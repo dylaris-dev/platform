@@ -78,7 +78,7 @@ func NewQuotaProvider(basePath string) *QuotaProvider {
 	// in a log line nobody reads. Usage still worked (the du fallback), but the
 	// limit was pure decoration and nothing above ever learned that.
 	if err := qp.probeProjectSupport(); err != nil {
-		log.Printf("quota: %s is present but this mount will not accept a project id (%v) — "+
+		log.Printf("quota: %s is present but this mount will not take a project quota (%v) — "+
 			"disk limits cannot be enforced here; usage will be measured with du instead", qp.fsType, err)
 		return qp
 	}
@@ -115,6 +115,46 @@ func (qp *QuotaProvider) probeProjectSupport() error {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 		}
+	}
+	// A project id is not a limit. Setting the LIMIT is a separate quotactl
+	// that needs CAP_SYS_ADMIN and a mount with project quotas enforced, and a
+	// node that could tag directories but not limit them reported limits as
+	// enforced while every one was decoration. Set one on the probe id and
+	// take it off again.
+	if err := qp.setProjectLimit(pid, 1024); err != nil {
+		return fmt.Errorf("setting a limit failed: %w", err)
+	}
+	// xfs is read back rather than trusted from the exit code: xfs_quota
+	// reports a refused command on stderr and can still exit 0. setquota
+	// (ext4) exits non-zero on a refusal.
+	got := int64(1024 << 20)
+	if qp.fsType == "xfs" {
+		_, got = qp.xfsGetUsageAndLimit("", pid)
+	}
+	if err := qp.setProjectLimit(pid, 0); err != nil {
+		return fmt.Errorf("removing the probe limit failed: %w", err)
+	}
+	if got != 1024<<20 {
+		return fmt.Errorf("a 1024 MB limit was accepted but reads back as %d bytes", got)
+	}
+	return nil
+}
+
+// setProjectLimit sets (or with 0 removes) the hard block limit of a project.
+func (qp *QuotaProvider) setProjectLimit(pid uint32, limitMB int64) error {
+	var cmd *exec.Cmd
+	switch qp.fsType {
+	case "xfs":
+		cmd = exec.Command("xfs_quota", "-x", "-c",
+			fmt.Sprintf("limit -p bhard=%dk %d", limitMB*1024, pid), qp.mountPoint)
+	case "ext4":
+		cmd = exec.Command("setquota", "-P",
+			fmt.Sprintf("%d", pid), "0", fmt.Sprintf("%d", limitMB*1024), "0", "0", qp.mountPoint)
+	default:
+		return fmt.Errorf("no project quotas on %q", qp.fsType)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }

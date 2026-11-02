@@ -54,7 +54,7 @@ func TestNetPolicyRulesetRefusesAnythingThatIsNotAnAddress(t *testing.T) {
 	if strings.Contains(rs, "0.0.0.0/0") {
 		t.Errorf("an allow-everything slipped through:\n%s", rs)
 	}
-	if strings.Contains(rs, "chain output") {
+	if strings.Count(rs, "chain output") != 1 || strings.Contains(rs, "chain output { type") {
 		t.Errorf("the ruleset was extended by its own input:\n%s", rs)
 	}
 	if n := strings.Count(rs, "saddr"); n != 0 {
@@ -115,13 +115,13 @@ func TestNetPolicyNotice(t *testing.T) {
 		},
 		{
 			name: "off because the machine is not ours", external: true,
-			want: func(s string) bool { return strings.Contains(s, "not one of our machines") },
+			want: func(s string) bool { return strings.Contains(s, "more than one owner") },
 			why:  "a BYON operator must not be told to fix something that is deliberate",
 		},
 		{
 			name: "off on one of ours", enforced: false, external: false,
 			want: func(s string) bool {
-				return strings.HasPrefix(s, "Off") && !strings.Contains(s, "not one of our machines")
+				return strings.HasPrefix(s, "Off") && !strings.Contains(s, "more than one owner")
 			},
 			why: "off on our own hardware is a different fact from off on a customer's",
 		},

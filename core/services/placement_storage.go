@@ -355,6 +355,10 @@ type DiskPathStatus struct {
 	ProjectedPercent int    `json:"projectedPercent"`
 	Status           string `json:"status"`
 	QuotaEnforceable bool   `json:"quotaEnforceable"`
+	// InodesFreePercent is -1 when unknown. A server can run a filesystem out
+	// of inodes with empty files long before any disk limit, and then nothing
+	// on it can create a file - a world save included.
+	InodesFreePercent int `json:"inodesFreePercent"`
 }
 
 // PathStatuses computes the per-path picture for a node.
@@ -370,15 +374,19 @@ func PathStatuses(storage []HeartbeatStoragePath, committed, unwrittenByPath map
 		available := sp.FreeBytes - unwritten - headroomGB*gibiByte
 
 		st := DiskPathStatus{
-			Path:             sp.Path,
-			TotalGB:          sp.TotalBytes / gibiByte,
-			FreeGB:           sp.FreeBytes / gibiByte,
-			UsedGB:           sp.UsedBytes / gibiByte,
-			CommittedGB:      committed[sp.Path] / gibiByte,
-			UnwrittenGB:      unwritten / gibiByte,
-			AvailableGB:      available / gibiByte,
-			HeadroomGB:       headroomGB,
-			QuotaEnforceable: sp.QuotaEnforceable,
+			Path:              sp.Path,
+			TotalGB:           sp.TotalBytes / gibiByte,
+			FreeGB:            sp.FreeBytes / gibiByte,
+			UsedGB:            sp.UsedBytes / gibiByte,
+			CommittedGB:       committed[sp.Path] / gibiByte,
+			UnwrittenGB:       unwritten / gibiByte,
+			AvailableGB:       available / gibiByte,
+			HeadroomGB:        headroomGB,
+			QuotaEnforceable:  sp.QuotaEnforceable,
+			InodesFreePercent: -1,
+		}
+		if sp.InodesTotal > 0 {
+			st.InodesFreePercent = int(sp.InodesFree * 100 / sp.InodesTotal)
 		}
 
 		switch {

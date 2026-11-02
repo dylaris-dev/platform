@@ -118,6 +118,10 @@ type HeartbeatStoragePath struct {
 	// enforced here (project quotas need xfs/ext4). Surfaced so a limit that
 	// silently does nothing on NFS/CIFS is visible instead of assumed.
 	QuotaEnforceable bool `json:"quota_enforceable"`
+	// Inodes of the filesystem. 0 total is unknown: an older node, or a
+	// filesystem that reports none.
+	InodesTotal int64 `json:"inodes_total"`
+	InodesFree  int64 `json:"inodes_free"`
 }
 
 // LoadHeartbeats reads every node heartbeat currently in Redis and

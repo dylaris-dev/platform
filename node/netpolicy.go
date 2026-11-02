@@ -84,7 +84,8 @@ type netEgress struct {
 	overlay   string // the shared network's subnet
 	redisIP   string // the one private address the container must reach
 	redisPort int
-	gamePort  int // the container port game servers listen on
+	gamePort  int    // the container port game servers listen on
+	gateway   string // the shared network's gateway: on a bridge, the host itself
 }
 
 // platformPortLow..High is the range the platform's own services listen in.
@@ -109,10 +110,27 @@ type publishedPort struct {
 // published - and locked every player out of a self-hosted platform in direct
 // routing (found on a fresh install from the installer).
 func netPolicyRulesetFor(allow []string, public []publishedPort, eg *netEgress) string {
+	return renderNetPolicy(true, allow, public, eg)
+}
+
+// renderNetPolicy is the whole ruleset. ingress false leaves the input chain
+// out: servers are not separated from each other (Core has published nothing
+// yet, or every server on the machine belongs to one owner), and only the
+// egress chain is written.
+func renderNetPolicy(ingress bool, allow []string, public []publishedPort, eg *netEgress) string {
 	var b strings.Builder
 	b.WriteString("table inet " + netPolicyTable + "\n")
 	b.WriteString("delete table inet " + netPolicyTable + "\n")
 	b.WriteString("table inet " + netPolicyTable + " {\n")
+	if ingress {
+		writeIngressChain(&b, allow, public)
+	}
+	writeEgressChain(&b, eg)
+	b.WriteString("}\n")
+	return b.String()
+}
+
+func writeIngressChain(b *strings.Builder, allow []string, public []publishedPort) {
 	b.WriteString("  chain input {\n")
 	b.WriteString("    type filter hook input priority 0; policy drop;\n")
 	// Replies to connections the server itself opened. Without this the server
@@ -147,17 +165,34 @@ func netPolicyRulesetFor(allow []string, public []publishedPort, eg *netEgress) 
 		}
 	}
 	b.WriteString("  }\n")
-	if eg != nil {
-		writeEgressChain(&b, eg)
-	}
-	b.WriteString("}\n")
-	return b.String()
 }
 
-// writeEgressChain renders the output chain. Every value is checked before it
-// is interpolated; one that does not parse drops the chain rather than the
-// container's network.
+// writeEgressChain renders the output chain.
+//
+// The link-local drop comes first and is written whatever else is unknown:
+// that is where a cloud's metadata service answers (Hetzner's user data can
+// carry join tokens), and no game server ever needs it. Everything after it is
+// FAIL OPEN like the rest of the policy: a value that does not parse leaves
+// only that drop, never a container without a network. Every value is checked
+// before it is interpolated.
+//
+// The full chain, in order: replies and loopback (Docker's DNS is 127.0.0.11);
+// the log-shipper's Redis; DNS to anywhere, because Docker's resolver forwards
+// from inside this namespace to whatever the host uses, and on a home machine
+// that is the router; the gateway, which on a bridge IS the host, every port of
+// it; the platform's own ports on the shared network, TCP and UDP; the rest of
+// the shared network (a tenant's proxy dials its backends, whose own ingress
+// decides); and every other private range - the LAN behind the machine and the
+// cloud's private network.
 func writeEgressChain(b *strings.Builder, eg *netEgress) {
+	b.WriteString("  chain output {\n")
+	b.WriteString("    type filter hook output priority 0; policy accept;\n")
+	b.WriteString("    ip daddr 169.254.0.0/16 drop\n")
+	b.WriteString("    ip6 daddr fd00:ec2::254 drop\n")
+	defer b.WriteString("  }\n")
+	if eg == nil {
+		return
+	}
 	_, overlay, err := net.ParseCIDR(eg.overlay)
 	if err != nil || overlay.IP.To4() == nil {
 		return
@@ -166,22 +201,27 @@ func writeEgressChain(b *strings.Builder, eg *netEgress) {
 	if redis == nil || redis.To4() == nil || eg.redisPort < 1 || eg.redisPort > 65535 {
 		return
 	}
-	b.WriteString("  chain output {\n")
-	b.WriteString("    type filter hook output priority 0; policy accept;\n")
+	ports := platformPortSet(eg.gamePort)
 	b.WriteString("    ct state established,related accept\n")
 	b.WriteString("    oif lo accept\n")
 	b.WriteString(fmt.Sprintf("    ip daddr %s tcp dport %d accept\n", redis.String(), eg.redisPort))
-	b.WriteString("    ip daddr 169.254.0.0/16 drop\n")
-	b.WriteString(fmt.Sprintf("    ip daddr %s tcp dport { %s } drop\n", overlay.String(), platformPortSet(eg.gamePort)))
+	b.WriteString("    udp dport 53 accept\n")
+	b.WriteString("    tcp dport 53 accept\n")
+	if gw := net.ParseIP(eg.gateway); gw != nil && gw.To4() != nil {
+		b.WriteString(fmt.Sprintf("    ip daddr %s drop\n", gw.String()))
+	}
+	b.WriteString(fmt.Sprintf("    ip daddr %s tcp dport { %s } drop\n", overlay.String(), ports))
+	b.WriteString(fmt.Sprintf("    ip daddr %s udp dport { %s } drop\n", overlay.String(), ports))
 	b.WriteString(fmt.Sprintf("    ip daddr %s accept\n", overlay.String()))
 	b.WriteString("    ip daddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 } drop\n")
-	b.WriteString("  }\n")
+	b.WriteString("    ip6 daddr { fc00::/7, fe80::/10 } meta l4proto { tcp, udp } drop\n")
 }
 
-// platformPortSet is the platform's port range and Redis's port, minus the
-// game port, as an nft set.
+// platformPortSet is the platform's port range plus the Redis and Postgres
+// ports, minus the game port, as an nft set. Postgres shares the network in the
+// self-host compose file.
 func platformPortSet(game int) string {
-	parts := []string{"6379"}
+	parts := []string{"5432", "6379"}
 	switch {
 	case game <= platformPortLow || game >= platformPortHigh:
 		if game == platformPortLow {
@@ -285,13 +325,13 @@ func (s *netPolicyState) snapshot() (applied, failures int, reason string, unpub
 }
 
 // netPolicyNotice is the one sentence the panel shows, or "" when there is
-// nothing to say. Enforcement being OFF is a deployment fact, not a fault: an
-// external or BYON node runs on hardware that is not ours, where separating a
-// customer's own servers from each other buys nobody anything.
+// nothing to say. Separation being OFF is a deployment fact, not a fault: on an
+// external or BYON machine whose servers all belong to one owner, separating
+// them from each other buys nobody anything.
 func netPolicyNotice(enforced bool, external bool, applied, failures int, lastReason string, unpublished bool) string {
 	if !enforced {
 		if external {
-			return "Off: this is not one of our machines, so its servers are left on the plain Docker network."
+			return "Not separated: Core reports no servers of more than one owner on this machine (an older Core never does), so they share the Docker network. The cloud metadata address is still blocked. NETPOLICY=on on the node separates them regardless."
 		}
 		return "Off: no policy is being applied on this node."
 	}
@@ -325,10 +365,15 @@ func shortUUID(u string) string {
 // a node - so this pulls nothing and adds no image to publish. It carries
 // nftables for exactly this (see the Dockerfile).
 func (dm *DockerManager) applyNetPolicy(ctx context.Context, containerName string, allow []string, public []publishedPort, eg *netEgress) error {
+	return dm.applyRuleset(ctx, "container:"+containerName, netPolicyRulesetFor(allow, public, eg))
+}
+
+// applyRuleset runs the helper with script in the network namespace netMode
+// names: "container:<name>" for one server, "host" for the host's own rules.
+func (dm *DockerManager) applyRuleset(ctx context.Context, netMode, script string) error {
 	if dm.netPolicyImage == "" {
 		return fmt.Errorf("no helper image resolved")
 	}
-	script := netPolicyRulesetFor(allow, public, eg)
 	cfg := &container.Config{
 		Image: dm.netPolicyImage,
 		// The ruleset travels in the command, not on stdin: attaching a stream to
@@ -338,7 +383,7 @@ func (dm *DockerManager) applyNetPolicy(ctx context.Context, containerName strin
 	}
 	hc := &container.HostConfig{
 		// Joins the TARGET's network namespace. This is the whole mechanism.
-		NetworkMode: container.NetworkMode("container:" + containerName),
+		NetworkMode: container.NetworkMode(netMode),
 		CapAdd:      []string{"NET_ADMIN"},
 		AutoRemove:  true,
 	}

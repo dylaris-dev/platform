@@ -50,6 +50,8 @@ export interface DiskPathStatus {
   projectedPercent: number;
   status: 'unknown' | 'ok' | 'warning' | 'critical' | 'breached';
   quotaEnforceable: boolean;
+  /** -1 when the node did not report inodes (older node, or a filesystem without them). */
+  inodesFreePercent: number;
 }
 
 async function fetchNodeStorage(nodeId: number): Promise<{ storage: StorageInfo[]; placement: StoragePlacementConfig; capacity: DiskPathStatus[] }> {
@@ -484,9 +486,20 @@ export function StorageCapacityNote({ cap }: { cap: DiskPathStatus }) {
             exceeding them. Usage is still measured (via <code className="font-mono">du</code>).
             {' '}Project quotas need xfs mounted with <code className="font-mono">pquota</code>, or ext4 with
             the <code className="font-mono">project</code> feature (<code className="font-mono">tune2fs -O project,quota</code>,
-            filesystem unmounted) and mounted with <code className="font-mono">prjquota</code>. The node
-            logs which of the two is missing on startup (search its log for <code className="font-mono">quota:</code>);
+            filesystem unmounted) and mounted with <code className="font-mono">prjquota</code>, and setting a
+            limit needs the node container to hold <code className="font-mono">CAP_SYS_ADMIN</code>. The node
+            logs which step is missing on startup (search its log for <code className="font-mono">quota:</code>);
             it re-checks on restart.
+          </span>
+        </p>
+      )}
+      {cap.inodesFreePercent >= 0 && cap.inodesFreePercent < 10 && (
+        <p className="flex items-start gap-1.5 rounded-sm border border-(--warning-border) bg-(--warning-ghost) px-2 py-1.5 text-[10px] font-mono text-(--warning-light)">
+          <AlertTriangle size={10} className="mt-0.5 shrink-0" />
+          <span>
+            Only {cap.inodesFreePercent}% of this filesystem&apos;s inodes are free. When they run out no server on
+            it can create a file, a world save included, however much disk space is left. Look for a server
+            with an unusual number of small files.
           </span>
         </p>
       )}

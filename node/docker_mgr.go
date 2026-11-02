@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
+	"github.com/redis/go-redis/v9"
 
 	"dylaris-pkg/validate"
 )
@@ -60,6 +61,20 @@ type DockerManager struct {
 	// netPolicyKick wakes the reconciler for a container that just started,
 	// see kickNetPolicy.
 	netPolicyKick chan struct{}
+	// external is NODE_EXTERNAL: not one of the platform's own machines. Its
+	// servers are separated only by tenancy, see netpolicy_plan.go.
+	// netPolicyForce is NETPOLICY=on, separating them regardless.
+	external       bool
+	netPolicyForce bool
+	// tenancyShared is Core's last word on whether this machine holds servers
+	// of more than one owner; netPolicySeparates whether the last round
+	// separated them. Both for the heartbeat as much as for the rounds.
+	tenancyShared      atomic.Bool
+	netPolicySeparates atomic.Bool
+	// Set once the reconciler runs, so a start can apply its own rules at once.
+	netPolicyRDB   *redis.Client
+	netPolicyToken string
+	hostRules      hostRulesState
 
 	// Whether a Link on this host currently holds no Docker address, so the
 	// warning in linkAddrs is written once per transition rather than every
@@ -882,7 +897,7 @@ func (dm *DockerManager) RunInstallerContainer(ctx context.Context, serverUUID, 
 	// Only where the platform runs the machine: a customer's host without CFS
 	// bandwidth control refuses any CPU cap at create, and the install would
 	// fail outright.
-	if dm.netPolicyImage != "" {
+	if !dm.external {
 		hc.Resources.NanoCPUs = installerNanoCPUs()
 	}
 	applyPidsLimit(hc)
@@ -999,7 +1014,7 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 		User:       mcUserSpec(),
 		WorkingDir: "/data",
 		Hostname:   containerName,
-		Env:        append(buildRedisEnv(config.UUID, "", sidecarAddr), tzEnv(config.Docker.Timezone)...),
+		Env:        append(append(buildRedisEnv(config.UUID, "", sidecarAddr), tzEnv(config.Docker.Timezone)...), dm.netGateContainerEnv()...),
 		// Stamped so another node sharing this docker.sock can tell whose it
 		// is. See container_owner.go.
 		Labels: map[string]string{
@@ -1152,6 +1167,7 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 				}
 			}
 		}
+		dm.closeNetGate(uuid)
 		err := dm.cli.ContainerStart(dm.ctx, mcName, container.StartOptions{})
 		if err != nil && strings.Contains(err.Error(), "already exists") {
 			// A stale network endpoint left by an ungraceful prior exit blocks the
@@ -1168,7 +1184,7 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 			err = dm.cli.ContainerStart(dm.ctx, mcName, container.StartOptions{})
 		}
 		if err == nil {
-			dm.kickNetPolicy()
+			dm.openNetGate(uuid)
 		}
 		return err
 	case "stop":
@@ -1232,6 +1248,10 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 	// RAM: user-specified + padding (default 512MB) against the OOM killer
 	bookedRAM := int64(config.Docker.RAM) * 1024 * 1024
 	oomPadding := int64(config.Docker.ramPadding()) * 1024 * 1024
+	// A CPU limit of 0 is NO cap, deliberately outside the platform's
+	// "0 = none" limits convention: zero cores is not a cap anyone wants, Docker
+	// reads NanoCPUs 0 as uncapped, and Core accepts 0 as "no limit"
+	// (validate.ResourceBounds).
 	nanoCpus := int64(config.Docker.CPULimit * 1e9)
 	cmdParts := strings.Fields(config.Docker.Command)
 
@@ -1248,7 +1268,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		User:       mcUserSpec(),
 		WorkingDir: fmt.Sprintf("/data/%s", config.ActiveSubServer),
 		Hostname:   containerName,
-		Env:        append(buildRedisEnv(config.UUID, config.ActiveSubServer, sidecarAddr), tzEnv(config.Docker.Timezone)...),
+		Env:        append(append(buildRedisEnv(config.UUID, config.ActiveSubServer, sidecarAddr), tzEnv(config.Docker.Timezone)...), dm.netGateContainerEnv()...),
 		// Stamped so another node sharing this docker.sock can tell whose it
 		// is. See container_owner.go.
 		Labels: map[string]string{
@@ -1362,6 +1382,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 	}
 
 	if autoStart {
+		dm.closeNetGate(config.UUID)
 		err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{})
 		if err != nil && gameOnly != nil {
 			// Most likely an extra port is held by something else on the
@@ -1383,7 +1404,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		if err != nil {
 			return "", fmt.Errorf("mc container start error: %v", err)
 		}
-		dm.kickNetPolicy()
+		dm.openNetGate(config.UUID)
 	}
 
 	// Confirm the container actually landed on a network. Docker accepts an

@@ -144,7 +144,10 @@ func TestRunInstallerContainerUsesTheInstallerNetwork(t *testing.T) {
 	j := strings.Index(s[i:], "\n}\n")
 	body := s[i : i+j]
 	for _, want := range []string{
-		"if dm.netPolicyImage != \"\" {\n\t\thc.Resources.NanoCPUs = installerNanoCPUs()\n\t}",
+		// Keyed to whose machine this is, not to whether the policy helper
+		// runs: since 2026-11-02 it runs on external machines too, which may
+		// lack CFS bandwidth control.
+		"if !dm.external {\n\t\thc.Resources.NanoCPUs = installerNanoCPUs()\n\t}",
 		"netMode, nc, releaseNet := dm.installerNetwork(ctx, dm.egressPolicy)",
 		"defer releaseNet()",
 		"hc.NetworkMode = netMode",

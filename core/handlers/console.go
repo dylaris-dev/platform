@@ -135,7 +135,7 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	ids := make([]string, 0, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
 		if v, ok := entries[i].Values["line"]; ok {
-			lines = append(lines, fmt.Sprintf("%v", v))
+			lines = append(lines, capConsoleLine(fmt.Sprintf("%v", v)))
 			ids = append(ids, entries[i].ID)
 		}
 	}
@@ -262,7 +262,7 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 		for _, stream := range results {
 			for _, msg := range stream.Messages {
 				line, _ := msg.Values["line"].(string)
-				fmt.Fprintf(w, "id: %s\ndata: %s\n\n", msg.ID, sseEscape(line))
+				fmt.Fprintf(w, "id: %s\ndata: %s\n\n", msg.ID, sseEscape(capConsoleLine(line)))
 				lastID = msg.ID
 			}
 		}
@@ -428,4 +428,17 @@ func sseEscape(s string) string {
 	s = strings.ReplaceAll(s, "\r", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	return s
+}
+
+// consoleLineMax is the longest console line handed to a browser: the
+// log-shipper's own per-line cap (maxLineBytes). The stream is writable with
+// the shipper's credential, and a line written past the shipper would
+// otherwise go out at whatever size it was stored.
+const consoleLineMax = 64 << 10
+
+func capConsoleLine(s string) string {
+	if len(s) <= consoleLineMax {
+		return s
+	}
+	return strings.ToValidUTF8(s[:consoleLineMax], "") + " [line truncated]"
 }

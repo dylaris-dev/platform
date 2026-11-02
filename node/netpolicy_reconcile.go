@@ -3,13 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"log"
 	"net"
-	"strconv"
 	"sync"
-	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -124,6 +120,17 @@ func (dm *DockerManager) infraPeers() []string {
 		out = append(out, dm.containerAddrs(dm.selfContainer)...)
 	}
 	out = append(out, dm.linkAddrs()...)
+	// A host-networked node or Link holds no address on the shared network, and
+	// what it sends to a server arrives from the network's gateway - the host.
+	// Without this a host-net node (the warp-proxy deployment of an external
+	// machine) would cut itself off from RCON, stats and voice.
+	if dm.selfHostNet || dm.linkAddrless.Load() {
+		if netID, _, err := dm.ensureGlobalNetwork(); err == nil {
+			if gw, gerr := dm.networkGateway(netID); gerr == nil {
+				out = append(out, gw)
+			}
+		}
+	}
 	return out
 }
 
@@ -238,174 +245,4 @@ func (dm *DockerManager) peerAddrs(uuids []string) []string {
 		}
 	}
 	return out
-}
-
-// reconcileNetPolicy brings every local game server to its wanted ruleset once.
-func (dm *DockerManager) reconcileNetPolicy(ctx context.Context, rdb *redis.Client, nodeToken string) {
-	fresh, published, err := loadNetPolicy(ctx, rdb, nodeToken)
-	switch {
-	case err != nil:
-		// A read failure is not a policy change. Keep the last good one; if
-		// there has never been one, enforce nothing rather than enforce a
-		// narrower set than Core intends.
-		log.Printf("netpolicy: cannot read the published policy: %v", err)
-	case published:
-		dm.netPolicySrc.set(fresh)
-	}
-
-	policy, haveSource := dm.netPolicySrc.get()
-	if !haveSource {
-		// Deliberate, and the reason is the direction failures fall. Applying
-		// node+Link only would cut a linked proxy off from its backends - on a
-		// running network, with players on it - because Core happened not to
-		// have published yet. Nothing is enforced until Core has spoken once.
-		dm.netPolicy.recordUnpublished()
-		return
-	}
-
-	containers, lerr := dm.ListRunningMCContainers()
-	if lerr != nil {
-		log.Printf("netpolicy: cannot list containers: %v", lerr)
-		return
-	}
-	if len(containers) == 0 {
-		dm.netPolicy.recordRound(0, nil)
-		return
-	}
-
-	infra := dm.infraPeers()
-	if len(infra) == 0 {
-		// Without the node's and the Link's own addresses every rule set would
-		// lock the server away from its own management and from every player.
-		// That is the one case where applying is worse than not applying.
-		log.Printf("netpolicy: neither this node nor the Link has a resolvable address; leaving every server OPEN")
-		failed := make(map[string]error, len(containers))
-		for _, c := range containers {
-			failed[c.UUID] = errNoInfraAddrs
-		}
-		dm.netPolicy.recordRound(0, failed)
-		return
-	}
-
-	// One answer for every container this round. nil when any part cannot be
-	// determined: the ingress rules still go on, egress stays open, loudly.
-	eg, egErr := dm.egressPolicy()
-	if egErr != nil {
-		log.Printf("netpolicy: egress left OPEN this round: %v", egErr)
-	}
-
-	applied := 0
-	failed := map[string]error{}
-	for _, c := range containers {
-		allow := append([]string{}, infra...)
-		allow = append(allow, dm.peerAddrs(policy[c.UUID])...)
-
-		applyCtx, cancel := context.WithTimeout(ctx, netPolicyApplyTimeout)
-		aerr := dm.applyNetPolicy(applyCtx, c.ContainerName, allow, c.Published, eg)
-		cancel()
-		if aerr != nil {
-			failed[c.UUID] = aerr
-			log.Printf("netpolicy: %s left OPEN: %v", c.ContainerName, aerr)
-			continue
-		}
-		applied++
-	}
-	dm.netPolicy.recordRound(applied, failed)
-}
-
-// startNetPolicyReconciler runs the loop until the context ends.
-//
-// Not started at all on an external or BYON node. That machine belongs to the
-// customer: separating their own servers from each other protects nobody, and
-// the node there would be reaching into containers on hardware that is not
-// ours. Decided 2026-09-10.
-func startNetPolicyReconciler(ctx context.Context, dm *DockerManager, rdb *redis.Client, nodeToken string) {
-	if dm == nil || dm.netPolicyImage == "" {
-		log.Printf("netpolicy: no helper image resolved; per-server rules are NOT being applied")
-		return
-	}
-	log.Printf("netpolicy: enforcing per-server ingress rules every %s (helper image %s)",
-		netPolicyInterval, dm.netPolicyImage)
-	go func() {
-		t := time.NewTicker(netPolicyInterval)
-		defer t.Stop()
-		dm.reconcileNetPolicy(ctx, rdb, nodeToken)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				dm.reconcileNetPolicy(ctx, rdb, nodeToken)
-			case <-dm.netPolicyKick:
-				dm.reconcileNetPolicy(ctx, rdb, nodeToken)
-			}
-		}
-	}()
-}
-
-// kickNetPolicy asks for a round now instead of at the next tick. A server
-// that just started carries no rules until then, and the tick is
-// netPolicyInterval: up to 15 s in which a tenant reaches the metadata service
-// and Core's ports. Non-blocking: one pending kick covers any number of starts,
-// and a node that runs no reconciler (external, BYON) just leaves it pending.
-// ponytail: still a window of one round (about a second); closing it fully
-// needs the installer's network-holder start for game containers.
-func (dm *DockerManager) kickNetPolicy() {
-	select {
-	case dm.netPolicyKick <- struct{}{}:
-	default:
-	}
-}
-
-// egressPolicy works out the shared network's subnet, the Redis address a
-// container's log-shipper dials and the game port.
-func (dm *DockerManager) egressPolicy() (*netEgress, error) {
-	netID, _, err := dm.ensureGlobalNetwork()
-	if err != nil {
-		return nil, err
-	}
-	insp, err := dm.cli.NetworkInspect(dm.ctx, netID, network.InspectOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("inspect network: %w", err)
-	}
-	subnet := ""
-	for _, c := range insp.IPAM.Config {
-		if _, n, perr := net.ParseCIDR(c.Subnet); perr == nil && n.IP.To4() != nil {
-			subnet = n.String()
-			break
-		}
-	}
-	if subnet == "" {
-		return nil, errors.New("the shared network has no IPv4 subnet")
-	}
-	addr, err := dm.sidecarRedisAddr(netID, nodeRedis.current())
-	if err != nil {
-		return nil, err
-	}
-	host, portStr, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, fmt.Errorf("redis address %q: %w", addr, err)
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return nil, fmt.Errorf("redis port %q: %w", portStr, err)
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		ips, lerr := net.LookupIP(host)
-		if lerr != nil || len(ips) == 0 {
-			return nil, fmt.Errorf("resolve redis host %q: %v", host, lerr)
-		}
-		for _, cand := range ips {
-			if cand.To4() != nil {
-				ip = cand
-				break
-			}
-		}
-		if ip == nil {
-			return nil, fmt.Errorf("redis host %q has no IPv4 address", host)
-		}
-	}
-	_, _, _, gamePort, _, _ := getModes()
-	return &netEgress{overlay: subnet, redisIP: ip.String(), redisPort: port, gamePort: gamePort}, nil
 }

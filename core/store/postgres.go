@@ -1348,7 +1348,7 @@ func (s *PostgresStore) ResetNodeLogin(id int) error {
 
 func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error) {
 	query := `
-		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, u.username as owner_name, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image, s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, COALESCE(s.server_type, 'game'), s.proxy_id
+		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.port, s.status, COALESCE(s.desired_state, 'stopped'), s.game_image, s.is_fixed, COALESCE(s.active_sub_server, ''), s.created_at, COALESCE(s.server_type, 'game'), s.proxy_id
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 		JOIN users u ON s.owner_id = u.id
@@ -1377,7 +1377,11 @@ func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error
 		// legal-looking value that any caller grouping by node silently files
 		// under a machine that does not exist. The network-policy publisher did
 		// exactly that and published an empty policy for the whole fleet.
-		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerName, &srv.Port, &srv.Status, &srv.DesiredState, &srv.GameImage, &srv.IsFixed, &srv.ActiveSubServer, &srv.CreatedAt, &srv.ServerType, &srv.ProxyID); err != nil {
+		//
+		// owner_id likewise: the publisher's same-owner check on a proxy link
+		// compared two empty strings, so it never refused a stranger's proxy,
+		// and separating servers by owner needs it outright.
+		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.Port, &srv.Status, &srv.DesiredState, &srv.GameImage, &srv.IsFixed, &srv.ActiveSubServer, &srv.CreatedAt, &srv.ServerType, &srv.ProxyID); err != nil {
 			continue
 		}
 		servers = append(servers, srv)

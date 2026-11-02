@@ -19,6 +19,7 @@ import (
 func NodeRedisKeys(token string) []string {
 	return []string{
 		"dylaris:node:" + token + ":netpolicy",
+		NetPolicyTenancyKey(token),
 		"dylaris:node:" + token + ":storage_placement",
 		"dylaris:node:" + token + ":cpu",
 		"dylaris:node:" + token + ":cpu:sig",

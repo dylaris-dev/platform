@@ -51,6 +51,10 @@ type StorageInfo struct {
 	// node accepts a limit and silently cannot apply it, so an operator must be
 	// able to see the difference rather than trust a limit that does nothing.
 	QuotaEnforceable bool `json:"quota_enforceable"`
+	// Inodes of the filesystem; 0 total means unknown (and some filesystems,
+	// btrfs among them, report none).
+	InodesTotal uint64 `json:"inodes_total"`
+	InodesFree  uint64 `json:"inodes_free"`
 }
 
 // NewStorageManager creates a StorageManager with the given paths.
@@ -320,6 +324,7 @@ func (sm *StorageManager) GetStorageInfo() []StorageInfo {
 		total, free := getDiskSpace(p)
 		info.TotalBytes = total
 		info.FreeBytes = free
+		info.InodesTotal, info.InodesFree = getInodes(p)
 		if total > free {
 			info.UsedBytes = total - free
 		}

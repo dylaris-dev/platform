@@ -369,19 +369,28 @@ func main() {
 	// whatever Core has allowed. See netpolicy.go for why it is enforced in the
 	// container's own namespace and why that needs no new privilege here.
 	//
-	// NOT on an external or BYON node. That machine is the customer's; separating
-	// their own servers from each other protects nobody, and reaching into
-	// containers on hardware that is not ours is not something to do for nothing.
-	if !nodeExternal {
-		self, _ := os.Hostname()
+	// On an external or BYON node too, since 2026-11-02: there the servers are
+	// separated only when they belong to more than one owner, and otherwise get
+	// the egress block of the cloud metadata address alone. See
+	// netpolicy_plan.go. NETPOLICY=off is the operator's way out, =on separates
+	// regardless of what Core says.
+	dockerMgr.external = nodeExternal
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("NETPOLICY"))) {
+	case "off":
+		log.Printf("netpolicy: switched off (NETPOLICY=off); no rules are applied to this node's servers")
+	case "on":
+		dockerMgr.netPolicyForce = true
+		fallthrough
+	default:
+		// selfContainerRef, not the hostname: a host-networked node's hostname
+		// is the HOST's, and inspecting by it found nothing, so no helper image.
+		self := selfContainerRef()
 		dockerMgr.selfContainer = self
 		dockerMgr.netPolicyImage = dockerMgr.resolveSelfImage(self)
 		if dockerMgr.netPolicyImage == "" {
 			log.Printf("netpolicy: could not resolve this node's own image; per-server rules are NOT being applied")
 		}
 		startNetPolicyReconciler(ctx, dockerMgr, rdb, nodeID)
-	} else {
-		log.Printf("netpolicy: not enforced on an external/BYON node; servers there share the plain Docker network")
 	}
 
 	// Port manager always active — routing mode (from Redis) decides at runtime whether to bind ports
@@ -461,6 +470,8 @@ func main() {
 	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
 	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
 	go startVoiceForwarder(ctx, rdb, dockerMgr, nodeID)
+	// Caps and TTLs on the keys a server's own shipper credential can write.
+	startShipperKeyGuard(ctx, dockerMgr, rdb)
 	go StartNodeSystemStats(ctx, rdb, nodeID, statsStreamMaxLen, mon)
 	go StartReconciler(ctx, rdb, dockerMgr, storageMgr)
 	// Purge .pre-restore-* dirs left over from crashed restores.
@@ -1072,11 +1083,15 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	// been measured - and absent is the one answer the panel renders as nothing
 	// at all, which is what an unmeasured node deserves.
 	if dm != nil {
-		enforced := dm.netPolicyImage != "" && !nodeExternal
+		enforced := dm.netPolicyImage != "" && dm.netPolicySeparates.Load()
 		applied, failures, lastReason, unpublished := dm.netPolicy.snapshot()
 		data["netPolicy"] = enforced
 		data["netPolicyServers"] = applied
-		if n := netPolicyNotice(enforced, nodeExternal, applied, failures, lastReason, unpublished); n != "" {
+		n := netPolicyNotice(enforced, nodeExternal && dm.netPolicyImage != "", applied, failures, lastReason, unpublished)
+		if p := dm.hostRules.Problem(); p != "" && dm.netPolicyImage != "" {
+			n = strings.TrimSpace(n + " The host-level block of the cloud metadata address is not in place: " + p)
+		}
+		if n != "" {
 			data["netPolicyNotice"] = n
 		}
 	}

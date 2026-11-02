@@ -19,7 +19,8 @@ func TestEgressRulesBlockThePlatformButNotTheGamePort(t *testing.T) {
 		"chain output",
 		"ip daddr 10.0.0.10 tcp dport 6379 accept",
 		"ip daddr 169.254.0.0/16 drop",
-		"ip daddr 10.20.0.0/16 tcp dport { 6379, 25500-25564, 25566-25599 } drop",
+		"ip daddr 10.20.0.0/16 tcp dport { 5432, 6379, 25500-25564, 25566-25599 } drop",
+		"ip daddr 10.20.0.0/16 udp dport { 5432, 6379, 25500-25564, 25566-25599 } drop",
 		"ip daddr 10.20.0.0/16 accept",
 		"10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16",
 	} {
@@ -32,8 +33,10 @@ func TestEgressRulesBlockThePlatformButNotTheGamePort(t *testing.T) {
 	if strings.Index(rs, "10.0.0.10 tcp dport 6379 accept") > strings.Index(rs, "172.16.0.0/12") {
 		t.Error("the private-range drop comes before the Redis allow")
 	}
-	// A value that does not parse drops the chain, never the network.
-	if bad := netPolicyRulesetWith(nil, &netEgress{overlay: "x; flush ruleset", redisIP: "10.0.0.10", redisPort: 6379, gamePort: 25565}); strings.Contains(bad, "chain output") || strings.Contains(bad, "flush") {
+	// A value that does not parse leaves the link-local drop alone, never the
+	// container without a network.
+	bad := netPolicyRulesetWith(nil, &netEgress{overlay: "x; flush ruleset", redisIP: "10.0.0.10", redisPort: 6379, gamePort: 25565})
+	if strings.Contains(bad, "flush") || strings.Contains(bad, "10.0.0.0/8") || !strings.Contains(bad, "ip daddr 169.254.0.0/16 drop") {
 		t.Errorf("an unparsable overlay reached the ruleset:\n%s", bad)
 	}
 }

@@ -316,8 +316,16 @@ func javaImageAllowed(st interface {
 	if strings.ContainsAny(img, " \t\n") {
 		return false
 	}
-	if strings.HasPrefix(img, platformImagePrefix) {
-		return true
+	if rest, ok := strings.CutPrefix(img, platformImagePrefix); ok {
+		// A Java version and nothing else as the repository's tail: the bare
+		// prefix took "platform-mc-javaX", a repository nobody here builds.
+		ver := rest
+		if i := strings.IndexAny(rest, ":@"); i >= 0 {
+			ver = rest[:i]
+		}
+		if ver != "" && strings.Trim(ver, "0123456789") == "" {
+			return true
+		}
 	}
 	var prefixes []string
 	if st != nil {
@@ -330,11 +338,26 @@ func javaImageAllowed(st interface {
 		}
 	}
 	for _, p := range prefixes {
-		if strings.HasPrefix(img, p) {
+		if imagePrefixMatches(img, p) {
 			return true
 		}
 	}
 	return false
+}
+
+// imagePrefixMatches holds an operator's prefix to a name boundary: a prefix
+// ending in "/", ":" or "@" is one already, otherwise the image must end there
+// or continue with one. "registry.example/approved" no longer admits
+// "registry.example/approved-evil/x".
+func imagePrefixMatches(img, prefix string) bool {
+	rest, ok := strings.CutPrefix(img, prefix)
+	if !ok {
+		return false
+	}
+	if rest == "" || strings.ContainsAny(prefix[len(prefix)-1:], "/:@") {
+		return true
+	}
+	return strings.ContainsAny(rest[:1], "/:@")
 }
 
 func resolveJavaImage(requested, stored string) string {

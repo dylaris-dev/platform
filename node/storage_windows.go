@@ -15,3 +15,6 @@ func getDiskSpace(path string) (uint64, uint64) {
 	}
 	return totalBytes, freeBytesAvailable
 }
+
+// getInodes has no meaning on Windows; 0 is "unknown".
+func getInodes(string) (uint64, uint64) { return 0, 0 }

@@ -838,6 +838,12 @@ func main() {
 	// server runs.
 	rconFilterKey := fmt.Sprintf("dylaris:server:%s:log_filter_rcon", serverUUID)
 
+	// Before anything else runs: the server process started below is the
+	// tenant's code and runs as our uid. See isolation.go.
+	if err := hideFromSameUID(); err != nil {
+		log.Printf("log-shipper: cannot make this process non-dumpable (%v); its environment stays readable to the server process", err)
+	}
+
 	rdb := connectRedis()
 	defer rdb.Close()
 
@@ -866,6 +872,12 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Hold the server until the node says its network rules are on, so its
+	// code never runs a moment without them. See netGateEnv.
+	if gate := os.Getenv(netGateEnv); gate != "" && !waitForNetGate(gate, netGateWait, 200*time.Millisecond) {
+		log.Printf("log-shipper: network rules not confirmed within %s; starting the server anyway", netGateWait)
+	}
+
 	stopKey := fmt.Sprintf("dylaris:server:%s:stop-requested", serverUUID)
 
 	// Buffered: signal delivery never blocks, and one pending SIGTERM is all
@@ -880,7 +892,7 @@ func main() {
 	var stopping atomic.Bool
 	for {
 		javaCmd := exec.Command(os.Args[1], os.Args[2:]...)
-		javaCmd.Env = append(os.Environ(), "TERM=xterm-256color")
+		javaCmd.Env = childEnv(os.Environ())
 		javaCmd.Stdin = nil // stdin managed via pipe below
 
 		// Our own pipes, not StdoutPipe: Wait closes those as soon as the

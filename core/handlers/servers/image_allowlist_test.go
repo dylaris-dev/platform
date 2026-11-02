@@ -22,7 +22,13 @@ func TestOnlyAllowedRuntimeImagesAreTaken(t *testing.T) {
 		{"", "", true}, // keeps the stored image
 		{"evil.example/x:1", "", false},
 		{"ghcr.io/dylaris-dev/platform-mc-java21:latest evil", "", false},
-		{"ghcr.io/dylaris-dev/platform-mc-javaX@sha256:abc", "", true},
+		{"ghcr.io/dylaris-dev/platform-mc-java21@sha256:abc", "", true},
+		{"ghcr.io/dylaris-dev/platform-mc-java8", "", true},
+		// The bare prefix let through a repository nobody here builds.
+		{"ghcr.io/dylaris-dev/platform-mc-javaX@sha256:abc", "", false},
+		{"ghcr.io/dylaris-dev/platform-mc-java21-evil:latest", "", false},
+		{"registry.example/approved-evil/java:21", "registry.example/approved", false},
+		{"registry.example/approved/java:21", "registry.example/approved", true},
 		{"registry.example/approved/java:21", "registry.example/approved/", true},
 		{"registry.example/other/java:21", "registry.example/approved/", false},
 	} {

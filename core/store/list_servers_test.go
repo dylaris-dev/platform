@@ -31,15 +31,15 @@ func TestListServersCarriesTheNodeID(t *testing.T) {
 
 	now := time.Now()
 	cols := []string{
-		"id", "uuid", "name", "node_id", "node_name", "owner_name", "port", "status",
+		"id", "uuid", "name", "node_id", "node_name", "owner_id", "owner_name", "port", "status",
 		"desired_state", "game_image", "is_fixed", "active_sub_server", "created_at",
 		"server_type", "proxy_id",
 	}
 	mock.ExpectQuery(regexp.QuoteMeta("FROM servers s")).
 		WillReturnRows(sqlmock.NewRows(cols).
-			AddRow(7, "uuid-a", "alpha", 325, "node-a", "someone", 25565, "online",
+			AddRow(7, "uuid-a", "alpha", 325, "node-a", "owner-1", "someone", 25565, "online",
 				"running", "img", true, "sub", now, "game", nil).
-			AddRow(8, "uuid-b", "beta", 327, "node-b", "someone", 25565, "offline",
+			AddRow(8, "uuid-b", "beta", 327, "node-b", "owner-2", "someone", 25565, "offline",
 				"stopped", "img", true, "sub", now, "proxy", 7))
 
 	servers, err := s.ListServers("")
@@ -57,6 +57,11 @@ func TestListServersCarriesTheNodeID(t *testing.T) {
 	// broke every other.
 	if servers[0].UUID != "uuid-a" || servers[1].ServerType != "proxy" {
 		t.Errorf("columns shifted: %+v / %+v", servers[0], servers[1])
+	}
+	// The owner too: the network-policy publisher separates by it, and its
+	// same-owner check on a proxy link compared two empty strings without it.
+	if servers[0].OwnerID != "owner-1" || servers[1].OwnerID != "owner-2" {
+		t.Errorf("owner ids = %q, %q; want owner-1, owner-2", servers[0].OwnerID, servers[1].OwnerID)
 	}
 	if servers[1].ProxyID == nil || *servers[1].ProxyID != 7 {
 		t.Errorf("proxy_id did not survive: %v", servers[1].ProxyID)

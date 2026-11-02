@@ -118,6 +118,63 @@ func BuildNodePolicies(servers []models.Server) map[int]map[string][]string {
 	return out
 }
 
+// NetPolicyTenancyKey must stay byte-identical to netPolicyTenancyKey in the
+// node. "shared" there means: this external or BYON machine holds servers of
+// more than one owner, so separate them. Absent means it does not, and the node
+// leaves them on the plain network apart from blocking the metadata address.
+func NetPolicyTenancyKey(nodeToken string) string {
+	return "dylaris:node:" + nodeToken + ":netpolicy_tenancy"
+}
+
+// ownersOnNode counts the distinct owners of the servers on one node.
+func ownersOnNode(servers []models.Server, nodeID int) int {
+	owners := map[string]bool{}
+	for _, s := range servers {
+		if s.NodeID == nodeID {
+			owners[s.OwnerID] = true
+		}
+	}
+	return len(owners)
+}
+
+// SameOwnerPolicies is the policy for a machine outside the platform's own
+// fleet whose servers belong to several owners: every server may be reached by
+// the other servers of ITS owner on that machine, plus its proxy as everywhere.
+// Owner's decision 2026-11-02 - on someone's own hardware a tenant's servers
+// talking to each other (a proxy and its backends, a chat bridge, a shared
+// plugin database) is ordinary use, and the line that matters is the one
+// between owners. Platform nodes keep the stricter proxy-only list.
+func SameOwnerPolicies(servers []models.Server, nodeID int) map[string][]string {
+	base := BuildNodePolicies(servers)[nodeID]
+	out := make(map[string][]string, len(base))
+	for _, s := range servers {
+		if s.NodeID != nodeID || s.UUID == "" {
+			continue
+		}
+		seen := map[string]bool{s.UUID: true}
+		var allow []string
+		add := func(u string) {
+			if u != "" && !seen[u] {
+				seen[u] = true
+				allow = append(allow, u)
+			}
+		}
+		for _, u := range base[s.UUID] {
+			add(u)
+		}
+		for _, peer := range servers {
+			if peer.NodeID == nodeID && peer.OwnerID == s.OwnerID {
+				add(peer.UUID)
+			}
+		}
+		if allow == nil {
+			allow = []string{}
+		}
+		out[s.UUID] = allow
+	}
+	return out
+}
+
 func (p *NetPolicyPublisher) Start(ctx context.Context) {
 	log.Printf("Network policy publisher started (interval: %s)", netPolicyInterval)
 	ticker := time.NewTicker(netPolicyInterval)
@@ -165,13 +222,27 @@ func (p *NetPolicyPublisher) RunOnce(ctx context.Context) {
 			"every policy below may be short. ListServers must carry s.node_id")
 	}
 	for _, n := range nodes {
-		// A customer's own machine is left alone, deliberately: their servers
-		// may talk to each other, and the node there does not enforce anything.
-		// Publishing for it would be writing a key nobody reads.
-		if n.Kind() == models.NodeKindBYON {
-			continue
-		}
 		policy := byNode[n.ID]
+		// Outside the platform's own fleet the servers are separated by
+		// TENANCY (owner's decision 2026-11-02): only once the machine holds
+		// servers of more than one owner, and then along owner lines. The
+		// policy goes out BEFORE the flag, so a node never pairs the flag with
+		// an older, narrower list.
+		shared := n.Kind() != models.NodeKindPlatform && ownersOnNode(servers, n.ID) > 1
+		if shared {
+			policy = SameOwnerPolicies(servers, n.ID)
+		} else {
+			// Cleared on a platform node too: one whose external tag was taken
+			// away keeps no stale flag behind.
+			if derr := p.redis.Del(ctx, NetPolicyTenancyKey(n.Token)).Err(); derr != nil {
+				logErrf("netpolicy", "cannot clear the tenancy flag of node %d: %v", n.ID, derr)
+			}
+			// A single-owner customer machine is left alone: nothing there
+			// reads a policy without the flag.
+			if n.Kind() == models.NodeKindBYON {
+				continue
+			}
+		}
 		if policy == nil {
 			policy = map[string][]string{}
 		}
@@ -185,6 +256,12 @@ func (p *NetPolicyPublisher) RunOnce(ctx context.Context) {
 		// would silently unpolice the whole fleet.
 		if serr := p.redis.Set(ctx, NetPolicyKey(n.Token), raw, 0).Err(); serr != nil {
 			logErrf("netpolicy", "cannot publish policy for node %d: %v", n.ID, serr)
+			continue
+		}
+		if shared {
+			if serr := p.redis.Set(ctx, NetPolicyTenancyKey(n.Token), "shared", 0).Err(); serr != nil {
+				logErrf("netpolicy", "cannot set the tenancy flag of node %d: %v", n.ID, serr)
+			}
 		}
 	}
 }
