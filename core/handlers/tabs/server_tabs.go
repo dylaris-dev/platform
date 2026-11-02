@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/validate"
 
@@ -22,11 +21,11 @@ import (
 // route creation + container-side HTTP reverse-proxy is a follow-up.
 
 type ServerTabsHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewServerTabsHandler(state *handlers.AppState) *ServerTabsHandler {
-	return &ServerTabsHandler{state: state}
+func NewServerTabsHandler(d Deps) *ServerTabsHandler {
+	return &ServerTabsHandler{d: d}
 }
 
 type serverTabResponse struct {
@@ -114,15 +113,15 @@ func parseShareExpiry(raw *string, now time.Time) (value interface{}, set bool, 
 // access before any of these handlers run, so this no longer branches on
 // config-vs-overview like the old checkServerAccess-based canAccess did.
 func (h *ServerTabsHandler) serverExists(serverID int) bool {
-	_, err := h.state.Store.GetServerByID(serverID)
+	_, err := h.d.Store.GetServerByID(serverID)
 	return err == nil
 }
 
 func (h *ServerTabsHandler) db() *sql.DB {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		return nil
 	}
-	provider, ok := h.state.Store.(sparkDBProvider)
+	provider, ok := h.d.Store.(sparkDBProvider)
 	if !ok {
 		return nil
 	}
@@ -170,7 +169,7 @@ func (h *ServerTabsHandler) List(w http.ResponseWriter, r *http.Request) {
 			et := expires.Time
 			t.ShareExpiresAt = &et
 		}
-		t.ProxyOrigin = TabProxyContentOrigin(h.state.FrontendURL, h.state.TabProxyHostSuffix, hostLabel)
+		t.ProxyOrigin = TabProxyContentOrigin(h.d.FrontendURL, h.d.TabProxyHostSuffix, hostLabel)
 		out = append(out, t)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -246,11 +245,11 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if !h.state.FeatureFlags.IsTabProxyEnabled(ctx) {
+		if !h.d.FeatureFlags.IsTabProxyEnabled(ctx) {
 			httpx.SendJSONError(w, "The tab reverse-proxy feature is disabled by the administrator.", http.StatusForbidden)
 			return
 		}
-		if req.Visibility == "public" && !h.state.FeatureFlags.TabProxyAllowPublicLinks(ctx) {
+		if req.Visibility == "public" && !h.d.FeatureFlags.TabProxyAllowPublicLinks(ctx) {
 			httpx.SendJSONError(w, "Public share links are disabled by the administrator.", http.StatusForbidden)
 			return
 		}
@@ -275,7 +274,7 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.Mode == "proxied" && (req.Surface == "page" || req.Surface == "both") {
 		if userID != "" {
 			if used, uerr := h.countUserShareLinks(db, userID); uerr == nil &&
-				capReached(used, h.state.FeatureFlags.TabProxyMaxShareLinksPerUser(ctx)) {
+				capReached(used, h.d.FeatureFlags.TabProxyMaxShareLinksPerUser(ctx)) {
 				httpx.SendJSONError(w, "You have reached your share-link limit.", http.StatusConflict)
 				return
 			}
@@ -340,7 +339,7 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.state.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{
+	h.d.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{
 		"serverId": serverID,
 	})
 
@@ -368,11 +367,11 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	req.TargetPath = strings.TrimSpace(req.TargetPath)
 	req.Surface = strings.TrimSpace(req.Surface)
 	req.Visibility = strings.TrimSpace(req.Visibility)
-	if req.Mode == "proxied" && !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
+	if req.Mode == "proxied" && !h.d.FeatureFlags.IsTabProxyEnabled(r.Context()) {
 		httpx.SendJSONError(w, "The tab reverse-proxy feature is disabled by the administrator.", http.StatusForbidden)
 		return
 	}
-	if req.Visibility == "public" && !h.state.FeatureFlags.TabProxyAllowPublicLinks(r.Context()) {
+	if req.Visibility == "public" && !h.d.FeatureFlags.TabProxyAllowPublicLinks(r.Context()) {
 		httpx.SendJSONError(w, "Public share links are disabled by the administrator.", http.StatusForbidden)
 		return
 	}
@@ -518,7 +517,7 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.state.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{
+	h.d.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{
 		"serverId": serverID,
 	})
 
@@ -549,7 +548,7 @@ func (h *ServerTabsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.state.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{
+	h.d.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{
 		"serverId": serverID,
 	})
 

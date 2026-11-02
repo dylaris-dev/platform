@@ -3,9 +3,7 @@ package tabs
 import (
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
-	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
@@ -42,10 +40,6 @@ func (f *customTabsFakeStore) CreateModule(m *models.Module) (int, error) {
 	return 42, nil
 }
 
-func customTabsState(f *customTabsFakeStore) *handlers.AppState {
-	return &handlers.AppState{Store: f, FeatureFlags: &services.FeatureFlags{}}
-}
-
 // The navbar row follows the tab-proxy settings, in both fields.
 //
 // This is the whole reason Settings -> Modules renders them read-only for this
@@ -74,7 +68,7 @@ func TestCustomTabsModuleFollowsTheTabProxySettings(t *testing.T) {
 			f := &customTabsFakeStore{mods: []models.Module{
 				{ID: 9, Name: "Custom Tabs", IsEnabled: !tc.wantEnabled, AccessRole: "nonsense"},
 			}}
-			if err := syncCustomTabsModule(customTabsState(f), tc.enabled, tc.audience); err != nil {
+			if err := syncCustomTabsModule(f, tc.enabled, tc.audience); err != nil {
 				t.Fatalf("sync: %v", err)
 			}
 			if got, ok := f.status[9]; !ok || got != tc.wantEnabled {
@@ -94,7 +88,7 @@ func TestCustomTabsModuleFollowsTheTabProxySettings(t *testing.T) {
 // navbar entry no matter what the settings say.
 func TestCustomTabsModuleIsCreatedWhenMissing(t *testing.T) {
 	f := &customTabsFakeStore{mods: []models.Module{{ID: 1, Name: "Servers"}}}
-	if err := syncCustomTabsModule(customTabsState(f), true, "admin"); err != nil {
+	if err := syncCustomTabsModule(f, true, "admin"); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 	if f.created == nil {

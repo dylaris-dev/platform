@@ -9,8 +9,6 @@ import (
 	"sync"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"google.golang.org/grpc"
 
 	nodegrpc "dylaris-core/grpc"
@@ -120,7 +118,7 @@ func serveThroughTabNode(t *testing.T, acceptEncoding string, node *tabNode) (*h
 	node.mu.Lock()
 	node.conn = conn
 	node.mu.Unlock()
-	h := &ProxyHandler{state: &handlers.AppState{GRPCRegistry: reg}}
+	h := &ProxyHandler{d: Deps{GRPCRegistry: reg}}
 	r := httptest.NewRequest(http.MethodGet, "http://tab.example/maps/world/tiles/1/x0/z0.prbm", nil)
 	if acceptEncoding != "" {
 		r.Header.Set("Accept-Encoding", acceptEncoding)

@@ -1126,7 +1126,7 @@ func main() {
 	srv := &http.Server{
 		Addr: ":" + port,
 		Handler: tabs.TabProxyHostMux(
-			appState, extras.proxyHandler, handlers.SecurityHeaders(corsObj(root))),
+			extras.proxyHandler, handlers.SecurityHeaders(corsObj(root))),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}

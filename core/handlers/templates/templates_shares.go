@@ -41,7 +41,7 @@ func (h *TemplatesHandler) shareTarget(w http.ResponseWriter, r *http.Request, c
 	}
 	// One answer for unknown, owner and self, so the form does not double as a
 	// username lookup beyond what it has to.
-	u, err := h.state.Store.GetUserByUsername(name)
+	u, err := h.d.Store.GetUserByUsername(name)
 	if err != nil || u == nil || u.ID == callerID || u.ID == ownerID {
 		httpx.SendJSONError(w, "Cannot share with that user. Check the username; you cannot share with yourself or the owner.", http.StatusBadRequest)
 		return nil, "", false
@@ -55,7 +55,7 @@ func (h *TemplatesHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	shares, err := h.state.Store.ListTemplateShares(t.ID)
+	shares, err := h.d.Store.ListTemplateShares(t.ID)
 	if err != nil {
 		log.Printf("templates: shares of %d: %v", t.ID, err)
 		httpx.SendJSONError(w, "Could not list the shares", http.StatusInternalServerError)
@@ -77,7 +77,7 @@ func (h *TemplatesHandler) PutShare(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.state.Store.UpsertTemplateShare(t.ID, u.ID, level); err != nil {
+	if err := h.d.Store.UpsertTemplateShare(t.ID, u.ID, level); err != nil {
 		log.Printf("templates: share %d with %s: %v", t.ID, u.ID, err)
 		httpx.SendJSONError(w, "Could not save the share", http.StatusInternalServerError)
 		return
@@ -96,7 +96,7 @@ func (h *TemplatesHandler) DeleteShare(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.DeleteTemplateShare(t.ID, target); err != nil {
+	if err := h.d.Store.DeleteTemplateShare(t.ID, target); err != nil {
 		log.Printf("templates: unshare %d: %v", t.ID, err)
 		httpx.SendJSONError(w, "Could not remove the share", http.StatusInternalServerError)
 		return
@@ -108,7 +108,7 @@ func (h *TemplatesHandler) DeleteShare(w http.ResponseWriter, r *http.Request) {
 // their personal templates with.
 func (h *TemplatesHandler) ListOwnerShares(w http.ResponseWriter, r *http.Request) {
 	id := authz.IdentityFromContext(r.Context())
-	shares, err := h.state.Store.ListOwnerShares(id.UserID)
+	shares, err := h.d.Store.ListOwnerShares(id.UserID)
 	if err != nil {
 		log.Printf("templates: owner shares of %s: %v", id.UserID, err)
 		httpx.SendJSONError(w, "Could not list the shares", http.StatusInternalServerError)
@@ -128,7 +128,7 @@ func (h *TemplatesHandler) PutOwnerShare(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if err := h.state.Store.UpsertOwnerShare(id.UserID, u.ID, level); err != nil {
+	if err := h.d.Store.UpsertOwnerShare(id.UserID, u.ID, level); err != nil {
 		log.Printf("templates: owner share %s with %s: %v", id.UserID, u.ID, err)
 		httpx.SendJSONError(w, "Could not save the share", http.StatusInternalServerError)
 		return
@@ -144,7 +144,7 @@ func (h *TemplatesHandler) DeleteOwnerShare(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.DeleteOwnerShare(id.UserID, target); err != nil {
+	if err := h.d.Store.DeleteOwnerShare(id.UserID, target); err != nil {
 		log.Printf("templates: owner unshare %s: %v", id.UserID, err)
 		httpx.SendJSONError(w, "Could not remove the share", http.StatusInternalServerError)
 		return

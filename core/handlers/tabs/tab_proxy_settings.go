@@ -6,18 +6,17 @@ import (
 	"net/http"
 	"strconv"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 )
 
 // TabProxySettingsHandler is the admin GET/PUT bundle for the WS5 custom-tab
 // reverse-proxy toggles. Mirrors FeatureSettingsHandler.
 type TabProxySettingsHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewTabProxySettingsHandler(state *handlers.AppState) *TabProxySettingsHandler {
-	return &TabProxySettingsHandler{state: state}
+func NewTabProxySettingsHandler(d Deps) *TabProxySettingsHandler {
+	return &TabProxySettingsHandler{d: d}
 }
 
 type tabProxySettings struct {
@@ -39,12 +38,12 @@ type tabProxySettings struct {
 func (h *TabProxySettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	out := tabProxySettings{
-		Enabled:              h.state.FeatureFlags.IsTabProxyEnabled(ctx),
-		AllowPublicLinks:     h.state.FeatureFlags.TabProxyAllowPublicLinks(ctx),
-		MaxPerUserPerServer:  h.state.FeatureFlags.TabProxyMaxPerUserPerServer(ctx),
-		MaxPerUserTotal:      h.state.FeatureFlags.TabProxyMaxPerUserTotal(ctx),
-		MaxShareLinksPerUser: h.state.FeatureFlags.TabProxyMaxShareLinksPerUser(ctx),
-		Audience:             h.state.FeatureFlags.TabProxyAudience(ctx),
+		Enabled:              h.d.FeatureFlags.IsTabProxyEnabled(ctx),
+		AllowPublicLinks:     h.d.FeatureFlags.TabProxyAllowPublicLinks(ctx),
+		MaxPerUserPerServer:  h.d.FeatureFlags.TabProxyMaxPerUserPerServer(ctx),
+		MaxPerUserTotal:      h.d.FeatureFlags.TabProxyMaxPerUserTotal(ctx),
+		MaxShareLinksPerUser: h.d.FeatureFlags.TabProxyMaxShareLinksPerUser(ctx),
+		Audience:             h.d.FeatureFlags.TabProxyAudience(ctx),
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "settings": out})
 }
@@ -86,19 +85,19 @@ func (h *TabProxySettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"tab_proxy_audience", req.Audience},
 	}
 	for _, kv := range writes {
-		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {
+		if err := h.d.Store.SetSetting(kv.k, kv.v); err != nil {
 			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		h.state.FeatureFlags.Invalidate(kv.k)
+		h.d.FeatureFlags.Invalidate(kv.k)
 	}
 	// The navbar row follows these settings; it is not separately editable.
 	// Cosmetic, so a failure is logged rather than failing the save the operator
 	// just made - same call shape as the Modpacks sync.
-	if err := syncCustomTabsModule(h.state, req.Enabled, req.Audience); err != nil {
+	if err := syncCustomTabsModule(h.d.Store, req.Enabled, req.Audience); err != nil {
 		log.Printf("tab-proxy: syncing the Custom Tabs module row failed: %v", err)
 	}
-	h.state.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
+	h.d.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
 		"feature": "tabProxy",
 		"enabled": req.Enabled,
 	})

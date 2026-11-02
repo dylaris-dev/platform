@@ -20,10 +20,10 @@ import (
 	"testing"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/gate"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -175,9 +175,9 @@ func newTestHandler(t *testing.T, settings map[string]string) (*TemplatesHandler
 			"stranger": {ID: strangerID, Username: "stranger"},
 		},
 	}
-	state := withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Authz: authz.NewResolver(st)})
+	d := Deps{Store: st, FeatureFlags: services.NewFeatureFlags(st), Authz: authz.NewResolver(st), CoreStorage: &corestorage.Manager{Store: st}}
 	stubModrinth(t, nil, nil) // no test reaches the real Modrinth
-	return NewTemplatesHandler(state), st
+	return NewTemplatesHandler(d), st
 }
 
 func asUser(r *http.Request, userID string, admin bool) *http.Request {
@@ -252,7 +252,7 @@ func uploadRequest(t *testing.T, meta string, zipBytes []byte) *http.Request {
 
 func storedFiles(t *testing.T, h *TemplatesHandler, tpl *models.Template) []string {
 	t.Helper()
-	files, err := h.state.CoreStorage.TemplateList(context.Background(), tpl)
+	files, err := h.d.CoreStorage.TemplateList(context.Background(), tpl)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestAudienceOffRefusesUsers(t *testing.T) {
 	h, _ := newTestHandler(t, map[string]string{services.TemplatesSettingKey: "off"})
 	for _, admin := range []bool{false, true} {
 		rec := httptest.NewRecorder()
-		gate.Gates{Store: h.state.Store, FeatureFlags: h.state.FeatureFlags}.RequireTemplatesAudience(h.List)(rec, asUser(httptest.NewRequest("GET", "/api/templates", nil), ownerID, admin))
+		gate.Gates{Store: h.d.Store, FeatureFlags: h.d.FeatureFlags}.RequireTemplatesAudience(h.List)(rec, asUser(httptest.NewRequest("GET", "/api/templates", nil), ownerID, admin))
 		want := http.StatusForbidden
 		if admin {
 			want = http.StatusOK

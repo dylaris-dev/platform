@@ -16,6 +16,7 @@ import (
 	"dylaris-core/handlers/mods"
 	"dylaris-core/handlers/nodes"
 	"dylaris-core/handlers/packs"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/handlers/servers"
 	"dylaris-core/handlers/stats"
 	"dylaris-core/handlers/storageapi"
@@ -43,6 +44,28 @@ type routeCfg struct {
 	// Panel is the embedded panel bundle, mounted as the router's fallback.
 	// Nil in tests, where nothing asks for a page.
 	Panel http.Handler
+}
+
+// tabTickets hands the tab-proxy package the ticket half of the auth handler
+// as functions, so tabs does not import the root handlers package. Parse keeps
+// AuthHandler's purpose check: a session token is refused as a ticket.
+func tabTickets(ah *handlers.AuthHandler) tabs.Tickets {
+	return tabs.Tickets{
+		IssueTabProxyTicket: ah.IssueTabProxyTicket,
+		ParseTabProxyTicket: func(token string) (tabs.TabTicket, error) {
+			c, err := ah.ParseTabProxyTicket(token)
+			if err != nil {
+				return tabs.TabTicket{}, err
+			}
+			return tabs.TabTicket{ServerID: c.ServerID, TabID: c.TabID, ReadOnly: c.ReadOnly}, nil
+		},
+		SessionID: func(r *http.Request) string {
+			if c, _ := reqctx.SessionClaims(r).(*handlers.Claims); c != nil {
+				return c.ID
+			}
+			return ""
+		},
+	}
 }
 
 // routeExtras carries the handler/service instances main() still needs after
@@ -586,6 +609,27 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		Events:      appState.Events,
 		CoreStorage: appState.CoreStorage,
 	}
+	tabsDeps := tabs.Deps{
+		Store:              appState.Store,
+		Redis:              appState.Redis,
+		Events:             appState.Events,
+		FeatureFlags:       appState.FeatureFlags,
+		Authz:              appState.Authz,
+		GRPCRegistry:       appState.GRPCRegistry,
+		DataLimiter:        appState.DataLimiter,
+		TabMeter:           appState.TabMeter,
+		FrontendURL:        appState.FrontendURL,
+		TabProxyHostSuffix: appState.TabProxyHostSuffix,
+		StoreEnabled:       appState.StoreEnabled,
+	}
+	templatesDeps := templates.Deps{
+		Store:        appState.Store,
+		Authz:        appState.Authz,
+		FeatureFlags: appState.FeatureFlags,
+		GRPCRegistry: appState.GRPCRegistry,
+		CoreStorage:  appState.CoreStorage,
+		SuspendGrace: appState.SuspendGrace,
+	}
 
 	// Initialize handlers
 	serverHandler := servers.NewServerHandler(appState)
@@ -660,23 +704,23 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	modrinthHandler := mods.NewModrinthHandler(modsDeps)
 	technicHandler := servers.NewTechnicHandler(appState)
 	serverModsHandler := servers.NewServerModsHandler(appState)
-	sparkHandler := tabs.NewSparkHandler(appState)
-	serverTabsHandler := tabs.NewServerTabsHandler(appState)
-	proxyHandler := tabs.NewProxyHandler(appState, authHandler)
+	sparkHandler := tabs.NewSparkHandler(tabsDeps)
+	serverTabsHandler := tabs.NewServerTabsHandler(tabsDeps)
+	proxyHandler := tabs.NewProxyHandler(tabsDeps, tabTickets(authHandler))
 	modrinthPATHandler := mods.NewModrinthPATHandler(modsDeps, cfg.ClusterSecret)
 	packsHandler := packs.NewPacksHandler(appState)
 	packsHandler.SetPATLoader(modrinthPATHandler)
 	// Server installs and pack alerts resolve team access the same way.
 	services.SetPackPATLoader(modrinthPATHandler)
 	appState.InstallMrpackURL = packsHandler.InstallMrpackURL
-	templatesHandler := templates.NewTemplatesHandler(appState)
+	templatesHandler := templates.NewTemplatesHandler(templatesDeps)
 	usernameHistoryHandler := users.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := users.NewAccountPolicyHandler(appState)
 	modpackSettingsHandler := mods.NewModpackSettingsHandler(modsDeps)
 	modCacheSettingsHandler := handlers.NewModCacheSettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
-	tabProxySettingsHandler := tabs.NewTabProxySettingsHandler(appState)
+	tabProxySettingsHandler := tabs.NewTabProxySettingsHandler(tabsDeps)
 	usageHandler := billing.NewUsageHandler(appState)
 	billingHandler := billing.NewBillingHandler(appState)
 	entitlementHandler := billing.NewEntitlementHandler(appState)

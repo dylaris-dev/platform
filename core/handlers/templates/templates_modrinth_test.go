@@ -120,7 +120,7 @@ func extractZip(t *testing.T, h *TemplatesHandler, tpl *models.Template, entries
 	if err := os.WriteFile(p, makeZip(t, entries), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	skipped, err := extractTemplateZip(context.Background(), h.state, tpl, p, services.TemplateSettings{ContentPolicy: policy})
+	skipped, err := extractTemplateZip(context.Background(), h.d, tpl, p, services.TemplateSettings{ContentPolicy: policy})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestJarHashingIsBounded(t *testing.T) {
 	if err := os.WriteFile(p, makeZip(t, entries), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	skipped, err := extractTemplateZip(context.Background(), h.state, tpl, p,
+	skipped, err := extractTemplateZip(context.Background(), h.d, tpl, p,
 		services.TemplateSettings{ContentPolicy: services.TemplatePolicyNoJars, MaxSizeBytes: &limit})
 	if err != nil {
 		t.Fatal(err)
@@ -371,7 +371,7 @@ func TestLastWriteAtAPathWins(t *testing.T) {
 		h, st := newTestHandler(t, nil)
 		stubModrinth(t, map[string]string{"sodium": "v-so"}, nil)
 		tpl := seedTemplate(t, st, ownerID, "personal")
-		if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, "mods/sodium.jar", strings.NewReader("old copy"), 8); err != nil {
+		if err := h.d.CoreStorage.TemplateWrite(context.Background(), tpl, "mods/sodium.jar", strings.NewReader("old copy"), 8); err != nil {
 			t.Fatal(err)
 		}
 		rec := httptest.NewRecorder()
@@ -420,7 +420,7 @@ func TestRefusedArchiveStagingIsBounded(t *testing.T) {
 	if err := os.WriteFile(p, makeZip(t, entries), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	skipped, err := extractTemplateZip(context.Background(), h.state, tpl, p,
+	skipped, err := extractTemplateZip(context.Background(), h.d, tpl, p,
 		services.TemplateSettings{ContentPolicy: services.TemplatePolicyNoJars, MaxSizeBytes: &limit})
 	if err != nil {
 		t.Fatal(err)

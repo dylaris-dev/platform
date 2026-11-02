@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -131,14 +129,14 @@ func hostVisibility(tab *proxyTab) string {
 // never accepts a session JWT by header or query. The ticket is minted by
 // HostMint, which does run behind AuthMiddleware.
 func (h *ProxyHandler) HostContent(w http.ResponseWriter, r *http.Request) {
-	label := TabProxyHostLabel(r.Host, h.state.TabProxyHostSuffix)
+	label := TabProxyHostLabel(r.Host, h.d.TabProxyHostSuffix)
 	if label == "" {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
 	}
 	// Master gate first, before the database and before the cookie: a disabled
 	// feature rejects every request here regardless of ticket validity.
-	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
+	if !h.d.FeatureFlags.IsTabProxyEnabled(r.Context()) {
 		http.Error(w, "Not found", http.StatusNotFound)
 		return
 	}
@@ -187,7 +185,7 @@ func (h *ProxyHandler) allowHostRequest(w http.ResponseWriter, r *http.Request, 
 	authed, hasAccess, readOnly := h.resolvePublicTicket(r, tab)
 	allow, status := decideProxyAccess(
 		hostVisibility(tab),
-		h.state.FeatureFlags.TabProxyAllowPublicLinks(r.Context()),
+		h.d.FeatureFlags.TabProxyAllowPublicLinks(r.Context()),
 		authed, hasAccess,
 	)
 	if !allow {
@@ -199,7 +197,7 @@ func (h *ProxyHandler) allowHostRequest(w http.ResponseWriter, r *http.Request, 
 			// does not guess: it sends the visitor to the panel, which knows
 			// both.
 			h.writeHostGatePage(w, status, "This page is private",
-				"Open it from the panel to view it.", h.state.FrontendURL)
+				"Open it from the panel to view it.", h.d.FrontendURL)
 		case http.StatusForbidden:
 			h.writeHostGatePage(w, status, "No permission",
 				"Your account cannot view this tab.", "")
@@ -242,12 +240,12 @@ func (h *ProxyHandler) allowHostRequest(w http.ResponseWriter, r *http.Request, 
 // host, leaving only the claim check between them. Host-only makes cross-tab
 // reuse impossible by scope, and the claim check in allowMint stays anyway.
 func (h *ProxyHandler) HostMint(w http.ResponseWriter, r *http.Request) {
-	label := TabProxyHostLabel(r.Host, h.state.TabProxyHostSuffix)
+	label := TabProxyHostLabel(r.Host, h.d.TabProxyHostSuffix)
 	if label == "" {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
-	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
+	if !h.d.FeatureFlags.IsTabProxyEnabled(r.Context()) {
 		httpx.SendJSONError(w, "Tab proxy disabled", http.StatusForbidden)
 		return
 	}
@@ -299,7 +297,7 @@ func (h *ProxyHandler) allowMint(w http.ResponseWriter, r *http.Request, tab *pr
 		return "", false
 	}
 	ticket := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-	claims, err := h.auth.ParseTabProxyTicket(ticket)
+	claims, err := h.tickets.ParseTabProxyTicket(ticket)
 	if err != nil {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return "", false
@@ -326,7 +324,7 @@ func (h *ProxyHandler) allowMint(w http.ResponseWriter, r *http.Request, tab *pr
 // holds an authenticated session by ambient cookie - anything that could steal
 // this could simply ask for another. It never touches a URL or storage.
 func (h *ProxyHandler) MintTicket(w http.ResponseWriter, r *http.Request) {
-	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
+	if !h.d.FeatureFlags.IsTabProxyEnabled(r.Context()) {
 		httpx.SendJSONError(w, "Tab proxy disabled", http.StatusForbidden)
 		return
 	}
@@ -360,18 +358,15 @@ func (h *ProxyHandler) MintTicket(w http.ResponseWriter, r *http.Request) {
 	// is not belt-and-braces: the capability is what a ticket GRANTS on the
 	// content host, so it is read here to fill the ticket's own claims, and a
 	// caller who lost it between routing and now must not receive one.
-	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	res, rerr := h.d.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
 	if rerr != nil || !res.HasCap(tabsReadCap) {
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
-	readOnly := !isAdmin && demo.IsAccount(h.state.Store, h.state.StoreEnabled, userID)
-	sid := ""
-	if c, _ := reqctx.SessionClaims(r).(*handlers.Claims); c != nil {
-		sid = c.ID
-	}
-	ticket, terr := h.auth.IssueTabProxyTicket(sid, username, isAdmin, tab.ServerID, tab.ID, readOnly)
+	readOnly := !isAdmin && demo.IsAccount(h.d.Store, h.d.StoreEnabled, userID)
+	sid := h.tickets.SessionID(r)
+	ticket, terr := h.tickets.IssueTabProxyTicket(sid, username, isAdmin, tab.ServerID, tab.ID, readOnly)
 	if terr != nil {
 		httpx.SendJSONError(w, "Failed to mint proxy ticket", http.StatusInternalServerError)
 		return
@@ -451,15 +446,15 @@ func (h *ProxyHandler) writeHostGatePage(w http.ResponseWriter, status int, titl
 //
 // Returns next unchanged when no suffix is configured, so a deployment without
 // one carries no extra layer at all.
-func TabProxyHostMux(state *handlers.AppState, ph *ProxyHandler, next http.Handler) http.Handler {
-	suffix := state.TabProxyHostSuffix
-	if suffix == "" || ph == nil {
+func TabProxyHostMux(ph *ProxyHandler, next http.Handler) http.Handler {
+	if ph == nil || ph.d.TabProxyHostSuffix == "" {
 		return next
 	}
+	suffix := ph.d.TabProxyHostSuffix
 	// The mint is deliberately NOT behind AuthMiddleware. What arrives is a
 	// tab-proxy ticket, and AuthMiddleware refuses that purpose by design - it is
 	// not a session and must never be usable as one. HostMint validates it itself.
-	allowed := tabProxyMintOrigins(state.FrontendURL, suffix)
+	allowed := tabProxyMintOrigins(ph.d.FrontendURL, suffix)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if TabProxyHostLabel(r.Host, suffix) == "" {
@@ -570,7 +565,7 @@ type shareResolveResponse struct {
 // limiter costs nothing and the endpoint is anonymous.
 func (h *ProxyHandler) ResolveShare(w http.ResponseWriter, r *http.Request) {
 	token := mux.Vars(r)["token"]
-	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) || h.state.TabProxyHostSuffix == "" {
+	if !h.d.FeatureFlags.IsTabProxyEnabled(r.Context()) || h.d.TabProxyHostSuffix == "" {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
@@ -593,11 +588,11 @@ func (h *ProxyHandler) ResolveShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	origin := TabProxyContentOrigin(h.state.FrontendURL, h.state.TabProxyHostSuffix, tab.ProxyHostLabel.String)
+	origin := TabProxyContentOrigin(h.d.FrontendURL, h.d.TabProxyHostSuffix, tab.ProxyHostLabel.String)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(shareResolveResponse{
 		ContentOrigin: origin,
-		RequiresAuth:  hostVisibility(tab) != "public" || !h.state.FeatureFlags.TabProxyAllowPublicLinks(r.Context()),
+		RequiresAuth:  hostVisibility(tab) != "public" || !h.d.FeatureFlags.TabProxyAllowPublicLinks(r.Context()),
 	})
 }

@@ -15,7 +15,6 @@ import (
 
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -76,12 +75,12 @@ func writeNodeStream(ctx context.Context, ch <-chan *pb.NodeMessage, dst io.Writ
 
 // fetchSelection has the node zip the selected paths under basePath and
 // stages the stream in a temp file; the caller removes it.
-func fetchSelection(ctx context.Context, state *handlers.AppState, nodeID int, serverUUID, basePath string, selected []string, max *int64) (string, error) {
-	if state.GRPCRegistry == nil {
+func fetchSelection(ctx context.Context, d Deps, nodeID int, serverUUID, basePath string, selected []string, max *int64) (string, error) {
+	if d.GRPCRegistry == nil {
 		return "", errors.New("template: gRPC registry not initialized")
 	}
 	reqID := uuid.NewString()
-	ch, err := state.GRPCRegistry.SendRequestStreaming(nodeID, &pb.NodeMessage{
+	ch, err := d.GRPCRegistry.SendRequestStreaming(nodeID, &pb.NodeMessage{
 		RequestId:  reqID,
 		ServerUuid: serverUUID,
 		Payload: &pb.NodeMessage_SelectiveReadReq{
@@ -91,7 +90,7 @@ func fetchSelection(ctx context.Context, state *handlers.AppState, nodeID int, s
 	if err != nil {
 		return "", fmt.Errorf("template: ask node %d: %w", nodeID, err)
 	}
-	defer state.GRPCRegistry.CleanupRequest(nodeID, reqID)
+	defer d.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
 	tmp, err := os.CreateTemp("", "template-capture-*.zip")
 	if err != nil {
@@ -142,7 +141,7 @@ func (h *TemplatesHandler) Capture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A missing server and one the caller may not read look the same.
-	res, err := h.state.Authz.Resolve(authz.IdentityFromContext(r.Context()), req.ServerID)
+	res, err := h.d.Authz.Resolve(authz.IdentityFromContext(r.Context()), req.ServerID)
 	if req.ServerID <= 0 || err != nil || !res.HasCap("files.read") {
 		httpx.SendJSONError(w, "You may not read files on that server", http.StatusForbidden)
 		return
@@ -157,7 +156,7 @@ func (h *TemplatesHandler) Capture(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	srv, err := h.state.Store.GetServerByID(req.ServerID)
+	srv, err := h.d.Store.GetServerByID(req.ServerID)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -168,7 +167,7 @@ func (h *TemplatesHandler) Capture(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	zipPath, err := fetchSelection(r.Context(), h.state, srv.NodeID, srv.UUID, req.SubServer, req.Selected, requestBound(s, t.BackupStorageID != nil))
+	zipPath, err := fetchSelection(r.Context(), h.d, srv.NodeID, srv.UUID, req.SubServer, req.Selected, requestBound(s, t.BackupStorageID != nil))
 	if err != nil {
 		note := h.discard(t)
 		switch {
@@ -184,7 +183,7 @@ func (h *TemplatesHandler) Capture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer os.Remove(zipPath)
-	skipped, err := extractTemplateZip(r.Context(), h.state, t, zipPath, s)
+	skipped, err := extractTemplateZip(r.Context(), h.d, t, zipPath, s)
 	if err != nil {
 		h.extractFailed(w, t, err, h.discard(t))
 		return
@@ -205,7 +204,7 @@ func (h *TemplatesHandler) fillFromInstall(req *captureRequest, srv *models.Serv
 	if req.Software != "" && req.McVersion != "" && req.SoftwareVersion != "" {
 		return
 	}
-	rec, err := h.state.Store.GetSubServerInstall(req.ServerID, req.SubServer)
+	rec, err := h.d.Store.GetSubServerInstall(req.ServerID, req.SubServer)
 	if err != nil || rec == nil {
 		return
 	}
@@ -240,7 +239,7 @@ func (h *TemplatesHandler) installedLoader(req *captureRequest, rec *models.SubS
 	if rec.Loader != "" {
 		return rec.Loader
 	}
-	entries, err := listServerDir(h.state.GRPCRegistry, srv.NodeID, srv.UUID, path.Join(req.SubServer, dir))
+	entries, err := listServerDir(h.d.GRPCRegistry, srv.NodeID, srv.UUID, path.Join(req.SubServer, dir))
 	if err != nil {
 		log.Printf("templates: loader of server %d/%s: %v", srv.ID, req.SubServer, err)
 		return rec.BuildVersion

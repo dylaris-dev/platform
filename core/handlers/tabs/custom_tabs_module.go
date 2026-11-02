@@ -1,8 +1,8 @@
 package tabs
 
 import (
-	"dylaris-core/handlers"
 	"dylaris-core/models"
+	"dylaris-core/store"
 )
 
 // customTabsModuleName is the modules-table row that puts Custom Tabs in the
@@ -25,15 +25,15 @@ const customTabsModulePosition = 7
 // Same shape as syncModpackModule, deliberately - these are the only two rows
 // that are answers to a feature question rather than settings of their own, and
 // they should not drift into two different mechanisms.
-func syncCustomTabsModule(state *handlers.AppState, enabled bool, audience string) error {
-	if state == nil || state.Store == nil {
+func syncCustomTabsModule(st store.Store, enabled bool, audience string) error {
+	if st == nil {
 		return nil
 	}
 	if audience != "admin" && audience != "all" {
 		audience = "all"
 	}
 
-	modules, err := state.Store.ListModules()
+	modules, err := st.ListModules()
 	if err != nil {
 		return err
 	}
@@ -43,19 +43,19 @@ func syncCustomTabsModule(state *handlers.AppState, enabled bool, audience strin
 		}
 		m := modules[i]
 		if m.IsEnabled != enabled {
-			if err := state.Store.UpdateModuleStatus(m.ID, enabled); err != nil {
+			if err := st.UpdateModuleStatus(m.ID, enabled); err != nil {
 				return err
 			}
 		}
 		if m.AccessRole != audience {
-			if err := state.Store.SetModuleAccessRole(m.ID, audience); err != nil {
+			if err := st.SetModuleAccessRole(m.ID, audience); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
-	_, err = state.Store.CreateModule(&models.Module{
+	_, err = st.CreateModule(&models.Module{
 		Name:       customTabsModuleName,
 		Type:       "internal",
 		Icon:       "layout-dashboard",

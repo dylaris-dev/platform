@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/reqctx"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -178,7 +179,34 @@ func newHostGateHandler(t *testing.T, enabled, allowPublic bool) (*ProxyHandler,
 		TabProxyHostSuffix: "share.example.com",
 	}
 	ah := handlers.NewAuthHandler(state, "test-tab-proxy-secret")
-	return NewProxyHandler(state, ah), ah
+	d := Deps{
+		Store:              state.Store,
+		FeatureFlags:       state.FeatureFlags,
+		FrontendURL:        state.FrontendURL,
+		TabProxyHostSuffix: state.TabProxyHostSuffix,
+	}
+	return NewProxyHandler(d, testTickets(ah)), ah
+}
+
+// testTickets is routes.go's tabTickets for this package's tests (package main
+// is not importable): the same three AuthHandler calls.
+func testTickets(ah *handlers.AuthHandler) Tickets {
+	return Tickets{
+		IssueTabProxyTicket: ah.IssueTabProxyTicket,
+		ParseTabProxyTicket: func(token string) (TabTicket, error) {
+			c, err := ah.ParseTabProxyTicket(token)
+			if err != nil {
+				return TabTicket{}, err
+			}
+			return TabTicket{ServerID: c.ServerID, TabID: c.TabID, ReadOnly: c.ReadOnly}, nil
+		},
+		SessionID: func(r *http.Request) string {
+			if c, _ := reqctx.SessionClaims(r).(*handlers.Claims); c != nil {
+				return c.ID
+			}
+			return ""
+		},
+	}
 }
 
 func proxiedTab(visibility, token string) *proxyTab {
@@ -372,7 +400,7 @@ func TestTabProxyHostMux_ContentHostNeverReachesTheRouter(t *testing.T) {
 		reachedNext = true
 		w.WriteHeader(http.StatusTeapot)
 	})
-	mux := TabProxyHostMux(h.state, h, next)
+	mux := TabProxyHostMux(h, next)
 
 	for _, path := range []string{"/", "/api/servers", "/api/system/core-info", "/login", "/__dyl/", "/__dyl/other"} {
 		reachedNext = false
@@ -388,7 +416,7 @@ func TestTabProxyHostMux_OtherHostsPassThrough(t *testing.T) {
 	h, _ := newHostGateHandler(t, true, true)
 	reachedNext := false
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reachedNext = true })
-	mux := TabProxyHostMux(h.state, h, next)
+	mux := TabProxyHostMux(h, next)
 
 	for _, host := range []string{"panel.example.com", "api.example.com", "share.example.com", "localhost:25500"} {
 		reachedNext = false
@@ -403,9 +431,9 @@ func TestTabProxyHostMux_OtherHostsPassThrough(t *testing.T) {
 // deployment without the feature carries no extra layer on every request.
 func TestTabProxyHostMux_UnconfiguredReturnsTheHandlerUntouched(t *testing.T) {
 	h, _ := newHostGateHandler(t, true, true)
-	h.state.TabProxyHostSuffix = ""
+	h.d.TabProxyHostSuffix = ""
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
-	if got := TabProxyHostMux(h.state, h, next); got == nil {
+	if got := TabProxyHostMux(h, next); got == nil {
 		t.Fatal("returned nil")
 	}
 }

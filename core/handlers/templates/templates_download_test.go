@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -41,7 +40,7 @@ func TestDownloadName(t *testing.T) {
 func TestDownloadStreamsAZip(t *testing.T) {
 	h, st := newTestHandler(t, nil)
 	tpl := seedTemplate(t, st, ownerID, "personal")
-	if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, "a/b.txt", strings.NewReader("hello"), 5); err != nil {
+	if err := h.d.CoreStorage.TemplateWrite(context.Background(), tpl, "a/b.txt", strings.NewReader("hello"), 5); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
@@ -82,7 +81,7 @@ func TestSuspendedOwnerKeepsReadDownloadDeleteButCannotWrite(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			h, st := newTestHandler(t, nil)
 			tpl := seedTemplate(t, st, ownerID, "personal")
-			if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, "keep.txt", strings.NewReader("x"), 1); err != nil {
+			if err := h.d.CoreStorage.TemplateWrite(context.Background(), tpl, "keep.txt", strings.NewReader("x"), 1); err != nil {
 				t.Fatal(err)
 			}
 			b := c.b
@@ -129,7 +128,7 @@ func TestDownloadAbortsWhenTheZipFailsMidStream(t *testing.T) {
 	tpl := seedTemplate(t, st, ownerID, "personal")
 	old := templateZipTo
 	defer func() { templateZipTo = old }()
-	templateZipTo = func(_ context.Context, _ *handlers.AppState, _ *models.Template, w io.Writer) error {
+	templateZipTo = func(_ context.Context, _ Deps, _ *models.Template, w io.Writer) error {
 		_, _ = w.Write([]byte("PK"))
 		return errors.New("storage went away")
 	}
@@ -210,11 +209,11 @@ func TestTemplateItemsCarryTheWriteRefusal(t *testing.T) {
 func TestDownloadCarriesTheModrinthManifest(t *testing.T) {
 	h, st := newTestHandler(t, nil)
 	tpl := seedTemplate(t, st, ownerID, "personal")
-	if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, "config/a.yml", strings.NewReader("x: 1"), 4); err != nil {
+	if err := h.d.CoreStorage.TemplateWrite(context.Background(), tpl, "config/a.yml", strings.NewReader("x: 1"), 4); err != nil {
 		t.Fatal(err)
 	}
 	// A stored file of the same name is replaced by the generated one.
-	if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, modrinthManifestName, strings.NewReader("stale"), 5); err != nil {
+	if err := h.d.CoreStorage.TemplateWrite(context.Background(), tpl, modrinthManifestName, strings.NewReader("stale"), 5); err != nil {
 		t.Fatal(err)
 	}
 	ref := &models.TemplateModrinthRef{TemplateID: tpl.ID, Path: "plugins/LuckPerms.jar", ProjectID: "lp", VersionID: "v1",

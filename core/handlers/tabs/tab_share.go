@@ -214,11 +214,11 @@ func (h *ServerTabsHandler) tabCapExceeded(db *sql.DB, ctx context.Context, serv
 		return ""
 	}
 	if n, err := h.countUserProxiedTabsTotal(db, userID); err == nil &&
-		capReached(n, h.state.FeatureFlags.TabProxyMaxPerUserTotal(ctx)) {
+		capReached(n, h.d.FeatureFlags.TabProxyMaxPerUserTotal(ctx)) {
 		return "You have reached your total limit of proxied tabs across all servers."
 	}
 	if n, err := h.countUserProxiedTabsOnServer(db, serverID, userID); err == nil &&
-		capReached(n, h.state.FeatureFlags.TabProxyMaxPerUserPerServer(ctx)) {
+		capReached(n, h.d.FeatureFlags.TabProxyMaxPerUserPerServer(ctx)) {
 		return "You have reached your limit of proxied tabs on this server."
 	}
 	return ""
@@ -281,7 +281,7 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 	if !existing.Valid || existing.String == "" {
 		if owner != "" {
 			if used, uerr := h.countUserShareLinks(db, owner); uerr == nil &&
-				capReached(used, h.state.FeatureFlags.TabProxyMaxShareLinksPerUser(r.Context())) {
+				capReached(used, h.d.FeatureFlags.TabProxyMaxShareLinksPerUser(r.Context())) {
 				httpx.SendJSONError(w, "This tab's owner has reached their share-link limit.", http.StatusConflict)
 				return
 			}
@@ -324,7 +324,7 @@ func (h *ServerTabsHandler) RotateShareLink(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{"serverId": serverID})
+	h.d.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{"serverId": serverID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "shareToken": tok})
 }
 
@@ -351,6 +351,6 @@ func (h *ServerTabsHandler) RevokeShareLink(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{"serverId": serverID})
+	h.d.Events.Publish(r.Context(), "server_tabs.changed", map[string]interface{}{"serverId": serverID})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

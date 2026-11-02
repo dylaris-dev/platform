@@ -125,7 +125,7 @@ func (h *TemplatesHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 		log.Printf("templates: modrinth %s %d/%s: %v", what, t.ID, rel, err)
 		httpx.SendJSONError(w, "Could not store the Modrinth reference", http.StatusInternalServerError)
 	}
-	refs, err := h.state.Store.ListTemplateModrinth(t.ID)
+	refs, err := h.d.Store.ListTemplateModrinth(t.ID)
 	if err != nil {
 		fail("list", err)
 		return
@@ -153,31 +153,31 @@ func (h *TemplatesHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 	}
 	// The reference first: if a later step fails, the template still has the
 	// jar at that path, once as a reference and maybe once stored.
-	if err := h.state.Store.UpsertTemplateModrinth(&ref); err != nil {
+	if err := h.d.Store.UpsertTemplateModrinth(&ref); err != nil {
 		fail("upsert", err)
 		return
 	}
 	for _, id := range older {
-		if _, err := h.state.Store.DeleteTemplateModrinth(t.ID, id); err != nil {
+		if _, err := h.d.Store.DeleteTemplateModrinth(t.ID, id); err != nil {
 			fail("replace", err)
 			return
 		}
 	}
-	files, err := h.state.CoreStorage.TemplateList(r.Context(), t)
+	files, err := h.d.CoreStorage.TemplateList(r.Context(), t)
 	if err != nil {
 		fail("list files", err)
 		return
 	}
 	for _, sf := range files {
 		if sf.Name == rel {
-			if err := h.state.CoreStorage.TemplateDelete(r.Context(), t, rel); err != nil {
+			if err := h.d.CoreStorage.TemplateDelete(r.Context(), t, rel); err != nil {
 				fail("delete stored", err)
 				return
 			}
 			break
 		}
 	}
-	if err := refreshSize(r.Context(), h.state, t); err != nil {
+	if err := refreshSize(r.Context(), h.d, t); err != nil {
 		log.Printf("templates: size of %d: %v", t.ID, err)
 	}
 	body := map[string]interface{}{"success": true, "reference": ref, "sizeBytes": t.SizeBytes}
@@ -198,7 +198,7 @@ func (h *TemplatesHandler) DeleteModrinth(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Reference not found", http.StatusNotFound)
 		return
 	}
-	found, err := h.state.Store.DeleteTemplateModrinth(t.ID, refID)
+	found, err := h.d.Store.DeleteTemplateModrinth(t.ID, refID)
 	if err != nil {
 		log.Printf("templates: delete modrinth %d/%d: %v", t.ID, refID, err)
 		httpx.SendJSONError(w, "Could not remove the reference", http.StatusInternalServerError)

@@ -32,7 +32,6 @@ import (
 	"sync"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/reqctx"
 
 	pb "dylaris-proto/node"
@@ -99,12 +98,12 @@ var coreResponseStrip = map[string]bool{
 }
 
 type ProxyHandler struct {
-	state *handlers.AppState
-	auth  *handlers.AuthHandler
+	d       Deps
+	tickets Tickets
 }
 
-func NewProxyHandler(state *handlers.AppState, auth *handlers.AuthHandler) *ProxyHandler {
-	return &ProxyHandler{state: state, auth: auth}
+func NewProxyHandler(d Deps, tickets Tickets) *ProxyHandler {
+	return &ProxyHandler{d: d, tickets: tickets}
 }
 
 type proxyTab struct {
@@ -136,10 +135,10 @@ type proxyTab struct {
 }
 
 func (h *ProxyHandler) rawDB() *sql.DB {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		return nil
 	}
-	provider, ok := h.state.Store.(sparkDBProvider)
+	provider, ok := h.d.Store.(sparkDBProvider)
 	if !ok {
 		return nil
 	}
@@ -214,9 +213,9 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 	}
 	// Custom tab traffic is data traffic: counted, and paced while the tenant
 	// is throttled (owner decision 2026-10-24).
-	h.state.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(body))
+	h.d.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(body))
 	var down int64
-	defer func() { h.state.TabMeter.Add(tab.ServerUUID, tab.NodeID, int64(len(body)), down) }()
+	defer func() { h.d.TabMeter.Add(tab.ServerUUID, tab.NodeID, int64(len(body)), down) }()
 	headers := h.forwardRequestHeaders(r)
 	// An explicit Accept-Encoding stops the node's Go transport from asking
 	// for gzip itself and transparently decompressing, so the compressed body
@@ -244,12 +243,12 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 			Body:       body,
 		}},
 	}
-	ch, err := h.state.GRPCRegistry.SendRequestStreaming(tab.NodeID, msg)
+	ch, err := h.d.GRPCRegistry.SendRequestStreaming(tab.NodeID, msg)
 	if err != nil {
 		proxyUpstreamError(w, tab, http.StatusBadGateway, "dispatch: "+err.Error())
 		return
 	}
-	defer h.state.GRPCRegistry.CleanupRequest(tab.NodeID, reqID)
+	defer h.d.GRPCRegistry.CleanupRequest(tab.NodeID, reqID)
 
 	headerWritten := false
 	flusher, canFlush := w.(http.Flusher)
@@ -308,7 +307,7 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 			w.WriteHeader(http.StatusOK)
 			headerWritten = true
 		}
-		h.state.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(chunk.Data))
+		h.d.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(chunk.Data))
 		down += int64(len(chunk.Data))
 		w.Write(chunk.Data)
 		if canFlush {
@@ -586,7 +585,7 @@ func (h *ProxyHandler) resolvePublicTicket(r *http.Request, tab *proxyTab) (auth
 		if c.Name != proxyCookieName || c.Value == "" {
 			continue
 		}
-		claims, err := h.auth.ParseTabProxyTicket(c.Value)
+		claims, err := h.tickets.ParseTabProxyTicket(c.Value)
 		if err != nil {
 			continue
 		}
@@ -714,11 +713,11 @@ func (h *ProxyHandler) serveWS(w http.ResponseWriter, r *http.Request, tab *prox
 			Headers:    h.forwardRequestHeaders(r),
 		}},
 	}
-	ch, err := h.state.GRPCRegistry.SendRequestStreaming(tab.NodeID, openMsg)
+	ch, err := h.d.GRPCRegistry.SendRequestStreaming(tab.NodeID, openMsg)
 	if err != nil {
 		return
 	}
-	defer h.state.GRPCRegistry.CleanupRequest(tab.NodeID, reqID)
+	defer h.d.GRPCRegistry.CleanupRequest(tab.NodeID, reqID)
 
 	done := make(chan struct{})
 	var closeOnce sync.Once
@@ -726,7 +725,7 @@ func (h *ProxyHandler) serveWS(w http.ResponseWriter, r *http.Request, tab *prox
 		closeOnce.Do(func() {
 			// Best-effort: if the node/connection is already gone this send
 			// simply fails and is ignored - there is nothing left to notify.
-			h.state.GRPCRegistry.SendOnStream(tab.NodeID, &pb.NodeMessage{
+			h.d.GRPCRegistry.SendOnStream(tab.NodeID, &pb.NodeMessage{
 				RequestId:  reqID,
 				ServerUuid: tab.ServerUUID,
 				Payload:    &pb.NodeMessage_WsClose{WsClose: &pb.WsClose{Code: 1000}},
@@ -747,11 +746,11 @@ func (h *ProxyHandler) serveWS(w http.ResponseWriter, r *http.Request, tab *prox
 			if rerr != nil {
 				return
 			}
-			h.state.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(data))
-			h.state.TabMeter.Add(tab.ServerUUID, tab.NodeID, int64(len(data)), 0)
+			h.d.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(data))
+			h.d.TabMeter.Add(tab.ServerUUID, tab.NodeID, int64(len(data)), 0)
 			frags := splitProxyBytes(data, coreWSFragmentSize)
 			for i, f := range frags {
-				if serr := h.state.GRPCRegistry.SendOnStream(tab.NodeID, &pb.NodeMessage{
+				if serr := h.d.GRPCRegistry.SendOnStream(tab.NodeID, &pb.NodeMessage{
 					RequestId:  reqID,
 					ServerUuid: tab.ServerUUID,
 					Payload: &pb.NodeMessage_WsFrame{WsFrame: &pb.WsFrame{
@@ -800,8 +799,8 @@ func (h *ProxyHandler) serveWS(w http.ResponseWriter, r *http.Request, tab *prox
 			if !fr.Fin {
 				continue
 			}
-			h.state.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(rxBuf))
-			h.state.TabMeter.Add(tab.ServerUUID, tab.NodeID, 0, int64(len(rxBuf)))
+			h.d.DataLimiter.Wait(r.Context(), tab.ServerUUID, len(rxBuf))
+			h.d.TabMeter.Add(tab.ServerUUID, tab.NodeID, 0, int64(len(rxBuf)))
 			if werr := bconn.WriteMessage(rxOpcode, rxBuf); werr != nil {
 				closeAll()
 				return

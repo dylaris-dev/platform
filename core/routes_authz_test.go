@@ -432,7 +432,7 @@ func TestTabTicketStillRequiresTabsRead(t *testing.T) {
 	if !ok {
 		t.Fatal("MintTicket is gone; if the mint moved again, move this assertion with it")
 	}
-	resolve := strings.Index(body, "h.state.Authz.Resolve(")
+	resolve := strings.Index(body, "h.d.Authz.Resolve(")
 	hasCap := strings.Index(body, "HasCap(tabsReadCap)")
 	issue := strings.Index(body, "IssueTabProxyTicket(")
 	switch {

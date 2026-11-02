@@ -42,7 +42,7 @@ func TestExtractCaptureZip(t *testing.T) {
 	if err := os.WriteFile(p, z, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	skipped, err := extractTemplateZip(context.Background(), h.state, tpl, p, services.TemplateSettings{ContentPolicy: services.TemplatePolicyNoJars})
+	skipped, err := extractTemplateZip(context.Background(), h.d, tpl, p, services.TemplateSettings{ContentPolicy: services.TemplatePolicyNoJars})
 	if err != nil {
 		t.Fatal(err)
 	}

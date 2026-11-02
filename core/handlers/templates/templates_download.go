@@ -10,13 +10,12 @@ import (
 	"regexp"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 )
 
 // templateZipTo is replaceable in tests (a storage that fails mid-stream).
-var templateZipTo = func(ctx context.Context, s *handlers.AppState, t *models.Template, w io.Writer) error {
+var templateZipTo = func(ctx context.Context, s Deps, t *models.Template, w io.Writer) error {
 	extra, err := modrinthManifest(s, t.ID)
 	if err != nil {
 		return err
@@ -40,7 +39,7 @@ type modrinthManifestFile struct {
 
 // modrinthManifest is nil for a template without references, so its download
 // is exactly its stored files.
-func modrinthManifest(s *handlers.AppState, templateID int) (map[string][]byte, error) {
+func modrinthManifest(s Deps, templateID int) (map[string][]byte, error) {
 	refs, err := s.Store.ListTemplateModrinth(templateID)
 	if err != nil {
 		return nil, fmt.Errorf("modrinth references: %w", err)
@@ -84,7 +83,7 @@ func (h *TemplatesHandler) Download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+downloadName(t.ID, t.Name)+`"`)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if err := templateZipTo(r.Context(), h.state, t, cw); err != nil {
+	if err := templateZipTo(r.Context(), h.d, t, cw); err != nil {
 		log.Printf("templates: download %d: %v", t.ID, err)
 		if cw.n == 0 {
 			w.Header().Del("Content-Disposition")

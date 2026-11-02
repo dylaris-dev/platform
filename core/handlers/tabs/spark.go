@@ -11,7 +11,6 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 )
 
@@ -25,11 +24,11 @@ import (
 // gate is gone.
 
 type SparkHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewSparkHandler(state *handlers.AppState) *SparkHandler {
-	return &SparkHandler{state: state}
+func NewSparkHandler(d Deps) *SparkHandler {
+	return &SparkHandler{d: d}
 }
 
 // sparkURLPattern matches spark.lucko.me share URLs printed by the spark
@@ -57,7 +56,7 @@ func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "URL must be a spark.lucko.me share link", http.StatusBadRequest)
 		return
 	}
-	srv, _ := h.state.Store.GetServerByID(serverID)
+	srv, _ := h.d.Store.GetServerByID(serverID)
 	userID, _ := r.Context().Value("userID").(string)
 	var startedAt sql.NullTime
 	if req.StartedAt != "" {
@@ -69,7 +68,7 @@ func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 	if userID != "" {
 		requestedBy = userID
 	}
-	_, err := h.state.Redis.Pipeline().Exec(r.Context())
+	_, err := h.d.Redis.Pipeline().Exec(r.Context())
 	_ = err // unrelated; quiet linter
 
 	// Direct DB write — postgres store doesn't have a typed helper for
@@ -91,7 +90,7 @@ func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.state.Events.Publish(r.Context(), "spark_profiles.changed", map[string]interface{}{
+	h.d.Events.Publish(r.Context(), "spark_profiles.changed", map[string]interface{}{
 		"serverId": serverID,
 	})
 
@@ -172,7 +171,7 @@ func (h *SparkHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "spark_profiles.changed", map[string]interface{}{
+	h.d.Events.Publish(r.Context(), "spark_profiles.changed", map[string]interface{}{
 		"serverId": serverID,
 	})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -186,10 +185,10 @@ type sparkDBProvider interface {
 }
 
 func (h *SparkHandler) dbFromState() *sql.DB {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		return nil
 	}
-	provider, ok := h.state.Store.(sparkDBProvider)
+	provider, ok := h.d.Store.(sparkDBProvider)
 	if !ok {
 		return nil
 	}

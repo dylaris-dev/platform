@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -68,8 +66,7 @@ func newTabCapHandler(t *testing.T, maxPerServer, maxTotal, maxShareLinks int) (
 		"tab_proxy_max_per_user_total":       strconv.Itoa(maxTotal),
 		"tab_proxy_max_share_links_per_user": strconv.Itoa(maxShareLinks),
 	}}
-	state := &handlers.AppState{Store: fs, FeatureFlags: services.NewFeatureFlags(fs)}
-	return NewServerTabsHandler(state), mock
+	return NewServerTabsHandler(Deps{Store: fs, FeatureFlags: services.NewFeatureFlags(fs)}), mock
 }
 
 func tabPatchRequest(body string) *http.Request {
