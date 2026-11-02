@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
 
@@ -118,7 +119,7 @@ func TestServerPackIsRenderedOncePerInputAndNeverStored(t *testing.T) {
 		t.Error("a render slot is still held after the file was returned")
 	}
 	for _, fn := range []string{"openServerPack", "renderServerPackFile", "exportServerPack"} {
-		if body := funcBody(t, "packs_server_export.go", fn); strings.Contains(body, ".Put(") || strings.Contains(body, ".PutStream(") {
+		if body := handlertest.FuncBody(t, "packs_server_export.go", fn); strings.Contains(body, ".Put(") || strings.Contains(body, ".PutStream(") {
 			t.Errorf("%s writes to modpack storage", fn)
 		}
 	}

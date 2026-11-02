@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -88,7 +89,7 @@ type voiceSwitchEnv struct {
 	h    *GatewayHandler
 	fs   *voiceSwitchStore
 	mr   *miniredis.Miniredis
-	node *voiceNode
+	node *handlertest.VoiceNode
 }
 
 // newVoiceSwitch is a server that meets every enable precondition: allowed
@@ -137,9 +138,7 @@ func (e *voiceSwitchEnv) voiceKeys() []string {
 }
 
 func (e *voiceSwitchEnv) written() string {
-	e.node.mu.Lock()
-	defer e.node.mu.Unlock()
-	return e.node.written.String()
+	return e.node.WrittenString()
 }
 
 // The enable preconditions, in the order they are checked. Case i breaks
@@ -161,8 +160,8 @@ var voiceRefusals = []struct {
 		e.mr.Set("voice:registry:r1", `{"voice_id":"r1","region":"us","ip":"203.0.113.9"}`)
 	}},
 	{"no_sub_server", func(e *voiceSwitchEnv) { e.fs.server.ActiveSubServer = "" }},
-	{"voice_mod_missing", func(e *voiceSwitchEnv) { e.node.path = "nothing/here" }},
-	{"voice_mod_ambiguous", func(e *voiceSwitchEnv) { e.node.also = "config/plasmovoice/server/config.toml" }},
+	{"voice_mod_missing", func(e *voiceSwitchEnv) { e.node.Path = "nothing/here" }},
+	{"voice_mod_ambiguous", func(e *voiceSwitchEnv) { e.node.Also = "config/plasmovoice/server/config.toml" }},
 	{"voice_pool_full", func(e *voiceSwitchEnv) { e.fs.poolFull = true }},
 }
 
@@ -191,7 +190,7 @@ func TestVoiceEnableRefusals(t *testing.T) {
 
 func TestVoiceModMissingMessage(t *testing.T) {
 	e := newVoiceSwitch(t)
-	e.node.path = "nothing/here"
+	e.node.Path = "nothing/here"
 	_, out := e.put(t, `{"enabled":true}`)
 	if out["message"] != "Install Simple Voice Chat or Plasmo Voice and start the server once." {
 		t.Fatalf("message %q", out["message"])
@@ -216,16 +215,16 @@ func TestVoiceEnableHappyPath(t *testing.T) {
 			t.Fatalf("%s not written; keys %v", k, e.mr.Keys())
 		}
 	}
-	if want := handlers.SvcVoiceEnable(readVoiceFixture(t, "svc_before.properties"), "a.eu.dylaris.com", 26000); e.written() != want {
+	if want := handlers.SvcVoiceEnable(handlertest.VoiceFixture(t, "svc_before.properties"), "a.eu.dylaris.com", 26000); e.written() != want {
 		t.Fatalf("config written:\n%s\nwant:\n%s", e.written(), want)
 	}
 }
 
 func TestVoiceNodeWriteFailureRollsBack(t *testing.T) {
 	e := newVoiceSwitch(t)
-	e.node.failWrite = true
+	e.node.FailWrite = true
 	// A voice_host the owner set by hand, which a write-back would blank.
-	e.node.file = strings.Replace(readVoiceFixture(t, "svc_after.properties"), "voice_host=a.eu.dylaris.com:26000", "voice_host=mine.example.org:4000", 1)
+	e.node.File = strings.Replace(handlertest.VoiceFixture(t, "svc_after.properties"), "voice_host=a.eu.dylaris.com:26000", "voice_host=mine.example.org:4000", 1)
 	rec, _ := e.put(t, `{"enabled":true}`)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status %d body %s, want 502", rec.Code, rec.Body.String())
@@ -235,9 +234,7 @@ func TestVoiceNodeWriteFailureRollsBack(t *testing.T) {
 	}
 	// The failed write changed nothing on the node, so the rollback must not
 	// write the disabled config back: that would strip hand-set settings.
-	e.node.mu.Lock()
-	writes := e.node.writes
-	e.node.mu.Unlock()
+	writes := e.node.WriteCount()
 	if writes != 1 {
 		t.Fatalf("node saw %d write requests, want 1 (the enable's own)", writes)
 	}
@@ -247,7 +244,7 @@ func TestVoiceDisableAllowedWhileFlagOff(t *testing.T) {
 	e := newVoiceSwitch(t)
 	e.fs.global = ""
 	e.fs.perms = map[string]bool{"server:7": false}
-	e.node.file = readVoiceFixture(t, "svc_after.properties")
+	e.node.File = handlertest.VoiceFixture(t, "svc_after.properties")
 	row := store.VoicePort{ServerID: 7, ServerUUID: "srv-7", Region: "eu", Port: 26000, Mod: "svc", Host: "a.eu.dylaris.com", UplinkKey: make([]byte, 32)}
 	e.fs.row = &row
 	if err := services.PublishVoice(context.Background(), e.h.state.Redis, row); err != nil {
@@ -260,7 +257,7 @@ func TestVoiceDisableAllowedWhileFlagOff(t *testing.T) {
 	if e.fs.row != nil || len(e.voiceKeys()) != 0 {
 		t.Fatalf("not disabled: row %+v keys %v", e.fs.row, e.voiceKeys())
 	}
-	if want := handlers.SvcVoiceDisable(e.node.file); e.written() != want {
+	if want := handlers.SvcVoiceDisable(e.node.File); e.written() != want {
 		t.Fatalf("config written back:\n%s\nwant:\n%s", e.written(), want)
 	}
 }

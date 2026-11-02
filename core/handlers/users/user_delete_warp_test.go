@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
 
@@ -29,7 +30,7 @@ type userDeleteWarpStore struct {
 func (f *userDeleteWarpStore) GetSetting(string) (string, error) { return "", nil }
 
 func (f *userDeleteWarpStore) GetUserByID(id string) (*models.User, error) {
-	return &models.User{ID: id, Username: "victim", Password: testReauthHash}, nil
+	return &models.User{ID: id, Username: "victim", Password: handlertest.ReauthHash}, nil
 }
 func (f *userDeleteWarpStore) CountServersByOwner(string) (int, error)      { return 0, nil }
 func (f *userDeleteWarpStore) ListTemplateIDsByOwner(string) ([]int, error) { return nil, nil }
@@ -63,7 +64,7 @@ func TestDeleteUser_HandsTheOverlayTeardownDown(t *testing.T) {
 	peers := &userDeleteWarpPeers{}
 	h := NewUserHandler(&handlers.AppState{Store: fs, WarpPeers: peers})
 
-	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+victimID, strings.NewReader(`{"reauth":{"password":"`+testReauthPassword+`"}}`))
+	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+victimID, strings.NewReader(`{"reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 	ctx := context.WithValue(r.Context(), "userID", "admin-id")
 	ctx = context.WithValue(ctx, "username", "admin")
 	ctx = context.WithValue(ctx, "isAdmin", true)

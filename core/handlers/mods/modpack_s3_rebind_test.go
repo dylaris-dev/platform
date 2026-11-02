@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 )
 
 func TestModpackS3SecretRebound(t *testing.T) {
@@ -70,11 +71,11 @@ func TestModpackS3SecretRebound(t *testing.T) {
 // before the settings writes, or the endpoint is already rebound by the time
 // the caller sees the 400.
 func TestModpackSettingsSet_RefusesARebindOnTheWire(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	fs.kv["modpack_storage_s3_endpoint"] = "https://s3.example"
-	fs.kv["modpack_storage_s3_bucket"] = "packs"
-	fs.kv["modpack_storage_s3_access_key"] = "AKIAREAL"
-	fs.kv["modpack_storage_s3_secret_key"] = "the-real-secret"
+	fs := handlertest.NewSettingsStore()
+	fs.KV["modpack_storage_s3_endpoint"] = "https://s3.example"
+	fs.KV["modpack_storage_s3_bucket"] = "packs"
+	fs.KV["modpack_storage_s3_access_key"] = "AKIAREAL"
+	fs.KV["modpack_storage_s3_secret_key"] = "the-real-secret"
 	h := NewModpackSettingsHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(modpackSettings{
@@ -90,10 +91,10 @@ func TestModpackSettingsSet_RefusesARebindOnTheWire(t *testing.T) {
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (%s)", rw.Code, rw.Body.String())
 	}
-	if got := fs.kv["modpack_storage_s3_endpoint"]; got != "https://s3.example" {
+	if got := fs.KV["modpack_storage_s3_endpoint"]; got != "https://s3.example" {
 		t.Fatalf("endpoint was rebound anyway: %q", got)
 	}
-	if got := fs.kv["modpack_storage_s3_secret_key"]; got != "the-real-secret" {
+	if got := fs.KV["modpack_storage_s3_secret_key"]; got != "the-real-secret" {
 		t.Fatalf("stored secret changed: %q", got)
 	}
 }

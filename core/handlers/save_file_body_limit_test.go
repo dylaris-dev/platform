@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/handlertest"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,8 +15,8 @@ import (
 // have it decoded into RAM. The reject fires at decode, before the handler
 // touches the node, so a nil GRPCRegistry never runs.
 func TestSaveFileHandler_RejectsOversizedBody(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	fs.kv["fm.admin_upload_limit"] = "100" // tiny ceiling so the test body is small
+	fs := handlertest.NewSettingsStore()
+	fs.KV["fm.admin_upload_limit"] = "100" // tiny ceiling so the test body is small
 
 	h := &FileHandler{state: &AppState{Store: fs}}
 
@@ -37,8 +38,8 @@ func TestSaveFileHandler_RejectsOversizedBody(t *testing.T) {
 // memory, and nothing bounded how many ran at once.
 func TestSaveFileHandler_IsCappedBelowTheUploadLimit(t *testing.T) {
 	for _, upload := range []string{"unlimited", "1073741824"} {
-		fs := newCoreStorageHTTPFakeStore()
-		fs.kv["fm.user_upload_limit"] = upload
+		fs := handlertest.NewSettingsStore()
+		fs.KV["fm.user_upload_limit"] = upload
 		h := &FileHandler{state: &AppState{Store: fs}}
 
 		req := httptest.NewRequest(http.MethodPost, "/api/files/save", strings.NewReader("{}"))

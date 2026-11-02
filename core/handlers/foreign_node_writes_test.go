@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -11,11 +10,9 @@ import (
 	"testing"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
-	"dylaris-core/store"
-
-	"github.com/gorilla/mux"
 )
 
 // What staff and admins may still do to a customer's machine, written from the
@@ -23,73 +20,25 @@ import (
 // get PAST the guard. Found by the review of step 1 of
 // roadmap/node-ownership-and-access.md (defects 8 to 11).
 
-// foreignFakeStore answers the node, the server on it and the BYON flag. A
-// settingErr or nodeErr is a database fault, which must count as foreign.
-type foreignFakeStore struct {
-	store.Store
-	node       *models.Node
-	nodeErr    error
-	byon       string
-	settingErr error
-}
-
-func (f *foreignFakeStore) GetNodeByID(id int) (*models.Node, error) {
-	if f.nodeErr != nil {
-		return nil, f.nodeErr
-	}
-	return f.node, nil
-}
-
-func (f *foreignFakeStore) GetSetting(key string) (string, error) {
-	if key == "feature_byon_enabled" {
-		return f.byon, f.settingErr
-	}
-	return "", nil
-}
-
-func (f *foreignFakeStore) GetServerByID(id int) (*models.Server, error) {
-	return &models.Server{ID: id, UUID: "srv-1", OwnerID: visOwner, NodeID: f.node.ID}, nil
-}
-
-func (f *foreignFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {
-	return &models.Server{ID: 3, UUID: uuid, OwnerID: visOwner, NodeID: f.node.ID}, nil
-}
-
-func (f *foreignFakeStore) GetUserByID(id string) (*models.User, error) {
-	return &models.User{ID: id}, nil
-}
-
-func (f *foreignFakeStore) GetPanelRole(int) (*store.PanelRole, error)   { return nil, nil }
-func (f *foreignFakeStore) GetServerRole(int) (*store.ServerRole, error) { return nil, nil }
-func (f *foreignFakeStore) GetUserPanelAuthz(string) (*int, store.CapOverrides, error) {
-	return nil, store.CapOverrides{}, nil
-}
-func (f *foreignFakeStore) GetServerGrant(int, string) (*store.ServerGrant, error) {
-	return nil, errors.New("no grant")
-}
-func (f *foreignFakeStore) GetAccountGrant(string, string) (*store.ServerGrant, error) {
-	return nil, errors.New("no grant")
-}
-
 func TestNodeOwnedByOther(t *testing.T) {
-	owner := visOwner
+	owner := handlertest.VisOwner
 	owned := &models.Node{ID: 7, OwnerID: &owner}
 	platform := &models.Node{ID: 7}
 	cases := []struct {
 		name string
-		st   *foreignFakeStore
+		st   *handlertest.ForeignStore
 		user string
 		want bool
 	}{
-		{"a platform machine", &foreignFakeStore{node: platform, byon: "true"}, visAdmin, false},
-		{"a customer's machine, BYON on", &foreignFakeStore{node: owned, byon: "true"}, visAdmin, true},
-		{"its owner", &foreignFakeStore{node: owned, byon: "true"}, visOwner, false},
-		{"a customer's machine, BYON off", &foreignFakeStore{node: owned, byon: "false"}, visAdmin, false},
+		{"a platform machine", &handlertest.ForeignStore{Node: platform, Byon: "true"}, handlertest.VisAdmin, false},
+		{"a customer's machine, BYON on", &handlertest.ForeignStore{Node: owned, Byon: "true"}, handlertest.VisAdmin, true},
+		{"its owner", &handlertest.ForeignStore{Node: owned, Byon: "true"}, handlertest.VisOwner, false},
+		{"a customer's machine, BYON off", &handlertest.ForeignStore{Node: owned, Byon: "false"}, handlertest.VisAdmin, false},
 		// Fail closed: these decide whether an admin opens a customer's world.
-		{"the node cannot be read", &foreignFakeStore{nodeErr: errors.New("connection refused")}, visAdmin, true},
-		{"the flag cannot be read", &foreignFakeStore{node: owned, settingErr: errors.New("connection refused")}, visAdmin, true},
+		{"the node cannot be read", &handlertest.ForeignStore{NodeErr: errors.New("connection refused")}, handlertest.VisAdmin, true},
+		{"the flag cannot be read", &handlertest.ForeignStore{Node: owned, SettingErr: errors.New("connection refused")}, handlertest.VisAdmin, true},
 		// Never saved is not a fault: it is the default, which is off.
-		{"the flag was never saved", &foreignFakeStore{node: owned, settingErr: sql.ErrNoRows}, visAdmin, false},
+		{"the flag was never saved", &handlertest.ForeignStore{Node: owned, SettingErr: sql.ErrNoRows}, handlertest.VisAdmin, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -103,18 +52,10 @@ func TestNodeOwnedByOther(t *testing.T) {
 // foreignState builds the state the way main does: the resolver asks the same
 // predicate the handlers ask.
 func foreignState(node *models.Node) *AppState {
-	st := &foreignFakeStore{node: node, byon: "true"}
+	st := &handlertest.ForeignStore{Node: node, Byon: "true"}
 	s := &AppState{Store: st, Authz: authz.NewResolver(st), FeatureFlags: services.NewFeatureFlags(st)}
 	s.Authz.SetForeignNode(s.NodeOwnedByOther)
 	return s
-}
-
-func foreignAdminRequest(method string, vars map[string]string, body string) *http.Request {
-	r := httptest.NewRequest(method, "/x", bytes.NewBufferString(body))
-	ctx := context.WithValue(r.Context(), "isAdmin", true)
-	ctx = context.WithValue(ctx, "userID", visAdmin)
-	ctx = context.WithValue(ctx, "username", "admin")
-	return mux.SetURLVars(r.WithContext(ctx), vars)
 }
 
 // TestWritesOnACustomersMachineAreNotFound covers every route the review named.
@@ -127,7 +68,7 @@ func TestWritesOnACustomersMachineAreNotFound(t *testing.T) {
 		call func(t *testing.T, s *AppState, w http.ResponseWriter)
 	}{
 		{"set overcommit", func(t *testing.T, s *AppState, w http.ResponseWriter) {
-			r := foreignAdminRequest("PUT", id, `{"cpuOvercommitRatio":1,"ramOvercommitRatio":1}`)
+			r := handlertest.AdminRequest("PUT", id, `{"cpuOvercommitRatio":1,"ramOvercommitRatio":1}`)
 			r.URL.Path = "/api/nodes/7/placement"
 			(&PlacementHandler{state: s}).SetNodePlacement(w, r)
 		}},
@@ -135,7 +76,7 @@ func TestWritesOnACustomersMachineAreNotFound(t *testing.T) {
 	for _, rt := range routes {
 		t.Run(rt.name+"/a customer's machine", func(t *testing.T) {
 			rw := httptest.NewRecorder()
-			rt.call(t, foreignState(visOwnedNode()), rw)
+			rt.call(t, foreignState(handlertest.OwnedNode()), rw)
 			if rw.Code != http.StatusNotFound {
 				t.Fatalf("status = %d, want 404 (%s)", rw.Code, rw.Body.String())
 			}
@@ -150,7 +91,7 @@ func TestWritesOnACustomersMachineAreNotFound(t *testing.T) {
 						t.Fatalf("the guard itself panicked on a platform machine: %v", p)
 					}
 				}()
-				rt.call(t, foreignState(visPlatformNode()), rw)
+				rt.call(t, foreignState(handlertest.PlatformNode()), rw)
 			}()
 			if rw.Code == http.StatusNotFound {
 				t.Fatalf("a platform machine was refused: %s", rw.Body.String())
@@ -167,12 +108,12 @@ func TestFilesAndBeamAskTheResolverForAnAdmin(t *testing.T) {
 		node    *models.Node
 		allowed bool
 	}{
-		{"a customer's machine", visOwnedNode(), false},
-		{"a platform machine", visPlatformNode(), true},
+		{"a customer's machine", handlertest.OwnedNode(), false},
+		{"a platform machine", handlertest.PlatformNode(), true},
 	} {
 		t.Run("files/"+c.name, func(t *testing.T) {
 			h := &FileHandler{state: foreignState(c.node)}
-			r := foreignAdminRequest("GET", nil, "")
+			r := handlertest.AdminRequest("GET", nil, "")
 			r.URL.RawQuery = "server_uuid=srv-1"
 			uuid, err := h.getServerUUID(r, "files.write")
 			if (err == nil && uuid == "srv-1") != c.allowed {
@@ -186,13 +127,13 @@ func TestFilesAndBeamAskTheResolverForAnAdmin(t *testing.T) {
 // answer through ownershipInForce, which must fail closed like the resolver's
 // half: the two used to disagree for as long as the settings table did not answer.
 func TestTheOlderFencesFailClosedToo(t *testing.T) {
-	st := &foreignFakeStore{node: visOwnedNode(), settingErr: errors.New("connection refused")}
+	st := &handlertest.ForeignStore{Node: handlertest.OwnedNode(), SettingErr: errors.New("connection refused")}
 	state := &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}
-	r := foreignAdminRequest("GET", nil, "")
-	if !ownedByOther(state, r, visOwnedNode()) {
+	r := handlertest.AdminRequest("GET", nil, "")
+	if !ownedByOther(state, r, handlertest.OwnedNode()) {
 		t.Error("an unreadable flag switched the ownership fence off")
 	}
-	if canManageNode(state, r, visOwnedNode()) {
+	if canManageNode(state, r, handlertest.OwnedNode()) {
 		t.Error("an unreadable flag let an admin manage a customer's machine")
 	}
 }

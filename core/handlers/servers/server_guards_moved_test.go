@@ -13,6 +13,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -24,11 +25,11 @@ func TestPlacementAndForceDeleteFailClosed(t *testing.T) {
 	fault := errors.New("connection refused")
 
 	t.Run("create on a customer's machine", func(t *testing.T) {
-		st := &foreignFakeStore{node: visOwnedNode(), settingErr: fault}
+		st := &handlertest.ForeignStore{Node: handlertest.OwnedNode(), SettingErr: fault}
 		h := &ServerHandler{state: &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}}
 		body := `{"uuid":"0f8c1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b","name":"x","nodeId":"7","docker":{"ram":1024,"cpuLimit":1,"diskLimit":10240}}`
 		rec := httptest.NewRecorder()
-		h.CreateServer(rec, foreignAdminRequest("POST", nil, body))
+		h.CreateServer(rec, handlertest.AdminRequest("POST", nil, body))
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
 		}
@@ -38,7 +39,7 @@ func TestPlacementAndForceDeleteFailClosed(t *testing.T) {
 // TestMovingAServerAcrossACustomersMachine: a move with either end on a
 // customer's machine is refused; a move between two platform machines is not.
 func TestMovingAServerAcrossACustomersMachine(t *testing.T) {
-	owner := visOwner
+	owner := handlertest.VisOwner
 	cases := []struct {
 		name   string
 		source *models.Node
@@ -51,10 +52,10 @@ func TestMovingAServerAcrossACustomersMachine(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			st := &twoNodeFakeStore{foreignFakeStore: foreignFakeStore{node: c.source, byon: "true"}, target: c.target}
+			st := &twoNodeFakeStore{ForeignStore: handlertest.ForeignStore{Node: c.source, Byon: "true"}, target: c.target}
 			s := &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}}
 			rw := httptest.NewRecorder()
-			(&ServerHandler{state: s}).MoveServer(rw, foreignAdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
+			(&ServerHandler{state: s}).MoveServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
 			if (c.want == http.StatusNotFound) != (rw.Code == http.StatusNotFound) {
 				t.Fatalf("status = %d, want %d (%s)", rw.Code, c.want, rw.Body.String())
 			}
@@ -67,7 +68,7 @@ func TestMovingAServerAcrossACustomersMachine(t *testing.T) {
 // owner's world onto the invitee's own machine, and an admin invited on a
 // customer's machine pulled it onto ours. The owner's own transfer must pass.
 func TestATransferIsTheOwnersDecision(t *testing.T) {
-	owner := visOwner
+	owner := handlertest.VisOwner
 	invitee := "33333333-3333-3333-3333-333333333333"
 	inviteeNode := &models.Node{ID: 8, OwnerID: &invitee, Status: "offline"}
 	ownerNode := &models.Node{ID: 8, OwnerID: &owner, Status: "offline"}
@@ -80,12 +81,12 @@ func TestATransferIsTheOwnersDecision(t *testing.T) {
 		refused bool
 	}{
 		{"an invitee onto their own machine", invitee, false, &models.Node{ID: 7}, inviteeNode, true},
-		{"an admin off a customer's machine", visAdmin, true, &models.Node{ID: 7, OwnerID: &owner}, &models.Node{ID: 8, Status: "offline"}, true},
-		{"the owner onto their own machine", visOwner, false, &models.Node{ID: 7}, ownerNode, false},
+		{"an admin off a customer's machine", handlertest.VisAdmin, true, &models.Node{ID: 7, OwnerID: &owner}, &models.Node{ID: 8, Status: "offline"}, true},
+		{"the owner onto their own machine", handlertest.VisOwner, false, &models.Node{ID: 7}, ownerNode, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			st := &twoNodeFakeStore{foreignFakeStore: foreignFakeStore{node: c.source, byon: "true"}, target: c.target}
+			st := &twoNodeFakeStore{ForeignStore: handlertest.ForeignStore{Node: c.source, Byon: "true"}, target: c.target}
 			s := &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}}
 			r := httptest.NewRequest("POST", "/x", bytes.NewBufferString(`{"targetNodeId":8}`))
 			ctx := context.WithValue(r.Context(), "isAdmin", c.isAdmin)
@@ -111,21 +112,21 @@ func TestServerWritesOnACustomersMachineAreNotFound(t *testing.T) {
 		call func(t *testing.T, s *handlers.AppState, w http.ResponseWriter)
 	}{
 		{"reassign a server's owner", func(t *testing.T, s *handlers.AppState, w http.ResponseWriter) {
-			(&ServerHandler{state: s}).AdminUpdateServerOwner(w, foreignAdminRequest("PATCH", id, `{"userId":"`+visAdmin+`"}`))
+			(&ServerHandler{state: s}).AdminUpdateServerOwner(w, handlertest.AdminRequest("PATCH", id, `{"userId":"`+handlertest.VisAdmin+`"}`))
 		}},
 		{"flag a server as a demo", func(t *testing.T, s *handlers.AppState, w http.ResponseWriter) {
 			s.StoreEnabled = true
-			(&ServerHandler{state: s}).SetServerDemo(w, foreignAdminRequest("PATCH", id, `{"enabled":true}`))
+			(&ServerHandler{state: s}).SetServerDemo(w, handlertest.AdminRequest("PATCH", id, `{"enabled":true}`))
 		}},
 		{"cancel a server's migration", func(t *testing.T, s *handlers.AppState, w http.ResponseWriter) {
-			s.Redis, _ = newQuotaHTTPRedis(t) // asked before the server is loaded
-			(&ServerHandler{state: s}).CancelMigration(w, foreignAdminRequest("POST", id, ""))
+			s.Redis, _ = handlertest.Redis(t) // asked before the server is loaded
+			(&ServerHandler{state: s}).CancelMigration(w, handlertest.AdminRequest("POST", id, ""))
 		}},
 	}
 	for _, rt := range routes {
 		t.Run(rt.name+"/a customer's machine", func(t *testing.T) {
 			rw := httptest.NewRecorder()
-			rt.call(t, foreignState(visOwnedNode()), rw)
+			rt.call(t, foreignState(handlertest.OwnedNode()), rw)
 			if rw.Code != http.StatusNotFound {
 				t.Fatalf("status = %d, want 404 (%s)", rw.Code, rw.Body.String())
 			}
@@ -140,7 +141,7 @@ func TestServerWritesOnACustomersMachineAreNotFound(t *testing.T) {
 						t.Fatalf("the guard itself panicked on a platform machine: %v", p)
 					}
 				}()
-				rt.call(t, foreignState(visPlatformNode()), rw)
+				rt.call(t, foreignState(handlertest.PlatformNode()), rw)
 			}()
 			if rw.Code == http.StatusNotFound {
 				t.Fatalf("a platform machine was refused: %s", rw.Body.String())
@@ -154,8 +155,8 @@ func TestServerWritesOnACustomersMachineAreNotFound(t *testing.T) {
 // caller included, and recorded nothing.
 func TestOnlyAnAdminChangesAServersOwner(t *testing.T) {
 	rw := httptest.NewRecorder()
-	(&ServerHandler{state: foreignState(visPlatformNode())}).AdminUpdateServerOwner(rw,
-		staffRequest("PATCH", map[string]string{"id": "7"}, `{"userId":"`+staffID+`"}`))
+	(&ServerHandler{state: foreignState(handlertest.PlatformNode())}).AdminUpdateServerOwner(rw,
+		handlertest.StaffRequest("PATCH", map[string]string{"id": "7"}, `{"userId":"`+handlertest.StaffID+`"}`))
 	if rw.Code != http.StatusForbidden {
 		t.Fatalf("staff changed a server's owner: status %d", rw.Code)
 	}
@@ -165,7 +166,7 @@ func TestOnlyAnAdminChangesAServersOwner(t *testing.T) {
 // caller's own machine passed it: root on the box now holding a customer's
 // world.
 func TestAServerIsNotMovedOntoTheCallersOwnMachine(t *testing.T) {
-	caller := visAdmin
+	caller := handlertest.VisAdmin
 	for _, c := range []struct {
 		name   string
 		target *models.Node
@@ -175,10 +176,10 @@ func TestAServerIsNotMovedOntoTheCallersOwnMachine(t *testing.T) {
 		{"a platform machine", &models.Node{ID: 8, Status: "offline"}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			st := &twoNodeFakeStore{foreignFakeStore: foreignFakeStore{node: &models.Node{ID: 7}, byon: "true"}, target: c.target}
+			st := &twoNodeFakeStore{ForeignStore: handlertest.ForeignStore{Node: &models.Node{ID: 7}, Byon: "true"}, target: c.target}
 			s := &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}}
 			rw := httptest.NewRecorder()
-			(&ServerHandler{state: s}).MoveServer(rw, foreignAdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
+			(&ServerHandler{state: s}).MoveServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
 			if (rw.Code == http.StatusForbidden) != c.refuse {
 				t.Fatalf("status %d, refuse=%v (%s)", rw.Code, c.refuse, rw.Body.String())
 			}
@@ -189,12 +190,12 @@ func TestAServerIsNotMovedOntoTheCallersOwnMachine(t *testing.T) {
 // Without ownership in force an owner_id means nothing, as for every other
 // ownership rule, and the node is an ordinary target.
 func TestTheMoveRuleWaitsForOwnershipToBeInForce(t *testing.T) {
-	caller := visAdmin
-	st := &twoNodeFakeStore{foreignFakeStore: foreignFakeStore{node: &models.Node{ID: 7}, byon: "false"},
+	caller := handlertest.VisAdmin
+	st := &twoNodeFakeStore{ForeignStore: handlertest.ForeignStore{Node: &models.Node{ID: 7}, Byon: "false"},
 		target: &models.Node{ID: 8, OwnerID: &caller, Status: "offline"}}
 	s := &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}}
 	rw := httptest.NewRecorder()
-	(&ServerHandler{state: s}).MoveServer(rw, foreignAdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
+	(&ServerHandler{state: s}).MoveServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
 	if rw.Code == http.StatusForbidden {
 		t.Fatalf("refused with ownership off: %s", rw.Body.String())
 	}
@@ -214,7 +215,7 @@ func TestAStaffAccountCannotBeTheDemo(t *testing.T) {
 			st := &demoStaffStore{user: &models.User{ID: "u-demo", Username: "demo"}, roleC: c.caps}
 			rw := httptest.NewRecorder()
 			(&ServerHandler{state: &handlers.AppState{Store: st, StoreEnabled: true}}).SetDemoAccount(rw,
-				foreignAdminRequest("PUT", nil, `{"username":"demo"}`))
+				handlertest.AdminRequest("PUT", nil, `{"username":"demo"}`))
 			if (rw.Code == http.StatusBadRequest) != c.refuse {
 				t.Fatalf("status %d, refuse=%v (%s)", rw.Code, c.refuse, rw.Body.String())
 			}
@@ -225,12 +226,12 @@ func TestAStaffAccountCannotBeTheDemo(t *testing.T) {
 // TransferServer asked only where the CALLER may place, and an admin may place
 // on a node of their own: the same move MoveServer refuses, through the other door.
 func TestATransferIsNotOntoTheCallersOwnMachine(t *testing.T) {
-	caller := visAdmin
-	st := &twoNodeFakeStore{foreignFakeStore: foreignFakeStore{node: &models.Node{ID: 7}, byon: "true"},
+	caller := handlertest.VisAdmin
+	st := &twoNodeFakeStore{ForeignStore: handlertest.ForeignStore{Node: &models.Node{ID: 7}, Byon: "true"},
 		target: &models.Node{ID: 8, OwnerID: &caller, Status: "offline"}}
 	s := &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}}
 	rw := httptest.NewRecorder()
-	(&ServerHandler{state: s}).TransferServer(rw, foreignAdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
+	(&ServerHandler{state: s}).TransferServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
 	if rw.Code != http.StatusForbidden || !bytes.Contains(rw.Body.Bytes(), []byte("platform's nodes")) {
 		t.Fatalf("status %d: %s", rw.Code, rw.Body.String())
 	}
@@ -294,7 +295,7 @@ func TestSetServerDemoEditsTheListInPlace(t *testing.T) {
 			body = `{"enabled":true}`
 		}
 		w := httptest.NewRecorder()
-		(&ServerHandler{state: s}).SetServerDemo(w, foreignAdminRequest("PATCH", map[string]string{"id": "7"}, body))
+		(&ServerHandler{state: s}).SetServerDemo(w, handlertest.AdminRequest("PATCH", map[string]string{"id": "7"}, body))
 		if w.Code != http.StatusOK {
 			t.Fatalf("SetServerDemo(%v) = %d %s", on, w.Code, w.Body)
 		}
@@ -316,7 +317,7 @@ func TestSetServerDemoDoesNotReAddADeletedServer(t *testing.T) {
 	fs := &demoListStore{settings: map[string]string{handlers.DemoServerUUIDsSetting: `["other"]`}, deleteInLock: true}
 	s := &handlers.AppState{Store: fs, StoreEnabled: true}
 	w := httptest.NewRecorder()
-	(&ServerHandler{state: s}).SetServerDemo(w, foreignAdminRequest("PATCH", map[string]string{"id": "7"}, `{"enabled":true}`))
+	(&ServerHandler{state: s}).SetServerDemo(w, handlertest.AdminRequest("PATCH", map[string]string{"id": "7"}, `{"enabled":true}`))
 	if w.Code != http.StatusNotFound || fs.settings[handlers.DemoServerUUIDsSetting] != `["other"]` {
 		t.Fatalf("got %d, list %s", w.Code, fs.settings[handlers.DemoServerUUIDsSetting])
 	}

@@ -11,10 +11,11 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 )
 
 func TestCoreStorage_SaveThenGet_BlanksSecretAndKeepsExisting(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	// A single online Core so checkSharedStorageReachable's short-circuit
 	// applies; this test is about the secret round trip, not the
 	// reachability round.
@@ -29,8 +30,8 @@ func TestCoreStorage_SaveThenGet_BlanksSecretAndKeepsExisting(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("SaveConfig status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.kv[handlers.KeyCoreStorageS3SecretKey] != "sekret" {
-		t.Fatalf("secret not persisted, got %q", fs.kv[handlers.KeyCoreStorageS3SecretKey])
+	if fs.KV[handlers.KeyCoreStorageS3SecretKey] != "sekret" {
+		t.Fatalf("secret not persisted, got %q", fs.KV[handlers.KeyCoreStorageS3SecretKey])
 	}
 
 	// GET must not leak the secret but must flag it as set.
@@ -62,16 +63,16 @@ func TestCoreStorage_SaveThenGet_BlanksSecretAndKeepsExisting(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("re-save status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.kv[handlers.KeyCoreStorageS3SecretKey] != "sekret" {
-		t.Errorf("blank re-save wiped the secret, got %q", fs.kv[handlers.KeyCoreStorageS3SecretKey])
+	if fs.KV[handlers.KeyCoreStorageS3SecretKey] != "sekret" {
+		t.Errorf("blank re-save wiped the secret, got %q", fs.KV[handlers.KeyCoreStorageS3SecretKey])
 	}
-	if fs.kv[handlers.KeyCoreStorageS3Region] != "eu-central-1" {
-		t.Errorf("region not updated on re-save, got %q", fs.kv[handlers.KeyCoreStorageS3Region])
+	if fs.KV[handlers.KeyCoreStorageS3Region] != "eu-central-1" {
+		t.Errorf("region not updated on re-save, got %q", fs.KV[handlers.KeyCoreStorageS3Region])
 	}
 }
 
 func TestCoreStorage_SaveRejectsInvalid(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 	body, _ := json.Marshal(handlers.CoreStorageConfig{Backend: "path", Path: "relative", PathConfirmed: true})
 	rw := httptest.NewRecorder()
@@ -79,8 +80,8 @@ func TestCoreStorage_SaveRejectsInvalid(t *testing.T) {
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("SaveConfig invalid status = %d, want 400", rw.Code)
 	}
-	if fs.kv[handlers.KeyCoreStorageBackend] != "" {
-		t.Errorf("invalid config was partially persisted: %v", fs.kv)
+	if fs.KV[handlers.KeyCoreStorageBackend] != "" {
+		t.Errorf("invalid config was partially persisted: %v", fs.KV)
 	}
 }
 
@@ -89,10 +90,10 @@ func TestCoreStorage_SaveRejectsInvalid(t *testing.T) {
 // already has a valid config saved and submits a bad edit must not lose the
 // previously-good settings.
 func TestCoreStorage_SaveRejectsInvalid_DoesNotWipeExistingValidConfig(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	fs.kv[handlers.KeyCoreStorageBackend] = "path"
-	fs.kv[handlers.KeyCoreStoragePath] = "/mnt/shared"
-	fs.kv[handlers.KeyCoreStoragePathConfirm] = "true"
+	fs := handlertest.NewSettingsStore()
+	fs.KV[handlers.KeyCoreStorageBackend] = "path"
+	fs.KV[handlers.KeyCoreStoragePath] = "/mnt/shared"
+	fs.KV[handlers.KeyCoreStoragePathConfirm] = "true"
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(handlers.CoreStorageConfig{Backend: "path", Path: "relative", PathConfirmed: true})
@@ -101,13 +102,13 @@ func TestCoreStorage_SaveRejectsInvalid_DoesNotWipeExistingValidConfig(t *testin
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rw.Code)
 	}
-	if fs.kv[handlers.KeyCoreStoragePath] != "/mnt/shared" {
-		t.Errorf("invalid save clobbered the existing good path, got %q", fs.kv[handlers.KeyCoreStoragePath])
+	if fs.KV[handlers.KeyCoreStoragePath] != "/mnt/shared" {
+		t.Errorf("invalid save clobbered the existing good path, got %q", fs.KV[handlers.KeyCoreStoragePath])
 	}
 }
 
 func TestCoreStorage_GetConfig_NeverConfigured(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 	rw := httptest.NewRecorder()
 	h.GetConfig(rw, httptest.NewRequest(http.MethodGet, "/api/settings/core-storage", nil))
@@ -124,11 +125,11 @@ func TestCoreStorage_GetConfig_NeverConfigured(t *testing.T) {
 }
 
 func TestCoreStorage_TestConnection_PathProbe(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	dir := testConnectionProbeDir(t)
-	fs.kv[handlers.KeyCoreStorageBackend] = "path"
-	fs.kv[handlers.KeyCoreStoragePath] = dir
-	fs.kv[handlers.KeyCoreStoragePathConfirm] = "true"
+	fs := handlertest.NewSettingsStore()
+	dir := handlertest.ConnectionProbeDir(t)
+	fs.KV[handlers.KeyCoreStorageBackend] = "path"
+	fs.KV[handlers.KeyCoreStoragePath] = dir
+	fs.KV[handlers.KeyCoreStoragePathConfirm] = "true"
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
 	rw := httptest.NewRecorder()
@@ -145,8 +146,8 @@ func TestCoreStorage_TestConnection_PathProbe(t *testing.T) {
 // key regression guard for "test before saving": the store has no valid
 // config at all, so a success here can only come from the request body.
 func TestCoreStorage_TestConnection_UsesCandidateFromBody_NotStoredConfig(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	dir := testConnectionProbeDir(t)
+	fs := handlertest.NewSettingsStore()
+	dir := handlertest.ConnectionProbeDir(t)
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(handlers.CoreStorageConfig{Backend: "path", Path: dir, PathConfirmed: true})
@@ -164,7 +165,7 @@ func TestCoreStorage_TestConnection_UsesCandidateFromBody_NotStoredConfig(t *tes
 // asserts an invalid candidate reports ok:false in a 200 JSON body (a "test"
 // result), not a hard HTTP error - the panel renders this inline.
 func TestCoreStorage_TestConnection_InvalidCandidateReportsFailure_NotHTTPError(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 	body, _ := json.Marshal(handlers.CoreStorageConfig{Backend: "path", Path: "relative", PathConfirmed: true})
 	rw := httptest.NewRecorder()
@@ -178,7 +179,7 @@ func TestCoreStorage_TestConnection_InvalidCandidateReportsFailure_NotHTTPError(
 }
 
 func TestCoreStorage_SaveConfig_BlankSecretUnchangedIdentity_ReusesStoredSecret(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	seedCoreStorageS3(fs)
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
@@ -191,16 +192,16 @@ func TestCoreStorage_SaveConfig_BlankSecretUnchangedIdentity_ReusesStoredSecret(
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.kv[handlers.KeyCoreStorageS3SecretKey] != "stored-secret" {
-		t.Errorf("stored secret not reused, got %q", fs.kv[handlers.KeyCoreStorageS3SecretKey])
+	if fs.KV[handlers.KeyCoreStorageS3SecretKey] != "stored-secret" {
+		t.Errorf("stored secret not reused, got %q", fs.KV[handlers.KeyCoreStorageS3SecretKey])
 	}
-	if fs.kv[handlers.KeyCoreStorageS3Region] != "eu-west-1" {
-		t.Errorf("unrelated field did not persist, got %q", fs.kv[handlers.KeyCoreStorageS3Region])
+	if fs.KV[handlers.KeyCoreStorageS3Region] != "eu-west-1" {
+		t.Errorf("unrelated field did not persist, got %q", fs.KV[handlers.KeyCoreStorageS3Region])
 	}
 }
 
 func TestCoreStorage_SaveConfig_BlankSecretChangedAccessKey_Rejected(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	seedCoreStorageS3(fs)
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
@@ -212,16 +213,16 @@ func TestCoreStorage_SaveConfig_BlankSecretChangedAccessKey_Rejected(t *testing.
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (changed access key + blank secret must be rejected); body=%s", rw.Code, rw.Body.String())
 	}
-	if fs.kv[handlers.KeyCoreStorageS3AccessKey] != "key1" {
-		t.Errorf("rejected save persisted the new access key anyway, got %q", fs.kv[handlers.KeyCoreStorageS3AccessKey])
+	if fs.KV[handlers.KeyCoreStorageS3AccessKey] != "key1" {
+		t.Errorf("rejected save persisted the new access key anyway, got %q", fs.KV[handlers.KeyCoreStorageS3AccessKey])
 	}
-	if fs.kv[handlers.KeyCoreStorageS3SecretKey] != "stored-secret" {
-		t.Errorf("rejected save touched the stored secret, got %q", fs.kv[handlers.KeyCoreStorageS3SecretKey])
+	if fs.KV[handlers.KeyCoreStorageS3SecretKey] != "stored-secret" {
+		t.Errorf("rejected save touched the stored secret, got %q", fs.KV[handlers.KeyCoreStorageS3SecretKey])
 	}
 }
 
 func TestCoreStorage_SaveConfig_BlankSecretChangedEndpoint_Rejected(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	seedCoreStorageS3(fs)
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
@@ -233,13 +234,13 @@ func TestCoreStorage_SaveConfig_BlankSecretChangedEndpoint_Rejected(t *testing.T
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (changed endpoint + blank secret must be rejected); body=%s", rw.Code, rw.Body.String())
 	}
-	if fs.kv[handlers.KeyCoreStorageS3Endpoint] != "https://s3.example.com" {
-		t.Errorf("rejected save persisted the new endpoint anyway, got %q", fs.kv[handlers.KeyCoreStorageS3Endpoint])
+	if fs.KV[handlers.KeyCoreStorageS3Endpoint] != "https://s3.example.com" {
+		t.Errorf("rejected save persisted the new endpoint anyway, got %q", fs.KV[handlers.KeyCoreStorageS3Endpoint])
 	}
 }
 
 func TestCoreStorage_TestConnection_BlankSecretChangedAccessKey_Rejected(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	seedCoreStorageS3(fs)
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
@@ -260,7 +261,7 @@ func TestCoreStorage_TestConnection_BlankSecretChangedAccessKey_Rejected(t *test
 }
 
 func TestCoreStorage_TestConnection_BlankSecretChangedEndpoint_Rejected(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	seedCoreStorageS3(fs)
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
@@ -285,13 +286,13 @@ func TestCoreStorage_TestConnection_BlankSecretChangedEndpoint_Rejected(t *testi
 // validation error - that is the observable difference between "merge
 // backfilled the secret" and "merge left it blank".
 func TestCoreStorage_TestConnection_BlankSecretUnchangedIdentity_PassesValidation(t *testing.T) {
-	disableAWSRetries(t)
-	fs := newCoreStorageHTTPFakeStore()
-	fs.kv[handlers.KeyCoreStorageBackend] = "s3"
-	fs.kv[handlers.KeyCoreStorageS3Endpoint] = "http://127.0.0.1:1"
-	fs.kv[handlers.KeyCoreStorageS3Bucket] = "bucket1"
-	fs.kv[handlers.KeyCoreStorageS3AccessKey] = "key1"
-	fs.kv[handlers.KeyCoreStorageS3SecretKey] = "stored-secret"
+	handlertest.DisableAWSRetries(t)
+	fs := handlertest.NewSettingsStore()
+	fs.KV[handlers.KeyCoreStorageBackend] = "s3"
+	fs.KV[handlers.KeyCoreStorageS3Endpoint] = "http://127.0.0.1:1"
+	fs.KV[handlers.KeyCoreStorageS3Bucket] = "bucket1"
+	fs.KV[handlers.KeyCoreStorageS3AccessKey] = "key1"
+	fs.KV[handlers.KeyCoreStorageS3SecretKey] = "stored-secret"
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
 	body, _ := json.Marshal(handlers.CoreStorageConfig{
@@ -311,8 +312,8 @@ func TestCoreStorage_TestConnection_BlankSecretUnchangedIdentity_PassesValidatio
 // wire body, not just the CoreStorageConfig struct: a future change that
 // surfaces the secret under some other key must still be caught.
 func TestCoreStorage_TestConnection_FailureBody_NeverLeaksSecret(t *testing.T) {
-	disableAWSRetries(t)
-	fs := newCoreStorageHTTPFakeStore()
+	handlertest.DisableAWSRetries(t)
+	fs := handlertest.NewSettingsStore()
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
 	const theSecret = "unleaked-topsecret-value"
@@ -337,11 +338,11 @@ func TestCoreStorage_TestConnection_FailureBody_NeverLeaksSecret(t *testing.T) {
 // tested (whether saved or not) path backend must not leave an empty
 // "_probe" directory behind forever.
 func TestCoreStorage_TestConnection_PathProbe_CleansUpProbeDir(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	dir := testConnectionProbeDir(t)
-	fs.kv[handlers.KeyCoreStorageBackend] = "path"
-	fs.kv[handlers.KeyCoreStoragePath] = dir
-	fs.kv[handlers.KeyCoreStoragePathConfirm] = "true"
+	fs := handlertest.NewSettingsStore()
+	dir := handlertest.ConnectionProbeDir(t)
+	fs.KV[handlers.KeyCoreStorageBackend] = "path"
+	fs.KV[handlers.KeyCoreStoragePath] = dir
+	fs.KV[handlers.KeyCoreStoragePathConfirm] = "true"
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 
 	rw := httptest.NewRecorder()
@@ -391,7 +392,7 @@ func TestCoreStorage_TestConnection_WarnsOnAnEphemeralPath(t *testing.T) {
 				return c.onRoot, c.determinable
 			}
 
-			fs := newCoreStorageHTTPFakeStore()
+			fs := handlertest.NewSettingsStore()
 			h := NewCoreStorageHandler(&handlers.AppState{Store: fs})
 			var body []byte
 			if c.backend == "s3" {
@@ -399,14 +400,14 @@ func TestCoreStorage_TestConnection_WarnsOnAnEphemeralPath(t *testing.T) {
 				// s3 tests here use. The probe fails, which is fine: the point
 				// is that an s3 config has no local path, so the check must not
 				// be consulted at all - asserted via `called` below.
-				disableAWSRetries(t)
+				handlertest.DisableAWSRetries(t)
 				body, _ = json.Marshal(handlers.CoreStorageConfig{
 					Backend: "s3", S3Endpoint: "http://127.0.0.1:1", S3Bucket: "b",
 					S3AccessKey: "k", S3SecretKey: "s",
 				})
 			} else {
 				body, _ = json.Marshal(handlers.CoreStorageConfig{
-					Backend: "path", Path: testConnectionProbeDir(t), PathConfirmed: true,
+					Backend: "path", Path: handlertest.ConnectionProbeDir(t), PathConfirmed: true,
 				})
 			}
 

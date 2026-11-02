@@ -524,9 +524,7 @@ func TestExtraPortsAddressOverridesThePublicIP(t *testing.T) {
 			}
 
 			h.syncPortsToStart(pc.fs.servers[1], "main")
-			node.mu.Lock()
-			written := node.written.String()
-			node.mu.Unlock()
+			written := node.WrittenString()
 			if !strings.Contains(written, "voice_host="+c.want+":26000") {
 				t.Fatalf("start wrote %q, want voice_host=%s:26000", written, c.want)
 			}
@@ -551,9 +549,7 @@ func TestUpdateServerPortChangesThePreset(t *testing.T) {
 		if p := pc.fs.ports[0]; p.Preset != "svc" || p.ContainerPort != voicePresetPort {
 			t.Fatalf("port %+v, want preset svc on container port %d", p, voicePresetPort)
 		}
-		node.mu.Lock()
-		written := node.written.String()
-		node.mu.Unlock()
+		written := node.WrittenString()
 		if !strings.Contains(written, "voice_host=voice.example.com:26000") {
 			t.Fatalf("wrote %q", written)
 		}

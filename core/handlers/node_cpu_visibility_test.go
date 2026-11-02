@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -14,15 +15,15 @@ import (
 // carries CanChangeResources, so refusing the admin in canManageNode alone would
 // have been undone by the second arm of the same condition.
 func TestNodeCPUDoesNotLetResourceRightsReachACustomersMachine(t *testing.T) {
-	admin := &models.User{ID: visAdmin, IsAdmin: true, Role: "admin"}
+	admin := &models.User{ID: handlertest.VisAdmin, IsAdmin: true, Role: "admin"}
 	cases := []struct {
 		name string
 		node *models.Node
 		want int
 	}{
-		{"a user's machine", visOwnedNode(), http.StatusForbidden},
+		{"a user's machine", handlertest.OwnedNode(), http.StatusForbidden},
 		// Past the gate, stopped by the nil pinning service.
-		{"a platform machine", visPlatformNode(), http.StatusServiceUnavailable},
+		{"a platform machine", handlertest.PlatformNode(), http.StatusServiceUnavailable},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -32,7 +33,7 @@ func TestNodeCPUDoesNotLetResourceRightsReachACustomersMachine(t *testing.T) {
 			}
 			h := &CPUPinningHandler{state: st}
 			rw := httptest.NewRecorder()
-			h.GetNodeCPU(rw, visAdminRequest("GET", "/x", map[string]string{"id": "7"}))
+			h.GetNodeCPU(rw, handlertest.VisAdminRequest("GET", "/x", map[string]string{"id": "7"}))
 			if rw.Code != c.want {
 				t.Fatalf("status = %d, want %d (%s)", rw.Code, c.want, rw.Body.String())
 			}

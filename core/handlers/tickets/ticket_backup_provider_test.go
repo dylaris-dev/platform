@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 	"dylaris-core/storage"
@@ -159,7 +160,7 @@ func (f *ticketBackupFakeStore) GetSetting(key string) (string, error) {
 
 // newTicketBackupHandler builds a TicketMigrationHandler wired against a REAL
 // Core file storage "path" backend rooted at a fresh, real, absolute-looking
-// test directory (see testConnectionProbeDir, core_storage_http_test.go), so
+// test directory (see handlertest.ConnectionProbeDir), so
 // CreateBackup/ListBackups/DownloadBackup/DeleteBackup/InitRestore/
 // ExecuteRestore resolve a genuine *storage.LocalProvider per request exactly
 // like production. Change 3 removed the injectable provider field the old
@@ -170,7 +171,7 @@ func (f *ticketBackupFakeStore) GetSetting(key string) (string, error) {
 // disk.
 func newTicketBackupHandler(t *testing.T, fs *ticketBackupFakeStore) (*TicketMigrationHandler, string) {
 	t.Helper()
-	dir := testConnectionProbeDir(t)
+	dir := handlertest.ConnectionProbeDir(t)
 	if fs.settings == nil {
 		fs.settings = map[string]string{}
 	}
@@ -397,7 +398,7 @@ func TestListBackups_OrderingIsChronological(t *testing.T) {
 // endpoint has no such ambiguity: List/Delete over HTTP either succeeds or
 // returns a hard error, on every OS.
 //
-// Callers must call disableAWSRetries(t) first so the SDK's default
+// Callers must call handlertest.DisableAWSRetries(t) first so the SDK's default
 // 3-attempt retry-with-backoff doesn't turn a sub-millisecond refused-
 // connection into a several-second test.
 func newTicketBackupS3FailFastHandler(t *testing.T) *TicketMigrationHandler {
@@ -418,7 +419,7 @@ func newTicketBackupS3FailFastHandler(t *testing.T) *TicketMigrationHandler {
 // yet". See newTicketBackupS3FailFastHandler's doc comment for why this
 // drives the real s3 resolution path instead of a fault-injected fake.
 func TestListBackups_ProviderErrorSurfaces(t *testing.T) {
-	disableAWSRetries(t)
+	handlertest.DisableAWSRetries(t)
 	h := newTicketBackupS3FailFastHandler(t)
 
 	rw := httptest.NewRecorder()
@@ -563,7 +564,7 @@ func TestDeleteBackup_Success(t *testing.T) {
 // "directory" would not even surface as an error internally, let alone reach
 // the handler).
 func TestDeleteBackup_ProviderErrorSurfaces(t *testing.T) {
-	disableAWSRetries(t)
+	handlertest.DisableAWSRetries(t)
 	h := newTicketBackupS3FailFastHandler(t)
 
 	req := adminReq(httptest.NewRequest(http.MethodDelete, "/api/admin/tickets/backups/tickets-x.json", nil))

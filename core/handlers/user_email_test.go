@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -108,7 +109,7 @@ func withReauthJSON(body string) string {
 	if json.Unmarshal([]byte(body), &m) != nil {
 		return body
 	}
-	m["reauth"] = map[string]string{"password": testReauthPassword}
+	m["reauth"] = map[string]string{"password": handlertest.ReauthPassword}
 	out, err := json.Marshal(m)
 	if err != nil {
 		return body
@@ -123,7 +124,7 @@ func emailStore() *emailFakeStore {
 			emailTestUserID: u,
 			// The administrator doing the asking, with a password the
 			// re-authentication can actually verify.
-			"admin-1": {ID: "admin-1", Username: "admin", Password: testReauthHash},
+			"admin-1": {ID: "admin-1", Username: "admin", Password: handlertest.ReauthHash},
 		},
 		byEmail:  map[string]*models.User{"old@example.com": u},
 		settings: map[string]string{},

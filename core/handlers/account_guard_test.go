@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -257,12 +258,12 @@ func (f *epochGuardStore) BumpSessionEpoch(id string) (int, error) {
 // Their session used to outlive it: only a password change ended sessions.
 func TestAnAdmin2FAResetEndsTheAccountsSessions(t *testing.T) {
 	base := newGuardFakeStore()
-	base.users[guardAdmin].Password = testReauthHash
+	base.users[guardAdmin].Password = handlertest.ReauthHash
 	fs := &epochGuardStore{keyedGuardStore: &keyedGuardStore{guardFakeStore: base}}
 	h := &AuthHandler{state: &AppState{Store: fs, Authz: authz.NewResolver(fs)}}
 	rec := httptest.NewRecorder()
 	h.AdminResetTOTPHandler(rec, guardRequest("DELETE", guardAdmin, true, guardMember,
-		`{"reauth":{"password":"`+testReauthPassword+`"}}`))
+		`{"reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: status %d: %s", rec.Code, rec.Body.String())
 	}

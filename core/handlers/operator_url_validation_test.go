@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"dylaris-core/handlers/handlertest"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -36,7 +37,7 @@ func TestSaveBeamSettings_ValidatesTheDownloadLink(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			fs := newCoreStorageHTTPFakeStore()
+			fs := handlertest.NewSettingsStore()
 			h := &SettingsHandler{state: &AppState{Store: fs}}
 
 			body, _ := json.Marshal(BeamSettings{Enabled: true, DownloadLink: c.link})
@@ -46,8 +47,8 @@ func TestSaveBeamSettings_ValidatesTheDownloadLink(t *testing.T) {
 			if rw.Code != c.wantStatus {
 				t.Fatalf("status = %d, want %d (%s)", rw.Code, c.wantStatus, rw.Body.String())
 			}
-			if c.wantStatus != http.StatusOK && fs.kv["beam.download_link"] != "" {
-				t.Fatalf("a rejected link was persisted: %q", fs.kv["beam.download_link"])
+			if c.wantStatus != http.StatusOK && fs.KV["beam.download_link"] != "" {
+				t.Fatalf("a rejected link was persisted: %q", fs.KV["beam.download_link"])
 			}
 		})
 	}

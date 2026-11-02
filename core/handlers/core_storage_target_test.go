@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -75,13 +76,13 @@ func TestBuildTargetStorageProvider_BuildsAWorkingUnsavedPathProvider(t *testing
 	// The whole point of the ad-hoc target: a config that was never saved
 	// still yields a usable provider, exactly as TestConnection already does.
 	//
-	// testConnectionProbeDir (core_storage_http_test.go, same package) is used
+	// handlertest.ConnectionProbeDir is used
 	// instead of a raw t.TempDir(): buildTargetStorageProvider runs
 	// validateCoreStorageConfig first, which enforces a deliberately
 	// Linux-only absolute-path check ("/...") that a real Windows temp dir
 	// (e.g. "C:\Users\...") fails, for the exact reason documented on that
 	// helper.
-	root := testConnectionProbeDir(t)
+	root := handlertest.ConnectionProbeDir(t)
 	prov, err := buildTargetStorageProvider(
 		CoreStorageConfig{Backend: "path", Path: root, PathConfirmed: true}, "library")
 	if err != nil {

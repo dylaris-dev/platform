@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
 
@@ -153,7 +154,7 @@ func TestSetUserRoleHandler_SelfDemotionGuard(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &userRoleFakeStore{
 				users:      tc.users,
-				targetUser: &models.User{ID: tc.targetID, Role: "admin", Password: testReauthHash},
+				targetUser: &models.User{ID: tc.targetID, Role: "admin", Password: handlertest.ReauthHash},
 			}
 			h := NewUserHandler(&handlers.AppState{Store: fs})
 			rec := httptest.NewRecorder()
@@ -223,7 +224,7 @@ func setPermsReq(targetID string, isAdmin bool, body map[string]interface{}) *ht
 // beyond the admin gate); this pins the argument order/mapping so a future
 // field-shuffle regresses loudly instead of silently swapping flags.
 func TestSetUserPermissionsHandler_Success(t *testing.T) {
-	fs := &userRoleFakeStore{targetUser: &models.User{ID: testTargetID, Password: testReauthHash}}
+	fs := &userRoleFakeStore{targetUser: &models.User{ID: testTargetID, Password: handlertest.ReauthHash}}
 	h := NewUserHandler(&handlers.AppState{Store: fs})
 	rec := httptest.NewRecorder()
 	body := withReauth(map[string]interface{}{"canDeleteServers": true, "canChangeResources": true, "supportTeam": "billing"})
@@ -299,7 +300,7 @@ func TestSetUserPanelRoleHandler_RoleNotFound(t *testing.T) {
 func TestSetUserPanelRoleHandler_Success(t *testing.T) {
 	fs := &userRoleFakeStore{
 		panelRole:  &store.PanelRole{ID: 3, Name: "support"},
-		targetUser: &models.User{ID: testOtherUserID, Password: testReauthHash},
+		targetUser: &models.User{ID: testOtherUserID, Password: handlertest.ReauthHash},
 	}
 	h := NewUserHandler(&handlers.AppState{Store: fs})
 	rec := httptest.NewRecorder()

@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-pkg/beam/quota"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,16 +23,6 @@ import (
 // handler contacts the node, so a nil GRPCRegistry never runs. An admin still
 // goes through the resolver, whose admin short-circuit needs nothing from the
 // store beyond the server row, so a fake answering GetSetting and that is enough.
-
-func newQuotaHTTPRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
-	t.Helper()
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis: %v", err)
-	}
-	t.Cleanup(mr.Close)
-	return redis.NewClient(&redis.Options{Addr: mr.Addr()}), mr
-}
 
 func newUploadRequest(t *testing.T, serverUUID string, fileSize int) *http.Request {
 	t.Helper()
@@ -58,7 +48,7 @@ func newUploadRequest(t *testing.T, serverUUID string, fileSize int) *http.Reque
 }
 
 func TestUploadFileHandler_DailyQuotaRejects(t *testing.T) {
-	rdb, mr := newQuotaHTTPRedis(t)
+	rdb, mr := handlertest.Redis(t)
 	mr.Set(quota.DailyUploadBytesKey, "1000")
 	mr.Set(quota.DailyKey("u", time.Now()), "900")
 
@@ -76,7 +66,7 @@ func TestUploadFileHandler_DailyQuotaRejects(t *testing.T) {
 }
 
 func TestUploadFileHandler_SizeCapRejects(t *testing.T) {
-	rdb, mr := newQuotaHTTPRedis(t)
+	rdb, mr := handlertest.Redis(t)
 	mr.Set(quota.MaxUploadBytesKey, "100")
 
 	h := &FileHandler{state: quotaHTTPState(rdb)}
@@ -89,7 +79,7 @@ func TestUploadFileHandler_SizeCapRejects(t *testing.T) {
 }
 
 type quotaHTTPFakeStore struct {
-	*coreStorageHTTPFakeStore
+	*handlertest.SettingsStore
 }
 
 func (f quotaHTTPFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {
@@ -97,6 +87,6 @@ func (f quotaHTTPFakeStore) GetServerByUUID(uuid string) (*models.Server, error)
 }
 
 func quotaHTTPState(rdb *redis.Client) *AppState {
-	st := quotaHTTPFakeStore{newCoreStorageHTTPFakeStore()}
+	st := quotaHTTPFakeStore{handlertest.NewSettingsStore()}
 	return &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}
 }

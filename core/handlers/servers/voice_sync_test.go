@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -81,10 +82,8 @@ func TestSyncVoiceWritesTheDetectedModsMerge(t *testing.T) {
 			if !NewServerHandler(st).syncVoiceToSubServer(&models.Server{ID: 7, UUID: "srv-7", NodeID: 7}, "survival") {
 				t.Fatal("sync failed")
 			}
-			node.mu.Lock()
-			got := node.written.String()
-			node.mu.Unlock()
-			if want := readVoiceFixture(t, c.after); got != want {
+			got := node.WrittenString()
+			if want := handlertest.VoiceFixture(t, c.after); got != want {
 				t.Fatalf("wrote:\n%s\nwant:\n%s", got, want)
 			}
 			if fs.mod != c.mod {

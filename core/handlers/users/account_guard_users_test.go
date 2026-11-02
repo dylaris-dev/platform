@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 )
 
@@ -234,11 +235,11 @@ func TestTheAccountGuardAfterReview(t *testing.T) {
 // they see - and rename themselves past the profile's cooldown.
 func TestStaffCannotSetTheirOwnTeamOrRenameThemselves(t *testing.T) {
 	fs := newGuardFakeStore()
-	fs.users[guardStaff].Password = testReauthHash // a valid re-proof, so only the self rule can refuse
+	fs.users[guardStaff].Password = handlertest.ReauthHash // a valid re-proof, so only the self rule can refuse
 	h := NewUserHandler(guardState(fs))
 	rec := httptest.NewRecorder()
 	h.SetUserPermissionsHandler(rec, guardRequest("PUT", guardStaff, false, guardStaff,
-		`{"canDeleteServers":false,"canChangeResources":false,"supportTeam":"billing","reauth":{"password":"`+testReauthPassword+`"}}`))
+		`{"canDeleteServers":false,"canChangeResources":false,"supportTeam":"billing","reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 	if rec.Code != http.StatusForbidden || len(fs.touched) != 0 {
 		t.Fatalf("own permissions: status %d, touched %v; want 403 and nothing written", rec.Code, fs.touched)
 	}
@@ -278,12 +279,12 @@ func TestStaffPlaceOthersOnlyInTheirOwnTeam(t *testing.T) {
 // owner's hands. The sessions ended with it; the API keys kept working.
 func TestAnAdminPasswordResetRevokesTheAccountsAPIKeys(t *testing.T) {
 	base := newGuardFakeStore()
-	base.users[guardAdmin].Password = testReauthHash
+	base.users[guardAdmin].Password = handlertest.ReauthHash
 	fs := &keyedGuardStore{guardFakeStore: base, keys: []models.APIKey{{ID: 7}, {ID: 8}}}
 	h := NewUserHandler(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
 	rec := httptest.NewRecorder()
 	h.ResetUserPassword(rec, guardRequest("PUT", guardAdmin, true, guardMember,
-		`{"password":"a-brand-new-password","reauth":{"password":"`+testReauthPassword+`"}}`))
+		`{"password":"a-brand-new-password","reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: status %d: %s", rec.Code, rec.Body.String())
 	}

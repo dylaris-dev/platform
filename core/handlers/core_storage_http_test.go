@@ -3,77 +3,14 @@ package handlers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"dylaris-core/storage"
 	backupstorage "dylaris-core/storage/backup"
-	"dylaris-core/store"
 )
-
-// coreStorageHTTPFakeStore is a read/write settings fake for the CRUD +
-// test-connection handler tests below. Distinct from coreStorageFakeStore
-// (core_storage_builder_test.go, GetSetting-only, read-side tests) and from
-// modeFakeStore (permissions_mode_test.go, always returns one fixed value):
-// this one records SetSetting writes into a map so a save-then-get round
-// trip can be asserted.
-type coreStorageHTTPFakeStore struct {
-	store.Store
-	kv map[string]string
-}
-
-func newCoreStorageHTTPFakeStore() *coreStorageHTTPFakeStore {
-	return &coreStorageHTTPFakeStore{kv: map[string]string{}}
-}
-
-func (f *coreStorageHTTPFakeStore) GetSetting(key string) (string, error) { return f.kv[key], nil }
-
-// SetSettingBy is the audited write path; the fake records the value and drops
-// the actor, so a handler that writes through it fails its assertion rather than
-// panicking on a nil embedded Store.
-func (f *coreStorageHTTPFakeStore) SetSettingBy(key, value, _ string) error {
-	return f.SetSetting(key, value)
-}
-
-func (f *coreStorageHTTPFakeStore) SetSetting(key, value string) error {
-	f.kv[key] = value
-	return nil
-}
-
-// testConnectionProbeDir returns an absolute-looking POSIX path ("/...")
-// that os.MkdirAll can still create on a Windows dev box (Windows treats a
-// leading "/" as drive-root-relative), matching validateCoreStorageConfig's
-// deliberately Linux-only absolute-path check (see its doc comment). Same
-// convention as the "/mnt/shared" literal already used in
-// core_storage_builder_test.go; a real t.TempDir() would fail the "/" check
-// on Windows and was deliberately not used here for that reason.
-// posixTestBase is where the "/"-prefixed test directories live: the drive
-// root on a Windows dev box (see testConnectionProbeDir), the OS temp dir
-// everywhere else. Not "/" on Linux: CI runs on GitHub-hosted runners, which
-// are not root, so nothing can be created at the filesystem root there.
-func posixTestBase() string {
-	if runtime.GOOS == "windows" {
-		return "/"
-	}
-	return os.TempDir()
-}
-
-func testConnectionProbeDir(t *testing.T) string {
-	t.Helper()
-	root := filepath.Join(posixTestBase(), testTmpRootName("dylaris-test-tmp"))
-	dir := filepath.ToSlash(filepath.Join(root, t.Name()))
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatalf("MkdirAll(%q): %v", dir, err)
-	}
-	t.Cleanup(func() { os.RemoveAll(root) })
-	return dir
-}
 
 // --- mergeCoreStorageCandidate (pure logic backing both SaveConfig and
 // TestConnection's "blank secret keeps the stored one" rule) ---
@@ -296,9 +233,3 @@ func TestProbeStorageProvider_DeleteFailureAfterMatchReportsFailure(t *testing.T
 		t.Fatalf("ok = true, want false when cleanup delete fails (%s)", msg)
 	}
 }
-
-// testTmpRootName makes the shared test root per test binary. Every helper
-// above removes its whole root on cleanup, and since handlers was split the
-// packages that use one run in parallel; a shared name let one package's
-// cleanup delete another's directories mid-test.
-func testTmpRootName(base string) string { return fmt.Sprintf("%s-%d", base, os.Getpid()) }

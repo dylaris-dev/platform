@@ -1,22 +1,11 @@
 package handlers
 
 import (
+	"dylaris-core/handlers/handlertest"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
-
-func readVoiceFixture(t *testing.T, name string) string {
-	t.Helper()
-	b, err := os.ReadFile(filepath.Join("testdata", "voice", name))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// core.autocrlf may check the fixtures out with CRLF; the writers emit LF.
-	return strings.ReplaceAll(string(b), "\r\n", "\n")
-}
 
 func TestDetectVoiceMod(t *testing.T) {
 	svcMod := "config/voicechat/voicechat-server.properties"
@@ -55,8 +44,8 @@ func TestDetectVoiceMod(t *testing.T) {
 }
 
 func TestSvcVoiceGolden(t *testing.T) {
-	before := readVoiceFixture(t, "svc_before.properties")
-	after := readVoiceFixture(t, "svc_after.properties")
+	before := handlertest.VoiceFixture(t, "svc_before.properties")
+	after := handlertest.VoiceFixture(t, "svc_after.properties")
 
 	if got := svcVoiceEnable(before, "a.eu.dylaris.com", 26000); got != after {
 		t.Fatalf("enable:\n%s\nwant:\n%s", got, after)
@@ -72,10 +61,10 @@ func TestSvcVoiceGolden(t *testing.T) {
 }
 
 func TestPlasmoVoiceGolden(t *testing.T) {
-	def := readVoiceFixture(t, "plasmo_default.toml")
-	after := readVoiceFixture(t, "plasmo_after.toml")
-	existing := readVoiceFixture(t, "plasmo_existing_public.toml")
-	disabled := readVoiceFixture(t, "plasmo_disabled.toml")
+	def := handlertest.VoiceFixture(t, "plasmo_default.toml")
+	after := handlertest.VoiceFixture(t, "plasmo_after.toml")
+	existing := handlertest.VoiceFixture(t, "plasmo_existing_public.toml")
+	disabled := handlertest.VoiceFixture(t, "plasmo_disabled.toml")
 
 	if got := plasmoVoiceEnable(def, "a.eu.dylaris.com", 26000); got != after {
 		t.Fatalf("enable on the default:\n%s\nwant:\n%s", got, after)
@@ -110,7 +99,7 @@ func TestPlasmoVoiceEnableInsertsAfterHostSubtables(t *testing.T) {
 func TestPlasmoMergeIsIdempotent(t *testing.T) {
 	for _, name := range []string{"plasmo_default.toml", "plasmo_after.toml", "plasmo_existing_public.toml"} {
 		t.Run(name, func(t *testing.T) {
-			in := readVoiceFixture(t, name)
+			in := handlertest.VoiceFixture(t, name)
 			once := plasmoVoiceEnable(in, "a.eu.dylaris.com", 26000)
 			if twice := plasmoVoiceEnable(once, "a.eu.dylaris.com", 26000); twice != once {
 				t.Fatalf("second merge changed the file:\n%s", twice)

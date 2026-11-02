@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 )
 
 // tickets.write is the support role, and this screen turns off the team
@@ -13,7 +14,7 @@ import (
 func TestTheTicketPolicyIsTheOperators(t *testing.T) {
 	rw := httptest.NewRecorder()
 	(&TicketSettingsHandler{state: &handlers.AppState{}}).SaveSettings(rw,
-		staffRequest("PUT", nil, `{"crossTeamVisibility":true,"auditRetentionDays":1}`))
+		handlertest.StaffRequest("PUT", nil, `{"crossTeamVisibility":true,"auditRetentionDays":1}`))
 	if rw.Code != http.StatusForbidden {
 		t.Fatalf("staff changed the ticket policy: status %d", rw.Code)
 	}

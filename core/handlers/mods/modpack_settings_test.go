@@ -8,17 +8,18 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/services"
 )
 
 // newModpackSettingsTestHandler wires a ModpackSettingsHandler against
-// coreStorageHTTPFakeStore (core_storage_http_test.go), which records
+// handlertest.SettingsStore (core_storage_http_test.go), which records
 // SetSetting writes into a map so a rejected request can be asserted to
 // never reach the store. FeatureFlags/Events are wired the same way
 // core_storage_gate_test.go does for FeatureSettingsHandler, since Set()
 // unconditionally invalidates flags and publishes events on success.
-func newModpackSettingsTestHandler(fs *coreStorageHTTPFakeStore) *ModpackSettingsHandler {
+func newModpackSettingsTestHandler(fs *handlertest.SettingsStore) *ModpackSettingsHandler {
 	st := &handlers.AppState{
 		Store:  fs,
 		Events: services.NewSystemEventsPublisher(nil),
@@ -45,7 +46,7 @@ func TestModpackSettingsHandler_Set_ProviderValidation(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			fs := newCoreStorageHTTPFakeStore()
+			fs := handlertest.NewSettingsStore()
 			h := newModpackSettingsTestHandler(fs)
 
 			body, _ := json.Marshal(modpackSettings{Provider: c.provider})
@@ -57,8 +58,8 @@ func TestModpackSettingsHandler_Set_ProviderValidation(t *testing.T) {
 			}
 
 			if c.wantCode == http.StatusBadRequest {
-				if _, ok := fs.kv["modpack_storage_provider"]; ok {
-					t.Errorf("rejected provider %q reached the store, kv = %v", c.provider, fs.kv)
+				if _, ok := fs.KV["modpack_storage_provider"]; ok {
+					t.Errorf("rejected provider %q reached the store, kv = %v", c.provider, fs.KV)
 				}
 				return
 			}
@@ -66,8 +67,8 @@ func TestModpackSettingsHandler_Set_ProviderValidation(t *testing.T) {
 			if wantStored == "" {
 				wantStored = "local"
 			}
-			if fs.kv["modpack_storage_provider"] != wantStored {
-				t.Errorf("stored provider = %q, want %q", fs.kv["modpack_storage_provider"], wantStored)
+			if fs.KV["modpack_storage_provider"] != wantStored {
+				t.Errorf("stored provider = %q, want %q", fs.KV["modpack_storage_provider"], wantStored)
 			}
 		})
 	}
@@ -106,7 +107,7 @@ func TestModpackSettingsHandler_Set_RejectsCredentialsInTheS3Endpoint(t *testing
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			fs := newCoreStorageHTTPFakeStore()
+			fs := handlertest.NewSettingsStore()
 			h := newModpackSettingsTestHandler(fs)
 
 			body, _ := json.Marshal(modpackSettings{Provider: c.provider, S3Endpoint: c.endpoint})
@@ -117,22 +118,22 @@ func TestModpackSettingsHandler_Set_RejectsCredentialsInTheS3Endpoint(t *testing
 				if rw.Code != http.StatusBadRequest {
 					t.Fatalf("status = %d, want 400: endpoint %q persists a credential (%s)", rw.Code, c.endpoint, rw.Body.String())
 				}
-				if got, ok := fs.kv["modpack_storage_s3_endpoint"]; ok {
+				if got, ok := fs.KV["modpack_storage_s3_endpoint"]; ok {
 					t.Errorf("rejected endpoint reached the store as %q", got)
 				}
 				// Nothing at all may be written: the writes run as one
 				// unguarded loop, so a rejection landing mid-loop would leave
 				// the provider switched with the endpoint refused.
-				if len(fs.kv) != 0 {
-					t.Errorf("rejected request wrote %d setting(s), want 0: %v", len(fs.kv), fs.kv)
+				if len(fs.KV) != 0 {
+					t.Errorf("rejected request wrote %d setting(s), want 0: %v", len(fs.KV), fs.KV)
 				}
 				return
 			}
 			if rw.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 			}
-			if fs.kv["modpack_storage_s3_endpoint"] != c.endpoint {
-				t.Errorf("stored endpoint = %q, want %q", fs.kv["modpack_storage_s3_endpoint"], c.endpoint)
+			if fs.KV["modpack_storage_s3_endpoint"] != c.endpoint {
+				t.Errorf("stored endpoint = %q, want %q", fs.KV["modpack_storage_s3_endpoint"], c.endpoint)
 			}
 		})
 	}
@@ -144,8 +145,8 @@ func TestModpackSettingsHandler_Set_RejectsCredentialsInTheS3Endpoint(t *testing
 // updatable to any currently-valid provider, since Set only validates the
 // incoming request and never conditions on what is already stored.
 func TestModpackSettingsHandler_Set_AllowsMovingFromAnyStoredValueToValid(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	fs.kv["modpack_storage_provider"] = "some-legacy-value"
+	fs := handlertest.NewSettingsStore()
+	fs.KV["modpack_storage_provider"] = "some-legacy-value"
 	h := newModpackSettingsTestHandler(fs)
 
 	body, _ := json.Marshal(modpackSettings{Provider: "core-storage"})
@@ -155,7 +156,7 @@ func TestModpackSettingsHandler_Set_AllowsMovingFromAnyStoredValueToValid(t *tes
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.kv["modpack_storage_provider"] != "core-storage" {
-		t.Errorf("stored provider = %q, want core-storage", fs.kv["modpack_storage_provider"])
+	if fs.KV["modpack_storage_provider"] != "core-storage" {
+		t.Errorf("stored provider = %q, want core-storage", fs.KV["modpack_storage_provider"])
 	}
 }

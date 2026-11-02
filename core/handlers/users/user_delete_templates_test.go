@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
@@ -53,7 +54,7 @@ func TestDeleteUserRemovesTheirTemplateFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+victimID, strings.NewReader(`{"reauth":{"password":"`+testReauthPassword+`"}}`))
+	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+victimID, strings.NewReader(`{"reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 	rctx := context.WithValue(r.Context(), "userID", "admin-id")
 	rctx = context.WithValue(rctx, "username", "admin")
 	rctx = context.WithValue(rctx, "isAdmin", true)

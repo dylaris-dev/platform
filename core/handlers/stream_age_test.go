@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 )
 
@@ -28,7 +29,7 @@ func shortStreams(t *testing.T) {
 func TestConsoleStreamEndsAndResumesAfterTheLastLine(t *testing.T) {
 	shortStreams(t)
 	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", ActiveSubServer: "main"}}
-	rdb := newServerPowerRedis(t)
+	rdb := handlertest.RedisClient(t)
 	h := &ConsoleHandler{state: &AppState{Store: fs, Redis: rdb}}
 	key := consoleStreamKey(fs.server, "")
 	ctx := context.Background()
@@ -78,7 +79,7 @@ func TestStreamsEndBeforeTheirTicket(t *testing.T) {
 func TestStreamsOpenWithTheRetryLine(t *testing.T) {
 	shortStreams(t)
 	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", ActiveSubServer: "main"}}
-	rdb := newServerPowerRedis(t)
+	rdb := handlertest.RedisClient(t)
 	run := func(name string, serve func(*httptest.ResponseRecorder)) string {
 		rec := httptest.NewRecorder()
 		done := make(chan struct{})

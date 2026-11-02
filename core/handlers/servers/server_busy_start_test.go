@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
 
@@ -24,7 +25,7 @@ func TestAStartClearsWhatHoldsTheServerDown(t *testing.T) {
 		server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerID: "u1", OwnerName: "alice", NodeID: 7},
 		node:   &models.Node{ID: 7, Token: "node-token-1", Name: "n1", Status: "online"},
 	}
-	rdb := newServerPowerRedis(t)
+	rdb := handlertest.RedisClient(t)
 	ctx := context.Background()
 	rdb.Set(ctx, "dylaris:server:srv-uuid:stopped_by_server", "1", 0)
 	rdb.Set(ctx, "dylaris:server:srv-uuid:reconcile_failed", "x", 0)
@@ -46,7 +47,7 @@ func TestAStartClearsWhatHoldsTheServerDown(t *testing.T) {
 func TestABusyServerRefusesWorkThatRewritesIt(t *testing.T) {
 	setup := func(t *testing.T, srv *models.Server, busy string) *httptest.ResponseRecorder {
 		fs := &serverPowerFakeStore{server: srv, node: &models.Node{ID: 7, Token: "node-token-1", Name: "n1", Status: "online"}}
-		rdb := newServerPowerRedis(t)
+		rdb := handlertest.RedisClient(t)
 		if busy != "" {
 			rdb.Set(context.Background(), handlers.NodeBusyKey(srv.UUID), busy, 0)
 		}

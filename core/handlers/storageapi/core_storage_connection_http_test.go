@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 )
@@ -16,7 +17,7 @@ import (
 // coreStorageConnFakeStore adds a storage-connection to the read/write settings
 // fake, so a SaveConfig with a selected connection can be exercised end to end.
 type coreStorageConnFakeStore struct {
-	*coreStorageHTTPFakeStore
+	*handlertest.SettingsStore
 	conn    *models.StorageConnection
 	connErr error
 }
@@ -30,9 +31,9 @@ func (f *coreStorageConnFakeStore) GetStorageConnection(int) (*models.StorageCon
 
 func newCoreStorageConnFakeStore(conn *models.StorageConnection, connErr error) *coreStorageConnFakeStore {
 	return &coreStorageConnFakeStore{
-		coreStorageHTTPFakeStore: newCoreStorageHTTPFakeStore(),
-		conn:                     conn,
-		connErr:                  connErr,
+		SettingsStore: handlertest.NewSettingsStore(),
+		conn:          conn,
+		connErr:       connErr,
 	}
 }
 
@@ -59,8 +60,8 @@ func TestSaveConfig_ConnectionValidatesConnectionNotInline(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("SaveConfig status = %d, want 200 (blank inline must be fine with a connection) (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.kv[handlers.KeyCoreStorageConnectionID] != "5" {
-		t.Errorf("connection id not persisted, got %q", fs.kv[handlers.KeyCoreStorageConnectionID])
+	if fs.KV[handlers.KeyCoreStorageConnectionID] != "5" {
+		t.Errorf("connection id not persisted, got %q", fs.KV[handlers.KeyCoreStorageConnectionID])
 	}
 }
 
@@ -78,8 +79,8 @@ func TestSaveConfig_BlankBackendWithConnectionStillSaves(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("SaveConfig status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.kv[handlers.KeyCoreStorageConnectionID] != "5" {
-		t.Errorf("connection id not persisted with a blank backend, got %q", fs.kv[handlers.KeyCoreStorageConnectionID])
+	if fs.KV[handlers.KeyCoreStorageConnectionID] != "5" {
+		t.Errorf("connection id not persisted with a blank backend, got %q", fs.KV[handlers.KeyCoreStorageConnectionID])
 	}
 }
 
@@ -94,8 +95,8 @@ func TestSaveConfig_MissingConnectionRejected(t *testing.T) {
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("SaveConfig status = %d, want 400 for a missing connection", rw.Code)
 	}
-	if fs.kv[handlers.KeyCoreStorageConnectionID] != "" {
-		t.Errorf("a broken connection selection was persisted: %q", fs.kv[handlers.KeyCoreStorageConnectionID])
+	if fs.KV[handlers.KeyCoreStorageConnectionID] != "" {
+		t.Errorf("a broken connection selection was persisted: %q", fs.KV[handlers.KeyCoreStorageConnectionID])
 	}
 }
 

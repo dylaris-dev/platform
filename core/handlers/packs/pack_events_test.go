@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -22,7 +23,7 @@ func (packEventStore) GetPack(id int) (*models.Pack, error) {
 // learned the ids of every tenant's packs and when each was edited. They now
 // name the owner, and the stream hands them to the owner alone.
 func TestPackEventsReachOnlyTheOwner(t *testing.T) {
-	rdb := newServerPowerRedis(t)
+	rdb := handlertest.RedisClient(t)
 	state := &handlers.AppState{Store: packEventStore{}, Redis: rdb, Events: services.NewSystemEventsPublisher(rdb)}
 	sub := rdb.Subscribe(context.Background(), services.SystemEventsChannel)
 	defer sub.Close()

@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 	"dylaris-core/storage"
@@ -118,13 +119,13 @@ func sanitizePathComponent(s string) string {
 }
 
 // attachmentUploadTestDir returns a fresh, real, absolute-looking POSIX path
-// (same "/dylaris-test-tmp" convention as testConnectionProbeDir,
-// core_storage_http_test.go) for the "path" backend, keyed by a
+// (same "/dylaris-test-tmp" convention as handlertest.ConnectionProbeDir)
+// for the "path" backend, keyed by a
 // sanitizePathComponent'd t.Name() rather than the raw name
-// testConnectionProbeDir uses directly.
+// handlertest.ConnectionProbeDir uses directly.
 func attachmentUploadTestDir(t *testing.T) string {
 	t.Helper()
-	root := filepath.Join(posixTestBase(), testTmpRootName("dylaris-test-tmp"))
+	root := handlertest.TempRoot("dylaris-test-tmp")
 	dir := filepath.ToSlash(filepath.Join(root, sanitizePathComponent(t.Name())))
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("MkdirAll(%q): %v", dir, err)

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -38,8 +39,8 @@ func (c *countingBody) Close() error { return nil }
 // asked who was calling, so any signed-in account, one with no server at all,
 // could fill Core's temp disk and only then be told 403.
 func TestAnUploadIsRefusedBeforeItsBodyIsRead(t *testing.T) {
-	rdb, _ := newQuotaHTTPRedis(t)
-	st := noServerStore{quotaHTTPFakeStore{newCoreStorageHTTPFakeStore()}}
+	rdb, _ := handlertest.Redis(t)
+	st := noServerStore{quotaHTTPFakeStore{handlertest.NewSettingsStore()}}
 	h := &FileHandler{state: &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
 
 	req := newUploadRequest(t, "s1", 1<<20)
@@ -66,8 +67,8 @@ func TestAnUploadIsRefusedBeforeItsBodyIsRead(t *testing.T) {
 // Only the upload applied the owner cut-off; save, create, rename and copy
 // kept writing to a suspended tenant's server.
 func TestEveryFileWriteRefusesASuspendedTenant(t *testing.T) {
-	rdb, _ := newQuotaHTTPRedis(t)
-	st := suspendedUploadStore{quotaHTTPFakeStore{newCoreStorageHTTPFakeStore()}}
+	rdb, _ := handlertest.Redis(t)
+	st := suspendedUploadStore{quotaHTTPFakeStore{handlertest.NewSettingsStore()}}
 	h := &FileHandler{state: &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
 
 	for name, tc := range map[string]struct {
@@ -132,8 +133,8 @@ func (s movingServerStore) GetServerByUUID(uuid string) (*models.Server, error) 
 // A move archives the directory and deletes it on the source after cutover; a
 // file written in between was lost without a word. Writes now wait.
 func TestFileWritesWaitForAMove(t *testing.T) {
-	rdb, _ := newQuotaHTTPRedis(t)
-	st := movingServerStore{quotaHTTPFakeStore{newCoreStorageHTTPFakeStore()}}
+	rdb, _ := handlertest.Redis(t)
+	st := movingServerStore{quotaHTTPFakeStore{handlertest.NewSettingsStore()}}
 	h := &FileHandler{state: &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
 	req := httptest.NewRequest(http.MethodPost, "/api/files/x?server_uuid=s1", strings.NewReader(`{"path":"a.txt","content":"x"}`))
 	ctx := context.WithValue(req.Context(), "username", "u")

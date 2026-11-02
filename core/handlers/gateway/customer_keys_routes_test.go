@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/store"
 )
 
@@ -82,14 +83,14 @@ func TestAnAdminCannotRollOrRevokeACustomersWarpKeys(t *testing.T) {
 // server's id deleted any route by name, a customer's included. Deleting any
 // route by name has its own fleet route (topology.write).
 func TestAServerRouteDeleteOnlyDeletesThatServersRoute(t *testing.T) {
-	rdb, mr := newQuotaHTTPRedis(t)
+	rdb, mr := handlertest.Redis(t)
 	// The route exists - it belongs to another server. A check that only asked
 	// "is there such a route" would let this through.
 	mr.SAdd("sys:index:routes", "customer.example.com")
 	mr.Set("route:customer.example.com", `{"server_uuid":"someone-elses-server"}`)
-	st := &foreignFakeStore{node: visPlatformNode(), byon: "true"}
+	st := &handlertest.ForeignStore{Node: handlertest.PlatformNode(), Byon: "true"}
 	h := NewGatewayHandler(&handlers.AppState{Store: st, Redis: rdb})
-	r := foreignAdminRequest("DELETE", map[string]string{"id": "3", "domain": "customer.example.com"}, "")
+	r := handlertest.AdminRequest("DELETE", map[string]string{"id": "3", "domain": "customer.example.com"}, "")
 	rec := httptest.NewRecorder()
 	func() {
 		defer func() {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
@@ -55,7 +56,7 @@ func (f *installFakeStore) SetModpackScan(int, string, string, int) error { retu
 // "node-lib".
 func newInstallTest(t *testing.T) (*ServerHandler, *installFakeStore, *redis.Client) {
 	t.Helper()
-	dir := testConnectionProbeDir(t)
+	dir := handlertest.ConnectionProbeDir(t)
 	fs := &installFakeStore{serverPowerFakeStore: serverPowerFakeStore{
 		server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "pending_setup", OwnerID: "u1", OwnerName: "alice",
 			NodeID: 7, ActiveSubServer: "main", InstallerType: "paper", BuildNumber: "1.21.1", MinecraftVersion: "1.21.1"},
@@ -67,7 +68,7 @@ func newInstallTest(t *testing.T) (*ServerHandler, *installFakeStore, *redis.Cli
 			"core_public_url":                  "https://panel.example.com",
 		},
 	}}
-	rdb := newServerPowerRedis(t)
+	rdb := handlertest.RedisClient(t)
 	h := &ServerHandler{state: &handlers.AppState{
 		Store:         fs,
 		Redis:         rdb,

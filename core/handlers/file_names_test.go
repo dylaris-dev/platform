@@ -13,6 +13,7 @@ import (
 
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 
 	pb "dylaris-proto/node"
@@ -24,8 +25,8 @@ import (
 // through and refuses one that is a path. The suspended tenant makes a name
 // that got past the check visible as the suspension refusal, before any node.
 func TestCreateAndRenameCheckTheNameInsteadOfRewritingIt(t *testing.T) {
-	rdb, _ := newQuotaHTTPRedis(t)
-	st := suspendedUploadStore{quotaHTTPFakeStore{newCoreStorageHTTPFakeStore()}}
+	rdb, _ := handlertest.Redis(t)
+	st := suspendedUploadStore{quotaHTTPFakeStore{handlertest.NewSettingsStore()}}
 	h := &FileHandler{state: &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
 
 	call := func(fn func(http.ResponseWriter, *http.Request), body string) *httptest.ResponseRecorder {

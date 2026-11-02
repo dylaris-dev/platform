@@ -3,12 +3,9 @@ package handlers
 import (
 	"testing"
 
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services"
 )
-
-type flagSettings map[string]string
-
-func (f flagSettings) GetSetting(key string) (string, error) { return f[key], nil }
 
 // A tenant's link kit is fenced from admins whenever route-only is on, not only
 // with BYON: route-only on beside BYON off would otherwise let any admin roll a
@@ -16,12 +13,12 @@ func (f flagSettings) GetSetting(key string) (string, error) { return f[key], ni
 func TestAKitIsItsOwnersWhileRouteOnlyIsOn(t *testing.T) {
 	cases := []struct {
 		name     string
-		settings flagSettings
+		settings *handlertest.SettingsStore
 		want     bool
 	}{
-		{"route-only on, BYON off", flagSettings{"feature_route_only_enabled": "true"}, true},
-		{"BYON on", flagSettings{"feature_byon_enabled": "true"}, true},
-		{"neither", flagSettings{}, false},
+		{"route-only on, BYON off", &handlertest.SettingsStore{KV: map[string]string{"feature_route_only_enabled": "true"}}, true},
+		{"BYON on", &handlertest.SettingsStore{KV: map[string]string{"feature_byon_enabled": "true"}}, true},
+		{"neither", &handlertest.SettingsStore{KV: map[string]string{}}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

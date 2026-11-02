@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -18,7 +19,7 @@ import (
 // and returns how many servers.changed frames it published.
 func countServersChanged(t *testing.T, state *handlers.AppState, fn func()) int {
 	t.Helper()
-	rdb := newServerPowerRedis(t)
+	rdb := handlertest.RedisClient(t)
 	// Only Events gets Redis: state.Redis stays nil so the beam stamp, which
 	// needs more of the store than these fakes answer, stays out of the way.
 	state.Events = services.NewSystemEventsPublisher(rdb)

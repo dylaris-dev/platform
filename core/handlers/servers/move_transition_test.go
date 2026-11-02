@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
 
@@ -34,7 +35,7 @@ func TestAMoveWaitsForAPowerTransition(t *testing.T) {
 		t.Run(c.status, func(t *testing.T) {
 			srv := &models.Server{ID: 1, UUID: "srv-uuid", Status: c.status, OwnerID: "u1", NodeID: 7}
 			fs := &serverPowerFakeStore{server: srv, node: &models.Node{ID: 7, Token: "node-token-1", Status: "online"}}
-			rdb := newServerPowerRedis(t)
+			rdb := handlertest.RedisClient(t)
 			h := newServerPowerHandler(fs, rdb)
 			h.state.Migration = services.NewMigrationOrchestrator(fs, rdb, nil, nil, "")
 			rec := httptest.NewRecorder()

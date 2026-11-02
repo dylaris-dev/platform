@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -97,12 +98,12 @@ func (f *storageMigrationFakeStore) InsertAuditIdentity(e *models.AuditEventIden
 // - see its doc comment), so a raw t.TempDir() - NOT "/"-prefixed on Windows -
 // would fail that check before ResolveTarget ever reached the same-location
 // comparison these tests exercise, rather than genuinely exercising it. Same
-// convention as testConnectionProbeDir in core_storage_http_test.go: a
+// convention as handlertest.ConnectionProbeDir: a
 // leading "/" resolves under the current drive root on Windows (os.MkdirAll
 // still succeeds there) while satisfying the string-prefix check either way.
 func storageMigrationTestRoot(t *testing.T, name string) string {
 	t.Helper()
-	root := filepath.Join(posixTestBase(), testTmpRootName("dylaris-storage-migration-test-tmp"))
+	root := handlertest.TempRoot("dylaris-storage-migration-test-tmp")
 	dir := filepath.ToSlash(filepath.Join(root, t.Name(), name))
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatalf("MkdirAll(%q): %v", dir, err)

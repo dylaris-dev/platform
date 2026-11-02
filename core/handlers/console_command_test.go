@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 )
 
@@ -28,7 +29,7 @@ func sendConsole(t *testing.T, h *ConsoleHandler, cmd string) int {
 // commands then ran on its next start.
 func TestConsoleCommandsAreBounded(t *testing.T) {
 	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped"}}
-	rdb := newServerPowerRedis(t)
+	rdb := handlertest.RedisClient(t)
 	h := &ConsoleHandler{state: &AppState{Store: fs, Redis: rdb}}
 	queue := "dylaris:server:srv-uuid:input"
 

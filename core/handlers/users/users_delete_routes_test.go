@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -32,7 +33,7 @@ type deleteRoutesFakeStore struct {
 func (f *deleteRoutesFakeStore) GetSetting(string) (string, error) { return "", nil }
 
 func (f *deleteRoutesFakeStore) GetUserByID(id string) (*models.User, error) {
-	return &models.User{ID: id, Username: "customer", Password: testReauthHash}, nil
+	return &models.User{ID: id, Username: "customer", Password: handlertest.ReauthHash}, nil
 }
 func (f *deleteRoutesFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
 	return f.routes, f.routesErr

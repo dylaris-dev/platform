@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -154,7 +154,7 @@ func emailStore() *emailFakeStore {
 			emailTestUserID: u,
 			// The administrator doing the asking, with a password the
 			// re-authentication can actually verify.
-			"admin-1": {ID: "admin-1", Username: "admin", Password: testReauthHash},
+			"admin-1": {ID: "admin-1", Username: "admin", Password: handlertest.ReauthHash},
 		},
 		byEmail:  map[string]*models.User{"old@example.com": u},
 		settings: map[string]string{},
@@ -265,29 +265,12 @@ func rsaPub(t *testing.T, bits int) ssh.PublicKey {
 	return pk
 }
 
-// The admin account-management actions re-authenticate, so every test that
-// drives one to its WRITE has to prove who is asking. One password and one
-// hash for the whole package, at MinCost because these run on every build.
-//
-// A fixture that wants to exercise the refusal simply leaves the block out.
-const testReauthPassword = "correct-horse-battery-staple"
-
-var testReauthHash = mustHash(testReauthPassword)
-
-func mustHash(pw string) string {
-	h, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.MinCost)
-	if err != nil {
-		panic(err)
-	}
-	return string(h)
-}
-
 // withReauth adds the acting administrator's credential to a request body.
 func withReauth(body map[string]interface{}) map[string]interface{} {
 	if body == nil {
 		body = map[string]interface{}{}
 	}
-	body["reauth"] = map[string]string{"password": testReauthPassword}
+	body["reauth"] = map[string]string{"password": handlertest.ReauthPassword}
 	return body
 }
 
@@ -334,7 +317,7 @@ func withReauthJSON(body string) string {
 	if json.Unmarshal([]byte(body), &m) != nil {
 		return body
 	}
-	m["reauth"] = map[string]string{"password": testReauthPassword}
+	m["reauth"] = map[string]string{"password": handlertest.ReauthPassword}
 	out, err := json.Marshal(m)
 	if err != nil {
 		return body

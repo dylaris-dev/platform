@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
@@ -99,7 +100,7 @@ func TestExternalServerBlanksSettingsFieldsWithoutTheSettingsCap(t *testing.T) {
 // Demo rows are always shown without the settings fields: the demo account
 // never holds the right to change settings.
 func TestDemoRowsCarryNoSettingsFields(t *testing.T) {
-	if body := funcBody(t, "servers.go", "GetServers"); !regexp.MustCompile(`ds.Permissions = &models.TabPermissions{Console: true, Files: true}\s+handlers\.RedactSettingsFields\(ds\)`).MatchString(body) {
+	if body := handlertest.FuncBody(t, "servers.go", "GetServers"); !regexp.MustCompile(`ds.Permissions = &models.TabPermissions{Console: true, Files: true}\s+handlers\.RedactSettingsFields\(ds\)`).MatchString(body) {
 		t.Error("demo rows are appended without redactSettingsFields")
 	}
 }

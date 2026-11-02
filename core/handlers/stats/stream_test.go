@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -21,7 +21,7 @@ import (
 func TestStatsStreamReplaysTheBufferOnlyOnTheFirstConnect(t *testing.T) {
 	shortStreams(t)
 	fs := &statsFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid"}}
-	rdb := newServerPowerRedis(t)
+	rdb := handlertest.RedisClient(t)
 	h := &StatsHandler{state: &handlers.AppState{Store: fs, Redis: rdb}}
 	rdb.XAdd(context.Background(), &redis.XAddArgs{Stream: "dylaris:server:srv-uuid:stats:buffer", Values: map[string]any{"data": `{"cpu":1}`}})
 
@@ -54,7 +54,7 @@ func TestStatsStreamReplaysTheBufferOnlyOnTheFirstConnect(t *testing.T) {
 func TestStatsStreamOpensWithTheRetryLine(t *testing.T) {
 	shortStreams(t)
 	fs := &statsFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", ActiveSubServer: "main"}}
-	rdb := newServerPowerRedis(t)
+	rdb := handlertest.RedisClient(t)
 	h := &StatsHandler{state: &handlers.AppState{Store: fs, Redis: rdb}}
 	req := mux.SetURLVars(httptest.NewRequest("GET", "/api/servers/1/stats/stream", nil), map[string]string{"id": "1"})
 	rec := httptest.NewRecorder()
@@ -84,15 +84,4 @@ func (f *statsFakeStore) GetSetting(string) (string, error)         { return "",
 func shortStreams(t *testing.T) {
 	t.Helper()
 	t.Cleanup(handlers.SetSSEMaxStreamAge(300 * time.Millisecond))
-}
-
-// newServerPowerRedis returns a real client backed by miniredis.
-func newServerPowerRedis(t *testing.T) *redis.Client {
-	t.Helper()
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis: %v", err)
-	}
-	t.Cleanup(mr.Close)
-	return redis.NewClient(&redis.Options{Addr: mr.Addr()})
 }

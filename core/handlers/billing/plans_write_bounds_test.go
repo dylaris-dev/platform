@@ -7,6 +7,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 )
 
@@ -27,19 +28,19 @@ func TestPlansWriteCannotBeSpentOnTheCallersOwnAccountBilling(t *testing.T) {
 	}
 	for name, call := range calls {
 		t.Run(name+"/own account", func(t *testing.T) {
-			st := &termsStore{target: &models.User{ID: staffID}}
+			st := &termsStore{target: &models.User{ID: handlertest.StaffID}}
 			s := &handlers.AppState{Store: st, Authz: authz.NewResolver(st)}
 			rw := httptest.NewRecorder()
-			call(s, rw, staffRequest("POST", map[string]string{"id": staffID}, `{"kind":"byon","days":30}`))
+			call(s, rw, handlertest.StaffRequest("POST", map[string]string{"id": handlertest.StaffID}, `{"kind":"byon","days":30}`))
 			if rw.Code != http.StatusForbidden {
 				t.Fatalf("status %d on the caller's own account", rw.Code)
 			}
 		})
 		t.Run(name+"/an admin", func(t *testing.T) {
-			st := &termsStore{target: &models.User{ID: visAdmin, IsAdmin: true}}
+			st := &termsStore{target: &models.User{ID: handlertest.VisAdmin, IsAdmin: true}}
 			s := &handlers.AppState{Store: st, Authz: authz.NewResolver(st)}
 			rw := httptest.NewRecorder()
-			call(s, rw, staffRequest("POST", map[string]string{"id": visAdmin}, `{"kind":"byon","days":30}`))
+			call(s, rw, handlertest.StaffRequest("POST", map[string]string{"id": handlertest.VisAdmin}, `{"kind":"byon","days":30}`))
 			if rw.Code != http.StatusForbidden {
 				t.Fatalf("status %d on an admin's account", rw.Code)
 			}

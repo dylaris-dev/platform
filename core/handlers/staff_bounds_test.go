@@ -1,32 +1,19 @@
 package handlers
 
 import (
-	"bytes"
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/store"
-
-	"github.com/gorilla/mux"
 )
 
 // What a STAFF member - a panel capability, not admin - may no longer do.
 // Found by the round-38 audit; the platform has no staff today, so each of
 // these is closed before the first one is hired.
-
-const staffID = "33333333-3333-3333-3333-333333333333"
-
-func staffRequest(method string, vars map[string]string, body string) *http.Request {
-	r := httptest.NewRequest(method, "/x", bytes.NewBufferString(body))
-	ctx := context.WithValue(r.Context(), "isAdmin", false)
-	ctx = context.WithValue(ctx, "userID", staffID)
-	ctx = context.WithValue(ctx, "username", "staff")
-	return mux.SetURLVars(r.WithContext(ctx), vars)
-}
 
 type demoStaffStore struct {
 	store.Store
@@ -92,19 +79,19 @@ func TestPlansWriteCannotBeSpentOnTheCallersOwnAccount(t *testing.T) {
 	}
 	for name, call := range calls {
 		t.Run(name+"/own account", func(t *testing.T) {
-			st := &termsStore{target: &models.User{ID: staffID}}
+			st := &termsStore{target: &models.User{ID: handlertest.StaffID}}
 			s := &AppState{Store: st, Authz: authz.NewResolver(st)}
 			rw := httptest.NewRecorder()
-			call(s, rw, staffRequest("POST", map[string]string{"id": staffID}, `{"kind":"byon","days":30}`))
+			call(s, rw, handlertest.StaffRequest("POST", map[string]string{"id": handlertest.StaffID}, `{"kind":"byon","days":30}`))
 			if rw.Code != http.StatusForbidden {
 				t.Fatalf("status %d on the caller's own account", rw.Code)
 			}
 		})
 		t.Run(name+"/an admin", func(t *testing.T) {
-			st := &termsStore{target: &models.User{ID: visAdmin, IsAdmin: true}}
+			st := &termsStore{target: &models.User{ID: handlertest.VisAdmin, IsAdmin: true}}
 			s := &AppState{Store: st, Authz: authz.NewResolver(st)}
 			rw := httptest.NewRecorder()
-			call(s, rw, staffRequest("POST", map[string]string{"id": visAdmin}, `{"kind":"byon","days":30}`))
+			call(s, rw, handlertest.StaffRequest("POST", map[string]string{"id": handlertest.VisAdmin}, `{"kind":"byon","days":30}`))
 			if rw.Code != http.StatusForbidden {
 				t.Fatalf("status %d on an admin's account", rw.Code)
 			}

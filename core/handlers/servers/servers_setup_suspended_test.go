@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
 
@@ -63,7 +64,7 @@ func TestSetupServerStillWorksForAnAdminWhileTheOwnerIsSuspended(t *testing.T) {
 		billing: &store.UserBilling{UserID: "u1", Status: "suspended"},
 		node:    &models.Node{ID: 7, Token: "node-token-1", Name: "n1", Status: "online"},
 	}
-	h := newServerPowerHandler(fs, newServerPowerRedis(t))
+	h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 
 	body, _ := json.Marshal(map[string]any{
 		"subServerName": "main",

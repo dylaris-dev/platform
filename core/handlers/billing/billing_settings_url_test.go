@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 )
 
 func TestSetBillingSettings_ValidatesThePaymentURL(t *testing.T) {
@@ -28,7 +29,7 @@ func TestSetBillingSettings_ValidatesThePaymentURL(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			fs := newCoreStorageHTTPFakeStore()
+			fs := handlertest.NewSettingsStore()
 			h := NewBillingHandler(&handlers.AppState{Store: fs})
 
 			payload := map[string]string{}
@@ -45,8 +46,8 @@ func TestSetBillingSettings_ValidatesThePaymentURL(t *testing.T) {
 			}
 			if c.wantStatus != http.StatusOK {
 				for k := range valid {
-					if fs.kv[k] != "" {
-						t.Fatalf("a rejected save still wrote settings (%s=%q)", k, fs.kv[k])
+					if fs.KV[k] != "" {
+						t.Fatalf("a rejected save still wrote settings (%s=%q)", k, fs.KV[k])
 					}
 				}
 			}

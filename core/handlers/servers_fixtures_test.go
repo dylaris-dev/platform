@@ -2,29 +2,12 @@ package handlers
 
 import (
 	"errors"
-	"testing"
-
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
 
 // Copies of handlers/servers test fixtures that handlers tests still use.
-
-// newServerPowerRedis returns a real *redis.Client backed by miniredis, used
-// both for the install-cooldown TTL key and (wrapped in a QueueService) for
-// the node command stream.
-func newServerPowerRedis(t *testing.T) *redis.Client {
-	t.Helper()
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis: %v", err)
-	}
-	t.Cleanup(mr.Close)
-	return redis.NewClient(&redis.Options{Addr: mr.Addr()})
-}
 
 // serverPowerFakeStore embeds store.Store (nil) so it satisfies the full
 // interface at compile time; only the methods ServerPowerHandler and

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
 
@@ -57,7 +58,7 @@ func TestRollExternalNodeKey(t *testing.T) {
 		{"node swaps", &store.WarpAPIKey{ID: 1, NodeID: "node-a", BoundNodeID: 9}, `{"releaseVersion":"2026.10.12","linkKeySwap":true}`, true, http.StatusOK},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			rdb, mr := newQuotaHTTPRedis(t)
+			rdb, mr := handlertest.Redis(t)
 			if c.hb != "" {
 				mr.Set("dylaris:discovery:tok", c.hb)
 			}

@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"dylaris-core/handlers/handlertest"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -52,7 +53,7 @@ func TestUploadWithNoRecognisedFilePartIsRefused(t *testing.T) {
 			ctx = context.WithValue(ctx, "isAdmin", true)
 			req = req.WithContext(ctx)
 
-			rdb, _ := newQuotaHTTPRedis(t)
+			rdb, _ := handlertest.Redis(t)
 			h := &FileHandler{state: quotaHTTPState(rdb)}
 			rec := httptest.NewRecorder()
 

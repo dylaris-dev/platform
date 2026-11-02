@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 )
@@ -18,7 +19,7 @@ func powerStateFixture(t *testing.T, status string) (*ServerHandler, *serverPowe
 		server: &models.Server{ID: 1, UUID: "srv-uuid", Status: status, OwnerID: "u1", OwnerName: "alice", NodeID: 7},
 		node:   &models.Node{ID: 7, Token: "node-token-1", Name: "n1", Status: "online"},
 	}
-	return newServerPowerHandler(fs, newServerPowerRedis(t)), fs
+	return newServerPowerHandler(fs, handlertest.RedisClient(t)), fs
 }
 
 func queuedPowerCommands(t *testing.T, h *ServerHandler) int64 {

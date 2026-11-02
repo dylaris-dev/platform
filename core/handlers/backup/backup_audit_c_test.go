@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/services"
 )
@@ -32,7 +33,7 @@ func TestBackupAuditCWiring(t *testing.T) {
 		{"backup.go", "UpdateJob", "if next.Schedule != job.Schedule || next.Timezone != job.Timezone || (next.Enabled && !job.Enabled) || job.NextRunAt == nil {", "every edit restarts the schedule"},
 		{"backup.go", "DownloadRun", "backupDownloadURLTTL", "a backup download link lives an hour"},
 	} {
-		if !strings.Contains(funcBody(t, c.file, c.fn), c.want) {
+		if !strings.Contains(handlertest.FuncBody(t, c.file, c.fn), c.want) {
 			t.Errorf("%s: %s", c.fn, c.why)
 		}
 	}

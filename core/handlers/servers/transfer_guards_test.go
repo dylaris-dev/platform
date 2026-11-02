@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/mux"
@@ -28,7 +29,7 @@ type transferStore struct {
 func (f *transferStore) CountServersByNode(int) (int, error) { return f.onTarget, nil }
 
 func (f *transferStore) GetServerByID(id int) (*models.Server, error) {
-	return &models.Server{ID: id, UUID: "srv-1", OwnerID: visOwner, NodeID: f.node.ID, Status: f.status}, nil
+	return &models.Server{ID: id, UUID: "srv-1", OwnerID: handlertest.VisOwner, NodeID: f.Node.ID, Status: f.status}, nil
 }
 
 func transferAs(t *testing.T, st *transferStore) *httptest.ResponseRecorder {
@@ -42,7 +43,7 @@ func transferAs(t *testing.T, st *transferStore) *httptest.ResponseRecorder {
 	call := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "/x", bytes.NewBufferString(`{"targetNodeId":8}`))
 		ctx := context.WithValue(r.Context(), "isAdmin", false)
-		ctx = context.WithValue(ctx, "userID", visOwner)
+		ctx = context.WithValue(ctx, "userID", handlertest.VisOwner)
 		r = mux.SetURLVars(r.WithContext(ctx), map[string]string{"id": "3"})
 		rw := httptest.NewRecorder()
 		h.TransferServer(rw, r)
@@ -56,11 +57,11 @@ func transferAs(t *testing.T, st *transferStore) *httptest.ResponseRecorder {
 }
 
 func newTransferStore(sourceStatus, serverStatus string) *transferStore {
-	owner := visOwner
+	owner := handlertest.VisOwner
 	return &transferStore{
 		twoNodeFakeStore: &twoNodeFakeStore{
-			foreignFakeStore: foreignFakeStore{node: &models.Node{ID: 7, Status: sourceStatus}, byon: "true"},
-			target:           &models.Node{ID: 8, OwnerID: &owner, Status: "online"},
+			ForeignStore: handlertest.ForeignStore{Node: &models.Node{ID: 7, Status: sourceStatus}, Byon: "true"},
+			target:       &models.Node{ID: 8, OwnerID: &owner, Status: "online"},
 		},
 		status: serverStatus,
 	}

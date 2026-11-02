@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 )
@@ -47,25 +48,25 @@ func TestDiskToolsDoNotOpenACustomersMachineToAnAdmin(t *testing.T) {
 		passCode int
 	}{
 		{"list orphan files", func(h *NodeHandler, w http.ResponseWriter) {
-			h.ListOrphanFiles(w, visAdminRequest("GET", "/x", orphanVars))
+			h.ListOrphanFiles(w, handlertest.VisAdminRequest("GET", "/x", orphanVars))
 		}, http.StatusServiceUnavailable},
 		{"read an orphan file", func(h *NodeHandler, w http.ResponseWriter) {
-			h.GetOrphanFileContent(w, visAdminRequest("GET", "/x?path=server.properties", orphanVars))
+			h.GetOrphanFileContent(w, handlertest.VisAdminRequest("GET", "/x?path=server.properties", orphanVars))
 		}, http.StatusServiceUnavailable},
 		{"inspect an orphan", func(h *NodeHandler, w http.ResponseWriter) {
-			h.InspectOrphan(w, visAdminRequest("GET", "/x", orphanVars))
+			h.InspectOrphan(w, handlertest.VisAdminRequest("GET", "/x", orphanVars))
 		}, http.StatusServiceUnavailable},
 		{"delete an orphan folder", func(h *NodeHandler, w http.ResponseWriter) {
-			h.DeleteOrphanedFolder(w, visAdminRequest("DELETE", "/x?uuid=orphan-1", map[string]string{"id": "7"}))
+			h.DeleteOrphanedFolder(w, handlertest.VisAdminRequest("DELETE", "/x?uuid=orphan-1", map[string]string{"id": "7"}))
 		}, http.StatusServiceUnavailable},
 		{"disk analysis", func(h *NodeHandler, w http.ResponseWriter) {
-			h.GetDiskAnalysis(w, visAdminRequest("GET", "/x", map[string]string{"id": "7"}))
+			h.GetDiskAnalysis(w, handlertest.VisAdminRequest("GET", "/x", map[string]string{"id": "7"}))
 		}, http.StatusOK},
 	}
 
 	for _, rt := range routes {
 		t.Run(rt.name+"/a user's machine is not found", func(t *testing.T) {
-			h := &NodeHandler{state: visState(visOwnedNode(), nil, sql.ErrNoRows)}
+			h := &NodeHandler{state: visState(handlertest.OwnedNode(), nil, sql.ErrNoRows)}
 			rw := httptest.NewRecorder()
 			rt.call(h, rw)
 			if rw.Code != http.StatusNotFound {
@@ -73,7 +74,7 @@ func TestDiskToolsDoNotOpenACustomersMachineToAnAdmin(t *testing.T) {
 			}
 		})
 		t.Run(rt.name+"/a platform machine is still the operator's", func(t *testing.T) {
-			h := &NodeHandler{state: visState(visPlatformNode(), nil, sql.ErrNoRows)}
+			h := &NodeHandler{state: visState(handlertest.PlatformNode(), nil, sql.ErrNoRows)}
 			rw := httptest.NewRecorder()
 			rt.call(h, rw)
 			if rw.Code != rt.passCode {
@@ -90,18 +91,22 @@ func TestDiskToolsDoNotOpenACustomersMachineToAnAdmin(t *testing.T) {
 func TestOrphanRoutesRefuseALiveServer(t *testing.T) {
 	vars := map[string]string{"nodeId": "7", "uuid": "live-1"}
 	calls := map[string]func(h *NodeHandler, w http.ResponseWriter){
-		"list": func(h *NodeHandler, w http.ResponseWriter) { h.ListOrphanFiles(w, visAdminRequest("GET", "/x", vars)) },
-		"read": func(h *NodeHandler, w http.ResponseWriter) {
-			h.GetOrphanFileContent(w, visAdminRequest("GET", "/x?path=a", vars))
+		"list": func(h *NodeHandler, w http.ResponseWriter) {
+			h.ListOrphanFiles(w, handlertest.VisAdminRequest("GET", "/x", vars))
 		},
-		"inspect": func(h *NodeHandler, w http.ResponseWriter) { h.InspectOrphan(w, visAdminRequest("GET", "/x", vars)) },
+		"read": func(h *NodeHandler, w http.ResponseWriter) {
+			h.GetOrphanFileContent(w, handlertest.VisAdminRequest("GET", "/x?path=a", vars))
+		},
+		"inspect": func(h *NodeHandler, w http.ResponseWriter) {
+			h.InspectOrphan(w, handlertest.VisAdminRequest("GET", "/x", vars))
+		},
 		"delete": func(h *NodeHandler, w http.ResponseWriter) {
-			h.DeleteOrphanedFolder(w, visAdminRequest("DELETE", "/x?uuid=live-1", map[string]string{"id": "7"}))
+			h.DeleteOrphanedFolder(w, handlertest.VisAdminRequest("DELETE", "/x?uuid=live-1", map[string]string{"id": "7"}))
 		},
 	}
 	for name, call := range calls {
 		t.Run(name+"/a server row means it is not an orphan", func(t *testing.T) {
-			h := &NodeHandler{state: visState(visPlatformNode(), &models.Server{ID: 3, UUID: "live-1"}, nil)}
+			h := &NodeHandler{state: visState(handlertest.PlatformNode(), &models.Server{ID: 3, UUID: "live-1"}, nil)}
 			rw := httptest.NewRecorder()
 			call(h, rw)
 			if rw.Code != http.StatusBadRequest {
@@ -111,7 +116,7 @@ func TestOrphanRoutesRefuseALiveServer(t *testing.T) {
 		// A store that cannot answer is not "no such server". The delete route
 		// used to discard this error and delete the folder anyway.
 		t.Run(name+"/a database fault is not an orphan", func(t *testing.T) {
-			h := &NodeHandler{state: visState(visPlatformNode(), nil, errors.New("connection refused"))}
+			h := &NodeHandler{state: visState(handlertest.PlatformNode(), nil, errors.New("connection refused"))}
 			rw := httptest.NewRecorder()
 			call(h, rw)
 			if rw.Code != http.StatusInternalServerError {
@@ -124,10 +129,10 @@ func TestOrphanRoutesRefuseALiveServer(t *testing.T) {
 // TestAdoptingAnOrphanOnACustomersMachineIsRefused: adopting inspects the folder
 // and writes a server row onto that hardware for an owner of the admin's choice.
 func TestAdoptingAnOrphanOnACustomersMachineIsRefused(t *testing.T) {
-	h := &NodeHandler{state: visState(visOwnedNode(), nil, sql.ErrNoRows)}
+	h := &NodeHandler{state: visState(handlertest.OwnedNode(), nil, sql.ErrNoRows)}
 	rw := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/disk/orphans/assign", bytes.NewReader(orphanAssignBody()))
-	req = req.WithContext(visAdminRequest(http.MethodPost, "/x", nil).Context())
+	req = req.WithContext(handlertest.VisAdminRequest(http.MethodPost, "/x", nil).Context())
 	h.AssignOrphan(rw, req)
 	if rw.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (%s)", rw.Code, rw.Body.String())
@@ -145,11 +150,11 @@ func TestForceDeleteNeverTouchesACustomersMachine(t *testing.T) {
 		byon bool
 		want int
 	}{
-		{"a user's machine, BYON on", visOwnedNode(), true, http.StatusConflict},
-		{"a platform machine", visPlatformNode(), true, http.StatusBadRequest},
+		{"a user's machine, BYON on", handlertest.OwnedNode(), true, http.StatusConflict},
+		{"a platform machine", handlertest.PlatformNode(), true, http.StatusBadRequest},
 		// With BYON off an owner_id means nothing (decision D6 is still open),
 		// so this step deliberately leaves that case as it was.
-		{"a user's machine, BYON off", visOwnedNode(), false, http.StatusBadRequest},
+		{"a user's machine, BYON off", handlertest.OwnedNode(), false, http.StatusBadRequest},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -157,7 +162,7 @@ func TestForceDeleteNeverTouchesACustomersMachine(t *testing.T) {
 			st.FeatureFlags = tenancyFeatureFlags(c.byon)
 			h := &NodeHandler{state: st}
 			rw := httptest.NewRecorder()
-			h.ForceDeleteNode(rw, visAdminRequest("DELETE", "/x", map[string]string{"id": "7"}))
+			h.ForceDeleteNode(rw, handlertest.VisAdminRequest("DELETE", "/x", map[string]string{"id": "7"}))
 			if rw.Code != c.want {
 				t.Fatalf("status = %d, want %d (%s)", rw.Code, c.want, rw.Body.String())
 			}

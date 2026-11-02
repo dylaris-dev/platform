@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"dylaris-core/handlers/handlertest"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,7 @@ import (
 // Redis is nil here (the publish block is guarded), so this covers only the
 // durable DB path; the live Redis publish is exercised on a real instance.
 func TestSaveBeamSettings_PersistsUploadLimits(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	h := &SettingsHandler{state: &AppState{Store: fs}}
 
 	maxUpload := int64(5) << 30    // 5 GiB
@@ -31,10 +32,10 @@ func TestSaveBeamSettings_PersistsUploadLimits(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
 
-	if got := fs.kv["beam.max_upload_bytes"]; got != "5368709120" {
+	if got := fs.KV["beam.max_upload_bytes"]; got != "5368709120" {
 		t.Errorf("stored beam.max_upload_bytes = %q, want %q", got, "5368709120")
 	}
-	if got := fs.kv["beam.daily_upload_bytes"]; got != "21474836480" {
+	if got := fs.KV["beam.daily_upload_bytes"]; got != "21474836480" {
 		t.Errorf("stored beam.daily_upload_bytes = %q, want %q", got, "21474836480")
 	}
 
@@ -51,7 +52,7 @@ func TestSaveBeamSettings_PersistsUploadLimits(t *testing.T) {
 // the round-trip as a cap: it used to be indistinguishable from "no limit",
 // which is the inversion the platform limit convention removes.
 func TestSaveBeamSettings_ZeroIsACapOfNone(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	h := &SettingsHandler{state: &AppState{Store: fs}}
 
 	zero := int64(0)
@@ -61,7 +62,7 @@ func TestSaveBeamSettings_ZeroIsACapOfNone(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if got := fs.kv["beam.max_upload_bytes"]; got != "0" {
+	if got := fs.KV["beam.max_upload_bytes"]; got != "0" {
 		t.Errorf("stored beam.max_upload_bytes = %q, want %q", got, "0")
 	}
 	loaded := h.LoadBeamSettings()
@@ -75,7 +76,7 @@ func TestSaveBeamSettings_ZeroIsACapOfNone(t *testing.T) {
 // an empty string, because empty means "never saved" and would be re-read as
 // whatever default ships - silently replacing the operator's choice.
 func TestSaveBeamSettings_UploadLimitsDefaultToNoCap(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	h := &SettingsHandler{state: &AppState{Store: fs}}
 
 	body, _ := json.Marshal(BeamSettings{})

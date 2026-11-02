@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/storage/modpack"
 )
@@ -109,7 +110,7 @@ func TestTextEditorRefusesAnOversizedStoredObject(t *testing.T) {
 		t.Fatalf("object at the cap: %d bytes, %v", len(b), err)
 	}
 	for _, fn := range []string{"GetContentText", "SetContentText"} {
-		if body := funcBody(t, "packs_text.go", fn); strings.Contains(body, "prov.Get(") || !strings.Contains(body, "readEditableObject(") {
+		if body := handlertest.FuncBody(t, "packs_text.go", fn); strings.Contains(body, "prov.Get(") || !strings.Contains(body, "readEditableObject(") {
 			t.Errorf("%s does not read through readEditableObject", fn)
 		}
 	}

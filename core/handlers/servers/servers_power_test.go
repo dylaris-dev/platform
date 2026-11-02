@@ -12,13 +12,13 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 )
@@ -165,19 +165,6 @@ func (f *serverPowerFakeStore) CountServersByNode(nodeID int) (int, error) {
 	return f.countServersByNode, f.countServersByNodeErr
 }
 
-// newServerPowerRedis returns a real *redis.Client backed by miniredis, used
-// both for the install-cooldown TTL key and (wrapped in a QueueService) for
-// the node command stream.
-func newServerPowerRedis(t *testing.T) *redis.Client {
-	t.Helper()
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis: %v", err)
-	}
-	t.Cleanup(mr.Close)
-	return redis.NewClient(&redis.Options{Addr: mr.Addr()})
-}
-
 func newServerPowerHandler(fs *serverPowerFakeStore, rdb *redis.Client) *ServerHandler {
 	return &ServerHandler{state: &handlers.AppState{
 		Store: fs,
@@ -218,7 +205,7 @@ func TestServerPowerHandler_InvalidAction(t *testing.T) {
 	for _, action := range cases {
 		t.Run("action="+action, func(t *testing.T) {
 			fs := &serverPowerFakeStore{}
-			h := newServerPowerHandler(fs, newServerPowerRedis(t))
+			h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 			rec := httptest.NewRecorder()
 			h.ServerPowerHandler(rec, serverPowerReq(1, action, "alice", false, "u1"))
 			if rec.Code != http.StatusBadRequest {
@@ -233,7 +220,7 @@ func TestServerPowerHandler_InvalidAction(t *testing.T) {
 
 func TestServerPowerHandler_InvalidJSON(t *testing.T) {
 	fs := &serverPowerFakeStore{}
-	h := newServerPowerHandler(fs, newServerPowerRedis(t))
+	h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 	r := httptest.NewRequest("POST", "/api/servers/1/power", bytes.NewReader([]byte("not json")))
 	r = mux.SetURLVars(r, map[string]string{"id": "1"})
 	ctx := context.WithValue(r.Context(), "username", "alice")
@@ -249,7 +236,7 @@ func TestServerPowerHandler_InvalidJSON(t *testing.T) {
 
 func TestServerPowerHandler_ServerNotFound(t *testing.T) {
 	fs := &serverPowerFakeStore{serverErr: errors.New("no rows")}
-	h := newServerPowerHandler(fs, newServerPowerRedis(t))
+	h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 	rec := httptest.NewRecorder()
 	h.ServerPowerHandler(rec, serverPowerReq(99, "start", "alice", false, "u1"))
 	if rec.Code != http.StatusNotFound {
@@ -264,7 +251,7 @@ func TestServerPowerHandler_PendingSetupBlocked(t *testing.T) {
 	// answers. Without it this passed for the wrong reason: the state checks
 	// used to run before authorization, so a stranger got this message too.
 	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, Status: "pending_setup", OwnerName: "alice", OwnerID: "u1"}}
-	h := newServerPowerHandler(fs, newServerPowerRedis(t))
+	h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 	rec := httptest.NewRecorder()
 	h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))
 	if rec.Code != http.StatusBadRequest {
@@ -285,7 +272,7 @@ func TestServerPowerHandler_StateSaysNothingToAStranger(t *testing.T) {
 	for _, status := range []string{"pending_setup", "disk_full", "online", "stopped"} {
 		t.Run(status, func(t *testing.T) {
 			fs := &serverPowerFakeStore{server: &models.Server{ID: 1, Status: status, OwnerName: "alice", OwnerID: "someone-else"}}
-			h := newServerPowerHandler(fs, newServerPowerRedis(t))
+			h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 			rec := httptest.NewRecorder()
 			h.ServerPowerHandler(rec, serverPowerReq(1, "start", "mallory", false, "u-mallory"))
 			if rec.Code != http.StatusForbidden {
@@ -317,7 +304,7 @@ func TestServerPowerHandler_DiskFull(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.action, func(t *testing.T) {
 			fs := &serverPowerFakeStore{server: &models.Server{ID: 1, Status: "disk_full", OwnerName: "alice", OwnerID: "u1"}}
-			h := newServerPowerHandler(fs, newServerPowerRedis(t))
+			h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 			rec := httptest.NewRecorder()
 			h.ServerPowerHandler(rec, serverPowerReq(1, c.action, "alice", false, "u1"))
 			if rec.Code != c.wantStatus {
@@ -338,7 +325,7 @@ func TestServerPowerHandler_AccessControl(t *testing.T) {
 			server:    &models.Server{ID: 1, Status: "stopped", OwnerName: "alice"},
 			inviteErr: errors.New("no invite"),
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "mallory", false, "u2"))
 		if rec.Code != http.StatusForbidden {
@@ -351,7 +338,7 @@ func TestServerPowerHandler_AccessControl(t *testing.T) {
 			server: &models.Server{ID: 1, Status: "stopped", OwnerName: "alice"},
 			invite: &models.ServerInvite{Permissions: models.TabPermissions{Power: false}},
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "bob", false, "u3"))
 		if rec.Code != http.StatusForbidden {
@@ -370,7 +357,7 @@ func TestServerPowerHandler_AccessControl(t *testing.T) {
 			serverGrant: &store.ServerGrant{UserID: "u3", ServerRoleID: &roleID},
 			serverRole:  &store.ServerRole{ID: roleID, Capabilities: []string{"power.start"}},
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "bob", false, "u3"))
 		if rec.Code != http.StatusOK {
@@ -387,7 +374,7 @@ func TestServerPowerHandler_AccessControl(t *testing.T) {
 			serverGrant: &store.ServerGrant{UserID: "u3", ServerRoleID: &roleID},
 			serverRole:  &store.ServerRole{ID: roleID, Capabilities: []string{"power.start"}},
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "kill", "bob", false, "u3"))
 		if rec.Code != http.StatusForbidden {
@@ -400,7 +387,7 @@ func TestServerPowerHandler_AccessControl(t *testing.T) {
 			server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", OwnerID: "u1", NodeID: 5},
 			node:   &models.Node{ID: 5, Token: "node-tok"},
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))
 		if rec.Code != http.StatusOK {
@@ -430,7 +417,7 @@ func TestServerPowerHandler_ClearsRconNeedsRestartOnStart(t *testing.T) {
 				server: &models.Server{ID: 1, UUID: "srv-uuid", Status: c.status, OwnerName: "alice", OwnerID: "u1", NodeID: 5},
 				node:   &models.Node{ID: 5, Token: "node-tok"},
 			}
-			h := newServerPowerHandler(fs, newServerPowerRedis(t))
+			h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 			rec := httptest.NewRecorder()
 			h.ServerPowerHandler(rec, serverPowerReq(1, c.action, "alice", false, "u1"))
 			if rec.Code != http.StatusOK {
@@ -452,7 +439,7 @@ func TestServerPowerHandler_ClearsRconNeedsRestartOnStart(t *testing.T) {
 func TestServerPowerHandler_ServerSuspended(t *testing.T) {
 	t.Run("non-admin blocked", func(t *testing.T) {
 		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, Status: "suspended", OwnerName: "alice", OwnerID: "u1"}}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))
 		if rec.Code != http.StatusForbidden {
@@ -471,7 +458,7 @@ func TestServerPowerHandler_ServerSuspended(t *testing.T) {
 			server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "suspended", OwnerName: "alice", NodeID: 5},
 			node:   &models.Node{ID: 5, Token: "node-tok"},
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "root", true, "admin1"))
 		if rec.Code != http.StatusOK {
@@ -488,7 +475,7 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 			server:  &models.Server{ID: 1, Status: "stopped", OwnerName: "alice", OwnerID: "u1"},
 			billing: &store.UserBilling{UserID: "u1", Status: "suspended"},
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))
 		if rec.Code != http.StatusForbidden {
@@ -504,7 +491,7 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 			server:  &models.Server{ID: 1, Status: "online", OwnerName: "alice", OwnerID: "u1"},
 			billing: &store.UserBilling{UserID: "u1", Status: "suspended"},
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "restart", "alice", false, "u1"))
 		if rec.Code != http.StatusForbidden {
@@ -518,7 +505,7 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 			billing: &store.UserBilling{UserID: "u1", Status: "suspended"},
 			node:    &models.Node{ID: 5, Token: "node-tok"},
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "stop", "alice", false, "u1"))
 		if rec.Code != http.StatusOK {
@@ -532,7 +519,7 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 			billing: &store.UserBilling{UserID: "owner-1", Status: "suspended"},
 			node:    &models.Node{ID: 5, Token: "node-tok"},
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "root", true, "admin1"))
 		if rec.Code != http.StatusOK {
@@ -547,7 +534,7 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 			node:         &models.Node{ID: 5, Token: "node-tok"},
 			auditEnabled: true,
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "root", true, "admin1"))
 		if rec.Code != http.StatusOK {
@@ -571,7 +558,7 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 			node:         &models.Node{ID: 5, Token: "node-tok"},
 			auditEnabled: true,
 		}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "root", true, "admin1"))
 		if rec.Code != http.StatusOK {
@@ -591,7 +578,7 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 func TestServerPowerHandler_InstallCooldown(t *testing.T) {
 	t.Run("non-admin blocked while cooldown key has TTL", func(t *testing.T) {
 		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", OwnerID: "u1"}}
-		rdb := newServerPowerRedis(t)
+		rdb := handlertest.RedisClient(t)
 		if err := rdb.Set(context.Background(), "dylaris:server:srv-uuid:install-start", "1", 30*time.Second).Err(); err != nil {
 			t.Fatalf("seed cooldown key: %v", err)
 		}
@@ -605,7 +592,7 @@ func TestServerPowerHandler_InstallCooldown(t *testing.T) {
 
 	t.Run("admin bypasses the cooldown", func(t *testing.T) {
 		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", NodeID: 5}, node: &models.Node{ID: 5, Token: "node-tok"}}
-		rdb := newServerPowerRedis(t)
+		rdb := handlertest.RedisClient(t)
 		if err := rdb.Set(context.Background(), "dylaris:server:srv-uuid:install-start", "1", 30*time.Second).Err(); err != nil {
 			t.Fatalf("seed cooldown key: %v", err)
 		}
@@ -619,7 +606,7 @@ func TestServerPowerHandler_InstallCooldown(t *testing.T) {
 
 	t.Run("no cooldown key present, not blocked", func(t *testing.T) {
 		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", OwnerID: "u1", NodeID: 5}, node: &models.Node{ID: 5, Token: "node-tok"}}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		rec := httptest.NewRecorder()
 		h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))
 		if rec.Code != http.StatusOK {
@@ -654,7 +641,7 @@ func TestServerPowerHandler_StatusTransitionMatrix(t *testing.T) {
 				server: &models.Server{ID: 1, UUID: "srv-uuid", Status: c.status, OwnerName: "alice", OwnerID: "u1", NodeID: 5},
 				node:   &models.Node{ID: 5, Token: "node-tok"},
 			}
-			h := newServerPowerHandler(fs, newServerPowerRedis(t))
+			h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 			rec := httptest.NewRecorder()
 			h.ServerPowerHandler(rec, serverPowerReq(1, c.action, "alice", false, "u1"))
 			if rec.Code != c.wantStatus {
@@ -678,7 +665,7 @@ func TestServerPowerHandler_NodeNotFound(t *testing.T) {
 		server:  &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerName: "alice", NodeID: 5},
 		nodeErr: errors.New("no node"),
 	}
-	h := newServerPowerHandler(fs, newServerPowerRedis(t))
+	h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 	rec := httptest.NewRecorder()
 	h.ServerPowerHandler(rec, serverPowerReq(1, "start", "root", true, "admin1"))
 	if rec.Code != http.StatusNotFound {
@@ -728,7 +715,7 @@ func TestServerPowerHandler_HappyPath_QueuesCommandAndUpdatesState(t *testing.T)
 				server: &models.Server{ID: 42, UUID: "srv-uuid-42", Status: c.startStatus, OwnerName: "alice", OwnerID: "u1", NodeID: 5},
 				node:   &models.Node{ID: 5, Token: "node-tok-42"},
 			}
-			rdb := newServerPowerRedis(t)
+			rdb := handlertest.RedisClient(t)
 			h := newServerPowerHandler(fs, rdb)
 			rec := httptest.NewRecorder()
 			h.ServerPowerHandler(rec, serverPowerReq(42, c.action, "alice", false, "u1"))
@@ -782,7 +769,7 @@ func TestServerPowerHandler_QueueSendCommandFailure(t *testing.T) {
 	t.Cleanup(func() { brokenRDB.Close() })
 	h := &ServerHandler{state: &handlers.AppState{
 		Store: fs,
-		Redis: newServerPowerRedis(t), // cooldown check needs a working Redis
+		Redis: handlertest.RedisClient(t), // cooldown check needs a working Redis
 		Queue: services.NewQueueService(brokenRDB),
 		Authz: authz.NewResolver(fs),
 	}}
@@ -801,7 +788,7 @@ func TestServerPowerHandler_QueueSendCommandFailure(t *testing.T) {
 func TestByonNodeServerCapReached(t *testing.T) {
 	t.Run("under the fallback capN (unknown topology) is not reached", func(t *testing.T) {
 		fs := &serverPowerFakeStore{countServersByNode: 3}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		reached, capN := h.byonNodeServerCapReached(context.Background(), &models.Node{ID: 1, Token: "tok"})
 		if reached || capN != byonNodeServerFallbackCap {
 			t.Fatalf("reached=%v capN=%d, want false/%d", reached, capN, byonNodeServerFallbackCap)
@@ -810,7 +797,7 @@ func TestByonNodeServerCapReached(t *testing.T) {
 
 	t.Run("at the fallback capN is reached", func(t *testing.T) {
 		fs := &serverPowerFakeStore{countServersByNode: byonNodeServerFallbackCap}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		reached, capN := h.byonNodeServerCapReached(context.Background(), &models.Node{ID: 1, Token: "tok"})
 		if !reached || capN != byonNodeServerFallbackCap {
 			t.Fatalf("reached=%v capN=%d, want true/%d", reached, capN, byonNodeServerFallbackCap)
@@ -819,7 +806,7 @@ func TestByonNodeServerCapReached(t *testing.T) {
 
 	t.Run("over the fallback capN is reached", func(t *testing.T) {
 		fs := &serverPowerFakeStore{countServersByNode: byonNodeServerFallbackCap + 5}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		reached, _ := h.byonNodeServerCapReached(context.Background(), &models.Node{ID: 1, Token: "tok"})
 		if !reached {
 			t.Fatalf("reached = false, want true")
@@ -828,7 +815,7 @@ func TestByonNodeServerCapReached(t *testing.T) {
 
 	t.Run("store error on CountServersByNode fails open (never blocks)", func(t *testing.T) {
 		fs := &serverPowerFakeStore{countServersByNodeErr: errors.New("db down")}
-		h := newServerPowerHandler(fs, newServerPowerRedis(t))
+		h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 		reached, capN := h.byonNodeServerCapReached(context.Background(), &models.Node{ID: 1, Token: "tok"})
 		if reached || capN != byonNodeServerFallbackCap {
 			t.Fatalf("reached=%v capN=%d, want false/%d (fail-open)", reached, capN, byonNodeServerFallbackCap)
@@ -838,7 +825,7 @@ func TestByonNodeServerCapReached(t *testing.T) {
 	// With a real CPUPinningService wired to miniredis and a published topology,
 	// the capN becomes factor x logical cores instead of the fallback ceiling.
 	t.Run("known topology uses factor x cores instead of the fallback", func(t *testing.T) {
-		rdb := newServerPowerRedis(t)
+		rdb := handlertest.RedisClient(t)
 		fs := &serverPowerFakeStore{
 			settings:           map[string]string{"byon.max_servers_per_core": "3"},
 			countServersByNode: 11,

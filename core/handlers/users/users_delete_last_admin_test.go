@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -31,7 +32,7 @@ func (f *lastAdminFakeStore) GetSetting(string) (string, error) { return "", nil
 
 func (f *lastAdminFakeStore) GetUserByID(string) (*models.User, error) {
 	u := f.target
-	u.Password = testReauthHash // the acting admin re-authenticates
+	u.Password = handlertest.ReauthHash // the acting admin re-authenticates
 	return &u, nil
 }
 func (f *lastAdminFakeStore) ListUsers() ([]models.User, error) {
@@ -48,7 +49,7 @@ func (f *lastAdminFakeStore) DeleteUser(string) error                      { f.d
 func (f *lastAdminFakeStore) ListTemplateIDsByOwner(string) ([]int, error) { return nil, nil }
 
 func lastAdminRequest() *http.Request {
-	req := httptest.NewRequest(http.MethodDelete, "/api/users/"+targetID, strings.NewReader(`{"reauth":{"password":"`+testReauthPassword+`"}}`))
+	req := httptest.NewRequest(http.MethodDelete, "/api/users/"+targetID, strings.NewReader(`{"reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 	ctx := context.WithValue(req.Context(), "username", "someone-else")
 	ctx = context.WithValue(ctx, "userID", "actor-id")
 	// An admin: the last-admin rule is the question here. A non-admin may not

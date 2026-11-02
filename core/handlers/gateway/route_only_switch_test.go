@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services"
 )
 
@@ -16,10 +17,10 @@ import (
 // without its own gate the handler would take addresses without checking the
 // subscription at all.
 func TestCreateLinkRouteIsClosedWithRouteOnlyOff(t *testing.T) {
-	state := &handlers.AppState{FeatureFlags: services.NewFeatureFlags(flagSettings{
+	state := &handlers.AppState{FeatureFlags: services.NewFeatureFlags(&handlertest.SettingsStore{KV: map[string]string{
 		"feature_byon_enabled":       "true",
 		"feature_route_only_enabled": "false",
-	})}
+	}})}
 	h := &GatewayHandler{state: state}
 	req := httptest.NewRequest(http.MethodPost, "/api/gateway/link-routes",
 		strings.NewReader(`{"linkId":"link-x","subdomain":"a","targetHost":"127.0.0.1"}`))

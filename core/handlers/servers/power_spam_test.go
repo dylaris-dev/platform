@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"dylaris-core/handlers/handlertest"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -102,7 +103,7 @@ func TestPowerLockRefusesTheSecondAction(t *testing.T) {
 }
 
 func TestTakePowerLock(t *testing.T) {
-	rdb := newServerPowerRedis(t)
+	rdb := handlertest.RedisClient(t)
 	ctx := context.Background()
 	if !takePowerLock(ctx, rdb, "a") {
 		t.Fatal("first take refused")
@@ -116,7 +117,7 @@ func TestTakePowerLock(t *testing.T) {
 	if !takePowerLock(ctx, nil, "a") {
 		t.Fatal("no Redis must not refuse")
 	}
-	broken := newServerPowerRedis(t)
+	broken := handlertest.RedisClient(t)
 	broken.Close()
 	if !takePowerLock(ctx, broken, "a") {
 		t.Fatal("a Redis error must let the action through")

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 )
 
 // TestCoreStorage_SaveConfig_SwitchToPathClearsStoredS3Secret guards Minor 6:
@@ -15,21 +16,21 @@ import (
 // it doesn't linger orphaned (with S3SecretSet still reporting true) once
 // the s3 config it belonged to is no longer in use.
 func TestCoreStorage_SaveConfig_SwitchToPathClearsStoredS3Secret(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	seedCoreStorageS3(fs)
 	// A Redis with one heartbeat: saving a host-path backend now consults the
 	// online-Core count, and refuses when it cannot be taken at all.
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
-	dir := testConnectionProbeDir(t)
+	dir := handlertest.ConnectionProbeDir(t)
 	body, _ := json.Marshal(handlers.CoreStorageConfig{Backend: "path", Path: dir, PathConfirmed: true})
 	rw := httptest.NewRecorder()
 	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage", bytes.NewReader(body)))
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.kv[handlers.KeyCoreStorageS3SecretKey] != "" {
-		t.Errorf("stored s3 secret not cleared after switching to path backend, got %q", fs.kv[handlers.KeyCoreStorageS3SecretKey])
+	if fs.KV[handlers.KeyCoreStorageS3SecretKey] != "" {
+		t.Errorf("stored s3 secret not cleared after switching to path backend, got %q", fs.KV[handlers.KeyCoreStorageS3SecretKey])
 	}
 }
 
@@ -37,7 +38,7 @@ func TestCoreStorage_SaveConfig_SwitchToPathClearsStoredS3Secret(t *testing.T) {
 // clipboard-pasted key/secret/endpoint/bucket with surrounding whitespace
 // must be trimmed before persisting, not silently break auth later.
 func TestCoreStorage_SaveConfig_TrimsS3FieldWhitespace(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	h := NewCoreStorageHandler(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
 
 	body, _ := json.Marshal(handlers.CoreStorageConfig{
@@ -49,16 +50,16 @@ func TestCoreStorage_SaveConfig_TrimsS3FieldWhitespace(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.kv[handlers.KeyCoreStorageS3Endpoint] != "https://s3.example.com" {
-		t.Errorf("s3Endpoint not trimmed, got %q", fs.kv[handlers.KeyCoreStorageS3Endpoint])
+	if fs.KV[handlers.KeyCoreStorageS3Endpoint] != "https://s3.example.com" {
+		t.Errorf("s3Endpoint not trimmed, got %q", fs.KV[handlers.KeyCoreStorageS3Endpoint])
 	}
-	if fs.kv[handlers.KeyCoreStorageS3Bucket] != "bucket1" {
-		t.Errorf("s3Bucket not trimmed, got %q", fs.kv[handlers.KeyCoreStorageS3Bucket])
+	if fs.KV[handlers.KeyCoreStorageS3Bucket] != "bucket1" {
+		t.Errorf("s3Bucket not trimmed, got %q", fs.KV[handlers.KeyCoreStorageS3Bucket])
 	}
-	if fs.kv[handlers.KeyCoreStorageS3AccessKey] != "key1" {
-		t.Errorf("s3AccessKey not trimmed, got %q", fs.kv[handlers.KeyCoreStorageS3AccessKey])
+	if fs.KV[handlers.KeyCoreStorageS3AccessKey] != "key1" {
+		t.Errorf("s3AccessKey not trimmed, got %q", fs.KV[handlers.KeyCoreStorageS3AccessKey])
 	}
-	if fs.kv[handlers.KeyCoreStorageS3SecretKey] != "sekret" {
-		t.Errorf("s3SecretKey not trimmed, got %q", fs.kv[handlers.KeyCoreStorageS3SecretKey])
+	if fs.KV[handlers.KeyCoreStorageS3SecretKey] != "sekret" {
+		t.Errorf("s3SecretKey not trimmed, got %q", fs.KV[handlers.KeyCoreStorageS3SecretKey])
 	}
 }

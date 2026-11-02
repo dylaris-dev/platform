@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -28,7 +29,7 @@ func (f *deleteUserFakeStore) GetSetting(string) (string, error) { return "", ni
 
 func (f *deleteUserFakeStore) GetUserByID(id string) (*models.User, error) {
 	// The password is the acting admin's: deleting re-authenticates now.
-	return &models.User{ID: id, Username: "customer", Email: "customer@example.test", Password: testReauthHash}, nil
+	return &models.User{ID: id, Username: "customer", Email: "customer@example.test", Password: handlertest.ReauthHash}, nil
 }
 
 func (f *deleteUserFakeStore) DeleteUser(string) error                      { return f.deleteErr }
@@ -57,7 +58,7 @@ func (f *deleteUserFakeStore) InsertAuditIdentity(e *models.AuditEventIdentity) 
 }
 
 func deleteUserRequest() *http.Request {
-	req := httptest.NewRequest(http.MethodDelete, "/api/users/11111111-1111-1111-1111-111111111111", strings.NewReader(`{"reauth":{"password":"`+testReauthPassword+`"}}`))
+	req := httptest.NewRequest(http.MethodDelete, "/api/users/11111111-1111-1111-1111-111111111111", strings.NewReader(`{"reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 	ctx := context.WithValue(req.Context(), "username", "admin")
 	ctx = context.WithValue(ctx, "userID", "admin-id")
 	ctx = context.WithValue(ctx, "isAdmin", true)

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 )
 
 // TestValidatePublicBaseURL pins the input rules for core_public_url. A node is
@@ -51,7 +52,7 @@ func TestValidatePublicBaseURL(t *testing.T) {
 // It also pins that the two Solder settings stay gone. The boot schema deletes
 // them; a save that wrote them again would put back what the removal took out.
 func TestModpackSettingsHandler_Set_PersistsCorePublicURL(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	h := newModpackSettingsTestHandler(fs)
 
 	body, _ := json.Marshal(modpackSettings{
@@ -63,11 +64,11 @@ func TestModpackSettingsHandler_Set_PersistsCorePublicURL(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if got := fs.kv["core_public_url"]; got != "https://panel.example.com/" {
+	if got := fs.KV["core_public_url"]; got != "https://panel.example.com/" {
 		t.Errorf("settings[core_public_url] = %q, want the saved value", got)
 	}
 	for _, k := range []string{"solder_mirror_url", "solder_delivery_mode"} {
-		if _, ok := fs.kv[k]; ok {
+		if _, ok := fs.KV[k]; ok {
 			t.Errorf("save wrote %q, a setting Solder's removal deleted", k)
 		}
 	}
@@ -88,7 +89,7 @@ func TestModpackSettingsHandler_Set_PersistsCorePublicURL(t *testing.T) {
 }
 
 func TestModpackSettingsHandler_Set_RejectsBadCorePublicURL(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	h := newModpackSettingsTestHandler(fs)
 
 	body, _ := json.Marshal(modpackSettings{Provider: "local", CorePublicURL: "panel.example.com"})
@@ -98,7 +99,7 @@ func TestModpackSettingsHandler_Set_RejectsBadCorePublicURL(t *testing.T) {
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (%s)", rw.Code, rw.Body.String())
 	}
-	if _, ok := fs.kv["modpack_storage_provider"]; ok {
-		t.Errorf("a rejected save still reached the store, kv = %v", fs.kv)
+	if _, ok := fs.KV["modpack_storage_provider"]; ok {
+		t.Errorf("a rejected save still reached the store, kv = %v", fs.KV)
 	}
 }

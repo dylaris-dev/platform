@@ -155,9 +155,7 @@ func TestALateWriteBackDoesNotUndoAReEnable(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			st, _, node := voiceNodeState(t, &voiceWriteBackStore{row: c.row}, path, "svc_after.properties")
 			writeBackVoiceConfig(st, srv)
-			node.mu.Lock()
-			wrote := node.writes > 0
-			node.mu.Unlock()
+			wrote := node.WriteCount() > 0
 			if wrote != c.wantWrite {
 				t.Fatalf("wrote = %v, want %v", wrote, c.wantWrite)
 			}

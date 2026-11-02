@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"dylaris-core/handlers/handlertest"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -104,11 +105,11 @@ func TestModCacheFirstSaveIsNotARebind(t *testing.T) {
 // ORDERING: for mod-cache the refusal has to land before Reconfigure, which
 // dials and authenticates against the submitted address inside the request.
 func TestSaveSMTPConfig_RefusesARebindOnTheWire(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	fs.kv["smtp.default.host"] = "smtp.provider.example"
-	fs.kv["smtp.default.port"] = "587"
-	fs.kv["smtp.default.username"] = "postmaster@example.com"
-	fs.kv["smtp.default.password"] = "the-real-password"
+	fs := handlertest.NewSettingsStore()
+	fs.KV["smtp.default.host"] = "smtp.provider.example"
+	fs.KV["smtp.default.port"] = "587"
+	fs.KV["smtp.default.username"] = "postmaster@example.com"
+	fs.KV["smtp.default.password"] = "the-real-password"
 	h := NewAuthSettingsHandler(&AppState{Store: fs})
 
 	body, _ := json.Marshal(SMTPConfigDTO{
@@ -123,19 +124,19 @@ func TestSaveSMTPConfig_RefusesARebindOnTheWire(t *testing.T) {
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (%s)", rw.Code, rw.Body.String())
 	}
-	if got := fs.kv["smtp.default.host"]; got != "smtp.provider.example" {
+	if got := fs.KV["smtp.default.host"]; got != "smtp.provider.example" {
 		t.Fatalf("the host was rebound anyway, so the next send delivers the password to it: %q", got)
 	}
-	if got := fs.kv["smtp.default.password"]; got != "the-real-password" {
+	if got := fs.KV["smtp.default.password"]; got != "the-real-password" {
 		t.Fatalf("stored password changed: %q", got)
 	}
 }
 
 func TestModCacheSet_RefusesARebindOnTheWire(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	fs.kv[settingModCacheAddr] = "cache.internal:6379"
-	fs.kv[settingModCacheUsername] = "dylaris"
-	fs.kv[settingModCachePassword] = "the-real-password"
+	fs := handlertest.NewSettingsStore()
+	fs.KV[settingModCacheAddr] = "cache.internal:6379"
+	fs.KV[settingModCacheUsername] = "dylaris"
+	fs.KV[settingModCachePassword] = "the-real-password"
 	h := NewModCacheSettingsHandler(&AppState{Store: fs})
 
 	body, _ := json.Marshal(modCacheSettings{
@@ -148,10 +149,10 @@ func TestModCacheSet_RefusesARebindOnTheWire(t *testing.T) {
 	if rw.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400 (%s)", rw.Code, rw.Body.String())
 	}
-	if got := fs.kv[settingModCacheAddr]; got != "cache.internal:6379" {
+	if got := fs.KV[settingModCacheAddr]; got != "cache.internal:6379" {
 		t.Fatalf("the address was rebound anyway: %q", got)
 	}
-	if got := fs.kv[settingModCachePassword]; got != "the-real-password" {
+	if got := fs.KV[settingModCachePassword]; got != "the-real-password" {
 		t.Fatalf("stored password changed: %q", got)
 	}
 }

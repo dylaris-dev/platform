@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -58,30 +59,30 @@ func (testConnErr) Error() string { return "no such connection" }
 // TestSwitchModpackConfig_PersistsConnectionID: switching modpacks to a
 // connection target persists modpack_storage_connection_id.
 func TestSwitchModpackConfig_PersistsConnectionID(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
+	fs := handlertest.NewSettingsStore()
 	res := NewStorageDataSetResolver(&handlers.AppState{Store: fs})
 
 	cfg := handlers.CoreStorageConfig{Backend: "s3", ConnectionID: 5, S3Bucket: "b", S3AccessKey: "k", S3SecretKey: "s"}
 	if err := res.switchModpackConfig(cfg); err != nil {
 		t.Fatalf("switchModpackConfig: %v", err)
 	}
-	if fs.kv[handlers.KeyModpackStorageConnectionID] != "5" {
-		t.Errorf("modpack connection id not persisted, got %q", fs.kv[handlers.KeyModpackStorageConnectionID])
+	if fs.KV[handlers.KeyModpackStorageConnectionID] != "5" {
+		t.Errorf("modpack connection id not persisted, got %q", fs.KV[handlers.KeyModpackStorageConnectionID])
 	}
 }
 
 // TestSwitchModpackConfig_InlineClearsStaleConnectionID: switching modpacks to an
 // inline target clears a previously-selected connection (the flagged bug).
 func TestSwitchModpackConfig_InlineClearsStaleConnectionID(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	fs.kv[handlers.KeyModpackStorageConnectionID] = "9" // a previously-selected connection
+	fs := handlertest.NewSettingsStore()
+	fs.KV[handlers.KeyModpackStorageConnectionID] = "9" // a previously-selected connection
 	res := NewStorageDataSetResolver(&handlers.AppState{Store: fs})
 
 	cfg := handlers.CoreStorageConfig{Backend: "s3", ConnectionID: 0, S3Bucket: "b", S3AccessKey: "k", S3SecretKey: "s"}
 	if err := res.switchModpackConfig(cfg); err != nil {
 		t.Fatalf("switchModpackConfig: %v", err)
 	}
-	if fs.kv[handlers.KeyModpackStorageConnectionID] != "" {
-		t.Errorf("inline switch left a stale connection id: %q", fs.kv[handlers.KeyModpackStorageConnectionID])
+	if fs.KV[handlers.KeyModpackStorageConnectionID] != "" {
+		t.Errorf("inline switch left a stale connection id: %q", fs.KV[handlers.KeyModpackStorageConnectionID])
 	}
 }

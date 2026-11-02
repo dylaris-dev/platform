@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 )
 
@@ -17,7 +18,7 @@ import (
 // server - this handler has no RCON wired at all, so reaching it would panic.
 func TestOnlinePlayersAreServedFromTheShortCache(t *testing.T) {
 	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid"}}
-	rdb := newServerPowerRedis(t)
+	rdb := handlertest.RedisClient(t)
 	rdb.Set(context.Background(), "dylaris:server:srv-uuid:players-online", `{"success":true,"output":"There are 2 of a max of 20 players online: a, b"}`, 0)
 	h := &PlayersHandler{state: &AppState{Store: fs, Redis: rdb}}
 	req := mux.SetURLVars(httptest.NewRequest("GET", "/api/servers/1/players/online", nil), map[string]string{"id": "1"})

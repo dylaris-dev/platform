@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 )
 
@@ -33,7 +34,7 @@ func TestEveryNodeListEndpointEnrichesFromTheHeartbeat(t *testing.T) {
 
 	for _, site := range sites {
 		t.Run(site.fn, func(t *testing.T) {
-			body := funcBody(t, site.file, site.fn)
+			body := handlertest.FuncBody(t, site.file, site.fn)
 			if !strings.Contains(body, `"nodes"`) {
 				t.Fatalf("%s no longer returns a node list - move or drop this site", site.fn)
 			}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/handlers/users"
 
 	"github.com/gorilla/mux"
@@ -261,7 +262,7 @@ func deleteUserPackObjects(t *testing.T, fail bool) {
 	h, fs, root := newPackCleanup(t)
 	d := seedBuild(t, h, root, &fs.builds[0])
 	st := &handlers.AppState{Store: &userDeletePackStore{userDeleteWarpStore: &userDeleteWarpStore{}, pc: fs, failDelete: fail}, ClusterSecret: h.state.ClusterSecret}
-	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+cleanupOwner, bytes.NewBufferString(`{"reauth":{"password":"`+testReauthPassword+`"}}`))
+	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+cleanupOwner, bytes.NewBufferString(`{"reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 	ctx := context.WithValue(r.Context(), "userID", "admin-id")
 	ctx = context.WithValue(ctx, "username", "admin")
 	ctx = context.WithValue(ctx, "isAdmin", true)

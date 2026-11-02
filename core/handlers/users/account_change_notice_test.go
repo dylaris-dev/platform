@@ -7,6 +7,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/mailer"
 )
 
@@ -26,13 +27,13 @@ func TestTheOwnerHearsAboutAnOperatorsChange(t *testing.T) {
 	t.Run("password", func(t *testing.T) {
 		mails := captureAccountMail(t)
 		base := newGuardFakeStore()
-		base.users[guardAdmin].Password = testReauthHash
+		base.users[guardAdmin].Password = handlertest.ReauthHash
 		base.users[guardMember].Email = "member@example.test"
 		fs := &keyedGuardStore{guardFakeStore: base}
 		h := NewUserHandler(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
 		rec := httptest.NewRecorder()
 		h.ResetUserPassword(rec, guardRequest("PUT", guardAdmin, true, guardMember,
-			`{"password":"a-brand-new-password","reauth":{"password":"`+testReauthPassword+`"}}`))
+			`{"password":"a-brand-new-password","reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status %d: %s", rec.Code, rec.Body)
 		}

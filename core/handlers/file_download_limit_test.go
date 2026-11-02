@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/handlertest"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -32,10 +33,10 @@ func TestGetTransferLimit_ResolvesTheDownloadKeys(t *testing.T) {
 		adminDownload = 9 * 1024 * 1024
 		userUpload    = 3 * 1024 * 1024
 	)
-	fs := newCoreStorageHTTPFakeStore()
-	fs.kv["fm.user_download_limit"] = strconv.Itoa(userDownload)
-	fs.kv["fm.admin_download_limit"] = strconv.Itoa(adminDownload)
-	fs.kv["fm.user_upload_limit"] = strconv.Itoa(userUpload)
+	fs := handlertest.NewSettingsStore()
+	fs.KV["fm.user_download_limit"] = strconv.Itoa(userDownload)
+	fs.KV["fm.admin_download_limit"] = strconv.Itoa(adminDownload)
+	fs.KV["fm.user_upload_limit"] = strconv.Itoa(userUpload)
 	h := &FileHandler{state: &AppState{Store: fs}}
 
 	cases := []struct {
@@ -61,8 +62,8 @@ func TestGetTransferLimit_ResolvesTheDownloadKeys(t *testing.T) {
 // An unset or unparseable setting must fall back to the compiled default, not
 // to zero - a zero budget would refuse every download outright.
 func TestGetTransferLimit_DownloadFallsBackToTheDefault(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	fs.kv["fm.user_download_limit"] = "not-a-number"
+	fs := handlertest.NewSettingsStore()
+	fs.KV["fm.user_download_limit"] = "not-a-number"
 	h := &FileHandler{state: &AppState{Store: fs}}
 
 	if got := h.getTransferLimit(downloadLimitRequest(false), "download"); got == nil || *got != 1*1024*1024*1024 {
@@ -139,9 +140,9 @@ func TestDownloadBudget_RefuseMidStreamAborts(t *testing.T) {
 // value an operator could type to mean "nobody may transfer" granted them the
 // default allowance instead - and "no limit" was not expressible at all.
 func TestGetTransferLimit_ZeroIsNoneAndUnlimitedIsNoCap(t *testing.T) {
-	fs := newCoreStorageHTTPFakeStore()
-	fs.kv["fm.user_upload_limit"] = "0"
-	fs.kv["fm.user_download_limit"] = "unlimited"
+	fs := handlertest.NewSettingsStore()
+	fs.KV["fm.user_upload_limit"] = "0"
+	fs.KV["fm.user_download_limit"] = "unlimited"
 	h := &FileHandler{state: &AppState{Store: fs}}
 
 	got := h.getTransferLimit(downloadLimitRequest(false), "upload")
