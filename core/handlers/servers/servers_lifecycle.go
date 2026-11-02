@@ -1511,7 +1511,7 @@ func (h *ServerHandler) GetInstallCooldown(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
-	srv, err := h.d.Store.GetServerByID(serverID)
+	srv, err := authz.ServerByID(r.Context(), h.d.Store, serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return

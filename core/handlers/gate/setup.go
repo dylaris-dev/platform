@@ -14,8 +14,9 @@ import (
 // that is the one question asked: an EXISTS that stops at the first row. It
 // used to be COUNT(*) of admins, then of users - two scans on every request.
 //
-// We deliberately do NOT cache it. The value of "setup completes on Core A,
-// Core B unlocks on the very next request" is worth one indexed-cheap SELECT.
+// The store caches only a TRUE answer, for a second (store/read_cache.go), so
+// "setup completes on Core A, Core B unlocks on the very next request" holds:
+// a false is always asked again.
 func (s Gates) RequireSetupComplete(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/setup/") {

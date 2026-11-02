@@ -32,11 +32,15 @@ import (
 // a genuinely idle machine both leave 0 behind.
 func EnrichNodesWithLiveStats(ctx context.Context, st NodeServerCounter, rdb *redis.Client, nodes []models.Node) map[string]bool {
 	seen := make(map[string]bool, len(nodes))
+	// One GROUP BY for every node, not a COUNT per node. A failed read leaves
+	// the counts as they were, as a failed per-node read did.
+	var counts map[int]int
+	if st != nil {
+		counts, _ = st.CountServersPerNode()
+	}
 	for i := range nodes {
-		if st != nil {
-			if count, err := st.CountServersByNode(nodes[i].ID); err == nil {
-				nodes[i].ServerCount = count
-			}
+		if counts != nil {
+			nodes[i].ServerCount = counts[nodes[i].ID]
 		}
 		hb, ok := LoadNodeHeartbeat(ctx, rdb, nodes[i].Token)
 		if !ok {
@@ -61,7 +65,7 @@ func EnrichNodesWithLiveStats(ctx context.Context, st NodeServerCounter, rdb *re
 // NodeServerCounter is the one store method this needs, kept narrow so the
 // collector's tests do not have to build a whole store.
 type NodeServerCounter interface {
-	CountServersByNode(nodeID int) (int, error)
+	CountServersPerNode() (map[int]int, error)
 }
 
 // LoadNodeHeartbeat reads one node's heartbeat. The second return is false when

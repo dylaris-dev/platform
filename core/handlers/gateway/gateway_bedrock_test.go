@@ -175,7 +175,6 @@ func TestRouteEditionWhileSwitchedOff(t *testing.T) {
 		t.Fatalf("set: %d", rec.Code)
 	}
 	bs.audience = "off"
-	e.h.d.FeatureFlags.Invalidate(services.BedrockSettingKey)
 	if rec, out := bedrockCall(e, http.MethodPut, edition(false, true), false); rec.Code != http.StatusOK {
 		t.Fatalf("keep Bedrock, drop Java while off: %d %v", rec.Code, out)
 	}

@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -66,5 +67,32 @@ func TestNoMemoryLimitReachesThePanel(t *testing.T) {
 	}
 	if raw, _ := json.Marshal(nodes[1]); strings.Contains(string(raw), "noMemoryLimit") {
 		t.Errorf("a silent node is flagged: %s", raw)
+	}
+}
+
+type perNodeCounter struct {
+	counts map[int]int
+	err    error
+	calls  int
+}
+
+func (c *perNodeCounter) CountServersPerNode() (map[int]int, error) {
+	c.calls++
+	return c.counts, c.err
+}
+
+// One count statement for the whole fleet; a node with no row reads 0, and a
+// failed read leaves the counts untouched as a failed per-node read did.
+func TestServerCountsInOneRead(t *testing.T) {
+	nodes := []models.Node{{ID: 1, ServerCount: 9}, {ID: 2, ServerCount: 9}, {ID: 3, ServerCount: 9}}
+	c := &perNodeCounter{counts: map[int]int{1: 4, 3: 1}}
+	EnrichNodesWithLiveStats(t.Context(), c, nil, nodes)
+	if c.calls != 1 || nodes[0].ServerCount != 4 || nodes[1].ServerCount != 0 || nodes[2].ServerCount != 1 {
+		t.Fatalf("calls %d counts %d/%d/%d", c.calls, nodes[0].ServerCount, nodes[1].ServerCount, nodes[2].ServerCount)
+	}
+	failed := &perNodeCounter{err: errors.New("db down")}
+	EnrichNodesWithLiveStats(t.Context(), failed, nil, nodes)
+	if nodes[0].ServerCount != 4 {
+		t.Fatalf("a failed read changed the count to %d", nodes[0].ServerCount)
 	}
 }

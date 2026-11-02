@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/authz"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
@@ -314,7 +315,7 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request) {
 	serverID := mux.Vars(r)["id"]
 
-	server, err := h.d.Store.GetServerByID(httpx.MustAtoi(serverID))
+	server, err := authz.ServerByID(r.Context(), h.d.Store, httpx.MustAtoi(serverID))
 	if err != nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
 		return
@@ -901,7 +902,7 @@ func (h *GatewayHandler) setServerProxyAuto(w http.ResponseWriter, r *http.Reque
 // "yes" (expects a PROXY header), "no", or "unknown" (not reported yet, or an
 // older node).
 func (h *GatewayHandler) GetServerProxyProtocol(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.d.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := authz.ServerByID(r.Context(), h.d.Store, httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return

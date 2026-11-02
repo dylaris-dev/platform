@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.02.4
+
+### Features
+- A panel request needs far fewer database queries: settings and the module list are read from a one-second
+  in-process snapshot and a request loads its user and server once. `/api/system/features` went from 12 to 2. `core`
+- A setting or feature flag changed on one Core replica applies on the others within a second; it used to take up to
+  a minute. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.02.3
 
 ### Features

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/authz"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
@@ -320,6 +321,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 					// after a 401 is what the panel already does.
 					isAdmin := false
 					userID := ""
+					var ticketUser *models.User
 					if h.d.Store != nil {
 						user, uerr := h.d.Store.GetUserByUsername(username)
 						if errors.Is(uerr, sql.ErrNoRows) || (uerr == nil && user == nil) {
@@ -341,11 +343,13 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 						}
 						isAdmin = user.IsAdmin
 						userID = user.ID
+						ticketUser = user
 					}
 					ctx := context.WithValue(r.Context(), "username", username)
 					ctx = context.WithValue(ctx, "isAdmin", isAdmin)
 					if userID != "" {
 						ctx = context.WithValue(ctx, "userID", userID)
+						ctx = authz.WithUser(ctx, ticketUser)
 					}
 					next(w, r.WithContext(ctx))
 					return
@@ -517,6 +521,10 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			}
 
 			ctx = context.WithValue(ctx, "userID", user.ID)
+			// The row itself, for handlers in this request that need more of it
+			// than the id (profile, usage). Request-scoped: never reused across
+			// requests.
+			ctx = authz.WithUser(ctx, user)
 
 			// Authorization comes from the ROW, never from the claim.
 			//
@@ -796,11 +804,14 @@ func (h *AuthHandler) GetProfileHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	username := r.Context().Value("username").(string)
 
-	// STORE REFACTOR
-	user, err := h.d.Store.GetUserByUsername(username)
-	if err != nil {
-		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
-		return
+	// The row AuthMiddleware loaded for this request, else a fresh read.
+	user := authz.UserFromContext(r.Context())
+	if user == nil || user.Username != username {
+		var err error
+		if user, err = h.d.Store.GetUserByUsername(username); err != nil {
+			httpx.SendJSONError(w, "User not found", http.StatusNotFound)
+			return
+		}
 	}
 
 	// Clear password before sending

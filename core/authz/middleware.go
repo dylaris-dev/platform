@@ -43,6 +43,9 @@ func (r *Resolver) RequireCap(capID string) func(http.HandlerFunc) http.HandlerF
 				denyJSON(w, "Forbidden", http.StatusForbidden)
 				return
 			}
+			if c.Scope == ScopeServer {
+				req = req.WithContext(withServer(req.Context(), res.server))
+			}
 			// Every server-scoped ACTION passes here with both the capability and
 			// the server already resolved, which is why the audit record is taken
 			// here rather than in each handler - see write_audit.go for what leaving

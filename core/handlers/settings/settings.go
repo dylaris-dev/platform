@@ -1268,7 +1268,6 @@ func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request
 		if err := h.d.Store.SetSetting("feature_auto_move_enabled", "false"); err != nil {
 			log.Printf("routing-mode: failed to disable auto-move feature flag: %v", err)
 		}
-		h.d.FeatureFlags.Invalidate("feature_auto_move_enabled")
 		if err := h.d.Store.ResetAllAutoMove(); err != nil {
 			log.Printf("routing-mode: failed to reset per-server auto-move opt-ins: %v", err)
 		}

@@ -87,7 +87,7 @@ var emptyJSONArray = json.RawMessage("[]")
 // straight out of the active sub-server's JSON files.
 func (h *PlayersHandler) GetLists(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, err := h.d.Store.GetServerByID(serverID)
+	srv, err := authz.ServerByID(r.Context(), h.d.Store, serverID)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -235,7 +235,7 @@ func (h *PlayersHandler) readPlayerList(nodeID int, serverUUID, subServer, filen
 // needs players.read rather than the right to run any command.
 func (h *PlayersHandler) GetOnline(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, err := h.d.Store.GetServerByID(serverID)
+	srv, err := authz.ServerByID(r.Context(), h.d.Store, serverID)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return

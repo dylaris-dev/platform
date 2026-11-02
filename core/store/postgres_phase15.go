@@ -90,6 +90,7 @@ func (s *PostgresStore) GetUserAccountPolicy() (bool, int, error) {
 }
 
 func (s *PostgresStore) SetUserAccountPolicy(allowChange bool, cooldownDays int) error {
+	defer s.invalidateSettings()
 	if cooldownDays < 0 {
 		cooldownDays = 0
 	}

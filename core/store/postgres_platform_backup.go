@@ -81,7 +81,7 @@ func (s *PostgresStore) CreatePlatformBackupJob(j *models.PlatformBackupJob) (in
 	err = s.db.QueryRow(`
 		INSERT INTO platform_backup_jobs (name, schedule, selection, storage_id, retention_count, enabled, next_run_at, timezone)
 		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8) RETURNING id`,
-		j.Name, j.Schedule, sel, nullableInt(j.StorageID), j.RetentionCount, j.Enabled, nullableTime(j.NextRunAt), backupJobZone(j.Timezone)).Scan(&id)
+		j.Name, j.Schedule, string(sel), nullableInt(j.StorageID), j.RetentionCount, j.Enabled, nullableTime(j.NextRunAt), backupJobZone(j.Timezone)).Scan(&id)
 	return id, err
 }
 
@@ -143,7 +143,7 @@ func (s *PostgresStore) UpdatePlatformBackupJob(j *models.PlatformBackupJob) err
 		UPDATE platform_backup_jobs
 		SET name=$1, schedule=$2, selection=$3::jsonb, storage_id=$4, retention_count=$5, enabled=$6, next_run_at=$7, timezone=$8
 		WHERE id=$9`,
-		j.Name, j.Schedule, sel, nullableInt(j.StorageID), j.RetentionCount, j.Enabled, nullableTime(j.NextRunAt), backupJobZone(j.Timezone), j.ID)
+		j.Name, j.Schedule, string(sel), nullableInt(j.StorageID), j.RetentionCount, j.Enabled, nullableTime(j.NextRunAt), backupJobZone(j.Timezone), j.ID)
 	if err != nil {
 		return err
 	}

@@ -6,8 +6,6 @@ import (
 	"errors"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 )
 
 // settingsReader is the slice of the Store interface this service needs.
@@ -16,46 +14,23 @@ type settingsReader interface {
 	GetSetting(key string) (string, error)
 }
 
-// FeatureFlags is a 60-second-cached read of boolean platform feature toggles
-// stored in the settings table. The cache is best-effort — a writer that
-// flips a flag should call Invalidate(key) so its own subsequent reads pick
-// up the new value within the same Core process; cross-process staleness is
-// bounded by the cache TTL.
+// FeatureFlags reads boolean, integer and string platform toggles from the
+// settings table. It holds no cache of its own: the store answers GetSetting
+// from its in-memory settings snapshot (store/read_cache.go), which is at most
+// a second old and invalidated by every write through the store. There used to
+// be a 60-second cache here as well, with an Invalidate every writer had to
+// remember to call; a flag flipped on another replica took up to a minute.
 type FeatureFlags struct {
-	store    settingsReader
-	mu       sync.Mutex
-	cache    map[string]cachedFlag
-	cacheInt map[string]cachedInt
-	cacheTTL time.Duration
-}
-
-type cachedFlag struct {
-	value bool
-	at    time.Time
-}
-
-type cachedInt struct {
-	value int
-	at    time.Time
+	store settingsReader
 }
 
 func NewFeatureFlags(st settingsReader) *FeatureFlags {
-	return &FeatureFlags{
-		store:    st,
-		cache:    map[string]cachedFlag{},
-		cacheInt: map[string]cachedInt{},
-		cacheTTL: 60 * time.Second,
-	}
+	return &FeatureFlags{store: st}
 }
 
 // Get returns the boolean value for key, defaulting to defaultV when the
 // setting is missing or unparseable.
 func (f *FeatureFlags) Get(_ context.Context, key string, defaultV bool) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if cf, ok := f.cache[key]; ok && time.Since(cf.at) < f.cacheTTL {
-		return cf.value
-	}
 	v, err := f.store.GetSetting(key)
 	if err != nil || v == "" {
 		return defaultV
@@ -64,20 +39,13 @@ func (f *FeatureFlags) Get(_ context.Context, key string, defaultV bool) bool {
 	if parseErr != nil {
 		return defaultV
 	}
-	f.cache[key] = cachedFlag{value: b, at: time.Now()}
 	return b
 }
 
 // GetFailClosed is Get for a flag whose OFF state opens something. A setting
 // that was never saved still reads as defaultV, but a settings table that cannot
-// be read answers true and is not cached, so a database fault never switches a
-// fence off for the next minute.
+// be read answers true, so a database fault never switches a fence off.
 func (f *FeatureFlags) GetFailClosed(_ context.Context, key string, defaultV bool) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if cf, ok := f.cache[key]; ok && time.Since(cf.at) < f.cacheTTL {
-		return cf.value
-	}
 	v, err := f.store.GetSetting(key)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return true
@@ -86,7 +54,6 @@ func (f *FeatureFlags) GetFailClosed(_ context.Context, key string, defaultV boo
 	if err != nil || v == "" || parseErr != nil {
 		b = defaultV
 	}
-	f.cache[key] = cachedFlag{value: b, at: time.Now()}
 	return b
 }
 
@@ -105,13 +72,8 @@ func (f *FeatureFlags) RouteOnlyOwnershipInForce(ctx context.Context) bool {
 }
 
 // GetInt returns the integer value for key, defaulting to defaultV when the
-// setting is missing or unparseable. Cached like Get.
+// setting is missing or unparseable.
 func (f *FeatureFlags) GetInt(_ context.Context, key string, defaultV int) int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if ci, ok := f.cacheInt[key]; ok && time.Since(ci.at) < f.cacheTTL {
-		return ci.value
-	}
 	v, err := f.store.GetSetting(key)
 	if err != nil || v == "" {
 		return defaultV
@@ -120,7 +82,6 @@ func (f *FeatureFlags) GetInt(_ context.Context, key string, defaultV int) int {
 	if perr != nil {
 		return defaultV
 	}
-	f.cacheInt[key] = cachedInt{value: n, at: time.Now()}
 	return n
 }
 
@@ -255,8 +216,7 @@ func (f *FeatureFlags) IsBYONEnabled(ctx context.Context) bool {
 // letting a customer bring a node.
 //
 // Unset, it FOLLOWS the BYON flag, which is what it was gated on until it had
-// one: an operator who never touches it sees no change. Get does not cache a
-// default, so the fallback tracks BYON live.
+// one: an operator who never touches it sees no change.
 func (f *FeatureFlags) IsRouteOnlyEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_route_only_enabled", f.IsBYONEnabled(ctx))
 }
@@ -358,8 +318,7 @@ func (f *FeatureFlags) TabProxyMaxShareLinksPerUser(ctx context.Context) int {
 }
 
 // GetString returns the raw string value for key, defaulting to defaultV when the
-// setting is missing or empty. Unlike Get/GetInt it is not cached (callers are
-// low-frequency), so it always reflects the latest write without invalidation.
+// setting is missing or empty.
 func (f *FeatureFlags) GetString(_ context.Context, key, defaultV string) string {
 	v, err := f.store.GetSetting(key)
 	if err != nil || strings.TrimSpace(v) == "" {
@@ -408,13 +367,4 @@ func (f *FeatureFlags) WarpRebalanceIntervalMin(ctx context.Context) int {
 		return v
 	}
 	return 5
-}
-
-// Invalidate drops the cached entry for a key so the next Get re-reads from
-// the store. Called by settings PUT handlers after a write.
-func (f *FeatureFlags) Invalidate(key string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.cache, key)
-	delete(f.cacheInt, key)
 }

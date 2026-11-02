@@ -46,7 +46,7 @@ func syncModpackModule(st store.Store, modpacksOn, authoringOn bool) error {
 	}
 	role := modpackModuleRole(authoringOn)
 
-	modules, err := st.ListModules()
+	modules, err := store.FreshModules(st)
 	if err != nil {
 		return err
 	}

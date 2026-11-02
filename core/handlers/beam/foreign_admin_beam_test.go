@@ -35,8 +35,8 @@ func foreignDeps(node *models.Node) Deps {
 	st := &handlertest.ForeignStore{Node: node, Byon: "true"}
 	flags := services.NewFeatureFlags(st)
 	d := Deps{Store: st, Authz: authz.NewResolver(st)}
-	d.Authz.SetForeignNode(func(nodeID int, userID string) bool {
-		return access.NodeOwnedByOther(st, flags, nodeID, userID)
+	d.Authz.SetForeignNode(func(srv *models.Server, userID string) bool {
+		return access.ServerNodeOwnedByOther(st, flags, srv, userID)
 	})
 	return d
 }

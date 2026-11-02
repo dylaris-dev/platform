@@ -18,4 +18,5 @@ func (f *nodeListStore) GetSetting(k string) (string, error) { return f.settings
 
 func (f *nodeListStore) ListNodes() ([]models.Node, error) { return f.nodes, nil }
 
-func (f *nodeListStore) CountServersByNode(int) (int, error) { return 0, nil }
+func (f *nodeListStore) CountServersByNode(int) (int, error)       { return 0, nil }
+func (f *nodeListStore) CountServersPerNode() (map[int]int, error) { return nil, nil }

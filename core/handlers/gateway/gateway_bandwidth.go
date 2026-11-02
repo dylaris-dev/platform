@@ -149,7 +149,6 @@ func (h *GatewayBandwidthHandler) SetRebalanceMode(w http.ResponseWriter, r *htt
 		httpx.SendJSONError(w, "Failed to save mode", http.StatusInternalServerError)
 		return
 	}
-	h.d.FeatureFlags.Invalidate("warp_rebalance_mode")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "mode": req.Mode})
 }

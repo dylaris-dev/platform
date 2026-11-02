@@ -228,8 +228,8 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Set PUT /api/admin/settings/features — write the bundle. Each setting key
-// is persisted, its cached flag is invalidated, and a features.changed event
-// is published so the panel re-renders banners / nav gating.
+// is persisted (the store drops its settings snapshot) and a features.changed
+// event is published so the panel re-renders banners / nav gating.
 // PANEL settings.write (RequireCap at the route).
 func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	var req featureSettingsPayload
@@ -323,21 +323,20 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	authoringChanged := authoringWas != authoringNow
 
 	writes := []struct {
-		key      string
-		val      bool
-		send     bool
-		cacheKey string
-		evtName  string
+		key     string
+		val     bool
+		send    bool
+		evtName string
 	}{
-		{"feature_tickets_enabled", ticketsNow, req.Tickets != nil, "feature_tickets_enabled", "tickets"},
-		{"feature_modpacks_enabled", modpacksNow, req.Modpacks != nil, "feature_modpacks_enabled", "modpacks"},
-		{"feature_modpack_authoring_enabled", authoringNow, req.ModpackAuthoring != nil || forceAuthoringWrite, "feature_modpack_authoring_enabled", "modpackAuthoring"},
-		{"feature_auto_move_enabled", pick(req.AutoMove, false), req.AutoMove != nil, "feature_auto_move_enabled", "autoMove"},
-		{"feature_byon_enabled", pick(req.Byon, false), req.Byon != nil, "feature_byon_enabled", "byon"},
-		{"feature_route_only_enabled", pick(req.RouteOnly, false), req.RouteOnly != nil, "feature_route_only_enabled", "routeOnly"},
-		{"apikeys_user_enabled", pick(req.UserAPIKeys, false), req.UserAPIKeys != nil, "apikeys_user_enabled", "userApiKeys"},
-		{services.ProxyProtocolSettingKey, pick(req.ProxyProtocol, false), req.ProxyProtocol != nil, services.ProxyProtocolSettingKey, "proxyProtocol"},
-		{services.VoiceChatSettingKey, pick(req.VoiceChat, false), req.VoiceChat != nil, services.VoiceChatSettingKey, "voiceChat"},
+		{"feature_tickets_enabled", ticketsNow, req.Tickets != nil, "tickets"},
+		{"feature_modpacks_enabled", modpacksNow, req.Modpacks != nil, "modpacks"},
+		{"feature_modpack_authoring_enabled", authoringNow, req.ModpackAuthoring != nil || forceAuthoringWrite, "modpackAuthoring"},
+		{"feature_auto_move_enabled", pick(req.AutoMove, false), req.AutoMove != nil, "autoMove"},
+		{"feature_byon_enabled", pick(req.Byon, false), req.Byon != nil, "byon"},
+		{"feature_route_only_enabled", pick(req.RouteOnly, false), req.RouteOnly != nil, "routeOnly"},
+		{"apikeys_user_enabled", pick(req.UserAPIKeys, false), req.UserAPIKeys != nil, "userApiKeys"},
+		{services.ProxyProtocolSettingKey, pick(req.ProxyProtocol, false), req.ProxyProtocol != nil, "proxyProtocol"},
+		{services.VoiceChatSettingKey, pick(req.VoiceChat, false), req.VoiceChat != nil, "voiceChat"},
 	}
 	for _, kv := range writes {
 		if !kv.send {
@@ -347,7 +346,6 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		h.d.FeatureFlags.Invalidate(kv.cacheKey)
 		h.d.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
 			"feature": kv.evtName,
 			"enabled": kv.val,
@@ -364,7 +362,6 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		h.d.FeatureFlags.Invalidate(services.ModConfigsSettingKey)
 		h.d.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
 			"feature": "modConfigs",
 			"enabled": *req.ModConfigs != "off",
@@ -376,7 +373,6 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		h.d.FeatureFlags.Invalidate(services.OwnStorageSettingKey)
 		h.d.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
 			"feature": "ownStorage",
 			"enabled": *req.OwnStorage != "off",
@@ -388,7 +384,6 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		h.d.FeatureFlags.Invalidate(services.BedrockSettingKey)
 		h.d.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
 			"feature": "bedrock",
 			"enabled": *req.Bedrock != "off",
@@ -414,7 +409,6 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		h.d.FeatureFlags.Invalidate("apikeys_user_allowed_caps")
 	}
 
 	// Bring the per-user column in line with the new global answer, so the users
@@ -518,7 +512,6 @@ func (h *FeatureSettingsHandler) saveTemplateSettings(ctx context.Context, req *
 		if err := h.d.Store.SetSetting(r.key, *r.val); err != nil {
 			return err
 		}
-		h.d.FeatureFlags.Invalidate(r.key)
 		h.d.Events.Publish(ctx, "features.changed", map[string]interface{}{
 			"feature": r.evt,
 			"enabled": *r.val != "off",

@@ -115,3 +115,35 @@ func TestNodeAddressIsWithheldOnASingleServerToo(t *testing.T) {
 		t.Errorf("address = %q, want it withheld", srv.NodeAddress)
 	}
 }
+
+// countingRedactStore counts node reads.
+type countingRedactStore struct {
+	redactFakeStore
+	nodeReads int
+}
+
+func (f *countingRedactStore) GetNodeByID(id int) (*models.Node, error) {
+	f.nodeReads++
+	return f.redactFakeStore.GetNodeByID(id)
+}
+
+// List rows carry their node's owner, so redaction reads no node at all and
+// gives the answer the node read gave: own machine keeps the address, anyone
+// else's or the platform's loses it.
+func TestNodeAddressFromTheJoinedOwner(t *testing.T) {
+	st := &countingRedactStore{redactFakeStore: redactFakeStore{settings: map[string]string{"routing_mode": "gateway"}}}
+	servers := []models.Server{
+		{ID: 10, NodeID: 1, NodeAddress: "203.0.113.9", NodeOwnerLoaded: true},
+		{ID: 11, NodeID: 2, NodeAddress: "198.51.100.4", NodeOwnerLoaded: true, NodeOwnerID: strp("tenant")},
+		{ID: 12, NodeID: 3, NodeAddress: "192.0.2.7", NodeOwnerLoaded: true, NodeOwnerID: strp("someone-else")},
+	}
+	access.RedactNodeAddress(st, func() bool { return true }, servers, false, "tenant")
+	if st.nodeReads != 0 {
+		t.Fatalf("read %d nodes, want 0", st.nodeReads)
+	}
+	for i, want := range []string{"", "198.51.100.4", ""} {
+		if servers[i].NodeAddress != want {
+			t.Errorf("server %d address %q, want %q", servers[i].ID, servers[i].NodeAddress, want)
+		}
+	}
+}

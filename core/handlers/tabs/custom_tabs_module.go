@@ -33,7 +33,7 @@ func syncCustomTabsModule(st store.Store, enabled bool, audience string) error {
 		audience = "all"
 	}
 
-	modules, err := st.ListModules()
+	modules, err := store.FreshModules(st)
 	if err != nil {
 		return err
 	}

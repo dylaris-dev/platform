@@ -28,9 +28,10 @@ type nodeListStore struct {
 	nodes    []models.Node
 }
 
-func (f *nodeListStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
-func (f *nodeListStore) ListNodes() ([]models.Node, error)   { return f.nodes, nil }
-func (f *nodeListStore) CountServersByNode(int) (int, error) { return 0, nil }
+func (f *nodeListStore) GetSetting(k string) (string, error)       { return f.settings[k], nil }
+func (f *nodeListStore) ListNodes() ([]models.Node, error)         { return f.nodes, nil }
+func (f *nodeListStore) CountServersByNode(int) (int, error)       { return 0, nil }
+func (f *nodeListStore) CountServersPerNode() (map[int]int, error) { return nil, nil }
 
 func listNodesFor(t *testing.T, rdb *redis.Client, nodes []models.Node) map[string]*bool {
 	t.Helper()

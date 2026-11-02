@@ -50,7 +50,8 @@ func OwnedByOther(flags *services.FeatureFlags, r *http.Request, node *models.No
 }
 
 // NodeOwnedByOther is OwnedByOther by node id and user, for the resolver, which
-// has no request. main installs it with SetForeignNode.
+// has no request. main installs ServerNodeOwnedByOther, which asks this when
+// the server row did not carry its node's owner.
 //
 // A node it cannot read counts as foreign, and so does a flag (see
 // OwnershipInForce): the cost is an admin refused during a database fault, not
@@ -65,6 +66,20 @@ func NodeOwnedByOther(st store.Store, flags *services.FeatureFlags, nodeID int, 
 		return true
 	}
 	return UserOwnedByOther(flags, node.OwnerID, userID)
+}
+
+// ServerNodeOwnedByOther is NodeOwnedByOther for a server row, main's
+// SetForeignNode predicate. A row from GetServerByID/GetServerByUUID carries
+// its node's owner from the same query (NodeOwnerLoaded), so the node is not
+// read a second time; any other row falls back to reading the node.
+func ServerNodeOwnedByOther(st store.Store, flags *services.FeatureFlags, srv *models.Server, userID string) bool {
+	if srv == nil {
+		return true
+	}
+	if srv.NodeOwnerLoaded {
+		return UserOwnedByOther(flags, srv.NodeOwnerID, userID)
+	}
+	return NodeOwnedByOther(st, flags, srv.NodeID, userID)
 }
 
 // UserOwnedByOther is the same question for anything that carries its owner's

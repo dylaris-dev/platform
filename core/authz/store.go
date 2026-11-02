@@ -18,3 +18,10 @@ type Store interface {
 	GetServerGrant(serverID int, userID string) (*store.ServerGrant, error)
 	GetAccountGrant(ownerUserID, userID string) (*store.ServerGrant, error)
 }
+
+// grantPairStore is the one-statement form of GetServerGrant + GetAccountGrant,
+// with each grant's server role joined. *store.PostgresStore has it; a store
+// without it is asked the two questions separately, with the same result.
+type grantPairStore interface {
+	GetServerAndAccountGrants(serverID int, ownerUserID, userID string) (direct, account *store.ServerGrant, err error)
+}

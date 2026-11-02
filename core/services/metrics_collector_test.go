@@ -26,8 +26,9 @@ func (f *metricsFakeStore) ListNodes() ([]models.Node, error) { return f.nodes, 
 
 // The collector enriches the node rows before reading their live figures, so
 // this is now one of the methods it calls. serversByNode is keyed by node ID.
-func (f *metricsFakeStore) CountServersByNode(id int) (int, error) { return f.serversByNode[id], nil }
-func (f *metricsFakeStore) CountUsers() (int, error)               { return f.users, nil }
+func (f *metricsFakeStore) CountServersByNode(id int) (int, error)    { return f.serversByNode[id], nil }
+func (f *metricsFakeStore) CountServersPerNode() (map[int]int, error) { return f.serversByNode, nil }
+func (f *metricsFakeStore) CountUsers() (int, error)                  { return f.users, nil }
 func (f *metricsFakeStore) ListServers(string) ([]models.Server, error) {
 	return f.servers, nil
 }

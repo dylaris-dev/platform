@@ -131,7 +131,7 @@ func (s *PostgresStore) CreateModrinthWatch(ctx context.Context, w *models.Modri
 	if w.FollowPack {
 		packID = w.PackID
 	}
-	if err = tx.QueryRowContext(ctx, `INSERT INTO modrinth_watches(user_id,build_id,spec,pack_id) VALUES($1,$2,$3,$4) RETURNING id`, w.UserID, w.BuildID, spec, packID).Scan(&w.ID); err != nil {
+	if err = tx.QueryRowContext(ctx, `INSERT INTO modrinth_watches(user_id,build_id,spec,pack_id) VALUES($1,$2,$3,$4) RETURNING id`, w.UserID, w.BuildID, string(spec), packID).Scan(&w.ID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -226,7 +226,7 @@ func (s *PostgresStore) CompleteModrinthWatch(ctx context.Context, w models.Modr
 		if marshalErr != nil {
 			return marshalErr
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE modrinth_watches SET delivered=$2,result=$3,last_error=$4,last_checked=NOW(),next_check=$5,spec=$6 WHERE id=$1`, w.ID, notified, result, strings.TrimSpace(failure), time.Now().Add(delay), spec)
+		_, err = tx.ExecContext(ctx, `UPDATE modrinth_watches SET delivered=$2,result=$3,last_error=$4,last_checked=NOW(),next_check=$5,spec=$6 WHERE id=$1`, w.ID, string(notified), string(result), strings.TrimSpace(failure), time.Now().Add(delay), string(spec))
 		if err != nil {
 			return err
 		}

@@ -126,7 +126,7 @@ func (s *PostgresStore) CreateStorageConnection(c *models.StorageConnection) (in
 	var id int
 	err = s.db.QueryRow(
 		`INSERT INTO storage_connections (name, provider, config, access_key, secret_enc) VALUES ($1, $2, $3::jsonb, $4, $5) RETURNING id`,
-		c.Name, c.Provider, cfg, c.AccessKey, enc,
+		c.Name, c.Provider, string(cfg), c.AccessKey, enc,
 	).Scan(&id)
 	if isUniqueViolation(err) {
 		return 0, ErrNameTaken
@@ -145,7 +145,7 @@ func (s *PostgresStore) UpdateStorageConnection(c *models.StorageConnection) err
 	}
 	res, err := s.db.Exec(
 		`UPDATE storage_connections SET name = $1, provider = $2, config = $3::jsonb, access_key = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $5`,
-		c.Name, c.Provider, cfg, c.AccessKey, c.ID,
+		c.Name, c.Provider, string(cfg), c.AccessKey, c.ID,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {

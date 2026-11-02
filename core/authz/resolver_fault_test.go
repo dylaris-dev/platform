@@ -20,7 +20,7 @@ func (f *faultStore) GetServerByID(int) (*models.Server, error) { return nil, f.
 // exist grants nothing that exists, so the short-circuit may stay; one that
 // cannot be READ must not open, or a database fault opens whatever it is.
 func TestResolve_AnAdminAndAServerThatCannotBeLoaded(t *testing.T) {
-	foreign := func(int, string) bool { return false }
+	foreign := func(*models.Server, string) bool { return false }
 	id := Identity{UserID: "admin-1", IsAdmin: true}
 
 	r := NewResolver(&faultStore{err: sql.ErrNoRows})

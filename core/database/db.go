@@ -17,7 +17,14 @@ func InitDB(cfg config.Config) (*sql.DB, error) {
 	if sslMode == "" {
 		sslMode = "disable"
 	}
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+	// binary_parameters=yes: lib/pq sends a parameterised statement as ONE
+	// Parse/Bind/Execute/Sync round trip instead of Parse/Sync + Bind/Execute/
+	// Sync - half the round trips (and transactions in pg_stat) per statement.
+	// It changes how one Go type is encoded: a []byte argument goes out in
+	// BINARY format, which is right for bytea and wrong for json/jsonb (Postgres
+	// expects a version byte). JSON is therefore always bound as a string; see
+	// TestNoJSONBoundAsBytes.
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s binary_parameters=yes",
 		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName, sslMode)
 
 	db, err := sql.Open("postgres", connStr)

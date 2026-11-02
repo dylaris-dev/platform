@@ -32,9 +32,9 @@ func foreignState(node *models.Node) Deps {
 }
 
 // foreignNodeOf is main's SetForeignNode predicate over a test Deps.
-func foreignNodeOf(d Deps) func(nodeID int, userID string) bool {
-	return func(nodeID int, userID string) bool {
-		return access.NodeOwnedByOther(d.Store, d.FeatureFlags, nodeID, userID)
+func foreignNodeOf(d Deps) func(srv *models.Server, userID string) bool {
+	return func(srv *models.Server, userID string) bool {
+		return access.ServerNodeOwnedByOther(d.Store, d.FeatureFlags, srv, userID)
 	}
 }
 

@@ -558,6 +558,7 @@ type nodeFakeStore struct {
 
 func (f *nodeFakeStore) ListNodes() ([]models.Node, error)           { return f.nodes, nil }
 func (f *nodeFakeStore) CountServersByNode(id int) (int, error)      { return f.perNode[id], nil }
+func (f *nodeFakeStore) CountServersPerNode() (map[int]int, error)   { return f.perNode, nil }
 func (f *nodeFakeStore) CountUsers() (int, error)                    { return 0, nil }
 func (f *nodeFakeStore) ListServers(string) ([]models.Server, error) { return nil, nil }
 

@@ -481,7 +481,7 @@ func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	srv, err := h.d.Store.GetServerByID(serverID)
+	srv, err := authz.ServerByID(r.Context(), h.d.Store, serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return

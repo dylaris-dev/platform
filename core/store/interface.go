@@ -187,6 +187,7 @@ type Store interface {
 	// cannot show.
 	ServerDiskLimitsByNode(nodeID int) (map[string]int64, error)
 	CountServersByNode(nodeID int) (int, error)
+	CountServersPerNode() (map[int]int, error)
 	ListServersByNode(nodeID int) ([]models.Server, error)
 	// ListServerPinningByNode is every server on the node with id, pinning
 	// mode and cpuset only.

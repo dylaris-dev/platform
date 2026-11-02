@@ -113,7 +113,7 @@ func TestAdminOnACustomersMachineSeesSettingsFieldsOnlyWhenGranted(t *testing.T)
 	resolver := authz.NewResolver(tabListAuthzStore{grants: map[int]*store.ServerGrant{
 		1: {CapOverrides: store.CapOverrides{Grant: []string{"overview.read", "console.read"}}},
 	}})
-	resolver.SetForeignNode(func(int, string) bool { return true })
+	resolver.SetForeignNode(func(*models.Server, string) bool { return true })
 	state := testDeps(Deps{Authz: resolver})
 
 	byon := settingsFieldsServer(1, "admin")
@@ -161,7 +161,7 @@ func TestAdminServerListBlanksSettingsFieldsOnACustomersMachine(t *testing.T) {
 	resolver := authz.NewResolver(tabListAuthzStore{grants: map[int]*store.ServerGrant{
 		1: {CapOverrides: store.CapOverrides{Grant: []string{"console.read"}}},
 	}})
-	resolver.SetForeignNode(func(int, string) bool { return true })
+	resolver.SetForeignNode(func(*models.Server, string) bool { return true })
 	h := &ServerHandler{d: testDeps(Deps{Store: adminListStore{}, Authz: resolver})}
 	r := httptest.NewRequest("GET", "/api/admin/servers", nil)
 	ctx := context.WithValue(r.Context(), "userID", "admin-1")

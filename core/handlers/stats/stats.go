@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"dylaris-core/authz"
 	"dylaris-core/handlers/guard"
 
 	"dylaris-core/handlers/httpx"
@@ -41,7 +42,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.d.Store.GetServerByID(serverID)
+	srv, err := authz.ServerByID(r.Context(), h.d.Store, serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -172,7 +173,7 @@ func (h *StatsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.d.Store.GetServerByID(serverID)
+	srv, err := authz.ServerByID(r.Context(), h.d.Store, serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -241,7 +242,7 @@ func (h *StatsHandler) GetDisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.d.Store.GetServerByID(serverID)
+	srv, err := authz.ServerByID(r.Context(), h.d.Store, serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -291,7 +292,7 @@ func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
-	srv, err := h.d.Store.GetServerByID(serverID)
+	srv, err := authz.ServerByID(r.Context(), h.d.Store, serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return

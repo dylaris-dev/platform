@@ -116,6 +116,7 @@ func (s *PostgresStore) ResealAtRest(fromSecret, toSecret string) (*ResealReport
 		return nil, fmt.Errorf("reseal: begin: %w", err)
 	}
 	defer tx.Rollback()
+	defer s.invalidateSettings()
 
 	rep := &ResealReport{}
 
@@ -183,8 +184,11 @@ func resealColumn(tx *sql.Tx, table, idCol, valCol string, fromKey, toKey []byte
 		return b, err
 	}
 
+	// id is read as text whatever its column type (int, uuid, text). Read
+	// into an any it came back as []byte, which binary_parameters sends in
+	// binary format - a hard error against an int or uuid column.
 	type pending struct {
-		id  any
+		id  string
 		val string
 	}
 	// Read the whole set before writing any of it. A cursor held open across

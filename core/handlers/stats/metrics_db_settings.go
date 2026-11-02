@@ -250,16 +250,15 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 // is written out at length.
 // setRecording writes the long-term statistics switch.
 //
-// Deliberately the same three steps the feature bundle performs - persist,
-// invalidate the cached flag, publish features.changed - because the panel gates
-// the Statistics screen on that event and nothing here would tell it otherwise.
+// Deliberately the same steps the feature bundle performs - persist, publish
+// features.changed - because the panel gates the Statistics screen on that
+// event and nothing here would tell it otherwise.
 // The KEY is unchanged (`feature_metrics_enabled`); only the endpoint that owns
 // writing it moved.
 func (h *MetricsDBHandler) setRecording(r *http.Request, on bool) error {
 	if err := h.d.Store.SetSetting(services.MetricsEnabledSetting, strconv.FormatBool(on)); err != nil {
 		return err
 	}
-	h.d.FeatureFlags.Invalidate(services.MetricsEnabledSetting)
 	h.d.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
 		"feature": "metrics",
 		"enabled": on,

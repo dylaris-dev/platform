@@ -46,6 +46,10 @@ type ServerGrant struct {
 	ServerRoleID *int
 	CapOverrides CapOverrides
 	Inherit      bool
+	// Role is the server role ServerRoleID names, when the read joined it
+	// (GetServerAndAccountGrants). nil means "not fetched": the resolver
+	// then reads it by id.
+	Role *ServerRole
 }
 
 // GetPanelRole returns the panel role by id. sql.ErrNoRows when absent.
@@ -179,6 +183,82 @@ func (s *PostgresStore) GetAccountGrant(ownerUserID, userID string) (*ServerGran
 		        COALESCE(cap_overrides, '{}'::jsonb), COALESCE(inherit, FALSE)
 		 FROM server_invites WHERE server_id IS NULL AND owner_user_id = $1 AND user_id = $2`,
 		ownerUserID, userID)
+}
+
+// grantWithRoleCols selects a server_invites row with its server role joined,
+// for scanGrantsWithRole.
+const grantWithRoleCols = `SELECT g.server_id, g.user_id, g.owner_user_id, g.server_role_id,
+		        COALESCE(g.cap_overrides, '{}'::jsonb), COALESCE(g.inherit, FALSE),
+		        r.id, r.owner_user_id, r.name, COALESCE(r.capabilities, '[]'::jsonb), r.created_at
+		 FROM server_invites g
+		 LEFT JOIN server_roles r ON r.id = g.server_role_id`
+
+func (s *PostgresStore) scanGrantsWithRole(query string, args ...interface{}) ([]ServerGrant, error) {
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ServerGrant
+	for rows.Next() {
+		var g ServerGrant
+		var sid, roleID, rID sql.NullInt64
+		var ownerUID, rOwner, rName sql.NullString
+		var ovJSON, capsJSON []byte
+		var rCreated sql.NullTime
+		if err := rows.Scan(&sid, &g.UserID, &ownerUID, &roleID, &ovJSON, &g.Inherit,
+			&rID, &rOwner, &rName, &capsJSON, &rCreated); err != nil {
+			return nil, err
+		}
+		if sid.Valid {
+			v := int(sid.Int64)
+			g.ServerID = &v
+		}
+		if ownerUID.Valid {
+			g.OwnerUserID = ownerUID.String
+		}
+		if roleID.Valid {
+			v := int(roleID.Int64)
+			g.ServerRoleID = &v
+		}
+		_ = json.Unmarshal(ovJSON, &g.CapOverrides)
+		if rID.Valid {
+			g.Role = &ServerRole{ID: int(rID.Int64), OwnerUserID: rOwner.String, Name: rName.String, CreatedAt: rCreated.Time}
+			_ = json.Unmarshal(capsJSON, &g.Role.Capabilities)
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// GetServerAndAccountGrants is GetServerGrant(serverID, userID) and
+// GetAccountGrant(ownerUserID, userID) in one statement, each with its server
+// role joined. Either result is nil when that grant does not exist. The two
+// uniqueness rules ((server_id, user_id), and (owner_user_id, user_id) where
+// server_id IS NULL) make that at most one row of each kind.
+func (s *PostgresStore) GetServerAndAccountGrants(serverID int, ownerUserID, userID string) (direct, account *ServerGrant, err error) {
+	grants, err := s.scanGrantsWithRole(grantWithRoleCols+`
+		 WHERE g.user_id = $3
+		   AND (g.server_id = $1 OR (g.server_id IS NULL AND g.owner_user_id = $2))`,
+		serverID, ownerUserID, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range grants {
+		if grants[i].ServerID != nil {
+			direct = &grants[i]
+		} else {
+			account = &grants[i]
+		}
+	}
+	return direct, account, nil
+}
+
+// ListGrantsForUser returns every grant userID holds - per-server and
+// account-wide, in every realm - with server roles joined. The server list
+// resolves all of its invited rows from this one read.
+func (s *PostgresStore) ListGrantsForUser(userID string) ([]ServerGrant, error) {
+	return s.scanGrantsWithRole(grantWithRoleCols+` WHERE g.user_id = $1`, userID)
 }
 
 // OwnerGrant is a joined server_invites row for the owner-facing grants list

@@ -228,9 +228,9 @@ func TestResolve_ProxyInheritRejectsCrossOwner(t *testing.T) {
 }
 
 func TestResolve_DemoReadGrantsServerReadCapsOnly(t *testing.T) {
-	fs := &resolverFakeStore{servers: map[int]*models.Server{5: {ID: 5, OwnerID: "owner", OwnerName: "owner"}}}
+	fs := &resolverFakeStore{servers: map[int]*models.Server{5: {ID: 5, UUID: "demo-uuid", OwnerID: "owner", OwnerName: "owner"}}}
 	r := NewResolver(fs)
-	r.SetDemoRead(func(serverID int) bool { return serverID == 5 })
+	r.SetDemoRead(func(serverUUID string) bool { return serverUUID == "demo-uuid" })
 	res, _ := r.Resolve(Identity{UserID: "stranger"}, 5)
 	for _, id := range []string{"overview.read", "console.read", "stats.read"} {
 		if !res.HasCap(id) {

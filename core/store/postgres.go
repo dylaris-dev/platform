@@ -12,6 +12,7 @@ import (
 	"github.com/lib/pq"
 	"log"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -48,6 +49,12 @@ type PostgresStore struct {
 	backupStorageSecretKey []byte
 	// bedrockKey seals bedrock_servers.floodgate_key_enc; nil fails writes closed.
 	bedrockKey []byte
+	// hasUsersUntil is when a cached HasUsers()==true expires (unix nanos,
+	// store/read_cache.go).
+	hasUsersUntil atomic.Int64
+	// settings and modules are in-memory read caches (store/read_cache.go).
+	settings settingsSnapshot
+	modules  modulesSnapshot
 }
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {
@@ -851,6 +858,25 @@ func (s *PostgresStore) SetNodeLastSeen(id int) error {
 	return err
 }
 
+// CountServersPerNode is CountServersByNode for every node in one statement.
+// A node without servers is absent from the map (reads as 0).
+func (s *PostgresStore) CountServersPerNode() (map[int]int, error) {
+	rows, err := s.db.Query(`SELECT node_id, COUNT(*) FROM servers GROUP BY node_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int]int{}
+	for rows.Next() {
+		var id, n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) CountServersByNode(nodeID int) (int, error) {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM servers WHERE node_id = $1", nodeID).Scan(&count)
@@ -1392,17 +1418,18 @@ func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error
 func (s *PostgresStore) GetServerByID(id int) (*models.Server, error) {
 	var srv models.Server
 	query := `
-		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.auto_move, FALSE), COALESCE(s.cpu_pinning_mode, 'shared'), COALESCE(s.cpuset, ''), COALESCE(n.status, 'offline'), n.last_seen_at, ` + ramPaddingCols + `, ` + memGuardCols + `, COALESCE(s.proxy_protocol, FALSE), COALESCE(NULLIF(s.timezone, ''), NULLIF(u.timezone, ''), 'UTC')
+		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.auto_move, FALSE), COALESCE(s.cpu_pinning_mode, 'shared'), COALESCE(s.cpuset, ''), COALESCE(n.status, 'offline'), n.last_seen_at, ` + ramPaddingCols + `, ` + memGuardCols + `, COALESCE(s.proxy_protocol, FALSE), COALESCE(NULLIF(s.timezone, ''), NULLIF(u.timezone, ''), 'UTC'), n.owner_id::text
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 		JOIN users u ON s.owner_id = u.id
 		WHERE s.id = $1
 	`
 	var pad ramPaddingScan
-	err := s.db.QueryRow(query, id).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort, &srv.AutoMove, &srv.CPUPinningMode, &srv.Cpuset, &srv.NodeStatus, &srv.NodeLastSeenAt, &pad.server, &pad.node, &pad.global, &srv.MemoryGuardAction, &srv.LastCrashReason, &srv.LastCrashAt, &srv.ProxyProtocol, &srv.Timezone)
+	err := s.db.QueryRow(query, id).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort, &srv.AutoMove, &srv.CPUPinningMode, &srv.Cpuset, &srv.NodeStatus, &srv.NodeLastSeenAt, &pad.server, &pad.node, &pad.global, &srv.MemoryGuardAction, &srv.LastCrashReason, &srv.LastCrashAt, &srv.ProxyProtocol, &srv.Timezone, &srv.NodeOwnerID)
 	if err != nil {
 		return nil, err
 	}
+	srv.NodeOwnerLoaded = true
 	pad.apply(&srv)
 	return &srv, nil
 }
@@ -1410,17 +1437,18 @@ func (s *PostgresStore) GetServerByID(id int) (*models.Server, error) {
 func (s *PostgresStore) GetServerByUUID(uuid string) (*models.Server, error) {
 	var srv models.Server
 	query := `
-		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.cpu_pinning_mode, 'shared'), COALESCE(s.cpuset, ''), COALESCE(n.status, 'offline'), n.last_seen_at, ` + ramPaddingCols + `, ` + memGuardCols + `, COALESCE(s.proxy_protocol, FALSE), COALESCE(NULLIF(s.timezone, ''), NULLIF(u.timezone, ''), 'UTC')
+		SELECT s.id, s.uuid, s.name, s.node_id, n.name as node_name, s.owner_id, u.username as owner_name, s.game_image, s.port, s.memory, COALESCE(s.cpu_limit, 0), COALESCE(s.start_command, ''), s.status, COALESCE(s.desired_state, 'stopped'), s.is_fixed, COALESCE(s.active_sub_server, ''), COALESCE(s.extra_jvm_flags, ''), s.created_at, COALESCE(s.installer_type, ''), COALESCE(s.minecraft_version, ''), COALESCE(s.build_number, ''), COALESCE(s.disk_limit, 0), COALESCE(s.server_type, 'game'), s.proxy_id, COALESCE(n.address, ''), COALESCE(s.host_port, 0), COALESCE(s.container_port, 25565), COALESCE(s.cpu_pinning_mode, 'shared'), COALESCE(s.cpuset, ''), COALESCE(n.status, 'offline'), n.last_seen_at, ` + ramPaddingCols + `, ` + memGuardCols + `, COALESCE(s.proxy_protocol, FALSE), COALESCE(NULLIF(s.timezone, ''), NULLIF(u.timezone, ''), 'UTC'), n.owner_id::text
 		FROM servers s
 		JOIN nodes n ON s.node_id = n.id
 		JOIN users u ON s.owner_id = u.id
 		WHERE s.uuid = $1
 	`
 	var pad ramPaddingScan
-	err := s.db.QueryRow(query, uuid).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort, &srv.CPUPinningMode, &srv.Cpuset, &srv.NodeStatus, &srv.NodeLastSeenAt, &pad.server, &pad.node, &pad.global, &srv.MemoryGuardAction, &srv.LastCrashReason, &srv.LastCrashAt, &srv.ProxyProtocol, &srv.Timezone)
+	err := s.db.QueryRow(query, uuid).Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.GameImage, &srv.Port, &srv.Memory, &srv.CPULimit, &srv.StartCommand, &srv.Status, &srv.DesiredState, &srv.IsFixed, &srv.ActiveSubServer, &srv.ExtraJvmFlags, &srv.CreatedAt, &srv.InstallerType, &srv.MinecraftVersion, &srv.BuildNumber, &srv.DiskLimit, &srv.ServerType, &srv.ProxyID, &srv.NodeAddress, &srv.HostPort, &srv.ContainerPort, &srv.CPUPinningMode, &srv.Cpuset, &srv.NodeStatus, &srv.NodeLastSeenAt, &pad.server, &pad.node, &pad.global, &srv.MemoryGuardAction, &srv.LastCrashReason, &srv.LastCrashAt, &srv.ProxyProtocol, &srv.Timezone, &srv.NodeOwnerID)
 	if err != nil {
 		return nil, err
 	}
+	srv.NodeOwnerLoaded = true
 	pad.apply(&srv)
 	return &srv, nil
 }
@@ -1860,6 +1888,16 @@ func scanNodeKind(nodeOwner sql.NullString, nodeTags string) models.NodeKind {
 	return n.Kind()
 }
 
+// setNodeOwner records the joined node owner for the server-side fences
+// (models.Server.NodeOwnerID is never serialized).
+func setNodeOwner(srv *models.Server, nodeOwner sql.NullString) {
+	srv.NodeOwnerLoaded = true
+	if nodeOwner.Valid && nodeOwner.String != "" {
+		owner := nodeOwner.String
+		srv.NodeOwnerID = &owner
+	}
+}
+
 // ListAllServers is the fleet, unfiltered, for callers that are not showing a
 // list to anybody: proxy backend resolution needs every child of a proxy,
 // including one on a customer's own node, or that customer's proxy stops
@@ -1896,6 +1934,7 @@ func scanFleetServer(rows *sql.Rows) (models.Server, error) {
 		&srv.CPUPinningMode, &srv.Cpuset, &srv.AutoMove, &pad.server, &pad.node, &pad.global,
 		&srv.MemoryGuardAction, &srv.LastCrashReason, &srv.LastCrashAt, &srv.ProxyProtocol)
 	srv.NodeKind = scanNodeKind(nodeOwner, nodeTags)
+	setNodeOwner(&srv, nodeOwner)
 	pad.apply(&srv)
 	return srv, err
 }
@@ -2056,6 +2095,7 @@ func (s *PostgresStore) ListServersForUser(userID string, isAdmin bool) ([]model
 			continue
 		}
 		srv.NodeKind = scanNodeKind(nodeOwner, nodeTags)
+		setNodeOwner(&srv, nodeOwner)
 		pad.apply(&srv)
 		scanServer(&srv, nil, role, permsJSON)
 		servers = append(servers, srv)
@@ -2069,7 +2109,7 @@ func (s *PostgresStore) ListServersForUser(userID string, isAdmin bool) ([]model
 
 const moduleSelectCols = `id, name, type, icon, COALESCE(url, ''), is_enabled, is_system, position, COALESCE(access_role, 'all')`
 
-func (s *PostgresStore) ListModules() ([]models.Module, error) {
+func (s *PostgresStore) loadModules() ([]models.Module, error) {
 	query := `SELECT ` + moduleSelectCols + ` FROM modules ORDER BY position ASC, id ASC`
 	rows, err := s.db.Query(query)
 	if err != nil {
@@ -2106,6 +2146,7 @@ func (s *PostgresStore) SetModuleAccessRole(id int, role string) error {
 		role = "all"
 	}
 	_, err := s.db.Exec(`UPDATE modules SET access_role = $1 WHERE id = $2 AND name <> 'Servers'`, role, id)
+	s.invalidateModules()
 	return err
 }
 
@@ -2120,36 +2161,31 @@ func (s *PostgresStore) CreateModule(m *models.Module) (int, error) {
 	query := `INSERT INTO modules (name, type, icon, url, is_enabled, is_system, position, access_role)
 	          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`
 	err := s.db.QueryRow(query, m.Name, m.Type, m.Icon, m.URL, m.IsEnabled, m.IsSystem, m.Position, role).Scan(&id)
+	s.invalidateModules()
 	return id, err
 }
 
 func (s *PostgresStore) DeleteModule(id int) error {
 	_, err := s.db.Exec("DELETE FROM modules WHERE id = $1", id)
+	s.invalidateModules()
 	return err
 }
 
 func (s *PostgresStore) UpdateModuleStatus(id int, isEnabled bool) error {
 	_, err := s.db.Exec("UPDATE modules SET is_enabled = $1 WHERE id = $2", isEnabled, id)
+	s.invalidateModules()
 	return err
 }
 
 func (s *PostgresStore) UpdateModulePosition(id int, position int) error {
 	_, err := s.db.Exec("UPDATE modules SET position = $1 WHERE id = $2", position, id)
+	s.invalidateModules()
 	return err
 }
 
 // ==========================================
 // SETTINGS
 // ==========================================
-
-func (s *PostgresStore) GetSetting(key string) (string, error) {
-	var value string
-	err := s.db.QueryRow("SELECT value FROM settings WHERE key = $1", key).Scan(&value)
-	if err != nil {
-		return "", err
-	}
-	return s.decodeSettingValue(key, value), nil
-}
 
 func (s *PostgresStore) SetSetting(key, value string) error {
 	stored, err := s.encodeSettingValue(key, value)
@@ -2160,6 +2196,7 @@ func (s *PostgresStore) SetSetting(key, value string) error {
 		INSERT INTO settings (key, value) VALUES ($1, $2)
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
 	`, key, stored)
+	s.invalidateSettings()
 	return err
 }
 
@@ -2172,6 +2209,7 @@ func (s *PostgresStore) InsertSettingIfAbsent(key, value string) (bool, error) {
 		return false, err
 	}
 	res, err := s.db.Exec(`INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`, key, stored)
+	s.invalidateSettings()
 	if err != nil {
 		return false, fmt.Errorf("insert setting %s: %w", key, err)
 	}
@@ -2184,7 +2222,9 @@ func (s *PostgresStore) InsertSettingIfAbsent(key, value string) (bool, error) {
 
 // DeleteSetting removes a setting row. A missing row is not an error.
 func (s *PostgresStore) DeleteSetting(key string) error {
-	if _, err := s.db.Exec(`DELETE FROM settings WHERE key = $1`, key); err != nil {
+	_, err := s.db.Exec(`DELETE FROM settings WHERE key = $1`, key)
+	s.invalidateSettings()
+	if err != nil {
 		return fmt.Errorf("delete setting %s: %w", key, err)
 	}
 	return nil
@@ -2194,6 +2234,7 @@ func (s *PostgresStore) DeleteSetting(key string) error {
 // so two replicas editing the same list cannot lose each other's change the way
 // a GetSetting/SetSetting pair does. A missing row reads as "".
 func (s *PostgresStore) UpdateSetting(key string, fn func(old string) (string, error)) error {
+	defer s.invalidateSettings()
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("update setting %s: %w", key, err)
@@ -2224,6 +2265,7 @@ func (s *PostgresStore) UpdateSetting(key string, fn func(old string) (string, e
 // 'disabled' and reports whether THIS caller won the single slot. Row returned
 // -> won (proceed); no row -> a concurrent enroll already consumed it (reject).
 func (s *PostgresStore) ConsumeOneShotJoin() (bool, error) {
+	defer s.invalidateSettings()
 	var v string
 	err := s.db.QueryRow(
 		`UPDATE settings SET value = 'disabled'
@@ -2641,6 +2683,7 @@ func (s *PostgresStore) SetSettingBy(key, value string, updatedBy string) error 
 		VALUES ($1, $2, NOW(), $3)
 		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by
 	`, key, stored, updatedBy)
+	s.invalidateSettings()
 	return err
 }
 
@@ -3047,14 +3090,6 @@ func (s *PostgresStore) CountAdmins() (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE is_admin = true`).Scan(&n)
 	return n, err
-}
-
-// HasUsers backs RequireSetupComplete, which runs on every API request: EXISTS
-// stops at the first visible row, where COUNT(*) walked the whole table.
-func (s *PostgresStore) HasUsers() (bool, error) {
-	var ok bool
-	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM users)`).Scan(&ok)
-	return ok, err
 }
 
 // CreateFirstAdmin atomically inserts the first admin via a guarded CTE so

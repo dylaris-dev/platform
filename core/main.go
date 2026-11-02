@@ -341,11 +341,11 @@ func main() {
 	// Demo showcase read access flows through the resolver so the RequireCap
 	// chokepoint covers console/stats/overview reads on demo servers.
 	// Both read appState per call, as the AppState methods they replace did.
-	appState.Authz.SetDemoRead(func(serverID int) bool {
-		return demo.IsServerID(appState.Store, appState.StoreEnabled, serverID)
+	appState.Authz.SetDemoRead(func(serverUUID string) bool {
+		return demo.IsServer(appState.Store, appState.StoreEnabled, serverUUID)
 	})
-	appState.Authz.SetForeignNode(func(nodeID int, userID string) bool {
-		return access.NodeOwnedByOther(appState.Store, appState.FeatureFlags, nodeID, userID)
+	appState.Authz.SetForeignNode(func(srv *models.Server, userID string) bool {
+		return access.ServerNodeOwnedByOther(appState.Store, appState.FeatureFlags, srv, userID)
 	})
 	appState.Authz.SetServerWriteAudit(audit.RecordServerWrite(appState.Store))
 

@@ -82,6 +82,15 @@ func ApplyResolvedTabPermissions(az *authz.Resolver, servers []models.Server, us
 		return servers
 	}
 	identity := authz.Identity{UserID: userID, Username: username}
+	// Every invited or inherited row, resolved from one read of the caller's
+	// grants (it was a Resolve - two or three statements - per row).
+	var shared []models.Server
+	for _, s := range servers {
+		if s.Role == "invited" || s.Role == "inherited" {
+			shared = append(shared, s)
+		}
+	}
+	resolved := az.ResolveListed(identity, shared)
 	out := servers[:0]
 	for _, s := range servers {
 		// An admin's row on a customer's machine: the resolver treats the admin
@@ -98,8 +107,8 @@ func ApplyResolvedTabPermissions(az *authz.Resolver, servers []models.Server, us
 			out = append(out, s)
 			continue
 		}
-		res, err := az.Resolve(identity, s.ID)
-		if err != nil || !res.HasAnyServerCap() {
+		res := resolved[s.ID]
+		if res == nil || !res.HasAnyServerCap() {
 			continue
 		}
 		merged := mergeResolvedTabPermissions(s.Permissions, res.HasCap)

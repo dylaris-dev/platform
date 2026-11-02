@@ -139,8 +139,8 @@ func newAuthzTestServer(t *testing.T, fs *authzFakeStore) http.Handler {
 		FeatureFlags: services.NewFeatureFlags(fs),
 		Authz:        authz.NewResolver(fs),
 	}
-	appState.Authz.SetDemoRead(func(serverID int) bool {
-		return demo.IsServerID(appState.Store, appState.StoreEnabled, serverID)
+	appState.Authz.SetDemoRead(func(serverUUID string) bool {
+		return demo.IsServer(appState.Store, appState.StoreEnabled, serverUUID)
 	})
 	authHandler := auth.NewAuthHandler(authDepsOf(appState), testJWTSecret)
 	root, _ := buildAPIRouter(appState, authHandler, routeCfg{JWTSecret: testJWTSecret})

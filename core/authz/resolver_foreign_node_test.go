@@ -23,7 +23,7 @@ func TestResolve_AnAdminOnACustomersMachine(t *testing.T) {
 			theirs: {ID: theirs, OwnerID: customer, NodeID: 20},
 		},
 	}
-	foreign := func(nodeID int, userID string) bool { return nodeID == 20 && userID != customer }
+	foreign := func(srv *models.Server, userID string) bool { return srv.NodeID == 20 && userID != customer }
 	id := Identity{UserID: admin, IsAdmin: true}
 
 	t.Run("a platform machine is still everything", func(t *testing.T) {

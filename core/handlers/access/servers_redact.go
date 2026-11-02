@@ -43,13 +43,18 @@ func RedactNodeAddress(st store.Store, gatewayEnabled func() bool, servers []mod
 	if mode, _ := st.GetSetting("file_access_mode"); mode == "sftp" || mode == "both" {
 		return
 	}
-	// One lookup per node rather than per server: a list is usually several
-	// servers on the same machine.
+	// A list row carries its node's owner from the list query
+	// (NodeOwnerLoaded); any other row costs one lookup per node rather than
+	// per server, since a list is usually several servers on one machine.
 	ownNode := map[int]bool{}
 	for i := range servers {
 		id := servers[i].NodeID
 		own, seen := ownNode[id]
-		if !seen {
+		if !seen && servers[i].NodeOwnerLoaded {
+			o := servers[i].NodeOwnerID
+			own = o != nil && *o == userID && userID != ""
+			ownNode[id] = own
+		} else if !seen {
 			node, err := st.GetNodeByID(id)
 			own = err == nil && node != nil && node.OwnerID != nil && *node.OwnerID == userID && userID != ""
 			ownNode[id] = own

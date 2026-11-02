@@ -167,7 +167,7 @@ func (s *PostgresStore) CreateBackupStorage(bs *models.BackupStorage) (int, erro
 	var id int
 	err = tx.QueryRow(
 		`INSERT INTO backup_storages (name, provider, config, secret_enc, is_default, owner_id) VALUES ($1, $2, $3::jsonb, $4, $5, $6) RETURNING id`,
-		bs.Name, bs.Provider, cfg, enc, bs.IsDefault, nullableString(bs.OwnerID),
+		bs.Name, bs.Provider, string(cfg), enc, bs.IsDefault, nullableString(bs.OwnerID),
 	).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -209,7 +209,7 @@ func (s *PostgresStore) UpdateBackupStorage(bs *models.BackupStorage) error {
 	// edit form should be able to do.
 	res, err := tx.Exec(
 		`UPDATE backup_storages SET name = $1, provider = $2, config = $3::jsonb, secret_enc = $4, is_default = $5 WHERE id = $6`,
-		bs.Name, bs.Provider, cfg, enc, bs.IsDefault, bs.ID,
+		bs.Name, bs.Provider, string(cfg), enc, bs.IsDefault, bs.ID,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {

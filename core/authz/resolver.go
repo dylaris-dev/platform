@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 
+	"dylaris-core/models"
 	"dylaris-core/store"
 )
 
@@ -37,8 +39,8 @@ func IdentityFromContext(ctx context.Context) Identity {
 // IsAdmin / EffectivePermissions paths (wired into routes in phase 2).
 type Resolver struct {
 	store       Store
-	demoRead    func(serverID int) bool // optional; StoreEnabled-gated by the caller
-	foreignNode func(nodeID int, userID string) bool
+	demoRead    func(serverUUID string) bool // optional; StoreEnabled-gated by the caller
+	foreignNode func(srv *models.Server, userID string) bool
 	writeAudit  WriteAuditFunc // optional; see write_audit.go
 }
 
@@ -46,16 +48,21 @@ func NewResolver(st Store) *Resolver {
 	return &Resolver{store: st}
 }
 
-// SetDemoRead installs an optional predicate that reports whether a server is an
-// admin-flagged public read-only showcase. nil-safe: unset means no demo access.
-func (r *Resolver) SetDemoRead(fn func(serverID int) bool) { r.demoRead = fn }
+// SetDemoRead installs an optional predicate that reports whether a server (by
+// UUID - the resolver already holds the row) is an admin-flagged public
+// read-only showcase. nil-safe: unset means no demo access.
+func (r *Resolver) SetDemoRead(fn func(serverUUID string) bool) { r.demoRead = fn }
 
-// SetForeignNode installs the predicate that reports whether a node is somebody
-// else's hardware for this user, while node ownership is in force. An admin gets
+// SetForeignNode installs the predicate that reports whether the node a server
+// runs on is somebody else's hardware for this user, while node ownership is in
+// force. It gets the server row the resolver loaded, which carries the node's
+// owner from the same query. An admin gets
 // no server rights there beyond what that somebody granted them. It is a hook
 // rather than a store call because the answer also depends on the BYON flag,
 // which lives in services, and services imports authz.
-func (r *Resolver) SetForeignNode(fn func(nodeID int, userID string) bool) { r.foreignNode = fn }
+func (r *Resolver) SetForeignNode(fn func(srv *models.Server, userID string) bool) {
+	r.foreignNode = fn
+}
 
 // Resolution is the materialized decision context for one (identity, scope).
 // It is deny-by-default: a capability is granted only when a short-circuit or
@@ -66,8 +73,16 @@ type Resolution struct {
 	ownerSelf  bool            // owns the realm in scope (own server, or serverID==0 self-realm)
 	demoRead   bool            // server is an admin-flagged demo showcase: grant SERVER read caps to any authed principal
 	panelCaps  map[string]bool // PANEL caps from panel role + per-user overrides
+	// panelLoad fills panelCaps on the first PANEL check. A server route
+	// checks a SERVER cap, and reading the panel role for it cost one or two
+	// statements whose answer HasCap never looked at.
+	panelLoad  func(map[string]bool)
+	panelOnce  sync.Once
 	serverCaps map[string]bool // SERVER caps from direct/proxy/account grant
 	ownerCaps  map[string]bool // OWNER caps from an account grant on this realm
+	// server is the row the decision was made on (nil when none was read).
+	// RequireCap hands it to the handler for this request only (ServerByID).
+	server *models.Server
 }
 
 // demoReadDeny lists SERVER read caps that a public demo showcase must NOT grant
@@ -122,6 +137,9 @@ func (res *Resolution) HasCap(capID string) bool {
 	}
 	switch c.Scope {
 	case ScopePanel:
+		if res.panelLoad != nil {
+			res.panelOnce.Do(func() { res.panelLoad(res.panelCaps) })
+		}
 		return res.panelCaps[capID]
 	case ScopeServer:
 		return res.ownerSelf || res.serverCaps[capID]
@@ -154,7 +172,10 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 		if errors.Is(serr, sql.ErrNoRows) {
 			return res, nil
 		}
-		if serr == nil && srv != nil && !r.foreignNode(srv.NodeID, id.UserID) {
+		if serr == nil {
+			res.server = srv
+		}
+		if serr == nil && srv != nil && !r.foreignNode(srv, id.UserID) {
 			return res, nil
 		}
 		res.admin = false
@@ -165,18 +186,7 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 		return res, nil // no identity: deny-by-default
 	}
 
-	// PANEL caps: role capabilities plus per-user grant/deny overrides.
-	roleID, overrides, err := r.store.GetUserPanelAuthz(id.UserID)
-	if err == nil {
-		if roleID != nil {
-			if role, rerr := r.store.GetPanelRole(*roleID); rerr == nil && role != nil {
-				for _, capID := range role.Capabilities {
-					res.panelCaps[capID] = true
-				}
-			}
-		}
-		applyOverrides(res.panelCaps, overrides)
-	}
+	r.setPanelLoad(res, id.UserID)
 
 	if serverID == 0 {
 		// Acting on the user's own OWNER realm (their own modpacks, roles, keys).
@@ -184,11 +194,86 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 		return res, nil
 	}
 
-	srv, serr := r.store.GetServerByID(serverID)
-	if serr != nil || srv == nil {
-		return res, nil // unknown server: SERVER/OWNER stay empty (deny)
+	srv := res.server
+	if srv == nil || srv.ID != serverID {
+		var serr error
+		srv, serr = r.store.GetServerByID(serverID)
+		if serr != nil || srv == nil {
+			return res, nil // unknown server: SERVER/OWNER stay empty (deny)
+		}
+		res.server = srv
 	}
-	if r.demoRead != nil && r.demoRead(serverID) {
+	r.resolveOnServer(res, id, srv, r.storeGrantReads(id.UserID))
+	return res, nil
+}
+
+// setPanelLoad arranges the PANEL caps: role capabilities plus per-user
+// grant/deny overrides, read on the first PANEL check. A failed read leaves
+// the set empty (deny), as it did when this ran eagerly.
+func (r *Resolver) setPanelLoad(res *Resolution, userID string) {
+	res.panelLoad = func(caps map[string]bool) {
+		roleID, overrides, err := r.store.GetUserPanelAuthz(userID)
+		if err != nil {
+			return
+		}
+		if roleID != nil {
+			if role, rerr := r.store.GetPanelRole(*roleID); rerr == nil && role != nil {
+				for _, capID := range role.Capabilities {
+					caps[capID] = true
+				}
+			}
+		}
+		applyOverrides(caps, overrides)
+	}
+}
+
+// grantReads are the reads the server half of a resolution makes. Resolve
+// answers them from the store per call; ResolveListed from one prefetch.
+type grantReads struct {
+	// pair: the caller's direct grant on serverID and account-wide grant in
+	// owner's realm. nil = none (a failed read is none).
+	pair func(serverID int, owner string) (direct, account *store.ServerGrant)
+	// direct: the caller's direct grant on a proxy, for inheritance.
+	direct func(serverID int) *store.ServerGrant
+	// server: a proxy's row. nil = unreadable.
+	server func(id int) *models.Server
+}
+
+func (r *Resolver) storeGrantReads(userID string) grantReads {
+	return grantReads{
+		// One statement where the store can (grantPairStore).
+		pair: func(serverID int, owner string) (direct, account *store.ServerGrant) {
+			if gp, ok := r.store.(grantPairStore); ok {
+				direct, account, _ = gp.GetServerAndAccountGrants(serverID, owner, userID)
+				return direct, account
+			}
+			if g, err := r.store.GetServerGrant(serverID, userID); err == nil {
+				direct = g
+			}
+			if a, err := r.store.GetAccountGrant(owner, userID); err == nil {
+				account = a
+			}
+			return direct, account
+		},
+		direct: func(serverID int) *store.ServerGrant {
+			if g, err := r.store.GetServerGrant(serverID, userID); err == nil {
+				return g
+			}
+			return nil
+		},
+		server: func(id int) *models.Server {
+			if s, err := r.store.GetServerByID(id); err == nil {
+				return s
+			}
+			return nil
+		},
+	}
+}
+
+// resolveOnServer is the SERVER/OWNER half of a resolution for a known server
+// row: demo read, the owner short-circuit, then the grants.
+func (r *Resolver) resolveOnServer(res *Resolution, id Identity, srv *models.Server, g grantReads) {
+	if r.demoRead != nil && r.demoRead(srv.UUID) {
 		res.demoRead = true
 	}
 	// Owner short-circuit keyed ONLY on the immutable owner UUID. The username is
@@ -197,11 +282,11 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 	// with no valid owner, yielding deny).
 	if srv.OwnerID == id.UserID {
 		res.ownerSelf = true // server owner short-circuit
-		return res, nil
+		return
 	}
 
-	// Direct per-server grant, else a proxy-inherited grant.
-	grant, gerr := r.store.GetServerGrant(serverID, id.UserID)
+	// Direct per-server grant and the account-wide grant on this realm.
+	grant, acct := g.pair(srv.ID, srv.OwnerID)
 	// A grant belongs to the realm of the owner who gave it. An admin owner
 	// change moves the server and leaves its rows behind, so without this the
 	// previous owner's friends kept their access, and the previous owner could
@@ -209,14 +294,14 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 	if grant != nil && grant.OwnerUserID != "" && grant.OwnerUserID != srv.OwnerID {
 		grant = nil
 	}
-	if gerr != nil || grant == nil {
-		grant = nil
+	// No direct grant: a proxy-inherited one.
+	if grant == nil {
 		if srv.ProxyID != nil {
 			// Never inherit across owners: the proxy must belong to the SAME owner
 			// as the child, else a friend invited on someone else's proxy could
 			// reach this owner's server.
-			if psrv, perr := r.store.GetServerByID(*srv.ProxyID); perr == nil && psrv != nil && psrv.OwnerID == srv.OwnerID {
-				if pg, perr2 := r.store.GetServerGrant(*srv.ProxyID, id.UserID); perr2 == nil && pg != nil && pg.Inherit &&
+			if psrv := g.server(*srv.ProxyID); psrv != nil && psrv.OwnerID == srv.OwnerID {
+				if pg := g.direct(*srv.ProxyID); pg != nil && pg.Inherit &&
 					(pg.OwnerUserID == "" || pg.OwnerUserID == srv.OwnerID) {
 					grant = pg
 				}
@@ -227,10 +312,76 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 		r.applyGrant(res, grant, srv.OwnerID)
 	}
 	// Account-wide grant on this server's owner realm (all servers + owner tools).
-	if acct, aerr := r.store.GetAccountGrant(srv.OwnerID, id.UserID); aerr == nil && acct != nil {
+	if acct != nil {
 		r.applyGrant(res, acct, srv.OwnerID)
 	}
-	return res, nil
+}
+
+// grantListStore reads every grant a user holds, roles joined, in one
+// statement (*store.PostgresStore).
+type grantListStore interface {
+	ListGrantsForUser(userID string) ([]store.ServerGrant, error)
+}
+
+// ResolveListed is Resolve(id, s.ID) for every server a list query just
+// returned, for a NON-admin identity, with the caller's grants read once for
+// all of them instead of per server. The rows themselves come from that list
+// query, in this request. The decision code is the same resolveOnServer;
+// only where the grants and a proxy's row come from differs. A store that
+// cannot list grants is resolved one server at a time.
+func (r *Resolver) ResolveListed(id Identity, servers []models.Server) map[int]*Resolution {
+	out := make(map[int]*Resolution, len(servers))
+	if len(servers) == 0 {
+		return out
+	}
+	gl, ok := r.store.(grantListStore)
+	if !ok || id.IsAdmin || id.UserID == "" {
+		for i := range servers {
+			if res, err := r.Resolve(id, servers[i].ID); err == nil {
+				out[servers[i].ID] = res
+			}
+		}
+		return out
+	}
+	grants, err := gl.ListGrantsForUser(id.UserID)
+	if err != nil {
+		return out // no resolution: every row is dropped, as a failed Resolve was
+	}
+	direct := map[int]*store.ServerGrant{}
+	account := map[string]*store.ServerGrant{}
+	for i := range grants {
+		if g := &grants[i]; g.ServerID != nil {
+			direct[*g.ServerID] = g
+		} else {
+			account[g.OwnerUserID] = g
+		}
+	}
+	listed := make(map[int]*models.Server, len(servers))
+	for i := range servers {
+		listed[servers[i].ID] = &servers[i]
+	}
+	storeReads := r.storeGrantReads(id.UserID)
+	reads := grantReads{
+		pair: func(serverID int, owner string) (*store.ServerGrant, *store.ServerGrant) {
+			return direct[serverID], account[owner]
+		},
+		direct: func(serverID int) *store.ServerGrant { return direct[serverID] },
+		server: func(sid int) *models.Server {
+			if s := listed[sid]; s != nil {
+				return s
+			}
+			return storeReads.server(sid)
+		},
+	}
+	for i := range servers {
+		res := &Resolution{panelCaps: map[string]bool{}, serverCaps: map[string]bool{}, ownerCaps: map[string]bool{}}
+		r.setPanelLoad(res, id.UserID)
+		srv := servers[i]
+		res.server = &srv
+		r.resolveOnServer(res, id, &srv, reads)
+		out[srv.ID] = res
+	}
+	return out
 }
 
 // applyGrant folds a grant's server-role caps + overrides into the resolution,
@@ -243,8 +394,11 @@ func (r *Resolver) Resolve(id Identity, serverID int) (*Resolution, error) {
 func (r *Resolver) applyGrant(res *Resolution, g *store.ServerGrant, realmOwner string) {
 	caps := map[string]bool{}
 	if g.ServerRoleID != nil {
-		if role, err := r.store.GetServerRole(*g.ServerRoleID); err == nil && role != nil &&
-			(role.OwnerUserID == "" || role.OwnerUserID == realmOwner) {
+		role := g.Role // joined by GetServerAndAccountGrants
+		if role == nil {
+			role, _ = r.store.GetServerRole(*g.ServerRoleID)
+		}
+		if role != nil && (role.OwnerUserID == "" || role.OwnerUserID == realmOwner) {
 			for _, capID := range role.Capabilities {
 				caps[capID] = true
 			}

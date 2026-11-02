@@ -106,7 +106,7 @@ func TestCreateStorageConnection_EncryptsSecretAndReturnsID(t *testing.T) {
 
 	cfg := []byte(`{"bucket":"b"}`)
 	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO storage_connections (name, provider, config, access_key, secret_enc) VALUES ($1, $2, $3::jsonb, $4, $5) RETURNING id`)).
-		WithArgs("nas", "s3", cfg, "AKIA", sqlmock.AnyArg()). // secret_enc is non-deterministic ciphertext
+		WithArgs("nas", "s3", string(cfg), "AKIA", sqlmock.AnyArg()). // secret_enc is non-deterministic ciphertext
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
 
 	id, err := s.CreateStorageConnection(&models.StorageConnection{Name: "nas", Provider: "s3", Config: json.RawMessage(cfg), AccessKey: "AKIA", SecretAccessKey: "the-secret"})
@@ -259,7 +259,7 @@ func TestUpdateStorageConnection_LeavesSecretUntouched(t *testing.T) {
 
 	cfg := []byte(`{"bucket":"b"}`)
 	mock.ExpectExec(regexp.QuoteMeta(`UPDATE storage_connections SET name = $1, provider = $2, config = $3::jsonb, access_key = $4, updated_at = CURRENT_TIMESTAMP WHERE id = $5`)).
-		WithArgs("nas", "s3", cfg, "AKIA", 5).
+		WithArgs("nas", "s3", string(cfg), "AKIA", 5).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	c := models.StorageConnection{ID: 5, Name: "nas", Provider: "s3", Config: json.RawMessage(cfg), AccessKey: "AKIA", SecretAccessKey: "ignored-on-update"}

@@ -474,6 +474,12 @@ type Server struct {
 	// the server's last node-pushed status and freezes when the node goes away.
 	NodeStatus     string     `json:"nodeStatus"`
 	NodeLastSeenAt *time.Time `json:"nodeLastSeenAt"`
+	// NodeOwnerID is nodes.owner_id, joined by GetServerByID/GetServerByUUID
+	// for the resolver's foreign-node fence only; NodeOwnerLoaded says the
+	// join ran (rows from other queries leave both zero). Never serialized:
+	// see NodeKind below for why the owner id must not travel.
+	NodeOwnerID     *string `json:"-"`
+	NodeOwnerLoaded bool    `json:"-"`
 	// NodeKind is whose machine this server runs on, derived from the node row
 	// rather than carried on it. The derived answer travels and the inputs do
 	// not: nodes.owner_id would tell every reader WHICH account owns the

@@ -89,7 +89,6 @@ func (h *TabProxySettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		h.d.FeatureFlags.Invalidate(kv.k)
 	}
 	// The navbar row follows these settings; it is not separately editable.
 	// Cosmetic, so a failure is logged rather than failing the save the operator

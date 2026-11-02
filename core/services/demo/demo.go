@@ -95,20 +95,6 @@ func IsServer(st store.Store, enabled bool, uuid string) bool {
 	return false
 }
 
-// IsServerID is IsServer by numeric server id. main hands it to the authz
-// resolver as the demo-read predicate (the resolver cannot import handlers).
-// Always false when the store integration is off (open-core/self-host build).
-func IsServerID(st store.Store, enabled bool, serverID int) bool {
-	if !enabled || st == nil {
-		return false
-	}
-	srv, err := st.GetServerByID(serverID)
-	if err != nil || srv == nil {
-		return false
-	}
-	return IsServer(st, enabled, srv.UUID)
-}
-
 // DropServers takes deleted servers off the demo list. The list holds
 // UUIDs, and a UUID can come back: CreateServer accepts one from the client,
 // and adopting a leftover folder reuses it. A stale entry then made a new,

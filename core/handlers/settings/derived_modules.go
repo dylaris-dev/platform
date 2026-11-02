@@ -28,7 +28,7 @@ func syncModuleEnabled(st store.Store, name string, on bool) error {
 	if st == nil {
 		return nil
 	}
-	modules, err := st.ListModules()
+	modules, err := store.FreshModules(st)
 	if err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func syncTemplatesModule(st store.Store, audience string) error {
 	if audience != "all" {
 		role = "admin"
 	}
-	modules, err := st.ListModules()
+	modules, err := store.FreshModules(st)
 	if err != nil {
 		return err
 	}
