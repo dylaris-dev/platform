@@ -122,7 +122,7 @@ func (h *ServerTabsHandler) db() *sql.DB {
 	if h.state.Store == nil {
 		return nil
 	}
-	provider, ok := h.state.Store.(handlers.SparkDBProvider)
+	provider, ok := h.state.Store.(sparkDBProvider)
 	if !ok {
 		return nil
 	}

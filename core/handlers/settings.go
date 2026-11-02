@@ -230,24 +230,6 @@ type GatewaySettings struct {
 	MaxCustomDomains *int64 `json:"maxCustomDomains"`
 }
 
-// defaultBlockedRoutePrefixes seeds a protective reserved list when the admin has
-// never saved one. Once saved (even empty), the admin's list wins.
-// "route" is reserved because it is the default custom-domain CNAME label: a
-// user who claimed route.<base> would take over the very name other users are
-// told to point their own domains at.
-// The second group is the set a hoster wants for its OWN flagship server and a
-// tenant must not be able to take first: "play.<base>" and "mc.<base>" read as
-// the platform's official address, not as one customer's. Admins are exempt
-// (resolveRouteDomain's allowReserved), so reserving them costs the operator
-// nothing and keeps them available.
-var defaultBlockedRoutePrefixes = []string{
-	"admin", "dylaris", "app", "api", "www", "panel", "gateway", "edge", "hub",
-	"link", "warp", "beam", "mail", "ns", "status", "support", "staff", "system", "root",
-	"route",
-	"minecraft", "mc", "play", "server", "store", "shop", "billing", "account",
-	"login", "auth", "cdn", "docs", "help",
-}
-
 // GatewayLimits are the platform-wide address caps, one per scope.
 //
 // Each is a POINTER so the wire can carry the platform convention intact:
@@ -311,7 +293,7 @@ func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Requ
 		CustomDomainsEnabled: getSetting("gateway_custom_domains_enabled") == "true",
 		CnameTarget:          getSetting("gateway_cname_target"),
 		BlockedRoutePrefixes: h.loadBlockedRoutePrefixes(),
-		MaxCustomDomains:     services.ParseLimitSetting(getSetting(SettingMaxCustomDomains), defaultMaxCustomDomains),
+		MaxCustomDomains:     services.ParseLimitSetting(getSetting(services.SettingMaxCustomDomains), services.DefaultMaxCustomDomains),
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -340,7 +322,7 @@ func (h *SettingsHandler) loadHosterDomains() []HosterDomain {
 func (h *SettingsHandler) loadBlockedRoutePrefixes() []string {
 	raw, _ := h.state.Store.GetSetting("gateway_blocked_route_prefixes")
 	if raw == "" {
-		return append([]string(nil), defaultBlockedRoutePrefixes...)
+		return append([]string(nil), services.DefaultBlockedRoutePrefixes...)
 	}
 	var out []string
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
@@ -448,8 +430,8 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 
 	// Save port-enable settings
 	if present.MaxCustomDomains != nil {
-		if err := h.state.Store.SetSetting(SettingMaxCustomDomains, services.FormatLimitSetting(req.MaxCustomDomains)); err != nil {
-			httpx.SendJSONError(w, "Failed to save setting: "+SettingMaxCustomDomains, http.StatusInternalServerError)
+		if err := h.state.Store.SetSetting(services.SettingMaxCustomDomains, services.FormatLimitSetting(req.MaxCustomDomains)); err != nil {
+			httpx.SendJSONError(w, "Failed to save setting: "+services.SettingMaxCustomDomains, http.StatusInternalServerError)
 			return
 		}
 	}
@@ -1363,24 +1345,6 @@ func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request
 // byte-identical to gateway/warp firewallAllowedPortsKey.
 const WarpFirewallRedisKey = "dylaris:warp:firewall:allowed_ports"
 
-// defaultWarpSpokeAllowedPorts is the compiled-in default allowlist (6379 Redis,
-// 25501 Core gRPC, 25551 beam relay). Written in the sorted order
-// normalizeWarpPorts emits, so the first-boot value does not visibly reorder on
-// the first save. MUST match gateway/warp defaultSpokeAllowedPorts.
-//
-// 25560, the edge tunnel, is deliberately absent. A customer machine must reach
-// an edge over the internet: through the overlay its players share one warp
-// leader's bandwidth with that same customer's Redis traffic and Beam uploads,
-// and drop every session whenever the leader restarts. This allowlist is the
-// only place that can enforce it - LINK_EXTERNAL, NODE_EXTERNAL and NODE_TAGS
-// are all env on the customer's own host, so nothing the machine declares about
-// itself is evidence.
-//
-// Adding it back re-opens that path for every tenant at once. The edge must
-// publish :25560 instead; a link then fails outright rather than quietly
-// degrading onto the overlay and looking healthy.
-const defaultWarpSpokeAllowedPorts = "6379,25501,25551"
-
 type WarpFirewallSettings struct {
 	AllowedPorts string `json:"allowedPorts"` // comma-separated destination TCP ports the overlay leaders allow spokes to reach
 
@@ -1462,7 +1426,7 @@ func normalizeWarpPorts(csv string) (string, error) {
 func (h *SettingsHandler) LoadWarpSpokeAllowedPorts() string {
 	v, _ := h.state.Store.GetSetting("warp_spoke_allowed_ports")
 	if v == "" {
-		return defaultWarpSpokeAllowedPorts
+		return services.DefaultWarpSpokeAllowedPorts
 	}
 	return v
 }
@@ -1485,7 +1449,7 @@ func (h *SettingsHandler) GetWarpFirewallSettings(w http.ResponseWriter, r *http
 		},
 		// Detected rather than stored: the panel pre-fills this when nothing is
 		// saved yet, so a self-hoster never has to look the overlay CIDR up.
-		"suggestedTunnelSubnets": h.state.suggestTunnelSubnets(),
+		"suggestedTunnelSubnets": services.SuggestTunnelSubnets(),
 	})
 }
 

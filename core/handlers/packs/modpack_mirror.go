@@ -45,7 +45,7 @@ func (h *PacksHandler) ModpackMirror(w http.ResponseWriter, r *http.Request) {
 	}
 	// Streamed rather than redirected, so the node only ever talks to the host
 	// it was told to trust - a redirect would hand it a storage-bucket URL.
-	if err := handlers.ServeModpackObject(w, r, prov, key, handlers.DeliverStream, "application/zip", path.Base(key)); err != nil {
+	if err := serveModpackObject(w, r, prov, key, deliverStream, "application/zip", path.Base(key)); err != nil {
 		notFound()
 		return
 	}

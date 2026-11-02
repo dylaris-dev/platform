@@ -1,4 +1,4 @@
-package handlers
+package services
 
 import (
 	"fmt"
@@ -38,7 +38,7 @@ func detectOverlaySubnets(redisAddr string) []string {
 		}
 	}
 
-	if local := localAddrToward(redisAddr); local != nil {
+	if local := LocalAddrToward(redisAddr); local != nil {
 		add(prefixForLocalIP(local))
 	}
 	for _, cidr := range privateInterfacePrefixes() {
@@ -47,10 +47,10 @@ func detectOverlaySubnets(redisAddr string) []string {
 	return out
 }
 
-// localAddrToward returns the local IP the kernel would use to reach addr. A UDP
+// LocalAddrToward returns the local IP the kernel would use to reach addr. A UDP
 // "connect" only selects a route and sends nothing, so this is free and works
 // even when Redis is down - it is the routing decision we want, not reachability.
-func localAddrToward(addr string) net.IP {
+func LocalAddrToward(addr string) net.IP {
 	addr = strings.TrimSpace(addr)
 	if addr == "" {
 		return nil
@@ -155,10 +155,10 @@ func privateInterfacePrefixes() []string {
 	return out
 }
 
-// suggestedTunnelSubnets is what the panel shows when nothing is stored: the
+// SuggestedTunnelSubnets is what the panel shows when nothing is stored: the
 // detected value, ready to save, plus the alternatives so an operator on a
 // multi-network Core can pick the right one instead of trusting a single guess.
-type suggestedTunnelSubnets struct {
+type SuggestedTunnelSubnets struct {
 	// Suggested is the best candidate, pre-filled into the field. "" = unknown.
 	Suggested string `json:"suggested"`
 	// Candidates includes Suggested, most-confident first.
@@ -168,13 +168,15 @@ type suggestedTunnelSubnets struct {
 	Source string `json:"source"`
 }
 
-func (s *AppState) suggestTunnelSubnets() suggestedTunnelSubnets {
+// SuggestTunnelSubnets is the tunnel-subnet suggestion the warp settings and
+// the deploy snippet show when nothing is stored.
+func SuggestTunnelSubnets() SuggestedTunnelSubnets {
 	// Read from the environment rather than threading config through AppState:
 	// this is the same value config.Load reads, and it is only ever used for a
 	// suggestion, so a stale copy could not cause a wrong decision anywhere.
 	redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
 	cands := detectOverlaySubnets(redisAddr)
-	out := suggestedTunnelSubnets{Candidates: cands}
+	out := SuggestedTunnelSubnets{Candidates: cands}
 	if len(cands) == 0 {
 		out.Source = "could not be detected on this host"
 		return out

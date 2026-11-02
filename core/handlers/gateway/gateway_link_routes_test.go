@@ -683,7 +683,7 @@ func TestCreateLinkRoute_CapsRoutesOnOwnDomains(t *testing.T) {
 	newFixture := func(held int) (*GatewayHandler, *linkRouteFakeGateway) {
 		fs := baseLinkRouteStore()
 		fs.settings["gateway_custom_domains_enabled"] = "true"
-		fs.settings[handlers.SettingMaxCustomDomains] = "2"
+		fs.settings[services.SettingMaxCustomDomains] = "2"
 		rdb := newLinkRouteRedis(t)
 		for i := 0; i < held; i++ {
 			seedLinkRoute(t, rdb, fmt.Sprintf("s%d.theirown.net", i),

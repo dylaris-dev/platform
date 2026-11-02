@@ -1,6 +1,7 @@
-package handlers
+package tabs
 
 import (
+	"dylaris-core/handlers"
 	"dylaris-core/models"
 )
 
@@ -24,7 +25,7 @@ const customTabsModulePosition = 7
 // Same shape as syncModpackModule, deliberately - these are the only two rows
 // that are answers to a feature question rather than settings of their own, and
 // they should not drift into two different mechanisms.
-func syncCustomTabsModule(state *AppState, enabled bool, audience string) error {
+func syncCustomTabsModule(state *handlers.AppState, enabled bool, audience string) error {
 	if state == nil || state.Store == nil {
 		return nil
 	}

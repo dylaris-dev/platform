@@ -20,16 +20,6 @@ import (
 // handlers. Thin wrappers rather than renames: the unexported names stay what
 // the rest of this package calls.
 
-func GeneratePlaintextKey() (string, error) { return generatePlaintextKey() }
-
-type ModpackDelivery = modpackDelivery
-
-const DeliverStream = deliverStream
-
-func ServeModpackObject(w http.ResponseWriter, r *http.Request, prov modpack.ModpackStorageProvider, key string, mode ModpackDelivery, contentType, filename string) error {
-	return serveModpackObject(w, r, prov, key, mode, contentType, filename)
-}
-
 func CompatQuery(r *http.Request) (mode, specific string) { return compatQuery(r) }
 
 func ResolveTargets(ctx context.Context, current, mode, specific string) ([]string, error) {
@@ -85,14 +75,6 @@ func CoreStorageConfigFromConnection(conn *models.StorageConnection) CoreStorage
 	return coreStorageConfigFromConnection(conn)
 }
 
-const TabProxyTicketTTL = tabProxyTicketTTL
-
-type SparkDBProvider = sparkDBProvider
-
-func SyncCustomTabsModule(state *AppState, enabled bool, audience string) error {
-	return syncCustomTabsModule(state, enabled, audience)
-}
-
 func UserRouteScope(userID string) string { return userRouteScope(userID) }
 
 func UsagePeriod(r *http.Request) time.Time { return usagePeriod(r) }
@@ -123,30 +105,7 @@ func (s *AppState) RequireEntitlement(r *http.Request, w http.ResponseWriter, us
 	return s.requireEntitlement(r, w, userID, kind)
 }
 
-func (s *AppState) DeployConfig() DeployConfig { return s.deployConfig() }
-
-func GenerateLinkIdentity() (string, error) { return generateLinkIdentity() }
-
-func GenerateNodeWarpIdentity() (string, error) { return generateNodeWarpIdentity() }
-
-func OwnNodeKey(st store.Store, nodeID, userID string) (*store.WarpAPIKey, int, string) {
-	return ownNodeKey(st, nodeID, userID)
-}
-
-func GrpcPortFromEnv() string { return grpcPortFromEnv() }
-
-func OverlayServiceAddrs(grpcPort string) (coreAddr, redisAddr string) {
-	return overlayServiceAddrs(grpcPort)
-}
-
-var (
-	DefaultMaxCustomDomains     = defaultMaxCustomDomains
-	DefaultBlockedRoutePrefixes = defaultBlockedRoutePrefixes
-)
-
 func AdminRouteScope(userID string) string { return adminRouteScope(userID) }
-
-const DefaultWarpSpokeAllowedPorts = defaultWarpSpokeAllowedPorts
 
 // --- nodes -------------------------------------------------------------------
 
@@ -162,8 +121,6 @@ type UpstreamCooldown = upstreamCooldown
 func (c *upstreamCooldown) Blocked(now time.Time) (time.Duration, bool) { return c.blocked(now) }
 
 func (c *upstreamCooldown) Trip(h http.Header, now time.Time) time.Duration { return c.trip(h, now) }
-
-const MaxCachedResponseBytes = maxCachedResponseBytes
 
 const KeyModpackStorageConnectionID = keyModpackStorageConnectionID
 

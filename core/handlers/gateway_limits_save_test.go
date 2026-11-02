@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
@@ -96,13 +97,13 @@ func TestARouteLimitOfZeroIsSavedAsZero(t *testing.T) {
 // must not be read as null: a client that predates it would lift the cap every
 // time it saved this screen.
 func TestTheCustomDomainCapSurvivesAClientThatDoesNotSendIt(t *testing.T) {
-	if fs := saveGatewayLimits(t, `{"limits":{"global":5}}`); fs.settings[SettingMaxCustomDomains] != "" {
-		t.Errorf("an absent field wrote %q", fs.settings[SettingMaxCustomDomains])
+	if fs := saveGatewayLimits(t, `{"limits":{"global":5}}`); fs.settings[services.SettingMaxCustomDomains] != "" {
+		t.Errorf("an absent field wrote %q", fs.settings[services.SettingMaxCustomDomains])
 	}
-	if fs := saveGatewayLimits(t, `{"limits":{"global":5},"maxCustomDomains":null}`); fs.settings[SettingMaxCustomDomains] != "unlimited" {
-		t.Errorf("an explicit null wrote %q, want unlimited", fs.settings[SettingMaxCustomDomains])
+	if fs := saveGatewayLimits(t, `{"limits":{"global":5},"maxCustomDomains":null}`); fs.settings[services.SettingMaxCustomDomains] != "unlimited" {
+		t.Errorf("an explicit null wrote %q, want unlimited", fs.settings[services.SettingMaxCustomDomains])
 	}
-	if fs := saveGatewayLimits(t, `{"limits":{"global":5},"maxCustomDomains":7}`); fs.settings[SettingMaxCustomDomains] != "7" {
-		t.Errorf("a cap of 7 wrote %q", fs.settings[SettingMaxCustomDomains])
+	if fs := saveGatewayLimits(t, `{"limits":{"global":5},"maxCustomDomains":7}`); fs.settings[services.SettingMaxCustomDomains] != "7" {
+		t.Errorf("a cap of 7 wrote %q", fs.settings[services.SettingMaxCustomDomains])
 	}
 }

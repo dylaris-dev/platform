@@ -139,8 +139,8 @@ func (h *GatewayHandler) ownerRouteStats(userID, domain string) (routeStats, err
 }
 
 func (h *GatewayHandler) customDomainCap() *int64 {
-	raw, _ := h.state.Store.GetSetting(handlers.SettingMaxCustomDomains)
-	return services.ParseLimitSetting(raw, handlers.DefaultMaxCustomDomains)
+	raw, _ := h.state.Store.GetSetting(services.SettingMaxCustomDomains)
+	return services.ParseLimitSetting(raw, services.DefaultMaxCustomDomains)
 }
 
 // customDomainCapError is the refusal for an account at its cap, or "".

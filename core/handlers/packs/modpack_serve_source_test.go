@@ -1,4 +1,4 @@
-package handlers
+package packs
 
 import (
 	"os"
@@ -7,8 +7,8 @@ import (
 )
 
 // TestPublicPackRoutesNeverCallGet enforces, in a way a test can fail on, that
-// the byte-serving public handler goes through serveModpackObject. They
-// live in handlers/packs and reach it as handlers.ServeModpackObject.
+// the byte-serving public handler goes through serveModpackObject, which
+// lives beside it in this package.
 //
 // This is a source check because no black-box test can catch the regression.
 // Going back to prov.Get plus w.Write produces a byte-identical response with
@@ -29,7 +29,7 @@ func TestPublicPackRoutesNeverCallGet(t *testing.T) {
 		path  string
 		route string
 	}{
-		{path: "packs/modpack_mirror.go", route: "GET /mirror/{rest} (unauthenticated)"},
+		{path: "modpack_mirror.go", route: "GET /mirror/{rest} (unauthenticated)"},
 	}
 
 	for _, f := range files {
@@ -43,7 +43,7 @@ func TestPublicPackRoutesNeverCallGet(t *testing.T) {
 					"through serveModpackObject, or Core buffers a whole pack per concurrent request",
 					f.path, f.route)
 			}
-			if !strings.Contains(string(src), "handlers.ServeModpackObject(") {
+			if !strings.Contains(string(src), "serveModpackObject(") {
 				t.Fatalf("%s no longer calls serveModpackObject: %s must not grow its own serving path",
 					f.path, f.route)
 			}

@@ -1,4 +1,4 @@
-package handlers
+package tabs
 
 import (
 	"database/sql"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 )
 
@@ -24,10 +25,10 @@ import (
 // gate is gone.
 
 type SparkHandler struct {
-	state *AppState
+	state *handlers.AppState
 }
 
-func NewSparkHandler(state *AppState) *SparkHandler {
+func NewSparkHandler(state *handlers.AppState) *SparkHandler {
 	return &SparkHandler{state: state}
 }
 

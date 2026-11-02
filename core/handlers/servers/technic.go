@@ -169,7 +169,7 @@ func (h *TechnicHandler) apiGet(ctx context.Context, path string, q url.Values, 
 	if len(body) > technicMaxBody {
 		return nil, errors.New("technic: response too large")
 	}
-	if h.state != nil && h.state.Cache != nil && len(body) <= handlers.MaxCachedResponseBytes {
+	if h.state != nil && h.state.Cache != nil && len(body) <= services.MaxCachedResponseBytes {
 		h.state.Cache.Set(ctx, key, string(body), ttl)
 	}
 	return body, nil
@@ -190,7 +190,7 @@ func (h *TechnicHandler) solderGet(ctx context.Context, rawURL string, out any) 
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("the pack's Solder server sent something unreadable: %w", err)
 	}
-	if h.state != nil && h.state.Cache != nil && len(body) <= handlers.MaxCachedResponseBytes {
+	if h.state != nil && h.state.Cache != nil && len(body) <= services.MaxCachedResponseBytes {
 		h.state.Cache.Set(ctx, key, string(body), technicPackTTL)
 	}
 	return nil

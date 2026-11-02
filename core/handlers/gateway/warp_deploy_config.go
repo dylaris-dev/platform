@@ -32,7 +32,7 @@ func (h *WarpHandler) GetDeployConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"config":  h.state.DeployConfig(),
+		"config":  deployConfig(h.state),
 	})
 }
 

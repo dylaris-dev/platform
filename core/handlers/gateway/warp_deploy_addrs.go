@@ -1,6 +1,8 @@
-package handlers
+package gateway
 
 import (
+	"dylaris-core/handlers"
+	"dylaris-core/services"
 	"net"
 	"os"
 	"strings"
@@ -149,7 +151,7 @@ func overlayServiceAddrs(grpcPort string) (coreAddr, redisAddr string) {
 		// reverse-proxy overlay, the service overlay) and only the Redis-facing
 		// one is provably the overlay the spoke will be on. It is an instance
 		// address, so it is second choice, not first.
-		if local := localAddrToward(redisEnv); local != nil {
+		if local := services.LocalAddrToward(redisEnv); local != nil {
 			coreAddr = net.JoinHostPort(local.String(), grpcPort)
 		}
 	}
@@ -158,7 +160,7 @@ func overlayServiceAddrs(grpcPort string) (coreAddr, redisAddr string) {
 
 // deployConfig answers with the tunnel subnets and the gRPC pin for a deploy
 // snippet.
-func (s *AppState) deployConfig() DeployConfig {
+func deployConfig(s *handlers.AppState) DeployConfig {
 	var out DeployConfig
 	if s != nil && s.GRPCTLSEnabled {
 		out.GRPCTLSFingerprint = s.GRPCTLSFingerprint
@@ -172,7 +174,7 @@ func (s *AppState) deployConfig() DeployConfig {
 	// an operator who never opened the warp settings has no stored value - which
 	// is the normal case, not an edge one.
 	if out.TunnelSubnets == "" && s != nil {
-		out.TunnelSubnets = s.suggestTunnelSubnets().Suggested
+		out.TunnelSubnets = services.SuggestTunnelSubnets().Suggested
 	}
 	return out
 }

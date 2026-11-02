@@ -656,7 +656,7 @@ func (h *GatewayHandler) loadBlockedRoutePrefixes() map[string]bool {
 	raw, _ := h.state.Store.GetSetting("gateway_blocked_route_prefixes")
 	var list []string
 	if raw == "" {
-		list = handlers.DefaultBlockedRoutePrefixes
+		list = services.DefaultBlockedRoutePrefixes
 	} else {
 		_ = json.Unmarshal([]byte(raw), &list)
 	}

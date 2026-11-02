@@ -625,7 +625,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	modrinthHandler := mods.NewModrinthHandler(appState)
 	technicHandler := servers.NewTechnicHandler(appState)
 	serverModsHandler := servers.NewServerModsHandler(appState)
-	sparkHandler := handlers.NewSparkHandler(appState)
+	sparkHandler := tabs.NewSparkHandler(appState)
 	serverTabsHandler := tabs.NewServerTabsHandler(appState)
 	proxyHandler := tabs.NewProxyHandler(appState, authHandler)
 	modrinthPATHandler := mods.NewModrinthPATHandler(appState, cfg.ClusterSecret)
@@ -708,7 +708,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// route served the Technic launcher. Its own rate-limiter instance, not a
 	// shared one: a client exhausting one budget must not lock another.
 	mirrorLimiter := httpx.NewIPRateLimiter()
-	r.HandleFunc("/mirror/{rest:.*}", mirrorLimiter.Limit(handlers.ModpackMirrorRequestsPerMinute, packsHandler.ModpackMirror)).Methods("GET")
+	r.HandleFunc("/mirror/{rest:.*}", mirrorLimiter.Limit(packs.ModpackMirrorRequestsPerMinute, packsHandler.ModpackMirror)).Methods("GET")
 
 	// --- REMOVED PUBLIC SHARE LINKS ---
 	// Build share links are gone (owner decision 2026-10-31). The route stays

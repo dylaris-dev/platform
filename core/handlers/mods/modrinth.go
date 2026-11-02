@@ -127,7 +127,7 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 
 	// Cache only successful 200s — error responses change shape and
 	// shouldn't poison the cache for 5+ minutes.
-	if resp.StatusCode == http.StatusOK && h.state.Cache != nil && len(body) <= handlers.MaxCachedResponseBytes {
+	if resp.StatusCode == http.StatusOK && h.state.Cache != nil && len(body) <= services.MaxCachedResponseBytes {
 		h.state.Cache.Set(ctx, cacheKey, string(body), ttl)
 	}
 

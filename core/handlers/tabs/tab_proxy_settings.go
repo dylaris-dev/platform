@@ -95,7 +95,7 @@ func (h *TabProxySettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// The navbar row follows these settings; it is not separately editable.
 	// Cosmetic, so a failure is logged rather than failing the save the operator
 	// just made - same call shape as the Modpacks sync.
-	if err := handlers.SyncCustomTabsModule(h.state, req.Enabled, req.Audience); err != nil {
+	if err := syncCustomTabsModule(h.state, req.Enabled, req.Audience); err != nil {
 		log.Printf("tab-proxy: syncing the Custom Tabs module row failed: %v", err)
 	}
 	h.state.Events.Publish(r.Context(), "features.changed", map[string]interface{}{

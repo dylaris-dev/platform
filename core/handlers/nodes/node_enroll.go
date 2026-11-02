@@ -81,7 +81,7 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// not confirm that key exists.
 	warpKeyNodeID := strings.TrimSpace(req.WarpKeyNodeID)
 	if warpKeyNodeID != "" {
-		key, _, msg := handlers.OwnNodeKey(h.state.Store, warpKeyNodeID, userID)
+		key, _, msg := access.OwnNodeKey(h.state.Store, warpKeyNodeID, userID)
 		if key == nil {
 			httpx.SendJSONError(w, msg, http.StatusBadRequest)
 			return

@@ -202,7 +202,7 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 // Here rather than in WarpService: the addresses come off AppState, which knows
 // Core's own networks, and the service has no view of them.
 func stampOverlayAddrs(res *services.EnrollResult) {
-	res.CoreGRPCAddr, res.RedisAddr = handlers.OverlayServiceAddrs(handlers.GrpcPortFromEnv())
+	res.CoreGRPCAddr, res.RedisAddr = overlayServiceAddrs(grpcPortFromEnv())
 }
 
 // Assignment handles GET /api/warp/assignment?public_key=... - the client's
@@ -294,7 +294,7 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	plaintext, err := handlers.GeneratePlaintextKey()
+	plaintext, err := services.GeneratePlaintextKey()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
@@ -372,12 +372,12 @@ func (h *WarpHandler) MintExternalNodeKey(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Name this location: 4 to 20 characters, letters, digits and hyphens, not starting or ending with a hyphen.", http.StatusBadRequest)
 		return
 	}
-	nodeID, err := handlers.GenerateNodeWarpIdentity()
+	nodeID, err := generateNodeWarpIdentity()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate node identity", http.StatusInternalServerError)
 		return
 	}
-	plaintext, err := handlers.GeneratePlaintextKey()
+	plaintext, err := services.GeneratePlaintextKey()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
@@ -573,7 +573,7 @@ func (h *WarpHandler) RollExternalNodeKey(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	plaintext, err := handlers.GeneratePlaintextKey()
+	plaintext, err := services.GeneratePlaintextKey()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
@@ -689,12 +689,12 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 		name = "Route-only link"
 	}
 
-	nodeID, err := handlers.GenerateLinkIdentity()
+	nodeID, err := generateLinkIdentity()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate link identity", http.StatusInternalServerError)
 		return
 	}
-	plaintext, err := handlers.GeneratePlaintextKey()
+	plaintext, err := services.GeneratePlaintextKey()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
@@ -1074,7 +1074,7 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 		httpx.SendJSONError(w, notFound, http.StatusNotFound)
 		return "", false
 	}
-	plaintext, err := handlers.GeneratePlaintextKey()
+	plaintext, err := services.GeneratePlaintextKey()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return "", false
@@ -1394,12 +1394,12 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nodeID, err := handlers.GenerateNodeWarpIdentity()
+	nodeID, err := generateNodeWarpIdentity()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate node identity", http.StatusInternalServerError)
 		return
 	}
-	plaintext, err := handlers.GeneratePlaintextKey()
+	plaintext, err := services.GeneratePlaintextKey()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
@@ -1501,7 +1501,7 @@ func (h *WarpHandler) BindNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Choose the machine this key belongs to", http.StatusBadRequest)
 		return
 	}
-	key, status, msg := handlers.OwnNodeKey(h.state.Store, mux.Vars(r)["nodeID"], userID)
+	key, status, msg := access.OwnNodeKey(h.state.Store, mux.Vars(r)["nodeID"], userID)
 	if key == nil {
 		httpx.SendJSONError(w, msg, status)
 		return

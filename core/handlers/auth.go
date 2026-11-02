@@ -51,11 +51,6 @@ func (h *AuthHandler) IssueToken(username string, isAdmin bool, pwdHash string) 
 	return token.SignedString(h.jwtKey)
 }
 
-// tabProxyTicketTTL is the lifetime of a tab-proxy-scoped ticket (Claims.Purpose
-// == "tab_proxy"). Short-lived because it lives in a cookie for the duration of
-// one dashboard-tab iframe session, not a general 24h session token.
-const tabProxyTicketTTL = 5 * time.Minute
-
 // IssueTabProxyTicket signs a short-lived, tab-proxy-scoped JWT. The caller
 // (ProxyHandler.MintTicket, on the panel's own origin) has already run this
 // request through AuthMiddleware plus the tabs.read capability for this exact
@@ -69,7 +64,7 @@ const tabProxyTicketTTL = 5 * time.Minute
 // sessionID is the minting session's id, so signing that session out ends the
 // ticket too (ParseTabProxyTicket).
 func (h *AuthHandler) IssueTabProxyTicket(sessionID, username string, isAdmin bool, serverID, tabID int, readOnly bool) (string, error) {
-	expiresAt := time.Now().Add(tabProxyTicketTTL)
+	expiresAt := time.Now().Add(reqctx.TabProxyTicketTTL)
 	claims := &Claims{
 		Username:         username,
 		IsAdmin:          isAdmin,

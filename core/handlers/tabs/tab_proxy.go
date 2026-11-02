@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/reqctx"
 
 	pb "dylaris-proto/node"
 
@@ -138,7 +139,7 @@ func (h *ProxyHandler) rawDB() *sql.DB {
 	if h.state.Store == nil {
 		return nil
 	}
-	provider, ok := h.state.Store.(handlers.SparkDBProvider)
+	provider, ok := h.state.Store.(sparkDBProvider)
 	if !ok {
 		return nil
 	}
@@ -371,7 +372,7 @@ func acceptsGzip(values []string) bool {
 // ticket or an unpublished link leaves it readable until it expires. Held to
 // the ticket's own lifetime, so revocation still takes effect as fast as it
 // did when nothing was cached (owner decision 2026-10-10).
-const tabProxyMaxBrowserCache = int(handlers.TabProxyTicketTTL / time.Second)
+const tabProxyMaxBrowserCache = int(reqctx.TabProxyTicketTTL / time.Second)
 
 // browserCacheControl turns the container's Cache-Control into the single
 // value Core sends. It is always private (the content sits behind a per-user

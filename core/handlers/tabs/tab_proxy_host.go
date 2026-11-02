@@ -272,7 +272,7 @@ func (h *ProxyHandler) HostMint(w http.ResponseWriter, r *http.Request) {
 		// registrable domain, so the iframe request is same-SITE even though it
 		// is cross-ORIGIN. Same-site is not same-origin.
 		SameSite: http.SameSiteStrictMode,
-		MaxAge:   int(handlers.TabProxyTicketTTL.Seconds()),
+		MaxAge:   int(reqctx.TabProxyTicketTTL.Seconds()),
 	})
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Cache-Control", "no-store")
@@ -381,7 +381,7 @@ func (h *ProxyHandler) MintTicket(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":   true,
 		"ticket":    ticket,
-		"expiresIn": int(handlers.TabProxyTicketTTL.Seconds()),
+		"expiresIn": int(reqctx.TabProxyTicketTTL.Seconds()),
 	})
 }
 

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -149,7 +150,7 @@ func TestIsAdminToken_RejectsNonHS256Alg(t *testing.T) {
 
 // TestIssueTabProxyTicket_ClaimsAndExpiry checks the minted ticket's shape:
 // right purpose, right server/tab/identity/readOnly claims, and an expiry
-// ~tabProxyTicketTTL out - independent of the mint HTTP handler.
+// ~reqctx.TabProxyTicketTTL out - independent of the mint HTTP handler.
 func TestIssueTabProxyTicket_ClaimsAndExpiry(t *testing.T) {
 	h := newTestAuthHandler()
 
@@ -180,8 +181,8 @@ func TestIssueTabProxyTicket_ClaimsAndExpiry(t *testing.T) {
 		t.Fatal("ExpiresAt not set")
 	}
 	exp := claims.ExpiresAt.Time
-	if exp.Before(before.Add(tabProxyTicketTTL-2*time.Second)) || exp.After(after.Add(tabProxyTicketTTL+2*time.Second)) {
-		t.Errorf("ExpiresAt = %v, want ~%v from mint time", exp, tabProxyTicketTTL)
+	if exp.Before(before.Add(reqctx.TabProxyTicketTTL-2*time.Second)) || exp.After(after.Add(reqctx.TabProxyTicketTTL+2*time.Second)) {
+		t.Errorf("ExpiresAt = %v, want ~%v from mint time", exp, reqctx.TabProxyTicketTTL)
 	}
 }
 

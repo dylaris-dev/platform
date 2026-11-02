@@ -9,8 +9,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -244,7 +242,7 @@ func TestRoutesOnOwnDomainsAreCapped(t *testing.T) {
 			fs := &linkRouteFakeStore{settings: map[string]string{
 				services.HosterDomainsSettingKey: `[{"domain":"example.com","validation":"dns"}]`,
 				"gateway_custom_domains_enabled": "true",
-				handlers.SettingMaxCustomDomains: tc.setting,
+				services.SettingMaxCustomDomains: tc.setting,
 			}, servers: map[string][]models.Server{linkRouteUserID: {{ID: 1, UUID: "srv-1"}}}}
 			gw := &linkRouteFakeGateway{}
 			rec := httptest.NewRecorder()

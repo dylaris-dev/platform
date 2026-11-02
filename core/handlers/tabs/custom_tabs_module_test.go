@@ -1,8 +1,9 @@
-package handlers
+package tabs
 
 import (
 	"testing"
 
+	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -41,8 +42,8 @@ func (f *customTabsFakeStore) CreateModule(m *models.Module) (int, error) {
 	return 42, nil
 }
 
-func customTabsState(f *customTabsFakeStore) *AppState {
-	return &AppState{Store: f, FeatureFlags: &services.FeatureFlags{}}
+func customTabsState(f *customTabsFakeStore) *handlers.AppState {
+	return &handlers.AppState{Store: f, FeatureFlags: &services.FeatureFlags{}}
 }
 
 // The navbar row follows the tab-proxy settings, in both fields.
