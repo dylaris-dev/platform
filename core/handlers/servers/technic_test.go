@@ -16,7 +16,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services"
 	"dylaris-core/services/modcompat"
 )
@@ -86,7 +85,7 @@ func newTestTechnicHandler(t *testing.T, u *technicUpstream) *TechnicHandler {
 	t.Cleanup(func() { technicCooldown = modcompat.UpstreamCooldown{} })
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	h := NewTechnicHandler(withCoreStorage(&handlers.AppState{Cache: services.NewCache(rdb)}))
+	h := NewTechnicHandler(testDeps(Deps{Cache: services.NewCache(rdb)}))
 	h.base = u.srv.URL
 	h.fetchExternal = func(ctx context.Context, raw string, max int64, _ time.Duration) ([]byte, error) {
 		resp, err := http.Get(raw)

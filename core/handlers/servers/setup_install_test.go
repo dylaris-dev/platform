@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services/corestorage"
 
@@ -70,13 +69,12 @@ func newInstallTest(t *testing.T) (*ServerHandler, *installFakeStore, *redis.Cli
 		},
 	}}
 	rdb := handlertest.RedisClient(t)
-	h := &ServerHandler{state: &handlers.AppState{
-		Store:         fs,
-		Redis:         rdb,
-		Queue:         services.NewQueueService(rdb),
-		FeatureFlags:  services.NewFeatureFlags(fs),
-		ClusterSecret: "test-cluster-secret",
-		CoreStorage:   &corestorage.Manager{Store: fs, Redis: rdb, ClusterSecret: "test-cluster-secret"},
+	h := &ServerHandler{d: Deps{
+		Store:        fs,
+		Redis:        rdb,
+		Queue:        services.NewQueueService(rdb),
+		FeatureFlags: services.NewFeatureFlags(fs),
+		CoreStorage:  &corestorage.Manager{Store: fs, Redis: rdb, ClusterSecret: "test-cluster-secret"},
 	}}
 	return h, fs, rdb
 }

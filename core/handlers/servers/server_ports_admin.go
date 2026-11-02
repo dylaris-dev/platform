@@ -12,7 +12,6 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
@@ -21,11 +20,11 @@ import (
 // PortsAdminHandler is the administrator's side of extra ports: settings,
 // per node ranges, the overview with search, permissions and limits.
 type PortsAdminHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewPortsAdminHandler(state *handlers.AppState) *PortsAdminHandler {
-	return &PortsAdminHandler{state: state}
+func NewPortsAdminHandler(state Deps) *PortsAdminHandler {
+	return &PortsAdminHandler{d: state}
 }
 
 type portsNodeUsage struct {
@@ -55,18 +54,18 @@ type portsSettingsView struct {
 }
 
 func (h *PortsAdminHandler) settingsView() portsSettingsView {
-	en, _ := h.state.Store.GetSetting(services.PortsEnabledSettingKey)
-	rng, saved, err := services.GlobalPortRange(h.state.Store)
+	en, _ := h.d.Store.GetSetting(services.PortsEnabledSettingKey)
+	rng, saved, err := services.GlobalPortRange(h.d.Store)
 	if err != nil {
 		log.Printf("ports admin: %v", err)
 		saved = true // unknown: do not claim the default applies
 	}
-	max, _ := h.state.Store.GetSetting(services.PortsMaxPerUserSettingKey)
+	max, _ := h.d.Store.GetSetting(services.PortsMaxPerUserSettingKey)
 	on, _ := strconv.ParseBool(strings.TrimSpace(en))
 	def := services.DefaultPortsPerUser
 	v := portsSettingsView{Enabled: on, Range: rng,
 		MaxPerUser: services.FormatLimitSetting(services.ParseLimitSetting(strings.TrimSpace(max), &def))}
-	if d, isDefault := services.EffectivePortRange("", rng, saved, h.state.Hosted); isDefault {
+	if d, isDefault := services.EffectivePortRange("", rng, saved, h.d.Hosted); isDefault {
 		v.DefaultRange = d
 	}
 	return v
@@ -79,7 +78,7 @@ func (h *PortsAdminHandler) GetOverview(w http.ResponseWriter, r *http.Request) 
 	if len(q) > 100 {
 		q = q[:100]
 	}
-	rows, err := h.state.Store.ListAllServerPorts(q)
+	rows, err := h.d.Store.ListAllServerPorts(q)
 	if err != nil {
 		log.Printf("ports admin: %v", err)
 		httpx.SendJSONError(w, "Failed to read the ports", http.StatusInternalServerError)
@@ -87,28 +86,28 @@ func (h *PortsAdminHandler) GetOverview(w http.ResponseWriter, r *http.Request) 
 	}
 	all := rows
 	if q != "" {
-		if all, err = h.state.Store.ListAllServerPorts(""); err != nil {
+		if all, err = h.d.Store.ListAllServerPorts(""); err != nil {
 			httpx.SendJSONError(w, "Failed to read the ports", http.StatusInternalServerError)
 			return
 		}
 	}
-	nodes, err := h.state.Store.ListNodes()
+	nodes, err := h.d.Store.ListNodes()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to read the nodes", http.StatusInternalServerError)
 		return
 	}
-	own, err := h.state.Store.GetNodeExtraPortRanges()
+	own, err := h.d.Store.GetNodeExtraPortRanges()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to read the node ranges", http.StatusInternalServerError)
 		return
 	}
-	hosts, err := h.state.Store.GetNodeExtraPortsHosts()
+	hosts, err := h.d.Store.GetNodeExtraPortsHosts()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to read the node addresses", http.StatusInternalServerError)
 		return
 	}
 	settings := h.settingsView()
-	beats := services.LoadHeartbeats(r.Context(), h.state.Redis)
+	beats := services.LoadHeartbeats(r.Context(), h.d.Redis)
 	usage := make([]portsNodeUsage, 0, len(nodes))
 	for _, n := range nodes {
 		u := portsNodeUsage{NodeID: n.ID, NodeName: n.Name, Range: settings.Range, Host: hosts[n.ID]}
@@ -177,7 +176,7 @@ func (h *PortsAdminHandler) SetSettings(w http.ResponseWriter, r *http.Request) 
 		*req.MaxPerUser = v
 	}
 	set := func(key, val string) bool {
-		if err := h.state.Store.SetSetting(key, val); err != nil {
+		if err := h.d.Store.SetSetting(key, val); err != nil {
 			log.Printf("ports admin: save %s: %v", key, err)
 			httpx.SendJSONError(w, "Failed to save the settings", http.StatusInternalServerError)
 			return false
@@ -201,7 +200,7 @@ func (h *PortsAdminHandler) SetSettings(w http.ResponseWriter, r *http.Request) 
 // left out stays. Refused when the range overlaps the node's game ports.
 func (h *PortsAdminHandler) SetNodeRange(w http.ResponseWriter, r *http.Request) {
 	nodeID := httpx.MustAtoi(mux.Vars(r)["id"])
-	node, err := h.state.Store.GetNodeByID(nodeID)
+	node, err := h.d.Store.GetNodeByID(nodeID)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
@@ -227,18 +226,18 @@ func (h *PortsAdminHandler) SetNodeRange(w http.ResponseWriter, r *http.Request)
 			httpx.SendJSONErrorCode(w, "The port range is invalid: "+err.Error()+".", "port_range_invalid", http.StatusBadRequest)
 			return
 		}
-		if hb := services.LoadHeartbeat(r.Context(), h.state.Redis, node.Token); hb != nil && services.PortRangesOverlap(req.Range, hb.PortRange) {
+		if hb := services.LoadHeartbeat(r.Context(), h.d.Redis, node.Token); hb != nil && services.PortRangesOverlap(req.Range, hb.PortRange) {
 			httpx.SendJSONErrorCode(w, "The range overlaps this node's game port range "+hb.PortRange+". Pick one outside it.", "ports_range_conflict", http.StatusBadRequest)
 			return
 		}
 	}
-	if err := h.state.Store.SetNodeExtraPortRange(nodeID, req.Range); err != nil {
+	if err := h.d.Store.SetNodeExtraPortRange(nodeID, req.Range); err != nil {
 		log.Printf("ports admin: node %d range: %v", nodeID, err)
 		httpx.SendJSONError(w, "Failed to save the range", http.StatusInternalServerError)
 		return
 	}
 	if req.Host != nil {
-		if err := h.state.Store.SetNodeExtraPortsHost(nodeID, host); err != nil {
+		if err := h.d.Store.SetNodeExtraPortsHost(nodeID, host); err != nil {
 			log.Printf("ports admin: node %d host: %v", nodeID, err)
 			httpx.SendJSONError(w, "Failed to save the address", http.StatusInternalServerError)
 			return
@@ -270,7 +269,7 @@ func normPortsHost(s string) (string, error) {
 
 // ListPermissions GET /api/admin/port-permissions
 func (h *PortsAdminHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.state.Store.ListPortPermissions()
+	rows, err := h.d.Store.ListPortPermissions()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to read the port permissions", http.StatusInternalServerError)
 		return
@@ -288,7 +287,7 @@ func (h *PortsAdminHandler) SetPermission(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, `Invalid request: expected {"scope": "server:<id>|user:<id>|role:<id>", "allowed": true|false}`, http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetPortPermission(req.Scope, *req.Allowed); err != nil {
+	if err := h.d.Store.SetPortPermission(req.Scope, *req.Allowed); err != nil {
 		httpx.SendJSONError(w, "Failed to save the port permission", http.StatusInternalServerError)
 		return
 	}
@@ -302,7 +301,7 @@ func (h *PortsAdminHandler) DeletePermission(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Invalid scope", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.DeletePortPermission(scope); err != nil {
+	if err := h.d.Store.DeletePortPermission(scope); err != nil {
 		httpx.SendJSONError(w, "Failed to delete the port permission", http.StatusInternalServerError)
 		return
 	}
@@ -311,7 +310,7 @@ func (h *PortsAdminHandler) DeletePermission(w http.ResponseWriter, r *http.Requ
 
 // ListLimits GET /api/admin/port-limits
 func (h *PortsAdminHandler) ListLimits(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.state.Store.ListPortLimits()
+	rows, err := h.d.Store.ListPortLimits()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to read the port limits", http.StatusInternalServerError)
 		return
@@ -339,7 +338,7 @@ func (h *PortsAdminHandler) SetLimit(w http.ResponseWriter, r *http.Request) {
 		}
 		max = &n
 	}
-	if err := h.state.Store.SetPortLimit(req.Scope, max); err != nil {
+	if err := h.d.Store.SetPortLimit(req.Scope, max); err != nil {
 		httpx.SendJSONError(w, "Failed to save the port limit", http.StatusInternalServerError)
 		return
 	}
@@ -353,7 +352,7 @@ func (h *PortsAdminHandler) DeleteLimit(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Invalid scope", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.DeletePortLimit(scope); err != nil {
+	if err := h.d.Store.DeletePortLimit(scope); err != nil {
 		httpx.SendJSONError(w, "Failed to delete the port limit", http.StatusInternalServerError)
 		return
 	}
@@ -373,10 +372,10 @@ type serverTraffic struct {
 }
 
 func (h *PortsAdminHandler) readServerTraffic(ctx context.Context, uuid string) (serverTraffic, bool) {
-	if h.state.Redis == nil || uuid == "" {
+	if h.d.Redis == nil || uuid == "" {
 		return serverTraffic{}, false
 	}
-	m, err := h.state.Redis.HGetAll(ctx, "dylaris:server:"+uuid+":net").Result()
+	m, err := h.d.Redis.HGetAll(ctx, "dylaris:server:"+uuid+":net").Result()
 	if err != nil || len(m) == 0 {
 		return serverTraffic{}, false
 	}

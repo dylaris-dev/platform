@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
 
 	"dylaris-core/models"
@@ -67,7 +66,7 @@ func (f *serverMetadataFakeStore) InsertServerAudit(ev *models.ServerAuditEvent)
 // Events is left nil - SystemEventsPublisher.Publish is nil-safe on both the
 // receiver and its rdb, so handlers can call it unconditionally in tests.
 func newServerMetadataHandler(fs *serverMetadataFakeStore) *ServerHandler {
-	return &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
+	return &ServerHandler{d: testDeps(Deps{Store: fs})}
 }
 
 func declareMetadataReqWithStore(fs *serverMetadataFakeStore, serverID int, body map[string]interface{}) *httptest.ResponseRecorder {

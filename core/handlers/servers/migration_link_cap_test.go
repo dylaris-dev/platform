@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -26,7 +24,7 @@ func (f *migrationCapStore) GetNodeByID(id int) (*models.Node, error) {
 func TestAMoveKeepsRealPlayerIPBehindALinkThatCarriesIt(t *testing.T) {
 	_, base, rdb := newProxyProtoHandler(t, true)
 	fs := &migrationCapStore{proxyProtoFakeStore: *base}
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb, Gateway: services.NewRedisGateway(rdb, fs, "cs")})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fs, Redis: rdb, Gateway: services.NewRedisGateway(rdb, fs, "cs")})}
 	srv := &models.Server{ID: 7, UUID: "srv-7", NodeID: 1, Status: "stopped", ProxyProtocol: true}
 	target := &models.Node{ID: 2, Status: "online", Token: "node-dst", LinkToken: "link-dst"}
 

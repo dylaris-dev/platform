@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -19,7 +18,7 @@ func (noInvitesStore) ListInvitesByServer(int) ([]models.ServerInvite, error) { 
 // A server with no members answered "members": null, which a client calling
 // .length or .map on it falls over.
 func TestNoMembersIsAnEmptyList(t *testing.T) {
-	h := &MemberHandler{state: withCoreStorage(&handlers.AppState{Store: noInvitesStore{}})}
+	h := &MemberHandler{d: testDeps(Deps{Store: noInvitesStore{}})}
 	req := mux.SetURLVars(httptest.NewRequest("GET", "/api/servers/4/members", nil), map[string]string{"id": "4"})
 	rec := httptest.NewRecorder()
 	h.GetMembers(rec, req)

@@ -45,11 +45,11 @@ func (h *ServerHandler) GetServerEdgeMotd(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
-	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
+	if _, err := h.d.Store.GetServerByID(serverID); err != nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
-	mode, text, err := h.state.Store.GetServerEdgeMotd(serverID)
+	mode, text, err := h.d.Store.GetServerEdgeMotd(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to read edge MOTD config", 500)
 		return
@@ -68,7 +68,7 @@ func (h *ServerHandler) SetServerEdgeMotd(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
@@ -89,14 +89,14 @@ func (h *ServerHandler) SetServerEdgeMotd(w http.ResponseWriter, r *http.Request
 	if len(text) > maxEdgeMotdTextLen {
 		text = text[:maxEdgeMotdTextLen]
 	}
-	if err := h.state.Store.SetServerEdgeMotd(serverID, req.Mode, text); err != nil {
+	if err := h.d.Store.SetServerEdgeMotd(serverID, req.Mode, text); err != nil {
 		httpx.SendJSONError(w, "Failed to update edge MOTD config", 500)
 		return
 	}
 	// Publish immediately so the edge picks it up without waiting for the periodic
 	// republish (best-effort; the status watcher republishes every scan tick too).
-	if h.state.Redis != nil {
-		publishEdgeMotd(context.Background(), h.state.Redis, srv.UUID, req.Mode, text)
+	if h.d.Redis != nil {
+		publishEdgeMotd(context.Background(), h.d.Redis, srv.UUID, req.Mode, text)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "mode": req.Mode, "customText": text})
 }

@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/servers"
 
 	"dylaris-core/models"
@@ -36,7 +35,7 @@ func TestGatewayPlayersOnlyForTheCallersServers(t *testing.T) {
 		"data": `{"players_by_server":{"uuid-mine":3,"uuid-theirs":7}}`,
 	}})
 
-	h := servers.NewServerHandler(&handlers.AppState{
+	h := servers.NewServerHandler(servers.Deps{
 		Store: &playersFakeStore{listed: []models.Server{{ID: 5, UUID: "uuid-mine"}, {ID: 6, UUID: "uuid-empty"}}},
 		Redis: rdb,
 	})

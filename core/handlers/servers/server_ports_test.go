@@ -14,7 +14,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -168,7 +167,7 @@ func newPortsCase(t *testing.T) *portsCase {
 		},
 	}
 	setPortsHeartbeat(t, mr, services.PortsNodeSince, "25600-25699")
-	return &portsCase{fs: fs, rdb: rdb, mr: mr, h: NewServerHandler(withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb}))}
+	return &portsCase{fs: fs, rdb: rdb, mr: mr, h: NewServerHandler(testDeps(Deps{Store: fs, Redis: rdb}))}
 }
 
 func setPortsHeartbeat(t *testing.T, mr *miniredis.Miniredis, release, gameRange string) {
@@ -372,7 +371,7 @@ func TestGetServerPortsSaysWhetherTheCallerMayWrite(t *testing.T) {
 				fs.serverRole = &store.ServerRole{ID: roleID, Capabilities: c.caps}
 			}
 			st := portsAuthzStore{fs}
-			h := NewServerHandler(withCoreStorage(&handlers.AppState{Store: st, Authz: authz.NewResolver(st)}))
+			h := NewServerHandler(testDeps(Deps{Store: st, Authz: authz.NewResolver(st)}))
 			r := httptest.NewRequest("GET", "/x", nil)
 			r = mux.SetURLVars(r, map[string]string{"id": "1"})
 			r = r.WithContext(context.WithValue(context.WithValue(r.Context(), "userID", c.caller), "isAdmin", false))
@@ -398,7 +397,7 @@ func TestPortsOverviewCarriesServerTraffic(t *testing.T) {
 	pc.fs.ports = []store.ServerPort{{ID: 1, ServerID: 1, NodeID: 7, Protocol: "udp", HostPort: 26000, ContainerPort: 24454, Name: "Voice"}}
 	pc.mr.HSet("dylaris:server:srv-1:net", "rx", "2048", "tx", "1024", "rx_bps", "300", "tx_bps", "100", "ts", "1700000000")
 	st := portsOverviewStore{pc.fs}
-	h := NewPortsAdminHandler(withCoreStorage(&handlers.AppState{Store: st, Redis: pc.rdb}))
+	h := NewPortsAdminHandler(testDeps(Deps{Store: st, Redis: pc.rdb}))
 	w := httptest.NewRecorder()
 	h.GetOverview(w, httptest.NewRequest("GET", "/x", nil))
 	var out struct {
@@ -447,7 +446,7 @@ func TestCreateServerPortUsesTheDefaultRangeOnlyWhenSelfHosted(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			pc := newPortsCase(t)
-			pc.h.state.Hosted = c.hosted
+			pc.h.d.Hosted = c.hosted
 			delete(pc.fs.settings, services.PortsRangeSettingKey)
 			if c.global != nil {
 				pc.fs.settings[services.PortsRangeSettingKey] = *c.global
@@ -589,7 +588,7 @@ func TestPortsOverviewShowsTheDefaultRange(t *testing.T) {
 		pc := newPortsCase(t)
 		delete(pc.fs.settings, services.PortsRangeSettingKey)
 		pc.fs.hosts = map[int]string{7: "voice.example.com"}
-		h := NewPortsAdminHandler(withCoreStorage(&handlers.AppState{Store: portsOverviewStore{pc.fs}, Redis: pc.rdb, Hosted: hosted}))
+		h := NewPortsAdminHandler(testDeps(Deps{Store: portsOverviewStore{pc.fs}, Redis: pc.rdb, Hosted: hosted}))
 		w := httptest.NewRecorder()
 		h.GetOverview(w, httptest.NewRequest("GET", "/x", nil))
 		var out struct {

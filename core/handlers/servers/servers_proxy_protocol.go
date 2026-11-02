@@ -31,12 +31,12 @@ func (h *ServerHandler) proxyProtocolDefault(ctx context.Context, srv *models.Se
 		RouteRequested: routeRequested,
 		BehindProxy:    srv.ProxyID != nil,
 	}
-	in.RoutingMode, _ = h.state.Store.GetSetting("routing_mode")
-	in.PlatformEnabled = h.state.FeatureFlags != nil && h.state.FeatureFlags.IsProxyProtocolEnabled(ctx)
-	in.NodeWritesConfig = nodeops.NodeReleaseAtLeast(ctx, h.state.Redis, node.Token, proxyProtocolDefaultSince)
+	in.RoutingMode, _ = h.d.Store.GetSetting("routing_mode")
+	in.PlatformEnabled = h.d.FeatureFlags != nil && h.d.FeatureFlags.IsProxyProtocolEnabled(ctx)
+	in.NodeWritesConfig = nodeops.NodeReleaseAtLeast(ctx, h.d.Redis, node.Token, proxyProtocolDefaultSince)
 
-	installs, ierr := h.state.Store.ListSubServerInstalls(srv.ID)
-	routes, rerr := services.ReadRoutesFromRedis(ctx, h.state.Redis)
+	installs, ierr := h.d.Store.ListSubServerInstalls(srv.ID)
+	routes, rerr := services.ReadRoutesFromRedis(ctx, h.d.Redis)
 	if ierr != nil || rerr != nil {
 		log.Printf("proxy-protocol default: server %d: cannot tell whether it is new (installs: %v, routes: %v)", srv.ID, ierr, rerr)
 		return false
@@ -52,12 +52,12 @@ func (h *ServerHandler) proxyProtocolDefault(ctx context.Context, srv *models.Se
 
 	// The link the server's routes WILL use: none exists yet, the panel adds
 	// the route after setup answers. Same token CreateServerRoute picks.
-	if h.state.Gateway != nil {
+	if h.d.Gateway != nil {
 		tok := node.LinkToken
 		if tok == "" {
-			tok = h.state.Gateway.LinkToken(node.Token)
+			tok = h.d.Gateway.LinkToken(node.Token)
 		}
-		ok, err := services.LinkAnnouncesCap(ctx, h.state.Redis, tok, nodeops.LinkCapClientAddr)
+		ok, err := services.LinkAnnouncesCap(ctx, h.d.Redis, tok, nodeops.LinkCapClientAddr)
 		if err != nil {
 			log.Printf("proxy-protocol default: server %d: link check: %v", srv.ID, err)
 		}
@@ -70,7 +70,7 @@ func (h *ServerHandler) proxyProtocolDefault(ctx context.Context, srv *models.Se
 // the node to configure the setting. Without the record a lost answer could
 // never be acted on, so a failure here sends the install without the request.
 func (h *ServerHandler) trackProxyProtocolInstall(ctx context.Context, srv *models.Server, sub string, isDefault bool) bool {
-	if err := services.TrackProxyProtocolInstall(ctx, h.state.Redis, srv.UUID, sub, isDefault); err != nil {
+	if err := services.TrackProxyProtocolInstall(ctx, h.d.Redis, srv.UUID, sub, isDefault); err != nil {
 		log.Printf("proxy-protocol: server %d: cannot record the request: %v", srv.ID, err)
 		return false
 	}
@@ -81,7 +81,7 @@ func (h *ServerHandler) trackProxyProtocolInstall(ctx context.Context, srv *mode
 // the matching config, and reports whether all of it took. A partial write is
 // rolled back so the server is never left half on.
 func (h *ServerHandler) switchProxyProtocolOn(ctx context.Context, srv *models.Server) bool {
-	if err := services.ApplyServerProxyProtocol(ctx, h.state.Store, h.state.Redis, h.state.Gateway, srv.ID, srv.UUID, true); err != nil {
+	if err := services.ApplyServerProxyProtocol(ctx, h.d.Store, h.d.Redis, h.d.Gateway, srv.ID, srv.UUID, true); err != nil {
 		log.Printf("proxy-protocol default: server %d: could not switch on, staying opt-in: %v", srv.ID, err)
 		h.switchProxyProtocolOff(ctx, srv)
 		return false
@@ -95,7 +95,7 @@ func (h *ServerHandler) switchProxyProtocolOn(ctx context.Context, srv *models.S
 // that hangs up must not leave the switch on for a server nothing configures.
 func (h *ServerHandler) switchProxyProtocolOff(ctx context.Context, srv *models.Server) {
 	ctx = context.WithoutCancel(ctx)
-	if err := services.ApplyServerProxyProtocol(ctx, h.state.Store, h.state.Redis, h.state.Gateway, srv.ID, srv.UUID, false); err != nil {
+	if err := services.ApplyServerProxyProtocol(ctx, h.d.Store, h.d.Redis, h.d.Gateway, srv.ID, srv.UUID, false); err != nil {
 		log.Printf("proxy-protocol default: server %d: could not switch back off: %v", srv.ID, err)
 	}
 }

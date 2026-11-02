@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/nodeops"
@@ -162,11 +161,11 @@ type PowerActionRequest struct {
 // ==========================================
 
 type ServerHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewServerHandler(state *handlers.AppState) *ServerHandler {
-	return &ServerHandler{state: state}
+func NewServerHandler(state Deps) *ServerHandler {
+	return &ServerHandler{d: state}
 }
 
 // GetGatewayPlayers GET /api/servers/players - players connected through the
@@ -177,20 +176,20 @@ func NewServerHandler(state *handlers.AppState) *ServerHandler {
 // ponytail: one server-list query per poll per open panel; serve it from the
 // list the panel already holds if that load ever shows.
 func (h *ServerHandler) GetGatewayPlayers(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil || h.state.Redis == nil {
+	if h.d.Store == nil || h.d.Redis == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
 	username, _ := r.Context().Value("username").(string)
-	servers, err := h.state.Store.ListServersForUser(userID, isAdmin)
+	servers, err := h.d.Store.ListServersForUser(userID, isAdmin)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
-	servers = access.ApplyResolvedTabPermissions(h.state.Authz, servers, userID, username)
-	counts := services.GatewayPlayersByServer(r.Context(), h.state.Redis)
+	servers = access.ApplyResolvedTabPermissions(h.d.Authz, servers, userID, username)
+	counts := services.GatewayPlayersByServer(r.Context(), h.d.Redis)
 	out := map[string]int{}
 	for _, s := range servers {
 		if n := counts[s.UUID]; n > 0 {
@@ -204,7 +203,7 @@ func (h *ServerHandler) GetGatewayPlayers(w http.ResponseWriter, r *http.Request
 // GetServers GET /api/servers - the servers the caller may see: their own plus
 // any they were invited to, or the whole fleet for an admin.
 func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -212,7 +211,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
 
-	servers, err := h.state.Store.ListServersForUser(userID, isAdmin)
+	servers, err := h.d.Store.ListServersForUser(userID, isAdmin)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -223,7 +222,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username, _ := r.Context().Value("username").(string)
-	servers = access.ApplyResolvedTabPermissions(h.state.Authz, servers, userID, username)
+	servers = access.ApplyResolvedTabPermissions(h.d.Authz, servers, userID, username)
 
 	// Demo servers. Mark any server already in the list that is on the demo list
 	// (so its owner/admin sees the demo status in the toggle), and — for the
@@ -233,7 +232,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	// panel to render the appended ones read-only.
 	// Whole demo surface only exists on the hosted (store-enabled) build; a
 	// self-host build never reads a stale demo_server_uuids setting.
-	if demoUUIDs := demo.LoadServerUUIDs(h.state.Store); h.state.StoreEnabled && len(demoUUIDs) > 0 {
+	if demoUUIDs := demo.LoadServerUUIDs(h.d.Store); h.d.StoreEnabled && len(demoUUIDs) > 0 {
 		demoSet := make(map[string]bool, len(demoUUIDs))
 		for _, u := range demoUUIDs {
 			demoSet[u] = true
@@ -243,9 +242,9 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 				servers[i].IsDemo = true
 			}
 		}
-		if demo.IsAccount(h.state.Store, h.state.StoreEnabled, userID) {
+		if demo.IsAccount(h.d.Store, h.d.StoreEnabled, userID) {
 			for _, uuid := range demoUUIDs {
-				ds, derr := h.state.Store.GetServerByUUID(uuid)
+				ds, derr := h.d.Store.GetServerByUUID(uuid)
 				if derr != nil || ds == nil {
 					continue
 				}
@@ -260,9 +259,9 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 
 	// Say why an install is not moving, rather than leaving a spinner that
 	// never resolves. Costs nothing when no server is installing.
-	nodeops.AnnotateStalledInstallsFor(r.Context(), h.state.Redis, h.state.GRPCRegistry, servers)
+	nodeops.AnnotateStalledInstallsFor(r.Context(), h.d.Redis, h.d.GRPCRegistry, servers)
 
-	access.RedactNodeAddress(h.state.Store, func() bool { return services.GatewayRoutingEnabled(h.state.Store) }, servers, isAdmin, userID)
+	access.RedactNodeAddress(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, servers, isAdmin, userID)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

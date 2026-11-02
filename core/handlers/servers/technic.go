@@ -14,7 +14,6 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
@@ -63,17 +62,17 @@ type technicCoolingDown struct{ left time.Duration }
 func (e technicCoolingDown) Error() string { return "Technic is rate limiting requests" }
 
 type TechnicHandler struct {
-	state *handlers.AppState
-	http  *http.Client
-	base  string
+	d    Deps
+	http *http.Client
+	base string
 	// fetchExternal reads a Solder API. Its host is the pack author's, so it
 	// goes through the SSRF-guarded fetch; a variable only for tests.
 	fetchExternal func(ctx context.Context, rawURL string, maxBytes int64, timeout time.Duration) ([]byte, error)
 }
 
-func NewTechnicHandler(state *handlers.AppState) *TechnicHandler {
+func NewTechnicHandler(state Deps) *TechnicHandler {
 	return &TechnicHandler{
-		state:         state,
+		d:             state,
 		http:          &http.Client{Timeout: 15 * time.Second},
 		base:          technicAPIBase,
 		fetchExternal: services.SafeFetch,
@@ -135,8 +134,8 @@ func (h *TechnicHandler) apiGet(ctx context.Context, path string, q url.Values, 
 	q.Set("build", technicBuildParam)
 	u := h.base + path + "?" + q.Encode()
 	key := "dylaris:technic:" + validate.HashURL(u)
-	if h.state != nil && h.state.Cache != nil {
-		if cached, ok := h.state.Cache.Get(ctx, key); ok {
+	if h.d.Cache != nil {
+		if cached, ok := h.d.Cache.Get(ctx, key); ok {
 			return []byte(cached), nil
 		}
 	}
@@ -170,8 +169,8 @@ func (h *TechnicHandler) apiGet(ctx context.Context, path string, q url.Values, 
 	if len(body) > technicMaxBody {
 		return nil, errors.New("technic: response too large")
 	}
-	if h.state != nil && h.state.Cache != nil && len(body) <= services.MaxCachedResponseBytes {
-		h.state.Cache.Set(ctx, key, string(body), ttl)
+	if h.d.Cache != nil && len(body) <= services.MaxCachedResponseBytes {
+		h.d.Cache.Set(ctx, key, string(body), ttl)
 	}
 	return body, nil
 }
@@ -179,8 +178,8 @@ func (h *TechnicHandler) apiGet(ctx context.Context, path string, q url.Values, 
 // solderGet reads a Solder API document, cached like the API.
 func (h *TechnicHandler) solderGet(ctx context.Context, rawURL string, out any) error {
 	key := "dylaris:technic:solder:" + validate.HashURL(rawURL)
-	if h.state != nil && h.state.Cache != nil {
-		if cached, ok := h.state.Cache.Get(ctx, key); ok {
+	if h.d.Cache != nil {
+		if cached, ok := h.d.Cache.Get(ctx, key); ok {
 			return json.Unmarshal([]byte(cached), out)
 		}
 	}
@@ -191,8 +190,8 @@ func (h *TechnicHandler) solderGet(ctx context.Context, rawURL string, out any) 
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("the pack's Solder server sent something unreadable: %w", err)
 	}
-	if h.state != nil && h.state.Cache != nil && len(body) <= services.MaxCachedResponseBytes {
-		h.state.Cache.Set(ctx, key, string(body), technicPackTTL)
+	if h.d.Cache != nil && len(body) <= services.MaxCachedResponseBytes {
+		h.d.Cache.Set(ctx, key, string(body), technicPackTTL)
 	}
 	return nil
 }

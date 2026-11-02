@@ -28,7 +28,7 @@ func (h *ServerModsHandler) ServerCompat(w http.ResponseWriter, r *http.Request)
 		httpx.SendJSONError(w, "Declare this server's loader and Minecraft version first, otherwise there is nothing to compare against", http.StatusUnprocessableEntity)
 		return
 	}
-	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
+	mods, err := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
@@ -53,7 +53,7 @@ func (h *ServerModsHandler) ServerCompat(w http.ResponseWriter, r *http.Request)
 		Current: srv.MinecraftVersion,
 		Mode:    mode,
 		Targets: targets,
-		Cache:   modcompat.AvailabilityCache(h.state.Cache),
+		Cache:   modcompat.AvailabilityCache(h.d.Cache),
 	})
 	if err != nil {
 		httpx.SendJSONError(w, "Availability check failed: "+err.Error(), http.StatusBadGateway)

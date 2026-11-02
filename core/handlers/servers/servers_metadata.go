@@ -27,7 +27,7 @@ import (
 // "setup" command that reinstalls the active sub-server.
 // PATCH /api/servers/{id}/loader-metadata (gated by RequireCap("server.settings.write") at the route)
 func (h *ServerHandler) DeclareServerLoaderMetadata(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -63,7 +63,7 @@ func (h *ServerHandler) DeclareServerLoaderMetadata(w http.ResponseWriter, r *ht
 
 	buildNumber := strings.TrimSpace(req.BuildNumber)
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
@@ -76,20 +76,20 @@ func (h *ServerHandler) DeclareServerLoaderMetadata(w http.ResponseWriter, r *ht
 		buildNumber = srv.BuildNumber
 	}
 
-	if err := h.state.Store.UpdateServerLoaderMetadata(serverID, installerType, minecraftVersion, buildNumber); err != nil {
+	if err := h.d.Store.UpdateServerLoaderMetadata(serverID, installerType, minecraftVersion, buildNumber); err != nil {
 		httpx.SendJSONError(w, "Failed to update server metadata", 500)
 		return
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventLoaderMetadataDeclared, actorID, "", map[string]interface{}{
+	audit.LogServer(h.d.Store, r, serverID, audit.ServerAuditEventLoaderMetadataDeclared, actorID, "", map[string]interface{}{
 		"from_installer_type":    srv.InstallerType,
 		"to_installer_type":      installerType,
 		"from_minecraft_version": srv.MinecraftVersion,
 		"to_minecraft_version":   minecraftVersion,
 	})
 
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

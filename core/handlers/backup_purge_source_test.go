@@ -19,7 +19,7 @@ import (
 // It scans the whole package, and the handlers/<domain> subpackages split out
 // of it, rather than the four files by name, so a fifth delete path added in a
 // new file is caught rather than quietly joining the leak. A subpackage calls
-// the purge on the shared Manager (h.state.CoreStorage.PurgeBackupArchivesForJob).
+// the purge on the shared Manager (h.d.CoreStorage.PurgeBackupArchivesForJob).
 func TestEveryDeleteThatCascadesBackupsPurgesFirst(t *testing.T) {
 	// call site -> the purge it must be preceded by. The first letter is left
 	// off so any qualifier of PurgeX( matches.

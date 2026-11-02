@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -55,12 +54,12 @@ func newTemplateInstallTest(t *testing.T, tmpl *models.Template, audience string
 	h, base, _ := newInstallTest(t)
 	fs := &templateFakeStore{installFakeStore: *base, tmpl: tmpl}
 	fs.settings["feature_templates"] = audience
-	h.state.Store = fs
-	h.state.CoreStorage.Store = h.state.Store
-	h.state.FeatureFlags = services.NewFeatureFlags(fs)
+	h.d.Store = fs
+	h.d.CoreStorage.Store = h.d.Store
+	h.d.FeatureFlags = services.NewFeatureFlags(fs)
 	var pushes []pushedTemplate
 	prev := templatePush
-	templatePush = func(_ context.Context, _ *handlers.AppState, nodeID int, serverUUID, subServer string, t *models.Template) error {
+	templatePush = func(_ context.Context, _ Deps, nodeID int, serverUUID, subServer string, t *models.Template) error {
 		pushes = append(pushes, pushedTemplate{nodeID, serverUUID, subServer, t.ID})
 		return nil
 	}
@@ -96,7 +95,7 @@ func TestTemplateInstallRefusedWhenTheCallerCannotSeeIt(t *testing.T) {
 			if len(*pushes) != 0 || fs.setupWrites != 0 {
 				t.Fatalf("pushed %d, wrote %d after a refusal", len(*pushes), fs.setupWrites)
 			}
-			if n := len(queuedInstaller(t, h.state.Redis)); n != 0 {
+			if n := len(queuedInstaller(t, h.d.Redis)); n != 0 {
 				t.Fatalf("queued %d", n)
 			}
 		})
@@ -119,7 +118,7 @@ func TestTemplateInstallRefusesFieldsThatDoNotApply(t *testing.T) {
 		}
 		body := templateSetup(5)
 		body["installer"] = inst
-		h.state.Redis.Del(context.Background(), "dylaris:server:srv-uuid:install-start")
+		h.d.Redis.Del(context.Background(), "dylaris:server:srv-uuid:install-start")
 		rec := httptest.NewRecorder()
 		h.SetupServer(rec, installRequest("setup", body, false))
 		if rec.Code != http.StatusBadRequest {
@@ -145,7 +144,7 @@ func TestTemplateInstallRewritesToUploadZip(t *testing.T) {
 	if len(*pushes) != 1 || (*pushes)[0] != (pushedTemplate{7, "srv-uuid", "main", 5}) {
 		t.Fatalf("pushes = %+v", *pushes)
 	}
-	inst := queuedInstaller(t, h.state.Redis)
+	inst := queuedInstaller(t, h.d.Redis)
 	if len(inst) != 1 {
 		t.Fatalf("queued %v", inst)
 	}
@@ -165,7 +164,7 @@ func TestTemplateInstallRewritesToUploadZip(t *testing.T) {
 // A failed push answers an error and leaves the server as it was.
 func TestTemplateInstallPushFailureQueuesNothing(t *testing.T) {
 	h, fs, _ := newTemplateInstallTest(t, &models.Template{ID: 5, OwnerID: "u1", Kind: "server", Visibility: "personal", Software: "paper", SoftwareVersion: "1.21.4"}, "all")
-	templatePush = func(context.Context, *handlers.AppState, int, string, string, *models.Template) error {
+	templatePush = func(context.Context, Deps, int, string, string, *models.Template) error {
 		return context.DeadlineExceeded
 	}
 	rec := httptest.NewRecorder()
@@ -173,7 +172,7 @@ func TestTemplateInstallPushFailureQueuesNothing(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status %d, want 502: %s", rec.Code, rec.Body.String())
 	}
-	if n := len(queuedInstaller(t, h.state.Redis)); n != 0 || fs.setupWrites != 0 {
+	if n := len(queuedInstaller(t, h.d.Redis)); n != 0 || fs.setupWrites != 0 {
 		t.Fatalf("queued %d, wrote %d after a failed push", n, fs.setupWrites)
 	}
 }
@@ -183,7 +182,7 @@ func TestTemplateInstallPushFailureQueuesNothing(t *testing.T) {
 func TestProxyTemplateRefusedOnAnOlderNode(t *testing.T) {
 	h, fs, pushes := newTemplateInstallTest(t, &models.Template{ID: 5, OwnerID: "u1", Kind: "proxy", Visibility: "personal", Software: "velocity", SoftwareVersion: "3.4.0"}, "all")
 	fs.server.ServerType = "proxy"
-	h.state.Redis.Set(context.Background(), "dylaris:discovery:node-lib", `{"releaseVersion":"2026.10.31"}`, 0)
+	h.d.Redis.Set(context.Background(), "dylaris:discovery:node-lib", `{"releaseVersion":"2026.10.31"}`, 0)
 	rec := httptest.NewRecorder()
 	h.SetupServer(rec, installRequest("setup", templateSetup(5), false))
 	if rec.Code != http.StatusConflict {
@@ -199,8 +198,8 @@ func TestProxyTemplateRefusedOnAnOlderNode(t *testing.T) {
 	// The same template on a game server goes through the proxy gate every
 	// online proxy install takes.
 	fs.server.ServerType = "game"
-	h.state.Redis.Set(context.Background(), "dylaris:discovery:node-lib", `{"releaseVersion":"`+templateProxySince+`"}`, 0)
-	h.state.Redis.Del(context.Background(), "dylaris:server:srv-uuid:install-start")
+	h.d.Redis.Set(context.Background(), "dylaris:discovery:node-lib", `{"releaseVersion":"`+templateProxySince+`"}`, 0)
+	h.d.Redis.Del(context.Background(), "dylaris:server:srv-uuid:install-start")
 	rec = httptest.NewRecorder()
 	h.SetupServer(rec, installRequest("setup", templateSetup(5), false))
 	if rec.Code != http.StatusBadRequest {
@@ -208,13 +207,13 @@ func TestProxyTemplateRefusedOnAnOlderNode(t *testing.T) {
 	}
 
 	fs.server.ServerType = "proxy"
-	h.state.Redis.Del(context.Background(), "dylaris:server:srv-uuid:install-start")
+	h.d.Redis.Del(context.Background(), "dylaris:server:srv-uuid:install-start")
 	rec = httptest.NewRecorder()
 	h.SetupServer(rec, installRequest("setup", templateSetup(5), false))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("current node: status %d: %s", rec.Code, rec.Body.String())
 	}
-	if inst := queuedInstaller(t, h.state.Redis); len(inst) != 1 || inst[0]["software"] != "velocity" || inst[0]["version"] != "3.4.0" {
+	if inst := queuedInstaller(t, h.d.Redis); len(inst) != 1 || inst[0]["software"] != "velocity" || inst[0]["version"] != "3.4.0" {
 		t.Fatalf("queued %v", inst)
 	}
 }
@@ -226,7 +225,7 @@ func TestTemplatePushLockRefusesASecondPush(t *testing.T) {
 	for _, admin := range []bool{false, true} {
 		h, _, pushes := newTemplateInstallTest(t, &models.Template{ID: 5, OwnerID: "u1", Kind: "server", Visibility: "personal", Software: "paper", McVersion: "1.21.4", SoftwareVersion: "1.21.4"}, "all")
 		ctx := context.Background()
-		h.state.Redis.Set(ctx, lockKey, "someone-else", 0)
+		h.d.Redis.Set(ctx, lockKey, "someone-else", 0)
 		rec := httptest.NewRecorder()
 		h.SetupServer(rec, installRequest("setup", templateSetup(5), admin))
 		if rec.Code != http.StatusConflict || decodeErrBody(t, rec) != templatePushBusy {
@@ -235,14 +234,14 @@ func TestTemplatePushLockRefusesASecondPush(t *testing.T) {
 		if len(*pushes) != 0 {
 			t.Fatalf("admin=%v: pushed %d while locked", admin, len(*pushes))
 		}
-		if v, _ := h.state.Redis.Get(ctx, lockKey).Result(); v != "someone-else" {
+		if v, _ := h.d.Redis.Get(ctx, lockKey).Result(); v != "someone-else" {
 			t.Fatalf("admin=%v: foreign lock became %q", admin, v)
 		}
 
-		h.state.Redis.Del(ctx, lockKey, "dylaris:server:srv-uuid:install-start")
+		h.d.Redis.Del(ctx, lockKey, "dylaris:server:srv-uuid:install-start")
 		var heldDuringPush bool
-		templatePush = func(context.Context, *handlers.AppState, int, string, string, *models.Template) error {
-			heldDuringPush = h.state.Redis.Exists(ctx, lockKey).Val() == 1
+		templatePush = func(context.Context, Deps, int, string, string, *models.Template) error {
+			heldDuringPush = h.d.Redis.Exists(ctx, lockKey).Val() == 1
 			return nil
 		}
 		rec = httptest.NewRecorder()
@@ -253,7 +252,7 @@ func TestTemplatePushLockRefusesASecondPush(t *testing.T) {
 		if !heldDuringPush {
 			t.Errorf("admin=%v: lock not held during the push", admin)
 		}
-		if h.state.Redis.Exists(ctx, lockKey).Val() != 0 {
+		if h.d.Redis.Exists(ctx, lockKey).Val() != 0 {
 			t.Errorf("admin=%v: lock left behind after the push", admin)
 		}
 	}
@@ -269,13 +268,13 @@ func templateRef(path, project string) models.TemplateModrinthRef {
 func TestTemplateInstallSendsModrinthFiles(t *testing.T) {
 	h, fs, _ := newTemplateInstallTest(t, &models.Template{ID: 5, OwnerID: "u1", Kind: "server", Visibility: "personal", Software: "paper", SoftwareVersion: "1.21.4"}, "all")
 	fs.refs = []models.TemplateModrinthRef{templateRef("plugins/LuckPerms.jar", "lp"), templateRef("plugins/Geyser/ext/x.jar", "gx")}
-	h.state.Redis.Set(context.Background(), "dylaris:discovery:node-lib", `{"releaseVersion":"`+templateModrinthSince+`"}`, 0)
+	h.d.Redis.Set(context.Background(), "dylaris:discovery:node-lib", `{"releaseVersion":"`+templateModrinthSince+`"}`, 0)
 	rec := httptest.NewRecorder()
 	h.SetupServer(rec, installRequest("setup", templateSetup(5), false))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
-	inst := queuedInstaller(t, h.state.Redis)
+	inst := queuedInstaller(t, h.d.Redis)
 	if len(inst) != 1 {
 		t.Fatalf("queued %v", inst)
 	}
@@ -324,12 +323,12 @@ func TestTemplateWithModrinthRefusedOnAnOlderNode(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			h, fs, pushes := newTemplateInstallTest(t, &models.Template{ID: 5, OwnerID: "u1", Kind: "server", Visibility: "personal", Software: "paper", SoftwareVersion: "1.21.4"}, "all")
-			h.state.ReleaseVersion = c.core
+			h.d.ReleaseVersion = c.core
 			if c.refs {
 				fs.refs = []models.TemplateModrinthRef{templateRef("plugins/LuckPerms.jar", "lp")}
 			}
 			if c.heartbeat != "" {
-				h.state.Redis.Set(context.Background(), "dylaris:discovery:node-lib", c.heartbeat, 0)
+				h.d.Redis.Set(context.Background(), "dylaris:discovery:node-lib", c.heartbeat, 0)
 			}
 			rec := httptest.NewRecorder()
 			h.SetupServer(rec, installRequest("setup", templateSetup(5), false))
@@ -345,7 +344,7 @@ func TestTemplateWithModrinthRefusedOnAnOlderNode(t *testing.T) {
 				}
 				return
 			}
-			if _, has := queuedInstaller(t, h.state.Redis)[0]["modrinthFiles"]; has != c.refs {
+			if _, has := queuedInstaller(t, h.d.Redis)[0]["modrinthFiles"]; has != c.refs {
 				t.Fatalf("modrinthFiles present = %v", has)
 			}
 		})
@@ -394,7 +393,7 @@ func TestTemplateOverTheReferenceCapIsRefused(t *testing.T) {
 
 	// Exactly at the cap installs.
 	fs.refs = fs.refs[:services.MaxTemplateModrinthRefs]
-	h.state.Redis.Del(context.Background(), "dylaris:server:srv-uuid:install-start")
+	h.d.Redis.Del(context.Background(), "dylaris:server:srv-uuid:install-start")
 	rec = httptest.NewRecorder()
 	h.SetupServer(rec, installRequest("setup", templateSetup(5), false))
 	if rec.Code != http.StatusOK {

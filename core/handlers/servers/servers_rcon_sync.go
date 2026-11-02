@@ -22,10 +22,10 @@ func (h *ServerHandler) syncRconToSubServer(srv *models.Server, subServer string
 	if subServer == "" {
 		return true
 	}
-	if h.state == nil || h.state.Store == nil {
+	if h.d.Store == nil {
 		return false
 	}
-	enabled, port, password, err := h.state.Store.GetServerRconConfig(srv.ID)
+	enabled, port, password, err := h.d.Store.GetServerRconConfig(srv.ID)
 	if err != nil {
 		log.Printf("rcon sync for server %d: reading the stored config failed: %v", srv.ID, err)
 		return false
@@ -33,7 +33,7 @@ func (h *ServerHandler) syncRconToSubServer(srv *models.Server, subServer string
 	if !rconNeedsStamping(subServer, enabled, password) {
 		return true
 	}
-	if err := NewRconHandler(h.state).applyProps(srv.NodeID, srv.UUID, subServer, enabled, port, password); err != nil {
+	if err := NewRconHandler(h.d).applyProps(srv.NodeID, srv.UUID, subServer, enabled, port, password); err != nil {
 		log.Printf("rcon sync for server %d (%s): writing server.properties failed: %v", srv.ID, subServer, err)
 		return false
 	}

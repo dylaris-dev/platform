@@ -24,7 +24,7 @@ func powerStateFixture(t *testing.T, status string) (*ServerHandler, *serverPowe
 
 func queuedPowerCommands(t *testing.T, h *ServerHandler) int64 {
 	t.Helper()
-	n, err := h.state.Redis.XLen(context.Background(), "dylaris:node:node-token-1:cmds").Result()
+	n, err := h.d.Redis.XLen(context.Background(), "dylaris:node:node-token-1:cmds").Result()
 	if err != nil {
 		return 0
 	}
@@ -44,7 +44,7 @@ func TestPowerActionsWaitWhileTheNodeIsBusy(t *testing.T) {
 				status = "stopped"
 			}
 			h, fs := powerStateFixture(t, status)
-			h.state.Redis.Set(context.Background(), services.NodeBusyKey("srv-uuid"), "installing", 0)
+			h.d.Redis.Set(context.Background(), services.NodeBusyKey("srv-uuid"), "installing", 0)
 
 			rec := httptest.NewRecorder()
 			h.ServerPowerHandler(rec, serverPowerReq(1, action, "alice", admin, "u1"))
@@ -88,7 +88,7 @@ func TestKillPublishesTheDesiredStateAtOnce(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("kill: status %d: %s", rec.Code, rec.Body.String())
 	}
-	got, err := h.state.Redis.Get(context.Background(), "dylaris:server:srv-uuid:desired_state").Result()
+	got, err := h.d.Redis.Get(context.Background(), "dylaris:server:srv-uuid:desired_state").Result()
 	if err != nil || got != "stopped" {
 		t.Fatalf("desired_state in Redis = %q (%v), want stopped right after the kill", got, err)
 	}
@@ -135,13 +135,13 @@ func TestCreateOnAPlatformNodeIsForOperatorsWhenBYONIsOff(t *testing.T) {
 // one there - ran the moment the server next came up and shut it down again.
 func TestStartBeginsWithAnEmptyInputQueue(t *testing.T) {
 	h, _ := powerStateFixture(t, "stopped")
-	h.state.Redis.RPush(context.Background(), "dylaris:server:srv-uuid:input", "stop")
+	h.d.Redis.RPush(context.Background(), "dylaris:server:srv-uuid:input", "stop")
 	rec := httptest.NewRecorder()
 	h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("start: status %d: %s", rec.Code, rec.Body.String())
 	}
-	if n := h.state.Redis.LLen(context.Background(), "dylaris:server:srv-uuid:input").Val(); n != 0 {
+	if n := h.d.Redis.LLen(context.Background(), "dylaris:server:srv-uuid:input").Val(); n != 0 {
 		t.Fatalf("%d stale command(s) left for the server to run on start", n)
 	}
 }

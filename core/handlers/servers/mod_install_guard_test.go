@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -137,7 +135,7 @@ func TestInstallChecksTheBuildAgainstTheServer(t *testing.T) {
 			m := miniredis.RunT(t)
 			rdb := redis.NewClient(&redis.Options{Addr: m.Addr()})
 			fs := &modFitFakeStore{installStatusFakeStore: installStatusFakeStore{mr: m}, server: tt.server}
-			h := &ServerModsHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb, Queue: services.NewQueueService(rdb)})}
+			h := &ServerModsHandler{d: testDeps(Deps{Store: fs, Redis: rdb, Queue: services.NewQueueService(rdb)})}
 
 			body := `{"projectId":"P1","versionId":"V1","fileName":"spark.jar","downloadUrl":"https://cdn.modrinth.com/data/P1/versions/V1/spark.jar","sha512":"client"}`
 			req := httptest.NewRequest(http.MethodPost, "/api/servers/7/mods", strings.NewReader(body))
@@ -203,7 +201,7 @@ func TestSetupWithModsWipeForgetsTheModRows(t *testing.T) {
 				{ID: 2, TargetDir: "plugins"},
 				{ID: 3}, // written before target_dir: placed by the fabric loader, in mods/
 			}}
-			h.state.Store = ws
+			h.d.Store = ws
 
 			body := setupBody(map[string]string{"type": "neoforge", "loader": "21.1.264"})
 			inst := body["installer"].(map[string]string)

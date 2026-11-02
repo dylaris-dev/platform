@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/corestorage"
 
 	"github.com/alicebob/miniredis/v2"
@@ -65,7 +64,7 @@ func (f *proxyProtoFakeStore) UpsertCoreLinkRoute(r store.CoreLinkRoute) error {
 	return nil
 }
 
-func newProxyProtoHandler(t *testing.T, flagOn bool) (*handlers.AppState, *proxyProtoFakeStore, *redis.Client) {
+func newProxyProtoHandler(t *testing.T, flagOn bool) (Deps, *proxyProtoFakeStore, *redis.Client) {
 	t.Helper()
 	fs := &proxyProtoFakeStore{
 		settings: map[string]string{"routing_mode": "gateway"},
@@ -77,7 +76,7 @@ func newProxyProtoHandler(t *testing.T, flagOn bool) (*handlers.AppState, *proxy
 		fs.settings[services.ProxyProtocolSettingKey] = "true"
 	}
 	rdb := newLinkRouteRedis(t)
-	return &handlers.AppState{
+	return Deps{
 		Store: fs, Redis: rdb, Gateway: services.NewRedisGateway(rdb, fs, "cs"),
 		FeatureFlags: services.NewFeatureFlags(fs),
 		CoreStorage:  &corestorage.Manager{Store: fs, Redis: rdb},

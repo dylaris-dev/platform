@@ -6,8 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -56,7 +54,7 @@ func (f *uninstallModFakeStore) DeleteServerMod(id, serverID int) error {
 // of those; uninstall now does too.
 func TestUninstallRefusesRatherThanDroppingTheRowWithNoQueue(t *testing.T) {
 	fs := &uninstallModFakeStore{}
-	h := &ServerModsHandler{state: withCoreStorage(&handlers.AppState{Store: fs})} // Queue deliberately nil
+	h := &ServerModsHandler{d: testDeps(Deps{Store: fs})} // Queue deliberately nil
 	rw := httptest.NewRecorder()
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/servers/7/mods/5", nil)

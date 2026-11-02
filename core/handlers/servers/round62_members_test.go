@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -24,7 +23,7 @@ const round62InviteBody = `{"username":"guest","permissions":{"console":true}}`
 func TestMemberRoutesHonourPermissionsModeOff(t *testing.T) {
 	st := &inviteInputStore{mode: authz.ModeOff}
 	rec := httptest.NewRecorder()
-	(&MemberHandler{state: withCoreStorage(&handlers.AppState{Store: st})}).InviteMember(rec, inviteReq(round62InviteBody))
+	(&MemberHandler{d: testDeps(Deps{Store: st})}).InviteMember(rec, inviteReq(round62InviteBody))
 	if rec.Code != http.StatusForbidden || st.created {
 		t.Fatalf("invite with mode off: %d created=%v", rec.Code, st.created)
 	}
@@ -33,7 +32,7 @@ func TestMemberRoutesHonourPermissionsModeOff(t *testing.T) {
 	req := inviteReq(round62InviteBody)
 	req = req.WithContext(context.WithValue(req.Context(), "isAdmin", true))
 	rec = httptest.NewRecorder()
-	(&MemberHandler{state: withCoreStorage(&handlers.AppState{Store: admin})}).InviteMember(rec, req)
+	(&MemberHandler{d: testDeps(Deps{Store: admin})}).InviteMember(rec, req)
 	if !admin.created {
 		t.Fatalf("an admin was refused with mode off: %d %s", rec.Code, rec.Body.String())
 	}
@@ -48,14 +47,14 @@ func TestMemberRoutesHonourPermissionsModeOff(t *testing.T) {
 
 	simple := &inviteInputStore{}
 	rec = httptest.NewRecorder()
-	(&MemberHandler{state: withCoreStorage(&handlers.AppState{Store: simple})}).InviteMember(rec, inviteReq(round62InviteBody))
+	(&MemberHandler{d: testDeps(Deps{Store: simple})}).InviteMember(rec, inviteReq(round62InviteBody))
 	if !simple.created {
 		t.Fatalf("invite with the default mode refused: %d %s", rec.Code, rec.Body.String())
 	}
 
 	ps := &patchPermsStore{mode: authz.ModeOff}
 	rec = httptest.NewRecorder()
-	(&MemberHandler{state: withCoreStorage(&handlers.AppState{Store: ps})}).UpdateMemberPermissions(rec, patchReq(`{"permissions":{"console":true}}`))
+	(&MemberHandler{d: testDeps(Deps{Store: ps})}).UpdateMemberPermissions(rec, patchReq(`{"permissions":{"console":true}}`))
 	if rec.Code != http.StatusForbidden || ps.updated {
 		t.Fatalf("patch with mode off: %d updated=%v", rec.Code, ps.updated)
 	}
@@ -82,7 +81,7 @@ func TestInviteRefusesYourselfAndTheOwner(t *testing.T) {
 		req := inviteReq(round62InviteBody)
 		req = req.WithContext(context.WithValue(req.Context(), "userID", "member-7"))
 		rec := httptest.NewRecorder()
-		(&MemberHandler{state: withCoreStorage(&handlers.AppState{Store: st})}).InviteMember(rec, req)
+		(&MemberHandler{d: testDeps(Deps{Store: st})}).InviteMember(rec, req)
 		if rec.Code != http.StatusBadRequest || st.created {
 			t.Errorf("%s: %d created=%v", name, rec.Code, st.created)
 		}
@@ -117,7 +116,7 @@ func TestInheritedMembersStayWithinOneOwner(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/servers/5/members/inherited", nil)
 		req = mux.SetURLVars(req, map[string]string{"id": "5"})
 		rec := httptest.NewRecorder()
-		(&MemberHandler{state: withCoreStorage(&handlers.AppState{Store: &inheritStore{proxyOwner: proxyOwner}})}).GetInheritedMembers(rec, req)
+		(&MemberHandler{d: testDeps(Deps{Store: &inheritStore{proxyOwner: proxyOwner}})}).GetInheritedMembers(rec, req)
 		var out struct{ Members []map[string]any }
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 			t.Fatalf("%d %s", rec.Code, rec.Body.String())

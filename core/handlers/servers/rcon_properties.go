@@ -51,7 +51,7 @@ func (h *RconHandler) applyRconToServerProperties(nodeID int, serverUUID, active
 	}
 	relPath := activeSubServer + "/" + nodeops.ServerPropertiesName
 
-	existing, found, err := nodeops.ReadNodeFileString(h.state.GRPCRegistry, nodeID, serverUUID, relPath)
+	existing, found, err := nodeops.ReadNodeFileString(h.d.GRPCRegistry, nodeID, serverUUID, relPath)
 	if err != nil {
 		return err
 	}
@@ -69,5 +69,5 @@ func (h *RconHandler) applyRconToServerProperties(nodeID int, serverUUID, active
 		"rcon.password": password,
 	})
 
-	return nodeops.WriteNodeFileString(h.state.GRPCRegistry, nodeID, serverUUID, relPath, merged)
+	return nodeops.WriteNodeFileString(h.d.GRPCRegistry, nodeID, serverUUID, relPath, merged)
 }

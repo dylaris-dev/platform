@@ -12,7 +12,6 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -27,7 +26,7 @@ func TestPlacementAndForceDeleteFailClosed(t *testing.T) {
 
 	t.Run("create on a customer's machine", func(t *testing.T) {
 		st := &handlertest.ForeignStore{Node: handlertest.OwnedNode(), SettingErr: fault}
-		h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)})}
+		h := &ServerHandler{d: testDeps(Deps{Store: st, FeatureFlags: services.NewFeatureFlags(st)})}
 		body := `{"uuid":"0f8c1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b","name":"x","nodeId":"7","docker":{"ram":1024,"cpuLimit":1,"diskLimit":10240}}`
 		rec := httptest.NewRecorder()
 		h.CreateServer(rec, handlertest.AdminRequest("POST", nil, body))
@@ -54,9 +53,9 @@ func TestMovingAServerAcrossACustomersMachine(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			st := &twoNodeFakeStore{ForeignStore: handlertest.ForeignStore{Node: c.source, Byon: "true"}, target: c.target}
-			s := withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}})
+			s := testDeps(Deps{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}})
 			rw := httptest.NewRecorder()
-			(&ServerHandler{state: s}).MoveServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
+			(&ServerHandler{d: s}).MoveServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
 			if (c.want == http.StatusNotFound) != (rw.Code == http.StatusNotFound) {
 				t.Fatalf("status = %d, want %d (%s)", rw.Code, c.want, rw.Body.String())
 			}
@@ -88,13 +87,13 @@ func TestATransferIsTheOwnersDecision(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			st := &twoNodeFakeStore{ForeignStore: handlertest.ForeignStore{Node: c.source, Byon: "true"}, target: c.target}
-			s := withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}})
+			s := testDeps(Deps{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}})
 			r := httptest.NewRequest("POST", "/x", bytes.NewBufferString(`{"targetNodeId":8}`))
 			ctx := context.WithValue(r.Context(), "isAdmin", c.isAdmin)
 			ctx = context.WithValue(ctx, "userID", c.user)
 			r = mux.SetURLVars(r.WithContext(ctx), map[string]string{"id": "3"})
 			rw := httptest.NewRecorder()
-			(&ServerHandler{state: s}).TransferServer(rw, r)
+			(&ServerHandler{d: s}).TransferServer(rw, r)
 			if got := rw.Code == http.StatusForbidden && bytes.Contains(rw.Body.Bytes(), []byte("owner")); got != c.refused {
 				t.Fatalf("refused = %v, want %v (status %d: %s)", got, c.refused, rw.Code, rw.Body.String())
 			}
@@ -110,23 +109,23 @@ func TestServerWritesOnACustomersMachineAreNotFound(t *testing.T) {
 	id := map[string]string{"id": "7"}
 	routes := []struct {
 		name string
-		call func(t *testing.T, s *handlers.AppState, w http.ResponseWriter)
+		call func(t *testing.T, s Deps, w http.ResponseWriter)
 	}{
-		{"reassign a server's owner", func(t *testing.T, s *handlers.AppState, w http.ResponseWriter) {
-			(&ServerHandler{state: s}).AdminUpdateServerOwner(w, handlertest.AdminRequest("PATCH", id, `{"userId":"`+handlertest.VisAdmin+`"}`))
+		{"reassign a server's owner", func(t *testing.T, s Deps, w http.ResponseWriter) {
+			(&ServerHandler{d: s}).AdminUpdateServerOwner(w, handlertest.AdminRequest("PATCH", id, `{"userId":"`+handlertest.VisAdmin+`"}`))
 		}},
-		{"flag a server as a demo", func(t *testing.T, s *handlers.AppState, w http.ResponseWriter) {
+		{"flag a server as a demo", func(t *testing.T, s Deps, w http.ResponseWriter) {
 			s.StoreEnabled = true
-			(&ServerHandler{state: s}).SetServerDemo(w, handlertest.AdminRequest("PATCH", id, `{"enabled":true}`))
+			(&ServerHandler{d: s}).SetServerDemo(w, handlertest.AdminRequest("PATCH", id, `{"enabled":true}`))
 		}},
-		{"cancel a server's migration", func(t *testing.T, s *handlers.AppState, w http.ResponseWriter) {
+		{"cancel a server's migration", func(t *testing.T, s Deps, w http.ResponseWriter) {
 			s.Redis, _ = handlertest.Redis(t) // asked before the server is loaded
-			(&ServerHandler{state: s}).CancelMigration(w, handlertest.AdminRequest("POST", id, ""))
+			(&ServerHandler{d: s}).CancelMigration(w, handlertest.AdminRequest("POST", id, ""))
 		}},
-		{"set overcommit", func(t *testing.T, s *handlers.AppState, w http.ResponseWriter) {
+		{"set overcommit", func(t *testing.T, s Deps, w http.ResponseWriter) {
 			r := handlertest.AdminRequest("PUT", id, `{"cpuOvercommitRatio":1,"ramOvercommitRatio":1}`)
 			r.URL.Path = "/api/nodes/7/placement"
-			(&PlacementHandler{state: s}).SetNodePlacement(w, r)
+			(&PlacementHandler{d: s}).SetNodePlacement(w, r)
 		}},
 	}
 	for _, rt := range routes {
@@ -161,7 +160,7 @@ func TestServerWritesOnACustomersMachineAreNotFound(t *testing.T) {
 // caller included, and recorded nothing.
 func TestOnlyAnAdminChangesAServersOwner(t *testing.T) {
 	rw := httptest.NewRecorder()
-	(&ServerHandler{state: foreignState(handlertest.PlatformNode())}).AdminUpdateServerOwner(rw,
+	(&ServerHandler{d: foreignState(handlertest.PlatformNode())}).AdminUpdateServerOwner(rw,
 		handlertest.StaffRequest("PATCH", map[string]string{"id": "7"}, `{"userId":"`+handlertest.StaffID+`"}`))
 	if rw.Code != http.StatusForbidden {
 		t.Fatalf("staff changed a server's owner: status %d", rw.Code)
@@ -183,9 +182,9 @@ func TestAServerIsNotMovedOntoTheCallersOwnMachine(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			st := &twoNodeFakeStore{ForeignStore: handlertest.ForeignStore{Node: &models.Node{ID: 7}, Byon: "true"}, target: c.target}
-			s := withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}})
+			s := testDeps(Deps{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}})
 			rw := httptest.NewRecorder()
-			(&ServerHandler{state: s}).MoveServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
+			(&ServerHandler{d: s}).MoveServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
 			if (rw.Code == http.StatusForbidden) != c.refuse {
 				t.Fatalf("status %d, refuse=%v (%s)", rw.Code, c.refuse, rw.Body.String())
 			}
@@ -199,9 +198,9 @@ func TestTheMoveRuleWaitsForOwnershipToBeInForce(t *testing.T) {
 	caller := handlertest.VisAdmin
 	st := &twoNodeFakeStore{ForeignStore: handlertest.ForeignStore{Node: &models.Node{ID: 7}, Byon: "false"},
 		target: &models.Node{ID: 8, OwnerID: &caller, Status: "offline"}}
-	s := withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}})
+	s := testDeps(Deps{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}})
 	rw := httptest.NewRecorder()
-	(&ServerHandler{state: s}).MoveServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
+	(&ServerHandler{d: s}).MoveServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
 	if rw.Code == http.StatusForbidden {
 		t.Fatalf("refused with ownership off: %s", rw.Body.String())
 	}
@@ -220,7 +219,7 @@ func TestAStaffAccountCannotBeTheDemo(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			st := &demoStaffStore{user: &models.User{ID: "u-demo", Username: "demo"}, roleC: c.caps}
 			rw := httptest.NewRecorder()
-			(&ServerHandler{state: withCoreStorage(&handlers.AppState{Store: st, StoreEnabled: true})}).SetDemoAccount(rw,
+			(&ServerHandler{d: testDeps(Deps{Store: st, StoreEnabled: true})}).SetDemoAccount(rw,
 				handlertest.AdminRequest("PUT", nil, `{"username":"demo"}`))
 			if (rw.Code == http.StatusBadRequest) != c.refuse {
 				t.Fatalf("status %d, refuse=%v (%s)", rw.Code, c.refuse, rw.Body.String())
@@ -235,9 +234,9 @@ func TestATransferIsNotOntoTheCallersOwnMachine(t *testing.T) {
 	caller := handlertest.VisAdmin
 	st := &twoNodeFakeStore{ForeignStore: handlertest.ForeignStore{Node: &models.Node{ID: 7}, Byon: "true"},
 		target: &models.Node{ID: 8, OwnerID: &caller, Status: "offline"}}
-	s := withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}})
+	s := testDeps(Deps{Store: st, FeatureFlags: services.NewFeatureFlags(st), Migration: &services.MigrationOrchestrator{}})
 	rw := httptest.NewRecorder()
-	(&ServerHandler{state: s}).TransferServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
+	(&ServerHandler{d: s}).TransferServer(rw, handlertest.AdminRequest("POST", map[string]string{"id": "3"}, `{"targetNodeId":8}`))
 	if rw.Code != http.StatusForbidden || !bytes.Contains(rw.Body.Bytes(), []byte("platform's nodes")) {
 		t.Fatalf("status %d: %s", rw.Code, rw.Body.String())
 	}
@@ -263,7 +262,7 @@ func TestRevokingANarrowGrantUnderAProxyIsTheOwnersCall(t *testing.T) {
 	for _, c := range cases {
 		t.Run("RemoveMember/"+c.name, func(t *testing.T) {
 			fs := &revokeStore{proxyGrant: c.proxyGrant, staleRealm: c.staleRealm}
-			h := NewMemberHandler(withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}))
+			h := NewMemberHandler(testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)}))
 			r := httptest.NewRequest(http.MethodDelete, "/api/servers/5/members/target", nil)
 			r = mux.SetURLVars(r, map[string]string{"id": "5", "userId": "11111111-1111-1111-1111-111111111111"})
 			r = r.WithContext(context.WithValue(context.WithValue(r.Context(), "userID", c.caller), "isAdmin", false))
@@ -274,13 +273,13 @@ func TestRevokingANarrowGrantUnderAProxyIsTheOwnersCall(t *testing.T) {
 		})
 		t.Run("RevokeGrant/"+c.name, func(t *testing.T) {
 			fs := &revokeStore{proxyGrant: c.proxyGrant, staleRealm: c.staleRealm}
-			h := &ServerRolesHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}
+			h := &ServerRolesHandler{d: testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)})}
 			r := httptest.NewRequest(http.MethodDelete, "/api/grants", bytes.NewBufferString(`{"username":"t","serverId":5}`))
 			r = r.WithContext(context.WithValue(context.WithValue(r.Context(), "userID", c.caller), "isAdmin", false))
 			// The member needs members.delete on 5 to get as far as the check.
 			if c.caller == "member" {
 				fs2 := &memberDeleteStore{revokeStore: fs}
-				h.state = withCoreStorage(&handlers.AppState{Store: fs2, Authz: authz.NewResolver(fs2)})
+				h.d = testDeps(Deps{Store: fs2, Authz: authz.NewResolver(fs2)})
 			}
 			h.RevokeGrant(httptest.NewRecorder(), r)
 			if fs.deleted != c.wantDelete {
@@ -294,14 +293,14 @@ func TestRevokingANarrowGrantUnderAProxyIsTheOwnersCall(t *testing.T) {
 // keep others, and remove - including a duplicate a racing toggle left behind.
 func TestSetServerDemoEditsTheListInPlace(t *testing.T) {
 	fs := &demoListStore{settings: map[string]string{demo.ServerUUIDsSetting: `["other","srv-7","srv-7"]`}}
-	s := withCoreStorage(&handlers.AppState{Store: fs, StoreEnabled: true})
+	s := testDeps(Deps{Store: fs, StoreEnabled: true})
 	toggle := func(on bool) {
 		body := `{"enabled":false}`
 		if on {
 			body = `{"enabled":true}`
 		}
 		w := httptest.NewRecorder()
-		(&ServerHandler{state: s}).SetServerDemo(w, handlertest.AdminRequest("PATCH", map[string]string{"id": "7"}, body))
+		(&ServerHandler{d: s}).SetServerDemo(w, handlertest.AdminRequest("PATCH", map[string]string{"id": "7"}, body))
 		if w.Code != http.StatusOK {
 			t.Fatalf("SetServerDemo(%v) = %d %s", on, w.Code, w.Body)
 		}
@@ -321,9 +320,9 @@ func TestSetServerDemoEditsTheListInPlace(t *testing.T) {
 // see its dropDemoServers undone by the toggle writing the UUID back.
 func TestSetServerDemoDoesNotReAddADeletedServer(t *testing.T) {
 	fs := &demoListStore{settings: map[string]string{demo.ServerUUIDsSetting: `["other"]`}, deleteInLock: true}
-	s := withCoreStorage(&handlers.AppState{Store: fs, StoreEnabled: true})
+	s := testDeps(Deps{Store: fs, StoreEnabled: true})
 	w := httptest.NewRecorder()
-	(&ServerHandler{state: s}).SetServerDemo(w, handlertest.AdminRequest("PATCH", map[string]string{"id": "7"}, `{"enabled":true}`))
+	(&ServerHandler{d: s}).SetServerDemo(w, handlertest.AdminRequest("PATCH", map[string]string{"id": "7"}, `{"enabled":true}`))
 	if w.Code != http.StatusNotFound || fs.settings[demo.ServerUUIDsSetting] != `["other"]` {
 		t.Fatalf("got %d, list %s", w.Code, fs.settings[demo.ServerUUIDsSetting])
 	}

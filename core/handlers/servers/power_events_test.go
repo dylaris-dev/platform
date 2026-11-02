@@ -28,7 +28,7 @@ func TestPowerActionPublishesServersChangedOnce(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _ := powerStateFixture(t, tc.status)
 			rec := httptest.NewRecorder()
-			got := countServersChanged(t, h.state, func() {
+			got := countServersChanged(t, &h.d, func() {
 				h.ServerPowerHandler(rec, serverPowerReq(1, tc.action, "alice", false, "u1"))
 			})
 			if rec.Code != tc.code {

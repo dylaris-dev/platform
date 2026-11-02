@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/handlertest"
 
@@ -33,7 +32,7 @@ func TestSetupServerRefusedWhileTheOwnerIsSuspended(t *testing.T) {
 		server:  &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerID: "u1", OwnerName: "alice", NodeID: 7},
 		billing: &store.UserBilling{UserID: "u1", Status: "suspended"},
 	}
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)})}
 
 	body, _ := json.Marshal(map[string]any{
 		"subServerName": "main",

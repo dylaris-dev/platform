@@ -40,13 +40,13 @@ func (h *ServerHandler) snapshotModpackContents(serverID int, subServer, origina
 			log.Printf("modpack snapshot: pack install for server %d has no build; skipping", serverID)
 			return
 		}
-		content, err := h.state.Store.ListBuildContent(packBuild.ID)
+		content, err := h.d.Store.ListBuildContent(packBuild.ID)
 		if err != nil {
 			log.Printf("modpack snapshot: ListBuildContent(%d) failed: %v", packBuild.ID, err)
 			return
 		}
 		rows := rowsFromBuildContent(serverID, subServer, content)
-		if err := h.state.Store.ReplaceServerModpackContents(serverID, subServer, rows); err != nil {
+		if err := h.d.Store.ReplaceServerModpackContents(serverID, subServer, rows); err != nil {
 			log.Printf("modpack snapshot write for server %d sub %q failed: %v", serverID, subServer, err)
 		}
 	case "modpack":
@@ -61,13 +61,13 @@ func (h *ServerHandler) snapshotModpackContents(serverID int, subServer, origina
 			return
 		}
 		rows := rowsFromMrpackEntries(serverID, subServer, entries)
-		if err := h.state.Store.ReplaceServerModpackContents(serverID, subServer, rows); err != nil {
+		if err := h.d.Store.ReplaceServerModpackContents(serverID, subServer, rows); err != nil {
 			log.Printf("modpack snapshot write for server %d sub %q failed: %v", serverID, subServer, err)
 		}
 	default:
 		// Not a modpack server (vanilla/loader/upload): clear any stale snapshot
 		// so a reinstall away from a modpack silences the cross-check.
-		if err := h.state.Store.ReplaceServerModpackContents(serverID, subServer, nil); err != nil {
+		if err := h.d.Store.ReplaceServerModpackContents(serverID, subServer, nil); err != nil {
 			log.Printf("modpack snapshot clear for server %d sub %q failed: %v", serverID, subServer, err)
 		}
 	}
@@ -151,7 +151,7 @@ func (h *ServerHandler) isSnapshotFetchHostAllowed(rawURL string) bool {
 	if host == "cdn.modrinth.com" {
 		return true
 	}
-	if base, err := corestorage.ModpackMirrorBase(h.state.Store.GetSetting); err == nil {
+	if base, err := corestorage.ModpackMirrorBase(h.d.Store.GetSetting); err == nil {
 		if mu, err := url.Parse(base); err == nil && strings.EqualFold(mu.Hostname(), host) {
 			return true
 		}

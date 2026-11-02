@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"dylaris-core/handlers/access"
 	"dylaris-core/store"
 )
 
@@ -23,13 +24,13 @@ func (f *modeFakeStore) SetSetting(key, value string) error {
 }
 
 func TestPermissionsMode_DefaultsToSimple(t *testing.T) {
-	if got := PermissionsMode(&modeFakeStore{value: "", getErr: errors.New("no row")}); got != "simple" {
+	if got := access.PermissionsMode(&modeFakeStore{value: "", getErr: errors.New("no row")}); got != "simple" {
 		t.Fatalf("PermissionsMode = %q, want simple on error", got)
 	}
-	if got := PermissionsMode(&modeFakeStore{value: "advanced"}); got != "advanced" {
+	if got := access.PermissionsMode(&modeFakeStore{value: "advanced"}); got != "advanced" {
 		t.Fatalf("PermissionsMode = %q, want advanced", got)
 	}
-	if got := PermissionsMode(&modeFakeStore{value: "bogus"}); got != "simple" {
+	if got := access.PermissionsMode(&modeFakeStore{value: "bogus"}); got != "simple" {
 		t.Fatalf("PermissionsMode = %q, want simple on unknown value", got)
 	}
 }

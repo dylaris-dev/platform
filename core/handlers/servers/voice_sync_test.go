@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -14,7 +13,7 @@ import (
 func TestSyncVoiceWithoutRowTouchesNothing(t *testing.T) {
 	fs := &voiceSyncFakeStore{}
 	// A nil GRPCRegistry fails any node call, so true means none was made.
-	h := NewServerHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerHandler(testDeps(Deps{Store: fs}))
 	if !h.syncVoiceToSubServer(&models.Server{ID: 7, UUID: "u"}, "survival") {
 		t.Fatal("a server without a voice row reported a failed sync")
 	}
@@ -25,7 +24,7 @@ func TestSyncVoiceWithoutRowTouchesNothing(t *testing.T) {
 
 func TestSyncVoiceWithRowReachesForTheNode(t *testing.T) {
 	fs := &voiceSyncFakeStore{row: &store.VoicePort{ServerID: 7, Region: "eu", Port: 26000, Host: "a.eu.dylaris.com"}}
-	h := NewServerHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerHandler(testDeps(Deps{Store: fs}))
 	if h.syncVoiceToSubServer(&models.Server{ID: 7, UUID: "u"}, "survival") {
 		t.Fatal("a voice row with no reachable node reported success")
 	}

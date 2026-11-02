@@ -9,8 +9,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -76,7 +74,7 @@ func portReq(t *testing.T, hostPort int) *http.Request {
 // A check that cannot run must REFUSE, not wave it through.
 func TestUpdateServerResources_RefusesWhenThePortCheckFails(t *testing.T) {
 	fake := &portConflictFakeStore{usedPortsErr: errors.New("connection reset")}
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fake})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fake})}
 
 	rec := httptest.NewRecorder()
 	h.UpdateServerResources(rec, portReq(t, 25601))
@@ -92,7 +90,7 @@ func TestUpdateServerResources_RefusesWhenThePortCheckFails(t *testing.T) {
 // The check still has to do its job when it CAN run.
 func TestUpdateServerResources_RejectsAPortAlreadyInUse(t *testing.T) {
 	fake := &portConflictFakeStore{usedPorts: []int{25601, 25602}}
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fake})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fake})}
 
 	rec := httptest.NewRecorder()
 	h.UpdateServerResources(rec, portReq(t, 25601))
@@ -108,7 +106,7 @@ func TestUpdateServerResources_RejectsAPortAlreadyInUse(t *testing.T) {
 // And must not block a free one.
 func TestUpdateServerResources_AllowsAFreePort(t *testing.T) {
 	fake := &portConflictFakeStore{usedPorts: []int{25602}}
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fake})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fake})}
 
 	rec := httptest.NewRecorder()
 	h.UpdateServerResources(rec, portReq(t, 25601))

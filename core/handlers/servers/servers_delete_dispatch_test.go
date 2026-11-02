@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -77,7 +75,7 @@ func deleteServerRequest() *http.Request {
 // and the response was a bare {"success":true}.
 func TestDeleteServerWarnsWhenTheNodeWasNeverTold(t *testing.T) {
 	fs := &deleteDispatchFakeStore{nodeMissing: true}
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Events: services.NewSystemEventsPublisher(nil)})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fs, Events: services.NewSystemEventsPublisher(nil)})}
 	rw := httptest.NewRecorder()
 
 	h.DeleteServer(rw, deleteServerRequest())
@@ -108,7 +106,7 @@ func TestDeleteServerIsSilentWhenTheDispatchWorked(t *testing.T) {
 	// Queue nil is one of the warning conditions, so this case needs a real one;
 	// without a Redis to back it, assert the node-present half instead: the
 	// warning must name the queue, not the node.
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Events: services.NewSystemEventsPublisher(nil)})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fs, Events: services.NewSystemEventsPublisher(nil)})}
 	rw := httptest.NewRecorder()
 
 	h.DeleteServer(rw, deleteServerRequest())
@@ -207,7 +205,7 @@ func TestDeleteSubServerHonorsTheDeleteCapability(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := &subServerDeleteFakeStore{admin: tt.admin, canDelete: tt.canDelete}
-			h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Events: services.NewSystemEventsPublisher(nil)})}
+			h := &ServerHandler{d: testDeps(Deps{Store: fs, Events: services.NewSystemEventsPublisher(nil)})}
 
 			req := httptest.NewRequest(http.MethodDelete, "/api/servers/7/sub-servers/survival", nil)
 			ctx := context.WithValue(req.Context(), "userID", "alice")

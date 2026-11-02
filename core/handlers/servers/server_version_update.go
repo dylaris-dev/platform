@@ -58,7 +58,7 @@ func (h *ServerModsHandler) UnmanagedMods(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "No active sub-server", http.StatusBadRequest)
 		return
 	}
-	known, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
+	known, err := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
@@ -200,7 +200,7 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 	// stray while leaving the real one behind: two copies of one mod, and a
 	// server that will not start.
 	claimedBy := map[string]string{}
-	if existing, lerr := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer); lerr == nil {
+	if existing, lerr := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer); lerr == nil {
 		for _, m := range existing {
 			if m.ModrinthProjectID != "" {
 				claimedBy[m.ModrinthProjectID] = m.FileName
@@ -266,7 +266,7 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 				u := userID
 				mod.InstalledBy = &u
 			}
-			if _, err := h.state.Store.UpsertServerMod(mod); err != nil {
+			if _, err := h.d.Store.UpsertServerMod(mod); err != nil {
 				res.Reason = "identified, but the database write failed: " + err.Error()
 				results = append(results, res)
 				continue
@@ -287,7 +287,7 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 	if linked > 0 {
 		// A hash names the version, not the project: fetch the project's title
 		// and slug for the new rows in one call, and answer with them.
-		if mods, lerr := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer); lerr == nil {
+		if mods, lerr := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer); lerr == nil {
 			h.fillProjectMeta(r.Context(), mods)
 			titles := map[string]string{}
 			for _, m := range mods {
@@ -299,7 +299,7 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 				}
 			}
 		}
-		h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
+		h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "linked": linked, "results": results})
 }
@@ -325,7 +325,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
 	var req versionUpdateRequest
@@ -357,11 +357,11 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// The update reinstalls the server like a setup does, so it needs the same
 	// answer setup gets: with Real player IP on, a target the node cannot
 	// configure to expect the header would refuse every player.
-	if _, refused := proxyProtocolInstallGate(w, h.state, srv, loader, req.Minecraft); refused {
+	if _, refused := proxyProtocolInstallGate(w, h.d, srv, loader, req.Minecraft); refused {
 		return
 	}
 
-	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
+	mods, err := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
@@ -394,12 +394,12 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if h.state.Queue == nil {
+	if h.d.Queue == nil {
 		httpx.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -413,7 +413,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	}
 	targetDir := defaultTargetDirForLoader(loader)
 
-	if !javaImageAllowed(h.state.Store, req.JavaImage) {
+	if !javaImageAllowed(h.d.Store, req.JavaImage) {
 		httpx.SendJSONError(w, javaImageRefused, http.StatusBadRequest)
 		return
 	}
@@ -432,7 +432,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		"docker": map[string]interface{}{
 			"image":         javaImage,
 			"ram":           srv.Memory,
-			"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
+			"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.d.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 			"cpuLimit":      srv.CPULimit,
 			"cpusetCpus":    models.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 			"timezone":      srv.Timezone,
@@ -460,9 +460,9 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// paired with it, and services.StatusWatcher puts it back. One hour is far
 	// longer than any move takes and short enough that a stale record cannot
 	// undo a LATER, successful move.
-	if h.state.Redis != nil {
+	if h.d.Redis != nil {
 		if rec, merr := json.Marshal(buildVersionUpdateUndo(srv, mods)); merr == nil {
-			h.state.Redis.Set(r.Context(), services.VersionUpdateUndoKey(srv.UUID), rec, time.Hour)
+			h.d.Redis.Set(r.Context(), services.VersionUpdateUndoKey(srv.UUID), rec, time.Hour)
 		}
 	}
 
@@ -475,13 +475,13 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// that column is what the Content tab filters Modrinth by and what the next
 	// availability check reads as "current". build_number gets the loader build,
 	// matching the column name and what an orphan import writes into it.
-	if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", srv.ActiveSubServer, srv.ExtraJvmFlags, loader, req.Minecraft, req.InstallerVersion); err != nil {
+	if err := h.d.Store.UpdateServerSetup(serverID, javaImage, "", srv.ActiveSubServer, srv.ExtraJvmFlags, loader, req.Minecraft, req.InstallerVersion); err != nil {
 		httpx.SendJSONError(w, "Failed to update the server record", http.StatusInternalServerError)
 		return
 	}
-	h.state.Store.UpdateServerStatus(serverID, "installing")
+	h.d.Store.UpdateServerStatus(serverID, "installing")
 
-	if err := h.state.Queue.SendCommand(context.Background(), node.Token, "update_server_version", configPayload, installerPayload); err != nil {
+	if err := h.d.Queue.SendCommand(context.Background(), node.Token, "update_server_version", configPayload, installerPayload); err != nil {
 		httpx.SendJSONError(w, "Failed to queue the version update", http.StatusInternalServerError)
 		return
 	}
@@ -494,7 +494,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	}
 	for _, m := range mods {
 		if dropped[m.ID] {
-			_ = h.state.Store.DeleteServerMod(m.ID, serverID)
+			_ = h.d.Store.DeleteServerMod(m.ID, serverID)
 		}
 	}
 	for _, in := range install {
@@ -503,7 +503,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		row.FileName = in.FileName
 		row.SHA512 = in.SHA512
 		row.TargetDir = targetDir
-		if _, err := h.state.Store.UpsertServerMod(&row); err != nil {
+		if _, err := h.d.Store.UpsertServerMod(&row); err != nil {
 			// The jar is on its way regardless; a stale row is visible and
 			// fixable, so this is logged through the response rather than
 			// failing a move that is already dispatched.
@@ -511,8 +511,8 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":   true,
@@ -657,10 +657,10 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
-	if guard.RefuseIfServerBusy(w, r, h.state.Redis, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
 		return
 	}
 	var req copySubServerRequest
@@ -692,12 +692,12 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if h.state.Queue == nil {
+	if h.d.Queue == nil {
 		httpx.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -720,7 +720,7 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	// through setup. It never was, which is half of how a platform limited to
 	// three ended up with seven. The listing is already in hand, so this costs
 	// nothing extra.
-	if guard.RefuseIfOverSubServerLimit(w, guard.SubServerLimit(h.state.Store), guard.CountSubServerDirs(entries)) {
+	if guard.RefuseIfOverSubServerLimit(w, guard.SubServerLimit(h.d.Store), guard.CountSubServerDirs(entries)) {
 		return
 	}
 	if subServerNameTaken(entries, req.TargetName) {
@@ -728,7 +728,7 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := h.state.Queue.SendCommand(context.Background(), node.Token, "copy_sub_server", map[string]interface{}{
+	if err := h.d.Queue.SendCommand(context.Background(), node.Token, "copy_sub_server", map[string]interface{}{
 		"uuid":            srv.UUID,
 		"sourceSubServer": srv.ActiveSubServer,
 		"targetSubServer": req.TargetName,
@@ -740,12 +740,12 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	// The mod inventory is per sub-server, so the copy needs its own rows or it
 	// would look like a server with no mods installed while the jars are right
 	// there on disk.
-	mods, _ := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
+	mods, _ := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	for _, m := range mods {
 		copied := m
 		copied.ID = 0
 		copied.SubServerName = req.TargetName
-		_, _ = h.state.Store.UpsertServerMod(&copied)
+		_, _ = h.d.Store.UpsertServerMod(&copied)
 	}
 
 	// Same argument as the mods above, for how it was INSTALLED. Without this the
@@ -754,16 +754,16 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	// save on the copy is classified as an installer change, putting the "what
 	// should I clear" dialog in front of an operator who only wanted to edit a
 	// JVM flag.
-	if rec, err := h.state.Store.GetSubServerInstall(serverID, srv.ActiveSubServer); err == nil && rec != nil {
+	if rec, err := h.d.Store.GetSubServerInstall(serverID, srv.ActiveSubServer); err == nil && rec != nil {
 		copied := *rec
 		copied.SubServerName = req.TargetName
-		if err := h.state.Store.UpsertSubServerInstall(copied); err != nil {
+		if err := h.d.Store.UpsertSubServerInstall(copied); err != nil {
 			log.Printf("CopySubServer: could not copy the install record for server %d/%s: %v",
 				serverID, req.TargetName, err)
 		}
 	}
-	if scan, jars, _, err := h.state.Store.GetModpackScan(serverID, srv.ActiveSubServer); err == nil && scan != "" {
-		if err := h.state.Store.SetModpackScan(serverID, req.TargetName, scan, jars); err != nil {
+	if scan, jars, _, err := h.d.Store.GetModpackScan(serverID, srv.ActiveSubServer); err == nil && scan != "" {
+		if err := h.d.Store.SetModpackScan(serverID, req.TargetName, scan, jars); err != nil {
 			log.Printf("CopySubServer: could not copy the modpack scan state for server %d/%s: %v",
 				serverID, req.TargetName, err)
 		}
@@ -772,17 +772,17 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	// And the modpack snapshot, for the same reason again: it backs the Content
 	// tab's cross-check, so a copy without it shows "no modpack members" next to
 	// a directory full of the pack's jars.
-	if contents, cerr := h.state.Store.ListServerModpackContents(serverID, srv.ActiveSubServer); cerr == nil && len(contents) > 0 {
+	if contents, cerr := h.d.Store.ListServerModpackContents(serverID, srv.ActiveSubServer); cerr == nil && len(contents) > 0 {
 		for i := range contents {
 			contents[i].SubServerName = req.TargetName
 		}
-		if err := h.state.Store.ReplaceServerModpackContents(serverID, req.TargetName, contents); err != nil {
+		if err := h.d.Store.ReplaceServerModpackContents(serverID, req.TargetName, contents); err != nil {
 			log.Printf("CopySubServer: could not copy the modpack snapshot for server %d/%s: %v",
 				serverID, req.TargetName, err)
 		}
 	}
 
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Copy queued. It appears as a sub-server once the files are in place.",
@@ -818,7 +818,7 @@ func subServerNameTaken(entries []*pb.FileInfo, name string) bool {
 // listServerDir is the shared implementation; the sub-server COUNT has to be
 // read the same way here and in SetupServer, which belongs to another type.
 func (h *ServerModsHandler) listServerDir(nodeID int, serverUUID, dir string) ([]*pb.FileInfo, error) {
-	return guard.ListServerDirFor(h.state.GRPCRegistry, nodeID, serverUUID, dir)
+	return guard.ListServerDirFor(h.d.GRPCRegistry, nodeID, serverUUID, dir)
 }
 
 // hashFilesBatch must not exceed the node's own hashFilesMaxCount (200 in
@@ -845,10 +845,10 @@ func (h *ServerModsHandler) hashServerFiles(nodeID int, serverUUID, dir string, 
 		}
 		return out, nil
 	}
-	if h.state.GRPCRegistry == nil {
+	if h.d.GRPCRegistry == nil {
 		return nil, fmt.Errorf("node connection not available")
 	}
-	resp, err := h.state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
+	resp, err := h.d.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
 		RequestId:  uuid.NewString(),
 		ServerUuid: serverUUID,
 		Payload:    &pb.NodeMessage_HashFilesReq{HashFilesReq: &pb.HashFilesReq{Path: dir, Names: names}},

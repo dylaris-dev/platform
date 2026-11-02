@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"github.com/gorilla/mux"
 
 	"dylaris-core/models"
@@ -76,7 +74,7 @@ func proxyLinkFixture() *proxyLinkStore {
 // /proxy-endpoint then listed the server by name.
 func TestLinkServerToProxyRefusesAnotherAccountsProxy(t *testing.T) {
 	fs := proxyLinkFixture()
-	h := NewServerHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 
 	h.LinkServerToProxy(rec, proxyLinkReq("1", `{"proxyId":3}`))
@@ -93,7 +91,7 @@ func TestLinkServerToProxyRefusesAnotherAccountsProxy(t *testing.T) {
 // switched proxies off rather than bounded them.
 func TestLinkServerToProxyAllowsTheOwnersOwnProxy(t *testing.T) {
 	fs := proxyLinkFixture()
-	h := NewServerHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 
 	h.LinkServerToProxy(rec, proxyLinkReq("1", `{"proxyId":2}`))
@@ -112,7 +110,7 @@ func TestProxyEndpointsSkipAnotherAccountsServer(t *testing.T) {
 	fs := proxyLinkFixture()
 	their := 3
 	fs.servers[1].ProxyID = &their // as if written before the refusal existed
-	h := NewServerHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 
 	r := httptest.NewRequest(http.MethodGet, "/api/servers/3/proxy-endpoint", nil)
@@ -153,7 +151,7 @@ func TestLinkServerToProxyIsTheOwnersCall(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			fs := proxyLinkFixture()
 			fs.servers[1].NodeID = c.nodeID
-			h := NewServerHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+			h := NewServerHandler(testDeps(Deps{Store: fs}))
 			r := proxyLinkReq("1", `{"proxyId":2}`)
 			ctx := context.WithValue(r.Context(), "userID", c.user)
 			ctx = context.WithValue(ctx, "isAdmin", c.admin)

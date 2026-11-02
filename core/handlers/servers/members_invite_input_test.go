@@ -10,7 +10,6 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -98,7 +97,7 @@ func TestInviteRefusesAnythingItDoesNotUnderstand(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &inviteInputStore{}
-			h := NewMemberHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+			h := NewMemberHandler(testDeps(Deps{Store: fs}))
 			rec := httptest.NewRecorder()
 
 			h.InviteMember(rec, inviteReq(c.body))

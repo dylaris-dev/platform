@@ -24,7 +24,7 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 	// customer-owned hardware stops being listed. Passing "" would have hidden
 	// the admin's own BYON servers from the admin.
 	userID, _ := r.Context().Value("userID").(string)
-	servers, err := h.state.Store.ListServersForUser(userID, true)
+	servers, err := h.d.Store.ListServersForUser(userID, true)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -36,7 +36,7 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 	// the tenant list: the settings fields only with server.settings.write.
 	if isAdmin, _ := r.Context().Value("isAdmin").(bool); isAdmin {
 		username, _ := r.Context().Value("username").(string)
-		servers = access.ApplyResolvedTabPermissions(h.state.Authz, servers, userID, username)
+		servers = access.ApplyResolvedTabPermissions(h.d.Authz, servers, userID, username)
 	}
 
 	search := strings.ToLower(r.URL.Query().Get("search"))
@@ -54,9 +54,9 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 
 	// Same as the tenant list: an install nobody is working on says so here too,
 	// or the admin overview is the one screen that still shows a bare spinner.
-	nodeops.AnnotateStalledInstallsFor(r.Context(), h.state.Redis, h.state.GRPCRegistry, servers)
+	nodeops.AnnotateStalledInstallsFor(r.Context(), h.d.Redis, h.d.GRPCRegistry, servers)
 
-	memberCounts, _ := h.state.Store.CountInvitesPerServer()
+	memberCounts, _ := h.d.Store.CountInvitesPerServer()
 	type adminServerRow struct {
 		models.Server
 		MemberCount int `json:"memberCount"`
@@ -109,34 +109,34 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 	// Handing a server to a new owner hands them the resolver's owner
 	// short-circuit, so on a customer's machine this was a staff member taking
 	// the customer's world for themselves.
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil || srv == nil || access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, srv.NodeID) {
+	srv, err := h.d.Store.GetServerByID(serverID)
+	if err != nil || srv == nil || access.ForeignToCaller(h.d.Store, h.d.FeatureFlags, r, srv.NodeID) {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
-	if _, err := h.state.Store.GetUserByID(req.UserID); err != nil {
+	if _, err := h.d.Store.GetUserByID(req.UserID); err != nil {
 		httpx.SendJSONError(w, "User not found", 404)
 		return
 	}
 
-	if err := h.state.Store.UpdateServerOwner(serverID, &req.UserID); err != nil {
+	if err := h.d.Store.UpdateServerOwner(serverID, &req.UserID); err != nil {
 		httpx.SendJSONError(w, "Failed to update owner", 500)
 		return
 	}
 	// The previous owner and everyone their grants let in lose the server here.
-	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
+	beamaccess.Stamp(r.Context(), h.d.Store, h.d.Redis, serverID)
 	// On both accounts, so the trail of the one that LOST the server shows it.
 	actorID, _ := r.Context().Value("userID").(string)
 	meta := map[string]interface{}{
 		"serverId": serverID, "serverUuid": srv.UUID, "previousOwner": srv.OwnerID, "newOwner": req.UserID,
 	}
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventServerOwnerChanged, actorID, srv.OwnerID, meta)
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventServerOwnerChanged, actorID, srv.OwnerID, meta)
 	if req.UserID != srv.OwnerID {
-		audit.LogIdentity(h.state.Store, r, audit.AuditEventServerOwnerChanged, actorID, req.UserID, meta)
+		audit.LogIdentity(h.d.Store, r, audit.AuditEventServerOwnerChanged, actorID, req.UserID, meta)
 	}
 
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

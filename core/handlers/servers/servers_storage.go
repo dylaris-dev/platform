@@ -53,13 +53,13 @@ func (h *ServerHandler) GetServerStoragePath(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
@@ -67,18 +67,18 @@ func (h *ServerHandler) GetServerStoragePath(w http.ResponseWriter, r *http.Requ
 
 	// Current storage path from Redis
 	currentPath := ""
-	if h.state.Redis != nil {
+	if h.d.Redis != nil {
 		key := fmt.Sprintf("node:%s:server:%s:storage", node.Token, srv.UUID)
-		if val, redisErr := h.state.Redis.Get(r.Context(), key).Result(); redisErr == nil {
+		if val, redisErr := h.d.Redis.Get(r.Context(), key).Result(); redisErr == nil {
 			currentPath = val
 		}
 	}
 
 	// Available storage paths from node heartbeat
 	var storagePaths interface{} = []interface{}{}
-	if h.state.Redis != nil {
+	if h.d.Redis != nil {
 		heartbeatKey := "dylaris:discovery:" + node.Token
-		if val, redisErr := h.state.Redis.Get(r.Context(), heartbeatKey).Result(); redisErr == nil {
+		if val, redisErr := h.d.Redis.Get(r.Context(), heartbeatKey).Result(); redisErr == nil {
 			var heartbeat map[string]interface{}
 			if json.Unmarshal([]byte(val), &heartbeat) == nil {
 				if s, ok := heartbeat["storage"]; ok {
@@ -113,35 +113,35 @@ func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
-	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
 
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
 
-	if h.state.Queue == nil {
+	if h.d.Queue == nil {
 		httpx.SendJSONError(w, "Queue not available", 503)
 		return
 	}
 
-	if err := h.state.Queue.SendMigrateCommand(r.Context(), node.Token, srv.UUID, req.TargetPath); err != nil {
+	if err := h.d.Queue.SendMigrateCommand(r.Context(), node.Token, srv.UUID, req.TargetPath); err != nil {
 		log.Printf("Failed to queue migrate_storage for server %d: %v", serverID, err)
 		httpx.SendJSONError(w, "Failed to queue migration", 500)
 		return
 	}
 
 	log.Printf("migrate_storage queued for server %d (%s) → %s", serverID, srv.UUID, req.TargetPath)
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"message": "Migration queued. Server will be stopped and data moved to the new path.",

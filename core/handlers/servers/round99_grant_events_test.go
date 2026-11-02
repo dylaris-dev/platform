@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
@@ -17,7 +16,9 @@ import (
 
 // countServersChanged runs fn with a subscriber on the system-events channel
 // and returns how many servers.changed frames it published.
-func countServersChanged(t *testing.T, state *handlers.AppState, fn func()) int {
+// state is the handler's own Deps: Events is set on it in place, so the
+// handler under test publishes through the subscribed client.
+func countServersChanged(t *testing.T, state *Deps, fn func()) int {
 	t.Helper()
 	rdb := handlertest.RedisClient(t)
 	// Only Events gets Redis: state.Redis stays nil so the beam stamp, which
@@ -72,7 +73,7 @@ func TestGrantChangesPublishServersChanged(t *testing.T) {
 			state := grantState(fs)
 			h := NewServerRolesHandler(state)
 			rec := httptest.NewRecorder()
-			got := countServersChanged(t, state, func() {
+			got := countServersChanged(t, &h.d, func() {
 				if tc.revoke {
 					h.RevokeGrant(rec, grantReq("DELETE", tc.actor, false, tc.body))
 				} else {

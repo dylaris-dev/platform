@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -71,7 +70,7 @@ func capRequest(userID string, isAdmin bool) *http.Request {
 func capHandler(fs *capFakeStore) *MemberHandler {
 	// The resolver and the handler read the same fake, exactly as they read the
 	// same store in production.
-	return &MemberHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}
+	return &MemberHandler{d: testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)})}
 }
 
 // An ACCOUNT-WIDE grantee has no per-server invite row - their grant is the row
@@ -175,7 +174,7 @@ func TestAnAdminOnACustomersMachineIsCappedToTheInvite(t *testing.T) {
 		},
 	}
 	h := capHandler(fs)
-	h.state.Authz.SetForeignNode(h.state.NodeOwnedByOther)
+	h.d.Authz.SetForeignNode(foreignNodeOf(h.d))
 
 	got := h.capPermissions(capRequest(capFriend, true), capServer, map[string]bool{
 		"console": true, "files": true,

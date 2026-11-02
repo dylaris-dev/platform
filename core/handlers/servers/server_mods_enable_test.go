@@ -8,8 +8,6 @@ import (
 	"sync"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -88,7 +86,7 @@ func TestSwitchingAModOffAndOnMovesItsJar(t *testing.T) {
 		reg := nodegrpc.NewRegistry()
 		node := &fileOpNode{failCopy: failCopy}
 		node.conn = reg.Register(7, "tok", node)
-		return NewServerModsHandler(withCoreStorage(&handlers.AppState{Store: fs, GRPCRegistry: reg})), fs, node
+		return NewServerModsHandler(testDeps(Deps{Store: fs, GRPCRegistry: reg})), fs, node
 	}
 	put := func(h *ServerModsHandler, body string) int {
 		req := httptest.NewRequest("PUT", "/api/servers/5/mods/9/enabled", strings.NewReader(body))
@@ -146,7 +144,7 @@ func TestAFailedSaveMovesTheJarBack(t *testing.T) {
 	reg := nodegrpc.NewRegistry()
 	node := &fileOpNode{}
 	node.conn = reg.Register(7, "tok", node)
-	h := NewServerModsHandler(withCoreStorage(&handlers.AppState{Store: fs, GRPCRegistry: reg}))
+	h := NewServerModsHandler(testDeps(Deps{Store: fs, GRPCRegistry: reg}))
 	req := httptest.NewRequest("PUT", "/api/servers/5/mods/9/enabled", strings.NewReader(`{"enabled":false}`))
 	req = mux.SetURLVars(req, map[string]string{"id": "5", "modId": "9"})
 	rec := httptest.NewRecorder()

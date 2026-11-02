@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -59,7 +57,7 @@ func TestDeleteServer_TakesItsAddressWithIt(t *testing.T) {
 
 	gw := &nodeDeleteGateway{}
 	fs := &deleteDispatchFakeStore{nodeMissing: true}
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{
+	h := &ServerHandler{d: testDeps(Deps{
 		Store:   fs,
 		Redis:   rdb,
 		Gateway: gw,

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services/beamaccess"
@@ -16,13 +17,13 @@ import (
 
 // LinkServerToProxy: Link a game server to a proxy server
 func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
 	// Check if proxy feature is enabled
-	val, _ := h.state.Store.GetSetting("feature_proxy_enabled")
+	val, _ := h.d.Store.GetSetting("feature_proxy_enabled")
 	if val == "false" {
 		httpx.SendJSONError(w, "Proxy feature is disabled", 403)
 		return
@@ -43,7 +44,7 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
@@ -61,7 +62,7 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	proxy, err := h.state.Store.GetServerByID(req.ProxyID)
+	proxy, err := h.d.Store.GetServerByID(req.ProxyID)
 	if err != nil {
 		httpx.SendJSONError(w, "Proxy not found", 404)
 		return
@@ -99,28 +100,28 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 	// owner never gave. Unlinking only takes rights away and stays with
 	// network.write. Admins as for grants: not on a customer's machine.
 	userID, _ := r.Context().Value("userID").(string)
-	adminHere := reqctx.IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, userID)
+	adminHere := reqctx.IsAdmin(r) && !access.NodeOwnedByOther(h.d.Store, h.d.FeatureFlags, srv.NodeID, userID)
 	if !adminHere && (userID == "" || userID != srv.OwnerID) {
 		httpx.SendJSONError(w, "Only the server's owner can link it to a proxy", 403)
 		return
 	}
 
 	proxyID := req.ProxyID
-	if err := h.state.Store.UpdateServerProxyID(serverID, &proxyID); err != nil {
+	if err := h.d.Store.UpdateServerProxyID(serverID, &proxyID); err != nil {
 		httpx.SendJSONError(w, "Failed to link server", 500)
 		return
 	}
 	// A move from one proxy to another ends what was inherited from the first.
-	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
+	beamaccess.Stamp(r.Context(), h.d.Store, h.d.Redis, serverID)
 
 	// The proxy can only reach this server once the node has been told to allow
 	// it, so republish now rather than at the next tick. Linking is the moment
 	// somebody is watching for it to work.
-	if h.state.NetPolicy != nil {
-		h.state.NetPolicy.RunOnce(r.Context())
+	if h.d.NetPolicy != nil {
+		h.d.NetPolicy.RunOnce(r.Context())
 	}
 
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -136,7 +137,7 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
@@ -154,11 +155,11 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 	}
 
 	resolveIP := func(containerUUID, proxyUUID string) string {
-		if h.state.Redis == nil {
+		if h.d.Redis == nil {
 			return ""
 		}
 		key := fmt.Sprintf("dylaris:server:%s:proxy_ip:%s", containerUUID, proxyUUID)
-		val, _ := h.state.Redis.Get(r.Context(), key).Result()
+		val, _ := h.d.Redis.Get(r.Context(), key).Result()
 		return val
 	}
 
@@ -167,7 +168,7 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 		// The fleet, not a visible list: a proxy on a customer's own node has
 		// its backends on that same node, and filtering them out here would
 		// stop that customer's proxy routing rather than hide anything.
-		linked, _ := h.state.Store.ListAllServers()
+		linked, _ := h.d.Store.ListAllServers()
 		var out []endpoint
 		for _, child := range linked {
 			if child.ProxyID == nil || *child.ProxyID != srv.ID {
@@ -202,7 +203,7 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "endpoints": []endpoint{}})
 		return
 	}
-	proxy, err := h.state.Store.GetServerByID(*srv.ProxyID)
+	proxy, err := h.d.Store.GetServerByID(*srv.ProxyID)
 	if err != nil {
 		httpx.SendJSONError(w, "Proxy not found", 404)
 		return
@@ -234,13 +235,13 @@ func proxyBackendHostname(uuid string) string {
 
 // UnlinkServerFromProxy: Remove a server's proxy link
 func (h *ServerHandler) UnlinkServerFromProxy(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
 	// Check if proxy feature is enabled
-	val, _ := h.state.Store.GetSetting("feature_proxy_enabled")
+	val, _ := h.d.Store.GetSetting("feature_proxy_enabled")
 	if val == "false" {
 		httpx.SendJSONError(w, "Proxy feature is disabled", 403)
 		return
@@ -253,26 +254,26 @@ func (h *ServerHandler) UnlinkServerFromProxy(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
+	if _, err := h.d.Store.GetServerByID(serverID); err != nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
-	if err := h.state.Store.UpdateServerProxyID(serverID, nil); err != nil {
+	if err := h.d.Store.UpdateServerProxyID(serverID, nil); err != nil {
 		httpx.SendJSONError(w, "Failed to unlink server", 500)
 		return
 	}
 	// Ends access inherited from the proxy; see beamaccess.Stamp.
-	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
+	beamaccess.Stamp(r.Context(), h.d.Store, h.d.Redis, serverID)
 
 	// Withdraw the proxy's allow rule now, for the same reason linking installs
 	// it now - and this direction matters more: until it is withdrawn the proxy
 	// can still reach a server somebody has just disconnected it from.
-	if h.state.NetPolicy != nil {
-		h.state.NetPolicy.RunOnce(r.Context())
+	if h.d.NetPolicy != nil {
+		h.d.NetPolicy.RunOnce(r.Context())
 	}
 
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

@@ -17,14 +17,14 @@ func (h *ServerHandler) GetSftpCredentials(w http.ResponseWriter, r *http.Reques
 	serverID, _ := strconv.Atoi(vars["id"])
 	username, _ := r.Context().Value("username").(string)
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
 	// If file mode is beam-only, do not expose node IP
-	fileMode, _ := h.state.Store.GetSetting("file_access_mode")
+	fileMode, _ := h.d.Store.GetSetting("file_access_mode")
 	if fileMode == "beam" {
 		// With a reason, like the external-node branch below. Without one a
 		// client gets four empty fields and nothing to say about them, which is
@@ -40,7 +40,7 @@ func (h *ServerHandler) GetSftpCredentials(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return

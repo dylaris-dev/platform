@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -22,11 +21,11 @@ import (
 // transparent — the API returns the chosen node plus the runner-up
 // scores so admins can see why.
 type PlacementHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewPlacementHandler(state *handlers.AppState) *PlacementHandler {
-	return &PlacementHandler{state: state}
+func NewPlacementHandler(state Deps) *PlacementHandler {
+	return &PlacementHandler{d: state}
 }
 
 // PickNode POST /api/placement/pick — any authed user (helper).
@@ -55,7 +54,7 @@ func (h *PlacementHandler) PickNode(w http.ResponseWriter, r *http.Request) {
 	// For a tenant it also stops an empty POST from enumerating the whole
 	// fleet's capacity and topology. Nothing is lost for an admin picking a node
 	// by hand: that list comes from /nodes, not from here.
-	applyPlacementScope(h.state, r, &req)
+	applyPlacementScope(h.d, r, &req)
 
 	resp := h.pickNode(r.Context(), req)
 	json.NewEncoder(w).Encode(resp)
@@ -63,7 +62,7 @@ func (h *PlacementHandler) PickNode(w http.ResponseWriter, r *http.Request) {
 
 // pickNode binds placement.Pick to this handler's state.
 func (h *PlacementHandler) pickNode(ctx context.Context, req placement.PickNodeRequest) placement.PickNodeResponse {
-	return placement.Pick(ctx, h.state.Store, h.state.Redis, services.GatewayRoutingEnabled(h.state.Store), req)
+	return placement.Pick(ctx, h.d.Store, h.d.Redis, services.GatewayRoutingEnabled(h.d.Store), req)
 }
 
 // SetNodePlacementRequest is the body for PUT /api/nodes/{id}/placement.
@@ -87,7 +86,7 @@ func (h *PlacementHandler) SetNodePlacement(w http.ResponseWriter, r *http.Reque
 	}
 	// Overcommit on a customer's machine decides how much of their hardware the
 	// scheduler hands out; that is theirs to set.
-	if access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, id) {
+	if access.ForeignToCaller(h.d.Store, h.d.FeatureFlags, r, id) {
 		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
@@ -112,12 +111,12 @@ func (h *PlacementHandler) SetNodePlacement(w http.ResponseWriter, r *http.Reque
 		}
 		padding = &n
 	}
-	if err := h.state.Store.SetNodePlacement(id, req.CPUOvercommitRatio, req.RAMOvercommitRatio); err != nil {
+	if err := h.d.Store.SetNodePlacement(id, req.CPUOvercommitRatio, req.RAMOvercommitRatio); err != nil {
 		httpx.SendJSONError(w, "Failed to update placement", http.StatusInternalServerError)
 		return
 	}
 	if paddingSet {
-		if err := h.state.Store.SetNodeRAMPadding(id, padding); err != nil {
+		if err := h.d.Store.SetNodeRAMPadding(id, padding); err != nil {
 			httpx.SendJSONError(w, "Failed to update RAM padding", http.StatusInternalServerError)
 			return
 		}
@@ -139,7 +138,7 @@ func extractIDFromPath(r *http.Request, prefix, suffix string) string {
 // to a single region. Populates the deploy wizard's multi-select chip list.
 func (h *PlacementHandler) AvailableTagsHandler(w http.ResponseWriter, r *http.Request) {
 	region := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
-	nodes, err := h.state.Store.ListNodes()
+	nodes, err := h.d.Store.ListNodes()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list nodes", http.StatusInternalServerError)
 		return
@@ -174,7 +173,7 @@ func (h *PlacementHandler) AvailableTagsHandler(w http.ResponseWriter, r *http.R
 // region keys currently advertised by online nodes. The wizard hides the
 // region picker when this list is empty.
 func (h *PlacementHandler) AvailableRegionsHandler(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.state.Store.ListNodes()
+	nodes, err := h.d.Store.ListNodes()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list nodes", http.StatusInternalServerError)
 		return
@@ -211,8 +210,8 @@ func (h *PlacementHandler) AvailableRegionsHandler(w http.ResponseWriter, r *htt
 // It is a function rather than two lines at the call site so a test can name
 // the DECISION. Testing the scheduler with the flag already set proves the flag
 // works, not that anything sets it.
-func applyPlacementScope(state *handlers.AppState, r *http.Request, req *placement.PickNodeRequest) {
-	if state == nil || !access.OwnershipInForce(state.FeatureFlags, r) {
+func applyPlacementScope(state Deps, r *http.Request, req *placement.PickNodeRequest) {
+	if !access.OwnershipInForce(state.FeatureFlags, r) {
 		return // no node has an owner; nothing to scope
 	}
 	if reqctx.IsAdmin(r) {

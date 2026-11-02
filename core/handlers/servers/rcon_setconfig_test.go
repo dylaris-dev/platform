@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -100,7 +99,7 @@ func (f *rconConfigFakeStore) SetServerRconNeedsRestart(serverID int, needsResta
 }
 
 func newRconConfigHandler(fs *rconConfigFakeStore) *RconHandler {
-	h := &RconHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
+	h := &RconHandler{d: testDeps(Deps{Store: fs})}
 	// Inject a fake props-writer so these tests exercise SetConfig's own logic
 	// without a live node/gRPC registry. It records the call and returns the
 	// configured error (nil by default = success).

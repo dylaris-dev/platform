@@ -19,7 +19,7 @@ import (
 // Multiple servers may be demos. The StoreEnabled check below is feature
 // availability (hosted-build-only), not authorization, and stays.
 func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
-	if !h.state.StoreEnabled {
+	if !h.d.StoreEnabled {
 		httpx.SendJSONError(w, "Demo feature not available", http.StatusNotFound)
 		return
 	}
@@ -30,8 +30,8 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 	}
 	// A demo server is readable by every signed-in account, so flagging one on a
 	// customer's machine published their console and stats to everyone.
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil || srv == nil || access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, srv.NodeID) {
+	srv, err := h.d.Store.GetServerByID(serverID)
+	if err != nil || srv == nil || access.ForeignToCaller(h.d.Store, h.d.FeatureFlags, r, srv.NodeID) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
@@ -43,7 +43,7 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = demo.EditList(h.state.Store, func(current []string) ([]string, error) {
+	err = demo.EditList(h.d.Store, func(current []string) ([]string, error) {
 		next := make([]string, 0, len(current)+1)
 		for _, u := range current {
 			if u != srv.UUID {
@@ -54,7 +54,7 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 			// Asked again under the lock: a delete that committed after the
 			// load above has already run its dropDemoServers, and adding the
 			// UUID now would put a deleted server back on the list.
-			if again, err := h.state.Store.GetServerByID(serverID); err != nil || again == nil || again.UUID != srv.UUID {
+			if again, err := h.d.Store.GetServerByID(serverID); err != nil || again == nil || again.UUID != srv.UUID {
 				return nil, demo.ErrServerGone
 			}
 			next = append(next, srv.UUID)
@@ -77,13 +77,13 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 // account ("" when unset). The StoreEnabled check below is feature
 // availability (hosted-build-only), not authorization, and stays.
 func (h *ServerHandler) GetDemoAccount(w http.ResponseWriter, r *http.Request) {
-	if !h.state.StoreEnabled {
+	if !h.d.StoreEnabled {
 		httpx.SendJSONError(w, "Demo feature not available", http.StatusNotFound)
 		return
 	}
 	username := ""
-	if uuid, _ := h.state.Store.GetSetting(demo.AccountUUIDSetting); uuid != "" {
-		if u, err := h.state.Store.GetUserByID(uuid); err == nil && u != nil {
+	if uuid, _ := h.d.Store.GetSetting(demo.AccountUUIDSetting); uuid != "" {
+		if u, err := h.d.Store.GetUserByID(uuid); err == nil && u != nil {
 			username = u.Username
 		}
 	}
@@ -96,7 +96,7 @@ func (h *ServerHandler) GetDemoAccount(w http.ResponseWriter, r *http.Request) {
 // demo account. The StoreEnabled check below is feature availability
 // (hosted-build-only), not authorization, and stays.
 func (h *ServerHandler) SetDemoAccount(w http.ResponseWriter, r *http.Request) {
-	if !h.state.StoreEnabled {
+	if !h.d.StoreEnabled {
 		httpx.SendJSONError(w, "Demo feature not available", http.StatusNotFound)
 		return
 	}
@@ -109,14 +109,14 @@ func (h *ServerHandler) SetDemoAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	username := strings.TrimSpace(req.Username)
 	if username == "" {
-		if err := h.state.Store.SetSetting(demo.AccountUUIDSetting, ""); err != nil {
+		if err := h.d.Store.SetSetting(demo.AccountUUIDSetting, ""); err != nil {
 			httpx.SendJSONError(w, "Failed to clear demo account", http.StatusInternalServerError)
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": ""})
 		return
 	}
-	u, err := h.state.Store.GetUserByUsername(username)
+	u, err := h.d.Store.GetUserByUsername(username)
 	if err != nil || u == nil {
 		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
@@ -128,11 +128,11 @@ func (h *ServerHandler) SetDemoAccount(w http.ResponseWriter, r *http.Request) {
 	// Anyone can open a demo session, and it reads everything the account
 	// reads. A staff account there handed users.read, audit.read or a node's
 	// credentials to the public.
-	if caps, ok := access.StrictPanelCaps(h.state.Store, u.ID); !ok || len(caps) > 0 {
+	if caps, ok := access.StrictPanelCaps(h.d.Store, u.ID); !ok || len(caps) > 0 {
 		httpx.SendJSONError(w, "A staff account cannot be the demo account", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetSetting(demo.AccountUUIDSetting, u.ID); err != nil {
+	if err := h.d.Store.SetSetting(demo.AccountUUIDSetting, u.ID); err != nil {
 		httpx.SendJSONError(w, "Failed to save demo account", http.StatusInternalServerError)
 		return
 	}

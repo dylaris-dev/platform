@@ -53,7 +53,7 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
 	var req struct {
@@ -64,7 +64,7 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	modID, _ := strconv.Atoi(mux.Vars(r)["modId"])
-	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
+	mods, err := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
@@ -92,7 +92,7 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]bool{"success": true})
 		return
 	}
-	if h.state.GRPCRegistry == nil {
+	if h.d.GRPCRegistry == nil {
 		httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -113,7 +113,7 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, fmt.Sprintf("%s was copied but the old file could not be removed: %v. Try again.", target.FileName, err), http.StatusBadGateway)
 		return
 	}
-	if err := h.state.Store.SetServerModDisabled(target.ID, serverID, !enable); err != nil {
+	if err := h.d.Store.SetServerModDisabled(target.ID, serverID, !enable); err != nil {
 		if errors.Is(err, store.ErrServerModNotFound) {
 			httpx.SendJSONError(w, "Mod not found", http.StatusNotFound)
 			return
@@ -130,7 +130,7 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "The jar moved, but the setting could not be saved", http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
+	h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -148,7 +148,7 @@ func (h *ServerModsHandler) nodeFileOp(srv *models.Server, payload any) error {
 	default:
 		return fmt.Errorf("unsupported file operation %T", payload)
 	}
-	resp, err := h.state.GRPCRegistry.SendRequest(srv.NodeID, msg, 30*time.Second)
+	resp, err := h.d.GRPCRegistry.SendRequest(srv.NodeID, msg, 30*time.Second)
 	if err != nil {
 		return err
 	}

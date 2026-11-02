@@ -50,7 +50,7 @@ type portsView struct {
 }
 
 func (h *ServerHandler) routingMode() string {
-	m, _ := h.state.Store.GetSetting("routing_mode")
+	m, _ := h.d.Store.GetSetting("routing_mode")
 	if m == "" {
 		return "ip_port"
 	}
@@ -75,15 +75,15 @@ func nodePublicAddress(node *models.Node) string {
 // effectivePortRange is the node's own range, else the global one, else the
 // self-hosted default ("" = none).
 func (h *ServerHandler) effectivePortRange(nodeID int) (string, error) {
-	ranges, err := h.state.Store.GetNodeExtraPortRanges()
+	ranges, err := h.d.Store.GetNodeExtraPortRanges()
 	if err != nil {
 		return "", err
 	}
-	g, saved, err := services.GlobalPortRange(h.state.Store)
+	g, saved, err := services.GlobalPortRange(h.d.Store)
 	if err != nil {
 		return "", err
 	}
-	rng, _ := services.EffectivePortRange(ranges[nodeID], g, saved, h.state.Hosted)
+	rng, _ := services.EffectivePortRange(ranges[nodeID], g, saved, h.d.Hosted)
 	return rng, nil
 }
 
@@ -93,7 +93,7 @@ func (h *ServerHandler) extraPortsAddress(node *models.Node) string {
 	if node == nil {
 		return ""
 	}
-	hosts, err := h.state.Store.GetNodeExtraPortsHosts()
+	hosts, err := h.d.Store.GetNodeExtraPortsHosts()
 	if err != nil {
 		log.Printf("ports: node %d: extra ports address: %v", node.ID, err)
 	}
@@ -105,12 +105,12 @@ func (h *ServerHandler) extraPortsAddress(node *models.Node) string {
 
 // GetServerPorts GET /api/servers/{id}/ports
 func (h *ServerHandler) GetServerPorts(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.d.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	ports, err := h.state.Store.ListServerPorts(srv.ID)
+	ports, err := h.d.Store.ListServerPorts(srv.ID)
 	if err != nil {
 		log.Printf("ports: server %d: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Failed to read the server's ports", http.StatusInternalServerError)
@@ -118,19 +118,19 @@ func (h *ServerHandler) GetServerPorts(w http.ResponseWriter, r *http.Request) {
 	}
 	v := portsView{Ports: ports, RoutingMode: h.routingMode(), IsAdmin: reqctx.IsAdmin(r)}
 	v.CanWrite = v.IsAdmin
-	if h.state.Authz != nil {
-		if res, err := h.state.Authz.Resolve(authz.IdentityFromContext(r.Context()), srv.ID); err == nil {
+	if h.d.Authz != nil {
+		if res, err := h.d.Authz.Resolve(authz.IdentityFromContext(r.Context()), srv.ID); err == nil {
 			v.CanWrite = res.HasCap("network.write")
 		}
 	}
 	v.Allowed = v.IsAdmin
 	if !v.Allowed {
-		v.Allowed, _, _ = services.ResolvePortsAllowed(h.state.Store, srv)
+		v.Allowed, _, _ = services.ResolvePortsAllowed(h.d.Store, srv)
 	}
-	v.Limit, _, _ = services.ResolvePortLimit(h.state.Store, srv.OwnerID)
-	v.Used, _ = h.state.Store.CountServerPortsByOwner(srv.OwnerID)
+	v.Limit, _, _ = services.ResolvePortLimit(h.d.Store, srv.OwnerID)
+	v.Used, _ = h.d.Store.CountServerPortsByOwner(srv.OwnerID)
 	v.Range, _ = h.effectivePortRange(srv.NodeID)
-	if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil {
+	if node, err := h.d.Store.GetNodeByID(srv.NodeID); err == nil {
 		v.Address = h.extraPortsAddress(node)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "ports": v})
@@ -148,7 +148,7 @@ type createPortRequest struct {
 // CreateServerPort POST /api/servers/{id}/ports
 func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.d.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -164,11 +164,11 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 		httpx.SendJSONErrorCode(w, "Extra ports need direct routing. Behind the gateway, use the voice chat switch under Routes, and share links or custom tabs for web views.", "ports_gateway_mode", http.StatusConflict)
 		return
 	}
-	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
 	if !isAdmin {
-		ok, _, err := services.ResolvePortsAllowed(h.state.Store, srv)
+		ok, _, err := services.ResolvePortsAllowed(h.d.Store, srv)
 		if err != nil {
 			log.Printf("ports: server %d: %v", srv.ID, err)
 		}
@@ -214,7 +214,7 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	existing, err := h.state.Store.ListServerPorts(srv.ID)
+	existing, err := h.d.Store.ListServerPorts(srv.ID)
 	if err != nil {
 		log.Printf("ports: server %d: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Failed to add the port", http.StatusInternalServerError)
@@ -231,19 +231,19 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "The server's node was not found", http.StatusNotFound)
 		return
 	}
-	if !nodeops.NodeReleaseAtLeast(ctx, h.state.Redis, node.Token, services.PortsNodeSince) {
+	if !nodeops.NodeReleaseAtLeast(ctx, h.d.Redis, node.Token, services.PortsNodeSince) {
 		httpx.SendJSONErrorCode(w, "Update this server's node first; it is too old to publish extra ports.", "node_too_old", http.StatusConflict)
 		return
 	}
 
 	if !isAdmin {
-		limit, _, err := services.ResolvePortLimit(h.state.Store, srv.OwnerID)
-		used, cerr := h.state.Store.CountServerPortsByOwner(srv.OwnerID)
+		limit, _, err := services.ResolvePortLimit(h.d.Store, srv.OwnerID)
+		used, cerr := h.d.Store.CountServerPortsByOwner(srv.OwnerID)
 		if err != nil || cerr != nil {
 			log.Printf("ports: server %d: limit: %v / %v", srv.ID, err, cerr)
 			httpx.SendJSONError(w, "Failed to add the port", http.StatusInternalServerError)
@@ -268,7 +268,7 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 			httpx.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
 			return
 		}
-		voiceMod, voiceRel, voiceContent, err = FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
+		voiceMod, voiceRel, voiceContent, err = FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 		switch {
 		case errors.Is(err, ErrVoiceModMissing):
 			httpx.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
@@ -285,7 +285,7 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 	}
 
 	gameRange := ""
-	if hb := services.LoadHeartbeat(ctx, h.state.Redis, node.Token); hb != nil {
+	if hb := services.LoadHeartbeat(ctx, h.d.Redis, node.Token); hb != nil {
 		gameRange = hb.PortRange
 	}
 	p := store.ServerPort{ServerID: srv.ID, NodeID: srv.NodeID, Protocol: req.Protocol, ContainerPort: req.ContainerPort,
@@ -307,9 +307,9 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 			merged = voicecfg.PlasmoEnable(voiceContent, address, got.HostPort)
 		}
 		if merged != voiceContent {
-			if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+voiceRel, merged); err != nil {
+			if err := nodeops.WriteNodeFileString(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+voiceRel, merged); err != nil {
 				log.Printf("ports: server %d: write %s: %v", srv.ID, voiceRel, err)
-				if derr := h.state.Store.DeleteServerPort(got.ID); derr != nil {
+				if derr := h.d.Store.DeleteServerPort(got.ID); derr != nil {
 					log.Printf("ports: server %d: roll back port %d: %v", srv.ID, got.ID, derr)
 				}
 				httpx.SendJSONError(w, "The node could not write the voice chat config. Try again.", http.StatusBadGateway)
@@ -333,7 +333,7 @@ func (h *ServerHandler) takePort(p store.ServerPort, hostPort int, gameRange str
 			return p, "port_out_of_range", "That port is in the node's game port range (" + gameRange + "). Pick one outside it."
 		}
 		p.HostPort = hostPort
-		got, err := h.state.Store.CreateServerPort(p)
+		got, err := h.d.Store.CreateServerPort(p)
 		if errors.Is(err, store.ErrPortTaken) {
 			return p, "port_taken", "Another server already uses " + strings.ToUpper(p.Protocol) + " port " + strconv.Itoa(hostPort) + " on this node."
 		}
@@ -360,7 +360,7 @@ func (h *ServerHandler) takePort(p store.ServerPort, hostPort int, gameRange str
 		return p, "ports_range_conflict", "The extra port range " + rng + " overlaps the node's game port range " + gameRange + ". An administrator moves it under Settings, Extra ports."
 	}
 	for attempt := 0; attempt < 3; attempt++ {
-		free, err := h.state.Store.FreeServerPort(p.NodeID, p.Protocol, min, max, nil)
+		free, err := h.d.Store.FreeServerPort(p.NodeID, p.Protocol, min, max, nil)
 		if errors.Is(err, store.ErrPortRangeFull) {
 			return p, "ports_range_full", "Every " + strings.ToUpper(p.Protocol) + " port in this node's range (" + rng + ") is taken. Ask an administrator to widen the range."
 		}
@@ -369,7 +369,7 @@ func (h *ServerHandler) takePort(p store.ServerPort, hostPort int, gameRange str
 			return p, "port_failed", "Failed to add the port."
 		}
 		p.HostPort = free
-		got, err := h.state.Store.CreateServerPort(p)
+		got, err := h.d.Store.CreateServerPort(p)
 		if errors.Is(err, store.ErrPortTaken) {
 			continue
 		}
@@ -412,7 +412,7 @@ func (h *ServerHandler) UpdateServerPort(w http.ResponseWriter, r *http.Request)
 		}
 		restart = true
 	}
-	if err := h.state.Store.UpdateServerPortMeta(p.ID, req.Name, req.Note); err != nil {
+	if err := h.d.Store.UpdateServerPortMeta(p.ID, req.Name, req.Note); err != nil {
 		log.Printf("ports: server %d: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Failed to save the port", http.StatusInternalServerError)
 		return
@@ -424,7 +424,7 @@ func (h *ServerHandler) UpdateServerPort(w http.ResponseWriter, r *http.Request)
 // writes the mod's config to match. It answers its own refusals.
 func (h *ServerHandler) changePortPreset(w http.ResponseWriter, r *http.Request, srv *models.Server, p *store.ServerPort, preset string) bool {
 	if preset == "" {
-		if err := h.state.Store.UpdateServerPortPreset(p.ID, "", p.ContainerPort); err != nil {
+		if err := h.d.Store.UpdateServerPortPreset(p.ID, "", p.ContainerPort); err != nil {
 			log.Printf("ports: server %d: %v", srv.ID, err)
 			httpx.SendJSONError(w, "Failed to save the port", http.StatusInternalServerError)
 			return false
@@ -440,14 +440,14 @@ func (h *ServerHandler) changePortPreset(w http.ResponseWriter, r *http.Request,
 		httpx.SendJSONErrorCode(w, "With the gateway on, turn voice chat on under Routes instead.", "voice_preset_mode", http.StatusConflict)
 		return false
 	}
-	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return false
 	}
 	if p.Protocol != "udp" {
 		httpx.SendJSONErrorCode(w, "Voice chat needs a UDP port. Add a UDP port with the voice chat preset instead.", "port_invalid", http.StatusBadRequest)
 		return false
 	}
-	others, err := h.state.Store.ListServerPorts(srv.ID)
+	others, err := h.d.Store.ListServerPorts(srv.ID)
 	if err != nil {
 		log.Printf("ports: server %d: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Failed to save the port", http.StatusInternalServerError)
@@ -466,7 +466,7 @@ func (h *ServerHandler) changePortPreset(w http.ResponseWriter, r *http.Request,
 			return false
 		}
 	}
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "The server's node was not found", http.StatusNotFound)
 		return false
@@ -480,7 +480,7 @@ func (h *ServerHandler) changePortPreset(w http.ResponseWriter, r *http.Request,
 		httpx.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
 		return false
 	}
-	mod, rel, content, err := FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	mod, rel, content, err := FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	switch {
 	case errors.Is(err, ErrVoiceModMissing):
 		httpx.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
@@ -498,13 +498,13 @@ func (h *ServerHandler) changePortPreset(w http.ResponseWriter, r *http.Request,
 		merged = voicecfg.PlasmoEnable(content, address, p.HostPort)
 	}
 	if merged != content {
-		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
+		if err := nodeops.WriteNodeFileString(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
 			log.Printf("ports: server %d: write %s: %v", srv.ID, rel, err)
 			httpx.SendJSONError(w, "The node could not write the voice chat config. Try again.", http.StatusBadGateway)
 			return false
 		}
 	}
-	if err := h.state.Store.UpdateServerPortPreset(p.ID, mod, voicePresetPort); err != nil {
+	if err := h.d.Store.UpdateServerPortPreset(p.ID, mod, voicePresetPort); err != nil {
 		log.Printf("ports: server %d: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Failed to save the port", http.StatusInternalServerError)
 		return false
@@ -520,7 +520,7 @@ func (h *ServerHandler) DeleteServerPort(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if err := h.state.Store.DeleteServerPort(p.ID); err != nil {
+	if err := h.d.Store.DeleteServerPort(p.ID); err != nil {
 		log.Printf("ports: server %d: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Failed to remove the port", http.StatusInternalServerError)
 		return
@@ -536,12 +536,12 @@ func (h *ServerHandler) DeleteServerPort(w http.ResponseWriter, r *http.Request)
 // port belongs to THAT server: the route's access check is on {id}.
 func (h *ServerHandler) loadServerPort(w http.ResponseWriter, r *http.Request) (*models.Server, *store.ServerPort, bool) {
 	vars := mux.Vars(r)
-	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(vars["id"]))
+	srv, err := h.d.Store.GetServerByID(httpx.MustAtoi(vars["id"]))
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return nil, nil, false
 	}
-	p, err := h.state.Store.GetServerPort(httpx.MustAtoi(vars["portId"]))
+	p, err := h.d.Store.GetServerPort(httpx.MustAtoi(vars["portId"]))
 	if err != nil || p == nil || p.ServerID != srv.ID {
 		httpx.SendJSONError(w, "Port not found", http.StatusNotFound)
 		return nil, nil, false
@@ -550,12 +550,12 @@ func (h *ServerHandler) loadServerPort(w http.ResponseWriter, r *http.Request) (
 }
 
 func (h *ServerHandler) publishPorts(ctx context.Context, srv *models.Server) {
-	ports, err := h.state.Store.ListServerPorts(srv.ID)
+	ports, err := h.d.Store.ListServerPorts(srv.ID)
 	if err != nil {
 		log.Printf("ports: server %d: %v", srv.ID, err)
 		return
 	}
-	if err := services.PublishServerPorts(ctx, h.state.Redis, srv.UUID, ports); err != nil {
+	if err := services.PublishServerPorts(ctx, h.d.Redis, srv.UUID, ports); err != nil {
 		log.Printf("ports: server %d: %v", srv.ID, err)
 	}
 }
@@ -565,7 +565,7 @@ func (h *ServerHandler) writeBackVoice(srv *models.Server) {
 	if srv.ActiveSubServer == "" {
 		return
 	}
-	mod, rel, content, err := FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	mod, rel, content, err := FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	if err != nil {
 		log.Printf("ports: server %d: voice config write-back skipped: %v", srv.ID, err)
 		return
@@ -575,7 +575,7 @@ func (h *ServerHandler) writeBackVoice(srv *models.Server) {
 		back = voicecfg.PlasmoDisable(content)
 	}
 	if back != content {
-		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, back); err != nil {
+		if err := nodeops.WriteNodeFileString(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, back); err != nil {
 			log.Printf("ports: server %d: voice config write-back of %s failed: %v", srv.ID, rel, err)
 		}
 	}
@@ -586,7 +586,7 @@ func (h *ServerHandler) writeBackVoice(srv *models.Server) {
 // preset's config is written for subName, and the node's key is rewritten.
 // It never blocks the start: a port it cannot keep is dropped and logged.
 func (h *ServerHandler) syncPortsToStart(srv *models.Server, subName string) {
-	ports, err := h.state.Store.ListServerPorts(srv.ID)
+	ports, err := h.d.Store.ListServerPorts(srv.ID)
 	if err != nil || len(ports) == 0 {
 		if err != nil {
 			log.Printf("ports: server %d: %v", srv.ID, err)
@@ -595,7 +595,7 @@ func (h *ServerHandler) syncPortsToStart(srv *models.Server, subName string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
 		return
 	}
@@ -603,20 +603,20 @@ func (h *ServerHandler) syncPortsToStart(srv *models.Server, subName string) {
 		if p.NodeID == srv.NodeID {
 			continue
 		}
-		if err := h.state.Store.MoveServerPort(p.ID, srv.NodeID, p.HostPort); err == nil {
+		if err := h.d.Store.MoveServerPort(p.ID, srv.NodeID, p.HostPort); err == nil {
 			continue
 		}
 		gameRange := ""
-		if hb := services.LoadHeartbeat(ctx, h.state.Redis, node.Token); hb != nil {
+		if hb := services.LoadHeartbeat(ctx, h.d.Redis, node.Token); hb != nil {
 			gameRange = hb.PortRange
 		}
-		_ = h.state.Store.DeleteServerPort(p.ID)
+		_ = h.d.Store.DeleteServerPort(p.ID)
 		p.NodeID = srv.NodeID
 		if _, code, msg := h.takePort(p, 0, gameRange); code != "" {
 			log.Printf("ports: server %d: port %q dropped after the move: %s", srv.ID, p.Name, msg)
 		}
 	}
-	ports, err = h.state.Store.ListServerPorts(srv.ID)
+	ports, err = h.d.Store.ListServerPorts(srv.ID)
 	if err != nil {
 		return
 	}
@@ -625,7 +625,7 @@ func (h *ServerHandler) syncPortsToStart(srv *models.Server, subName string) {
 		if p.Preset == "" || subName == "" || address == "" {
 			continue
 		}
-		mod, rel, content, err := FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, subName)
+		mod, rel, content, err := FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, subName)
 		if err != nil {
 			log.Printf("ports: server %d: voice config: %v", srv.ID, err)
 			continue
@@ -635,12 +635,12 @@ func (h *ServerHandler) syncPortsToStart(srv *models.Server, subName string) {
 			merged = voicecfg.PlasmoEnable(content, address, p.HostPort)
 		}
 		if merged != content {
-			if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, subName+"/"+rel, merged); err != nil {
+			if err := nodeops.WriteNodeFileString(h.d.GRPCRegistry, srv.NodeID, srv.UUID, subName+"/"+rel, merged); err != nil {
 				log.Printf("ports: server %d: voice config write: %v", srv.ID, err)
 			}
 		}
 	}
-	if err := services.PublishServerPorts(ctx, h.state.Redis, srv.UUID, ports); err != nil {
+	if err := services.PublishServerPorts(ctx, h.d.Redis, srv.UUID, ports); err != nil {
 		log.Printf("ports: server %d: %v", srv.ID, err)
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
 	"dylaris-core/services/modcompat"
@@ -36,14 +35,14 @@ import (
 // it picks up the command — no new proto round trip needed for V1.
 
 type ServerModsHandler struct {
-	state *handlers.AppState
+	d Deps
 	// scanDeps replaces the node and Modrinth round trips of the modpack scan
 	// in tests; nil means the real ones.
 	scanDeps func(srv *models.Server) modpackScanDeps
 }
 
-func NewServerModsHandler(state *handlers.AppState) *ServerModsHandler {
-	return &ServerModsHandler{state: state}
+func NewServerModsHandler(state Deps) *ServerModsHandler {
+	return &ServerModsHandler{d: state}
 }
 
 type installModRequest struct {
@@ -69,7 +68,7 @@ var modrinthAllowedHosts = map[string]bool{
 // router's mods.read/mods.write/mods.delete RequireCap now enforces it before
 // this handler ever runs.
 func (h *ServerModsHandler) getServer(serverID int) (*models.Server, bool) {
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		return nil, false
 	}
@@ -85,7 +84,7 @@ func (h *ServerModsHandler) List(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
+	mods, err := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
@@ -136,7 +135,7 @@ func (h *ServerModsHandler) fillProjectMeta(ctx context.Context, mods []models.S
 		if !ok || p.Slug == "" || mods[i].ModrinthProjectSlug != "" {
 			continue
 		}
-		if err := h.state.Store.SetServerModProjectMeta(mods[i].ID, p.Slug, p.Title); err != nil {
+		if err := h.d.Store.SetServerModProjectMeta(mods[i].ID, p.Slug, p.Title); err != nil {
 			log.Printf("[mods] storing the project title of mod %d: %v", mods[i].ID, err)
 			continue
 		}
@@ -160,20 +159,20 @@ func (h *ServerModsHandler) ModpackContents(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	// The scan is advisory: a failure to read its state just means no scan.
-	scan, jars, _, scanErr := h.state.Store.GetModpackScan(serverID, srv.ActiveSubServer)
+	scan, jars, _, scanErr := h.d.Store.GetModpackScan(serverID, srv.ActiveSubServer)
 	if scanErr == nil && scan == modpackScanPending && h.maybeScanModpack(srv) {
-		_, jars, _, scanErr = h.state.Store.GetModpackScan(serverID, srv.ActiveSubServer)
+		_, jars, _, scanErr = h.d.Store.GetModpackScan(serverID, srv.ActiveSubServer)
 	}
 	if scanErr != nil {
 		jars = 0
 	}
-	contents, err := h.state.Store.ListServerModpackContents(serverID, srv.ActiveSubServer)
+	contents, err := h.d.Store.ListServerModpackContents(serverID, srv.ActiveSubServer)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list modpack contents", http.StatusInternalServerError)
 		return
 	}
 	installerType := ""
-	if rec, err := h.state.Store.GetSubServerInstall(serverID, srv.ActiveSubServer); err == nil && rec != nil {
+	if rec, err := h.d.Store.GetSubServerInstall(serverID, srv.ActiveSubServer); err == nil && rec != nil {
 		installerType = rec.InstallerType
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -193,7 +192,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
 	var req installModRequest
@@ -279,12 +278,12 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if h.state.Queue == nil {
+	if h.d.Queue == nil {
 		httpx.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -300,7 +299,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	// A lookup failure is not fatal to the install: the worst case is the old
 	// jar surviving, which is exactly today's behaviour, and refusing the whole
 	// install over it would be a worse trade.
-	prev, prevErr := h.state.Store.GetServerModByProject(serverID, srv.ActiveSubServer, req.ProjectID)
+	prev, prevErr := h.d.Store.GetServerModByProject(serverID, srv.ActiveSubServer, req.ProjectID)
 	if prevErr != nil {
 		log.Printf("install mod: reading the previous row for project %s failed, the old jar may survive: %v",
 			req.ProjectID, prevErr)
@@ -349,7 +348,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		// the node found, so a 404 and a hash mismatch both read as success.
 		// installing only when the node is new enough to answer; see
 		// installStatusFor for why an old one is recorded the way it always was.
-		Status:    nodeops.InstallStatusFor(r.Context(), h.state.Redis, node.Token),
+		Status:    nodeops.InstallStatusFor(r.Context(), h.d.Redis, node.Token),
 		InstallID: installID,
 	}
 	// Filed BEFORE the upsert, which is the write that destroys it. A history
@@ -359,7 +358,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	// Only when the version actually changes. Re-installing the same build is a
 	// repair, not a step worth being able to undo.
 	if prev != nil && prev.ModrinthVersionID != req.VersionID {
-		if err := h.state.Store.RecordServerModHistory(serverID, srv.ActiveSubServer, prev); err != nil {
+		if err := h.d.Store.RecordServerModHistory(serverID, srv.ActiveSubServer, prev); err != nil {
 			log.Printf("install mod: recording history for project %s failed, rollback will not offer this version: %v",
 				req.ProjectID, err)
 		}
@@ -368,7 +367,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	// result handler only applies a report naming the attempt the row holds, and
 	// a node that answered before the upsert landed had its report dropped,
 	// leaving the row "installing" for good.
-	if _, err := h.state.Store.UpsertServerMod(mod); err != nil {
+	if _, err := h.d.Store.UpsertServerMod(mod); err != nil {
 		httpx.SendJSONError(w, "Could not record the install: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -385,20 +384,20 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		"serverId":         serverID,
 		"projectId":        req.ProjectID,
 	}
-	if err := h.state.Queue.SendCommand(context.Background(), node.Token, "install_mod", configPayload, nil); err != nil {
+	if err := h.d.Queue.SendCommand(context.Background(), node.Token, "install_mod", configPayload, nil); err != nil {
 		// The row exists now and names an install the node never received. Failed
 		// is what it is, and the panel already says "the server is still running
 		// whatever it had before" for a failed row.
-		if _, serr := h.state.Store.SetServerModStatus(serverID, srv.ActiveSubServer, req.ProjectID, installID,
+		if _, serr := h.d.Store.SetServerModStatus(serverID, srv.ActiveSubServer, req.ProjectID, installID,
 			models.ServerModFailed, "Core could not queue the install for the node."); serr != nil {
 			log.Printf("install mod: marking the undispatched install of %s failed: %v", req.ProjectID, serr)
 		}
-		h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
+		h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
 		httpx.SendJSONError(w, "Failed to queue install", http.StatusInternalServerError)
 		return
 	}
 
-	h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{
+	h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{
 		"serverId": serverID,
 	})
 
@@ -421,7 +420,7 @@ func (h *ServerModsHandler) ModHistory(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	entries, err := h.state.Store.ListServerModHistory(serverID, srv.ActiveSubServer)
+	entries, err := h.d.Store.ListServerModHistory(serverID, srv.ActiveSubServer)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not read the mod history", http.StatusInternalServerError)
 		return
@@ -445,7 +444,7 @@ func (h *ServerModsHandler) SetUpdatesPaused(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	modID, _ := strconv.Atoi(mux.Vars(r)["modId"])
-	if err := h.state.Store.SetServerModUpdatesPaused(modID, serverID, *req.Paused); err != nil {
+	if err := h.d.Store.SetServerModUpdatesPaused(modID, serverID, *req.Paused); err != nil {
 		if errors.Is(err, store.ErrServerModNotFound) {
 			httpx.SendJSONError(w, "Mod not found", http.StatusNotFound)
 			return
@@ -453,7 +452,7 @@ func (h *ServerModsHandler) SetUpdatesPaused(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Could not save the setting", http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{
+	h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{
 		"serverId": serverID,
 	})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -468,11 +467,11 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
 	modID, _ := strconv.Atoi(mux.Vars(r)["modId"])
-	mods, _ := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
+	mods, _ := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	var target *models.ServerMod
 	for i := range mods {
 		if mods[i].ID == modID {
@@ -485,7 +484,7 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 		return
@@ -498,7 +497,7 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, off, _ := modPaths(srv, target)
-		if h.state.GRPCRegistry == nil {
+		if h.d.GRPCRegistry == nil {
 			httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -506,11 +505,11 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Failed to remove the switched-off jar: "+err.Error(), http.StatusBadGateway)
 			return
 		}
-		if err := h.state.Store.DeleteServerMod(modID, serverID); err != nil {
+		if err := h.d.Store.DeleteServerMod(modID, serverID); err != nil {
 			httpx.SendJSONError(w, "Failed to remove mod entry", http.StatusInternalServerError)
 			return
 		}
-		h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
+		h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
 		json.NewEncoder(w).Encode(map[string]bool{"success": true})
 		return
 	}
@@ -520,11 +519,11 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 	// already refuses on both of these; this path used to discard the send error
 	// and delete the row regardless, which left the jar loading on the server with
 	// nothing in the UI left to remove it with.
-	if h.state.Queue == nil {
+	if h.d.Queue == nil {
 		httpx.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if err := h.state.Queue.SendCommand(context.Background(), node.Token, "remove_mod", map[string]interface{}{
+	if err := h.d.Queue.SendCommand(context.Background(), node.Token, "remove_mod", map[string]interface{}{
 		"uuid":            srv.UUID,
 		"activeSubServer": srv.ActiveSubServer,
 		"targetDir":       targetDir,
@@ -533,12 +532,12 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Failed to queue removal", http.StatusInternalServerError)
 		return
 	}
-	if err := h.state.Store.DeleteServerMod(modID, serverID); err != nil {
+	if err := h.d.Store.DeleteServerMod(modID, serverID); err != nil {
 		httpx.SendJSONError(w, "Failed to remove mod entry", http.StatusInternalServerError)
 		return
 	}
 
-	h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{
+	h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{
 		"serverId": serverID,
 	})
 

@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
 
 	"dylaris-core/authz"
@@ -134,8 +133,8 @@ func (f *grantFakeStore) InsertAuditIdentity(ev *models.AuditEventIdentity) erro
 	return nil
 }
 
-func grantState(fs *grantFakeStore) *handlers.AppState {
-	return withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
+func grantState(fs *grantFakeStore) Deps {
+	return testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)})
 }
 
 func grantReq(method string, actorID string, isAdmin bool, body interface{}) *http.Request {
@@ -579,10 +578,10 @@ func TestAGrantOnACustomersMachineIsNotAnAdminBypass(t *testing.T) {
 
 // fencedGrantState wires the resolver the way main does, so an admin who falls
 // back to the delegation cap is resolved with the same fence.
-func fencedGrantState(fs *grantFakeStore) *handlers.AppState {
+func fencedGrantState(fs *grantFakeStore) Deps {
 	st := grantState(fs)
 	st.FeatureFlags = services.NewFeatureFlags(fs)
-	st.Authz.SetForeignNode(st.NodeOwnedByOther)
+	st.Authz.SetForeignNode(foreignNodeOf(st))
 	return st
 }
 

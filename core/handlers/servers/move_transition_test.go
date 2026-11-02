@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
@@ -37,7 +36,7 @@ func TestAMoveWaitsForAPowerTransition(t *testing.T) {
 			fs := &serverPowerFakeStore{server: srv, node: &models.Node{ID: 7, Token: "node-token-1", Status: "online"}}
 			rdb := handlertest.RedisClient(t)
 			h := newServerPowerHandler(fs, rdb)
-			h.state.Migration = services.NewMigrationOrchestrator(fs, rdb, nil, nil, "")
+			h.d.Migration = services.NewMigrationOrchestrator(fs, rdb, nil, nil, "")
 			rec := httptest.NewRecorder()
 			r := httptest.NewRequest("POST", "/x", nil)
 			h.queueMigration(rec, r, srv, &models.Node{ID: 8, Status: "online"}, "manual", "alice")
@@ -57,7 +56,7 @@ func TestAMoveWaitsForAPowerTransition(t *testing.T) {
 func TestACopyWaitsForAPowerTransition(t *testing.T) {
 	for _, status := range []string{"starting", "restarting", "stopping", "online", "installing"} {
 		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", Status: status, OwnerID: "u1", NodeID: 7, ActiveSubServer: "main"}}
-		h := &ServerModsHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
+		h := &ServerModsHandler{d: testDeps(Deps{Store: fs})}
 		r := httptest.NewRequest("POST", "/api/servers/1/copy-sub-server", bytes.NewBufferString(`{"targetName":"copy"}`))
 		r = mux.SetURLVars(r.WithContext(context.WithValue(r.Context(), "isAdmin", false)), map[string]string{"id": "1"})
 		rec := httptest.NewRecorder()

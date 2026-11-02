@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/services/beamaccess"
@@ -24,11 +23,11 @@ import (
 // writes by owner id. Gated by AuthMiddleware only for now; phase 4 swaps to
 // RequireCap("roles.*") / RequireCap("members.*").
 type ServerRolesHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewServerRolesHandler(state *handlers.AppState) *ServerRolesHandler {
-	return &ServerRolesHandler{state: state}
+func NewServerRolesHandler(state Deps) *ServerRolesHandler {
+	return &ServerRolesHandler{d: state}
 }
 
 type serverRoleView struct {
@@ -71,7 +70,7 @@ func actingUserID(r *http.Request) string {
 // ListServerRoles GET /api/server-roles - the custom roles in the acting
 // owner's realm.
 func (h *ServerRolesHandler) ListServerRoles(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -80,7 +79,7 @@ func (h *ServerRolesHandler) ListServerRoles(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
-	roles, err := h.state.Store.ListServerRolesByOwner(owner)
+	roles, err := h.d.Store.ListServerRolesByOwner(owner)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list server roles", 500)
 		return
@@ -96,12 +95,12 @@ func (h *ServerRolesHandler) ListServerRoles(w http.ResponseWriter, r *http.Requ
 // owner's realm. Outside advanced permissions mode a non-admin is refused with
 // 403, and a duplicate name is 409.
 func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	idn := authz.IdentityFromContext(r.Context())
-	if !idn.IsAdmin && handlers.PermissionsMode(h.state.Store) != authz.ModeAdvanced {
+	if !idn.IsAdmin && access.PermissionsMode(h.d.Store) != authz.ModeAdvanced {
 		httpx.SendJSONError(w, "Custom roles require advanced permissions mode", 403)
 		return
 	}
@@ -123,12 +122,12 @@ func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Req
 		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
-	id, err := h.state.Store.CreateServerRole(owner, req.Name, req.Capabilities)
+	id, err := h.d.Store.CreateServerRole(owner, req.Name, req.Capabilities)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to create server role (the name may already be in use)", 409)
 		return
 	}
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventServerRoleCreated, owner, "", map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventServerRoleCreated, owner, "", map[string]interface{}{
 		"role_id": id, "name": req.Name, "capabilities": access.NormalizeCaps(req.Capabilities),
 	})
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -141,12 +140,12 @@ func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Req
 // its capabilities. Scoped to the acting owner, so another realm's role is
 // 404.
 func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	idn := authz.IdentityFromContext(r.Context())
-	if !idn.IsAdmin && handlers.PermissionsMode(h.state.Store) != authz.ModeAdvanced {
+	if !idn.IsAdmin && access.PermissionsMode(h.d.Store) != authz.ModeAdvanced {
 		httpx.SendJSONError(w, "Custom roles require advanced permissions mode", 403)
 		return
 	}
@@ -174,8 +173,8 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 		return
 	}
 	// Read first, for the audit row only: the update is what decides ownership.
-	before, _ := h.state.Store.GetServerRole(id)
-	if err := h.state.Store.UpdateServerRole(id, owner, req.Name, req.Capabilities); err != nil {
+	before, _ := h.d.Store.GetServerRole(id)
+	if err := h.d.Store.UpdateServerRole(id, owner, req.Name, req.Capabilities); err != nil {
 		httpx.SendJSONError(w, "Server role not found", 404)
 		return
 	}
@@ -184,12 +183,12 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 		meta["previous_name"] = before.Name
 		meta["previous_capabilities"] = access.NormalizeCaps(before.Capabilities)
 	}
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventServerRoleUpdated, owner, "", meta)
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventServerRoleUpdated, owner, "", meta)
 	// A role's capabilities are every holder's: changing them changes who may
 	// reach the files of every server in this realm.
-	beamaccess.StampForOwner(r.Context(), h.state.Store, h.state.Redis, owner)
+	beamaccess.StampForOwner(r.Context(), h.d.Store, h.d.Redis, owner)
 	// A role losing overview.read hides servers from its holders' sidebars.
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"role":    serverRoleView{ID: id, Name: req.Name, Capabilities: access.NormalizeCaps(req.Capabilities)},
@@ -199,12 +198,12 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 // DeleteServerRole DELETE /api/server-roles/{id} - deletes a role in the
 // acting owner's realm; another realm's role is 404.
 func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	idn := authz.IdentityFromContext(r.Context())
-	if !idn.IsAdmin && handlers.PermissionsMode(h.state.Store) != authz.ModeAdvanced {
+	if !idn.IsAdmin && access.PermissionsMode(h.d.Store) != authz.ModeAdvanced {
 		httpx.SendJSONError(w, "Custom roles require advanced permissions mode", 403)
 		return
 	}
@@ -219,8 +218,8 @@ func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Req
 		return
 	}
 	// Read first, for the audit row only: the delete is what decides ownership.
-	before, _ := h.state.Store.GetServerRole(id)
-	if err := h.state.Store.DeleteServerRole(id, owner); err != nil {
+	before, _ := h.d.Store.GetServerRole(id)
+	if err := h.d.Store.DeleteServerRole(id, owner); err != nil {
 		httpx.SendJSONError(w, "Server role not found", 404)
 		return
 	}
@@ -229,8 +228,8 @@ func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Req
 		meta["name"] = before.Name
 		meta["capabilities"] = access.NormalizeCaps(before.Capabilities)
 	}
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventServerRoleDeleted, owner, "", meta)
-	beamaccess.StampForOwner(r.Context(), h.state.Store, h.state.Redis, owner)
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventServerRoleDeleted, owner, "", meta)
+	beamaccess.StampForOwner(r.Context(), h.d.Store, h.d.Redis, owner)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

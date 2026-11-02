@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/placement"
@@ -109,7 +108,7 @@ func TestApplyPlacementScopeNamesTheCallerParty(t *testing.T) {
 	}
 
 	t.Run("an admin auto-placing is fenced to platform nodes", func(t *testing.T) {
-		st := withCoreStorage(&handlers.AppState{Store: byonOn, FeatureFlags: services.NewFeatureFlags(byonOn)})
+		st := testDeps(Deps{Store: byonOn, FeatureFlags: services.NewFeatureFlags(byonOn)})
 		var req placement.PickNodeRequest
 		applyPlacementScope(st, request("admin-1", true), &req)
 		if !req.PlatformOnly {
@@ -121,7 +120,7 @@ func TestApplyPlacementScopeNamesTheCallerParty(t *testing.T) {
 	})
 
 	t.Run("a tenant is scoped to their own nodes", func(t *testing.T) {
-		st := withCoreStorage(&handlers.AppState{Store: byonOn, FeatureFlags: services.NewFeatureFlags(byonOn)})
+		st := testDeps(Deps{Store: byonOn, FeatureFlags: services.NewFeatureFlags(byonOn)})
 		var req placement.PickNodeRequest
 		applyPlacementScope(st, request("tenant-a", false), &req)
 		if req.OwnerScope == nil || *req.OwnerScope != "tenant-a" {
@@ -135,7 +134,7 @@ func TestApplyPlacementScopeNamesTheCallerParty(t *testing.T) {
 	// With BYON off no node has an owner, so scoping would only be a way to
 	// break the single-operator panel.
 	t.Run("BYON off scopes nothing", func(t *testing.T) {
-		st := withCoreStorage(&handlers.AppState{Store: byonOff, FeatureFlags: services.NewFeatureFlags(byonOff)})
+		st := testDeps(Deps{Store: byonOff, FeatureFlags: services.NewFeatureFlags(byonOff)})
 		for _, admin := range []bool{true, false} {
 			var req placement.PickNodeRequest
 			applyPlacementScope(st, request("someone", admin), &req)
@@ -163,7 +162,7 @@ func TestPickNodeEndpointPreviewsTheSameNodeCreateWouldUse(t *testing.T) {
 	}}
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	h := &PlacementHandler{state: withCoreStorage(&handlers.AppState{
+	h := &PlacementHandler{d: testDeps(Deps{
 		Store: fs, Redis: rdb, FeatureFlags: services.NewFeatureFlags(fs),
 	})}
 
@@ -199,7 +198,7 @@ func TestPickNodeSkipsExternalNodesUnlessTheGatewayRoutes(t *testing.T) {
 	ext.Tags = "external"
 	for mode, want := range map[string]bool{"gateway": true, "both": true, "ip_port": false, "": false} {
 		h := newPlacementHandler(t, []models.Node{ext})
-		h.state.Store.(*placementFakeStore).settings["routing_mode"] = mode
+		h.d.Store.(*placementFakeStore).settings["routing_mode"] = mode
 		got := h.pickNode(context.Background(), placement.PickNodeRequest{RAMMB: 1024})
 		if got.Success != want {
 			t.Errorf("routing_mode %q: picked = %v, want %v (%s)", mode, got.Success, want, got.Reason)

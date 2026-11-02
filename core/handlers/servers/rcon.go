@@ -11,7 +11,6 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/nodeops"
 )
@@ -26,7 +25,7 @@ import (
 // (power-class action); external uses the API key's scope.
 
 type RconHandler struct {
-	state *handlers.AppState
+	d Deps
 	// applyProps writes the RCON keys into the active sub-server's
 	// server.properties on the node. A field (not a direct method call) so the
 	// SetConfig unit tests can inject a fake instead of a live node/gRPC
@@ -34,8 +33,8 @@ type RconHandler struct {
 	applyProps func(nodeID int, serverUUID, activeSubServer string, enabled bool, port int, password string) error
 }
 
-func NewRconHandler(state *handlers.AppState) *RconHandler {
-	h := &RconHandler{state: state}
+func NewRconHandler(state Deps) *RconHandler {
+	h := &RconHandler{d: state}
 	h.applyProps = h.applyRconToServerProperties
 	return h
 }
@@ -44,7 +43,7 @@ func NewRconHandler(state *handlers.AppState) *RconHandler {
 // existing "power"-class permission (owner / admin / member-with-power).
 func (h *RconHandler) ExecForUser(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -55,7 +54,7 @@ func (h *RconHandler) ExecForUser(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	resp := nodeops.ExecRcon(r.Context(), h.state.Store, h.state.GRPCRegistry, srv.ID, srv.UUID, srv.NodeID, req)
+	resp := nodeops.ExecRcon(r.Context(), h.d.Store, h.d.GRPCRegistry, srv.ID, srv.UUID, srv.NodeID, req)
 	nodeops.WriteRconResponse(w, resp)
 }
 
@@ -65,7 +64,7 @@ func (h *RconHandler) ExecForUser(w http.ResponseWriter, r *http.Request) {
 // from the URL.
 func (h *RconHandler) ExecExternal(w http.ResponseWriter, r *http.Request) {
 	serverUUID := mux.Vars(r)["uuid"]
-	srv, err := h.state.Store.GetServerByUUID(serverUUID)
+	srv, err := h.d.Store.GetServerByUUID(serverUUID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -76,7 +75,7 @@ func (h *RconHandler) ExecExternal(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	resp := nodeops.ExecRcon(r.Context(), h.state.Store, h.state.GRPCRegistry, srv.ID, srv.UUID, srv.NodeID, req)
+	resp := nodeops.ExecRcon(r.Context(), h.d.Store, h.d.GRPCRegistry, srv.ID, srv.UUID, srv.NodeID, req)
 	nodeops.WriteRconResponse(w, resp)
 }
 
@@ -119,11 +118,11 @@ type rconConfigResponse struct {
 // whether a password is set. Password value is never returned.
 func (h *RconHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
+	if _, err := h.d.Store.GetServerByID(serverID); err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	enabled, port, password, err := h.state.Store.GetServerRconConfig(serverID)
+	enabled, port, password, err := h.d.Store.GetServerRconConfig(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load rcon config", http.StatusInternalServerError)
 		return
@@ -133,10 +132,10 @@ func (h *RconHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	// the column is NOT NULL DEFAULT FALSE, so a read error means a full DB
 	// outage that GetServerRconConfig above would already have caught; fall back
 	// to false rather than blanking the whole config card.
-	needsRestart, _ := h.state.Store.GetServerRconNeedsRestart(serverID)
+	needsRestart, _ := h.d.Store.GetServerRconNeedsRestart(serverID)
 	// Same non-fatal treatment: NOT NULL DEFAULT FALSE, so a read error means a
 	// DB outage the config read above already surfaced.
-	hideNoise, _ := h.state.Store.GetServerRconLogFilter(serverID)
+	hideNoise, _ := h.d.Store.GetServerRconLogFilter(serverID)
 	json.NewEncoder(w).Encode(rconConfigResponse{
 		Success:         true,
 		Enabled:         enabled,
@@ -153,7 +152,7 @@ func (h *RconHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 // returned ONCE in the response so the user can copy them.
 func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -168,7 +167,7 @@ func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, existingPort, existingPassword, _ := h.state.Store.GetServerRconConfig(serverID)
+	_, existingPort, existingPassword, _ := h.d.Store.GetServerRconConfig(serverID)
 	password := existingPassword
 	exposeNew := ""
 	if req.Regenerate || (req.Enabled && password == "") {
@@ -210,7 +209,7 @@ func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.state.Store.SetServerRconConfig(serverID, req.Enabled, port, password); err != nil {
+	if err := h.d.Store.SetServerRconConfig(serverID, req.Enabled, port, password); err != nil {
 		httpx.SendJSONError(w, "Failed to save rcon config", http.StatusInternalServerError)
 		return
 	}
@@ -220,28 +219,28 @@ func (h *RconHandler) SetConfig(w http.ResponseWriter, r *http.Request) {
 	// RCON-dependent Players-tab lock across a reload; the flag clears when the
 	// server (re)starts.
 	needsRestart := srv.ActiveSubServer != ""
-	if err := h.state.Store.SetServerRconNeedsRestart(serverID, needsRestart); err != nil {
+	if err := h.d.Store.SetServerRconNeedsRestart(serverID, needsRestart); err != nil {
 		httpx.SendJSONError(w, "Failed to save rcon config", http.StatusInternalServerError)
 		return
 	}
 	// Console filter. Independent of everything above: it never touches
 	// server.properties and takes effect without a restart, so it is applied even
 	// when the RCON write path did nothing.
-	hideNoise, _ := h.state.Store.GetServerRconLogFilter(serverID)
+	hideNoise, _ := h.d.Store.GetServerRconLogFilter(serverID)
 	if req.HideLogNoise != nil && *req.HideLogNoise != hideNoise {
 		hideNoise = *req.HideLogNoise
-		if err := h.state.Store.SetServerRconLogFilter(serverID, hideNoise); err != nil {
+		if err := h.d.Store.SetServerRconLogFilter(serverID, hideNoise); err != nil {
 			httpx.SendJSONError(w, "Failed to save console filter", http.StatusInternalServerError)
 			return
 		}
 		// Publish immediately so a running server picks it up on its next poll
 		// rather than waiting for the status watcher's republish tick.
-		if h.state.Redis != nil {
+		if h.d.Redis != nil {
 			v := "false"
 			if hideNoise {
 				v = "true"
 			}
-			h.state.Redis.Set(r.Context(), fmt.Sprintf("dylaris:server:%s:log_filter_rcon", srv.UUID), v, 60*time.Second)
+			h.d.Redis.Set(r.Context(), fmt.Sprintf("dylaris:server:%s:log_filter_rcon", srv.UUID), v, 60*time.Second)
 		}
 	}
 

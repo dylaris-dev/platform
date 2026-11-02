@@ -23,10 +23,10 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 	if subServer == "" {
 		return true
 	}
-	if h.state == nil || h.state.Store == nil {
+	if h.d.Store == nil {
 		return false
 	}
-	vp, err := h.state.Store.GetVoicePort(srv.ID)
+	vp, err := h.d.Store.GetVoicePort(srv.ID)
 	if err != nil {
 		log.Printf("voice sync for server %d: reading the voice port failed: %v", srv.ID, err)
 		return false
@@ -35,7 +35,7 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 		return true
 	}
 
-	mod, rel, content, err := FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, subServer)
+	mod, rel, content, err := FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, subServer)
 	if errors.Is(err, ErrVoiceModMissing) {
 		// The sub-server about to run has no voice mod (removed, or a switch
 		// to one without it): the port would be held for nothing, forever.
@@ -55,7 +55,7 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 		merged = voicecfg.SvcEnable(content, vp.Host, vp.Port)
 	}
 	if merged != content {
-		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, subServer+"/"+rel, merged); err != nil {
+		if err := nodeops.WriteNodeFileString(h.d.GRPCRegistry, srv.NodeID, srv.UUID, subServer+"/"+rel, merged); err != nil {
 			log.Printf("voice sync for server %d (%s): writing %s failed: %v", srv.ID, subServer, rel, err)
 			return false
 		}
@@ -64,7 +64,7 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 	// Update only the row read above, never AllocateVoicePort: that one
 	// inserts, so a disable or region move landing between the read and here
 	// would be undone - the row resurrected on a new port, or moved back.
-	ok, err := h.state.Store.UpdateVoicePortMod(srv.ID, vp.Region, vp.Port, mod, services.VoiceInternalPort, vp.Host)
+	ok, err := h.d.Store.UpdateVoicePortMod(srv.ID, vp.Region, vp.Port, mod, services.VoiceInternalPort, vp.Host)
 	if err != nil {
 		log.Printf("voice sync for server %d: updating the voice port failed: %v", srv.ID, err)
 		return false
@@ -75,12 +75,12 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 	}
 	got := *vp
 	got.Mod, got.InternalPort = mod, services.VoiceInternalPort
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		return true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := services.PublishVoice(ctx, h.state.Redis, got); err != nil {
+	if err := services.PublishVoice(ctx, h.d.Redis, got); err != nil {
 		log.Printf("voice sync for server %d: %v", srv.ID, err)
 		return false
 	}
@@ -90,17 +90,17 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 // releaseVoicePort drops the server's voice row and its relay mapping. The
 // mod's config is not written back: there is no mod to read it.
 func (h *ServerHandler) releaseVoicePort(srv *models.Server, vp store.VoicePort) {
-	if err := h.state.Store.DeleteVoicePort(srv.ID); err != nil {
+	if err := h.d.Store.DeleteVoicePort(srv.ID); err != nil {
 		log.Printf("voice sync for server %d: releasing port %d: %v", srv.ID, vp.Port, err)
 		return
 	}
 	log.Printf("voice: server %d has no voice mod any more, released %s port %d", srv.ID, vp.Region, vp.Port)
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := services.UnpublishVoice(ctx, h.state.Redis, vp); err != nil {
+	if err := services.UnpublishVoice(ctx, h.d.Redis, vp); err != nil {
 		log.Printf("voice sync for server %d: %v", srv.ID, err)
 	}
 }

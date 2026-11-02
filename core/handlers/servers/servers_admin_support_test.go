@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -28,7 +26,7 @@ func (f *adminServersFakeStore) CountInvitesPerServer() (map[int]int, error) { r
 
 func adminServersRows(t *testing.T, isAdmin bool) []map[string]any {
 	t.Helper()
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: &adminServersFakeStore{servers: []models.Server{
+	h := &ServerHandler{d: testDeps(Deps{Store: &adminServersFakeStore{servers: []models.Server{
 		{ID: 1, Name: "srv", NodeName: "node-a", NodeAddress: "203.0.113.7"},
 	}}})}
 	r := httptest.NewRequest(http.MethodGet, "/api/admin/servers", nil)

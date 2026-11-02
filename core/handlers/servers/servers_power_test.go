@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/handlertest"
@@ -65,7 +64,7 @@ type serverPowerFakeStore struct {
 }
 
 // The following satisfy authz.Store (beyond GetServerByID, already overridden
-// above) so h.state.Authz.Resolve does not panic on the nil embedded
+// above) so h.d.Authz.Resolve does not panic on the nil embedded
 // store.Store. None of these tests exercise panel roles or account grants, so
 // they report "not found" unless a test explicitly sets serverGrant/serverRole.
 func (f *serverPowerFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {
@@ -168,7 +167,7 @@ func (f *serverPowerFakeStore) CountServersByNode(nodeID int) (int, error) {
 }
 
 func newServerPowerHandler(fs *serverPowerFakeStore, rdb *redis.Client) *ServerHandler {
-	return &ServerHandler{state: withCoreStorage(&handlers.AppState{
+	return &ServerHandler{d: testDeps(Deps{
 		Store: fs,
 		Redis: rdb,
 		Queue: services.NewQueueService(rdb),
@@ -769,7 +768,7 @@ func TestServerPowerHandler_QueueSendCommandFailure(t *testing.T) {
 		MaxRetries:  -1,
 	})
 	t.Cleanup(func() { brokenRDB.Close() })
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{
+	h := &ServerHandler{d: testDeps(Deps{
 		Store: fs,
 		Redis: handlertest.RedisClient(t), // cooldown check needs a working Redis
 		Queue: services.NewQueueService(brokenRDB),
@@ -840,7 +839,7 @@ func TestByonNodeServerCapReached(t *testing.T) {
 		if err := rdb.Set(context.Background(), "dylaris:node:node-tok:cpu", raw, 0).Err(); err != nil {
 			t.Fatalf("seed topology: %v", err)
 		}
-		h := &ServerHandler{state: withCoreStorage(&handlers.AppState{
+		h := &ServerHandler{d: testDeps(Deps{
 			Store:      fs,
 			Redis:      rdb,
 			CPUPinning: services.NewCPUPinningService(rdb, fs),

@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 
 	"github.com/alicebob/miniredis/v2"
@@ -37,10 +36,10 @@ func transferAs(t *testing.T, st *transferStore) *httptest.ResponseRecorder {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
-	s := withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st),
+	s := testDeps(Deps{Store: st, FeatureFlags: services.NewFeatureFlags(st),
 		Migration: services.NewMigrationOrchestrator(st, rdb, services.NewQueueService(rdb), nil, "x"),
 	})
-	h := &ServerHandler{state: s}
+	h := &ServerHandler{d: s}
 	call := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "/x", bytes.NewBufferString(`{"targetNodeId":8}`))
 		ctx := context.WithValue(r.Context(), "isAdmin", false)

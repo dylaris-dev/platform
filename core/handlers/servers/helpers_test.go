@@ -13,6 +13,7 @@ import (
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -24,11 +25,25 @@ import (
 
 // foreignState builds the state the way main does: the resolver asks the same
 // predicate the handlers ask.
-func foreignState(node *models.Node) *handlers.AppState {
+func foreignState(node *models.Node) Deps {
 	st := &handlertest.ForeignStore{Node: node, Byon: "true"}
-	s := withCoreStorage(&handlers.AppState{Store: st, Authz: authz.NewResolver(st), FeatureFlags: services.NewFeatureFlags(st)})
-	s.Authz.SetForeignNode(s.NodeOwnedByOther)
+	s := testDeps(Deps{Store: st, Authz: authz.NewResolver(st), FeatureFlags: services.NewFeatureFlags(st)})
+	s.Authz.SetForeignNode(foreignNodeOf(s))
 	return s
+}
+
+// rootState is the root-package state for the settings and API-key handlers
+// these tests drive alongside the server ones (they move in R4/R6).
+func rootState(d Deps) *handlers.AppState {
+	d = testDeps(d)
+	return &handlers.AppState{Store: d.Store, Redis: d.Redis, Events: d.Events, Authz: d.Authz, GRPCRegistry: d.GRPCRegistry, CoreStorage: d.CoreStorage}
+}
+
+// foreignNodeOf is main's SetForeignNode predicate over a test Deps.
+func foreignNodeOf(d Deps) func(nodeID int, userID string) bool {
+	return func(nodeID int, userID string) bool {
+		return access.NodeOwnedByOther(d.Store, d.FeatureFlags, nodeID, userID)
+	}
 }
 
 func newPlacementHandler(t *testing.T, nodes []models.Node) *PlacementHandler {
@@ -36,7 +51,7 @@ func newPlacementHandler(t *testing.T, nodes []models.Node) *PlacementHandler {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	fs := &placementFakeStore{nodes: nodes, settings: map[string]string{"routing_mode": "gateway"}}
-	return NewPlacementHandler(withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb}))
+	return NewPlacementHandler(testDeps(Deps{Store: fs, Redis: rdb}))
 }
 
 func ownedNode(id int, name string, owner *string) models.Node {
@@ -122,15 +137,15 @@ func (f *twoNodeFakeStore) GetUserBilling(id string) (*store.UserBilling, error)
 	return &store.UserBilling{UserID: id, Status: "active"}, nil
 }
 
-func voiceNodeState(t *testing.T, fs store.Store, path, fixture string) (*handlers.AppState, *miniredis.Miniredis, *handlertest.VoiceNode) {
+func voiceNodeState(t *testing.T, fs store.Store, path, fixture string) (Deps, *miniredis.Miniredis, *handlertest.VoiceNode) {
 	t.Helper()
 	reg := nodegrpc.NewRegistry()
 	node := handlertest.NewVoiceNode(t, reg, path, fixture)
 	mr := miniredis.RunT(t)
-	return withCoreStorage(&handlers.AppState{Store: fs, GRPCRegistry: reg, Redis: redis.NewClient(&redis.Options{Addr: mr.Addr()})}), mr, node
+	return testDeps(Deps{Store: fs, GRPCRegistry: reg, Redis: redis.NewClient(&redis.Options{Addr: mr.Addr()})}), mr, node
 }
 
-func voiceRaceState(t *testing.T, fs *voiceRaceStore) (*handlers.AppState, *miniredis.Miniredis) {
+func voiceRaceState(t *testing.T, fs *voiceRaceStore) (Deps, *miniredis.Miniredis) {
 	t.Helper()
 	st, mr, _ := voiceNodeState(t, fs, "config/voicechat/voicechat-server.properties", "svc_before.properties")
 	return st, mr
@@ -315,10 +330,9 @@ func (f *revokeStore) GetServerRole(int) (*store.ServerRole, error) { return nil
 
 func (f *revokeStore) GetServerAuditState(int) (bool, bool, int, error) { return false, false, 0, nil }
 
-// withCoreStorage gives a test state the core storage it implicitly was before
-// S12 (the AppState methods ran over its own Store, Redis, Events, ...): a
-// Manager over the very same objects.
-func withCoreStorage(s *handlers.AppState) *handlers.AppState {
-	s.CoreStorage = &corestorage.Manager{Store: s.Store, Redis: s.Redis, Events: s.Events, ClusterSecret: s.ClusterSecret, Registry: s.GRPCRegistry}
-	return s
+// testDeps is routes.go's serversDeps for tests: a core storage Manager over
+// the same objects, as the AppState methods ran over them before S12.
+func testDeps(d Deps) Deps {
+	d.CoreStorage = &corestorage.Manager{Store: d.Store, Redis: d.Redis, Events: d.Events, Registry: d.GRPCRegistry}
+	return d
 }

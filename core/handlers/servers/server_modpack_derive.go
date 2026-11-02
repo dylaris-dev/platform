@@ -55,16 +55,16 @@ func modpackScanLockKey(serverID int, subServer string) string {
 // a previous attempt left, so the fresh install is scanned on the next load
 // rather than after the cooldown.
 func (h *ServerHandler) scheduleModpackScan(serverID int, subServer, installerType string, reinstall bool) {
-	current, _, _, err := h.state.Store.GetModpackScan(serverID, subServer)
+	current, _, _, err := h.d.Store.GetModpackScan(serverID, subServer)
 	if err != nil {
 		log.Printf("modpack scan: reading state for server %d sub %q: %v", serverID, subServer, err)
 		return
 	}
-	if err := h.state.Store.SetModpackScan(serverID, subServer, nextModpackScan(installerType, current, reinstall), 0); err != nil {
+	if err := h.d.Store.SetModpackScan(serverID, subServer, nextModpackScan(installerType, current, reinstall), 0); err != nil {
 		log.Printf("modpack scan: scheduling for server %d sub %q: %v", serverID, subServer, err)
 	}
-	if h.state.Redis != nil {
-		h.state.Redis.Del(context.Background(), modpackScanLockKey(serverID, subServer))
+	if h.d.Redis != nil {
+		h.d.Redis.Del(context.Background(), modpackScanLockKey(serverID, subServer))
 	}
 }
 
@@ -98,18 +98,18 @@ func (h *ServerModsHandler) modpackScanDepsFor(srv *models.Server) modpackScanDe
 // maybeScanModpack runs the owed scan when nobody else is, and waits for it up
 // to modpackScanWait. It reports whether the scan finished in that time.
 func (h *ServerModsHandler) maybeScanModpack(srv *models.Server) bool {
-	if srv.Status == "installing" || h.state.Redis == nil {
+	if srv.Status == "installing" || h.d.Redis == nil {
 		return false
 	}
 	key := modpackScanLockKey(srv.ID, srv.ActiveSubServer)
-	ok, err := h.state.Redis.SetNX(context.Background(), key, "1", modpackScanCooldown).Result()
+	ok, err := h.d.Redis.SetNX(context.Background(), key, "1", modpackScanCooldown).Result()
 	if err != nil || !ok {
 		return false
 	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := scanModpackJars(h.state.Store, srv, h.modpackScanDepsFor(srv)); err != nil {
+		if err := scanModpackJars(h.d.Store, srv, h.modpackScanDepsFor(srv)); err != nil {
 			log.Printf("modpack scan for server %d sub %q: %v", srv.ID, srv.ActiveSubServer, err)
 		}
 	}()

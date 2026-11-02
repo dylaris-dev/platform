@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/services/beamaccess"
@@ -47,7 +46,7 @@ func dedupeCaps(in []string) []string {
 // members.write on the server AND may only grant caps they themselves hold.
 // Phase 4/6 wire audit + permissions_mode enforcement here.
 func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -74,12 +73,12 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
-	if !idn.IsAdmin && handlers.PermissionsMode(h.state.Store) == authz.ModeOff {
+	if !idn.IsAdmin && access.PermissionsMode(h.d.Store) == authz.ModeOff {
 		httpx.SendJSONError(w, "Delegation is disabled", 403)
 		return
 	}
 
-	target, err := h.state.Store.GetUserByUsername(req.Username)
+	target, err := h.d.Store.GetUserByUsername(req.Username)
 	if err != nil || target == nil {
 		httpx.SendJSONError(w, "User not found", 404)
 		return
@@ -93,7 +92,7 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	var ownerUserID string
 	var srv *models.Server
 	if req.ServerID != nil {
-		srv, err = h.state.Store.GetServerByID(*req.ServerID)
+		srv, err = h.d.Store.GetServerByID(*req.ServerID)
 		if err != nil || srv == nil {
 			httpx.SendJSONError(w, "Server not found", 404)
 			return
@@ -111,7 +110,7 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	// A server-role (if given) must belong to the realm owner.
 	var roleCaps []string
 	if req.ServerRoleID != nil {
-		role, rerr := h.state.Store.GetServerRole(*req.ServerRoleID)
+		role, rerr := h.d.Store.GetServerRole(*req.ServerRoleID)
 		if rerr != nil || role == nil || role.OwnerUserID != ownerUserID {
 			httpx.SendJSONError(w, "Server role not found in this realm", 404)
 			return
@@ -124,11 +123,11 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	// bypass it on a customer's machine: roles.write is an OWNER capability, so
 	// the route resolved them as admin, and the grant is written in the
 	// customer's name - an admin could invite themselves or anyone else in.
-	adminHere := idn.IsAdmin && (srv == nil || !h.state.NodeOwnedByOther(srv.NodeID, idn.UserID))
+	adminHere := idn.IsAdmin && (srv == nil || !access.NodeOwnedByOther(h.d.Store, h.d.FeatureFlags, srv.NodeID, idn.UserID))
 	isOwnerOrAdmin := adminHere || req.ServerID == nil || (srv != nil && srv.OwnerID == idn.UserID)
 	var delegatorRes *authz.Resolution
 	if req.ServerID != nil && !isOwnerOrAdmin {
-		res, rerr := h.state.Authz.Resolve(idn, *req.ServerID)
+		res, rerr := h.d.Authz.Resolve(idn, *req.ServerID)
 		if rerr != nil {
 			httpx.SendJSONError(w, "Authorization check failed", 500)
 			return
@@ -159,7 +158,7 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	// to an existing one, and after the write the answer is always "existed".
 	hadGrant := false
 	if req.ServerID != nil {
-		if g, gerr := h.state.Store.GetServerGrant(*req.ServerID, target.ID); gerr == nil && g != nil {
+		if g, gerr := h.d.Store.GetServerGrant(*req.ServerID, target.ID); gerr == nil && g != nil {
 			hadGrant = true
 		}
 	}
@@ -172,21 +171,21 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	}
 
 	ov := store.CapOverrides{Grant: req.GrantCaps, Deny: req.DenyCaps}
-	if err := h.state.Store.UpsertServerGrant(req.ServerID, target.ID, ownerUserID, req.ServerRoleID, ov, req.Inherit); err != nil {
+	if err := h.d.Store.UpsertServerGrant(req.ServerID, target.ID, ownerUserID, req.ServerRoleID, ov, req.Inherit); err != nil {
 		httpx.SendJSONError(w, "Failed to assign grant", 500)
 		return
 	}
 	// A nil ServerID is an ACCOUNT-wide grant, which the resolver honours on
 	// every server of that owner - so every one of them is stamped.
 	if req.ServerID != nil {
-		beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, *req.ServerID)
+		beamaccess.Stamp(r.Context(), h.d.Store, h.d.Redis, *req.ServerID)
 	} else {
-		beamaccess.StampForOwner(r.Context(), h.state.Store, h.state.Redis, ownerUserID)
+		beamaccess.StampForOwner(r.Context(), h.d.Store, h.d.Redis, ownerUserID)
 	}
 	// The invitee's sidebar lists servers by grant, and their panel refetches
 	// that list only on this event; without it they saw the server only after
 	// some unrelated server change or a reload.
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 
 	// Handing someone access to a server is the most security-relevant thing
 	// that happens to one, and it was the only such action with no audit row.
@@ -208,15 +207,15 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 		"inherit":      req.Inherit,
 	}
 	if req.ServerID != nil {
-		audit.EnableServerAuditIfNeeded(h.state.Store, *req.ServerID)
+		audit.EnableServerAuditIfNeeded(h.d.Store, *req.ServerID)
 		event := audit.ServerAuditEventMemberInvited
 		if hadGrant {
 			event = audit.ServerAuditEventMemberPermsChanged
 		}
-		audit.LogServer(h.state.Store, r, *req.ServerID, event, idn.UserID, target.ID, auditMeta)
+		audit.LogServer(h.d.Store, r, *req.ServerID, event, idn.UserID, target.ID, auditMeta)
 	} else {
 		auditMeta["ownerUserId"] = ownerUserID
-		audit.LogIdentity(h.state.Store, r, audit.AuditEventAccountGrantAssigned, idn.UserID, target.ID, auditMeta)
+		audit.LogIdentity(h.d.Store, r, audit.AuditEventAccountGrantAssigned, idn.UserID, target.ID, auditMeta)
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -231,7 +230,7 @@ type revokeGrantRequest struct {
 // non-owner holding members.delete on the server, may revoke. No delegation cap
 // (removing access is always safe for an authorized manager).
 func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -249,7 +248,7 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
-	target, err := h.state.Store.GetUserByUsername(req.Username)
+	target, err := h.d.Store.GetUserByUsername(req.Username)
 	if err != nil || target == nil {
 		httpx.SendJSONError(w, "User not found", 404)
 		return
@@ -257,16 +256,16 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 
 	var ownerUserID string
 	if req.ServerID != nil {
-		srv, serr := h.state.Store.GetServerByID(*req.ServerID)
+		srv, serr := h.d.Store.GetServerByID(*req.ServerID)
 		if serr != nil || srv == nil {
 			httpx.SendJSONError(w, "Server not found", 404)
 			return
 		}
 		ownerUserID = srv.OwnerID
 		// The customer's invitations on their own machine are theirs to remove.
-		adminHere := idn.IsAdmin && !h.state.NodeOwnedByOther(srv.NodeID, idn.UserID)
+		adminHere := idn.IsAdmin && !access.NodeOwnedByOther(h.d.Store, h.d.FeatureFlags, srv.NodeID, idn.UserID)
 		if !(adminHere || srv.OwnerID == idn.UserID) {
-			res, rerr := h.state.Authz.Resolve(idn, *req.ServerID)
+			res, rerr := h.d.Authz.Resolve(idn, *req.ServerID)
 			if rerr != nil {
 				httpx.SendJSONError(w, "Authorization check failed", 500)
 				return
@@ -275,7 +274,7 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 				httpx.SendJSONError(w, "Forbidden", 403)
 				return
 			}
-			if access.RevokeUncoversInheritance(h.state.Store, srv, target.ID) {
+			if access.RevokeUncoversInheritance(h.d.Store, srv, target.ID) {
 				httpx.SendJSONError(w, "Removing this grant would give them the wider access they inherit from the proxy; only the owner can do that", 403)
 				return
 			}
@@ -284,7 +283,7 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 		ownerUserID = idn.UserID
 	}
 
-	if err := h.state.Store.DeleteServerGrant(req.ServerID, ownerUserID, target.ID); err != nil {
+	if err := h.d.Store.DeleteServerGrant(req.ServerID, ownerUserID, target.ID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.SendJSONError(w, "Grant not found", 404)
 			return
@@ -293,19 +292,19 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if req.ServerID != nil {
-		beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, *req.ServerID)
+		beamaccess.Stamp(r.Context(), h.d.Store, h.d.Redis, *req.ServerID)
 	} else {
-		beamaccess.StampForOwner(r.Context(), h.state.Store, h.state.Redis, ownerUserID)
+		beamaccess.StampForOwner(r.Context(), h.d.Store, h.d.Redis, ownerUserID)
 	}
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 	// Revocation is audited for the same reason the grant is, and matters more
 	// when reconstructing an incident: "when did they stop having it" is the
 	// other half of "when did they get it".
 	if req.ServerID != nil {
-		audit.LogServer(h.state.Store, r, *req.ServerID, audit.ServerAuditEventMemberRemoved, idn.UserID, target.ID,
+		audit.LogServer(h.d.Store, r, *req.ServerID, audit.ServerAuditEventMemberRemoved, idn.UserID, target.ID,
 			map[string]interface{}{"username": target.Username})
 	} else {
-		audit.LogIdentity(h.state.Store, r, audit.AuditEventAccountGrantRevoked, idn.UserID, target.ID,
+		audit.LogIdentity(h.d.Store, r, audit.AuditEventAccountGrantRevoked, idn.UserID, target.ID,
 			map[string]interface{}{"username": target.Username, "ownerUserId": ownerUserID})
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -327,7 +326,7 @@ type grantView struct {
 // (account-wide server_id NULL + per-server), for the /access grants table.
 // Gated at the route with RequireCap("roles.read"); admin short-circuits.
 func (h *ServerRolesHandler) ListGrants(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -336,7 +335,7 @@ func (h *ServerRolesHandler) ListGrants(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
-	grants, err := h.state.Store.ListGrantsByOwner(owner)
+	grants, err := h.d.Store.ListGrantsByOwner(owner)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list grants", 500)
 		return

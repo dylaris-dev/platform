@@ -2,7 +2,6 @@ package servers
 
 import (
 	"context"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/nodeops"
 	"net/http"
 )
@@ -23,7 +22,7 @@ var proxyInstallers = map[string]bool{"velocity": true, "waterfall": true, "bung
 // policy letting it reach them, and its ping counted twice in the players
 // online. The server's type is chosen at creation, so that is where the choice
 // belongs.
-func proxyInstallRefusal(ctx context.Context, st *handlers.AppState, serverType, nodeToken, installerType string) (int, string) {
+func proxyInstallRefusal(ctx context.Context, st Deps, serverType, nodeToken, installerType string) (int, string) {
 	if !proxyInstallers[installerType] {
 		return 0, ""
 	}

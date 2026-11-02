@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/beamaccess"
 
 	beamauth "dylaris-pkg/beam/auth"
@@ -46,7 +45,7 @@ func (f *proxyStampStore) GetNodeByID(int) (*models.Node, error) { return &model
 
 func (f *proxyStampStore) InsertAuditIdentity(*models.AuditEventIdentity) error { return nil }
 
-func proxyStampState(t *testing.T) (*handlers.AppState, *miniredis.Miniredis) {
+func proxyStampState(t *testing.T) (Deps, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -57,7 +56,7 @@ func proxyStampState(t *testing.T) (*handlers.AppState, *miniredis.Miniredis) {
 		{ID: 2, UUID: "backend", OwnerID: "o", ProxyID: &proxy, NodeID: 1},
 		{ID: 3, UUID: "unlinked", OwnerID: "o", NodeID: 1},
 	}}
-	return withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb}), mr
+	return testDeps(Deps{Store: fs, Redis: rdb}), mr
 }
 
 // A grant with inherit on a proxy reaches its backends, so revoking it has to
@@ -95,7 +94,7 @@ func TestUnlinkAndOwnerChangeStampTheServer(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			st, mr := proxyStampState(t)
 			w := httptest.NewRecorder()
-			call(&ServerHandler{state: st}, w)
+			call(&ServerHandler{d: st}, w)
 			if w.Code != 200 {
 				t.Fatalf("status %d: %s", w.Code, w.Body.String())
 			}
@@ -126,7 +125,7 @@ func TestDeletingAProxyStampsItsBackends(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: &proxyDeleteStore{}, Redis: rdb, Events: services.NewSystemEventsPublisher(nil)})}
+	h := &ServerHandler{d: testDeps(Deps{Store: &proxyDeleteStore{}, Redis: rdb, Events: services.NewSystemEventsPublisher(nil)})}
 	rw := httptest.NewRecorder()
 	h.DeleteServer(rw, deleteServerRequest())
 	if rw.Code != 200 {

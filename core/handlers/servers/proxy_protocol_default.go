@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -25,14 +24,14 @@ const proxyProtocolDefaultSince = "2026.10.21.2"
 // In auto mode nothing is refused: forwarding is switched off before an
 // install that cannot be set up for it, and the auto reconcile turns it on
 // again once the new software's status ping shows it expects the header.
-func proxyProtocolInstallGate(w http.ResponseWriter, st *handlers.AppState, srv *models.Server, installerType, version string) (keep, refused bool) {
+func proxyProtocolInstallGate(w http.ResponseWriter, st Deps, srv *models.Server, installerType, version string) (keep, refused bool) {
 	if !srv.ProxyProtocol {
 		return false, false
 	}
 	if services.ProxyProtocolDefaultSoftware(installerType, version) {
 		return true, false
 	}
-	if st != nil && st.Store != nil {
+	if st.Store != nil {
 		if mode, err := st.Store.GetServerProxyMode(srv.ID); err == nil && mode == store.ProxyModeAuto {
 			if err := services.ApplyServerProxyProtocol(context.Background(), st.Store, st.Redis, st.Gateway, srv.ID, srv.UUID, false); err == nil {
 				srv.ProxyProtocol = false

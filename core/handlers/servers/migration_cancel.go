@@ -42,10 +42,10 @@ func isCancellableMigrationPhase(phase string) bool {
 // migrationPhase returns the orchestration phase for a server, or "" if the
 // record is absent/unreadable.
 func (h *ServerHandler) migrationPhase(ctx context.Context, uuid string) string {
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		return ""
 	}
-	raw, err := h.state.Redis.Get(ctx, fmt.Sprintf("dylaris:migration:%s:orchestration", uuid)).Result()
+	raw, err := h.d.Redis.Get(ctx, fmt.Sprintf("dylaris:migration:%s:orchestration", uuid)).Result()
 	if err != nil || raw == "" {
 		return ""
 	}
@@ -67,7 +67,7 @@ func (h *ServerHandler) migrationPhase(ctx context.Context, uuid string) string 
 // a cancel is only honored pre-cutover. Returns 409 when no migration is in
 // progress or it has already finished.
 func (h *ServerHandler) CancelMigration(w http.ResponseWriter, r *http.Request) {
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		httpx.SendJSONError(w, "Migration state unavailable", 503)
 		return
 	}
@@ -78,14 +78,14 @@ func (h *ServerHandler) CancelMigration(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// A customer's own transfer is theirs to cancel, not staff's.
-	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil || srv == nil || access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, srv.NodeID) {
+	srv, err := h.d.Store.GetServerByID(serverID)
+	if err != nil || srv == nil || access.ForeignToCaller(h.d.Store, h.d.FeatureFlags, r, srv.NodeID) {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 	ctx := context.Background()
 	// A migration is in progress iff the per-server migration lock is held.
-	lockHeld, err := h.state.Redis.Exists(ctx, fmt.Sprintf("dylaris:server:%s:migration", srv.UUID)).Result()
+	lockHeld, err := h.d.Redis.Exists(ctx, fmt.Sprintf("dylaris:server:%s:migration", srv.UUID)).Result()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to read migration state", 500)
 		return
@@ -102,7 +102,7 @@ func (h *ServerHandler) CancelMigration(w http.ResponseWriter, r *http.Request) 
 	if username == "" {
 		username = "admin"
 	}
-	if err := h.state.Redis.Set(ctx, fmt.Sprintf("dylaris:server:%s:migration:cancel", srv.UUID), username, migrationCancelFlagTTL).Err(); err != nil {
+	if err := h.d.Redis.Set(ctx, fmt.Sprintf("dylaris:server:%s:migration:cancel", srv.UUID), username, migrationCancelFlagTTL).Err(); err != nil {
 		httpx.SendJSONError(w, "Failed to request cancellation", 500)
 		return
 	}

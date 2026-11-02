@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
 
 	"github.com/gorilla/mux"
@@ -86,7 +85,7 @@ func TestServerRoles_CreateRejectsPanelCap(t *testing.T) {
 	// users.read is a PANEL-scope cap; a server-role must reject it.
 	// mode: advanced so the request reaches cap validation, not the mode gate.
 	fs := &serverRolesFakeStore{mode: "advanced"}
-	h := NewServerRolesHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerRolesHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 	h.CreateServerRole(rec, serverRoleReq("POST", "/api/server-roles", nil,
 		map[string]interface{}{"name": "x", "capabilities": []string{"users.read"}}))
@@ -101,7 +100,7 @@ func TestServerRoles_CreateRejectsPanelCap(t *testing.T) {
 func TestServerRoles_CreateRejectsUnknownCap(t *testing.T) {
 	// mode: advanced so the request reaches cap validation, not the mode gate.
 	fs := &serverRolesFakeStore{mode: "advanced"}
-	h := NewServerRolesHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerRolesHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 	h.CreateServerRole(rec, serverRoleReq("POST", "/api/server-roles", nil,
 		map[string]interface{}{"name": "x", "capabilities": []string{"does.not.exist"}}))
@@ -115,7 +114,7 @@ func TestServerRoles_CreateRejectsUnknownCap(t *testing.T) {
 
 func TestServerRoles_CreateAcceptsServerAndOwnerCaps(t *testing.T) {
 	fs := &serverRolesFakeStore{createID: 12, mode: "advanced"}
-	h := NewServerRolesHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerRolesHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 	h.CreateServerRole(rec, serverRoleReq("POST", "/api/server-roles", nil,
 		map[string]interface{}{"name": "Builders", "capabilities": []string{"files.read", "modpack.read"}}))
@@ -145,7 +144,7 @@ func TestServerRoles_CreateAcceptsServerAndOwnerCaps(t *testing.T) {
 
 func TestServerRoles_UpdateScopesToActingOwner(t *testing.T) {
 	fs := &serverRolesFakeStore{mode: "advanced"}
-	h := NewServerRolesHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerRolesHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 	h.UpdateServerRole(rec, serverRoleReq("PATCH", "/api/server-roles/2", map[string]string{"id": "2"},
 		map[string]interface{}{"name": "Builders2", "capabilities": []string{"files.read"}}))
@@ -159,7 +158,7 @@ func TestServerRoles_UpdateScopesToActingOwner(t *testing.T) {
 
 func TestServerRoles_DeleteScopesToActingOwner(t *testing.T) {
 	fs := &serverRolesFakeStore{mode: "advanced"}
-	h := NewServerRolesHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerRolesHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 	h.DeleteServerRole(rec, serverRoleReq("DELETE", "/api/server-roles/3", map[string]string{"id": "3"}, nil))
 	if rec.Code != http.StatusOK {
@@ -174,7 +173,7 @@ func TestServerRoles_ListReturnsOwnRoles(t *testing.T) {
 	fs := &serverRolesFakeStore{roles: []store.ServerRole{
 		{ID: 1, OwnerUserID: testActorID, Name: "Builders", Capabilities: []string{"files.read"}},
 	}}
-	h := NewServerRolesHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerRolesHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 	h.ListServerRoles(rec, serverRoleReq("GET", "/api/server-roles", nil, nil))
 	if rec.Code != http.StatusOK {
@@ -216,7 +215,7 @@ func TestServerRoles_CreateModeGate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &serverRolesFakeStore{createID: 5, mode: tc.mode}
-			h := NewServerRolesHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+			h := NewServerRolesHandler(testDeps(Deps{Store: fs}))
 			rec := httptest.NewRecorder()
 			h.CreateServerRole(rec, serverRoleReqAdmin("POST", "/api/server-roles", nil, tc.isAdmin,
 				map[string]interface{}{"name": "R", "capabilities": []string{"files.read"}}))
@@ -236,7 +235,7 @@ func TestServerRoles_CreateModeGate(t *testing.T) {
 func TestServerRoles_CrudIsAudited(t *testing.T) {
 	fs := &serverRolesFakeStore{mode: "advanced", createID: 9,
 		getRole: &store.ServerRole{ID: 3, OwnerUserID: testActorID, Name: "Old", Capabilities: []string{"files.read"}}}
-	h := NewServerRolesHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewServerRolesHandler(testDeps(Deps{Store: fs}))
 	body := map[string]interface{}{"name": "Builders", "capabilities": []string{"files.read"}}
 	h.CreateServerRole(httptest.NewRecorder(), serverRoleReq("POST", "/api/server-roles", nil, body))
 	h.UpdateServerRole(httptest.NewRecorder(), serverRoleReq("PATCH", "/api/server-roles/3", map[string]string{"id": "3"}, body))

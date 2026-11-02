@@ -63,9 +63,9 @@ func newProxyDefaultTest(t *testing.T) (*ServerHandler, *proxyDefaultStore, *red
 	ps := &proxyDefaultStore{installFakeStore: fs, activeErr: errors.New("stop here")}
 	fs.settings["routing_mode"] = "gateway"
 	fs.settings[services.ProxyProtocolSettingKey] = "true"
-	h.state.Store = ps
-	h.state.FeatureFlags = services.NewFeatureFlags(ps)
-	h.state.Gateway = services.NewRedisGateway(rdb, ps, "test-cluster-secret")
+	h.d.Store = ps
+	h.d.FeatureFlags = services.NewFeatureFlags(ps)
+	h.d.Gateway = services.NewRedisGateway(rdb, ps, "test-cluster-secret")
 	ctx := context.Background()
 	rdb.Set(ctx, "dylaris:discovery:node-lib", `{"releaseVersion":"`+proxyProtocolDefaultSince+`"}`, 0)
 	rdb.Set(ctx, "online_link:"+services.DeriveLinkToken("node-lib", "test-cluster-secret"), `{"caps":["client-addr"]}`, 0)
@@ -183,7 +183,7 @@ func TestSetupLeavesProxyProtocolOptIn(t *testing.T) {
 		},
 		"platform setting off": func(h *ServerHandler, ps *proxyDefaultStore, _ *redis.Client) {
 			ps.settings[services.ProxyProtocolSettingKey] = "false"
-			h.state.FeatureFlags = services.NewFeatureFlags(ps)
+			h.d.FeatureFlags = services.NewFeatureFlags(ps)
 		},
 		"routing both": func(_ *ServerHandler, ps *proxyDefaultStore, _ *redis.Client) {
 			ps.settings["routing_mode"] = "both"

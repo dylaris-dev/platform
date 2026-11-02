@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -52,7 +50,7 @@ func (f *runtimeFakeStore) GetServerAuditState(int) (bool, bool, int, error) {
 
 func runtimeRequest(t *testing.T, fs store.Store, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Events: services.NewSystemEventsPublisher(nil)})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fs, Events: services.NewSystemEventsPublisher(nil)})}
 	req := httptest.NewRequest(http.MethodPatch, "/api/servers/7/runtime", strings.NewReader(body))
 	ctx := context.WithValue(req.Context(), "userID", "alice")
 	ctx = context.WithValue(ctx, "isAdmin", true)

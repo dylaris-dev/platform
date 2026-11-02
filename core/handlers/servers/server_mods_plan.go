@@ -51,7 +51,7 @@ func (h *ServerModsHandler) Plan(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Declare the server's loader and Minecraft version first", http.StatusConflict)
 		return
 	}
-	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
+	mods, err := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return

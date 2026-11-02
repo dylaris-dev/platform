@@ -604,7 +604,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// Per-package dependencies, copied from appState once. A field assigned
 	// further down (WarpPeers, InstallMrpackURL) must not be copied before its
-	// assignment (TestNoAppStateFieldIsSetAfterItIsCopied).
+	// assignment (TestNoAppStateFieldIsSetAfterItIsCopied); usersDeps, nodesDeps
+	// and serversDeps are built after theirs.
 	statsDeps := stats.Deps{
 		Store:        appState.Store,
 		Redis:        appState.Redis,
@@ -715,10 +716,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	}
 
 	// Initialize handlers
-	serverHandler := servers.NewServerHandler(appState)
-	portsAdminHandler := servers.NewPortsAdminHandler(appState)
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
-	serverRolesHandler := servers.NewServerRolesHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
 	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyHostSuffix)
 	fileHandler := handlers.NewFileHandler(appState)
@@ -788,10 +786,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	}
 	nodeHandler := nodes.NewNodeHandler(nodesDeps)
 
-	placementHandler := servers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)
 	statsHandler := stats.NewStatsHandler(statsDeps)
-	memberHandler := servers.NewMemberHandler(appState)
 	versionHandler := handlers.NewVersionHandler(appState)
 	beamHandler := beam.NewBeamHandler(beamDeps, cfg.BeamJWTSecret, cfg.ClusterSecret)
 	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
@@ -817,11 +813,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	ticketMigrationHandler := tickets.NewTicketMigrationHandler(ticketsDeps)
 	systemEventsHandler := handlers.NewSystemEventsHandler(appState)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
-	rconHandler := servers.NewRconHandler(appState)
 	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
 	modrinthHandler := mods.NewModrinthHandler(modsDeps)
-	technicHandler := servers.NewTechnicHandler(appState)
-	serverModsHandler := servers.NewServerModsHandler(appState)
 	sparkHandler := tabs.NewSparkHandler(tabsDeps)
 	serverTabsHandler := tabs.NewServerTabsHandler(tabsDeps)
 	proxyHandler := tabs.NewProxyHandler(tabsDeps, tabTickets(authHandler))
@@ -831,6 +824,36 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Server installs and pack alerts resolve team access the same way.
 	services.SetPackPATLoader(modrinthPATHandler)
 	appState.InstallMrpackURL = packsHandler.InstallMrpackURL
+	// Built after InstallMrpackURL above: a modpack install resolves its
+	// .mrpack through it, and Deps copies the field.
+	serversDeps := servers.Deps{
+		Store:            appState.Store,
+		Redis:            appState.Redis,
+		Queue:            appState.Queue,
+		GRPCRegistry:     appState.GRPCRegistry,
+		Events:           appState.Events,
+		FeatureFlags:     appState.FeatureFlags,
+		Authz:            appState.Authz,
+		Cache:            appState.Cache,
+		Gateway:          appState.Gateway,
+		CoreStorage:      appState.CoreStorage,
+		Migration:        appState.Migration,
+		CPUPinning:       appState.CPUPinning,
+		NetPolicy:        appState.NetPolicy,
+		SuspendGrace:     appState.SuspendGrace,
+		StoreEnabled:     appState.StoreEnabled,
+		Hosted:           appState.Hosted,
+		ReleaseVersion:   appState.ReleaseVersion,
+		InstallMrpackURL: appState.InstallMrpackURL,
+	}
+	serverHandler := servers.NewServerHandler(serversDeps)
+	portsAdminHandler := servers.NewPortsAdminHandler(serversDeps)
+	serverRolesHandler := servers.NewServerRolesHandler(serversDeps)
+	placementHandler := servers.NewPlacementHandler(serversDeps)
+	memberHandler := servers.NewMemberHandler(serversDeps)
+	rconHandler := servers.NewRconHandler(serversDeps)
+	technicHandler := servers.NewTechnicHandler(serversDeps)
+	serverModsHandler := servers.NewServerModsHandler(serversDeps)
 	templatesHandler := templates.NewTemplatesHandler(templatesDeps)
 	usernameHistoryHandler := users.NewUsernameHistoryHandler(usersDeps)
 	accountPolicyHandler := users.NewAccountPolicyHandler(usersDeps)

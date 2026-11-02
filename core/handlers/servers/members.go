@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
@@ -48,11 +47,11 @@ func unknownPermissionKeys(perms map[string]bool) []string {
 }
 
 type MemberHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewMemberHandler(state *handlers.AppState) *MemberHandler {
-	return &MemberHandler{state: state}
+func NewMemberHandler(state Deps) *MemberHandler {
+	return &MemberHandler{d: state}
 }
 
 // capPermissions caps a requested permission set to what the CALLER may
@@ -83,17 +82,17 @@ func (h *MemberHandler) mayReplaceMemberAccess(r *http.Request, serverID int) bo
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
 	username, _ := r.Context().Value("username").(string)
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		return false
 	}
-	if srv.OwnerID == userID || (isAdmin && !h.state.NodeOwnedByOther(srv.NodeID, userID)) {
+	if srv.OwnerID == userID || (isAdmin && !access.NodeOwnedByOther(h.d.Store, h.d.FeatureFlags, srv.NodeID, userID)) {
 		return true
 	}
-	if h.state.Authz == nil {
+	if h.d.Authz == nil {
 		return false
 	}
-	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	res, rerr := h.d.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
 	return rerr == nil && res.HasCap("members.delete")
 }
 
@@ -102,7 +101,7 @@ func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[
 	userID, _ := r.Context().Value("userID").(string)
 	username, _ := r.Context().Value("username").(string)
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		return denyAllPermissions(perms)
 	}
@@ -113,13 +112,13 @@ func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[
 	// invited non-owner may delegate onward.
 	// An admin on a customer's machine got here through that customer's invite,
 	// so the invite, not the admin flag, caps what they may hand on.
-	if srv.OwnerID == userID || (isAdmin && !h.state.NodeOwnedByOther(srv.NodeID, userID)) {
+	if srv.OwnerID == userID || (isAdmin && !access.NodeOwnedByOther(h.d.Store, h.d.FeatureFlags, srv.NodeID, userID)) {
 		return perms
 	}
-	if h.state.Authz == nil {
+	if h.d.Authz == nil {
 		return denyAllPermissions(perms)
 	}
-	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	res, rerr := h.d.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
 	if rerr != nil {
 		return denyAllPermissions(perms)
 	}
@@ -226,7 +225,7 @@ func refuseBadPermissionMap(w http.ResponseWriter, perms map[string]bool) bool {
 
 // GetMembers GET /api/servers/{id}/members - the member invites on one server.
 func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -238,7 +237,7 @@ func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	invites, err := h.state.Store.ListInvitesByServer(serverID)
+	invites, err := h.d.Store.ListInvitesByServer(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load members", http.StatusInternalServerError)
 		return
@@ -258,7 +257,7 @@ func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
 // so the invite itself is the first thing the audit trail records. An existing
 // member is 409.
 func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -296,17 +295,17 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	if refuseBadPermissionMap(w, req.Permissions) {
 		return
 	}
-	if refuseDelegationWhenOff(w, r, h.state.Store) {
+	if refuseDelegationWhenOff(w, r, h.d.Store) {
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
-	targetUser, err := h.state.Store.GetUserByUsername(req.Username)
+	targetUser, err := h.d.Store.GetUserByUsername(req.Username)
 	if err != nil {
 		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
@@ -333,17 +332,17 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	// Cap to what the inviter themselves holds.
 	req.Permissions = h.capPermissions(r, serverID, req.Permissions)
 
-	if err := h.state.Store.CreateInvite(serverID, targetUser.ID, inviterID, req.Permissions); err != nil {
+	if err := h.d.Store.CreateInvite(serverID, targetUser.ID, inviterID, req.Permissions); err != nil {
 		httpx.SendJSONError(w, "Failed to create invite (user may already be invited)", http.StatusConflict)
 		return
 	}
-	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	beamaccess.Stamp(r.Context(), h.d.Store, h.d.Redis, serverID)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 
 	// First member invite flips audit_enabled on. Cheap no-op when
 	// already on. The audit row for the invite is written right after.
-	audit.EnableServerAuditIfNeeded(h.state.Store, serverID)
-	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventMemberInvited, inviterID, targetUser.ID, map[string]interface{}{
+	audit.EnableServerAuditIfNeeded(h.d.Store, serverID)
+	audit.LogServer(h.d.Store, r, serverID, audit.ServerAuditEventMemberInvited, inviterID, targetUser.ID, map[string]interface{}{
 		"username":    targetUser.Username,
 		"permissions": req.Permissions,
 	})
@@ -355,7 +354,7 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 // one member's permission set and records the change in the server audit
 // trail.
 func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -393,7 +392,7 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 		httpx.SendJSONError(w, "You cannot change your own access", http.StatusForbidden)
 		return
 	}
-	if refuseDelegationWhenOff(w, r, h.state.Store) {
+	if refuseDelegationWhenOff(w, r, h.d.Store) {
 		return
 	}
 
@@ -408,15 +407,15 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 	// Cap to what the inviter themselves holds.
 	req.Permissions = h.capPermissions(r, serverID, req.Permissions)
 
-	if err := h.state.Store.UpdateInvitePermissions(serverID, targetUserID, req.Permissions); err != nil {
+	if err := h.d.Store.UpdateInvitePermissions(serverID, targetUserID, req.Permissions); err != nil {
 		httpx.SendJSONError(w, "Failed to update permissions", http.StatusInternalServerError)
 		return
 	}
-	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	beamaccess.Stamp(r.Context(), h.d.Store, h.d.Redis, serverID)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventMemberPermsChanged, actorID, targetUserID, map[string]interface{}{
+	audit.LogServer(h.d.Store, r, serverID, audit.ServerAuditEventMemberPermsChanged, actorID, targetUserID, map[string]interface{}{
 		"permissions": req.Permissions,
 	})
 
@@ -426,7 +425,7 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 // RemoveMember DELETE /api/servers/{id}/members/{userId} - revokes a member's
 // access and records it in the server audit trail.
 func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -442,27 +441,27 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	caller, _ := r.Context().Value("userID").(string)
-	adminHere := reqctx.IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, caller)
-	if !adminHere && caller != srv.OwnerID && access.RevokeUncoversInheritance(h.state.Store, srv, targetUserID) {
+	adminHere := reqctx.IsAdmin(r) && !access.NodeOwnedByOther(h.d.Store, h.d.FeatureFlags, srv.NodeID, caller)
+	if !adminHere && caller != srv.OwnerID && access.RevokeUncoversInheritance(h.d.Store, srv, targetUserID) {
 		httpx.SendJSONError(w, "Removing this member would give them the wider access they inherit from the proxy; only the owner can do that", http.StatusForbidden)
 		return
 	}
 
-	if err := h.state.Store.DeleteInvite(serverID, targetUserID); err != nil {
+	if err := h.d.Store.DeleteInvite(serverID, targetUserID); err != nil {
 		httpx.SendJSONError(w, "Failed to remove member", http.StatusInternalServerError)
 		return
 	}
-	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
-	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+	beamaccess.Stamp(r.Context(), h.d.Store, h.d.Redis, serverID)
+	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventMemberRemoved, actorID, targetUserID, nil)
+	audit.LogServer(h.d.Store, r, serverID, audit.ServerAuditEventMemberRemoved, actorID, targetUserID, nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -470,7 +469,7 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 // GetInheritedMembers GET /api/servers/{id}/members/inherited
 // Returns users who have access via proxy inheritance (read-only view).
 func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -482,7 +481,7 @@ func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -501,7 +500,7 @@ func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Reque
 	// A child linked to another owner's proxy (links from before that was
 	// refused, or an admin owner change that kept proxy_id) listed the other
 	// owner's members to anyone with members.read on the child.
-	proxy, err := h.state.Store.GetServerByID(*srv.ProxyID)
+	proxy, err := h.d.Store.GetServerByID(*srv.ProxyID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load inherited members", http.StatusInternalServerError)
 		return
@@ -515,7 +514,7 @@ func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Get all invites on the proxy that have inherit=true
-	proxyInvites, err := h.state.Store.ListInvitesByServer(*srv.ProxyID)
+	proxyInvites, err := h.d.Store.ListInvitesByServer(*srv.ProxyID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load inherited members", http.StatusInternalServerError)
 		return
@@ -529,7 +528,7 @@ func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Reque
 				continue
 			}
 			// Exclude users who have a direct invite on this server
-			_, directErr := h.state.Store.GetInvite(serverID, inv.UserID)
+			_, directErr := h.d.Store.GetInvite(serverID, inv.UserID)
 			if directErr == nil {
 				continue
 			}
@@ -556,7 +555,7 @@ func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Reque
 // caller is not a panel admin. Off means nobody delegates access to a server;
 // /api/grants enforced that and this older route to the same rows did not.
 func refuseDelegationWhenOff(w http.ResponseWriter, r *http.Request, st store.Store) bool {
-	if authz.IdentityFromContext(r.Context()).IsAdmin || handlers.PermissionsMode(st) != authz.ModeOff {
+	if authz.IdentityFromContext(r.Context()).IsAdmin || access.PermissionsMode(st) != authz.ModeOff {
 		return false
 	}
 	httpx.SendJSONError(w, "Delegation is disabled", http.StatusForbidden)

@@ -76,7 +76,7 @@ func TestPowerLockRefusesTheSecondAction(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("first restart: status %d: %s", rec.Code, rec.Body.String())
 	}
-	ttl, err := h.state.Redis.TTL(context.Background(), powerLockKey("srv-uuid")).Result()
+	ttl, err := h.d.Redis.TTL(context.Background(), powerLockKey("srv-uuid")).Result()
 	if err != nil || ttl <= 0 || ttl > powerLockTTL {
 		t.Fatalf("power lock TTL = %v (%v), want (0, %v]", ttl, err, powerLockTTL)
 	}

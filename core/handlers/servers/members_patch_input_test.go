@@ -10,7 +10,6 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -96,7 +95,7 @@ func TestUpdateMemberPermissionsRefusesWhatTheInviteRefuses(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &patchPermsStore{}
-			h := NewMemberHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+			h := NewMemberHandler(testDeps(Deps{Store: fs}))
 			rec := httptest.NewRecorder()
 
 			h.UpdateMemberPermissions(rec, patchReq(c.body))
@@ -127,7 +126,7 @@ func TestUpdateMemberPermissionsRefusesWhatTheInviteRefuses(t *testing.T) {
 // member's access here.
 func TestUpdateMemberPermissionsNeedsTheRightToRemove(t *testing.T) {
 	fs := &patchPermsStore{}
-	h := NewMemberHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewMemberHandler(testDeps(Deps{Store: fs}))
 	r := patchReq(`{"permissions":{}}`)
 	ctx := context.WithValue(r.Context(), "userID", "member-1")
 	ctx = context.WithValue(ctx, "username", "member")

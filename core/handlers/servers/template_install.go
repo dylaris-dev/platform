@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/nodeops"
@@ -112,7 +111,7 @@ func (h *ServerHandler) resolveTemplateInstall(w http.ResponseWriter, r *http.Re
 // this Core is a dev build (see nodeops.NodeReleaseAtLeastKnown). Answers the
 // request and returns ok=false when it is refused.
 func (h *ServerHandler) templateModrinth(w http.ResponseWriter, r *http.Request, nodeID int, t *models.Template) ([]models.TemplateModrinthRef, []services.TemplateModrinthFile, bool) {
-	refs, err := h.state.Store.ListTemplateModrinth(t.ID)
+	refs, err := h.d.Store.ListTemplateModrinth(t.ID)
 	if err != nil {
 		log.Printf("template install: modrinth references of %d: %v", t.ID, err)
 		httpx.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
@@ -124,7 +123,7 @@ func (h *ServerHandler) templateModrinth(w http.ResponseWriter, r *http.Request,
 		return nil, nil, false
 	}
 	if len(files) > 0 {
-		if node, err := h.state.Store.GetNodeByID(nodeID); err == nil && nodeops.NodeReleaseAtLeastKnown(r.Context(), h.state.Redis, h.state.ReleaseVersion, node.Token, templateModrinthSince) {
+		if node, err := h.d.Store.GetNodeByID(nodeID); err == nil && nodeops.NodeReleaseAtLeastKnown(r.Context(), h.d.Redis, h.d.ReleaseVersion, node.Token, templateModrinthSince) {
 			httpx.SendJSONError(w, templateModrinthRefused, http.StatusConflict)
 			return nil, nil, false
 		}
@@ -136,7 +135,7 @@ func (h *ServerHandler) templateModrinth(w http.ResponseWriter, r *http.Request,
 // see is a 404 like a missing one, as in the templates API, so ids cannot be
 // probed. TemplateCanSee also applies the feature's audience to non-admins.
 func (h *ServerHandler) visibleTemplate(w http.ResponseWriter, r *http.Request, id int) (*models.Template, bool) {
-	t, err := h.state.Store.GetTemplate(id)
+	t, err := h.d.Store.GetTemplate(id)
 	if err != nil {
 		log.Printf("template install: get %d: %v", id, err)
 		httpx.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
@@ -146,13 +145,13 @@ func (h *ServerHandler) visibleTemplate(w http.ResponseWriter, r *http.Request, 
 		httpx.SendJSONError(w, "Template not found", http.StatusNotFound)
 		return nil, false
 	}
-	v, err := access.TemplateViewer(r, h.state.Authz, h.state.Store, t)
+	v, err := access.TemplateViewer(r, h.d.Authz, h.d.Store, t)
 	if err != nil {
 		log.Printf("template install: viewer for %d: %v", id, err)
 		httpx.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
 		return nil, false
 	}
-	if !services.TemplateCanSee(*t, v, services.LoadTemplateSettings(r.Context(), h.state.FeatureFlags)) {
+	if !services.TemplateCanSee(*t, v, services.LoadTemplateSettings(r.Context(), h.d.FeatureFlags)) {
 		httpx.SendJSONError(w, "Template not found", http.StatusNotFound)
 		return nil, false
 	}
@@ -163,7 +162,7 @@ func (h *ServerHandler) visibleTemplate(w http.ResponseWriter, r *http.Request, 
 // the node, where the upload-zip installer reads them: the same write sequence
 // as a browser upload (FileHandler.UploadFileHandler). The node is never handed
 // a URL. The zip is built into a temp file first so TotalSize is exact.
-func pushTemplateZip(ctx context.Context, state *handlers.AppState, nodeID int, serverUUID, subServer string, t *models.Template) error {
+func pushTemplateZip(ctx context.Context, state Deps, nodeID int, serverUUID, subServer string, t *models.Template) error {
 	if state.GRPCRegistry == nil {
 		return errors.New("node registry not available")
 	}

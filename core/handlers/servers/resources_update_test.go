@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -93,7 +91,7 @@ func resourcesServer(status string) *models.Server {
 // panel showed the new RAM, the node never heard of it. Validation runs first.
 func TestUpdateServerResources_InvalidCpusetWritesNothing(t *testing.T) {
 	fake := &resourcesFakeStore{server: resourcesServer("online")}
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fake, CPUPinning: &services.CPUPinningService{}})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fake, CPUPinning: &services.CPUPinningService{}})}
 
 	rec := httptest.NewRecorder()
 	h.UpdateServerResources(rec, resourcesReq(t, map[string]any{
@@ -112,7 +110,7 @@ func TestUpdateServerResources_RefusedWhileInstallingOrMigrating(t *testing.T) {
 	for _, status := range []string{"installing", "migrating"} {
 		t.Run(status, func(t *testing.T) {
 			fake := &resourcesFakeStore{server: resourcesServer(status)}
-			h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fake})}
+			h := &ServerHandler{d: testDeps(Deps{Store: fake})}
 
 			rec := httptest.NewRecorder()
 			h.UpdateServerResources(rec, resourcesReq(t, map[string]any{"ram": 4096, "cpuLimit": 2.0, "diskLimit": 10240}))
@@ -144,7 +142,7 @@ func resourcesRedis(t *testing.T) *redis.Client {
 func TestUpdateServerResources_ContainerPortOnlyChangeReachesTheNode(t *testing.T) {
 	rdb := resourcesRedis(t)
 	fake := &resourcesFakeStore{server: resourcesServer("online")}
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fake, Queue: services.NewQueueService(rdb)})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fake, Queue: services.NewQueueService(rdb)})}
 
 	rec := httptest.NewRecorder()
 	h.UpdateServerResources(rec, resourcesReq(t, map[string]any{
@@ -179,7 +177,7 @@ func TestUpdateServerResources_DispatchFailureIsReported(t *testing.T) {
 	t.Cleanup(func() { brokenRDB.Close() })
 
 	fake := &resourcesFakeStore{server: resourcesServer("online")}
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fake, Queue: services.NewQueueService(brokenRDB)})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fake, Queue: services.NewQueueService(brokenRDB)})}
 
 	rec := httptest.NewRecorder()
 	h.UpdateServerResources(rec, resourcesReq(t, map[string]any{"ram": 4096, "cpuLimit": 2.0, "diskLimit": 10240}))
@@ -198,7 +196,7 @@ func TestUpdateServerResources_DispatchFailureIsReported(t *testing.T) {
 func TestUpdateServerResources_RequestedPortsAreSentEvenWhenUnchanged(t *testing.T) {
 	rdb := resourcesRedis(t)
 	fake := &resourcesFakeStore{server: resourcesServer("online")}
-	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fake, Queue: services.NewQueueService(rdb)})}
+	h := &ServerHandler{d: testDeps(Deps{Store: fake, Queue: services.NewQueueService(rdb)})}
 
 	rec := httptest.NewRecorder()
 	h.UpdateServerResources(rec, resourcesReq(t, map[string]any{

@@ -57,13 +57,13 @@ func TestSuspensionIsAnsweredBeforeTheBusyGuard(t *testing.T) {
 // Failure paths that used to leave state behind, named per site.
 func TestFailedDispatchesLeaveNothingBehind(t *testing.T) {
 	for _, c := range []struct{ file, fn, want, why string }{
-		{"servers/servers_lifecycle.go", "CreateServer", "h.state.Store.DeleteServer(int(serverID))", "a create the node never got left a row with no disk limit"},
-		{"servers/servers_lifecycle.go", "SetupServer", "services.RestoreSetupBefore(r.Context(), h.state.Redis, h.state.Store, srv, subName)", "a setup that was never sent stayed 'installing'"},
-		{"servers/servers_lifecycle.go", "SetupServer", "services.RememberSetupBefore(r.Context(), h.state.Redis, srv, subName)", "a failed install could not be put back"},
+		{"servers/servers_lifecycle.go", "CreateServer", "h.d.Store.DeleteServer(int(serverID))", "a create the node never got left a row with no disk limit"},
+		{"servers/servers_lifecycle.go", "SetupServer", "services.RestoreSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)", "a setup that was never sent stayed 'installing'"},
+		{"servers/servers_lifecycle.go", "SetupServer", "services.RememberSetupBefore(r.Context(), h.d.Redis, srv, subName)", "a failed install could not be put back"},
 		{"servers/servers_lifecycle.go", "ReinstallServer", "undo()", "a reinstall that was never sent stayed 'installing'"},
 		{"servers/servers_lifecycle.go", "CreateServer", `configPayload["storagePath"] = sp`, "the wizard's storage path was dropped"},
 		{"guard/sub_server_limit.go", "RefuseIfSubServerLimitReached", "if subServerDirExists(entries, target) {", "the cap counted the sub-server being re-installed"},
-		{"servers/servers_lifecycle.go", "ReinstallServer", `h.state.Store.UpdateServerDesiredState(srv.ID, "online")`, "a reinstall of a stopped server would stay down now that the node asks the intent"},
+		{"servers/servers_lifecycle.go", "ReinstallServer", `h.d.Store.UpdateServerDesiredState(srv.ID, "online")`, "a reinstall of a stopped server would stay down now that the node asks the intent"},
 	} {
 		if !strings.Contains(handlertest.FuncBody(t, c.file, c.fn), c.want) {
 			t.Errorf("%s: %s", c.fn, c.why)
@@ -86,7 +86,7 @@ func TestABeamTicketIsReadOnlyWhileTheServerMoves(t *testing.T) {
 func TestInstallsPublishTheIntentBeforeTheCommand(t *testing.T) {
 	for fn, action := range map[string]string{"SetupServer": `"setup"`, "ReinstallServer": `"reinstall"`} {
 		body := handlertest.FuncBody(t, "servers/servers_lifecycle.go", fn)
-		pub := strings.Index(body, `services.PublishDesiredState(r.Context(), h.state.Redis, srv.UUID, "online")`)
+		pub := strings.Index(body, `services.PublishDesiredState(r.Context(), h.d.Redis, srv.UUID, "online")`)
 		send := strings.Index(body, "SendCommand(context.Background(), node.Token, "+action)
 		if pub < 0 || send < 0 || pub > send {
 			t.Errorf("%s publishes the intent after the command, or not at all", fn)
