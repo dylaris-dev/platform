@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -89,7 +87,7 @@ func newProxyProtoHandler(t *testing.T, flagOn bool) (*GatewayHandler, *proxyPro
 		fs.settings[services.ProxyProtocolSettingKey] = "true"
 	}
 	rdb := newLinkRouteRedis(t)
-	return &GatewayHandler{state: &handlers.AppState{
+	return &GatewayHandler{d: Deps{
 		Store: fs, Redis: rdb, Gateway: services.NewRedisGateway(rdb, fs, "cs"),
 		FeatureFlags: services.NewFeatureFlags(fs),
 	}}, fs, rdb
@@ -234,7 +232,7 @@ func patchLinkRouteProxyProtocol(h *GatewayHandler, userID string, admin bool, d
 
 func TestSetLinkRouteProxyProtocol(t *testing.T) {
 	h, fs, rdb := newProxyProtoHandler(t, true)
-	if err := h.state.Gateway.CreateRouteViaLink("owner-1", "play.example.com", "tunnel-1", "127.0.0.1", 25565); err != nil {
+	if err := h.d.Gateway.CreateRouteViaLink("owner-1", "play.example.com", "tunnel-1", "127.0.0.1", 25565); err != nil {
 		t.Fatal(err)
 	}
 	if err := rdb.Set(context.Background(), "online_link:tunnel-1", capsClientAddr, 0).Err(); err != nil {
@@ -320,7 +318,7 @@ func TestSetServerProxyProtocol_OffAlwaysAllowed(t *testing.T) {
 
 func TestSetLinkRouteProxyProtocol_OffAlwaysAllowed(t *testing.T) {
 	h, fs, rdb := newProxyProtoHandler(t, false)
-	gw := h.state.Gateway
+	gw := h.d.Gateway
 	if err := gw.CreateRouteViaLink("owner-1", "play.example.com", "tunnel-1", "127.0.0.1", 25565); err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +408,7 @@ func TestSetServerProxyProtocol_RefusedWithoutLinkCap(t *testing.T) {
 	})
 	t.Run("redis error fails closed", func(t *testing.T) {
 		h, fs, _ := newProxyProtoHandler(t, true)
-		h.state.Redis = redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
+		h.d.Redis = redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
 		rec := patchServerProxyProtocol(h, `{"enabled":true}`)
 		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "link_check_failed") {
 			t.Fatalf("status %d body %s, want 409 link_check_failed", rec.Code, rec.Body.String())
@@ -423,7 +421,7 @@ func TestSetServerProxyProtocol_RefusedWithoutLinkCap(t *testing.T) {
 
 func TestSetLinkRouteProxyProtocol_RefusedWithoutLinkCap(t *testing.T) {
 	h, fs, rdb := newProxyProtoHandler(t, true)
-	if err := h.state.Gateway.CreateRouteViaLink("owner-1", "play.example.com", "tunnel-1", "127.0.0.1", 25565); err != nil {
+	if err := h.d.Gateway.CreateRouteViaLink("owner-1", "play.example.com", "tunnel-1", "127.0.0.1", 25565); err != nil {
 		t.Fatal(err)
 	}
 	if err := rdb.Set(context.Background(), "online_link:tunnel-1", "1", 0).Err(); err != nil {

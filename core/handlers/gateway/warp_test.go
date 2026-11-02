@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -157,7 +155,7 @@ func newWarpTestHandler(t *testing.T) *WarpHandler {
 		peers:    map[string]store.WarpPeer{},
 	}
 	svc := services.NewWarpService(fs, rdb, "test-secret")
-	state := &handlers.AppState{Store: fs, Redis: rdb}
+	state := Deps{Store: fs, Redis: rdb}
 	return NewWarpHandler(state, svc)
 }
 
@@ -205,8 +203,8 @@ func enrollWithOwner(t *testing.T, h *WarpHandler) *httptest.ResponseRecorder {
 // re-enroll within minutes and put them straight back.
 func TestEnroll_HardSuspendedOwnerIsRefused(t *testing.T) {
 	h := newWarpTestHandler(t)
-	fs := h.state.Store.(*warpFakeStore)
-	h.state.SuspendGrace = 48 * time.Hour
+	fs := h.d.Store.(*warpFakeStore)
+	h.d.SuspendGrace = 48 * time.Hour
 	at := time.Now().Add(-49 * time.Hour)
 	fs.billing = &store.UserBilling{Status: "suspended", SuspendedAt: &at}
 
@@ -219,8 +217,8 @@ func TestEnroll_HardSuspendedOwnerIsRefused(t *testing.T) {
 // and it matches how LinkBoot and the ACL reconciler treat the same window.
 func TestEnroll_SuspendedWithinGraceStillEnrolls(t *testing.T) {
 	h := newWarpTestHandler(t)
-	fs := h.state.Store.(*warpFakeStore)
-	h.state.SuspendGrace = 48 * time.Hour
+	fs := h.d.Store.(*warpFakeStore)
+	h.d.SuspendGrace = 48 * time.Hour
 	at := time.Now().Add(-1 * time.Hour)
 	fs.billing = &store.UserBilling{Status: "suspended", SuspendedAt: &at}
 
@@ -233,7 +231,7 @@ func TestEnroll_SuspendedWithinGraceStillEnrolls(t *testing.T) {
 // the log line is what makes the degraded gate visible.
 func TestEnroll_BillingLookupFailureFailsOpen(t *testing.T) {
 	h := newWarpTestHandler(t)
-	fs := h.state.Store.(*warpFakeStore)
+	fs := h.d.Store.(*warpFakeStore)
 	fs.billingErr = errors.New("db down")
 
 	if rec := enrollWithOwner(t, h); rec.Code != http.StatusOK {
@@ -245,7 +243,7 @@ func TestEnroll_BillingLookupFailureFailsOpen(t *testing.T) {
 // the gate must not even look.
 func TestEnroll_PlatformKeySkipsTheSuspensionGate(t *testing.T) {
 	h := newWarpTestHandler(t)
-	fs := h.state.Store.(*warpFakeStore)
+	fs := h.d.Store.(*warpFakeStore)
 
 	body, _ := json.Marshal(map[string]interface{}{"public_key": "platformPubKey"})
 	req := httptest.NewRequest("POST", "/api/warp/enroll", bytes.NewReader(body))

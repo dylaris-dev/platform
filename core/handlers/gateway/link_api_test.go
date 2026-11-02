@@ -22,7 +22,7 @@ func routeOnlyKit(t *testing.T) (*WarpHandler, *nodeLinkFakeStore, store.WarpAPI
 	t.Helper()
 	h, fs, _ := newNodeLinkHandler(t)
 	fs.keys["link-xyz"] = &store.WarpAPIKey{ID: 9, NodeID: "link-xyz", OwnerID: "owner-1"}
-	return h, fs, *fs.keys["link-xyz"], h.state.Gateway.LinkToken("link-xyz")
+	return h, fs, *fs.keys["link-xyz"], h.d.Gateway.LinkToken("link-xyz")
 }
 
 func callAs(h http.HandlerFunc, method, path, body string, key store.WarpAPIKey) *httptest.ResponseRecorder {
@@ -49,7 +49,7 @@ func TestLinkHeartbeatWritesTheKeysTheReadersRead(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
-	rdb := h.state.Redis
+	rdb := h.d.Redis
 	if v, _ := rdb.Get(context.Background(), "link:"+token).Result(); v != "valid" {
 		t.Errorf("link:<token> = %q, want valid", v)
 	}
@@ -67,8 +67,8 @@ func TestLinkHeartbeatWritesTheKeysTheReadersRead(t *testing.T) {
 func TestLinkHeartbeatOfACutOffOwnerTakesTheTunnelDown(t *testing.T) {
 	h, fs, key, token := routeOnlyKit(t)
 	ctx := context.Background()
-	h.state.Redis.Set(ctx, "link:"+token, "valid", time.Hour)
-	h.state.Redis.Set(ctx, "online_link:"+token, "1", time.Hour)
+	h.d.Redis.Set(ctx, "link:"+token, "valid", time.Hour)
+	h.d.Redis.Set(ctx, "online_link:"+token, "1", time.Hour)
 	past := time.Now().Add(-72 * time.Hour)
 	fs.billing = &store.UserBilling{Status: "suspended", SuspendedAt: &past}
 
@@ -76,7 +76,7 @@ func TestLinkHeartbeatOfACutOffOwnerTakesTheTunnelDown(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status %d, want 403", rec.Code)
 	}
-	if n, _ := h.state.Redis.Exists(ctx, "link:"+token, "online_link:"+token).Result(); n != 0 {
+	if n, _ := h.d.Redis.Exists(ctx, "link:"+token, "online_link:"+token).Result(); n != 0 {
 		t.Errorf("%d key(s) survived the cut-off heartbeat", n)
 	}
 }
@@ -104,12 +104,12 @@ func TestLinkHeartbeatNeverLeavesARevokedTokenValid(t *testing.T) {
 	for name, liveReads := range map[string]int{"revoked before the write": 0, "revoked right after the write": 1} {
 		t.Run(name, func(t *testing.T) {
 			h, fs, key, token := routeOnlyKit(t)
-			h.state.Store = &revokeAfterReads{nodeLinkFakeStore: fs, n: liveReads}
+			h.d.Store = &revokeAfterReads{nodeLinkFakeStore: fs, n: liveReads}
 			rec := callAs(h.LinkHeartbeat, http.MethodPost, "/api/warp/link/heartbeat", "{}", key)
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("status %d, want 401", rec.Code)
 			}
-			if n, _ := h.state.Redis.Exists(context.Background(), "link:"+token, "online_link:"+token).Result(); n != 0 {
+			if n, _ := h.d.Redis.Exists(context.Background(), "link:"+token, "online_link:"+token).Result(); n != 0 {
 				t.Errorf("a revoked kit's token is still valid (%d key(s))", n)
 			}
 		})
@@ -134,7 +134,7 @@ func TestLinkAPIRefusesEveryOtherKey(t *testing.T) {
 			}
 		}
 	}
-	if n, _ := h.state.Redis.DBSize(context.Background()).Result(); n != 0 {
+	if n, _ := h.d.Redis.DBSize(context.Background()).Result(); n != 0 {
 		t.Errorf("refused calls wrote %d key(s)", n)
 	}
 }
@@ -144,7 +144,7 @@ func TestLinkAPIRefusesEveryOtherKey(t *testing.T) {
 func TestLinkEdgesListsEveryDialableEdgeWithItsPin(t *testing.T) {
 	h, _, key, _ := routeOnlyKit(t)
 	ctx := context.Background()
-	rdb := h.state.Redis
+	rdb := h.d.Redis
 	rdb.SAdd(ctx, "sys:edges", "e1", "e2", "e3", "e4")
 	rdb.Set(ctx, "edge:registry:e1", `{"edge_id":"e1","ip":"1.2.3.4","private_ip":"10.0.0.1","service_port":"25560"}`, 0)
 	rdb.Set(ctx, "edge:cert:fingerprint:e1", "ff00", 0)
@@ -183,13 +183,13 @@ func TestLinkStatsNeverResurrectARevokedKitsStream(t *testing.T) {
 	for name, liveReads := range map[string]int{"revoked before the write": 0, "revoked right after the write": 1} {
 		t.Run(name, func(t *testing.T) {
 			h, fs, key, _ := routeOnlyKit(t)
-			h.state.Store = &revokeAfterReads{nodeLinkFakeStore: fs, n: liveReads}
+			h.d.Store = &revokeAfterReads{nodeLinkFakeStore: fs, n: liveReads}
 			rec := callAs(h.LinkStats, http.MethodPost, "/api/warp/link/stats",
 				`{"v":1,"component":"link","id":"link-xyz","counters":{"tunnels_established":1}}`, key)
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("status %d, want 401: %s", rec.Code, rec.Body.String())
 			}
-			if n, _ := h.state.Redis.Exists(context.Background(), "dylaris:link:link-xyz:stats").Result(); n != 0 {
+			if n, _ := h.d.Redis.Exists(context.Background(), "dylaris:link:link-xyz:stats").Result(); n != 0 {
 				t.Error("a revoked kit's stats stream exists again; every Core will keep a consumer on it")
 			}
 		})
@@ -205,10 +205,10 @@ func TestLinkStatsLandInTheKitsOwnStream(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
 	ctx := context.Background()
-	if n, _ := h.state.Redis.Exists(ctx, "dylaris:link:link-someone-else:stats").Result(); n != 0 {
+	if n, _ := h.d.Redis.Exists(ctx, "dylaris:link:link-someone-else:stats").Result(); n != 0 {
 		t.Error("the link chose the stream it wrote to")
 	}
-	msgs, err := h.state.Redis.XRange(ctx, "dylaris:link:link-xyz:stats", "-", "+").Result()
+	msgs, err := h.d.Redis.XRange(ctx, "dylaris:link:link-xyz:stats", "-", "+").Result()
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("stream: %v, %v", msgs, err)
 	}
@@ -237,7 +237,7 @@ func TestLinkStatsDoNotLetTheKitNameItsRegion(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
-	msgs, err := h.state.Redis.XRange(context.Background(), "dylaris:link:link-xyz:stats", "-", "+").Result()
+	msgs, err := h.d.Redis.XRange(context.Background(), "dylaris:link:link-xyz:stats", "-", "+").Result()
 	if err != nil || len(msgs) != 1 {
 		t.Fatalf("stream: %v, %v", msgs, err)
 	}

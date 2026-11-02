@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
@@ -63,7 +62,7 @@ func TestRollExternalNodeKey(t *testing.T) {
 				mr.Set("dylaris:discovery:tok", c.hb)
 			}
 			st := &rollExternalStore{key: c.key}
-			h := &WarpHandler{state: &handlers.AppState{Store: st, Redis: rdb}}
+			h := &WarpHandler{d: Deps{Store: st, Redis: rdb}}
 			req := httptest.NewRequest(http.MethodPost, "/api/admin/warp/keys/1/roll", nil)
 			req = mux.SetURLVars(req, map[string]string{"id": "1"})
 			req = req.WithContext(context.WithValue(req.Context(), "isAdmin", c.admin))

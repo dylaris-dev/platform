@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"dylaris-core/handlers"
 	"dylaris-core/services"
 	"net"
 	"os"
@@ -160,20 +159,20 @@ func overlayServiceAddrs(grpcPort string) (coreAddr, redisAddr string) {
 
 // deployConfig answers with the tunnel subnets and the gRPC pin for a deploy
 // snippet.
-func deployConfig(s *handlers.AppState) DeployConfig {
+func deployConfig(d Deps) DeployConfig {
 	var out DeployConfig
-	if s != nil && s.GRPCTLSEnabled {
-		out.GRPCTLSFingerprint = s.GRPCTLSFingerprint
+	if d.GRPCTLSEnabled {
+		out.GRPCTLSFingerprint = d.GRPCTLSFingerprint
 	}
-	if s != nil && s.Store != nil {
-		v, _ := s.Store.GetSetting("warp_tunnel_subnets")
+	if d.Store != nil {
+		v, _ := d.Store.GetSetting("warp_tunnel_subnets")
 		out.TunnelSubnets = strings.TrimSpace(v)
 	}
 	// Nothing stored: fall back to the value Core can detect about its own
 	// networks. The snippet is only useful if every field in it is filled, and
 	// an operator who never opened the warp settings has no stored value - which
 	// is the normal case, not an edge one.
-	if out.TunnelSubnets == "" && s != nil {
+	if out.TunnelSubnets == "" {
 		out.TunnelSubnets = services.SuggestTunnelSubnets().Suggested
 	}
 	return out

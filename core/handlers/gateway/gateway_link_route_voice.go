@@ -43,7 +43,7 @@ func newLinkRouteVoiceView(v *store.LinkRouteVoice) linkRouteVoiceView {
 }
 
 func (h *GatewayHandler) coreRoute(domain string) (*store.CoreLinkRoute, error) {
-	rows, err := h.state.Store.ListCoreLinkRoutes()
+	rows, err := h.d.Store.ListCoreLinkRoutes()
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func (h *GatewayHandler) coreRoute(domain string) (*store.CoreLinkRoute, error) 
 // linkRouteVoiceAllowed is ResolveVoiceAllowed for a route's owner, failing
 // closed. A route has no server, so the server scope never has a row.
 func (h *GatewayHandler) linkRouteVoiceAllowed(ownerID string) bool {
-	allowed, _, err := services.ResolveVoiceAllowed(h.state.Store, &models.Server{OwnerID: ownerID})
+	allowed, _, err := services.ResolveVoiceAllowed(h.d.Store, &models.Server{OwnerID: ownerID})
 	if err != nil {
 		log.Printf("voice: route owner %s: permission check: %v", ownerID, err)
 		return false
@@ -97,11 +97,11 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 	defer cancel()
 
 	if !*req.Enabled {
-		prior, err := h.state.Store.GetLinkRouteVoice(domain)
+		prior, err := h.d.Store.GetLinkRouteVoice(domain)
 		if err == nil && prior != nil {
-			_, err = h.state.Store.DeleteLinkRouteVoice(domain)
+			_, err = h.d.Store.DeleteLinkRouteVoice(domain)
 			if err == nil {
-				if uerr := services.UnpublishLinkRouteVoice(ctx, h.state.Redis, *prior); uerr != nil {
+				if uerr := services.UnpublishLinkRouteVoice(ctx, h.d.Redis, *prior); uerr != nil {
 					log.Printf("voice: route %s: %v", domain, uerr) // the reconcile sweeps it
 				}
 			}
@@ -115,7 +115,7 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !services.GatewayRoutingEnabled(h.state.Store) {
+	if !services.GatewayRoutingEnabled(h.d.Store) {
 		gate.GatewayDisabledResponse(w)
 		return
 	}
@@ -124,7 +124,7 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
-	if msg := guard.OwnerRefusal(h.state.Store, h.state.SuspendGrace, r, rt.OwnerID); msg != "" {
+	if msg := guard.OwnerRefusal(h.d.Store, h.d.SuspendGrace, r, rt.OwnerID); msg != "" {
 		httpx.SendJSONError(w, msg, http.StatusForbidden)
 		return
 	}
@@ -132,16 +132,16 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONErrorCode(w, "Voice chat is not available for this account.", "voice_not_allowed", http.StatusConflict)
 		return
 	}
-	if ok, err := services.LinkAnnouncesCap(ctx, h.state.Redis, rt.LinkToken, linkCapVoice); err != nil || !ok {
+	if ok, err := services.LinkAnnouncesCap(ctx, h.d.Redis, rt.LinkToken, linkCapVoice); err != nil || !ok {
 		httpx.SendJSONErrorCode(w, "The link of this route has not reported that it can carry voice chat. Make sure it is running and up to date, then try again.", "link_without_voice", http.StatusConflict)
 		return
 	}
-	region, ok := services.VoiceRegionFor(domain, services.GetEdgesFromRedis(ctx, h.state.Redis))
+	region, ok := services.VoiceRegionFor(domain, services.GetEdgesFromRedis(ctx, h.d.Redis))
 	if !ok {
 		httpx.SendJSONErrorCode(w, "Voice chat needs an address on one of the platform's domains.", "no_routes", http.StatusConflict)
 		return
 	}
-	relays, err := services.LiveVoiceRelays(ctx, h.state.Redis)
+	relays, err := services.LiveVoiceRelays(ctx, h.d.Redis)
 	if err != nil {
 		log.Printf("voice: route %s: %v", domain, err)
 		httpx.SendJSONError(w, "Could not check the voice relays. Try again.", http.StatusBadGateway)
@@ -156,7 +156,7 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	prior, err := h.state.Store.GetLinkRouteVoice(domain)
+	prior, err := h.d.Store.GetLinkRouteVoice(domain)
 	if err != nil {
 		log.Printf("voice: route %s: %v", domain, err)
 		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
@@ -167,7 +167,7 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
 		return
 	}
-	got, err := h.state.Store.AllocateLinkRouteVoice(domain, region, req.TargetPort, key, services.VoicePortMin, services.VoicePortMax)
+	got, err := h.d.Store.AllocateLinkRouteVoice(domain, region, req.TargetPort, key, services.VoicePortMin, services.VoicePortMax)
 	if errors.Is(err, store.ErrVoicePoolFull) {
 		httpx.SendJSONErrorCode(w, "Every voice port in this region is taken.", "voice_pool_full", http.StatusConflict)
 		return
@@ -178,14 +178,14 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if prior != nil && (prior.Region != got.Region || prior.Port != got.Port) {
-		if err := services.UnpublishLinkRouteVoice(ctx, h.state.Redis, *prior); err != nil {
+		if err := services.UnpublishLinkRouteVoice(ctx, h.d.Redis, *prior); err != nil {
 			log.Printf("voice: route %s: %v", domain, err)
 		}
 	}
-	if err := services.PublishLinkRouteVoice(ctx, h.state.Redis, got); err != nil {
+	if err := services.PublishLinkRouteVoice(ctx, h.d.Redis, got); err != nil {
 		log.Printf("voice: route %s: %v", domain, err)
 		if prior == nil {
-			if _, derr := h.state.Store.DeleteLinkRouteVoice(domain); derr != nil {
+			if _, derr := h.d.Store.DeleteLinkRouteVoice(domain); derr != nil {
 				log.Printf("voice: route %s: roll back: %v", domain, derr)
 			}
 		}

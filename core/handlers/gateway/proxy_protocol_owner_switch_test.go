@@ -12,7 +12,7 @@ import (
 // the running sub-server.
 func TestOwnerSwitchForgetsThePendingRequest(t *testing.T) {
 	h, _, rdb := newProxyProtoHandler(t, true)
-	fs := h.state.Store.(*proxyProtoFakeStore)
+	fs := h.d.Store.(*proxyProtoFakeStore)
 	fs.servers[7].ActiveSubServer = "main"
 	seedRoute(t, rdb, "play.example.com", "tok-1", capsClientAddr)
 	ctx := context.Background()

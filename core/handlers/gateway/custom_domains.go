@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
@@ -21,12 +19,12 @@ import (
 // CustomDomainHandler serves a tenant's view of their own domain claims, and
 // the self-service way back from a permanent block.
 type CustomDomainHandler struct {
-	state    *handlers.AppState
+	d        Deps
 	resolver services.DomainResolver
 }
 
-func NewCustomDomainHandler(state *handlers.AppState, res services.DomainResolver) *CustomDomainHandler {
-	return &CustomDomainHandler{state: state, resolver: res}
+func NewCustomDomainHandler(d Deps, res services.DomainResolver) *CustomDomainHandler {
+	return &CustomDomainHandler{d: d, resolver: res}
 }
 
 type customDomainView struct {
@@ -66,7 +64,7 @@ func viewOf(c store.CustomDomainClaim) customDomainView {
 // for a tenant to see another tenant's.
 func (h *CustomDomainHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
-	claims, err := h.state.Store.ListCustomDomainClaimsByUser(userID)
+	claims, err := h.d.Store.ListCustomDomainClaimsByUser(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not load your custom domains", http.StatusInternalServerError)
 		return
@@ -87,7 +85,7 @@ func (h *CustomDomainHandler) IssueTXTToken(w http.ResponseWriter, r *http.Reque
 	userID, _ := r.Context().Value("userID").(string)
 	domain := strings.ToLower(strings.TrimSpace(mux.Vars(r)["domain"]))
 
-	claim, err := h.state.Store.GetCustomDomainClaim(userID, domain)
+	claim, err := h.d.Store.GetCustomDomainClaim(userID, domain)
 	if err != nil {
 		httpx.SendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
 		return
@@ -104,7 +102,7 @@ func (h *CustomDomainHandler) IssueTXTToken(w http.ResponseWriter, r *http.Reque
 			httpx.SendJSONError(w, "Could not generate a verification token", http.StatusInternalServerError)
 			return
 		}
-		if serr := h.state.Store.SetCustomDomainTXTToken(claim.ID, token); serr != nil {
+		if serr := h.d.Store.SetCustomDomainTXTToken(claim.ID, token); serr != nil {
 			httpx.SendJSONError(w, "Could not store the verification token", http.StatusInternalServerError)
 			return
 		}
@@ -122,7 +120,7 @@ func (h *CustomDomainHandler) VerifyTXT(w http.ResponseWriter, r *http.Request) 
 	userID, _ := r.Context().Value("userID").(string)
 	domain := strings.ToLower(strings.TrimSpace(mux.Vars(r)["domain"]))
 
-	claim, err := h.state.Store.GetCustomDomainClaim(userID, domain)
+	claim, err := h.d.Store.GetCustomDomainClaim(userID, domain)
 	if err != nil {
 		httpx.SendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
 		return
@@ -149,7 +147,7 @@ func (h *CustomDomainHandler) VerifyTXT(w http.ResponseWriter, r *http.Request) 
 			http.StatusConflict)
 		return
 	}
-	if err := h.state.Store.MarkCustomDomainVerified(claim.ID); err != nil {
+	if err := h.d.Store.MarkCustomDomainVerified(claim.ID); err != nil {
 		httpx.SendJSONError(w, "Could not record the verification", http.StatusInternalServerError)
 		return
 	}
@@ -167,15 +165,15 @@ const verifyCheckCooldown = 5 * time.Minute
 // verifyCooldown claims this (user, domain)'s check slot and returns how long
 // is left when it was already taken. No Redis means no cooldown.
 func (h *CustomDomainHandler) verifyCooldown(ctx context.Context, userID, domain string) time.Duration {
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		return 0
 	}
 	key := "dylaris:custom-domain:check:" + userID + ":" + domain
-	ok, err := h.state.Redis.SetNX(ctx, key, "1", verifyCheckCooldown).Result()
+	ok, err := h.d.Redis.SetNX(ctx, key, "1", verifyCheckCooldown).Result()
 	if err != nil || ok {
 		return 0
 	}
-	ttl, err := h.state.Redis.TTL(ctx, key).Result()
+	ttl, err := h.d.Redis.TTL(ctx, key).Result()
 	if err != nil || ttl <= 0 {
 		return 0
 	}
@@ -210,12 +208,12 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	domain := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(req.Domain), "."))
-	raw, _ := h.state.Store.GetSetting("gateway_hoster_domains")
-	var hosters []handlers.HosterDomain
+	raw, _ := h.d.Store.GetSetting("gateway_hoster_domains")
+	var hosters []services.HosterDomain
 	if raw != "" {
 		_ = json.Unmarshal([]byte(raw), &hosters)
 	}
-	enabled, _ := h.state.Store.GetSetting("gateway_custom_domains_enabled")
+	enabled, _ := h.d.Store.GetSetting("gateway_custom_domains_enabled")
 	if enabled != "true" && !reqctx.IsAdmin(r) {
 		httpx.SendJSONErrorCode(w, "Your own domains are not enabled on this platform.", "custom_domains_off", http.StatusConflict)
 		return
@@ -224,7 +222,7 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	claims, err := h.state.Store.ListCustomDomainClaimsByUser(userID)
+	claims, err := h.d.Store.ListCustomDomainClaimsByUser(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not load your custom domains", http.StatusInternalServerError)
 		return
@@ -237,7 +235,7 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONErrorCode(w, fmt.Sprintf("You can add up to %d domains.", maxClaimsPerUser), "too_many_domains", http.StatusConflict)
 		return
 	}
-	claim, err := h.state.Store.RequestCustomDomainClaim(userID, domain)
+	claim, err := h.d.Store.RequestCustomDomainClaim(userID, domain)
 	if err != nil || claim == nil {
 		httpx.SendJSONError(w, "Could not add the domain", http.StatusInternalServerError)
 		return
@@ -245,7 +243,7 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 	if claim.TXTToken == "" && claim.State != store.ClaimVerified {
 		token, terr := services.NewTXTToken()
 		if terr == nil {
-			terr = h.state.Store.SetCustomDomainTXTToken(claim.ID, token)
+			terr = h.d.Store.SetCustomDomainTXTToken(claim.ID, token)
 		}
 		if terr != nil {
 			httpx.SendJSONError(w, "Could not generate a verification token", http.StatusInternalServerError)
@@ -263,12 +261,12 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 func (h *CustomDomainHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	domain := strings.ToLower(strings.TrimSpace(mux.Vars(r)["domain"]))
-	owned, err := services.OwnedServerUUIDs(h.state.Store, userID)
+	owned, err := services.OwnedServerUUIDs(h.d.Store, userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not check your routes", http.StatusInternalServerError)
 		return
 	}
-	routes, err := services.ReadRoutesFromRedis(r.Context(), h.state.Redis)
+	routes, err := services.ReadRoutesFromRedis(r.Context(), h.d.Redis)
 	if err != nil {
 		// Not knowing the routes is not "there are none".
 		httpx.SendJSONError(w, "Could not check your routes", http.StatusServiceUnavailable)
@@ -280,7 +278,7 @@ func (h *CustomDomainHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	found, err := h.state.Store.DeleteCustomDomainClaim(userID, domain)
+	found, err := h.d.Store.DeleteCustomDomainClaim(userID, domain)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not remove the domain", http.StatusInternalServerError)
 		return

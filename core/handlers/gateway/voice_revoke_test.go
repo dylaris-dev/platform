@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -97,13 +95,13 @@ func TestReconcileRevocationDoesNotWaitOnAHungNode(t *testing.T) {
 	reg.Register(7, "tok", node)
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	st := &handlers.AppState{Store: fs, GRPCRegistry: reg, Redis: rdb}
+
 	if err := services.PublishVoice(context.Background(), rdb, row); err != nil {
 		t.Fatal(err)
 	}
 
 	svc := services.NewVoiceService(fs, rdb)
-	svc.SetRevoke(func(ctx context.Context, srv *models.Server) error { return RevokeServerVoice(ctx, st, srv) })
+	svc.SetRevoke(func(ctx context.Context, srv *models.Server) error { return RevokeServerVoice(ctx, fs, rdb, reg, srv) })
 	done := make(chan error, 1)
 	go func() { done <- svc.Reconcile(context.Background()) }()
 	select {
@@ -154,7 +152,7 @@ func TestALateWriteBackDoesNotUndoAReEnable(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			st, _, node := voiceNodeState(t, &voiceWriteBackStore{row: c.row}, path, "svc_after.properties")
-			writeBackVoiceConfig(st, srv)
+			writeBackVoiceConfig(st.Store, st.GRPCRegistry, srv)
 			wrote := node.WriteCount() > 0
 			if wrote != c.wantWrite {
 				t.Fatalf("wrote = %v, want %v", wrote, c.wantWrite)

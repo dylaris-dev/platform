@@ -32,7 +32,7 @@ func (h *WarpHandler) GetDeployConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"config":  deployConfig(h.state),
+		"config":  deployConfig(h.d),
 	})
 }
 
@@ -51,17 +51,17 @@ func (h *WarpHandler) mayReadDeployConfig(r *http.Request) bool {
 	if reqctx.IsAdmin(r) {
 		return true
 	}
-	if h.state.FeatureFlags == nil {
+	if h.d.FeatureFlags == nil {
 		return true
 	}
 	ctx := r.Context()
-	byonOn := h.state.FeatureFlags.IsBYONEnabled(ctx)
-	routeOnlyOn := h.state.FeatureFlags.IsRouteOnlyEnabled(ctx)
+	byonOn := h.d.FeatureFlags.IsBYONEnabled(ctx)
+	routeOnlyOn := h.d.FeatureFlags.IsRouteOnlyEnabled(ctx)
 	if !byonOn && !routeOnlyOn {
 		return true
 	}
 	userID, _ := ctx.Value("userID").(string)
-	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, false)
+	ent, err := services.EffectiveEntitlement(h.d.Store, userID, time.Now(), h.d.StoreEnabled, false)
 	if err != nil {
 		log.Printf("deploy-config: could not resolve entitlement for %s: %v", userID, err)
 		return false

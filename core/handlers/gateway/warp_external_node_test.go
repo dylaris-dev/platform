@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -56,7 +54,7 @@ func (f *externalMintStore) DeleteWarpAPIKeyByID(id int) error {
 // node mint must not depend on the tenant feature.
 func newExternalMintHandler() (*WarpHandler, *externalMintStore) {
 	fs := &externalMintStore{settings: map[string]string{"routing_mode": "gateway", "feature_byon_enabled": "false"}}
-	state := &handlers.AppState{
+	state := Deps{
 		Store:              fs,
 		FeatureFlags:       services.NewFeatureFlags(fs),
 		Gateway:            services.NewRedisGateway(nil, fs, "cs"),

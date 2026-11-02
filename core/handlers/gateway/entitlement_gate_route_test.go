@@ -16,7 +16,7 @@ import (
 // the API while their link was down.
 func TestCreateLinkRoute_RefusedWhenSuspended(t *testing.T) {
 	state := newEntGateState(&store.UserBilling{Status: "suspended", MaxLinks: ptrI64(1)}, true)
-	h := &GatewayHandler{state: state}
+	h := &GatewayHandler{d: state}
 	req := httptest.NewRequest(http.MethodPost, "/api/gateway/link-routes",
 		strings.NewReader(`{"linkId":"link-x","subdomain":"a","targetHost":"127.0.0.1"}`))
 	req = req.WithContext(context.WithValue(req.Context(), "userID", "u1"))

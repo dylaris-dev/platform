@@ -62,9 +62,9 @@ func (h *DNSHandler) buildDNSCheckConfig() services.DNSCheckConfig {
 	}
 
 	// Hoster base domains from gateway_hoster_domains (same shape as
-	// GatewayHandler.loadGatewayDomainConfig / HosterDomain).
+	// GatewayHandler.loadGatewayDomainConfig / services.HosterDomain).
 	if raw, _ := h.state.Store.GetSetting("gateway_hoster_domains"); raw != "" {
-		var hosters []HosterDomain
+		var hosters []services.HosterDomain
 		if json.Unmarshal([]byte(raw), &hosters) == nil {
 			for _, hd := range hosters {
 				d := strings.ToLower(strings.TrimSpace(hd.Domain))

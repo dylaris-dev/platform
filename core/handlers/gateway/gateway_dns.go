@@ -15,8 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"dylaris-core/handlers"
 )
 
 // The DNS credential is entered in the panel and STORED IN THE GATEWAY HUB.
@@ -45,11 +43,11 @@ const hubProofPrincipal = "core"
 
 // GatewayDNSHandler forwards the panel's DNS settings to the gateway Hub.
 type GatewayDNSHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewGatewayDNSHandler(state *handlers.AppState) *GatewayDNSHandler {
-	return &GatewayDNSHandler{state: state}
+func NewGatewayDNSHandler(d Deps) *GatewayDNSHandler {
+	return &GatewayDNSHandler{d: d}
 }
 
 // dnsConfigPayload is the Hub's answer. Note the absence of a token field: the
@@ -191,7 +189,7 @@ func (h *GatewayDNSHandler) forward(w http.ResponseWriter, r *http.Request, body
 // forward() when the probe needed the same transport with a different answer
 // shape; there is one place that knows how to talk to the Hub.
 func (h *GatewayDNSHandler) callHub(w http.ResponseWriter, r *http.Request, body map[string]any) ([]byte, bool) {
-	hubURL := strings.TrimSpace(h.state.GatewayHubURL)
+	hubURL := strings.TrimSpace(h.d.GatewayHubURL)
 	if hubURL == "" {
 		// Not an error. A platform-only install has no gateway and no records to
 		// write, and the screen renders that state instead of a form that cannot
@@ -202,7 +200,7 @@ func (h *GatewayDNSHandler) callHub(w http.ResponseWriter, r *http.Request, body
 		})
 		return nil, false
 	}
-	if h.state.ClusterSecret == "" {
+	if h.d.ClusterSecret == "" {
 		dnsError(w, http.StatusServiceUnavailable, "CLUSTER_SECRET is not configured")
 		return nil, false
 	}
@@ -221,7 +219,7 @@ func (h *GatewayDNSHandler) callHub(w http.ResponseWriter, r *http.Request, body
 	ts := time.Now().Unix()
 	body["principal"] = hubProofPrincipal
 	body["ts"] = ts
-	body["proof"] = hubProof(h.state.ClusterSecret, hubProofPrincipal, ts)
+	body["proof"] = hubProof(h.d.ClusterSecret, hubProofPrincipal, ts)
 
 	payload, err := json.Marshal(body)
 	if err != nil {

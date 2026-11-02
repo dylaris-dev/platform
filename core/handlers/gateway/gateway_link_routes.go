@@ -74,7 +74,7 @@ func validateLocalTarget(host string) error {
 // none wherever it is, and absence is spelled by the row not existing.
 func (h *GatewayHandler) effectiveRouteLimit(userID string) *int64 {
 	for _, scope := range []string{storeclient.AdminRouteScope(userID), storeclient.UserRouteScope(userID), "user_default", "global"} {
-		l, err := h.state.Store.GetGatewayRouteLimit(scope)
+		l, err := h.d.Store.GetGatewayRouteLimit(scope)
 		if err != nil || l == nil {
 			continue // no row here: ask the next scope
 		}
@@ -111,13 +111,13 @@ type routeStats struct {
 // free - a tenant capped at N addresses could hold any number of them.
 func (h *GatewayHandler) ownerRouteStats(userID, domain string) (routeStats, error) {
 	var st routeStats
-	owned, err := services.OwnedServerUUIDs(h.state.Store, userID)
+	owned, err := services.OwnedServerUUIDs(h.d.Store, userID)
 	if err != nil {
 		return st, err
 	}
 	bases := h.ourBaseDomains()
 	domain = strings.ToLower(strings.TrimSpace(domain))
-	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
+	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.d.Redis) {
 		if !services.RouteHeldBy(rt, userID, owned) {
 			continue
 		}
@@ -139,7 +139,7 @@ func (h *GatewayHandler) ownerRouteStats(userID, domain string) (routeStats, err
 }
 
 func (h *GatewayHandler) customDomainCap() *int64 {
-	raw, _ := h.state.Store.GetSetting(services.SettingMaxCustomDomains)
+	raw, _ := h.d.Store.GetSetting(services.SettingMaxCustomDomains)
 	return services.ParseLimitSetting(raw, services.DefaultMaxCustomDomains)
 }
 
@@ -154,7 +154,7 @@ func (h *GatewayHandler) customDomainCapError(held int) string {
 
 // ourBaseDomains is the hoster list the route cap is measured against.
 func (h *GatewayHandler) ourBaseDomains() []string {
-	raw, _ := h.state.Store.GetSetting(services.HosterDomainsSettingKey)
+	raw, _ := h.d.Store.GetSetting(services.HosterDomainsSettingKey)
 	return services.HosterBaseDomains(raw)
 }
 
@@ -167,13 +167,13 @@ func (h *GatewayHandler) resolveOwnedLinkToken(userID, linkID string) (string, e
 	if linkID == "" {
 		return "", fmt.Errorf("link is required")
 	}
-	kits, err := h.state.Store.ListWarpAPIKeysByOwner(userID)
+	kits, err := h.d.Store.ListWarpAPIKeysByOwner(userID)
 	if err != nil {
 		return "", fmt.Errorf("failed to load your links")
 	}
 	for _, k := range kits {
 		if k.NodeID == linkID {
-			return h.state.Gateway.LinkToken(linkID), nil
+			return h.d.Gateway.LinkToken(linkID), nil
 		}
 	}
 	return "", fmt.Errorf("unknown link")
@@ -183,13 +183,13 @@ func (h *GatewayHandler) resolveOwnedLinkToken(userID, linkID string) (string, e
 // means the domain is already routed to someone else.
 func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userID").(string)
-	if !access.RouteOnlyActive(h.state.FeatureFlags, r) {
+	if !access.RouteOnlyActive(h.d.FeatureFlags, r) {
 		httpx.SendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
 		return
 	}
 	// The same gate minting a kit passes. Only the panel checked it before, so a
 	// suspended tenant could still claim addresses through the API.
-	if !guard.RequireEntitlement(r, w, guard.Entitlement{Store: h.state.Store, Flags: h.state.FeatureFlags, StoreEnabled: h.state.StoreEnabled, Storefront: storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}}, userID, services.EntitlementRouteOnly) {
+	if !guard.RequireEntitlement(r, w, guard.Entitlement{Store: h.d.Store, Flags: h.d.FeatureFlags, StoreEnabled: h.d.StoreEnabled, Storefront: storeclient.Client{URL: h.d.StoreURL, SharedKey: h.d.StoreSharedKey}}, userID, services.EntitlementRouteOnly) {
 		return
 	}
 
@@ -289,7 +289,7 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 		// fix rather than refuse.
 		host = "127.0.0.1"
 	}
-	if err := h.state.Gateway.CreateRouteViaLink(userID, finalDomain, linkToken, host, req.TargetPort); err != nil {
+	if err := h.d.Gateway.CreateRouteViaLink(userID, finalDomain, linkToken, host, req.TargetPort); err != nil {
 		msg := err.Error()
 		if errors.Is(err, services.ErrRouteDomainTaken) {
 			// Same wording the availability hint uses, and deliberately silent
@@ -318,14 +318,14 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 // meant the delete answered "Route not found" for something the panel had just
 // listed. The reverse gap is the create path's rollback window.
 func (h *GatewayHandler) ownsCoreRoute(userID, domain string) bool {
-	if rows, err := h.state.Store.ListCoreLinkRoutes(); err == nil {
+	if rows, err := h.d.Store.ListCoreLinkRoutes(); err == nil {
 		for _, rt := range rows {
 			if rt.Domain == domain && rt.OwnerID == userID {
 				return true
 			}
 		}
 	}
-	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
+	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.d.Redis) {
 		if rt.Domain == domain && rt.CoreOwned && rt.OwnerID == userID {
 			return true
 		}
@@ -343,10 +343,10 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 	// translation the edit form cannot show which link a route uses, and a save
 	// would quietly move it to whichever link happened to be selected.
 	linkIDByToken := map[string]string{}
-	if kits, err := h.state.Store.ListWarpAPIKeysByOwner(userID); err == nil {
+	if kits, err := h.d.Store.ListWarpAPIKeysByOwner(userID); err == nil {
 		for _, k := range kits {
 			if k.NodeID != "" {
-				linkIDByToken[h.state.Gateway.LinkToken(k.NodeID)] = k.NodeID
+				linkIDByToken[h.d.Gateway.LinkToken(k.NodeID)] = k.NodeID
 			}
 		}
 	}
@@ -367,7 +367,7 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 		BedrockActive  bool                 `json:"bedrock_active"`
 	}
 	voice := map[string]*store.LinkRouteVoice{}
-	if rows, err := h.state.Store.ListLinkRouteVoice(); err == nil {
+	if rows, err := h.d.Store.ListLinkRouteVoice(); err == nil {
 		for i := range rows {
 			voice[rows[i].Domain] = &rows[i]
 		}
@@ -377,7 +377,7 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 	allowed := h.linkRouteVoiceAllowed(userID)
 	var mine []services.GatewayRoute
 	var domains []string
-	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
+	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.d.Redis) {
 		if rt.CoreOwned && rt.OwnerID == userID {
 			mine = append(mine, rt)
 			domains = append(domains, rt.Domain)
@@ -388,7 +388,7 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 		bedrock = h.linkRouteBedrockViews(h.ctx(), domains)
 	}
 	bedrockAllowed := h.bedrockAllowed(r)
-	bedrockActive := services.BedrockActive(r.Context(), h.state.FeatureFlags)
+	bedrockActive := services.BedrockActive(r.Context(), h.d.FeatureFlags)
 	out := make([]linkRoute, 0, len(mine))
 	for _, rt := range mine {
 		out = append(out, linkRoute{PublicRoute: rt.Public(), LinkID: linkIDByToken[rt.TunnelID],
@@ -411,15 +411,15 @@ func (h *GatewayHandler) DeleteLinkRoute(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Route not found", http.StatusNotFound)
 		return
 	}
-	if err := h.state.Gateway.DeleteCoreOwnedRoute(domain); err != nil {
+	if err := h.d.Gateway.DeleteCoreOwnedRoute(domain); err != nil {
 		http.Error(w, "Failed to delete route", http.StatusInternalServerError)
 		return
 	}
 	// Its editions row went with the route (cascade); tell the gateway now
 	// rather than at the next reconcile, so a domain registered again at once
 	// starts as Java only. Best-effort: the reconcile repeats it.
-	if h.state.Redis != nil {
-		if err := h.bedrockService().PublishEditions(h.ctx(), services.BedrockActive(r.Context(), h.state.FeatureFlags)); err != nil {
+	if h.d.Redis != nil {
+		if err := h.bedrockService().PublishEditions(h.ctx(), services.BedrockActive(r.Context(), h.d.FeatureFlags)); err != nil {
 			log.Printf("link route %s: publish editions: %v", domain, err)
 		}
 	}
@@ -442,7 +442,7 @@ func (h *GatewayHandler) SetLinkRouteProxyProtocol(w http.ResponseWriter, r *htt
 		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
-	if msg := guard.OwnerRefusal(h.state.Store, h.state.SuspendGrace, r, userID); msg != "" {
+	if msg := guard.OwnerRefusal(h.d.Store, h.d.SuspendGrace, r, userID); msg != "" {
 		httpx.SendJSONError(w, msg, http.StatusForbidden)
 		return
 	}
@@ -457,7 +457,7 @@ func (h *GatewayHandler) SetLinkRouteProxyProtocol(w http.ResponseWriter, r *htt
 	if enabled && h.proxyProtocolNoLink(w, r, func(rt services.GatewayRoute) bool { return rt.Domain == domain }) {
 		return
 	}
-	if err := h.state.Gateway.SetCoreOwnedRouteProxyProtocol(domain, enabled); err != nil {
+	if err := h.d.Gateway.SetCoreOwnedRouteProxyProtocol(domain, enabled); err != nil {
 		if errors.Is(err, services.ErrRouteNotStored) {
 			httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 			return

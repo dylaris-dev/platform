@@ -83,7 +83,7 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
-	prior, err := h.state.Store.GetLinkRouteEdition(domain)
+	prior, err := h.d.Store.GetLinkRouteEdition(domain)
 	if err != nil {
 		log.Printf("bedrock: link route %s: %v", domain, err)
 		httpx.SendJSONError(w, "Failed to read the Bedrock setting", http.StatusInternalServerError)
@@ -96,21 +96,21 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 			httpx.SendJSONErrorCode(w, bedrockOff, "bedrock_disabled", http.StatusConflict)
 			return
 		}
-		if msg := guard.OwnerRefusal(h.state.Store, h.state.SuspendGrace, r, rt.OwnerID); msg != "" {
+		if msg := guard.OwnerRefusal(h.d.Store, h.d.SuspendGrace, r, rt.OwnerID); msg != "" {
 			httpx.SendJSONError(w, msg, http.StatusForbidden)
 			return
 		}
-		if !services.GatewayRoutingEnabled(h.state.Store) || h.state.Redis == nil {
+		if !services.GatewayRoutingEnabled(h.d.Store) || h.d.Redis == nil {
 			gate.GatewayDisabledResponse(w)
 			return
 		}
-		entries, err := services.LiveBedrockEntries(ctx, h.state.Redis)
+		entries, err := services.LiveBedrockEntries(ctx, h.d.Redis)
 		if err != nil {
 			log.Printf("bedrock: link route %s: %v", domain, err)
 			httpx.SendJSONError(w, "Could not check the Bedrock entries. Try again.", http.StatusBadGateway)
 			return
 		}
-		if refusal := linkRouteBedrockRefusal(domain, services.GetEdgesFromRedis(ctx, h.state.Redis), entries); refusal != "" {
+		if refusal := linkRouteBedrockRefusal(domain, services.GetEdgesFromRedis(ctx, h.d.Redis), entries); refusal != "" {
 			httpx.SendJSONErrorCode(w, refusal, "bedrock_unavailable", http.StatusConflict)
 			return
 		}
@@ -125,12 +125,12 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Failed to create the Floodgate key", http.StatusInternalServerError)
 		return
 	}
-	if err := h.state.Store.SetLinkRouteEdition(domain, *req.Java, *req.Bedrock, key); err != nil {
+	if err := h.d.Store.SetLinkRouteEdition(domain, *req.Java, *req.Bedrock, key); err != nil {
 		log.Printf("bedrock: link route %s: %v", domain, err)
 		httpx.SendJSONError(w, "Failed to save the route", http.StatusInternalServerError)
 		return
 	}
-	if err := h.bedrockService().PublishEditions(ctx, services.BedrockActive(r.Context(), h.state.FeatureFlags)); err != nil {
+	if err := h.bedrockService().PublishEditions(ctx, services.BedrockActive(r.Context(), h.d.FeatureFlags)); err != nil {
 		log.Printf("bedrock: link route %s: publish editions: %v", domain, err)
 		httpx.SendJSONError(w, "The route was saved, but the gateway could not be told yet. It applies within a minute.", http.StatusBadGateway)
 		return
@@ -150,7 +150,7 @@ func (h *GatewayHandler) GetLinkRouteFloodgateKey(w http.ResponseWriter, r *http
 		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
-	e, err := h.state.Store.GetLinkRouteEdition(domain)
+	e, err := h.d.Store.GetLinkRouteEdition(domain)
 	if err != nil {
 		log.Printf("bedrock: link route %s: key: %v", domain, err)
 		httpx.SendJSONError(w, "Failed to read the Floodgate key", http.StatusInternalServerError)
@@ -175,15 +175,15 @@ func (h *GatewayHandler) GetLinkRouteFloodgateKey(w http.ResponseWriter, r *http
 // address's stored editions and, when Bedrock cannot be added, why.
 func (h *GatewayHandler) linkRouteBedrockViews(ctx context.Context, domains []string) map[string]linkRouteBedrockView {
 	stored := map[string]store.LinkRouteEdition{}
-	if rows, err := h.state.Store.ListLinkRouteEditions(); err == nil {
+	if rows, err := h.d.Store.ListLinkRouteEditions(); err == nil {
 		for _, e := range rows {
 			stored[e.Domain] = e
 		}
 	} else {
 		log.Printf("bedrock: list link route editions: %v", err)
 	}
-	edges := services.GetEdgesFromRedis(ctx, h.state.Redis)
-	entries, err := services.LiveBedrockEntries(ctx, h.state.Redis)
+	edges := services.GetEdgesFromRedis(ctx, h.d.Redis)
+	entries, err := services.LiveBedrockEntries(ctx, h.d.Redis)
 	if err != nil {
 		log.Printf("bedrock: link routes: %v", err)
 	}

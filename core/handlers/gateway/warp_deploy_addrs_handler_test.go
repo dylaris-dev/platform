@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services"
 )
 
@@ -26,7 +25,7 @@ func TestGetDeployConfigCarriesTheGRPCPinOnlyWhileTLSIsOn(t *testing.T) {
 		{"TLS off", false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewWarpHandler(&handlers.AppState{GRPCTLSEnabled: tc.enabled, GRPCTLSFingerprint: "ab12cd34"}, nil)
+			h := NewWarpHandler(Deps{GRPCTLSEnabled: tc.enabled, GRPCTLSFingerprint: "ab12cd34"}, nil)
 			rec := httptest.NewRecorder()
 			h.GetDeployConfig(rec, httptest.NewRequest(http.MethodGet, "/api/warp/deploy-config", nil))
 

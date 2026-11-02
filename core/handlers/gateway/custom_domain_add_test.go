@@ -12,7 +12,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -72,7 +71,7 @@ func TestAddingADomainReturnsTheRecordAndServesNothing(t *testing.T) {
 		"gateway_custom_domains_enabled": "true",
 		"gateway_hoster_domains":         `[{"domain":"eu.dylaris.com","validation":"letters"}]`,
 	}}
-	h := NewCustomDomainHandler(&handlers.AppState{Store: fs}, noTXT{})
+	h := NewCustomDomainHandler(Deps{Store: fs}, noTXT{})
 
 	rec := userCall(h.Add, "/api/gateway/custom-domains", `{"domain":"play.example.com"}`)
 	var out struct {
@@ -101,7 +100,7 @@ func TestManualCheckHasACooldownAndNeverBlocks(t *testing.T) {
 	fs := &addFakeStore{settings: map[string]string{}, claims: map[string]*store.CustomDomainClaim{
 		"play.example.com": {ID: 1, Domain: "play.example.com", State: store.ClaimPending, TXTToken: "dylaris-verify=abc"},
 	}}
-	h := NewCustomDomainHandler(&handlers.AppState{Store: fs, Redis: rdb}, noTXT{})
+	h := NewCustomDomainHandler(Deps{Store: fs, Redis: rdb}, noTXT{})
 	path := "/api/gateway/custom-domains/play.example.com/verify-txt"
 	verify := func() int {
 		r := httptest.NewRequest(http.MethodPost, path, nil)
@@ -145,7 +144,7 @@ func TestRemovingADomain(t *testing.T) {
 		"mc.example.com":   {ID: 2, Domain: "mc.example.com", State: store.ClaimPending},
 	}}
 	seedLinkRoute(t, rdb, "play.example.com", services.GatewayRoute{CoreOwned: true, OwnerID: "u1"})
-	h := NewCustomDomainHandler(&handlers.AppState{Store: fs, Redis: rdb}, noTXT{})
+	h := NewCustomDomainHandler(Deps{Store: fs, Redis: rdb}, noTXT{})
 	del := func(domain string) int {
 		r := httptest.NewRequest(http.MethodDelete, "/api/gateway/custom-domains/"+domain, nil)
 		r = mux.SetURLVars(r, map[string]string{"domain": domain})

@@ -10,7 +10,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	nodegrpc "dylaris-core/grpc"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -35,12 +34,12 @@ func decodeCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 // newEntGateState builds a BYON-on state. storeEnabled is what separates a
 // hosted install (entitlement required) from a self-host one (everything
 // allowed), and getting it wrong in either direction is the whole risk here.
-func newEntGateState(billing *store.UserBilling, storeEnabled bool) *handlers.AppState {
+func newEntGateState(billing *store.UserBilling, storeEnabled bool) Deps {
 	fs := &entGateStore{
 		settings: map[string]string{"feature_byon_enabled": "true"},
 		billing:  billing,
 	}
-	return &handlers.AppState{
+	return Deps{
 		Store:        fs,
 		FeatureFlags: services.NewFeatureFlags(fs),
 		StoreEnabled: storeEnabled,
@@ -80,10 +79,10 @@ func (f *entGateStore) CreateNodeEnrollToken(string, string, string, *time.Time,
 
 func ptrI64(i int64) *int64 { return &i }
 
-func voiceNodeState(t *testing.T, fs store.Store, path, fixture string) (*handlers.AppState, *miniredis.Miniredis, *handlertest.VoiceNode) {
+func voiceNodeState(t *testing.T, fs store.Store, path, fixture string) (Deps, *miniredis.Miniredis, *handlertest.VoiceNode) {
 	t.Helper()
 	reg := nodegrpc.NewRegistry()
 	node := handlertest.NewVoiceNode(t, reg, path, fixture)
 	mr := miniredis.RunT(t)
-	return &handlers.AppState{Store: fs, GRPCRegistry: reg, Redis: redis.NewClient(&redis.Options{Addr: mr.Addr()})}, mr, node
+	return Deps{Store: fs, GRPCRegistry: reg, Redis: redis.NewClient(&redis.Options{Addr: mr.Addr()})}, mr, node
 }

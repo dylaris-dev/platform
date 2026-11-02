@@ -500,7 +500,7 @@ func main() {
 	voiceService := services.NewVoiceService(pgStore, redisClient)
 	voiceService.SetLeader(coreLeader)
 	voiceService.SetRevoke(func(ctx context.Context, srv *models.Server) error {
-		return gateway.RevokeServerVoice(ctx, appState, srv)
+		return gateway.RevokeServerVoice(ctx, appState.Store, appState.Redis, appState.GRPCRegistry, srv)
 	})
 	voiceService.Start(bgCtx)
 

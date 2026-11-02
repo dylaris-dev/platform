@@ -7,9 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
@@ -39,7 +38,7 @@ func (f *gatewayDomainFakeStore) GetGatewayRouteLimit(scope string) (*models.Gat
 }
 
 func newGatewayDomainHandler(settings map[string]string) *GatewayHandler {
-	return &GatewayHandler{state: &handlers.AppState{Store: &gatewayDomainFakeStore{settings: settings}}}
+	return &GatewayHandler{d: Deps{Store: &gatewayDomainFakeStore{settings: settings}}}
 }
 
 // routeDomainReqT names the exact anonymous struct type resolveRouteDomain
@@ -64,7 +63,7 @@ func routeDomainReq(domain, subdomain, hosterDomain, customDomain string, target
 	}{Domain: domain, Subdomain: subdomain, HosterDomain: hosterDomain, CustomDomain: customDomain, TargetPort: targetPort}
 }
 
-func hosterDomainsJSON(t *testing.T, hosters []handlers.HosterDomain) string {
+func hosterDomainsJSON(t *testing.T, hosters []services.HosterDomain) string {
 	t.Helper()
 	b, err := json.Marshal(hosters)
 	if err != nil {
@@ -77,7 +76,7 @@ func hosterDomainsJSON(t *testing.T, hosters []handlers.HosterDomain) string {
 // custom-domain, legacy-raw) plus the reserved-label and label-count guards.
 func TestResolveRouteDomain(t *testing.T) {
 	hostersJSON := func(t *testing.T) string {
-		return hosterDomainsJSON(t, []handlers.HosterDomain{{Domain: "dylaris.com", Validation: "dns"}})
+		return hosterDomainsJSON(t, []services.HosterDomain{{Domain: "dylaris.com", Validation: "dns"}})
 	}
 
 	t.Run("valid hoster subdomain", func(t *testing.T) {
@@ -344,7 +343,7 @@ func TestEffectiveRouteLimit(t *testing.T) {
 }
 
 func newGatewayDomainHandlerWithLimits(limits map[string]*models.GatewayRouteLimit) *GatewayHandler {
-	return &GatewayHandler{state: &handlers.AppState{Store: &gatewayDomainFakeStore{routeLimits: limits}}}
+	return &GatewayHandler{d: Deps{Store: &gatewayDomainFakeStore{routeLimits: limits}}}
 }
 
 // --- ServerHandler.isSnapshotFetchHostAllowed (SSRF allowlist) ---
@@ -444,7 +443,7 @@ func TestDefaultBlockedPrefixesReserveTheHostersOwnNames(t *testing.T) {
 // the two real paths it belongs to, and answers to that path's rules.
 func TestRawDomainFromATenantIsNotAThirdPath(t *testing.T) {
 	hosters := func(t *testing.T) string {
-		return hosterDomainsJSON(t, []handlers.HosterDomain{{Domain: "eu.dylaris.com", Validation: "letters"}})
+		return hosterDomainsJSON(t, []services.HosterDomain{{Domain: "eu.dylaris.com", Validation: "letters"}})
 	}
 
 	t.Run("foreign domain is refused while custom domains are off", func(t *testing.T) {
@@ -550,7 +549,7 @@ func TestRawDomainFromATenantIsNotAThirdPath(t *testing.T) {
 // refused. Names the old pattern let through - empty labels, edge hyphens, a
 // single label, a wildcard - are refused on the admin's raw path too.
 func TestRouteDomainsAreNormalisedAndStrict(t *testing.T) {
-	hosters := hosterDomainsJSON(t, []handlers.HosterDomain{{Domain: "dylaris.com", Validation: "dns"}})
+	hosters := hosterDomainsJSON(t, []services.HosterDomain{{Domain: "dylaris.com", Validation: "dns"}})
 	h := newGatewayDomainHandler(map[string]string{
 		"gateway_hoster_domains":         hosters,
 		"gateway_custom_domains_enabled": "true",

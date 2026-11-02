@@ -2,14 +2,13 @@ package gateway
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"dylaris-core/handlers"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -30,7 +29,7 @@ func TestGatewayBandwidthGetHistory_ShapeAndRange(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"time", "component", "id", "host", "region", "rx_bps", "tx_bps", "cap_mbit"}).
 			AddRow(t0, "warp", "eu-1", "web-eu-1", "eu", int64(100), int64(200), 1000))
 
-	h := NewGatewayBandwidthHandler(&handlers.AppState{Store: st})
+	h := NewGatewayBandwidthHandler(Deps{Store: st})
 	req := httptest.NewRequest(http.MethodGet, "/api/gateway-bandwidth/history?range=6h&host=web-eu-1", nil)
 	rw := httptest.NewRecorder()
 	h.GetHistory(rw, req)
@@ -116,7 +115,7 @@ func TestALongWindowDoesNotTouchTheRawTable(t *testing.T) {
 	}
 	defer db.Close()
 	// No ExpectQuery at all: any query against the store fails the mock.
-	h := NewGatewayBandwidthHandler(&handlers.AppState{Store: store.NewPostgresStore(db)})
+	h := NewGatewayBandwidthHandler(Deps{Store: store.NewPostgresStore(db)})
 	rw := httptest.NewRecorder()
 	h.GetHistory(rw, httptest.NewRequest(http.MethodGet, "/api/gateway-bandwidth/history?range=7d", nil))
 
@@ -146,7 +145,7 @@ func TestALongWindowDoesNotTouchTheRawTable(t *testing.T) {
 }
 
 func TestGatewayBandwidthGetHistory_NoStore(t *testing.T) {
-	h := NewGatewayBandwidthHandler(&handlers.AppState{})
+	h := NewGatewayBandwidthHandler(Deps{})
 	rw := httptest.NewRecorder()
 	h.GetHistory(rw, httptest.NewRequest(http.MethodGet, "/api/gateway-bandwidth/history", nil))
 	if rw.Code != http.StatusServiceUnavailable {
@@ -177,7 +176,7 @@ func rebalanceReq(body string) *http.Request {
 
 func TestGatewayBandwidthSetRebalanceMode_Armed(t *testing.T) {
 	fs := &rebalanceFakeStore{}
-	h := NewGatewayBandwidthHandler(&handlers.AppState{Store: fs, FeatureFlags: services.NewFeatureFlags(nil)})
+	h := NewGatewayBandwidthHandler(Deps{Store: fs, FeatureFlags: services.NewFeatureFlags(nil)})
 
 	rw := httptest.NewRecorder()
 	h.SetRebalanceMode(rw, rebalanceReq(`{"mode":"armed"}`))
@@ -202,7 +201,7 @@ func TestGatewayBandwidthSetRebalanceMode_Armed(t *testing.T) {
 
 func TestGatewayBandwidthSetRebalanceMode_RejectsUnknownMode(t *testing.T) {
 	fs := &rebalanceFakeStore{}
-	h := NewGatewayBandwidthHandler(&handlers.AppState{Store: fs, FeatureFlags: services.NewFeatureFlags(nil)})
+	h := NewGatewayBandwidthHandler(Deps{Store: fs, FeatureFlags: services.NewFeatureFlags(nil)})
 
 	rw := httptest.NewRecorder()
 	h.SetRebalanceMode(rw, rebalanceReq(`{"mode":"bogus"}`))
@@ -217,7 +216,7 @@ func TestGatewayBandwidthSetRebalanceMode_RejectsUnknownMode(t *testing.T) {
 
 func TestGatewayBandwidthSetRebalanceMode_InvalidJSON(t *testing.T) {
 	fs := &rebalanceFakeStore{}
-	h := NewGatewayBandwidthHandler(&handlers.AppState{Store: fs, FeatureFlags: services.NewFeatureFlags(nil)})
+	h := NewGatewayBandwidthHandler(Deps{Store: fs, FeatureFlags: services.NewFeatureFlags(nil)})
 
 	rw := httptest.NewRecorder()
 	h.SetRebalanceMode(rw, rebalanceReq(`{not json`))
@@ -232,12 +231,44 @@ func TestGatewayBandwidthSetRebalanceMode_InvalidJSON(t *testing.T) {
 
 func TestGatewayBandwidthSetRebalanceMode_StoreErrorIs500(t *testing.T) {
 	fs := &rebalanceFakeStore{setErr: errors.New("db down")}
-	h := NewGatewayBandwidthHandler(&handlers.AppState{Store: fs, FeatureFlags: services.NewFeatureFlags(nil)})
+	h := NewGatewayBandwidthHandler(Deps{Store: fs, FeatureFlags: services.NewFeatureFlags(nil)})
 
 	rw := httptest.NewRecorder()
 	h.SetRebalanceMode(rw, rebalanceReq(`{"mode":"off"}`))
 
 	if rw.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500: %s", rw.Code, rw.Body.String())
+	}
+}
+
+// With long-term recording on, a long window is read from that pool: the
+// handler asks LongTermRead per request and does not explain an empty chart
+// as "not recording".
+func TestALongWindowReadsTheLongTermPool(t *testing.T) {
+	raw, rawMock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer raw.Close()
+	lt, _, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer lt.Close()
+	asked := 0
+	h := NewGatewayBandwidthHandler(Deps{Store: store.NewPostgresStore(raw), LongTermRead: func() *sql.DB { asked++; return lt }})
+	rw := httptest.NewRecorder()
+	h.GetHistory(rw, httptest.NewRequest(http.MethodGet, "/api/gateway-bandwidth/history?range=7d", nil))
+	var body struct {
+		Note string `json:"note"`
+	}
+	if err := json.NewDecoder(rw.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if asked != 1 || body.Note != "" {
+		t.Fatalf("asked the long-term pool %d times, note %q: want once and no 'not recording' note", asked, body.Note)
+	}
+	if err := rawMock.ExpectationsWereMet(); err != nil {
+		t.Errorf("the raw table was queried: %v", err)
 	}
 }

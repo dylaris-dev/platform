@@ -5,7 +5,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -24,7 +23,7 @@ func TestASuspendedOwnerCannotClaimAnAddress(t *testing.T) {
 				services.HosterDomainsSettingKey: `[{"domain":"example.com","validation":"dns"}]`,
 			}, servers: map[string][]models.Server{linkRouteUserID: {{ID: 1, UUID: "srv-1"}}}}}
 			gw := &linkRouteFakeGateway{}
-			h := &GatewayHandler{state: &handlers.AppState{Store: fs, Gateway: gw, Redis: rdb, FeatureFlags: services.NewFeatureFlags(routeOnlyOnFlags{})}}
+			h := &GatewayHandler{d: Deps{Store: fs, Gateway: gw, Redis: rdb, FeatureFlags: services.NewFeatureFlags(routeOnlyOnFlags{})}}
 			rec := httptest.NewRecorder()
 			h.CreateServerRoute(rec, serverRouteReq(linkRouteUserID, false, map[string]interface{}{
 				"domain": "new.example.com", "targetPort": 25565,

@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -173,7 +171,7 @@ func (f *linkRouteFakeStore) GetUserBilling(userID string) (*store.UserBilling, 
 }
 
 func newLinkRouteHandler(fs *linkRouteFakeStore, gw *linkRouteFakeGateway, rdb *redis.Client) *GatewayHandler {
-	return &GatewayHandler{state: &handlers.AppState{Store: fs, Gateway: gw, Redis: rdb, FeatureFlags: services.NewFeatureFlags(routeOnlyOnFlags{})}}
+	return &GatewayHandler{d: Deps{Store: fs, Gateway: gw, Redis: rdb, FeatureFlags: services.NewFeatureFlags(routeOnlyOnFlags{})}}
 }
 
 func linkRouteReq(userID string, body map[string]interface{}) *http.Request {

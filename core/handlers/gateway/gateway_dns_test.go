@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"dylaris-core/handlers"
 )
 
 // The rule this decides: Core's proof is byte-identical to what the gateway Hub
@@ -56,7 +54,7 @@ func TestHubProofBindsEveryInput(t *testing.T) {
 // A platform-only install has no gateway, no relay and no records to write. An
 // error there would send an admin looking for a broken hub they never deployed.
 func TestForwardWithoutAHubReportsUnavailable(t *testing.T) {
-	h := NewGatewayDNSHandler(&handlers.AppState{ClusterSecret: "secret"})
+	h := NewGatewayDNSHandler(Deps{ClusterSecret: "secret"})
 	rec := httptest.NewRecorder()
 	h.Get(rec, httptest.NewRequest(http.MethodGet, "/api/settings/gateway/dns", nil))
 
@@ -98,7 +96,7 @@ func TestSaveForwardsASignedRequest(t *testing.T) {
 	}))
 	defer hub.Close()
 
-	h := NewGatewayDNSHandler(&handlers.AppState{ClusterSecret: secret, GatewayHubURL: hub.URL})
+	h := NewGatewayDNSHandler(Deps{ClusterSecret: secret, GatewayHubURL: hub.URL})
 	req := httptest.NewRequest(http.MethodPut, "/api/settings/gateway/dns",
 		strings.NewReader(`{"provider":" cloudflare ","token":"cf-token","zones":["example.com"],"enabled":true}`))
 	rec := httptest.NewRecorder()
@@ -142,7 +140,7 @@ func TestHubRejectionIsPassedThrough(t *testing.T) {
 	}))
 	defer hub.Close()
 
-	h := NewGatewayDNSHandler(&handlers.AppState{ClusterSecret: "s", GatewayHubURL: hub.URL})
+	h := NewGatewayDNSHandler(Deps{ClusterSecret: "s", GatewayHubURL: hub.URL})
 	rec := httptest.NewRecorder()
 	h.Save(rec, httptest.NewRequest(http.MethodPut, "/x", strings.NewReader(`{"enabled":true}`)))
 
@@ -163,7 +161,7 @@ func TestClusterSecretMismatchSaysSo(t *testing.T) {
 	}))
 	defer hub.Close()
 
-	h := NewGatewayDNSHandler(&handlers.AppState{ClusterSecret: "s", GatewayHubURL: hub.URL})
+	h := NewGatewayDNSHandler(Deps{ClusterSecret: "s", GatewayHubURL: hub.URL})
 	rec := httptest.NewRecorder()
 	h.Get(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
 
@@ -174,7 +172,7 @@ func TestClusterSecretMismatchSaysSo(t *testing.T) {
 
 // An unreachable Hub must not read as a bad request from the admin.
 func TestUnreachableHubIsABadGateway(t *testing.T) {
-	h := NewGatewayDNSHandler(&handlers.AppState{ClusterSecret: "s", GatewayHubURL: "http://127.0.0.1:1"})
+	h := NewGatewayDNSHandler(Deps{ClusterSecret: "s", GatewayHubURL: "http://127.0.0.1:1"})
 	rec := httptest.NewRecorder()
 	h.Get(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
 
@@ -194,7 +192,7 @@ func TestTokenIsNeverRelayedToTheBrowser(t *testing.T) {
 	}))
 	defer hub.Close()
 
-	h := NewGatewayDNSHandler(&handlers.AppState{ClusterSecret: "s", GatewayHubURL: hub.URL})
+	h := NewGatewayDNSHandler(Deps{ClusterSecret: "s", GatewayHubURL: hub.URL})
 	rec := httptest.NewRecorder()
 	h.Get(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
 
@@ -222,7 +220,7 @@ func TestSaveForwardsTheCertificateHalf(t *testing.T) {
 	}))
 	defer hub.Close()
 
-	h := NewGatewayDNSHandler(&handlers.AppState{ClusterSecret: "s", GatewayHubURL: hub.URL})
+	h := NewGatewayDNSHandler(Deps{ClusterSecret: "s", GatewayHubURL: hub.URL})
 	rec := httptest.NewRecorder()
 	h.Save(rec, httptest.NewRequest(http.MethodPut, "/x", strings.NewReader(
 		`{"provider":"cloudflare","zones":["example.com"],"enabled":true,`+
@@ -261,7 +259,7 @@ func TestCertStatusIsRelayed(t *testing.T) {
 	}))
 	defer hub.Close()
 
-	h := NewGatewayDNSHandler(&handlers.AppState{ClusterSecret: "s", GatewayHubURL: hub.URL})
+	h := NewGatewayDNSHandler(Deps{ClusterSecret: "s", GatewayHubURL: hub.URL})
 	rec := httptest.NewRecorder()
 	h.Get(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
 

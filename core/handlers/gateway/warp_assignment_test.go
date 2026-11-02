@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -82,7 +80,7 @@ func newTestWarpHandlerWithPeer(t *testing.T, keyID int, pubkey, region, leaderI
 		hash:          services.HashAPIKey(fmt.Sprintf("PLAINTEXT-FOR-KEY-%d", keyID)),
 	}
 	svc := services.NewWarpService(fs, rdb, "test-secret")
-	state := &handlers.AppState{Store: fs, Redis: rdb}
+	state := Deps{Store: fs, Redis: rdb}
 	return NewWarpHandler(state, svc)
 }
 
@@ -116,7 +114,7 @@ func newTestWarpHandlerWithForeignPeer(t *testing.T, authKeyID, foreignKeyID int
 		hash:          services.HashAPIKey(fmt.Sprintf("PLAINTEXT-FOR-KEY-%d", authKeyID)),
 	}
 	svc := services.NewWarpService(fs, rdb, "test-secret")
-	state := &handlers.AppState{Store: fs, Redis: rdb}
+	state := Deps{Store: fs, Redis: rdb}
 	return NewWarpHandler(state, svc)
 }
 

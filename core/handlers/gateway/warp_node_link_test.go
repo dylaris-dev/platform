@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
@@ -117,7 +115,7 @@ func newNodeLinkHandler(t *testing.T) (*WarpHandler, *nodeLinkFakeStore, []byte)
 	if err != nil {
 		t.Fatalf("mint the node secret: %v", err)
 	}
-	state := &handlers.AppState{
+	state := Deps{
 		Store:         fs,
 		Redis:         rdb,
 		FeatureFlags:  services.NewFeatureFlags(fs),
@@ -261,7 +259,7 @@ func TestLinkBoot_RouteOnlyKeyGetsATokenAndNoRedisLogin(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got["mode"] != "core" || got["link_id"] != "link-xyz" || got["link_token"] != h.state.Gateway.LinkToken("link-xyz") {
+	if got["mode"] != "core" || got["link_id"] != "link-xyz" || got["link_token"] != h.d.Gateway.LinkToken("link-xyz") {
 		t.Errorf("answer %v, want mode core, the kit id and its derived token", got)
 	}
 	for _, k := range []string{"redis_user", "redis_pass", "redis_db", "redis_addr", "node_id"} {

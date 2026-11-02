@@ -1,12 +1,11 @@
 package gateway
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
 	"time"
-
-	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
@@ -16,17 +15,17 @@ import (
 // from the F0 Redis mirror and history from gateway_bandwidth_stats. Admin-gated
 // (settings.read) at the route.
 type GatewayBandwidthHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewGatewayBandwidthHandler(state *handlers.AppState) *GatewayBandwidthHandler {
-	return &GatewayBandwidthHandler{state: state}
+func NewGatewayBandwidthHandler(d Deps) *GatewayBandwidthHandler {
+	return &GatewayBandwidthHandler{d: d}
 }
 
 // GetOverview GET /api/gateway-bandwidth/overview
 // Live per-component + per-host utilisation and sustained-threshold alerts.
 func (h *GatewayBandwidthHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
-	ov := services.LoadGatewayBandwidthOverview(r.Context(), h.state.Redis, h.state.Store, time.Now())
+	ov := services.LoadGatewayBandwidthOverview(r.Context(), h.d.Redis, h.d.Store, time.Now())
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ov)
 }
@@ -70,7 +69,7 @@ func bandwidthRange(name string) (window, step time.Duration) {
 // the screen could only chart one host at a time and had nothing to draw a
 // per-component sparkline from.
 func (h *GatewayBandwidthHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -83,19 +82,22 @@ func (h *GatewayBandwidthHandler) GetHistory(w http.ResponseWriter, r *http.Requ
 	// recording and an empty chart because a database is down are the same
 	// picture and opposite problems.
 	if window > services.RawRetention {
-		handle := h.state.Metrics.Handle()
-		if handle == nil || handle.Read == nil {
+		var read *sql.DB
+		if h.d.LongTermRead != nil {
+			read = h.d.LongTermRead()
+		}
+		if read == nil {
 			writeBandwidthHistory(w, services.BandwidthHistory{
 				StepSec: int(step / time.Second), Components: []services.BandwidthSeries{}, Hosts: []services.BandwidthSeries{},
 			}, "Windows longer than 24 hours come from the long-term statistics database, which is not recording. Turn it on in Settings, Features.")
 			return
 		}
-		out := services.LongTermBandwidth(r.Context(), handle.Read, now.Add(-window), now, step)
+		out := services.LongTermBandwidth(r.Context(), read, now.Add(-window), now, step)
 		writeBandwidthHistory(w, out, "")
 		return
 	}
 
-	rows, err := h.state.Store.GetGatewayBandwidthHistory(now.Add(-window), r.URL.Query().Get("component"), r.URL.Query().Get("host"))
+	rows, err := h.d.Store.GetGatewayBandwidthHistory(now.Add(-window), r.URL.Query().Get("component"), r.URL.Query().Get("host"))
 	if err != nil {
 		rows = nil
 	}
@@ -119,7 +121,7 @@ func writeBandwidthHistory(w http.ResponseWriter, out services.BandwidthHistory,
 // GetRebalance handles GET /api/gateway-bandwidth/rebalance - the F3 rebalancer
 // mode + recent decision feed. Admin-gated at the route (settings.read).
 func (h *GatewayBandwidthHandler) GetRebalance(w http.ResponseWriter, r *http.Request) {
-	view := services.LoadRebalanceView(r.Context(), h.state.Redis, h.state.FeatureFlags)
+	view := services.LoadRebalanceView(r.Context(), h.d.Redis, h.d.FeatureFlags)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(view)
 }
@@ -142,12 +144,12 @@ func (h *GatewayBandwidthHandler) SetRebalanceMode(w http.ResponseWriter, r *htt
 		httpx.SendJSONError(w, "mode must be off, dry-run, or armed", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetSetting("warp_rebalance_mode", req.Mode); err != nil {
+	if err := h.d.Store.SetSetting("warp_rebalance_mode", req.Mode); err != nil {
 		log.Printf("set warp_rebalance_mode: %v", err)
 		httpx.SendJSONError(w, "Failed to save mode", http.StatusInternalServerError)
 		return
 	}
-	h.state.FeatureFlags.Invalidate("warp_rebalance_mode")
+	h.d.FeatureFlags.Invalidate("warp_rebalance_mode")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "mode": req.Mode})
 }

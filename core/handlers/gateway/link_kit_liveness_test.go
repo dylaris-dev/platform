@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -48,7 +46,7 @@ func listKits(t *testing.T, rdb *redis.Client, kitIDs ...string) []kitRow {
 	for i, id := range kitIDs {
 		fs.keys = append(fs.keys, store.WarpAPIKey{ID: i + 1, Name: id, NodeID: id, OwnerID: "alice", CreatedAt: time.Now()})
 	}
-	state := &handlers.AppState{
+	state := Deps{
 		Store:        fs,
 		FeatureFlags: services.NewFeatureFlags(fs),
 		Gateway:      services.NewRedisGateway(rdb, fs, "cs"),

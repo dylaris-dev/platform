@@ -1,5 +1,13 @@
 package services
 
+// HosterDomain is one of the platform-provided base domains under which a
+// user can register a route by entering only a subdomain. The validation
+// mode controls what characters are accepted in that subdomain field.
+type HosterDomain struct {
+	Domain     string `json:"domain"`     // e.g. "dylaris.com"
+	Validation string `json:"validation"` // "letters" | "alphanumeric" | "dns"
+}
+
 // SettingMaxCustomDomains caps the routes one account may hold on its own
 // domains. Those cost us no address, but each one is a claim the verifier
 // queries a tenant-chosen nameserver for and a key every edge loads, and there

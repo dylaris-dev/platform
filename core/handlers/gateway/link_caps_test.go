@@ -37,7 +37,7 @@ func TestLinkPresenceValue(t *testing.T) {
 // same 15 s TTL, and a later {} heartbeat (a link rolled back) takes them away.
 func TestLinkHeartbeatStoresAnnouncedCaps(t *testing.T) {
 	h, _, key, token := routeOnlyKit(t)
-	rdb := h.state.Redis
+	rdb := h.d.Redis
 	ctx := context.Background()
 
 	rec := callAs(h.LinkHeartbeat, http.MethodPost, "/api/warp/link/heartbeat", `{"caps":["client-addr"]}`, key)

@@ -73,8 +73,8 @@ func newBedrockSwitch(t *testing.T) (*voiceSwitchEnv, *bedrockSwitchStore) {
 	t.Helper()
 	e := newVoiceSwitch(t)
 	bs := &bedrockSwitchStore{voiceSwitchStore: e.fs, eds: map[string]store.RouteEdition{}, audience: "all"}
-	e.h.state.Store = bs
-	e.h.state.FeatureFlags = services.NewFeatureFlags(bs)
+	e.h.d.Store = bs
+	e.h.d.FeatureFlags = services.NewFeatureFlags(bs)
 	e.mr.Set("bedrock:registry:b1", `{"id":"b1","region":"eu","version":"1"}`)
 	e.mr.SAdd("sys:bedrock", "b1")
 	return e, bs
@@ -175,7 +175,7 @@ func TestRouteEditionWhileSwitchedOff(t *testing.T) {
 		t.Fatalf("set: %d", rec.Code)
 	}
 	bs.audience = "off"
-	e.h.state.FeatureFlags.Invalidate(services.BedrockSettingKey)
+	e.h.d.FeatureFlags.Invalidate(services.BedrockSettingKey)
 	if rec, out := bedrockCall(e, http.MethodPut, edition(false, true), false); rec.Code != http.StatusOK {
 		t.Fatalf("keep Bedrock, drop Java while off: %d %v", rec.Code, out)
 	}
@@ -235,8 +235,8 @@ func newLinkBedrock(t *testing.T) (*voiceSwitchEnv, *linkBedrockStore) {
 			{Domain: linkDomain, OwnerID: "owner-1", LinkToken: "tok"},
 			{Domain: "play.example.com", OwnerID: "owner-1", LinkToken: "tok"},
 		}}
-	e.h.state.Store = ls
-	e.h.state.FeatureFlags = services.NewFeatureFlags(ls)
+	e.h.d.Store = ls
+	e.h.d.FeatureFlags = services.NewFeatureFlags(ls)
 	return e, ls
 }
 

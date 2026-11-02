@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
+	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
@@ -23,6 +23,7 @@ import (
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
+	"github.com/redis/go-redis/v9"
 )
 
 // voiceNodeSince is the node release that speaks voicewire v2. 2026.10.22 ran
@@ -49,7 +50,7 @@ func newVoiceView(vp *store.VoicePort, allowed bool) voiceView {
 
 // voiceAllowed is ResolveVoiceAllowed failing closed: a read error is "no".
 func (h *GatewayHandler) voiceAllowed(srv *models.Server) bool {
-	allowed, _, err := services.ResolveVoiceAllowed(h.state.Store, srv)
+	allowed, _, err := services.ResolveVoiceAllowed(h.d.Store, srv)
 	if err != nil {
 		log.Printf("voice: server %d: permission check: %v", srv.ID, err)
 		return false
@@ -60,12 +61,12 @@ func (h *GatewayHandler) voiceAllowed(srv *models.Server) bool {
 // GetServerVoice GET /api/servers/{id}/voice - the server's voice port, if
 // any, and whether it may turn voice on.
 func (h *GatewayHandler) GetServerVoice(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.d.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	vp, err := h.state.Store.GetVoicePort(srv.ID)
+	vp, err := h.d.Store.GetVoicePort(srv.ID)
 	if err != nil {
 		log.Printf("voice: server %d: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Failed to read the voice chat setting", http.StatusInternalServerError)
@@ -87,7 +88,7 @@ func (h *GatewayHandler) GetServerVoice(w http.ResponseWriter, r *http.Request) 
 // RequireGatewayEnabled, the gate is checked here for on only). Turning
 // something off is how an owner gets out of a state, never into one.
 func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.d.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -98,11 +99,11 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if enabled {
-		if !services.GatewayRoutingEnabled(h.state.Store) {
+		if !services.GatewayRoutingEnabled(h.d.Store) {
 			gate.GatewayDisabledResponse(w)
 			return
 		}
-		if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+		if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 			return
 		}
 	}
@@ -110,7 +111,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 
 	if !enabled {
-		changed, err := DisableServerVoice(ctx, h.state, srv)
+		changed, err := DisableServerVoice(ctx, h.d.Store, h.d.Redis, h.d.GRPCRegistry, srv)
 		if err != nil {
 			log.Printf("voice: server %d: disable: %v", srv.ID, err)
 			httpx.SendJSONError(w, "Failed to turn voice chat off", http.StatusInternalServerError)
@@ -124,23 +125,23 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONErrorCode(w, "Voice chat is not available for this server.", "voice_not_allowed", http.StatusConflict)
 		return
 	}
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
-	if err != nil || node == nil || !nodeops.NodeReleaseAtLeast(ctx, h.state.Redis, node.Token, voiceNodeSince) {
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
+	if err != nil || node == nil || !nodeops.NodeReleaseAtLeast(ctx, h.d.Redis, node.Token, voiceNodeSince) {
 		httpx.SendJSONErrorCode(w, "This server's node is too old for voice chat. Update the node, then try again.", "node_too_old", http.StatusConflict)
 		return
 	}
-	routes, err := services.ReadRoutesFromRedis(ctx, h.state.Redis)
+	routes, err := services.ReadRoutesFromRedis(ctx, h.d.Redis)
 	if err != nil {
 		log.Printf("voice: server %d: read routes: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Could not read this server's routes. Try again.", http.StatusBadGateway)
 		return
 	}
-	host, region, ok := services.VoiceRouteFor(routes, services.GetEdgesFromRedis(ctx, h.state.Redis), srv.UUID)
+	host, region, ok := services.VoiceRouteFor(routes, services.GetEdgesFromRedis(ctx, h.d.Redis), srv.UUID)
 	if !ok {
 		httpx.SendJSONErrorCode(w, "Voice chat needs an address on one of the platform's domains. Add a route first.", "no_routes", http.StatusConflict)
 		return
 	}
-	relays, err := services.LiveVoiceRelays(ctx, h.state.Redis)
+	relays, err := services.LiveVoiceRelays(ctx, h.d.Redis)
 	if err != nil {
 		log.Printf("voice: server %d: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Could not check the voice relays. Try again.", http.StatusBadGateway)
@@ -158,7 +159,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
 		return
 	}
-	mod, rel, content, err := servers.FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	mod, rel, content, err := servers.FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	switch {
 	case errors.Is(err, servers.ErrVoiceModMissing):
 		httpx.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
@@ -172,7 +173,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	prior, err := h.state.Store.GetVoicePort(srv.ID)
+	prior, err := h.d.Store.GetVoicePort(srv.ID)
 	if err != nil {
 		log.Printf("voice: server %d: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
@@ -183,7 +184,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
 		return
 	}
-	got, err := h.state.Store.AllocateVoicePort(store.VoicePort{
+	got, err := h.d.Store.AllocateVoicePort(store.VoicePort{
 		ServerID: srv.ID, Region: region, Mod: mod, InternalPort: services.VoiceInternalPort, UplinkKey: key, Host: host,
 	}, services.VoicePortMin, services.VoicePortMax)
 	if errors.Is(err, store.ErrVoicePoolFull) {
@@ -201,7 +202,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		merged = voicecfg.PlasmoEnable(content, got.Host, got.Port)
 	}
 	if merged != content {
-		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
+		if err := nodeops.WriteNodeFileString(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
 			log.Printf("voice: server %d: write %s: %v", srv.ID, rel, err)
 			h.rollbackVoice(ctx, srv, prior, false)
 			httpx.SendJSONError(w, "The node could not write the voice chat config. Try again.", http.StatusBadGateway)
@@ -211,11 +212,11 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 	// A server that moved region took a new port; the old one's keys go first,
 	// because they share the server key with the new ones.
 	if prior != nil && (prior.Region != got.Region || prior.Port != got.Port) {
-		if err := services.UnpublishVoice(ctx, h.state.Redis, *prior); err != nil {
+		if err := services.UnpublishVoice(ctx, h.d.Redis, *prior); err != nil {
 			log.Printf("voice: server %d: %v", srv.ID, err)
 		}
 	}
-	if err := services.PublishVoice(ctx, h.state.Redis, got); err != nil {
+	if err := services.PublishVoice(ctx, h.d.Redis, got); err != nil {
 		log.Printf("voice: server %d: %v", srv.ID, err)
 		h.rollbackVoice(ctx, srv, prior, true)
 		httpx.SendJSONError(w, "Voice chat could not be published to the gateway. Try again.", http.StatusBadGateway)
@@ -237,9 +238,9 @@ func (h *GatewayHandler) rollbackVoice(ctx context.Context, srv *models.Server, 
 	}
 	var err error
 	if writeBack {
-		_, err = DisableServerVoice(ctx, h.state, srv)
+		_, err = DisableServerVoice(ctx, h.d.Store, h.d.Redis, h.d.GRPCRegistry, srv)
 	} else {
-		_, err = dropServerVoice(ctx, h.state, srv)
+		_, err = dropServerVoice(ctx, h.d.Store, h.d.Redis, srv)
 	}
 	if err != nil {
 		log.Printf("voice: server %d: roll back: %v", srv.ID, err)
@@ -254,12 +255,12 @@ func (h *GatewayHandler) rollbackVoice(ctx context.Context, srv *models.Server, 
 // Only the row is load-bearing. Without the row and keys voice simply stops,
 // so a failed unpublish (the reconcile sweeps the keys) or a failed config
 // write-back is logged, not returned.
-func DisableServerVoice(ctx context.Context, st *handlers.AppState, srv *models.Server) (changed bool, err error) {
-	changed, err = dropServerVoice(ctx, st, srv)
+func DisableServerVoice(ctx context.Context, st store.Store, rdb *redis.Client, reg *nodegrpc.Registry, srv *models.Server) (changed bool, err error) {
+	changed, err = dropServerVoice(ctx, st, rdb, srv)
 	if !changed || err != nil || srv.ActiveSubServer == "" {
 		return changed, err
 	}
-	writeBackVoiceConfig(st, srv)
+	writeBackVoiceConfig(st, reg, srv)
 	return true, nil
 }
 
@@ -274,8 +275,8 @@ var voiceWriteBackTimeout = 30 * time.Second
 // ponytail: a write-back past the timeout is abandoned, not cancelled; its
 // goroutine ends when the node answers or disconnects. Thread a context
 // through readNodeFileString if that ever piles up.
-func RevokeServerVoice(ctx context.Context, st *handlers.AppState, srv *models.Server) error {
-	changed, err := dropServerVoice(ctx, st, srv)
+func RevokeServerVoice(ctx context.Context, st store.Store, rdb *redis.Client, reg *nodegrpc.Registry, srv *models.Server) error {
+	changed, err := dropServerVoice(ctx, st, rdb, srv)
 	if !changed || err != nil || srv.ActiveSubServer == "" {
 		return err
 	}
@@ -283,7 +284,7 @@ func RevokeServerVoice(ctx context.Context, st *handlers.AppState, srv *models.S
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		writeBackVoiceConfig(st, srv)
+		writeBackVoiceConfig(st, reg, srv)
 	}()
 	go func() {
 		select {
@@ -297,8 +298,8 @@ func RevokeServerVoice(ctx context.Context, st *handlers.AppState, srv *models.S
 
 // writeBackVoiceConfig strips the voice address from the mod config on the
 // node. Failures are logged: voice already stopped with the row.
-func writeBackVoiceConfig(st *handlers.AppState, srv *models.Server) {
-	mod, rel, content, err := servers.FindVoiceConfig(st.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
+func writeBackVoiceConfig(st store.Store, reg *nodegrpc.Registry, srv *models.Server) {
+	mod, rel, content, err := servers.FindVoiceConfig(reg, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	if err != nil {
 		log.Printf("voice: server %d: config write-back skipped: %v", srv.ID, err)
 		return
@@ -311,11 +312,11 @@ func writeBackVoiceConfig(st *handlers.AppState, srv *models.Server) {
 		// Asked again right before the write: on a slow node this runs long
 		// after the disable, and if voice was turned on meanwhile the "off"
 		// config would leave a voice port the mod no longer uses.
-		if p, err := st.Store.GetVoicePort(srv.ID); err != nil || p != nil {
+		if p, err := st.GetVoicePort(srv.ID); err != nil || p != nil {
 			log.Printf("voice: server %d: config write-back skipped, voice is on again (or unreadable: %v)", srv.ID, err)
 			return
 		}
-		if err := nodeops.WriteNodeFileString(st.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, back); err != nil {
+		if err := nodeops.WriteNodeFileString(reg, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, back); err != nil {
 			log.Printf("voice: server %d: config write-back of %s failed: %v", srv.ID, rel, err)
 		}
 	}
@@ -324,12 +325,12 @@ func writeBackVoiceConfig(st *handlers.AppState, srv *models.Server) {
 // ListVoicePermissions GET /api/admin/voice-permissions - every scope row,
 // plus the global setting they override.
 func (h *GatewayHandler) ListVoicePermissions(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.state.Store.ListVoicePermissions()
+	rows, err := h.d.Store.ListVoicePermissions()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list voice permissions", http.StatusInternalServerError)
 		return
 	}
-	global := h.state.FeatureFlags != nil && h.state.FeatureFlags.IsVoiceChatEnabled(r.Context())
+	global := h.d.FeatureFlags != nil && h.d.FeatureFlags.IsVoiceChatEnabled(r.Context())
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "permissions": rows, "global": global})
 }
 
@@ -344,7 +345,7 @@ func (h *GatewayHandler) SetVoicePermission(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, `Invalid request: expected {"scope": "server:<id>|user:<id>|role:<id>", "allowed": true|false}`, http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetVoicePermission(req.Scope, *req.Allowed); err != nil {
+	if err := h.d.Store.SetVoicePermission(req.Scope, *req.Allowed); err != nil {
 		httpx.SendJSONError(w, "Failed to save the voice permission", http.StatusInternalServerError)
 		return
 	}
@@ -359,7 +360,7 @@ func (h *GatewayHandler) DeleteVoicePermission(w http.ResponseWriter, r *http.Re
 		httpx.SendJSONError(w, "Invalid scope", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.DeleteVoicePermission(scope); err != nil {
+	if err := h.d.Store.DeleteVoicePermission(scope); err != nil {
 		httpx.SendJSONError(w, "Failed to delete the voice permission", http.StatusInternalServerError)
 		return
 	}
@@ -368,16 +369,16 @@ func (h *GatewayHandler) DeleteVoicePermission(w http.ResponseWriter, r *http.Re
 
 // dropServerVoice is the first half of DisableServerVoice: the row, then the
 // keys. No node call.
-func dropServerVoice(ctx context.Context, st *handlers.AppState, srv *models.Server) (changed bool, err error) {
-	vp, err := st.Store.GetVoicePort(srv.ID)
+func dropServerVoice(ctx context.Context, st store.Store, rdb *redis.Client, srv *models.Server) (changed bool, err error) {
+	vp, err := st.GetVoicePort(srv.ID)
 	if err != nil || vp == nil {
 		return false, err
 	}
-	if err := st.Store.DeleteVoicePort(srv.ID); err != nil {
+	if err := st.DeleteVoicePort(srv.ID); err != nil {
 		return false, err
 	}
-	if st.Redis != nil {
-		if err := services.UnpublishVoice(ctx, st.Redis, *vp); err != nil {
+	if rdb != nil {
+		if err := services.UnpublishVoice(ctx, rdb, *vp); err != nil {
 			log.Printf("voice: server %d: %v", srv.ID, err)
 		}
 	}

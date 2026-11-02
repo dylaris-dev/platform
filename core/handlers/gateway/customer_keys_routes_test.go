@@ -8,7 +8,6 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/store"
 )
@@ -89,7 +88,7 @@ func TestAServerRouteDeleteOnlyDeletesThatServersRoute(t *testing.T) {
 	mr.SAdd("sys:index:routes", "customer.example.com")
 	mr.Set("route:customer.example.com", `{"server_uuid":"someone-elses-server"}`)
 	st := &handlertest.ForeignStore{Node: handlertest.PlatformNode(), Byon: "true"}
-	h := NewGatewayHandler(&handlers.AppState{Store: st, Redis: rdb})
+	h := NewGatewayHandler(Deps{Store: st, Redis: rdb})
 	r := handlertest.AdminRequest("DELETE", map[string]string{"id": "3", "domain": "customer.example.com"}, "")
 	rec := httptest.NewRecorder()
 	func() {

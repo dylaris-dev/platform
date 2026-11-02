@@ -7,12 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/store"
 )
 
-func callDeployConfig(state *handlers.AppState, userID string, isAdmin bool) *httptest.ResponseRecorder {
+func callDeployConfig(state Deps, userID string, isAdmin bool) *httptest.ResponseRecorder {
 	h := NewWarpHandler(state, nil)
 	r := httptest.NewRequest(http.MethodGet, "/api/warp/deploy-config", nil)
 	ctx := context.WithValue(r.Context(), "userID", userID)

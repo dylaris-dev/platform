@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"dylaris-core/handlers/templates"
 	"dylaris-core/handlers/tickets"
 	"dylaris-core/handlers/users"
+	"dylaris-core/metrics"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -574,6 +576,17 @@ var requiredCaps = map[string]string{
 	"/api/admin/storage/{id:[0-9]+}/lifecycle":      "settings.write",
 }
 
+// longTermRead hands a handler package the long-term statistics pool without
+// the metrics import: asked per request, nil while recording is off.
+func longTermRead(m *metrics.Manager) func() *sql.DB {
+	return func() *sql.DB {
+		if h := m.Handle(); h != nil {
+			return h.Read
+		}
+		return nil
+	}
+}
+
 // buildAPIRouter constructs every request handler + the warp service and
 // registers every route exactly as main() used to inline them, so a test can
 // walk the REAL router. Pure extraction: no route, method, or middleware
@@ -666,6 +679,23 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		ReleaseVersion:        appState.ReleaseVersion,
 		ClusterSecret:         appState.ClusterSecret,
 	}
+	gatewayDeps := gateway.Deps{
+		Store:              appState.Store,
+		Redis:              appState.Redis,
+		FeatureFlags:       appState.FeatureFlags,
+		Gateway:            appState.Gateway,
+		GRPCRegistry:       appState.GRPCRegistry,
+		Admission:          appState.Admission,
+		SuspendGrace:       appState.SuspendGrace,
+		StoreEnabled:       appState.StoreEnabled,
+		StoreURL:           appState.StoreURL,
+		StoreSharedKey:     appState.StoreSharedKey,
+		ClusterSecret:      appState.ClusterSecret,
+		GatewayHubURL:      appState.GatewayHubURL,
+		GRPCTLSEnabled:     appState.GRPCTLSEnabled,
+		GRPCTLSFingerprint: appState.GRPCTLSFingerprint,
+		LongTermRead:       longTermRead(appState.Metrics),
+	}
 	templatesDeps := templates.Deps{
 		Store:        appState.Store,
 		Authz:        appState.Authz,
@@ -699,7 +729,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// never exercise a warp route.
 	pgStore, _ := appState.Store.(*store.PostgresStore)
 	warpService := services.NewWarpService(pgStore, appState.Redis, cfg.ClusterSecret)
-	warpHandler := gateway.NewWarpHandler(appState, warpService)
+	warpHandler := gateway.NewWarpHandler(gatewayDeps, warpService)
 	// Published on the state as well: the account delete needs it to drop a
 	// departing tenant's overlay peers, and it lives nowhere else.
 	//
@@ -810,8 +840,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
 	nodeEnrollHandler := nodes.NewNodeEnrollHandler(nodesDeps)
 	nodeAdmissionHandler := nodes.NewNodeAdmissionHandler(nodesDeps)
-	gatewayDNSHandler := gateway.NewGatewayDNSHandler(appState)
-	gatewayBandwidthHandler := gateway.NewGatewayBandwidthHandler(appState)
+	gatewayDNSHandler := gateway.NewGatewayDNSHandler(gatewayDeps)
+	gatewayBandwidthHandler := gateway.NewGatewayBandwidthHandler(gatewayDeps)
 	voiceStatsHandler := handlers.NewVoiceStatsHandler(appState)
 	ticketDeletionsHandler := tickets.NewTicketDeletionsHandler(ticketsDeps)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
@@ -1694,7 +1724,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/versions", authHandler.AuthMiddleware(versionHandler.GetVersions)).Methods("GET")
 
 	// --- Gateway Endpoints ---
-	gatewayHandler := gateway.NewGatewayHandler(appState)
+	gatewayHandler := gateway.NewGatewayHandler(gatewayDeps)
 	dnsHandler := handlers.NewDNSHandler(appState)
 	trafficLimitHandler := billing.NewTrafficLimitHandler(billingDeps)
 	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
@@ -1758,7 +1788,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Custom-domain ownership proof. Scoped to the caller inside each handler -
 	// a claim is one user's relationship to one domain, and the block is per
 	// (user, domain) so nobody can lock a competitor's domain out globally.
-	customDomainHandler := gateway.NewCustomDomainHandler(appState, services.NewNetResolver())
+	customDomainHandler := gateway.NewCustomDomainHandler(gatewayDeps, services.NewNetResolver())
 	api.HandleFunc("/gateway/custom-domains", authHandler.AuthMiddleware(customDomainHandler.List)).Methods("GET")
 	api.HandleFunc("/gateway/custom-domains", authLimiter.Limit(30, authHandler.AuthMiddleware(customDomainHandler.Add))).Methods("POST")
 	api.HandleFunc("/gateway/custom-domains/{domain:[^/]+}", authHandler.AuthMiddleware(customDomainHandler.Delete)).Methods("DELETE")

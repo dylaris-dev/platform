@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"github.com/gorilla/mux"
 
 	"dylaris-core/services"
@@ -72,7 +70,7 @@ func TestCheckNowEndsARunOfMisses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &verifyFakeStore{claimFakeStore: claimFakeStore{claim: &store.CustomDomainClaim{ID: 7,
 				Domain: "mc.example.com", State: store.ClaimVerified, TXTToken: "dylaris-verify=abc", FailingSince: tc.failing}}}
-			h := NewCustomDomainHandler(&handlers.AppState{Store: fs}, txtResolver{})
+			h := NewCustomDomainHandler(Deps{Store: fs}, txtResolver{})
 			r := mux.SetURLVars(httptest.NewRequest(http.MethodPost, "/", nil), map[string]string{"domain": "mc.example.com"})
 			w := httptest.NewRecorder()
 			h.VerifyTXT(w, r)

@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -118,7 +116,7 @@ func newRevokeTestHandler(t *testing.T) (*WarpHandler, *revokeFakeStore) {
 	t.Helper()
 	base := newWarpTestHandler(t)
 	fs := &revokeFakeStore{
-		warpFakeStore: *base.state.Store.(*warpFakeStore),
+		warpFakeStore: *base.d.Store.(*warpFakeStore),
 		keysByNodeID:  map[string]*store.WarpAPIKey{},
 		peersByKey:    map[int][]store.WarpPeer{},
 	}
@@ -130,8 +128,8 @@ func newRevokeTestHandler(t *testing.T) (*WarpHandler, *revokeFakeStore) {
 	fs.leaders = map[string]bool{"leader-01": true}
 	// The service is rebuilt against the EXTENDED fake, so DisconnectKeyPeers
 	// resolves peers through it rather than through the base fake.
-	svc := services.NewWarpService(fs, base.state.Redis, "test-secret")
-	state := &handlers.AppState{Store: fs, Redis: base.state.Redis, FeatureFlags: services.NewFeatureFlags(fs)}
+	svc := services.NewWarpService(fs, base.d.Redis, "test-secret")
+	state := Deps{Store: fs, Redis: base.d.Redis, FeatureFlags: services.NewFeatureFlags(fs)}
 	return NewWarpHandler(state, svc), fs
 }
 
@@ -236,7 +234,7 @@ func TestDeleteWarpRegionAllowedWhenEmpty(t *testing.T) {
 // heartbeat), so the refusal points at it.
 func TestDeletingALeaderThatStillAnnouncesIsRefused(t *testing.T) {
 	h, fs := newRevokeTestHandler(t)
-	if err := h.state.Redis.Set(context.Background(), "dylaris:warp:leader-01:alive", "1", 0).Err(); err != nil {
+	if err := h.d.Redis.Set(context.Background(), "dylaris:warp:leader-01:alive", "1", 0).Err(); err != nil {
 		t.Fatalf("seed liveness: %v", err)
 	}
 
@@ -310,7 +308,7 @@ func TestDeletingWarpTopologyThatDoesNotExistIs404(t *testing.T) {
 func TestDeletingARegionWhoseLeaderStillAnnouncesIsRefused(t *testing.T) {
 	h, fs := newRevokeTestHandler(t)
 	fs.leadersByRegion["leader-01"] = []store.WarpLeader{{LeaderID: "leader-01", Region: "leader-01"}}
-	if err := h.state.Redis.Set(context.Background(), "dylaris:warp:leader-01:alive", "1", 0).Err(); err != nil {
+	if err := h.d.Redis.Set(context.Background(), "dylaris:warp:leader-01:alive", "1", 0).Err(); err != nil {
 		t.Fatalf("seed liveness: %v", err)
 	}
 
@@ -355,7 +353,7 @@ func TestRevokeLinkKitDisconnectsThePeer(t *testing.T) {
 	fs.settings["feature_byon_enabled"] = "true"
 	fs.keysByNodeID["link-abc"] = &store.WarpAPIKey{ID: 11, NodeID: "link-abc", OwnerID: "owner-1"}
 	fs.seedPeer(11, store.WarpPeer{Pubkey: "pk-link", WGIP: "10.0.99.9", Region: "leader-01"})
-	h.state.Gateway = linkRevokeFakeGateway{}
+	h.d.Gateway = linkRevokeFakeGateway{}
 
 	rec := httptest.NewRecorder()
 	h.RevokeLinkKit(rec, revokeReq(t, "/api/warp/link-kits/link-abc", "linkID", "link-abc", "owner-1", false))

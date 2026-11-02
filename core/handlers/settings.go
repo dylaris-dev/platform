@@ -214,9 +214,9 @@ func (h *SettingsHandler) LoadFeatureSettings() FeatureSettings {
 // --- Gateway Settings ---
 
 type GatewaySettings struct {
-	Limits               GatewayLimits  `json:"limits"`
-	HosterDomains        []HosterDomain `json:"hosterDomains"`
-	CustomDomainsEnabled bool           `json:"customDomainsEnabled"`
+	Limits               GatewayLimits           `json:"limits"`
+	HosterDomains        []services.HosterDomain `json:"hosterDomains"`
+	CustomDomainsEnabled bool                    `json:"customDomainsEnabled"`
 	// CnameTarget is a single DNS LABEL (e.g. "route"), not a full domain. It is
 	// expanded per hoster domain into route.<base>, so one setting covers every
 	// region: a user picks whichever base matches the region they want.
@@ -249,14 +249,6 @@ type GatewayLimits struct {
 	// capping addresses per MC server is a feature to decide on, not a
 	// regression to repair. PortMcEnabled stays: that one IS enforced.
 	PortMcEnabled bool `json:"portMcEnabled"`
-}
-
-// HosterDomain is one of the platform-provided base domains under which a
-// user can register a route by entering only a subdomain. The validation
-// mode controls what characters are accepted in that subdomain field.
-type HosterDomain struct {
-	Domain     string `json:"domain"`     // e.g. "dylaris.com"
-	Validation string `json:"validation"` // "letters" | "alphanumeric" | "dns"
 }
 
 // validHosterValidation returns true for the three accepted modes —
@@ -305,14 +297,14 @@ func (h *SettingsHandler) GetGatewaySettings(w http.ResponseWriter, r *http.Requ
 
 // loadHosterDomains parses the persisted hoster-domain list from settings.
 // Returns an empty slice if unset or malformed.
-func (h *SettingsHandler) loadHosterDomains() []HosterDomain {
+func (h *SettingsHandler) loadHosterDomains() []services.HosterDomain {
 	raw, _ := h.state.Store.GetSetting("gateway_hoster_domains")
 	if raw == "" {
-		return []HosterDomain{}
+		return []services.HosterDomain{}
 	}
-	var out []HosterDomain
+	var out []services.HosterDomain
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return []HosterDomain{}
+		return []services.HosterDomain{}
 	}
 	return out
 }
@@ -335,7 +327,7 @@ func (h *SettingsHandler) loadBlockedRoutePrefixes() []string {
 // LoadGatewayDomainConfig is the read-side helper for code paths that need
 // just the domain configuration (route create handler, public route-options
 // endpoint) without re-running the admin-only GetGatewaySettings.
-func (h *SettingsHandler) LoadGatewayDomainConfig() (hosters []HosterDomain, customEnabled bool, cnameTarget string) {
+func (h *SettingsHandler) LoadGatewayDomainConfig() (hosters []services.HosterDomain, customEnabled bool, cnameTarget string) {
 	hosters = h.loadHosterDomains()
 	v, _ := h.state.Store.GetSetting("gateway_custom_domains_enabled")
 	customEnabled = v == "true"
@@ -377,7 +369,7 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	_ = json.Unmarshal(body, &present)
 
 	// Validate + normalize hoster domains
-	cleaned := make([]HosterDomain, 0, len(req.HosterDomains))
+	cleaned := make([]services.HosterDomain, 0, len(req.HosterDomains))
 	seen := map[string]bool{}
 	for _, hd := range req.HosterDomains {
 		dom := validate.NormHost(hd.Domain)
@@ -397,7 +389,7 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 		if !validHosterValidation(val) {
 			val = "alphanumeric"
 		}
-		cleaned = append(cleaned, HosterDomain{Domain: dom, Validation: val})
+		cleaned = append(cleaned, services.HosterDomain{Domain: dom, Validation: val})
 	}
 	hostersJSON, _ := json.Marshal(cleaned)
 

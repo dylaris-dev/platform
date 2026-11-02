@@ -46,7 +46,7 @@ func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string
 		return nil
 	}
 
-	claim, err := h.state.Store.GetCustomDomainClaim(userID, domain)
+	claim, err := h.d.Store.GetCustomDomainClaim(userID, domain)
 	if err != nil && err != store.ErrNoClaim {
 		// Fail CLOSED. Not knowing whether this user is blocked is not a reason
 		// to assume they are not.
@@ -61,14 +61,14 @@ func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string
 		return nil
 	}
 
-	claim, err = h.state.Store.RequestCustomDomainClaim(userID, domain)
+	claim, err = h.d.Store.RequestCustomDomainClaim(userID, domain)
 	if err != nil || claim == nil {
 		return fmt.Errorf("could not start the ownership check for %s", domain)
 	}
 	if claim.TXTToken == "" {
 		token, terr := services.NewTXTToken()
 		if terr == nil {
-			terr = h.state.Store.SetCustomDomainTXTToken(claim.ID, token)
+			terr = h.d.Store.SetCustomDomainTXTToken(claim.ID, token)
 		}
 		if terr != nil {
 			log.Printf("custom-domain: could not mint the token for %s (user %s): %v", domain, userID, terr)
@@ -83,7 +83,7 @@ func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if services.CheckTXTToken(ctx, res, domain, claim.TXTToken) {
-		if err := h.state.Store.MarkCustomDomainVerified(claim.ID); err != nil {
+		if err := h.d.Store.MarkCustomDomainVerified(claim.ID); err != nil {
 			return fmt.Errorf("could not record the ownership of %s", domain)
 		}
 		return nil
@@ -121,11 +121,11 @@ func (h *GatewayHandler) armCustomDomainClaim(r *http.Request, userID, domain st
 	if domain == "" {
 		return ""
 	}
-	claim, err := h.state.Store.GetCustomDomainClaim(userID, domain)
+	claim, err := h.d.Store.GetCustomDomainClaim(userID, domain)
 	if err == nil && claim != nil && claim.State == store.ClaimVerified {
 		return "" // already proven; nothing to wait for
 	}
-	claim, err = h.state.Store.StartCustomDomainClaim(userID, domain,
+	claim, err = h.d.Store.StartCustomDomainClaim(userID, domain,
 		time.Now().Add(services.CustomDomainGrant))
 	if err != nil {
 		// The route is already created; failing the request now would be worse
@@ -139,7 +139,7 @@ func (h *GatewayHandler) armCustomDomainClaim(r *http.Request, userID, domain st
 	if claim.TXTToken == "" {
 		token, terr := services.NewTXTToken()
 		if terr == nil {
-			terr = h.state.Store.SetCustomDomainTXTToken(claim.ID, token)
+			terr = h.d.Store.SetCustomDomainTXTToken(claim.ID, token)
 		}
 		if terr != nil {
 			log.Printf("custom-domain: could not mint the token for %s (user %s): %v", domain, userID, terr)

@@ -8,8 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -107,7 +105,7 @@ func (f *claimFakeStore) StartCustomDomainClaim(_, domain string, _ time.Time) (
 }
 
 func claimHandler(fs *claimFakeStore) *GatewayHandler {
-	return &GatewayHandler{state: &handlers.AppState{Store: fs}}
+	return &GatewayHandler{d: Deps{Store: fs}}
 }
 
 func userRequest() *http.Request {

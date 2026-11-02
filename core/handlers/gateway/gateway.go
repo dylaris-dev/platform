@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
@@ -26,14 +25,14 @@ import (
 )
 
 type GatewayHandler struct {
-	state *handlers.AppState
+	d Deps
 	// txtResolver looks up a custom domain's ownership record; nil means the
 	// real DNS (services.NewNetResolver). A field so tests answer it.
 	txtResolver services.DomainResolver
 }
 
-func NewGatewayHandler(state *handlers.AppState) *GatewayHandler {
-	return &GatewayHandler{state: state}
+func NewGatewayHandler(d Deps) *GatewayHandler {
+	return &GatewayHandler{d: d}
 }
 
 func (h *GatewayHandler) ctx() context.Context {
@@ -53,7 +52,7 @@ func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
 	// the edge and take a share of its players; the digest identifies the same
 	// link across polls, which is all a listing needs. Nothing has ever read the
 	// full value on the client side.
-	links := services.GetLinksFromRedis(h.ctx(), h.state.Redis)
+	links := services.GetLinksFromRedis(h.ctx(), h.d.Redis)
 	out := make([]map[string]interface{}, 0, len(links))
 	for _, l := range links {
 		out = append(out, map[string]interface{}{
@@ -72,7 +71,7 @@ func (h *GatewayHandler) GetLinks(w http.ResponseWriter, r *http.Request) {
 // Edges are auto-discovered from their own heartbeats, never configured in
 // Core.
 func (h *GatewayHandler) GetEdges(w http.ResponseWriter, r *http.Request) {
-	edges := services.GetEdgesFromRedis(h.ctx(), h.state.Redis)
+	edges := services.GetEdgesFromRedis(h.ctx(), h.d.Redis)
 	if edges == nil {
 		edges = []services.GatewayEdgeInfo{}
 	}
@@ -88,7 +87,7 @@ func (h *GatewayHandler) GetEdges(w http.ResponseWriter, r *http.Request) {
 func (h *GatewayHandler) GetAllRoutes(w http.ResponseWriter, r *http.Request) {
 	// PublicRoutes, not the stored shape: every route carries the tunnel token
 	// its link authenticates with, and this listing spans the whole fleet.
-	json.NewEncoder(w).Encode(services.PublicRoutes(services.GetRoutesFromRedis(h.ctx(), h.state.Redis)))
+	json.NewEncoder(w).Encode(services.PublicRoutes(services.GetRoutesFromRedis(h.ctx(), h.d.Redis)))
 }
 
 // AdminDeleteRoute DELETE /api/gateway/routes/{domain} - removes any route by
@@ -104,7 +103,7 @@ func (h *GatewayHandler) AdminDeleteRoute(w http.ResponseWriter, r *http.Request
 	// reads res.error out of a JSON body - so a refused delete arrived as an
 	// undefined field and was reported with a generic message that named
 	// nothing.
-	if err := h.state.Gateway.DeleteRoute(domain); err != nil {
+	if err := h.d.Gateway.DeleteRoute(domain); err != nil {
 		log.Printf("AdminDeleteRoute: %s: %v", domain, err)
 		httpx.SendJSONError(w, "Failed to delete route", http.StatusInternalServerError)
 		return
@@ -131,13 +130,13 @@ func (h *GatewayHandler) BulkDeleteRoutesBySuffix(w http.ResponseWriter, r *http
 		return
 	}
 
-	routes := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
+	routes := services.GetRoutesFromRedis(h.ctx(), h.d.Redis)
 	deleted := 0
 	failed := 0
 	for _, rt := range routes {
 		d := strings.ToLower(rt.Domain)
 		if d == suffix || strings.HasSuffix(d, "."+suffix) {
-			if err := h.state.Gateway.DeleteRoute(rt.Domain); err != nil {
+			if err := h.d.Gateway.DeleteRoute(rt.Domain); err != nil {
 				failed++
 			} else {
 				deleted++
@@ -156,7 +155,7 @@ func (h *GatewayHandler) BulkDeleteRoutesBySuffix(w http.ResponseWriter, r *http
 // across every route currently registered. Powers the bulk-delete picker.
 // GET /api/gateway/routes/suffixes
 func (h *GatewayHandler) GetRouteSuffixes(w http.ResponseWriter, r *http.Request) {
-	routes := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
+	routes := services.GetRoutesFromRedis(h.ctx(), h.d.Redis)
 	seen := map[string]int{} // suffix → match count
 	for _, rt := range routes {
 		d := strings.ToLower(strings.TrimSpace(rt.Domain))
@@ -208,16 +207,16 @@ func (h *GatewayHandler) GetRouteSuffixes(w http.ResponseWriter, r *http.Request
 // answers with the last 100 service error entries instead.
 func (h *GatewayHandler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	// Hub logs are not in Redis; return service error logs instead
-	errors := services.GetAllServiceErrorsFromRedis(h.state.Redis, 100)
+	errors := services.GetAllServiceErrorsFromRedis(h.d.Redis, 100)
 	json.NewEncoder(w).Encode(errors)
 }
 
 // GetStats GET /api/gateway/stats - counts only: links and edges, how many of
 // each are online, and the route total.
 func (h *GatewayHandler) GetStats(w http.ResponseWriter, r *http.Request) {
-	links := services.GetLinksFromRedis(h.ctx(), h.state.Redis)
-	edges := services.GetEdgesFromRedis(h.ctx(), h.state.Redis)
-	routeCount := services.CountRoutesFromRedis(h.ctx(), h.state.Redis)
+	links := services.GetLinksFromRedis(h.ctx(), h.d.Redis)
+	edges := services.GetEdgesFromRedis(h.ctx(), h.d.Redis)
+	routeCount := services.CountRoutesFromRedis(h.ctx(), h.d.Redis)
 
 	onlineLinks := 0
 	for _, l := range links {
@@ -258,10 +257,10 @@ func (h *GatewayHandler) TriggerSync(w http.ResponseWriter, r *http.Request) {
 func (h *GatewayHandler) GetErrors(w http.ResponseWriter, r *http.Request) {
 	service := r.URL.Query().Get("service")
 	if service != "" {
-		errors := services.GetServiceErrorsFromRedis(h.state.Redis, service, 50)
+		errors := services.GetServiceErrorsFromRedis(h.d.Redis, service, 50)
 		json.NewEncoder(w).Encode(errors)
 	} else {
-		errors := services.GetAllServiceErrorsFromRedis(h.state.Redis, 50)
+		errors := services.GetAllServiceErrorsFromRedis(h.d.Redis, 50)
 		json.NewEncoder(w).Encode(errors)
 	}
 }
@@ -299,7 +298,7 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 		return
 	}
 
-	exists, _ := h.state.Redis.Exists(h.ctx(), "route:"+finalDomain).Result()
+	exists, _ := h.d.Redis.Exists(h.ctx(), "route:"+finalDomain).Result()
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"available": exists == 0,
 		"domain":    finalDomain,
@@ -315,14 +314,14 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request) {
 	serverID := mux.Vars(r)["id"]
 
-	server, err := h.state.Store.GetServerByID(httpx.MustAtoi(serverID))
+	server, err := h.d.Store.GetServerByID(httpx.MustAtoi(serverID))
 	if err != nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
 	var routes []services.GatewayRoute
-	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.state.Redis) {
+	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.d.Redis) {
 		if rt.ServerUUID == server.UUID {
 			routes = append(routes, rt)
 		}
@@ -378,7 +377,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// never find it to remove it.
 	// An admin creating it is no exception, or the hub row names the admin. Only
 	// a platform server, which has no owner, falls back to the caller.
-	srv, serr := h.state.Store.GetServerByID(serverID)
+	srv, serr := h.d.Store.GetServerByID(serverID)
 	if serr != nil || srv == nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
 		return
@@ -393,7 +392,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	if reqctx.IsAdmin(r) {
 		refusalFor = userID
 	}
-	if msg := guard.OwnerRefusal(h.state.Store, h.state.SuspendGrace, r, refusalFor); msg != "" {
+	if msg := guard.OwnerRefusal(h.d.Store, h.d.SuspendGrace, r, refusalFor); msg != "" {
 		http.Error(w, msg, http.StatusForbidden)
 		return
 	}
@@ -461,7 +460,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	if err := h.state.Gateway.CreateServerRoute(uint(serverID), account, finalDomain, req.TargetPort); err != nil {
+	if err := h.d.Gateway.CreateServerRoute(uint(serverID), account, finalDomain, req.TargetPort); err != nil {
 		errMsg := err.Error()
 		if errors.Is(err, services.ErrRouteDomainTaken) {
 			http.Error(w, fmt.Sprintf("%s is already in use", finalDomain), http.StatusConflict)
@@ -521,7 +520,7 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 		if sub == "" || host == "" {
 			return "", false, fmt.Errorf("subdomain and hosterDomain must both be set")
 		}
-		var hd *handlers.HosterDomain
+		var hd *services.HosterDomain
 		for i := range hosters {
 			if hosters[i].Domain == host {
 				hd = &hosters[i]
@@ -596,7 +595,7 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 //
 // An empty sub (the caller typed the hoster apex itself) fails validation, and
 // that is the intended answer: the apex is not a tenant's to route.
-func resolveHosterSubdomain(sub string, hd handlers.HosterDomain, blocked map[string]bool) (string, bool, error) {
+func resolveHosterSubdomain(sub string, hd services.HosterDomain, blocked map[string]bool) (string, bool, error) {
 	if !validate.ValidateSubdomain(sub, hd.Validation) {
 		return "", false, fmt.Errorf("subdomain does not match the allowed format for %s", hd.Domain)
 	}
@@ -610,7 +609,7 @@ func resolveHosterSubdomain(sub string, hd handlers.HosterDomain, blocked map[st
 // than one of ours. It reports isCustom=true on success so the caller runs the
 // ownership gate and arms the claim: a domain reaching us through any input
 // shape has to prove itself the same way.
-func resolveBroughtDomain(dom string, hosters []handlers.HosterDomain, customEnabled bool, blocked map[string]bool) (string, bool, error) {
+func resolveBroughtDomain(dom string, hosters []services.HosterDomain, customEnabled bool, blocked map[string]bool) (string, bool, error) {
 	if !customEnabled {
 		return "", false, fmt.Errorf("custom domains are not enabled")
 	}
@@ -638,14 +637,14 @@ func resolveBroughtDomain(dom string, hosters []handlers.HosterDomain, customEna
 // loadGatewayDomainConfig reads the hoster-domain list + custom flag straight
 // from the settings store. Mirrors SettingsHandler.LoadGatewayDomainConfig
 // but inlined here so GatewayHandler doesn't need a SettingsHandler reference.
-func (h *GatewayHandler) loadGatewayDomainConfig() ([]handlers.HosterDomain, bool, string) {
-	raw, _ := h.state.Store.GetSetting("gateway_hoster_domains")
-	var hosters []handlers.HosterDomain
+func (h *GatewayHandler) loadGatewayDomainConfig() ([]services.HosterDomain, bool, string) {
+	raw, _ := h.d.Store.GetSetting("gateway_hoster_domains")
+	var hosters []services.HosterDomain
 	if raw != "" {
 		_ = json.Unmarshal([]byte(raw), &hosters)
 	}
-	enabled, _ := h.state.Store.GetSetting("gateway_custom_domains_enabled")
-	cname, _ := h.state.Store.GetSetting("gateway_cname_target")
+	enabled, _ := h.d.Store.GetSetting("gateway_custom_domains_enabled")
+	cname, _ := h.d.Store.GetSetting("gateway_cname_target")
 	return hosters, enabled == "true", cname
 }
 
@@ -653,7 +652,7 @@ func (h *GatewayHandler) loadGatewayDomainConfig() ([]handlers.HosterDomain, boo
 // map. Unset (raw == "") falls back to the protective default shared with the
 // settings handler; an explicitly-saved list (even empty) is honored as-is.
 func (h *GatewayHandler) loadBlockedRoutePrefixes() map[string]bool {
-	raw, _ := h.state.Store.GetSetting("gateway_blocked_route_prefixes")
+	raw, _ := h.d.Store.GetSetting("gateway_blocked_route_prefixes")
 	var list []string
 	if raw == "" {
 		list = services.DefaultBlockedRoutePrefixes
@@ -688,12 +687,12 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 	// too: the capability was resolved against {id}, so skipping this let a
 	// platform server's id delete any route, a customer's included. Deleting any
 	// route by name is DELETE /api/gateway/routes/{domain} (topology.write).
-	server, serr := h.state.Store.GetServerByID(serverID)
+	server, serr := h.d.Store.GetServerByID(serverID)
 	if serr != nil || server == nil {
 		http.Error(w, "server not found", http.StatusNotFound)
 		return
 	}
-	all := services.GetRoutesFromRedis(h.ctx(), h.state.Redis)
+	all := services.GetRoutesFromRedis(h.ctx(), h.d.Redis)
 	found := false
 	for _, rt := range all {
 		// The shared predicate, not a narrower copy: a route written before
@@ -709,16 +708,16 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.state.Gateway.DeleteRoute(domain); err != nil {
+	if err := h.d.Gateway.DeleteRoute(domain); err != nil {
 		http.Error(w, "Failed to delete route", http.StatusInternalServerError)
 		return
 	}
 	// The route's editions go with it, so a domain registered again later
 	// starts as Java only. Best-effort: a leftover row only matters if the same
 	// name comes back, and the next delete or save removes it.
-	if err := h.state.Store.DeleteRouteEdition(domain); err != nil {
+	if err := h.d.Store.DeleteRouteEdition(domain); err != nil {
 		log.Printf("route %s: delete editions: %v", domain, err)
-	} else if err := h.bedrockService().PublishEditions(h.ctx(), services.BedrockActive(r.Context(), h.state.FeatureFlags)); err != nil {
+	} else if err := h.bedrockService().PublishEditions(h.ctx(), services.BedrockActive(r.Context(), h.d.FeatureFlags)); err != nil {
 		log.Printf("route %s: publish editions: %v", domain, err)
 	}
 
@@ -734,7 +733,7 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 // Turning one OFF is never refused: an operator who disables the platform
 // setting must not leave an owner stuck with forwarding they cannot remove.
 func (h *GatewayHandler) proxyProtocolOff(w http.ResponseWriter, r *http.Request, enabled bool) bool {
-	if !enabled || (h.state.FeatureFlags != nil && h.state.FeatureFlags.IsProxyProtocolEnabled(r.Context())) {
+	if !enabled || (h.d.FeatureFlags != nil && h.d.FeatureFlags.IsProxyProtocolEnabled(r.Context())) {
 		return false
 	}
 	httpx.SendJSONErrorCode(w, "Real player IP forwarding is not enabled on this platform.", "proxy_protocol_disabled", http.StatusConflict)
@@ -750,7 +749,7 @@ func (h *GatewayHandler) proxyProtocolOff(w http.ResponseWriter, r *http.Request
 func (h *GatewayHandler) proxyProtocolNoLink(w http.ResponseWriter, r *http.Request, belongs func(services.GatewayRoute) bool) bool {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	routes, err := services.ReadRoutesFromRedis(ctx, h.state.Redis)
+	routes, err := services.ReadRoutesFromRedis(ctx, h.d.Redis)
 	if err != nil {
 		log.Printf("proxy-protocol: link check: %v", err)
 		httpx.SendJSONErrorCode(w, "Could not check the links of this server's routes. Try again.", "link_check_failed", http.StatusConflict)
@@ -762,7 +761,7 @@ func (h *GatewayHandler) proxyProtocolNoLink(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		found = true
-		ok, err := services.LinkAnnouncesCap(ctx, h.state.Redis, rt.TunnelID, nodeops.LinkCapClientAddr)
+		ok, err := services.LinkAnnouncesCap(ctx, h.d.Redis, rt.TunnelID, nodeops.LinkCapClientAddr)
 		if err != nil {
 			log.Printf("proxy-protocol: link check: route %s: %v", rt.Domain, err)
 			httpx.SendJSONErrorCode(w, "Could not check the links of this server's routes. Try again.", "link_check_failed", http.StatusConflict)
@@ -801,12 +800,12 @@ func decodeProxyProtocolBody(r *http.Request) (bool, bool) {
 // message follow it. A failure after the column answers 502 so the caller saves
 // again, which rewrites all three.
 func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.d.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
 	mode, ok := decodeProxyModeBody(r)
@@ -825,12 +824,12 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 	if enabled && h.proxyProtocolNoLink(w, r, func(rt services.GatewayRoute) bool { return services.RouteBelongsToServer(rt, srv.UUID) }) {
 		return
 	}
-	if err := h.state.Store.SetServerProxyMode(srv.ID, mode); err != nil {
+	if err := h.d.Store.SetServerProxyMode(srv.ID, mode); err != nil {
 		log.Printf("proxy-protocol: server %d: mode: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
 		return
 	}
-	if err := services.ApplyServerProxyProtocol(r.Context(), h.state.Store, h.state.Redis, h.state.Gateway, srv.ID, srv.UUID, enabled); err != nil {
+	if err := services.ApplyServerProxyProtocol(r.Context(), h.d.Store, h.d.Redis, h.d.Gateway, srv.ID, srv.UUID, enabled); err != nil {
 		log.Printf("proxy-protocol: server %d: %v", srv.ID, err)
 		switch {
 		case errors.Is(err, services.ErrProxyProtocolNodeKey):
@@ -844,9 +843,9 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 	}
 	// The owner's own choice supersedes a pending request from an install, and
 	// turning it on vouches for the sub-server that is running.
-	services.ForgetProxyProtocolInstall(r.Context(), h.state.Redis, srv.UUID)
+	services.ForgetProxyProtocolInstall(r.Context(), h.d.Redis, srv.UUID)
 	if enabled {
-		if err := services.MarkProxyProtocolSubConfigured(r.Context(), h.state.Redis, srv.UUID, srv.ActiveSubServer); err != nil {
+		if err := services.MarkProxyProtocolSubConfigured(r.Context(), h.d.Redis, srv.UUID, srv.ActiveSubServer); err != nil {
 			log.Printf("proxy-protocol: server %d: recording %s: %v", srv.ID, srv.ActiveSubServer, err)
 		}
 	}
@@ -881,14 +880,14 @@ func decodeProxyModeBody(r *http.Request) (string, bool) {
 // once the node reports that it does. Never refused: auto cannot lock anyone
 // out.
 func (h *GatewayHandler) setServerProxyAuto(w http.ResponseWriter, r *http.Request, srv *models.Server) {
-	if err := h.state.Store.SetServerProxyMode(srv.ID, store.ProxyModeAuto); err != nil {
+	if err := h.d.Store.SetServerProxyMode(srv.ID, store.ProxyModeAuto); err != nil {
 		log.Printf("proxy-protocol: server %d: mode: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
 		return
 	}
-	ready, _ := h.state.Redis.Get(r.Context(), services.ServerProxyReadyKey(srv.UUID)).Result()
+	ready, _ := h.d.Redis.Get(r.Context(), services.ServerProxyReadyKey(srv.UUID)).Result()
 	if srv.ProxyProtocol && ready != "1" {
-		if err := services.ApplyServerProxyProtocol(r.Context(), h.state.Store, h.state.Redis, h.state.Gateway, srv.ID, srv.UUID, false); err != nil {
+		if err := services.ApplyServerProxyProtocol(r.Context(), h.d.Store, h.d.Redis, h.d.Gateway, srv.ID, srv.UUID, false); err != nil {
 			log.Printf("proxy-protocol: server %d: auto: %v", srv.ID, err)
 			httpx.SendJSONError(w, "The setting was saved, but forwarding could not be switched off yet. Save again.", http.StatusBadGateway)
 			return
@@ -902,19 +901,19 @@ func (h *GatewayHandler) setServerProxyAuto(w http.ResponseWriter, r *http.Reque
 // "yes" (expects a PROXY header), "no", or "unknown" (not reported yet, or an
 // older node).
 func (h *GatewayHandler) GetServerProxyProtocol(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.d.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	mode, err := h.state.Store.GetServerProxyMode(srv.ID)
+	mode, err := h.d.Store.GetServerProxyMode(srv.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to read the setting", http.StatusInternalServerError)
 		return
 	}
 	detected := "unknown"
-	if h.state.Redis != nil {
-		switch v, _ := h.state.Redis.Get(r.Context(), services.ServerProxyReadyKey(srv.UUID)).Result(); v {
+	if h.d.Redis != nil {
+		switch v, _ := h.d.Redis.Get(r.Context(), services.ServerProxyReadyKey(srv.UUID)).Result(); v {
 		case "1":
 			detected = "yes"
 		case "0":

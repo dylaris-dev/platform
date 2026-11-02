@@ -29,7 +29,6 @@ import (
 // stage deletes the entries it made obsolete and never adds one; an entry no
 // longer needed fails the test, so the list cannot outlive the edges.
 var layeringAllowed = map[string]bool{
-	"handlers/gateway -> handlers":    true,
 	"handlers/servers -> handlers":    true,
 	"handlers/storageapi -> handlers": true,
 

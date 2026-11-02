@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/store"
 )
 
@@ -32,7 +30,7 @@ func TestWarpKeyMiddlewareTellsAnUnknownKeyFromAFault(t *testing.T) {
 		{"database fault", errors.New("connection refused"), http.StatusServiceUnavailable},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			h := &WarpHandler{state: &handlers.AppState{Store: &keyLookupStore{err: c.err}}}
+			h := &WarpHandler{d: Deps{Store: &keyLookupStore{err: c.err}}}
 			req := httptest.NewRequest(http.MethodPost, "/api/warp/link/heartbeat", nil)
 			req.Header.Set("Authorization", "Bearer link-abc")
 			rec := httptest.NewRecorder()

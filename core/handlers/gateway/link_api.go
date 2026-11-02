@@ -63,16 +63,16 @@ func (h *WarpHandler) routeOnlyKey(w http.ResponseWriter, r *http.Request) (key 
 		httpx.SendJSONError(w, "Not a route-only link key", http.StatusForbidden)
 		return key, "", false, false
 	}
-	if !services.GatewayRoutingEnabled(h.state.Store) || h.state.Gateway == nil || h.state.Redis == nil {
+	if !services.GatewayRoutingEnabled(h.d.Store) || h.d.Gateway == nil || h.d.Redis == nil {
 		httpx.SendJSONError(w, "Gateway routing is disabled", http.StatusConflict)
 		return key, "", false, false
 	}
-	token = h.state.Gateway.LinkToken(key.NodeID)
+	token = h.d.Gateway.LinkToken(key.NodeID)
 	// Fail open on a DB fault, loudly, exactly as LinkBoot does: a blip must not
 	// take a paying tenant's link down.
-	if b, berr := h.state.Store.GetUserBilling(key.OwnerID); berr != nil {
+	if b, berr := h.d.Store.GetUserBilling(key.OwnerID); berr != nil {
 		log.Printf("route-only link %s: billing lookup failed, suspension gate skipped: %v", key.NodeID, berr)
-	} else if store.OwnerCutOff(b, h.state.SuspendGrace, services.OverLimitGrace, time.Now()) {
+	} else if store.OwnerCutOff(b, h.d.SuspendGrace, services.OverLimitGrace, time.Now()) {
 		httpx.SendJSONError(w, "Account suspended", http.StatusForbidden)
 		return key, token, false, true
 	}
@@ -82,7 +82,7 @@ func (h *WarpHandler) routeOnlyKey(w http.ResponseWriter, r *http.Request) (key 
 // linkRevoked re-reads the key. The middleware read it before the handler ran,
 // and a revoke can land in between.
 func (h *WarpHandler) linkRevoked(nodeID string) bool {
-	fresh, err := h.state.Store.GetWarpAPIKeyByNodeID(nodeID)
+	fresh, err := h.d.Store.GetWarpAPIKeyByNodeID(nodeID)
 	if err != nil {
 		log.Printf("route-only link %s: fresh revoke check failed, proceeding: %v", nodeID, err)
 		return false
@@ -101,7 +101,7 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if cutOff {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		if err := h.state.Redis.Del(ctx, "link:"+token, "online_link:"+token).Err(); err != nil {
+		if err := h.d.Redis.Del(ctx, "link:"+token, "online_link:"+token).Err(); err != nil {
 			log.Printf("route-only link %s: cut off, deleting its tunnel key failed: %v", key.NodeID, err)
 		}
 	}
@@ -115,7 +115,7 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 	presence := linkPresenceValue(r.Body)
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	_, err := h.state.Redis.TxPipelined(ctx, func(p redis.Pipeliner) error {
+	_, err := h.d.Redis.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Set(ctx, "link:"+token, "valid", linkTokenTTL)
 		p.Set(ctx, "online_link:"+token, presence, linkOnlineTTL)
 		return nil
@@ -131,7 +131,7 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// If it sees it revoked, the delete may already have run before the write,
 	// so this undoes the write itself. Either way no revoked token survives.
 	if h.linkRevoked(key.NodeID) {
-		h.state.Redis.Del(ctx, "link:"+token, "online_link:"+token)
+		h.d.Redis.Del(ctx, "link:"+token, "online_link:"+token)
 		httpx.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
 		return
 	}
@@ -199,7 +199,7 @@ func (h *WarpHandler) LinkEdges(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	edges, err := readLinkEdges(ctx, h.state.Redis)
+	edges, err := readLinkEdges(ctx, h.d.Redis)
 	if err != nil {
 		log.Printf("route-only link %s: reading the edge list failed: %v", key.NodeID, err)
 		httpx.SendJSONError(w, "Edge list unavailable", http.StatusServiceUnavailable)
@@ -295,7 +295,7 @@ func (h *WarpHandler) LinkStats(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	stream := "dylaris:link:" + key.NodeID + ":stats"
-	if err := h.state.Redis.XAdd(ctx, &redis.XAddArgs{
+	if err := h.d.Redis.XAdd(ctx, &redis.XAddArgs{
 		Stream: stream,
 		MaxLen: linkStatsMaxLen,
 		Approx: true,
@@ -308,7 +308,7 @@ func (h *WarpHandler) LinkStats(w http.ResponseWriter, r *http.Request) {
 	// Asked again AFTER the write: if the revoke's delete ran before this XAdd,
 	// this undoes the stream it just brought back.
 	if h.linkRevoked(key.NodeID) {
-		h.state.Redis.Del(ctx, stream)
+		h.d.Redis.Del(ctx, stream)
 		httpx.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
 		return
 	}
@@ -335,7 +335,7 @@ func (h *WarpHandler) LinkVoice(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.state.Store.ListLinkRouteVoice()
+	rows, err := h.d.Store.ListLinkRouteVoice()
 	if err != nil {
 		log.Printf("route-only link %s: reading voice ports failed: %v", key.NodeID, err)
 		httpx.SendJSONError(w, "Voice ports unavailable", http.StatusServiceUnavailable)
@@ -369,7 +369,7 @@ func (h *WarpHandler) LinkTargets(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.state.Store.ListCoreLinkRoutes()
+	rows, err := h.d.Store.ListCoreLinkRoutes()
 	if err != nil {
 		log.Printf("route-only link %s: reading routes failed: %v", key.NodeID, err)
 		httpx.SendJSONError(w, "Routes unavailable", http.StatusServiceUnavailable)

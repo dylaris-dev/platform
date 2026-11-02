@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services/voicecfg"
 
@@ -114,7 +113,7 @@ func newVoiceSwitch(t *testing.T) *voiceSwitchEnv {
 	}
 	mr.SAdd("sys:index:routes", "a.eu.dylaris.com")
 	mr.SAdd("sys:voices", "r1")
-	return &voiceSwitchEnv{h: &GatewayHandler{state: st}, fs: fs, mr: mr, node: node}
+	return &voiceSwitchEnv{h: &GatewayHandler{d: st}, fs: fs, mr: mr, node: node}
 }
 
 func (e *voiceSwitchEnv) put(t *testing.T, body string) (*httptest.ResponseRecorder, map[string]interface{}) {
@@ -248,7 +247,7 @@ func TestVoiceDisableAllowedWhileFlagOff(t *testing.T) {
 	e.node.File = handlertest.VoiceFixture(t, "svc_after.properties")
 	row := store.VoicePort{ServerID: 7, ServerUUID: "srv-7", Region: "eu", Port: 26000, Mod: "svc", Host: "a.eu.dylaris.com", UplinkKey: make([]byte, 32)}
 	e.fs.row = &row
-	if err := services.PublishVoice(context.Background(), e.h.state.Redis, row); err != nil {
+	if err := services.PublishVoice(context.Background(), e.h.d.Redis, row); err != nil {
 		t.Fatal(err)
 	}
 	rec, out := e.put(t, `{"enabled":false}`)
@@ -304,7 +303,7 @@ func (e *voiceSwitchEnv) disableExisting(t *testing.T, why string) {
 	t.Helper()
 	row := store.VoicePort{ServerID: 7, ServerUUID: "srv-7", Region: "eu", Port: 26000, Mod: "svc", Host: "a.eu.dylaris.com", UplinkKey: make([]byte, 32)}
 	e.fs.row = &row
-	if err := services.PublishVoice(context.Background(), e.h.state.Redis, row); err != nil {
+	if err := services.PublishVoice(context.Background(), e.h.d.Redis, row); err != nil {
 		t.Fatal(err)
 	}
 	rec, out := e.put(t, `{"enabled":false}`)
@@ -371,7 +370,7 @@ func (f *voicePermAdminStore) DeleteVoicePermission(scope string) error {
 
 func TestVoicePermissionAdminAPI(t *testing.T) {
 	fs := &voicePermAdminStore{rows: map[string]bool{}}
-	h := &GatewayHandler{state: &handlers.AppState{Store: fs}}
+	h := &GatewayHandler{d: Deps{Store: fs}}
 	put := func(body string) int {
 		rec := httptest.NewRecorder()
 		h.SetVoicePermission(rec, httptest.NewRequest(http.MethodPut, "/api/admin/voice-permissions", strings.NewReader(body)))
