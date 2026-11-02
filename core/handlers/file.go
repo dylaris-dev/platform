@@ -16,6 +16,7 @@ import (
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
 	"dylaris-core/services/demo"
@@ -315,7 +316,7 @@ func (h *FileHandler) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 		if errResp.Code == 403 {
 			httpx.SendJSONError(w, errResp.Message, http.StatusForbidden)
 		} else {
-			httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+			httpx.SendJSONError(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 		}
 		return
 	}
@@ -377,18 +378,18 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 	}
 	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
-	data, errResp, rerr := collectNodeFile(ch, maxOpenFileBytes)
+	data, errResp, rerr := nodeops.CollectNodeFile(ch, nodeops.MaxOpenFileBytes)
 	if errResp != nil {
-		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 		return
 	}
 	if rerr != nil {
-		httpx.SendJSONError(w, rerr.Error(), readErrStatus(rerr))
+		httpx.SendJSONError(w, rerr.Error(), nodeops.ReadErrStatus(rerr))
 		return
 	}
-	data, readonly, derr := decodeOpenedFile(path, data, maxOpenFileBytes)
+	data, readonly, derr := nodeops.DecodeOpenedFile(path, data, nodeops.MaxOpenFileBytes)
 	if derr != nil {
-		httpx.SendJSONError(w, derr.Error(), readErrStatus(derr))
+		httpx.SendJSONError(w, derr.Error(), nodeops.ReadErrStatus(derr))
 		return
 	}
 
@@ -409,27 +410,9 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 }
 
 // SaveFileHandler handles requests to save file content
-// nodeWriteConfirmTimeout bounds the wait for the node to commit a written
-// file: a rename on its own disk, so seconds at most.
-const nodeWriteConfirmTimeout = 30 * time.Second
-
-// confirmNodeWrite waits for the node's answer to a write's TransferDone (see
-// NodeConnection.AwaitReply) and turns it into what the caller answers. ok is
-// false with a status and message when the node refused or never confirmed.
-func confirmNodeWrite(wait func(time.Duration) (*pb.NodeMessage, error)) (status int, message string, ok bool) {
-	resp, err := wait(nodeWriteConfirmTimeout)
-	if err != nil {
-		return http.StatusBadGateway, "The node did not confirm the file was written: " + err.Error(), false
-	}
-	if e := resp.GetError(); e != nil {
-		return nodeErrorStatus(e.Code), e.Message, false
-	}
-	return 0, "", true
-}
-
 // saveBodyLimit bounds the editor's save request. JSON escaping can make a
 // text file's body several times its size, hence the multiple of the open cap.
-const saveBodyLimit = 4 * maxOpenFileBytes
+const saveBodyLimit = 4 * nodeops.MaxOpenFileBytes
 
 func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 	// Bound the request body: the whole file content arrives inline as JSON, so
@@ -438,7 +421,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 	// UploadFileHandler applies via MaxBytesReader).
 	//
 	// And never above saveBodyLimit. This is the editor's save: the file was
-	// opened as text, capped at maxOpenFileBytes, and the whole body is decoded
+	// opened as text, capped at nodeops.MaxOpenFileBytes, and the whole body is decoded
 	// into one string and copied again before it is sent - at the upload limit
 	// (500 MB by default) that was over a gigabyte of Core's memory per
 	// request, with nothing bounding how many ran at once. Bigger files go
@@ -515,7 +498,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 		return
 	}
 	// Listen for the node's verdict before the first chunk goes out.
@@ -554,7 +537,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, fmt.Sprintf("Failed to send transfer done: %v", err), http.StatusBadGateway)
 		return
 	}
-	if status, msg, ok := confirmNodeWrite(wait); !ok {
+	if status, msg, ok := nodeops.ConfirmNodeWrite(wait); !ok {
 		httpx.SendJSONError(w, msg, status)
 		return
 	}
@@ -615,7 +598,7 @@ func (h *FileHandler) CreateFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -681,7 +664,7 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -765,7 +748,7 @@ func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -817,7 +800,7 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -883,7 +866,7 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 	for resp := range ch {
 		if errResp := resp.GetError(); errResp != nil {
 			if !headerWritten {
-				http.Error(w, errResp.Message, nodeErrorStatus(errResp.Code))
+				http.Error(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 			}
 			return
 		}
@@ -924,7 +907,7 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 
 		// Final TransferDone (TotalBytes>0): transfer complete, channel will close
 	}
-	refuseIncomplete(w, complete, bodyStarted)
+	nodeops.RefuseIncomplete(w, complete, bodyStarted)
 }
 
 // SelectiveDownloadHandler handles selective folder downloads.
@@ -997,7 +980,7 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 	for resp := range ch {
 		if errResp := resp.GetError(); errResp != nil {
 			if !headerWritten {
-				http.Error(w, errResp.Message, nodeErrorStatus(errResp.Code))
+				http.Error(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 			}
 			return
 		}
@@ -1035,7 +1018,7 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 			}
 		}
 	}
-	refuseIncomplete(w, complete, bodyStarted)
+	nodeops.RefuseIncomplete(w, complete, bodyStarted)
 }
 
 // UploadFileHandler handles uploads — receives files via HTTP multipart,
@@ -1199,7 +1182,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		}
 		if errResp := resp.GetError(); errResp != nil {
 			file.Close()
-			httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+			httpx.SendJSONError(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 			return
 		}
 
@@ -1258,7 +1241,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		}
 		// The node commits the file on TransferDone and says how that went.
 		// "Uploaded" used to go out without asking, over a full quota too.
-		if status, msg, ok := confirmNodeWrite(wait); !ok {
+		if status, msg, ok := nodeops.ConfirmNodeWrite(wait); !ok {
 			httpx.SendJSONError(w, fmt.Sprintf("%s: %s", sanitizedName, msg), status)
 			return
 		}

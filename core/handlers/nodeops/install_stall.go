@@ -1,8 +1,9 @@
-package handlers
+package nodeops
 
 import (
 	"context"
 
+	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -34,7 +35,7 @@ import (
 // installStallReason is what the panel shows. Empty means nothing is wrong.
 const installStallReason = "The node running this install went offline. Nothing is lost - it resumes on its own when the node reconnects. If the node is gone for good, reinstall the server."
 
-// annotateStalledInstalls marks servers whose install cannot currently make
+// AnnotateStalledInstalls marks servers whose install cannot currently make
 // progress, so the panel can say so instead of showing a spinner forever.
 //
 // ALL of these must hold, and each removes a false positive:
@@ -48,7 +49,7 @@ const installStallReason = "The node running this install went offline. Nothing 
 // The middle condition is what keeps the ordinary dispatch window quiet: between
 // Core enqueueing the job and the node picking it up there is no busy key yet,
 // and reporting a stall there would fire on every single install.
-func annotateStalledInstalls(ctx context.Context, rdb *redis.Client, connected func(nodeID int) bool, servers []models.Server) {
+func AnnotateStalledInstalls(ctx context.Context, rdb *redis.Client, connected func(nodeID int) bool, servers []models.Server) {
 	if connected == nil {
 		return
 	}
@@ -93,11 +94,11 @@ func annotateStalledInstalls(ctx context.Context, rdb *redis.Client, connected f
 	}
 }
 
-// annotateStalledInstallsFor is the call-site wrapper: it pulls the connectivity
-// check off AppState so handlers do not each reach for the registry.
-func annotateStalledInstallsFor(ctx context.Context, state *AppState, servers []models.Server) {
-	if state == nil || state.GRPCRegistry == nil {
+// AnnotateStalledInstallsFor is the call-site wrapper: it takes the connectivity
+// check off the registry so handlers do not each reach for it.
+func AnnotateStalledInstallsFor(ctx context.Context, rdb *redis.Client, reg *nodegrpc.Registry, servers []models.Server) {
+	if reg == nil {
 		return
 	}
-	annotateStalledInstalls(ctx, state.Redis, state.GRPCRegistry.IsConnected, servers)
+	AnnotateStalledInstalls(ctx, rdb, reg.IsConnected, servers)
 }

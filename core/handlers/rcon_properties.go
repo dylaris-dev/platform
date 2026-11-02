@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/handlers/nodeops"
 	"fmt"
 	"sort"
 	"strconv"
@@ -162,7 +163,7 @@ func (h *RconHandler) readNodeFileString(nodeID int, serverUUID, relPath string)
 	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
 	// server.properties is a few KB; the bound only stops a path that is not.
-	data, errResp, rerr := collectNodeFile(ch, 1<<20)
+	data, errResp, rerr := nodeops.CollectNodeFile(ch, 1<<20)
 	if errResp != nil {
 		if errResp.Code == 404 {
 			return "", false, nil
@@ -228,7 +229,7 @@ func (h *RconHandler) writeNodeFileString(nodeID int, serverUUID, relPath, conte
 	if err := conn.Send(doneMsg); err != nil {
 		return fmt.Errorf("node write finalize failed: %w", err)
 	}
-	if _, msg, ok := confirmNodeWrite(wait); !ok {
+	if _, msg, ok := nodeops.ConfirmNodeWrite(wait); !ok {
 		return fmt.Errorf("node write failed: %s", msg)
 	}
 	return nil

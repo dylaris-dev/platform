@@ -1,4 +1,4 @@
-package handlers
+package nodeops
 
 import (
 	"context"
@@ -6,9 +6,11 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-pkg/release"
+
+	"github.com/redis/go-redis/v9"
 )
 
-// modReportingSince is the release in which the node started reporting the
+// ModReportingSince is the release in which the node started reporting the
 // outcome of an install. A node older than this performs the install and says
 // nothing, so a row waiting for its answer would wait forever.
 //
@@ -16,9 +18,9 @@ import (
 // RELEASE_VERSION: that value is empty in a development build, and deriving it
 // would make every node look too old exactly where the feature is being worked
 // on.
-const modReportingSince = "2026.09.02.8"
+const ModReportingSince = "2026.09.02.8"
 
-// installStatusFor decides whether an install may be recorded as PENDING, or
+// InstallStatusFor decides whether an install may be recorded as PENDING, or
 // has to be recorded the way it always was - as a fact at dispatch.
 //
 // Core and the node are deployed separately, so "new Core, old node" is not an
@@ -31,13 +33,13 @@ const modReportingSince = "2026.09.02.8"
 // lossy: the row is written as installed, and if a report does arrive it still
 // carries the attempt id, so it is applied and corrects the row. Guessing the
 // other way cannot be corrected by anything.
-func installStatusFor(ctx context.Context, st *AppState, nodeToken string) string {
-	if st == nil || st.Redis == nil {
+func InstallStatusFor(ctx context.Context, rdb *redis.Client, nodeToken string) string {
+	if rdb == nil {
 		return models.ServerModInstalled
 	}
 	// The singular loader: the plural one is a KEYS scan over the whole fleet,
 	// and this runs on every install.
-	hb := services.LoadHeartbeat(ctx, st.Redis, nodeToken)
+	hb := services.LoadHeartbeat(ctx, rdb, nodeToken)
 	if hb == nil {
 		return models.ServerModInstalled
 	}
@@ -45,7 +47,7 @@ func installStatusFor(ctx context.Context, st *AppState, nodeToken string) strin
 	if err != nil {
 		return models.ServerModInstalled
 	}
-	since, err := release.ParseVersion(modReportingSince)
+	since, err := release.ParseVersion(ModReportingSince)
 	if err != nil {
 		return models.ServerModInstalled
 	}

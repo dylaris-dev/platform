@@ -1,4 +1,4 @@
-package handlers
+package nodeops
 
 import (
 	"context"
@@ -8,12 +8,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 
+	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
 
-// setNodesLinkOnline fills LinkOnline: is the Link that carries each node's
+// SetNodesLinkOnline fills LinkOnline: is the Link that carries each node's
 // players actually connected? The heartbeat's linkCount says how many Link
 // containers the node sees on its own host, which stays 1 while that Link
 // reaches no edge and nobody can join. This asks the Link itself, through the
@@ -27,15 +29,15 @@ import (
 // self-enrolled Link runs under a Hub-GENERATED token, so asking about the
 // derived one would report it as not connected for as long as the learner
 // has no answer - a red badge on a machine that is serving players.
-func setNodesLinkOnline(ctx context.Context, state *AppState, nodes []models.Node) {
+func SetNodesLinkOnline(ctx context.Context, rdb *redis.Client, clusterSecret string, nodes []models.Node) {
 	if len(nodes) == 0 {
 		return
 	}
 	askFor := func(n *models.Node) string {
-		if n.LinkToken == "" && !isBYONNode(*n) {
+		if n.LinkToken == "" && !IsBYONNode(*n) {
 			return ""
 		}
-		return services.EffectiveLinkToken(n, state.ClusterSecret)
+		return services.EffectiveLinkToken(n, clusterSecret)
 	}
 	tokens := make([]string, 0, len(nodes))
 	for i := range nodes {
@@ -43,7 +45,7 @@ func setNodesLinkOnline(ctx context.Context, state *AppState, nodes []models.Nod
 			tokens = append(tokens, t)
 		}
 	}
-	online := services.LinkOnline(ctx, state.Redis, tokens)
+	online := services.LinkOnline(ctx, rdb, tokens)
 	if online == nil {
 		return
 	}
@@ -58,12 +60,12 @@ func setNodesLinkOnline(ctx context.Context, state *AppState, nodes []models.Nod
 	}
 }
 
-// inspectOrphanOnNode sends an inspect_orphan gRPC request to nodeID for orphanUUID
+// InspectOrphanOnNode sends an inspect_orphan gRPC request to nodeID for orphanUUID
 // and returns the parsed response. Returns nil, error on gRPC failure or missing orphan.
 // Package-level (not a NodeHandler method) so the server-lifecycle switch path can
 // reuse it to refresh a server's loader metadata from the node's .dylaris.json.
-func inspectOrphanOnNode(state *AppState, nodeID int, orphanUUID string) (*pb.InspectOrphanResp, error) {
-	resp, err := state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
+func InspectOrphanOnNode(reg *nodegrpc.Registry, nodeID int, orphanUUID string) (*pb.InspectOrphanResp, error) {
+	resp, err := reg.SendRequest(nodeID, &pb.NodeMessage{
 		RequestId:  uuid.NewString(),
 		ServerUuid: orphanUUID,
 		Payload:    &pb.NodeMessage_InspectOrphanReq{InspectOrphanReq: &pb.InspectOrphanReq{}},
@@ -72,7 +74,7 @@ func inspectOrphanOnNode(state *AppState, nodeID int, orphanUUID string) (*pb.In
 		return nil, fmt.Errorf("node communication error: %w", err)
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		code := nodeErrorStatus(errResp.Code)
+		code := NodeErrorStatus(errResp.Code)
 		if code == 0 {
 			code = 500
 		}
@@ -85,7 +87,7 @@ func inspectOrphanOnNode(state *AppState, nodeID int, orphanUUID string) (*pb.In
 	return orphanInfo, nil
 }
 
-// subServerLoaderFromInspect extracts one sub-server's loader/version/build from
+// SubServerLoaderFromInspect extracts one sub-server's loader/version/build from
 // a node's inspect_orphan response. It prefers the richer .dylaris.json metadata
 // (which carries minecraft_version and build) and falls back to the directory
 // scan, which reports the type only. ok reports whether the sub-server was found
@@ -95,12 +97,12 @@ func inspectOrphanOnNode(state *AppState, nodeID int, orphanUUID string) (*pb.In
 // Shared by orphan adoption (first fill) and the sub-server switch (refresh), so
 // both derive installer_type/minecraft_version/build_number the same way and
 // cannot drift apart.
-func subServerLoaderFromInspect(resp *pb.InspectOrphanResp, subName string) (instType, mcVer, build string, ok bool) {
+func SubServerLoaderFromInspect(resp *pb.InspectOrphanResp, subName string) (instType, mcVer, build string, ok bool) {
 	if resp == nil || subName == "" {
 		return "", "", "", false
 	}
 	if resp.HasMetadata && resp.MetadataJson != "" {
-		var meta dylarisMetadata
+		var meta DylarisMetadata
 		if err := json.Unmarshal([]byte(resp.MetadataJson), &meta); err == nil {
 			for _, ss := range meta.SubServers {
 				if ss.Name == subName {
@@ -121,10 +123,10 @@ func subServerLoaderFromInspect(resp *pb.InspectOrphanResp, subName string) (ins
 	return "", "", "", false
 }
 
-func isBYONNode(n models.Node) bool { return n.Kind() == models.NodeKindBYON }
+func IsBYONNode(n models.Node) bool { return n.Kind() == models.NodeKindBYON }
 
-// dylarisMetadata mirrors the relevant fields of .dylaris.json on disk.
-type dylarisMetadata struct {
+// DylarisMetadata mirrors the relevant fields of .dylaris.json on disk.
+type DylarisMetadata struct {
 	Name            string  `json:"name"`
 	MemoryMB        int     `json:"memory_mb"`
 	CPULimit        float64 `json:"cpu_limit"`

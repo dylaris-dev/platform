@@ -549,7 +549,7 @@ type Server struct {
 	// reads "installing" but nothing is working on it, because the node holding
 	// the job is offline. The status stays "installing" because it is still true;
 	// this is the missing explanation, not a state change. See
-	// handlers.annotateStalledInstalls.
+	// nodeops.AnnotateStalledInstalls.
 	InstallStalled     bool   `json:"installStalled,omitempty"`
 	InstallStallReason string `json:"installStallReason,omitempty"`
 }

@@ -12,6 +12,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
+	"dylaris-core/handlers/nodeops"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -121,7 +122,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
-	if err != nil || node == nil || !handlers.NodeReleaseAtLeast(ctx, h.state, node.Token, voiceNodeSince) {
+	if err != nil || node == nil || !nodeops.NodeReleaseAtLeast(ctx, h.state.Redis, node.Token, voiceNodeSince) {
 		httpx.SendJSONErrorCode(w, "This server's node is too old for voice chat. Update the node, then try again.", "node_too_old", http.StatusConflict)
 		return
 	}

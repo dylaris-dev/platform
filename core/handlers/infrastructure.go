@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -43,7 +44,7 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 	// Shared with the metrics collector, which used to read these fields off an
 	// unenriched ListNodes result and record the zero value as a measurement.
 	services.EnrichNodesWithLiveStats(ctx, h.state.Store, h.state.Redis, nodes)
-	setNodesLinkOnline(ctx, h.state, nodes)
+	nodeops.SetNodesLinkOnline(ctx, h.state.Redis, h.state.ClusterSecret, nodes)
 
 	// Aggregate stats. Links are split by who RUNS them: a customer's BYON or
 	// route-only link going down is not an outage of this platform, so the

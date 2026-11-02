@@ -1,4 +1,4 @@
-package handlers
+package nodeops
 
 import (
 	"context"
@@ -20,7 +20,7 @@ func TestAQueuedRestoreOnAnOfflineNodeIsReported(t *testing.T) {
 	rdb, _ := stallRedis(t)
 	restores := queuedRestore()
 
-	annotateStalledRestores(context.Background(), rdb, offline, 1, "srv-uuid", restores)
+	AnnotateStalledRestores(context.Background(), rdb, offline, 1, "srv-uuid", restores)
 
 	if !restores[0].Stalled {
 		t.Fatal("a queued restore on an offline node with no busy key was not reported")
@@ -81,7 +81,7 @@ func TestARestoreThatIsFineIsNotReported(t *testing.T) {
 			if tc.online {
 				conn = online
 			}
-			annotateStalledRestores(context.Background(), rdb, conn, 1, "srv-uuid", tc.restores)
+			AnnotateStalledRestores(context.Background(), rdb, conn, 1, "srv-uuid", tc.restores)
 			for _, r := range tc.restores {
 				if r.Stalled {
 					t.Errorf("restore %d reported as stalled; it is not", r.ID)
@@ -98,7 +98,7 @@ func TestAnUnreachableRedisDoesNotInventARestoreStall(t *testing.T) {
 	mr.Close()
 	restores := queuedRestore()
 
-	annotateStalledRestores(context.Background(), rdb, offline, 1, "srv-uuid", restores)
+	AnnotateStalledRestores(context.Background(), rdb, offline, 1, "srv-uuid", restores)
 
 	if restores[0].Stalled {
 		t.Error("a Redis failure was reported as a stalled restore")

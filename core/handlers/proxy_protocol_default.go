@@ -4,8 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	"dylaris-pkg/release"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -15,29 +13,6 @@ import (
 // proxyProtocolDefaultSince is the node release that writes the real-IP
 // setting into a server's config and reports whether it did.
 const proxyProtocolDefaultSince = "2026.10.21.2"
-
-// nodeReleaseAtLeast is the strict twin of nodeReleaseOlderThan: a node whose
-// release is unknown (no heartbeat, a dev build) does NOT qualify. The default
-// turns a switch on, and on for a server the node never configured locks every
-// player out, so "unknown" has to read as "no" here.
-func nodeReleaseAtLeast(ctx context.Context, st *AppState, nodeToken, since string) bool {
-	if st == nil || st.Redis == nil {
-		return false
-	}
-	hb := services.LoadHeartbeat(ctx, st.Redis, nodeToken)
-	if hb == nil {
-		return false
-	}
-	have, err := release.ParseVersion(hb.ReleaseVersion)
-	if err != nil || have.IsZero() {
-		return false
-	}
-	want, err := release.ParseVersion(since)
-	if err != nil {
-		return false
-	}
-	return have.Compare(want) >= 0
-}
 
 // proxyProtocolInstallGate is asked by every install on an existing server.
 // While the switch is on, the software installed has to expect the header

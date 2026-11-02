@@ -68,7 +68,7 @@ func nodeResolvesProvider(provider string) bool {
 // or unusable provider - and a restore stops the server before it finds out.
 //
 // A constant rather than the running Core's own RELEASE_VERSION, for the reason
-// modReportingSince gives: a development build carries no version.
+// nodeops.ModReportingSince gives: a development build carries no version.
 const presignedMultipartSince = "2026.09.14.2"
 
 // ErrNodeUpdateRequired refuses a backup or restore on object storage for a node

@@ -17,6 +17,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -235,7 +236,7 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 		httpx.SendJSONError(w, "The server's node was not found", http.StatusNotFound)
 		return
 	}
-	if !handlers.NodeReleaseAtLeast(ctx, h.state, node.Token, services.PortsNodeSince) {
+	if !nodeops.NodeReleaseAtLeast(ctx, h.state.Redis, node.Token, services.PortsNodeSince) {
 		httpx.SendJSONErrorCode(w, "Update this server's node first; it is too old to publish extra ports.", "node_too_old", http.StatusConflict)
 		return
 	}

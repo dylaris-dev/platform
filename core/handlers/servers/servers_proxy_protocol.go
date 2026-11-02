@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/nodeops"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -33,7 +34,7 @@ func (h *ServerHandler) proxyProtocolDefault(ctx context.Context, srv *models.Se
 	}
 	in.RoutingMode, _ = h.state.Store.GetSetting("routing_mode")
 	in.PlatformEnabled = h.state.FeatureFlags != nil && h.state.FeatureFlags.IsProxyProtocolEnabled(ctx)
-	in.NodeWritesConfig = handlers.NodeReleaseAtLeast(ctx, h.state, node.Token, handlers.ProxyProtocolDefaultSince)
+	in.NodeWritesConfig = nodeops.NodeReleaseAtLeast(ctx, h.state.Redis, node.Token, handlers.ProxyProtocolDefaultSince)
 
 	installs, ierr := h.state.Store.ListSubServerInstalls(srv.ID)
 	routes, rerr := services.ReadRoutesFromRedis(ctx, h.state.Redis)
@@ -57,7 +58,7 @@ func (h *ServerHandler) proxyProtocolDefault(ctx context.Context, srv *models.Se
 		if tok == "" {
 			tok = h.state.Gateway.LinkToken(node.Token)
 		}
-		ok, err := handlers.LinkAnnouncesCap(ctx, h.state.Redis, tok, handlers.LinkCapClientAddr)
+		ok, err := services.LinkAnnouncesCap(ctx, h.state.Redis, tok, nodeops.LinkCapClientAddr)
 		if err != nil {
 			log.Printf("proxy-protocol default: server %d: link check: %v", srv.ID, err)
 		}

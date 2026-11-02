@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
+	"dylaris-core/handlers/nodeops"
 
 	"dylaris-pkg/validate"
 
@@ -347,7 +348,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		// the node found, so a 404 and a hash mismatch both read as success.
 		// installing only when the node is new enough to answer; see
 		// installStatusFor for why an old one is recorded the way it always was.
-		Status:    handlers.InstallStatusFor(r.Context(), h.state, node.Token),
+		Status:    nodeops.InstallStatusFor(r.Context(), h.state.Redis, node.Token),
 		InstallID: installID,
 	}
 	// Filed BEFORE the upsert, which is the write that destroys it. A history

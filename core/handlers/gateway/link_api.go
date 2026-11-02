@@ -12,9 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -142,7 +141,7 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 // knownLinkCaps is every capability a link may announce. The edge reads
 // online_link:<token> to decide whether a link understands a stream type, so
 // only these names may ever reach that key.
-var knownLinkCaps = []string{handlers.LinkCapClientAddr, linkCapVoice}
+var knownLinkCaps = []string{nodeops.LinkCapClientAddr, linkCapVoice}
 
 // linkPresenceValue is what a heartbeat writes into online_link:<token>: the
 // capabilities the link announced as {"caps":[...]}, or "1" when it announced

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/nodeops"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -11,7 +12,6 @@ import (
 func TestNodeReleaseOlderThan(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	st := &AppState{Redis: rdb}
 	ctx := context.Background()
 
 	cases := []struct {
@@ -33,12 +33,12 @@ func TestNodeReleaseOlderThan(t *testing.T) {
 			if c.heartbeat != "" {
 				mr.Set("dylaris:discovery:"+token, c.heartbeat)
 			}
-			if got := nodeReleaseOlderThan(ctx, st, token, technicSince); got != c.want {
-				t.Errorf("nodeReleaseOlderThan = %v, want %v", got, c.want)
+			if got := nodeops.NodeReleaseOlderThan(ctx, rdb, token, technicSince); got != c.want {
+				t.Errorf("nodeops.NodeReleaseOlderThan = %v, want %v", got, c.want)
 			}
 		})
 	}
-	if nodeReleaseOlderThan(ctx, &AppState{}, "x", technicSince) {
+	if nodeops.NodeReleaseOlderThan(ctx, nil, "x", technicSince) {
 		t.Error("no Redis must not refuse")
 	}
 }

@@ -13,6 +13,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -761,7 +762,7 @@ func (h *GatewayHandler) proxyProtocolNoLink(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		found = true
-		ok, err := handlers.LinkAnnouncesCap(ctx, h.state.Redis, rt.TunnelID, handlers.LinkCapClientAddr)
+		ok, err := services.LinkAnnouncesCap(ctx, h.state.Redis, rt.TunnelID, nodeops.LinkCapClientAddr)
 		if err != nil {
 			log.Printf("proxy-protocol: link check: route %s: %v", rt.Domain, err)
 			httpx.SendJSONErrorCode(w, "Could not check the links of this server's routes. Try again.", "link_check_failed", http.StatusConflict)

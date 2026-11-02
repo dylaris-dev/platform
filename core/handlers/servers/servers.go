@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/demo"
@@ -259,7 +260,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 
 	// Say why an install is not moving, rather than leaving a spinner that
 	// never resolves. Costs nothing when no server is installing.
-	handlers.AnnotateStalledInstallsFor(r.Context(), h.state, servers)
+	nodeops.AnnotateStalledInstallsFor(r.Context(), h.state.Redis, h.state.GRPCRegistry, servers)
 
 	access.RedactNodeAddress(h.state.Store, h.state.GatewayEnabled, servers, isAdmin, userID)
 

@@ -15,6 +15,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
+	"dylaris-core/handlers/nodeops"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
@@ -963,7 +964,7 @@ func (h *BackupHandler) ListRestores(w http.ResponseWriter, r *http.Request) {
 	// A restore left "queued" by a node that went away looks exactly like one
 	// that is about to start. See restore_stall.go.
 	if srv != nil && h.state.GRPCRegistry != nil {
-		handlers.AnnotateStalledRestores(r.Context(), h.state.Redis, h.state.GRPCRegistry.IsConnected, srv.NodeID, srv.UUID, restores)
+		nodeops.AnnotateStalledRestores(r.Context(), h.state.Redis, h.state.GRPCRegistry.IsConnected, srv.NodeID, srv.UUID, restores)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "restores": restores})
 }

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/nodeops"
 	"net/http"
 )
 
@@ -28,7 +29,7 @@ func proxyInstallRefusal(ctx context.Context, st *AppState, serverType, nodeToke
 	if serverType != "proxy" {
 		return http.StatusBadRequest, "A proxy can only be installed on a server created as a proxy"
 	}
-	if nodeReleaseOlderThan(ctx, st, nodeToken, proxyInstallSince) {
+	if nodeops.NodeReleaseOlderThan(ctx, st.Redis, nodeToken, proxyInstallSince) {
 		return http.StatusConflict, "This node runs an older release that cannot install a proxy. Update the node, then try again."
 	}
 	return 0, ""

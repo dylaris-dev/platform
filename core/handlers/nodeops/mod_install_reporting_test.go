@@ -1,4 +1,4 @@
-package handlers
+package nodeops
 
 import (
 	"context"
@@ -33,7 +33,6 @@ func seedHeartbeat(t *testing.T, m *miniredis.Miniredis, token, version string) 
 func TestInstallStatusWaitsOnlyForANodeThatAnswers(t *testing.T) {
 	m := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: m.Addr()})
-	st := &AppState{Redis: rdb}
 
 	tests := []struct {
 		name    string
@@ -42,7 +41,7 @@ func TestInstallStatusWaitsOnlyForANodeThatAnswers(t *testing.T) {
 		why     string
 	}{
 		{
-			name: "a node from this release reports", version: modReportingSince,
+			name: "a node from this release reports", version: ModReportingSince,
 			want: models.ServerModInstalling,
 			why:  "the release that introduced reporting must itself be treated as reporting",
 		},
@@ -68,8 +67,8 @@ func TestInstallStatusWaitsOnlyForANodeThatAnswers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			token := "node-" + tt.name
 			seedHeartbeat(t, m, token, tt.version)
-			if got := installStatusFor(context.Background(), st, token); got != tt.want {
-				t.Errorf("installStatusFor = %q, want %q: %s", got, tt.want, tt.why)
+			if got := InstallStatusFor(context.Background(), rdb, token); got != tt.want {
+				t.Errorf("InstallStatusFor = %q, want %q: %s", got, tt.want, tt.why)
 			}
 		})
 	}
@@ -79,10 +78,10 @@ func TestInstallStatusWaitsOnlyForANodeThatAnswers(t *testing.T) {
 func TestInstallStatusWithNoHeartbeatOrNoRedis(t *testing.T) {
 	m := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: m.Addr()})
-	if got := installStatusFor(context.Background(), &AppState{Redis: rdb}, "unknown"); got != models.ServerModInstalled {
+	if got := InstallStatusFor(context.Background(), rdb, "unknown"); got != models.ServerModInstalled {
 		t.Errorf("a node with no heartbeat = %q, want installed", got)
 	}
-	if got := installStatusFor(context.Background(), &AppState{}, "any"); got != models.ServerModInstalled {
+	if got := InstallStatusFor(context.Background(), nil, "any"); got != models.ServerModInstalled {
 		t.Errorf("no redis = %q, want installed", got)
 	}
 }

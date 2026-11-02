@@ -17,6 +17,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -107,7 +108,7 @@ func (h *ServerHandler) resolveTemplateInstall(w http.ResponseWriter, r *http.Re
 // install when the node cannot download them. Stricter than the other release
 // gates: an old node does not fail here, it installs WITHOUT the jars and
 // reports success, so a node that reports no version is refused too unless
-// this Core is a dev build (see handlers.NodeReleaseAtLeastKnown). Answers the
+// this Core is a dev build (see nodeops.NodeReleaseAtLeastKnown). Answers the
 // request and returns ok=false when it is refused.
 func (h *ServerHandler) templateModrinth(w http.ResponseWriter, r *http.Request, nodeID int, t *models.Template) ([]models.TemplateModrinthRef, []services.TemplateModrinthFile, bool) {
 	refs, err := h.state.Store.ListTemplateModrinth(t.ID)
@@ -122,7 +123,7 @@ func (h *ServerHandler) templateModrinth(w http.ResponseWriter, r *http.Request,
 		return nil, nil, false
 	}
 	if len(files) > 0 {
-		if node, err := h.state.Store.GetNodeByID(nodeID); err == nil && handlers.NodeReleaseAtLeastKnown(r.Context(), h.state, node.Token, templateModrinthSince) {
+		if node, err := h.state.Store.GetNodeByID(nodeID); err == nil && nodeops.NodeReleaseAtLeastKnown(r.Context(), h.state.Redis, h.state.ReleaseVersion, node.Token, templateModrinthSince) {
 			httpx.SendJSONError(w, templateModrinthRefused, http.StatusConflict)
 			return nil, nil, false
 		}
@@ -233,7 +234,7 @@ func pushTemplateZip(ctx context.Context, state *handlers.AppState, nodeID int, 
 	}); err != nil {
 		return fmt.Errorf("node write finalize: %w", err)
 	}
-	if _, msg, ok := handlers.ConfirmNodeWrite(wait); !ok {
+	if _, msg, ok := nodeops.ConfirmNodeWrite(wait); !ok {
 		return fmt.Errorf("node write: %s", msg)
 	}
 	return nil

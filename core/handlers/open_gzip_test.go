@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"compress/gzip"
+	"dylaris-core/handlers/nodeops"
 	"errors"
 	"net/http"
 	"strings"
@@ -44,12 +45,12 @@ func TestOpeningAGzipShowsItDecompressedAndReadonly(t *testing.T) {
 		{"truncated gzip", "logs/cut.log.gz", gz[:len(gz)-6], "", true, http.StatusUnprocessableEntity},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, ro, err := decodeOpenedFile(tc.path, tc.data, 100)
+			out, ro, err := nodeops.DecodeOpenedFile(tc.path, tc.data, 100)
 			if tc.wantStatus != 0 {
 				if err == nil {
 					t.Fatalf("no error, want status %d", tc.wantStatus)
 				}
-				if got := readErrStatus(err); got != tc.wantStatus {
+				if got := nodeops.ReadErrStatus(err); got != tc.wantStatus {
 					t.Fatalf("status %d, want %d (err %v)", got, tc.wantStatus, err)
 				}
 				return
@@ -63,12 +64,12 @@ func TestOpeningAGzipShowsItDecompressedAndReadonly(t *testing.T) {
 		})
 	}
 
-	// Exactly at the cap still opens: the limit is "over max", like collectNodeFile.
-	if _, _, err := decodeOpenedFile("a.gz", gzipped(t, strings.Repeat("a", 100)), 100); err != nil {
+	// Exactly at the cap still opens: the limit is "over max", like nodeops.CollectNodeFile.
+	if _, _, err := nodeops.DecodeOpenedFile("a.gz", gzipped(t, strings.Repeat("a", 100)), 100); err != nil {
 		t.Fatalf("at the cap: %v", err)
 	}
-	if _, _, err := decodeOpenedFile("a.gz", bomb, 100); !errors.Is(err, errGzipTooLargeToOpen) {
-		t.Fatalf("over the cap: %v, want errGzipTooLargeToOpen", err)
+	if _, _, err := nodeops.DecodeOpenedFile("a.gz", bomb, 100); !errors.Is(err, nodeops.ErrGzipTooLargeToOpen) {
+		t.Fatalf("over the cap: %v, want nodeops.ErrGzipTooLargeToOpen", err)
 	}
 	// The demo filter keys on the base name, so a decompressed log stays hidden.
 	if got := demoFileContent("logs/latest.log.gz", logText); got != demoHiddenNotice {

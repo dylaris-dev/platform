@@ -1,4 +1,4 @@
-package handlers
+package nodeops
 
 import (
 	"errors"
@@ -29,11 +29,11 @@ func chunkStream(sizes ...int) <-chan *pb.NodeMessage {
 // Opening a file collected all of it in Core's memory with no limit: one user
 // with read access opening a multi-gigabyte file took Core down for everyone.
 func TestOpeningAFileStopsAtTheLimit(t *testing.T) {
-	if data, _, err := collectNodeFile(chunkStream(4, 4), 10); err != nil || len(data) != 8 {
+	if data, _, err := CollectNodeFile(chunkStream(4, 4), 10); err != nil || len(data) != 8 {
 		t.Fatalf("a file under the limit: %d bytes, err %v", len(data), err)
 	}
-	if _, _, err := collectNodeFile(chunkStream(6, 6), 10); !errors.Is(err, errFileTooLargeToOpen) {
-		t.Fatalf("a file over the limit: err %v, want errFileTooLargeToOpen", err)
+	if _, _, err := CollectNodeFile(chunkStream(6, 6), 10); !errors.Is(err, ErrFileTooLargeToOpen) {
+		t.Fatalf("a file over the limit: err %v, want ErrFileTooLargeToOpen", err)
 	}
 }
 
@@ -44,7 +44,7 @@ func TestANodesErrorCodeIsNotPassedThroughBlindly(t *testing.T) {
 		404: http.StatusNotFound, 403: http.StatusForbidden, 413: http.StatusRequestEntityTooLarge,
 		401: http.StatusBadGateway, 302: http.StatusBadGateway, 0: http.StatusBadGateway, 99999: http.StatusBadGateway,
 	} {
-		if got := nodeErrorStatus(code); got != want {
+		if got := NodeErrorStatus(code); got != want {
 			t.Errorf("node code %d -> %d, want %d", code, got, want)
 		}
 	}
@@ -55,10 +55,10 @@ func TestANodesErrorCodeIsNotPassedThroughBlindly(t *testing.T) {
 func TestAFileCutShortIsNotOpenedAsTheWholeFile(t *testing.T) {
 	ch := partialStream(4, 4)
 	close(ch)
-	if _, _, err := collectNodeFile(ch, 100); !errors.Is(err, errTransferIncomplete) {
-		t.Fatalf("err %v, want errTransferIncomplete", err)
+	if _, _, err := CollectNodeFile(ch, 100); !errors.Is(err, ErrTransferIncomplete) {
+		t.Fatalf("err %v, want ErrTransferIncomplete", err)
 	}
-	if readErrStatus(errTransferIncomplete) != http.StatusBadGateway {
+	if ReadErrStatus(ErrTransferIncomplete) != http.StatusBadGateway {
 		t.Fatal("a cut-off read is not a size problem")
 	}
 }

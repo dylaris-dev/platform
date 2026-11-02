@@ -1,4 +1,4 @@
-package handlers
+package nodeops
 
 import (
 	"context"
@@ -21,7 +21,7 @@ import (
 // backup RUNS get a real reaper (reapAbandonedRuns, 6h, which must close the row
 // because it holds storage), and the DB migration job computes staleness on READ
 // rather than persisting it. Restores had neither. This takes the third
-// approach, annotateStalledInstalls', because a restore is the same situation as
+// approach, AnnotateStalledInstalls', because a restore is the same situation as
 // a stalled install rather than the same situation as an abandoned run: nothing
 // has to be released, and the work genuinely resumes.
 //
@@ -35,7 +35,7 @@ import (
 // world on a slow disk.
 const restoreStallReason = "The node that would run this restore is offline. Nothing is lost - it resumes on its own when the node reconnects. If the node is gone for good, restore again once a replacement is online."
 
-// annotateStalledRestores marks restores that cannot currently make progress.
+// AnnotateStalledRestores marks restores that cannot currently make progress.
 //
 // All three must hold, and each removes a false positive:
 //
@@ -48,7 +48,7 @@ const restoreStallReason = "The node that would run this restore is offline. Not
 // The middle condition is what keeps the ordinary dispatch window quiet: between
 // the push and the node claiming it there is no busy key yet, and reporting a
 // stall there would fire on every restore anyone ever starts.
-func annotateStalledRestores(ctx context.Context, rdb *redis.Client, connected func(nodeID int) bool, nodeID int, serverUUID string, restores []models.BackupRestore) {
+func AnnotateStalledRestores(ctx context.Context, rdb *redis.Client, connected func(nodeID int) bool, nodeID int, serverUUID string, restores []models.BackupRestore) {
 	if connected == nil || connected(nodeID) {
 		return
 	}

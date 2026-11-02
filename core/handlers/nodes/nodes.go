@@ -16,6 +16,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/nodeops"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -122,7 +123,7 @@ func isExternalPlatformNode(n models.Node) bool { return n.Kind() == models.Node
 // caller. An empty caller matches nothing, so a request that arrived without an
 // identity gets an empty list rather than the fleet.
 func ownedBYONNode(uid string) func(models.Node) bool {
-	return func(n models.Node) bool { return handlers.IsBYONNode(n) && uid != "" && *n.OwnerID == uid }
+	return func(n models.Node) bool { return nodeops.IsBYONNode(n) && uid != "" && *n.OwnerID == uid }
 }
 
 // placeableNode is the PLACEMENT predicate: a node this caller may be offered
@@ -239,7 +240,7 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 				httpx.SendJSONError(w, "Forbidden", 403)
 				return
 			}
-			nodes = filterNodes(nodes, func(n models.Node) bool { return !handlers.IsBYONNode(n) })
+			nodes = filterNodes(nodes, func(n models.Node) bool { return !nodeops.IsBYONNode(n) })
 		default:
 			httpx.SendJSONError(w, "Unknown scope", 400)
 			return
@@ -264,7 +265,7 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 
 	// One round trip for the whole list, after the scope filter, so it covers
 	// exactly the rows being returned.
-	handlers.SetNodesLinkOnline(r.Context(), h.state, nodes)
+	nodeops.SetNodesLinkOnline(r.Context(), h.state.Redis, h.state.ClusterSecret, nodes)
 
 	// Derive the unusable flag at response time (no DB column needed): an
 	// external/home node only routes via gateway+beam, so while the platform
@@ -493,7 +494,7 @@ func (h *NodeHandler) GetNodeServers(w http.ResponseWriter, r *http.Request) {
 	}
 	// This is the view an operator opens when a node looks wrong, so it is the
 	// one place a stalled install most needs to be visible.
-	handlers.AnnotateStalledInstallsFor(r.Context(), h.state, servers)
+	nodeops.AnnotateStalledInstallsFor(r.Context(), h.state.Redis, h.state.GRPCRegistry, servers)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"servers": servers,
@@ -1072,7 +1073,7 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		httpx.SendJSONError(w, errResp.Message, handlers.NodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -1149,13 +1150,13 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 	}
 	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
-	data, errResp, rerr := handlers.CollectNodeFile(ch, handlers.MaxOpenFileBytes)
+	data, errResp, rerr := nodeops.CollectNodeFile(ch, nodeops.MaxOpenFileBytes)
 	if errResp != nil {
-		httpx.SendJSONError(w, errResp.Message, handlers.NodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
 		return
 	}
 	if rerr != nil {
-		httpx.SendJSONError(w, rerr.Error(), handlers.ReadErrStatus(rerr))
+		httpx.SendJSONError(w, rerr.Error(), nodeops.ReadErrStatus(rerr))
 		return
 	}
 
@@ -1194,7 +1195,7 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
-	// The route, not inspectOrphanOnNode: the sub-server switch reuses that
+	// The route, not nodeops.InspectOrphanOnNode: the sub-server switch reuses that
 	// function for a LIVE server on purpose, and must keep working.
 	if !h.requireOrphan(w, orphanUUID) {
 		return
@@ -1205,7 +1206,7 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orphanInfo, err := handlers.InspectOrphanOnNode(h.state, nodeID, orphanUUID)
+	orphanInfo, err := nodeops.InspectOrphanOnNode(h.state.GRPCRegistry, nodeID, orphanUUID)
 	if err != nil {
 		httpx.SendJSONError(w, err.Error(), 502)
 		return
@@ -1214,7 +1215,7 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 	// Parse metadata JSON server-side so the panel receives a clean object.
 	var metadataObj interface{}
 	if orphanInfo.HasMetadata && orphanInfo.MetadataJson != "" {
-		var meta handlers.DylarisMetadata
+		var meta nodeops.DylarisMetadata
 		if jsonErr := json.Unmarshal([]byte(orphanInfo.MetadataJson), &meta); jsonErr == nil {
 			metadataObj = meta
 		}
@@ -1372,7 +1373,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Inspect the orphan on the node ---
-	orphanInfo, err := handlers.InspectOrphanOnNode(h.state, req.NodeID, req.UUID)
+	orphanInfo, err := nodeops.InspectOrphanOnNode(h.state.GRPCRegistry, req.NodeID, req.UUID)
 	if err != nil {
 		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
 		return
@@ -1394,7 +1395,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "The node reported an invalid active sub-server name for this server", 400)
 		return
 	}
-	installerType, minecraftVersion, buildNumber, _ := handlers.SubServerLoaderFromInspect(orphanInfo, activeSubServer)
+	installerType, minecraftVersion, buildNumber, _ := nodeops.SubServerLoaderFromInspect(orphanInfo, activeSubServer)
 
 	// --- Create the servers DB row ---
 	srv := &models.Server{

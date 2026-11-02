@@ -16,6 +16,7 @@ import (
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/guard"
+	"dylaris-core/handlers/nodeops"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
@@ -570,7 +571,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	// An older node ignores the field and only extracts - the exact server that
 	// never started. Refused before anything is written, like Technic below.
 	if req.Installer.Software != "" {
-		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil && handlers.NodeReleaseOlderThan(r.Context(), h.state, node.Token, uploadSoftwareSince) {
+		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil && nodeops.NodeReleaseOlderThan(r.Context(), h.state.Redis, node.Token, uploadSoftwareSince) {
 			httpx.SendJSONError(w, "This node runs an older release that cannot install server software over an upload. Update the node, then try again.", http.StatusConflict)
 			return
 		}
@@ -597,7 +598,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, msg, code)
 			return
 		}
-		if tmpl != nil && handlers.NodeReleaseOlderThan(r.Context(), h.state, token, templateProxySince) {
+		if tmpl != nil && nodeops.NodeReleaseOlderThan(r.Context(), h.state.Redis, token, templateProxySince) {
 			httpx.SendJSONError(w, proxyTemplateRefused, http.StatusConflict)
 			return
 		}
@@ -614,7 +615,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	// sent a job it would fail after the container already exists.
 	var technic *handlers.TechnicResolution
 	if req.Installer.Type == "technic" {
-		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil && handlers.NodeReleaseOlderThan(r.Context(), h.state, node.Token, handlers.TechnicSince) {
+		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil && nodeops.NodeReleaseOlderThan(r.Context(), h.state.Redis, node.Token, handlers.TechnicSince) {
 			httpx.SendJSONError(w, "This node runs an older release that cannot install Technic packs. Update the node, then try again.", http.StatusConflict)
 			return
 		}
@@ -1453,9 +1454,9 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	// unreachable node leaves the existing values rather than wiping them (the
 	// switch itself already needs the node, so a node outage stops it upstream).
 	if h.state.GRPCRegistry != nil {
-		if resp, ierr := handlers.InspectOrphanOnNode(h.state, srv.NodeID, srv.UUID); ierr != nil {
+		if resp, ierr := nodeops.InspectOrphanOnNode(h.state.GRPCRegistry, srv.NodeID, srv.UUID); ierr != nil {
 			log.Printf("SwitchSubServer: loader-metadata refresh for %s/%s skipped: %v", srv.UUID, subName, ierr)
-		} else if it, mv, build, ok := handlers.SubServerLoaderFromInspect(resp, subName); ok {
+		} else if it, mv, build, ok := nodeops.SubServerLoaderFromInspect(resp, subName); ok {
 			mv, build = versionFromInstallRecord(h.state.Store, serverID, subName, it, mv, build)
 			if err := h.state.Store.UpdateServerLoaderMetadata(serverID, it, mv, build); err != nil {
 				log.Printf("SwitchSubServer: persist loader metadata for server %d failed: %v", serverID, err)
@@ -2401,7 +2402,7 @@ func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, s
 			tok = h.state.Gateway.LinkToken(target.Token)
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		ok, err := handlers.LinkAnnouncesCap(ctx, h.state.Redis, tok, handlers.LinkCapClientAddr)
+		ok, err := services.LinkAnnouncesCap(ctx, h.state.Redis, tok, nodeops.LinkCapClientAddr)
 		cancel()
 		if err != nil || !ok {
 			httpx.SendJSONErrorCode(w, "Real player IP is on for this server, and the target node's link has not reported that it can pass the player IP. Update that link or turn Real player IP off first.",

@@ -132,7 +132,7 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONErrorCode(w, "Voice chat is not available for this account.", "voice_not_allowed", http.StatusConflict)
 		return
 	}
-	if ok, err := handlers.LinkAnnouncesCap(ctx, h.state.Redis, rt.LinkToken, linkCapVoice); err != nil || !ok {
+	if ok, err := services.LinkAnnouncesCap(ctx, h.state.Redis, rt.LinkToken, linkCapVoice); err != nil || !ok {
 		httpx.SendJSONErrorCode(w, "The link of this route has not reported that it can carry voice chat. Make sure it is running and up to date, then try again.", "link_without_voice", http.StatusConflict)
 		return
 	}

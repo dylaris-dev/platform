@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	pb "dylaris-proto/node"
 	"net/http"
 	"time"
 
@@ -86,10 +85,6 @@ func CoreStorageConfigFromConnection(conn *models.StorageConnection) CoreStorage
 	return coreStorageConfigFromConnection(conn)
 }
 
-func AnnotateStalledRestores(ctx context.Context, rdb *redis.Client, connected func(nodeID int) bool, nodeID int, serverUUID string, restores []models.BackupRestore) {
-	annotateStalledRestores(ctx, rdb, connected, nodeID, serverUUID, restores)
-}
-
 const TabProxyTicketTTL = tabProxyTicketTTL
 
 type SparkDBProvider = sparkDBProvider
@@ -138,14 +133,6 @@ func OwnNodeKey(st store.Store, nodeID, userID string) (*store.WarpAPIKey, int, 
 	return ownNodeKey(st, nodeID, userID)
 }
 
-func NodeReleaseAtLeast(ctx context.Context, st *AppState, nodeToken, since string) bool {
-	return nodeReleaseAtLeast(ctx, st, nodeToken, since)
-}
-
-func LinkAnnouncesCap(ctx context.Context, rdb *redis.Client, token, cap string) (bool, error) {
-	return linkAnnouncesCap(ctx, rdb, token, cap)
-}
-
 func GrpcPortFromEnv() string { return grpcPortFromEnv() }
 
 func OverlayServiceAddrs(grpcPort string) (coreAddr, redisAddr string) {
@@ -178,8 +165,6 @@ var (
 	ErrVoiceModAmbiguous = errVoiceModAmbiguous
 )
 
-const LinkCapClientAddr = linkCapClientAddr
-
 var (
 	DefaultMaxCustomDomains     = defaultMaxCustomDomains
 	DefaultBlockedRoutePrefixes = defaultBlockedRoutePrefixes
@@ -194,40 +179,6 @@ const DefaultWarpSpokeAllowedPorts = defaultWarpSpokeAllowedPorts
 func PurgeBackupArchivesForServers(state *AppState, serverIDs []int) {
 	purgeBackupArchivesForServers(state, serverIDs)
 }
-
-func AnnotateStalledInstallsFor(ctx context.Context, state *AppState, servers []models.Server) {
-	annotateStalledInstallsFor(ctx, state, servers)
-}
-
-func ReadErrStatus(err error) int { return readErrStatus(err) }
-
-func CollectNodeFile(ch <-chan *pb.NodeMessage, max int) ([]byte, *pb.OpError, error) {
-	return collectNodeFile(ch, max)
-}
-
-func NodeErrorStatus(code int32) int { return nodeErrorStatus(code) }
-
-func ConfirmNodeWrite(wait func(time.Duration) (*pb.NodeMessage, error)) (status int, message string, ok bool) {
-	return confirmNodeWrite(wait)
-}
-
-const MaxOpenFileBytes = maxOpenFileBytes
-
-func SetNodesLinkOnline(ctx context.Context, state *AppState, nodes []models.Node) {
-	setNodesLinkOnline(ctx, state, nodes)
-}
-
-func InspectOrphanOnNode(state *AppState, nodeID int, orphanUUID string) (*pb.InspectOrphanResp, error) {
-	return inspectOrphanOnNode(state, nodeID, orphanUUID)
-}
-
-func SubServerLoaderFromInspect(resp *pb.InspectOrphanResp, subName string) (instType, mcVer, build string, ok bool) {
-	return subServerLoaderFromInspect(resp, subName)
-}
-
-func IsBYONNode(n models.Node) bool { return isBYONNode(n) }
-
-type DylarisMetadata = dylarisMetadata
 
 // --- mods --------------------------------------------------------------------
 
@@ -354,10 +305,6 @@ func ExactMinecraftVersion(software, mcVersion, version, loader string) string {
 	return exactMinecraftVersion(software, mcVersion, version, loader)
 }
 
-func InstallStatusFor(ctx context.Context, st *AppState, nodeToken string) string {
-	return installStatusFor(ctx, st, nodeToken)
-}
-
 func ModFitKnown(serverLoader, serverMC string) bool { return modFitKnown(serverLoader, serverMC) }
 
 func ModVersionFits(serverLoader, serverMC string, versionLoaders, versionGameVersions []string) (bool, string) {
@@ -365,14 +312,6 @@ func ModVersionFits(serverLoader, serverMC string, versionLoaders, versionGameVe
 }
 
 func NeoForgeMinecraft(loader string) string { return neoForgeMinecraft(loader) }
-
-func NodeReleaseOlderThan(ctx context.Context, st *AppState, nodeToken, since string) bool {
-	return nodeReleaseOlderThan(ctx, st, nodeToken, since)
-}
-
-func NodeReleaseAtLeastKnown(ctx context.Context, st *AppState, nodeToken, since string) bool {
-	return nodeReleaseAtLeastKnown(ctx, st, nodeToken, since)
-}
 
 func ProxyBackendUUIDs(state *AppState, proxyID int) []string {
 	return proxyBackendUUIDs(state, proxyID)
@@ -427,8 +366,6 @@ func (h *RconHandler) ApplyProps(nodeID int, serverUUID, activeSubServer string,
 }
 
 var DefaultPlacementSettings = defaultPlacementSettings
-
-const ModReportingSince = modReportingSince
 
 func NeoForgeMajor(v string) (string, bool) { return neoForgeMajor(v) }
 

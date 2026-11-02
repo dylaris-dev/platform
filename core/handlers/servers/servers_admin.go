@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 
@@ -53,7 +54,7 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 
 	// Same as the tenant list: an install nobody is working on says so here too,
 	// or the admin overview is the one screen that still shows a bare spinner.
-	handlers.AnnotateStalledInstallsFor(r.Context(), h.state, servers)
+	nodeops.AnnotateStalledInstallsFor(r.Context(), h.state.Redis, h.state.GRPCRegistry, servers)
 
 	memberCounts, _ := h.state.Store.CountInvitesPerServer()
 	type adminServerRow struct {

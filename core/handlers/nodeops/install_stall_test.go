@@ -1,4 +1,4 @@
-package handlers
+package nodeops
 
 import (
 	"context"
@@ -35,7 +35,7 @@ func TestStalledInstallIsReported(t *testing.T) {
 	rdb, _ := stallRedis(t)
 	servers := []models.Server{srv("a", "installing", 1)}
 
-	annotateStalledInstalls(context.Background(), rdb, offline, servers)
+	AnnotateStalledInstalls(context.Background(), rdb, offline, servers)
 
 	if !servers[0].InstallStalled {
 		t.Fatal("an install on an offline node with no busy key was not reported")
@@ -55,7 +55,7 @@ func TestStalledInstallStaysQuiet(t *testing.T) {
 		// holdBusyStatus keeps this key alive for as long as the node works.
 		mr.Set(services.NodeBusyKey("a"), "installing")
 		servers := []models.Server{srv("a", "installing", 1)}
-		annotateStalledInstalls(ctx, rdb, offline, servers)
+		AnnotateStalledInstalls(ctx, rdb, offline, servers)
 		if servers[0].InstallStalled {
 			t.Error("a live install was reported as stalled")
 		}
@@ -67,7 +67,7 @@ func TestStalledInstallStaysQuiet(t *testing.T) {
 	t.Run("a connected node that has not started yet", func(t *testing.T) {
 		rdb, _ := stallRedis(t)
 		servers := []models.Server{srv("a", "installing", 1)}
-		annotateStalledInstalls(ctx, rdb, online, servers)
+		AnnotateStalledInstalls(ctx, rdb, online, servers)
 		if servers[0].InstallStalled {
 			t.Error("the ordinary dispatch window was reported as a stall")
 		}
@@ -76,7 +76,7 @@ func TestStalledInstallStaysQuiet(t *testing.T) {
 	t.Run("a server that is not installing", func(t *testing.T) {
 		rdb, _ := stallRedis(t)
 		servers := []models.Server{srv("a", "offline", 1), srv("b", "online", 1)}
-		annotateStalledInstalls(ctx, rdb, offline, servers)
+		AnnotateStalledInstalls(ctx, rdb, offline, servers)
 		for _, s := range servers {
 			if s.InstallStalled {
 				t.Errorf("%s (%s) was reported as a stalled install", s.UUID, s.Status)
@@ -90,7 +90,7 @@ func TestStalledInstallStaysQuiet(t *testing.T) {
 		rdb, mr := stallRedis(t)
 		mr.Close()
 		servers := []models.Server{srv("a", "installing", 1)}
-		annotateStalledInstalls(ctx, rdb, offline, servers)
+		AnnotateStalledInstalls(ctx, rdb, offline, servers)
 		if servers[0].InstallStalled {
 			t.Error("a Redis failure invented a stall")
 		}
@@ -99,7 +99,7 @@ func TestStalledInstallStaysQuiet(t *testing.T) {
 	t.Run("no connectivity check available", func(t *testing.T) {
 		rdb, _ := stallRedis(t)
 		servers := []models.Server{srv("a", "installing", 1)}
-		annotateStalledInstalls(ctx, rdb, nil, servers)
+		AnnotateStalledInstalls(ctx, rdb, nil, servers)
 		if servers[0].InstallStalled {
 			t.Error("without a way to tell whether the node is connected, nothing may be claimed")
 		}
@@ -118,7 +118,7 @@ func TestStalledInstallPicksOnlyTheAffected(t *testing.T) {
 		srv("fine", "installing", 1),    // live node mid-dispatch
 		srv("running", "online", 7),     // not installing at all
 	}
-	annotateStalledInstalls(context.Background(), rdb, connected, servers)
+	AnnotateStalledInstalls(context.Background(), rdb, connected, servers)
 
 	want := map[string]bool{"busy": false, "stalled": true, "fine": false, "running": false}
 	for _, s := range servers {
@@ -140,8 +140,8 @@ func TestStalledInstallIsQuietWhenNothingIsInstalling(t *testing.T) {
 	mr.Close()
 	servers := []models.Server{srv("a", "online", 1), srv("b", "offline", 1)}
 
-	annotateStalledInstalls(context.Background(), rdb, offline, servers)
-	annotateStalledInstalls(context.Background(), nil, offline, servers)
+	AnnotateStalledInstalls(context.Background(), rdb, offline, servers)
+	AnnotateStalledInstalls(context.Background(), nil, offline, servers)
 
 	for _, s := range servers {
 		if s.InstallStalled {
@@ -155,7 +155,7 @@ func TestStalledInstallIsQuietWhenNothingIsInstalling(t *testing.T) {
 // that could not be read would only have hidden it.
 func TestStalledInstallWithoutRedisStillReports(t *testing.T) {
 	servers := []models.Server{srv("a", "installing", 1)}
-	annotateStalledInstalls(context.Background(), nil, offline, servers)
+	AnnotateStalledInstalls(context.Background(), nil, offline, servers)
 	if !servers[0].InstallStalled {
 		t.Error("an install on a node known to be offline was not reported")
 	}

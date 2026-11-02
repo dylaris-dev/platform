@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/nodeops"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -68,7 +69,7 @@ func TestInstallReplyCarriesTheRecordedStatus(t *testing.T) {
 		version string // "" = no heartbeat
 		want    string
 	}{
-		{name: "reporting node", version: handlers.ModReportingSince, want: models.ServerModInstalling},
+		{name: "reporting node", version: nodeops.ModReportingSince, want: models.ServerModInstalling},
 		{name: "node too old to report", version: "2026.08.28", want: models.ServerModInstalled},
 		{name: "no heartbeat", version: "", want: models.ServerModInstalled},
 	}

@@ -3,10 +3,9 @@ package servers
 import (
 	"testing"
 
-	"dylaris-core/handlers"
-
 	pb "dylaris-proto/node"
 
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
 )
 
@@ -133,7 +132,7 @@ func TestSubServerLoaderFromInspect(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			it, mc, b, ok := handlers.SubServerLoaderFromInspect(tt.resp, tt.subName)
+			it, mc, b, ok := nodeops.SubServerLoaderFromInspect(tt.resp, tt.subName)
 			if ok != tt.wantOK {
 				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
 			}
