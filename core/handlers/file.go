@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
@@ -162,7 +163,7 @@ func (h *FileHandler) refuseSuspendedWrite(w http.ResponseWriter, r *http.Reques
 	}
 	// A move archives the directory and deletes it on the source after
 	// cutover: a file written meanwhile was lost without a word.
-	return refuseIfSuspended(w, r, h.state, srv) || refuseIfMoving(w, r, srv)
+	return guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) || guard.RefuseIfMoving(w, r, srv)
 }
 
 // getServerUUIDRead is getServerUUID for read-only operations (list + view file

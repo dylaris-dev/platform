@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 
 	"dylaris-pkg/validate"
 
@@ -53,7 +53,7 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
 	var req struct {

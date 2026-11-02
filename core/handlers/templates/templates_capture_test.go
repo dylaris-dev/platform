@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
+	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -177,7 +177,7 @@ func TestCaptureFillPinsTheInstalledLoader(t *testing.T) {
 		"main/libraries/net/fabricmc/fabric-loader": {{Name: "0.20.1", IsDir: true}},
 	}
 	prev := listServerDir
-	listServerDir = func(_ *handlers.AppState, _ int, _ string, dir string) ([]*pb.FileInfo, error) {
+	listServerDir = func(_ *nodegrpc.Registry, _ int, _ string, dir string) ([]*pb.FileInfo, error) {
 		return listed[dir], nil
 	}
 	t.Cleanup(func() { listServerDir = prev })

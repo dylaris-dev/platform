@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
@@ -348,7 +349,7 @@ func TestGetBeamTicket_RefusedWhileTheOwnerIsSuspended(t *testing.T) {
 			if rec.Code != 403 || body.Ticket != "" {
 				t.Fatalf("status=%d ticket=%q, want 403 and no ticket", rec.Code, body.Ticket)
 			}
-			if body.Message != handlers.SuspendedMessage {
+			if body.Message != guard.SuspendedMessage {
 				t.Errorf("message = %q, want the suspension message so the tenant is told to settle payment", body.Message)
 			}
 		})

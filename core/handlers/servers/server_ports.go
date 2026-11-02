@@ -15,6 +15,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -162,7 +163,7 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 		httpx.SendJSONErrorCode(w, "Extra ports need direct routing. Behind the gateway, use the voice chat switch under Routes, and share links or custom tabs for web views.", "ports_gateway_mode", http.StatusConflict)
 		return
 	}
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
 	if !isAdmin {
@@ -439,7 +440,7 @@ func (h *ServerHandler) changePortPreset(w http.ResponseWriter, r *http.Request,
 		httpx.SendJSONErrorCode(w, "With the gateway on, turn voice chat on under Routes instead.", "voice_preset_mode", http.StatusConflict)
 		return false
 	}
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return false
 	}
 	if p.Protocol != "udp" {

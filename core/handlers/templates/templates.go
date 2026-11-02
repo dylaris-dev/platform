@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -98,7 +99,7 @@ func (h *TemplatesHandler) load(w http.ResponseWriter, r *http.Request, need tem
 // cut off (an admin panel session passes). Writes call it; reads, downloads
 // and deletes do not, so a tenant can always see and leave with what they have.
 func (h *TemplatesHandler) refuseSuspended(w http.ResponseWriter, r *http.Request, ownerID string) bool {
-	msg := handlers.OwnerRefusal(h.state, r, ownerID)
+	msg := guard.OwnerRefusal(h.state.Store, h.state.SuspendGrace, r, ownerID)
 	if msg == "" {
 		return false
 	}
@@ -204,7 +205,7 @@ func (h *TemplatesHandler) List(w http.ResponseWriter, r *http.Request) {
 			it := item(t, tv, withCap(s, &t, ownerAdmin).MaxSizeBytes)
 			msg, seen := refusals[t.OwnerID]
 			if !seen {
-				msg = handlers.OwnerRefusal(h.state, r, t.OwnerID)
+				msg = guard.OwnerRefusal(h.state.Store, h.state.SuspendGrace, r, t.OwnerID)
 				refusals[t.OwnerID] = msg
 			}
 			it.WriteRefusal = msg
@@ -235,7 +236,7 @@ func (h *TemplatesHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it := item(*t, v, s.MaxSizeBytes)
-	it.WriteRefusal = handlers.OwnerRefusal(h.state, r, t.OwnerID)
+	it.WriteRefusal = guard.OwnerRefusal(h.state.Store, h.state.SuspendGrace, r, t.OwnerID)
 	writeJSON(w, http.StatusOK, it)
 }
 

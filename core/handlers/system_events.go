@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
@@ -165,7 +166,7 @@ func (h *SystemEventsHandler) StreamEvents(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
-	release, ok := acquireLiveStream(w, r, h.state.Store, "events", eventStreamsPerUser)
+	release, ok := guard.AcquireLiveStream(w, r, h.state.Store, "events", guard.EventStreamsPerUser)
 	if !ok {
 		return
 	}

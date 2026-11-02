@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
 
@@ -49,7 +49,7 @@ func TestABusyServerRefusesWorkThatRewritesIt(t *testing.T) {
 		fs := &serverPowerFakeStore{server: srv, node: &models.Node{ID: 7, Token: "node-token-1", Name: "n1", Status: "online"}}
 		rdb := handlertest.RedisClient(t)
 		if busy != "" {
-			rdb.Set(context.Background(), handlers.NodeBusyKey(srv.UUID), busy, 0)
+			rdb.Set(context.Background(), services.NodeBusyKey(srv.UUID), busy, 0)
 		}
 		h := newServerPowerHandler(fs, rdb)
 		body, _ := json.Marshal(map[string]any{

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/models"
 	"dylaris-core/services/demo"
 	"dylaris-core/store"
@@ -53,32 +54,6 @@ func TestSystemEventsResolveOncePerStream(t *testing.T) {
 	}
 }
 
-func TestStreamSlots(t *testing.T) {
-	s := streamSlots{held: map[string]int{}}
-	var releases []func()
-	for range 3 {
-		rel, ok := s.acquire("console:u1", 3)
-		if !ok {
-			t.Fatal("refused under the cap")
-		}
-		releases = append(releases, rel)
-	}
-	if _, ok := s.acquire("console:u1", 3); ok {
-		t.Fatal("a fourth stream got past a cap of three")
-	}
-	if _, ok := s.acquire("console:u2", 3); !ok {
-		t.Fatal("one user's streams counted against another")
-	}
-	releases[0]()
-	releases[0]() // twice is once
-	if _, ok := s.acquire("console:u1", 3); !ok {
-		t.Fatal("a released slot was not given back")
-	}
-	if _, ok := s.acquire("console:u1", 3); ok {
-		t.Fatal("a double release handed out an extra slot")
-	}
-}
-
 // Over the cap a stream is refused before any stream header goes out; the
 // panel opens a fresh one on its own backoff.
 func TestStreamConsoleRefusedOverTheCap(t *testing.T) {
@@ -88,8 +63,12 @@ func TestStreamConsoleRefusedOverTheCap(t *testing.T) {
 	h := NewConsoleHandler(&AppState{Store: consoleHistoryFakeStore{}, Redis: rdb})
 
 	var held []func()
-	for range consoleStreamsPerUser {
-		rel, ok := liveStreams.acquire("console:capped-user", consoleStreamsPerUser)
+	for range guard.ConsoleStreamsPerUser {
+		// through the guard's own entry point: the console handler and this
+		// loop must count against the ONE slot table
+		capped := httptest.NewRequest(http.MethodGet, "/", nil)
+		capped = capped.WithContext(context.WithValue(capped.Context(), "userID", "capped-user"))
+		rel, ok := guard.AcquireLiveStream(httptest.NewRecorder(), capped, nil, "console", guard.ConsoleStreamsPerUser)
 		if !ok {
 			t.Fatal("setup could not take the slots")
 		}
@@ -185,7 +164,7 @@ func TestDemoVisitorsHaveTheirOwnSlots(t *testing.T) {
 		}
 	}()
 	take := func(user, addr string) bool {
-		rel, ok := acquireLiveStream(httptest.NewRecorder(), req(user, addr), st, "demo-test", 1)
+		rel, ok := guard.AcquireLiveStream(httptest.NewRecorder(), req(user, addr), st, "demo-test", 1)
 		if ok {
 			held = append(held, rel)
 		}

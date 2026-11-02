@@ -1,4 +1,4 @@
-package handlers
+package guard
 
 import (
 	"encoding/json"
@@ -45,7 +45,7 @@ func TestCountSubServerDirs(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := countSubServerDirs(c.entries); got != c.want {
+			if got := CountSubServerDirs(c.entries); got != c.want {
 				t.Errorf("countSubServerDirs = %d, want %d", got, c.want)
 			}
 		})
@@ -70,7 +70,7 @@ func TestRefuseIfOverSubServerLimit(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			got := refuseIfOverSubServerLimit(rec, c.limit, c.have)
+			got := RefuseIfOverSubServerLimit(rec, c.limit, c.have)
 			if got != c.wantRefuse {
 				t.Fatalf("refused = %v, want %v", got, c.wantRefuse)
 			}
@@ -96,10 +96,10 @@ func TestRefuseIfOverSubServerLimit(t *testing.T) {
 // a stopped server does not write, so the cap silently lapsed exactly when
 // sub-servers get added.
 func TestSubServerLimitRefusesWhenTheNodeCannotBeAsked(t *testing.T) {
-	st := &AppState{Store: &subServerLimitStore{limit: "3"}}
+	st := &subServerLimitStore{limit: "3"}
 	rec := httptest.NewRecorder()
-	// No GRPCRegistry on the state, so the listing cannot be made.
-	if !refuseIfSubServerLimitReached(rec, st, 7, "srv-uuid", "new") {
+	// No node registry, so the listing cannot be made.
+	if !RefuseIfSubServerLimitReached(rec, st, nil, 7, "srv-uuid", "new") {
 		t.Fatal("an unanswerable count was treated as room to spare")
 	}
 	if rec.Code != http.StatusBadGateway {
@@ -110,9 +110,9 @@ func TestSubServerLimitRefusesWhenTheNodeCannotBeAsked(t *testing.T) {
 // With no cap configured the node is not asked at all: an unlimited platform
 // must not fail an install because a node was briefly busy.
 func TestSubServerLimitDoesNotAskTheNodeWhenThereIsNoCap(t *testing.T) {
-	st := &AppState{Store: &subServerLimitStore{limit: "unlimited"}}
+	st := &subServerLimitStore{limit: "unlimited"}
 	rec := httptest.NewRecorder()
-	if refuseIfSubServerLimitReached(rec, st, 7, "srv-uuid", "new") {
+	if RefuseIfSubServerLimitReached(rec, st, nil, 7, "srv-uuid", "new") {
 		t.Fatalf("refused although no cap is set: %s", rec.Body.String())
 	}
 }

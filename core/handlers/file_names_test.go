@@ -13,6 +13,7 @@ import (
 
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -100,7 +101,7 @@ func TestAMissingFolderListsAsEmptyForCore(t *testing.T) {
 		node.conn = conn
 		node.mu.Unlock()
 
-		files, err := listServerDirFor(&AppState{GRPCRegistry: reg}, 7, "srv-1", "survival/mods")
+		files, err := guard.ListServerDirFor(reg, 7, "srv-1", "survival/mods")
 		if (err != nil) != tc.wantErr {
 			t.Errorf("node code %d: err = %v, want error %v", tc.code, err, tc.wantErr)
 		}

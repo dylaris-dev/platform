@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -97,7 +98,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 			handlers.GatewayDisabledResponse(w)
 			return
 		}
-		if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+		if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 			return
 		}
 	}

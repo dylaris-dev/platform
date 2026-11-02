@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/handlers/servers"
@@ -183,7 +183,7 @@ func (h *GatewayHandler) SetRouteEdition(w http.ResponseWriter, r *http.Request)
 			httpx.SendJSONErrorCode(w, bedrockOff, "bedrock_disabled", http.StatusConflict)
 			return
 		}
-		if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+		if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 			return
 		}
 		if _, refusal := h.bedrockAvailability(ctx, srv); refusal != "" {

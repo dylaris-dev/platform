@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-pkg/validate"
@@ -188,7 +189,7 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
-	release, ok := acquireLiveStream(w, r, h.state.Store, "console", consoleStreamsPerUser)
+	release, ok := guard.AcquireLiveStream(w, r, h.state.Store, "console", guard.ConsoleStreamsPerUser)
 	if !ok {
 		return
 	}

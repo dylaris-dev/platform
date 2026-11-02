@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/services"
 
 	"dylaris-core/models"
 )
@@ -44,7 +44,7 @@ func TestPowerActionsWaitWhileTheNodeIsBusy(t *testing.T) {
 				status = "stopped"
 			}
 			h, fs := powerStateFixture(t, status)
-			h.state.Redis.Set(context.Background(), handlers.NodeBusyKey("srv-uuid"), "installing", 0)
+			h.state.Redis.Set(context.Background(), services.NodeBusyKey("srv-uuid"), "installing", 0)
 
 			rec := httptest.NewRecorder()
 			h.ServerPowerHandler(rec, serverPowerReq(1, action, "alice", admin, "u1"))

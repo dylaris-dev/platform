@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 
 	beamauth "dylaris-pkg/beam/auth"
 	"dylaris-pkg/fileperms"
@@ -274,7 +275,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// as everything else a cut-off tenant may not ask the node to do. Measured
 	// on production: a suspended account minted a ticket and the relay spliced
 	// it through to the node.
-	if handlers.RefuseIfSuspended(w, r, h.state, server) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, server) {
 		return
 	}
 	// Read-only while the server moves: the source copy is deleted after

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
@@ -52,7 +53,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
-	release, ok := handlers.AcquireLiveStream(w, r, h.state.Store, "stats", handlers.StatsStreamsPerUser)
+	release, ok := guard.AcquireLiveStream(w, r, h.state.Store, "stats", guard.StatsStreamsPerUser)
 	if !ok {
 		return
 	}

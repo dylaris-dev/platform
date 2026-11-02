@@ -1,4 +1,4 @@
-package handlers
+package guard
 
 import (
 	"context"
@@ -32,17 +32,17 @@ func TestAnOverLimitOwnerIsRefusedLikeASuspendedOne(t *testing.T) {
 		want    string
 	}{
 		{"active", store.UserBilling{Status: "active"}, false, ""},
-		{"suspended", store.UserBilling{Status: "suspended"}, false, suspendedMessage},
+		{"suspended", store.UserBilling{Status: "suspended"}, false, SuspendedMessage},
 		{"over the limit past the grace", store.UserBilling{Status: "active", OverLimitSince: &long}, false, overLimitMessage},
 		{"over the limit within the grace", store.UserBilling{Status: "active", OverLimitSince: &recent}, false, ""},
 		{"an operator in the panel", store.UserBilling{Status: "active", OverLimitSince: &long}, true, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b := tc.billing
-			state := &AppState{Store: &cutoffBillingStore{billing: &b}, SuspendGrace: 48 * time.Hour}
+			st := &cutoffBillingStore{billing: &b}
 			r := httptest.NewRequest("POST", "/", nil)
 			r = r.WithContext(context.WithValue(r.Context(), "isAdmin", tc.admin))
-			if got := ownerRefusal(state, r, "u1"); got != tc.want {
+			if got := OwnerRefusal(st, 48*time.Hour, r, "u1"); got != tc.want {
 				t.Fatalf("refusal %q, want %q", got, tc.want)
 			}
 		})

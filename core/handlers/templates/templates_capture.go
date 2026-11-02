@@ -16,6 +16,7 @@ import (
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -224,8 +225,8 @@ func (h *TemplatesHandler) fillFromInstall(req *captureRequest, srv *models.Serv
 	}
 }
 
-// listServerDir is handlers.ListServerDirFor, swapped in tests.
-var listServerDir = handlers.ListServerDirFor
+// listServerDir is guard.ListServerDirFor, swapped in tests.
+var listServerDir = guard.ListServerDirFor
 
 // installedLoader is the loader version the sub-server runs: the recorded one,
 // else the one its library folder holds, else the recorded build (for an
@@ -239,7 +240,7 @@ func (h *TemplatesHandler) installedLoader(req *captureRequest, rec *models.SubS
 	if rec.Loader != "" {
 		return rec.Loader
 	}
-	entries, err := listServerDir(h.state, srv.NodeID, srv.UUID, path.Join(req.SubServer, dir))
+	entries, err := listServerDir(h.state.GRPCRegistry, srv.NodeID, srv.UUID, path.Join(req.SubServer, dir))
 	if err != nil {
 		log.Printf("templates: loader of server %d/%s: %v", srv.ID, req.SubServer, err)
 		return rec.BuildVersion

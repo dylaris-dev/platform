@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -52,7 +53,7 @@ func TestStalledInstallStaysQuiet(t *testing.T) {
 	t.Run("a node that is actively installing", func(t *testing.T) {
 		rdb, mr := stallRedis(t)
 		// holdBusyStatus keeps this key alive for as long as the node works.
-		mr.Set(nodeBusyKey("a"), "installing")
+		mr.Set(services.NodeBusyKey("a"), "installing")
 		servers := []models.Server{srv("a", "installing", 1)}
 		annotateStalledInstalls(ctx, rdb, offline, servers)
 		if servers[0].InstallStalled {
@@ -108,7 +109,7 @@ func TestStalledInstallStaysQuiet(t *testing.T) {
 // Mixed fleets are the realistic shape: one dead node among several.
 func TestStalledInstallPicksOnlyTheAffected(t *testing.T) {
 	rdb, mr := stallRedis(t)
-	mr.Set(nodeBusyKey("busy"), "installing")
+	mr.Set(services.NodeBusyKey("busy"), "installing")
 
 	connected := func(nodeID int) bool { return nodeID != 7 }
 	servers := []models.Server{
@@ -164,7 +165,7 @@ func TestStalledInstallWithoutRedisStillReports(t *testing.T) {
 // silently disables the detection, so the format is pinned here the way the
 // other cross-component keys are.
 func TestNodeBusyKeyFormat(t *testing.T) {
-	if got := nodeBusyKey("abc"); got != "dylaris:server:abc:node_busy" {
+	if got := services.NodeBusyKey("abc"); got != "dylaris:server:abc:node_busy" {
 		t.Errorf("nodeBusyKey = %q", got)
 	}
 }

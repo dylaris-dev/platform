@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 
 	"dylaris-pkg/validate"
 
@@ -190,7 +191,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
 	var req installModRequest
@@ -465,7 +466,7 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
 	modID, _ := strconv.Atoi(mux.Vars(r)["modId"])

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
@@ -50,7 +51,7 @@ func TestSetupServerRefusedWhileTheOwnerIsSuspended(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
 	}
-	if msg := decodeErrBody(t, rec); msg != handlers.SuspendedMessage {
+	if msg := decodeErrBody(t, rec); msg != guard.SuspendedMessage {
 		t.Fatalf("message = %q, want the suspension message", msg)
 	}
 }
@@ -79,7 +80,7 @@ func TestSetupServerStillWorksForAnAdminWhileTheOwnerIsSuspended(t *testing.T) {
 
 	h.SetupServer(rec, r.WithContext(ctx))
 
-	if rec.Code == http.StatusForbidden && decodeErrBody(t, rec) == handlers.SuspendedMessage {
+	if rec.Code == http.StatusForbidden && decodeErrBody(t, rec) == guard.SuspendedMessage {
 		t.Fatalf("an admin was stopped by the tenant's suspension: %s", rec.Body.String())
 	}
 }

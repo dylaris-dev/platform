@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
@@ -167,7 +168,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	// Setup is refused to a cut-off owner, creation was not: a suspended
 	// tenant still placed new containers and rows on their machines.
-	if msg := handlers.OwnerRefusal(h.state, r, req.OwnerID); msg != "" {
+	if msg := guard.OwnerRefusal(h.state.Store, h.state.SuspendGrace, r, req.OwnerID); msg != "" {
 		httpx.SendJSONError(w, msg, http.StatusForbidden)
 		return
 	}
@@ -476,10 +477,10 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
-	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.state.Redis, srv) {
 		return
 	}
 	// Before the cooldown below is claimed: a refusal here is answered by
@@ -646,7 +647,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	// sub-server gets added. Measured on production: a limit of three, seven
 	// sub-servers.
 	if srv.Status != "pending_setup" {
-		if handlers.RefuseIfSubServerLimitReached(w, h.state, srv.NodeID, srv.UUID, subName) {
+		if guard.RefuseIfSubServerLimitReached(w, h.state.Store, h.state.GRPCRegistry, srv.NodeID, srv.UUID, subName) {
 			return
 		}
 	}
@@ -1022,10 +1023,10 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
-	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.state.Redis, srv) {
 		return
 	}
 
@@ -1336,10 +1337,10 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
-	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.state.Redis, srv) {
 		return
 	}
 
@@ -1647,7 +1648,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	// Stopping and killing stay open while suspended: a tenant who is cut off
 	// may still put their own server down.
 	if req.Action == "start" || req.Action == "restart" {
-		if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+		if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 			return
 		}
 	}
@@ -1730,7 +1731,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	// on its own if the node dies, where a status left behind by a lost
 	// update would refuse power actions for good.
 	if h.state.Redis != nil {
-		if busy, err := h.state.Redis.Get(context.Background(), handlers.NodeBusyKey(srv.UUID)).Result(); err == nil && busy != "" {
+		if busy, err := h.state.Redis.Get(context.Background(), services.NodeBusyKey(srv.UUID)).Result(); err == nil && busy != "" {
 			httpx.SendJSONError(w, "The node is still working on this server ("+busy+"). Try again when it has finished.", 409)
 			return
 		}
@@ -1978,7 +1979,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 	// global default had changed since; without it the node keeps its label.
 	sendPadding := paddingRequested || req.RAM != srv.Memory
 
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
 	// The node recreates the container for a RAM or port change, which would
@@ -2342,7 +2343,7 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server is suspended. Action blocked.", http.StatusForbidden)
 		return
 	}
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
 	h.queueMigration(w, r, srv, target, "transfer", username)
@@ -2406,7 +2407,7 @@ func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, s
 			return
 		}
 	}
-	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.state.Redis, srv) {
 		return
 	}
 	if err := h.state.Migration.EnqueueMigration(r.Context(), srv.ID, target.ID, reason, requestedBy); err != nil {
@@ -2561,7 +2562,7 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
-	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.state.Redis, srv) {
 		return
 	}
 
@@ -2671,7 +2672,7 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
-	if handlers.RefuseIfMoving(w, r, srv) {
+	if guard.RefuseIfMoving(w, r, srv) {
 		return
 	}
 
@@ -2838,7 +2839,7 @@ func (h *ServerHandler) UpdateServerRuntime(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
 	if srv.Status == "pending_setup" {

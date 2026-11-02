@@ -81,21 +81,7 @@ const (
 	KeyCoreStorageS3SecretKey = keyCoreStorageS3SecretKey
 )
 
-const StatsStreamsPerUser = statsStreamsPerUser
-
-func AcquireLiveStream(w http.ResponseWriter, r *http.Request, st store.Store, kind string, max int) (release func(), ok bool) {
-	return acquireLiveStream(w, r, st, kind, max)
-}
-
 func SettingOrUnset(st store.Store, key string) (string, error) { return settingOrUnset(st, key) }
-
-func RefuseIfSuspended(w http.ResponseWriter, r *http.Request, state *AppState, srv *models.Server) bool {
-	return refuseIfSuspended(w, r, state, srv)
-}
-
-func RefuseIfServerBusy(w http.ResponseWriter, r *http.Request, state *AppState, srv *models.Server) bool {
-	return refuseIfServerBusy(w, r, state, srv)
-}
 
 func PurgeBackupArchivesForJob(state *AppState, jobID int) { purgeBackupArchivesForJob(state, jobID) }
 
@@ -143,10 +129,6 @@ func RedactNodeAddressOne(state *AppState, srv *models.Server, isAdmin bool, use
 	redactNodeAddressOne(state, srv, isAdmin, userID)
 }
 
-// SuspendedMessage is what a suspended account is told; for the subpackages'
-// tests that assert it.
-const SuspendedMessage = suspendedMessage
-
 // --- gateway -----------------------------------------------------------------
 
 func (s *AppState) GatewayEnabled() bool { return s.gatewayEnabled() }
@@ -170,10 +152,6 @@ func (s *AppState) DeployConfig() DeployConfig { return s.deployConfig() }
 func ByonActive(state *AppState, r *http.Request) bool { return byonActive(state, r) }
 
 func RouteOnlyActive(state *AppState, r *http.Request) bool { return routeOnlyActive(state, r) }
-
-func OwnerRefusal(state *AppState, r *http.Request, ownerID string) string {
-	return ownerRefusal(state, r, ownerID)
-}
 
 func GenerateLinkIdentity() (string, error) { return generateLinkIdentity() }
 
@@ -442,8 +420,6 @@ func CanPlaceOnNode(state *AppState, r *http.Request, node *models.Node) bool {
 	return canPlaceOnNode(state, r, node)
 }
 
-func CountSubServerDirs(entries []*pb.FileInfo) int { return countSubServerDirs(entries) }
-
 func DiskMBToGBCeil(mb int64) int { return diskMBToGBCeil(mb) }
 
 var EffectiveCpuset = effectiveCpuset
@@ -456,10 +432,6 @@ func InstallStatusFor(ctx context.Context, st *AppState, nodeToken string) strin
 	return installStatusFor(ctx, st, nodeToken)
 }
 
-func ListServerDirFor(state *AppState, nodeID int, serverUUID, dir string) ([]*pb.FileInfo, error) {
-	return listServerDirFor(state, nodeID, serverUUID, dir)
-}
-
 func ModFitKnown(serverLoader, serverMC string) bool { return modFitKnown(serverLoader, serverMC) }
 
 func ModVersionFits(serverLoader, serverMC string, versionLoaders, versionGameVersions []string) (bool, string) {
@@ -467,8 +439,6 @@ func ModVersionFits(serverLoader, serverMC string, versionLoaders, versionGameVe
 }
 
 func NeoForgeMinecraft(loader string) string { return neoForgeMinecraft(loader) }
-
-func NodeBusyKey(uuid string) string { return nodeBusyKey(uuid) }
 
 func NodeReleaseOlderThan(ctx context.Context, st *AppState, nodeToken, since string) bool {
 	return nodeReleaseOlderThan(ctx, st, nodeToken, since)
@@ -508,18 +478,6 @@ func RedactNodeAddress(state *AppState, servers []models.Server, isAdmin bool, u
 
 func RedactSettingsFields(s *models.Server) { redactSettingsFields(s) }
 
-func RefuseIfMoving(w http.ResponseWriter, r *http.Request, srv *models.Server) bool {
-	return refuseIfMoving(w, r, srv)
-}
-
-func RefuseIfOverSubServerLimit(w http.ResponseWriter, limit *int64, have int) bool {
-	return refuseIfOverSubServerLimit(w, limit, have)
-}
-
-func RefuseIfSubServerLimitReached(w http.ResponseWriter, state *AppState, nodeID int, serverUUID, target string) bool {
-	return refuseIfSubServerLimitReached(w, state, nodeID, serverUUID, target)
-}
-
 func RevokeUncoversInheritance(state *AppState, srv *models.Server, targetID string) bool {
 	return revokeUncoversInheritance(state, srv, targetID)
 }
@@ -537,8 +495,6 @@ func StampBeamAccessForOwner(ctx context.Context, state *AppState, ownerUserID s
 func StrictPanelCaps(state *AppState, userID string) (map[string]bool, bool) {
 	return strictPanelCaps(state, userID)
 }
-
-func SubServerLimit(state *AppState) *int64 { return subServerLimit(state) }
 
 const TechnicSince = technicSince
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -440,7 +441,7 @@ func (h *GatewayHandler) SetLinkRouteProxyProtocol(w http.ResponseWriter, r *htt
 		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
-	if msg := handlers.OwnerRefusal(h.state, r, userID); msg != "" {
+	if msg := guard.OwnerRefusal(h.state.Store, h.state.SuspendGrace, r, userID); msg != "" {
 		httpx.SendJSONError(w, msg, http.StatusForbidden)
 		return
 	}

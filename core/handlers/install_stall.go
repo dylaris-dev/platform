@@ -31,13 +31,6 @@ import (
 // when it came back. What was missing was the explanation, so that is what this
 // adds.
 
-// nodeBusyKey mirrors the node's own key name (node/reconciler.go). It is a
-// cross-component contract in the same sense the status key is: the node is the
-// only writer, Core is a reader, and neither may rename it alone.
-func nodeBusyKey(uuid string) string {
-	return services.NodeBusyKey(uuid)
-}
-
 // installStallReason is what the panel shows. Empty means nothing is wrong.
 const installStallReason = "The node running this install went offline. Nothing is lost - it resumes on its own when the node reconnects. If the node is gone for good, reinstall the server."
 
@@ -85,7 +78,7 @@ func annotateStalledInstalls(ctx context.Context, rdb *redis.Client, connected f
 	pipe := rdb.Pipeline()
 	cmds := make([]*redis.IntCmd, len(candidates))
 	for n, i := range candidates {
-		cmds[n] = pipe.Exists(ctx, nodeBusyKey(servers[i].UUID))
+		cmds[n] = pipe.Exists(ctx, services.NodeBusyKey(servers[i].UUID))
 	}
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		// A Redis failure must not invent a stall: an unreachable Redis says

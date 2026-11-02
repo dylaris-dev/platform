@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/authz"
@@ -481,7 +482,7 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
 		}
-		if msg := decodeErrBody(t, rec); msg != handlers.SuspendedMessage {
+		if msg := decodeErrBody(t, rec); msg != guard.SuspendedMessage {
 			t.Fatalf("message = %q", msg)
 		}
 	})

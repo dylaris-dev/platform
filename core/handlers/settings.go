@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/handlers/validate"
@@ -755,11 +756,6 @@ func (h *SettingsHandler) LoadPlacementSettings() PlacementSettings {
 
 // --- Server Settings ---
 
-// SettingMaxSubServers is the settings key. Named so the setter, the loader and
-// the enforcement site in servers_lifecycle.go cannot drift apart by a typo -
-// they used to spell it out three times.
-const SettingMaxSubServers = "srv.max_sub_servers"
-
 // SettingMaxScheduledTasks caps the scheduled tasks one server may hold.
 const SettingMaxScheduledTasks = "srv.max_scheduled_tasks"
 
@@ -780,18 +776,13 @@ type ServerSettings struct {
 	MaxScheduledTasks *int64 `json:"maxScheduledTasks"`
 }
 
-// defaultMaxSubServers is the product default, used when the setting has never
-// been saved. Deliberately a cap and not "unlimited": a fresh install should not
-// let one server spawn sub-servers without bound.
-var defaultMaxSubServers = services.LimitPtr(3)
-
 // defaultMaxScheduledTasks is the product default: enough for a nightly restart
 // and a good number of announcements, few enough that no single server can take
 // over the executor's batch.
 var defaultMaxScheduledTasks = services.LimitPtr(25)
 
 var defaultServerSettings = ServerSettings{
-	MaxSubServers:     defaultMaxSubServers,
+	MaxSubServers:     guard.DefaultMaxSubServers,
 	MaxScheduledTasks: defaultMaxScheduledTasks,
 }
 
@@ -820,7 +811,7 @@ func (h *SettingsHandler) SaveServerSettings(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Scheduled task limit must be 0 or more (0 means none; leave it unset for no limit)", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetSetting(SettingMaxSubServers, services.FormatLimitSetting(req.MaxSubServers)); err != nil {
+	if err := h.state.Store.SetSetting(guard.SettingMaxSubServers, services.FormatLimitSetting(req.MaxSubServers)); err != nil {
 		httpx.SendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
@@ -835,8 +826,8 @@ func (h *SettingsHandler) SaveServerSettings(w http.ResponseWriter, r *http.Requ
 // LoadServerSettings reads server settings from the database.
 func (h *SettingsHandler) LoadServerSettings() ServerSettings {
 	settings := defaultServerSettings
-	if val, err := h.state.Store.GetSetting(SettingMaxSubServers); err == nil {
-		settings.MaxSubServers = services.ParseLimitSetting(val, defaultMaxSubServers)
+	if val, err := h.state.Store.GetSetting(guard.SettingMaxSubServers); err == nil {
+		settings.MaxSubServers = services.ParseLimitSetting(val, guard.DefaultMaxSubServers)
 	}
 	settings.MaxScheduledTasks = scheduledTaskLimit(h.state)
 	return settings

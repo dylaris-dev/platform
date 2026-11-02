@@ -73,7 +73,7 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 						sends = true
 					}
 					// the guard is reached through whatever package holds it
-					// (handlers.RefuseIfSuspended today); the set of names is
+					// (guard.RefuseIfSuspended today); the set of names is
 					// what stays explicit
 					if suspensionGuards[fun.Sel.Name] {
 						guards = true
@@ -102,7 +102,7 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 			if !guards {
 				t.Errorf("%s: %s sends a command to a node without checking suspension. "+
 					"A tenant who is cut off for non-payment can reach it and make their node work. "+
-					"Add refuseIfSuspended, or add it to the exempt map above with the reason it must stay open.",
+					"Add guard.RefuseIfSuspended, or add it to the exempt map above with the reason it must stay open.",
 					f, fn.Name.Name)
 				continue
 			}

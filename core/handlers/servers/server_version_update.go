@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 
 	"dylaris-pkg/validate"
 	pb "dylaris-proto/node"
@@ -325,7 +326,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
 	var req versionUpdateRequest
@@ -657,10 +658,10 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
-	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.state.Redis, srv) {
 		return
 	}
 	var req copySubServerRequest
@@ -720,7 +721,7 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	// through setup. It never was, which is half of how a platform limited to
 	// three ended up with seven. The listing is already in hand, so this costs
 	// nothing extra.
-	if handlers.RefuseIfOverSubServerLimit(w, handlers.SubServerLimit(h.state), handlers.CountSubServerDirs(entries)) {
+	if guard.RefuseIfOverSubServerLimit(w, guard.SubServerLimit(h.state.Store), guard.CountSubServerDirs(entries)) {
 		return
 	}
 	if subServerNameTaken(entries, req.TargetName) {
@@ -818,7 +819,7 @@ func subServerNameTaken(entries []*pb.FileInfo, name string) bool {
 // listServerDir is the shared implementation; the sub-server COUNT has to be
 // read the same way here and in SetupServer, which belongs to another type.
 func (h *ServerModsHandler) listServerDir(nodeID int, serverUUID, dir string) ([]*pb.FileInfo, error) {
-	return handlers.ListServerDirFor(h.state, nodeID, serverUUID, dir)
+	return guard.ListServerDirFor(h.state.GRPCRegistry, nodeID, serverUUID, dir)
 }
 
 // hashFilesBatch must not exceed the node's own hashFilesMaxCount (200 in

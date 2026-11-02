@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -95,7 +96,7 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 			httpx.SendJSONErrorCode(w, bedrockOff, "bedrock_disabled", http.StatusConflict)
 			return
 		}
-		if msg := handlers.OwnerRefusal(h.state, r, rt.OwnerID); msg != "" {
+		if msg := guard.OwnerRefusal(h.state.Store, h.state.SuspendGrace, r, rt.OwnerID); msg != "" {
 			httpx.SendJSONError(w, msg, http.StatusForbidden)
 			return
 		}

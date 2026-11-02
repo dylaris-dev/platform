@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
@@ -686,7 +687,7 @@ func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 	// The SCHEDULE is deliberately left running for a suspended tenant: their
 	// data keeps being protected for the retention window, which is what makes
 	// a cutoff reversible. Asking for an extra run on demand is not that.
-	if srv, err := h.state.Store.GetServerByID(job.ServerID); err == nil && handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if srv, err := h.state.Store.GetServerByID(job.ServerID); err == nil && guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
 	runID, err := h.startBackupRun(r.Context(), job)
@@ -826,7 +827,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
 	// None while it moves: a restore during a move restarted the server on the
@@ -841,7 +842,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "The server is being moved. Restore it once the move has finished.", http.StatusConflict)
 		return
 	}
-	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.state.Redis, srv) {
 		return
 	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)

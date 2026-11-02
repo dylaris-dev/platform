@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -391,7 +392,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	if reqctx.IsAdmin(r) {
 		refusalFor = userID
 	}
-	if msg := handlers.OwnerRefusal(h.state, r, refusalFor); msg != "" {
+	if msg := guard.OwnerRefusal(h.state.Store, h.state.SuspendGrace, r, refusalFor); msg != "" {
 		http.Error(w, msg, http.StatusForbidden)
 		return
 	}
@@ -804,7 +805,7 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
+	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
 		return
 	}
 	mode, ok := decodeProxyModeBody(r)

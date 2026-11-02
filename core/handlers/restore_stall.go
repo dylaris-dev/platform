@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -73,7 +74,7 @@ func annotateStalledRestores(ctx context.Context, rdb *redis.Client, connected f
 		mark()
 		return
 	}
-	busy, err := rdb.Exists(ctx, nodeBusyKey(serverUUID)).Result()
+	busy, err := rdb.Exists(ctx, services.NodeBusyKey(serverUUID)).Result()
 	if err != nil {
 		// An unreachable Redis says nothing about whether the node is working,
 		// so it must not invent a stall.

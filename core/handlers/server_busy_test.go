@@ -35,6 +35,25 @@ func TestEveryRewritingHandlerTakesTheBusyGuard(t *testing.T) {
 	}
 }
 
+// Where a handler takes both guards, the suspended tenant hears 403 and its
+// way out, not 409 "the node is busy": the cutoff is the answer that holds
+// after the node finishes. Pinned when the guards moved to handlers/guard.
+func TestSuspensionIsAnsweredBeforeTheBusyGuard(t *testing.T) {
+	for _, c := range []struct{ file, fn string }{
+		{"servers/servers_lifecycle.go", "SetupServer"},
+		{"servers/servers_lifecycle.go", "ReinstallServer"},
+		{"servers/servers_lifecycle.go", "SwitchSubServer"},
+		{"servers/server_version_update.go", "CopySubServer"},
+		{"backup/backup.go", "RestoreRun"},
+	} {
+		body := handlertest.FuncBody(t, c.file, c.fn)
+		sus, busy := strings.Index(body, "RefuseIfSuspended("), strings.Index(body, "RefuseIfServerBusy(")
+		if sus < 0 || busy < 0 || busy < sus {
+			t.Errorf("%s: the busy guard answers before the suspension guard (or one is missing)", c.fn)
+		}
+	}
+}
+
 // Failure paths that used to leave state behind, named per site.
 func TestFailedDispatchesLeaveNothingBehind(t *testing.T) {
 	for _, c := range []struct{ file, fn, want, why string }{
@@ -43,7 +62,7 @@ func TestFailedDispatchesLeaveNothingBehind(t *testing.T) {
 		{"servers/servers_lifecycle.go", "SetupServer", "services.RememberSetupBefore(r.Context(), h.state.Redis, srv, subName)", "a failed install could not be put back"},
 		{"servers/servers_lifecycle.go", "ReinstallServer", "undo()", "a reinstall that was never sent stayed 'installing'"},
 		{"servers/servers_lifecycle.go", "CreateServer", `configPayload["storagePath"] = sp`, "the wizard's storage path was dropped"},
-		{"sub_server_limit.go", "refuseIfSubServerLimitReached", "if subServerDirExists(entries, target) {", "the cap counted the sub-server being re-installed"},
+		{"guard/sub_server_limit.go", "RefuseIfSubServerLimitReached", "if subServerDirExists(entries, target) {", "the cap counted the sub-server being re-installed"},
 		{"servers/servers_lifecycle.go", "ReinstallServer", `h.state.Store.UpdateServerDesiredState(srv.ID, "online")`, "a reinstall of a stopped server would stay down now that the node asks the intent"},
 	} {
 		if !strings.Contains(handlertest.FuncBody(t, c.file, c.fn), c.want) {

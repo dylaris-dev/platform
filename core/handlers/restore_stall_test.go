@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 )
 
 func queuedRestore() []models.BackupRestore {
@@ -74,7 +75,7 @@ func TestARestoreThatIsFineIsNotReported(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rdb, mr := stallRedis(t)
 			if tc.busy {
-				mr.Set(nodeBusyKey("srv-uuid"), "restarting")
+				mr.Set(services.NodeBusyKey("srv-uuid"), "restarting")
 			}
 			conn := offline
 			if tc.online {

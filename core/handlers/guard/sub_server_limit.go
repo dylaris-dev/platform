@@ -1,4 +1,4 @@
-package handlers
+package guard
 
 import (
 	"fmt"
@@ -6,23 +6,25 @@ import (
 	"strings"
 	"time"
 
+	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
+	"dylaris-core/store"
 	pb "dylaris-proto/node"
 
 	"github.com/google/uuid"
 )
 
-// listServerDirFor lists one directory of a server on its node.
+// ListServerDirFor lists one directory of a server on its node.
 //
 // It lives here rather than on a handler because the sub-server COUNT is the
 // one thing two different handlers have to agree on, and they belong to
 // different types. ServerModsHandler.listServerDir delegates to it.
-func listServerDirFor(state *AppState, nodeID int, serverUUID, dir string) ([]*pb.FileInfo, error) {
-	if state == nil || state.GRPCRegistry == nil {
+func ListServerDirFor(reg *nodegrpc.Registry, nodeID int, serverUUID, dir string) ([]*pb.FileInfo, error) {
+	if reg == nil {
 		return nil, fmt.Errorf("node connection not available")
 	}
-	resp, err := state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
+	resp, err := reg.SendRequest(nodeID, &pb.NodeMessage{
 		RequestId:  uuid.NewString(),
 		ServerUuid: serverUUID,
 		Payload:    &pb.NodeMessage_ListReq{ListReq: &pb.ListFilesReq{Path: dir}},
@@ -46,7 +48,7 @@ func listServerDirFor(state *AppState, nodeID int, serverUUID, dir string) ([]*p
 	return list.Files, nil
 }
 
-// countSubServerDirs counts the sub-servers in a listing of a server's root.
+// CountSubServerDirs counts the sub-servers in a listing of a server's root.
 // A sub-server IS a directory there; files (.active_server) and anything hidden
 // are not sub-servers and must not be counted as one.
 //
@@ -63,7 +65,7 @@ func subServerDirExists(entries []*pb.FileInfo, target string) bool {
 	return false
 }
 
-func countSubServerDirs(entries []*pb.FileInfo) int {
+func CountSubServerDirs(entries []*pb.FileInfo) int {
 	n := 0
 	for _, e := range entries {
 		if e == nil || !e.IsDir {
@@ -78,20 +80,30 @@ func countSubServerDirs(entries []*pb.FileInfo) int {
 	return n
 }
 
-// subServerLimit is the operator's cap, read through the shared parser so the
+// SettingMaxSubServers is the settings key. Named so the setter, the loader and
+// the enforcement site in servers_lifecycle.go cannot drift apart by a typo -
+// they used to spell it out three times.
+const SettingMaxSubServers = "srv.max_sub_servers"
+
+// DefaultMaxSubServers is the product default, used when the setting has never
+// been saved. Deliberately a cap and not "unlimited": a fresh install should not
+// let one server spawn sub-servers without bound.
+var DefaultMaxSubServers = services.LimitPtr(3)
+
+// SubServerLimit is the operator's cap, read through the shared parser so the
 // platform limit convention holds: nil means no cap at all, 0 means none.
-func subServerLimit(state *AppState) *int64 {
-	if state == nil || state.Store == nil {
+func SubServerLimit(st store.Store) *int64 {
+	if st == nil {
 		return nil
 	}
-	val, err := state.Store.GetSetting(SettingMaxSubServers)
+	val, err := st.GetSetting(SettingMaxSubServers)
 	if err != nil {
-		return defaultMaxSubServers
+		return DefaultMaxSubServers
 	}
-	return services.ParseLimitSetting(val, defaultMaxSubServers)
+	return services.ParseLimitSetting(val, DefaultMaxSubServers)
 }
 
-// refuseIfSubServerLimitReached answers the request when the server already
+// RefuseIfSubServerLimitReached answers the request when the server already
 // holds as many sub-servers as it may, and reports whether it did.
 //
 // The count comes from the NODE, because the node's disk is the only thing that
@@ -110,12 +122,12 @@ func subServerLimit(state *AppState) *int64 {
 // cap counted the target itself, which refused re-installing an existing
 // sub-server at the limit and gave an upload install - whose file is staged
 // into the new folder before setup asks - one fewer than the limit.
-func refuseIfSubServerLimitReached(w http.ResponseWriter, state *AppState, nodeID int, serverUUID, target string) bool {
-	limit := subServerLimit(state)
+func RefuseIfSubServerLimitReached(w http.ResponseWriter, st store.Store, reg *nodegrpc.Registry, nodeID int, serverUUID, target string) bool {
+	limit := SubServerLimit(st)
 	if limit == nil {
 		return false
 	}
-	entries, err := listServerDirFor(state, nodeID, serverUUID, "")
+	entries, err := ListServerDirFor(reg, nodeID, serverUUID, "")
 	if err != nil {
 		httpx.SendJSONError(w, "The node did not answer, so the number of sub-servers is not known: "+err.Error(),
 			http.StatusBadGateway)
@@ -124,12 +136,12 @@ func refuseIfSubServerLimitReached(w http.ResponseWriter, state *AppState, nodeI
 	if subServerDirExists(entries, target) {
 		return false
 	}
-	return refuseIfOverSubServerLimit(w, limit, countSubServerDirs(entries))
+	return RefuseIfOverSubServerLimit(w, limit, CountSubServerDirs(entries))
 }
 
-// refuseIfOverSubServerLimit is the decision on counts alone, split out so both
+// RefuseIfOverSubServerLimit is the decision on counts alone, split out so both
 // call sites share one message and the rule can be tested without a node.
-func refuseIfOverSubServerLimit(w http.ResponseWriter, limit *int64, have int) bool {
+func RefuseIfOverSubServerLimit(w http.ResponseWriter, limit *int64, have int) bool {
 	if !services.AtOrOver(limit, int64(have)) {
 		return false
 	}
