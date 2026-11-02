@@ -7,18 +7,17 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/validate"
 	"dylaris-core/services/corestorage"
 )
 
 type ModpackSettingsHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewModpackSettingsHandler(state *handlers.AppState) *ModpackSettingsHandler {
-	return &ModpackSettingsHandler{state: state}
+func NewModpackSettingsHandler(d Deps) *ModpackSettingsHandler {
+	return &ModpackSettingsHandler{d: d}
 }
 
 // modpackSettings is the wire shape used by GET + PUT. The s3 secret is
@@ -90,7 +89,7 @@ func requestOrigin(r *http.Request) string {
 // Get GET /api/admin/settings/modpacks - PANEL settings.read (RequireCap at the route).
 func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	get := func(k string) string {
-		v, _ := h.state.Store.GetSetting(k)
+		v, _ := h.d.Store.GetSetting(k)
 		return v
 	}
 	out := modpackSettings{
@@ -207,7 +206,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	get := func(k string) string {
-		v, _ := h.state.Store.GetSetting(k)
+		v, _ := h.d.Store.GetSetting(k)
 		return v
 	}
 	if modpackS3SecretRebound(req, get) {
@@ -262,13 +261,13 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"core_public_url", req.CorePublicURL},
 	}
 	for _, kv := range writes {
-		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {
+		if err := h.d.Store.SetSetting(kv.k, kv.v); err != nil {
 			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 	if req.S3SecretKey != "" {
-		if err := h.state.Store.SetSetting("modpack_storage_s3_secret_key", req.S3SecretKey); err != nil {
+		if err := h.d.Store.SetSetting("modpack_storage_s3_secret_key", req.S3SecretKey); err != nil {
 			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -279,8 +278,8 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// every panel to re-render its gating over a value that did not change.
 	// The cached "is storage configured" answer is now stale; the panel reads it
 	// from /api/system/features and refreshes on exactly this event.
-	h.state.CoreStorage.InvalidateModpack()
-	h.state.Events.Publish(r.Context(), "modpack_settings.changed", nil)
+	h.d.CoreStorage.InvalidateModpack()
+	h.d.Events.Publish(r.Context(), "modpack_settings.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -304,11 +303,11 @@ func (h *ModpackSettingsHandler) SetUserFlag(w http.ResponseWriter, r *http.Requ
 	}
 	// Marks the row manual as a side effect, so the platform authoring toggle's
 	// bulk apply leaves this decision alone (see SetUserCanCreateModpacks).
-	if err := h.state.Store.SetUserCanCreateModpacks(userID, req.CanCreate); err != nil {
+	if err := h.d.Store.SetUserCanCreateModpacks(userID, req.CanCreate); err != nil {
 		httpx.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": userID})
+	h.d.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": userID})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -325,10 +324,10 @@ func (h *ModpackSettingsHandler) ClearUserFlagOverride(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	if err := h.state.Store.ClearUserCanCreateModpacksManual(userID); err != nil {
+	if err := h.d.Store.ClearUserCanCreateModpacksManual(userID); err != nil {
 		httpx.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": userID})
+	h.d.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": userID})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/guard"
 
@@ -36,7 +35,7 @@ import (
 )
 
 type BeamHandler struct {
-	state     *handlers.AppState
+	d         Deps
 	jwtSecret string
 	// clusterSecret unwraps a node's stored per-node secret, which keys the LAN
 	// fast-path certificate. Not the same secret as jwtSecret on purpose - see
@@ -52,8 +51,8 @@ type BeamHandler struct {
 	minCacheAt  time.Time
 }
 
-func NewBeamHandler(state *handlers.AppState, jwtSecret, clusterSecret string) *BeamHandler {
-	return &BeamHandler{state: state, jwtSecret: jwtSecret, clusterSecret: clusterSecret}
+func NewBeamHandler(d Deps, jwtSecret, clusterSecret string) *BeamHandler {
+	return &BeamHandler{d: d, jwtSecret: jwtSecret, clusterSecret: clusterSecret}
 }
 
 // beamAccessCap is the capability a caller must hold on a server before Core
@@ -85,12 +84,12 @@ const beamAccessCap = "sftp.access"
 // capability in the ticket to check" - about the field this now fills in.
 func (h *BeamHandler) canBeam(r *http.Request, serverID int) (bool, fileperms.Perms) {
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
-	if h.state == nil || h.state.Authz == nil {
+	if h.d.Authz == nil {
 		return false, fileperms.Perms{}
 	}
 	username, _ := r.Context().Value("username").(string)
 	userID, _ := r.Context().Value("userID").(string)
-	res, err := h.state.Authz.Resolve(
+	res, err := h.d.Authz.Resolve(
 		authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
 	if err != nil || !res.HasCap(beamAccessCap) {
 		return false, fileperms.Perms{}
@@ -121,13 +120,13 @@ func (h *BeamHandler) GetBeamServers(w http.ResponseWriter, r *http.Request) {
 	isAdmin := r.Context().Value("isAdmin").(bool)
 
 	// Use ListServersForUser which handles access control
-	user, err := h.state.Store.GetUserByUsername(username)
+	user, err := h.d.Store.GetUserByUsername(username)
 	if err != nil || user == nil {
 		httpx.SendJSONError(w, "User not found", http.StatusUnauthorized)
 		return
 	}
 
-	servers, err := h.state.Store.ListServersForUser(user.ID, isAdmin)
+	servers, err := h.d.Store.ListServersForUser(user.ID, isAdmin)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load servers", http.StatusInternalServerError)
 		return
@@ -147,7 +146,7 @@ func (h *BeamHandler) GetBeamServers(w http.ResponseWriter, r *http.Request) {
 		nodeDiscoveryID := ""
 		nodeName := s.NodeName
 		if s.NodeID > 0 {
-			node, err := h.state.Store.GetNodeByID(s.NodeID)
+			node, err := h.d.Store.GetNodeByID(s.NodeID)
 			if err == nil && node != nil {
 				nodeDiscoveryID = node.Token // Token = the id Core assigned at enrolment, used in discovery
 				nodeName = node.Name
@@ -209,7 +208,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// The operator's off switch. It used to be read only by the panel and by
 	// GetBeamConfig, so a disabled Beam kept minting tickets and the node, which
 	// never sees this setting, honoured them.
-	if v, _ := h.state.Store.GetSetting("beam.enabled"); v == "false" {
+	if v, _ := h.d.Store.GetSetting("beam.enabled"); v == "false" {
 		httpx.SendJSONError(w, "Beam is disabled", http.StatusForbidden)
 		return
 	}
@@ -232,7 +231,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve server
-	server, err := h.state.Store.GetServerByUUID(serverUUID)
+	server, err := h.d.Store.GetServerByUUID(serverUUID)
 	if err != nil || server == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -263,7 +262,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// hands out a write credential the node enforces without knowing about demo.
 	// Fail closed: an unreadable demo setting is not proof of a normal account.
 	userID, _ := r.Context().Value("userID").(string)
-	demo, err := demo.IsAccountChecked(h.state.Store, h.state.StoreEnabled, userID)
+	demo, err := demo.IsAccountChecked(h.d.Store, h.d.StoreEnabled, userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
 		return
@@ -277,7 +276,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// as everything else a cut-off tenant may not ask the node to do. Measured
 	// on production: a suspended account minted a ticket and the relay spliced
 	// it through to the node.
-	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, server) {
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, server) {
 		return
 	}
 	// Read-only while the server moves: the source copy is deleted after
@@ -297,7 +296,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// runs client -> relay -> node, so the relay belongs near the NODE.
 	nodeRegion := ""
 	if server.NodeID > 0 {
-		node, err := h.state.Store.GetNodeByID(server.NodeID)
+		node, err := h.d.Store.GetNodeByID(server.NodeID)
 		if err == nil && node != nil {
 			nodeDiscoveryID = node.Token
 			nodePrivateIPs = node.PrivateIPs
@@ -328,7 +327,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// machine.
 	directFingerprint := ""
 	if server.NodeID != 0 {
-		if secret, ok, serr := redisacl.LoadNodeSecret(h.state.Store, h.clusterSecret, server.NodeID); serr != nil {
+		if secret, ok, serr := redisacl.LoadNodeSecret(h.d.Store, h.clusterSecret, server.NodeID); serr != nil {
 			log.Printf("beam ticket: node %d secret load failed, no direct path advertised: %v", server.NodeID, serr)
 		} else if ok {
 			if fp, ferr := beamauth.LANCertFingerprint(hex.EncodeToString(secret), nodeDiscoveryID); ferr == nil {
@@ -342,16 +341,16 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// only when no relay is registered, since with a relay it would deanonymize the
 	// node. beamaccess.ResolveRelay reads the same settings GetBeamConfig uses.
 	getSetting := func(key string) string {
-		val, _ := h.state.Store.GetSetting(key)
+		val, _ := h.d.Store.GetSetting(key)
 		return val
 	}
-	relayAddr, _ := beamaccess.ResolveRelay(r.Context(), h.state.Redis, getSetting("beam.relay_address"), getSetting("beam.public_host"), nodeRegion)
+	relayAddr, _ := beamaccess.ResolveRelay(r.Context(), h.d.Redis, getSetting("beam.relay_address"), getSetting("beam.public_host"), nodeRegion)
 	// "No relay registered" is also every relay restart: heartbeats live 30s, so
 	// a member asking during a relay deploy got the node's public address, the
 	// one the server list hides from them. The same rule decides here, so an
 	// admin or the node's own owner keeps the direct path.
 	probe := models.Server{NodeID: server.NodeID, NodeAddress: nodePublicIP}
-	access.RedactNodeAddressOne(h.state.Store, func() bool { return services.GatewayRoutingEnabled(h.state.Store) }, &probe, isAdmin, userID)
+	access.RedactNodeAddressOne(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, &probe, isAdmin, userID)
 	nodePublicIP = probe.NodeAddress
 	directHints := buildBeamDirectHints(relayAddr, nodePrivateIPs, nodePublicIP, beamLANPort, directFingerprint)
 
@@ -378,7 +377,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// the proof degrades to the old behaviour rather than to no ticket.
 	var nodeProofSecret []byte
 	if server.NodeID != 0 {
-		if secret, ok, serr := redisacl.LoadNodeSecret(h.state.Store, h.clusterSecret, server.NodeID); serr != nil {
+		if secret, ok, serr := redisacl.LoadNodeSecret(h.d.Store, h.clusterSecret, server.NodeID); serr != nil {
 			log.Printf("beam ticket: node %d secret load failed, ticket carries no node proof: %v", server.NodeID, serr)
 		} else if ok {
 			nodeProofSecret = secret
@@ -461,7 +460,7 @@ func buildBeamDirectHints(relayAddr string, lanIPs []string, publicIP, port, fin
 // GET /api/beam/config
 func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 	getSetting := func(key string) string {
-		val, _ := h.state.Store.GetSetting(key)
+		val, _ := h.d.Store.GetSetting(key)
 		return val
 	}
 
@@ -469,7 +468,7 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 	publicHost := getSetting("beam.public_host")
 	// No server context here, so no region to prefer: this endpoint answers
 	// "which relay can I reach at all", and the ticket path applies the region.
-	relayAddress, _ := beamaccess.ResolveRelay(r.Context(), h.state.Redis, manualOverride, publicHost, "")
+	relayAddress, _ := beamaccess.ResolveRelay(r.Context(), h.d.Redis, manualOverride, publicHost, "")
 	enabled := getSetting("beam.enabled")
 	if enabled == "" {
 		enabled = "true"
@@ -596,7 +595,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	getSetting := func(key string) string {
-		val, _ := h.state.Store.GetSetting(key)
+		val, _ := h.d.Store.GetSetting(key)
 		return val
 	}
 
@@ -604,7 +603,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 	// the beam.download_link override. Relays have not served binaries since
 	// eeff445; the loop below survives because the override may still name
 	// several hosts in future, and one attempt is the normal case.
-	candidates, expectedSHA, resolveErr := resolveDownloadCandidates(r.Context(), h.state.Redis, getSetting, platform)
+	candidates, expectedSHA, resolveErr := resolveDownloadCandidates(r.Context(), h.d.Redis, getSetting, platform)
 	if len(candidates) == 0 {
 		// This route is UNAUTHENTICATED and browser-facing (/api/tools/beam
 		// redirects into it off the User-Agent), so the two reasons a download

@@ -60,7 +60,7 @@ func TestBeamTicketRefusesTheDemoAccount(t *testing.T) {
 		want       int
 	}{{"demo account", "owner-id", 403}, {"another demo account", "someone-else", 200}, {"no demo", "", 200}} {
 		h := newBeamAccessHandler(beamTicketStore(t, map[string]string{demo.AccountUUIDSetting: c.demo}))
-		h.state.StoreEnabled = true
+		h.d.StoreEnabled = true
 		if got := mintBeamTicket(t, h, "owner-id"); got != c.want {
 			t.Errorf("%s: status %d, want %d", c.name, got, c.want)
 		}

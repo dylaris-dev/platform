@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 
 	"dylaris-core/handlers/httpx"
@@ -19,18 +18,18 @@ import (
 )
 
 type StatsHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewStatsHandler(state *handlers.AppState) *StatsHandler {
-	return &StatsHandler{state: state}
+func NewStatsHandler(d Deps) *StatsHandler {
+	return &StatsHandler{d: d}
 }
 
 // StreamStats GET /api/servers/{id}/stats/stream
 // SSE endpoint: sends buffered data from Redis Stream first, then live pub/sub updates.
 // Sets a watching key so nodes only publish when someone is actually watching.
 func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil || h.state.Redis == nil {
+	if h.d.Store == nil || h.d.Redis == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -42,7 +41,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -53,7 +52,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
-	release, ok := guard.AcquireLiveStream(w, r, h.state.Store, "stats", guard.StatsStreamsPerUser)
+	release, ok := guard.AcquireLiveStream(w, r, h.d.Store, "stats", guard.StatsStreamsPerUser)
 	if !ok {
 		return
 	}
@@ -69,8 +68,8 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	watchKey := fmt.Sprintf("dylaris:server:%s:stats:watching", srv.UUID)
 
 	// Set watching key so the node knows to publish live updates
-	h.state.Redis.Set(r.Context(), watchKey, "1", 10*time.Second)
-	defer clearStatsWatch(h.state.Redis, watchKey)
+	h.d.Redis.Set(r.Context(), watchKey, "1", 10*time.Second)
+	defer clearStatsWatch(h.d.Redis, watchKey)
 
 	// Refresh watching key in background
 	watchDone := make(chan struct{})
@@ -82,7 +81,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 			case <-watchDone:
 				return
 			case <-ticker.C:
-				h.state.Redis.Set(r.Context(), watchKey, "1", 10*time.Second)
+				h.d.Redis.Set(r.Context(), watchKey, "1", 10*time.Second)
 			}
 		}
 	}()
@@ -95,7 +94,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	// writing it when the container goes away but the stream stays for an
 	// hour, and replaying it made a stopped server's last hour look current.
 	// A named event, so a panel that does not listen for it ignores it.
-	state := readStatsStreamState(ctx, h.state.Redis, bufferKey, srv.Status, time.Now())
+	state := readStatsStreamState(ctx, h.d.Redis, bufferKey, srv.Status, time.Now())
 	if b, err := json.Marshal(state); err == nil {
 		fmt.Fprintf(w, "event: state\ndata: %s\n\n", b)
 	}
@@ -106,7 +105,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	// reconnects: streams end on a timer now, and replaying the buffer every
 	// time would draw it into the live graph again.
 	if r.Header.Get("Last-Event-ID") == "" && state.Live {
-		for _, data := range statsReplay(ctx, h.state.Redis, bufferKey) {
+		for _, data := range statsReplay(ctx, h.d.Redis, bufferKey) {
 			fmt.Fprintf(w, "data: %s\n\n", data)
 		}
 	}
@@ -114,7 +113,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	// Subscribe to live updates
-	pubsub := h.state.Redis.Subscribe(ctx, liveKey)
+	pubsub := h.d.Redis.Subscribe(ctx, liveKey)
 	defer pubsub.Close()
 
 	ch := pubsub.Channel()
@@ -166,7 +165,7 @@ func readStatsStreamState(ctx context.Context, rdb *redis.Client, bufferKey, sta
 // GetHistory GET /api/servers/{id}/stats/history?range=24h
 // Returns historical stats data points from PostgreSQL.
 func (h *StatsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -178,7 +177,7 @@ func (h *StatsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -197,7 +196,7 @@ func (h *StatsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	since := time.Now().Add(-duration)
-	rows, err := h.state.Store.GetStatsHistory(srv.UUID, since)
+	rows, err := h.d.Store.GetStatsHistory(srv.UUID, since)
 	if err != nil {
 		rows = nil
 	}
@@ -235,7 +234,7 @@ func (h *StatsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 // GetDisk GET /api/servers/{id}/stats/disk
 // Returns disk usage data for the server.
 func (h *StatsHandler) GetDisk(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil || h.state.Redis == nil {
+	if h.d.Store == nil || h.d.Redis == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -247,14 +246,14 @@ func (h *StatsHandler) GetDisk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
 	diskKey := fmt.Sprintf("dylaris:server:%s:stats:disk", srv.UUID)
-	data, err := h.state.Redis.Get(r.Context(), diskKey).Result()
+	data, err := h.d.Redis.Get(r.Context(), diskKey).Result()
 	if err != nil {
 		// No data yet
 		w.Header().Set("Content-Type", "application/json")
@@ -288,7 +287,7 @@ type coreLoadEntry struct {
 // marked. An unpinned server, or a node too old to publish the load, answers
 // with no cores.
 func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil || h.state.Redis == nil {
+	if h.d.Store == nil || h.d.Redis == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -297,7 +296,7 @@ func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -308,7 +307,7 @@ func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
 	}{Cores: []coreLoadEntry{}}
 	w.Header().Set("Content-Type", "application/json")
 
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		json.NewEncoder(w).Encode(out)
 		return
@@ -316,12 +315,12 @@ func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
 	var published struct {
 		Cores map[int]float64 `json:"cores"`
 	}
-	raw, err := h.state.Redis.Get(r.Context(), fmt.Sprintf("dylaris:node:%s:cpuload", node.Token)).Bytes()
+	raw, err := h.d.Redis.Get(r.Context(), fmt.Sprintf("dylaris:node:%s:cpuload", node.Token)).Bytes()
 	if err != nil || json.Unmarshal(raw, &published) != nil || len(published.Cores) == 0 {
 		json.NewEncoder(w).Encode(out)
 		return
 	}
-	others, err := h.state.Store.ListServerPinningByNode(node.ID)
+	others, err := h.d.Store.ListServerPinningByNode(node.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not read the node's servers", http.StatusInternalServerError)
 		return

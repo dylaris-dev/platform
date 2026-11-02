@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/metrics"
 	"dylaris-core/services"
@@ -23,11 +21,11 @@ import (
 // nothing reachable over HTTP can put a number into a record whose whole value
 // is that it was measured.
 type MetricsHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewMetricsHandler(state *handlers.AppState) *MetricsHandler {
-	return &MetricsHandler{state: state}
+func NewMetricsHandler(d Deps) *MetricsHandler {
+	return &MetricsHandler{d: d}
 }
 
 // ready reports whether there is a record to read, and writes the reason if not.
@@ -41,7 +39,7 @@ func NewMetricsHandler(state *handlers.AppState) *MetricsHandler {
 // target is swappable at runtime now, so a second read could land after a swap
 // and hand a closed pool to a query this function had already approved.
 func (h *MetricsHandler) ready(w http.ResponseWriter, r *http.Request) (*metrics.Handle, bool) {
-	handle := h.state.Metrics.Handle()
+	handle := h.d.Metrics.Handle()
 	if handle == nil || handle.Read == nil {
 		sendMetricsJSON(w, map[string]any{
 			"success": true, "available": false, "reason": "unavailable",
@@ -49,7 +47,7 @@ func (h *MetricsHandler) ready(w http.ResponseWriter, r *http.Request) (*metrics
 		})
 		return nil, false
 	}
-	if !h.state.FeatureFlags.Get(r.Context(), services.MetricsEnabledSetting, false) {
+	if !h.d.FeatureFlags.Get(r.Context(), services.MetricsEnabledSetting, false) {
 		sendMetricsJSON(w, map[string]any{
 			"success": true, "available": false, "reason": "disabled",
 			"message": "Long-term statistics are switched off. Turn them on in Settings, Features to start recording.",

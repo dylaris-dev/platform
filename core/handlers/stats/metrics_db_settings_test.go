@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -25,7 +23,7 @@ func (s *metricsDBStore) SetSetting(k, v string) error        { s.vals[k] = v; r
 func metricsDBHandlerFor(st *metricsDBStore) *MetricsDBHandler {
 	// FeatureFlags reads the same store: this endpoint owns the recording
 	// switch now, so the two cannot be given different views of it.
-	return NewMetricsDBHandler(&handlers.AppState{
+	return NewMetricsDBHandler(Deps{
 		Store:        st,
 		FeatureFlags: services.NewFeatureFlags(st),
 	})

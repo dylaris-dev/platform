@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/services/corestorage"
 )
 
 func TestModpackS3SecretRebound(t *testing.T) {
@@ -76,7 +76,7 @@ func TestModpackSettingsSet_RefusesARebindOnTheWire(t *testing.T) {
 	fs.KV["modpack_storage_s3_bucket"] = "packs"
 	fs.KV["modpack_storage_s3_access_key"] = "AKIAREAL"
 	fs.KV["modpack_storage_s3_secret_key"] = "the-real-secret"
-	h := NewModpackSettingsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewModpackSettingsHandler(Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}})
 
 	body, _ := json.Marshal(modpackSettings{
 		Provider:    "s3",

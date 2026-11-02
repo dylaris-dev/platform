@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 
 	"dylaris-core/authz"
@@ -140,7 +139,7 @@ func (f *beamAccessFakeStore) GetAccountGrant(ownerUserID, userID string) (*stor
 // manifest from GitHub on every ticket request, which a unit test must not do;
 // an unexpired cache entry short-circuits that fetch (beam_manifest.go).
 func newBeamAccessHandler(fs *beamAccessFakeStore) *BeamHandler {
-	h := NewBeamHandler(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}, "beam-test-secret", "test-cluster-secret")
+	h := NewBeamHandler(Deps{Store: fs, Authz: authz.NewResolver(fs)}, "beam-test-secret", "test-cluster-secret")
 	h.minCacheVal = ""
 	h.minCacheAt = time.Now()
 	return h

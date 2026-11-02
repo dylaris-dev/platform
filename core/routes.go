@@ -563,6 +563,30 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		CoreStorage:  appState.CoreStorage,
 	}
 
+	// Per-package dependencies, copied from appState once. A field assigned
+	// further down (WarpPeers, InstallMrpackURL) must not be copied before its
+	// assignment (TestNoAppStateFieldIsSetAfterItIsCopied).
+	statsDeps := stats.Deps{
+		Store:        appState.Store,
+		Redis:        appState.Redis,
+		Events:       appState.Events,
+		FeatureFlags: appState.FeatureFlags,
+		Metrics:      appState.Metrics,
+	}
+	beamDeps := beam.Deps{
+		Store:        appState.Store,
+		Redis:        appState.Redis,
+		Authz:        appState.Authz,
+		StoreEnabled: appState.StoreEnabled,
+		SuspendGrace: appState.SuspendGrace,
+	}
+	modsDeps := mods.Deps{
+		Store:       appState.Store,
+		Cache:       appState.Cache,
+		Events:      appState.Events,
+		CoreStorage: appState.CoreStorage,
+	}
+
 	// Initialize handlers
 	serverHandler := servers.NewServerHandler(appState)
 	portsAdminHandler := servers.NewPortsAdminHandler(appState)
@@ -604,10 +628,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	placementHandler := servers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)
-	statsHandler := stats.NewStatsHandler(appState)
+	statsHandler := stats.NewStatsHandler(statsDeps)
 	memberHandler := servers.NewMemberHandler(appState)
 	versionHandler := handlers.NewVersionHandler(appState)
-	beamHandler := beam.NewBeamHandler(appState, cfg.BeamJWTSecret, cfg.ClusterSecret)
+	beamHandler := beam.NewBeamHandler(beamDeps, cfg.BeamJWTSecret, cfg.ClusterSecret)
 	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
 	timezoneHandler := handlers.NewTimezoneHandler(appState)
 	backupHandler := backup.NewBackupHandler(appState)
@@ -633,13 +657,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
 	rconHandler := servers.NewRconHandler(appState)
 	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
-	modrinthHandler := mods.NewModrinthHandler(appState)
+	modrinthHandler := mods.NewModrinthHandler(modsDeps)
 	technicHandler := servers.NewTechnicHandler(appState)
 	serverModsHandler := servers.NewServerModsHandler(appState)
 	sparkHandler := tabs.NewSparkHandler(appState)
 	serverTabsHandler := tabs.NewServerTabsHandler(appState)
 	proxyHandler := tabs.NewProxyHandler(appState, authHandler)
-	modrinthPATHandler := mods.NewModrinthPATHandler(appState, cfg.ClusterSecret)
+	modrinthPATHandler := mods.NewModrinthPATHandler(modsDeps, cfg.ClusterSecret)
 	packsHandler := packs.NewPacksHandler(appState)
 	packsHandler.SetPATLoader(modrinthPATHandler)
 	// Server installs and pack alerts resolve team access the same way.
@@ -648,7 +672,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	templatesHandler := templates.NewTemplatesHandler(appState)
 	usernameHistoryHandler := users.NewUsernameHistoryHandler(appState)
 	accountPolicyHandler := users.NewAccountPolicyHandler(appState)
-	modpackSettingsHandler := mods.NewModpackSettingsHandler(appState)
+	modpackSettingsHandler := mods.NewModpackSettingsHandler(modsDeps)
 	modCacheSettingsHandler := handlers.NewModCacheSettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
@@ -1551,8 +1575,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	dnsHandler := handlers.NewDNSHandler(appState)
 	trafficLimitHandler := billing.NewTrafficLimitHandler(appState)
 	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
-	metricsHandler := stats.NewMetricsHandler(appState)
-	metricsDBHandler := stats.NewMetricsDBHandler(appState)
+	metricsHandler := stats.NewMetricsHandler(statsDeps)
+	metricsDBHandler := stats.NewMetricsDBHandler(statsDeps)
 
 	// Admin endpoints (PANEL topology.* - global gateway oversight; Phase 4 Task 18)
 	api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetLinks))).Methods("GET")

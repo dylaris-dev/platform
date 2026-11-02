@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/modcompat"
 
 	"dylaris-core/handlers/httpx"
@@ -34,17 +33,17 @@ const (
 )
 
 type ModrinthHandler struct {
-	state *handlers.AppState
-	http  *http.Client
+	d    Deps
+	http *http.Client
 	// cool is Modrinth's 429: the limit is per IP and Core is one IP for
 	// every customer, so one busy panel must not turn into a ban for all.
 	cool modcompat.UpstreamCooldown
 }
 
-func NewModrinthHandler(state *handlers.AppState) *ModrinthHandler {
+func NewModrinthHandler(d Deps) *ModrinthHandler {
 	return &ModrinthHandler{
-		state: state,
-		http:  &http.Client{Timeout: 15 * time.Second},
+		d:    d,
+		http: &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -72,8 +71,8 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 	if reqBody != nil {
 		cacheKey = "dylaris:modrinth:" + validate.HashURL(method+" "+urlStr+" "+string(reqBody))
 	}
-	if h.state.Cache != nil {
-		if cached, ok := h.state.Cache.Get(ctx, cacheKey); ok {
+	if h.d.Cache != nil {
+		if cached, ok := h.d.Cache.Get(ctx, cacheKey); ok {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			w.Write([]byte(cached))
@@ -128,8 +127,8 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 
 	// Cache only successful 200s — error responses change shape and
 	// shouldn't poison the cache for 5+ minutes.
-	if resp.StatusCode == http.StatusOK && h.state.Cache != nil && len(body) <= services.MaxCachedResponseBytes {
-		h.state.Cache.Set(ctx, cacheKey, string(body), ttl)
+	if resp.StatusCode == http.StatusOK && h.d.Cache != nil && len(body) <= services.MaxCachedResponseBytes {
+		h.d.Cache.Set(ctx, cacheKey, string(body), ttl)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

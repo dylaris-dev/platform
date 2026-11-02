@@ -30,14 +30,11 @@ import (
 // longer needed fails the test, so the list cannot outlive the edges.
 var layeringAllowed = map[string]bool{
 	"handlers/backup -> handlers":     true,
-	"handlers/beam -> handlers":       true,
 	"handlers/billing -> handlers":    true,
 	"handlers/gateway -> handlers":    true,
-	"handlers/mods -> handlers":       true,
 	"handlers/nodes -> handlers":      true,
 	"handlers/packs -> handlers":      true,
 	"handlers/servers -> handlers":    true,
-	"handlers/stats -> handlers":      true,
 	"handlers/storageapi -> handlers": true,
 	"handlers/tabs -> handlers":       true,
 	"handlers/templates -> handlers":  true,

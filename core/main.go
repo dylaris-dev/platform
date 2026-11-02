@@ -766,6 +766,45 @@ func main() {
 		log.Printf("panel: serving %d routes from the embedded bundle", panel.Routes())
 	}
 
+	// Every AppState field is set BEFORE the router is built: buildAPIRouter
+	// copies fields into per-package Deps values, so a field assigned after it
+	// would stay zero for those handlers (TestNoAppStateFieldIsSetAfterItIsCopied).
+
+	// The cluster secret, for link-boot's BYON answer (the node's derived Redis
+	// password).
+	appState.ClusterSecret = cfg.ClusterSecret
+
+	// How Core reaches its OWN database with pg_dump / pg_restore, for platform
+	// backups. The major version is asked once here rather than per run: it
+	// decides which installed client is used, and the constraint points both
+	// ways - pg_dump refuses a server newer than itself, pg_restore emits SQL an
+	// older one does not understand.
+	appState.PlatformDB = services.PGConn{
+		Host: cfg.DBHost, Port: cfg.DBPort, User: cfg.DBUser,
+		Password: cfg.DBPassword, Name: cfg.DBName, SSLMode: cfg.DBSSLMode,
+	}
+	if major, merr := services.PGServerMajor(db); merr == nil {
+		appState.PlatformDBMajor = major
+	} else {
+		// Not fatal: everything except a platform backup works without it, and
+		// the client choice then falls back to whatever is on PATH.
+		log.Printf("could not read the database major version, platform backups will guess the client: %v", merr)
+	}
+	// The same volume the ticket attachments already live on, so a
+	// bundle is spooled where there is room for it rather than on the
+	// container's own writable layer.
+	appState.PlatformBackupWorkDir = filepath.Join("dylaris_data", "platform-backups")
+	appState.GatewayHubURL = cfg.GatewayHubURL
+	appState.AdminSecret = cfg.AdminSecret
+	appState.SetupEnabled = cfg.SetupEnabled
+	appState.SuspendGrace = cfg.SuspendGrace
+	// P0b-5 admission gate. The JOIN half is consulted on the ACL-on gRPC enroll
+	// path for unknown nodes; the NETWORK half runs on the warp enrol instead,
+	// which is the only place a BYON customer's real IP is visible (over gRPC the
+	// peer is the warp leader, identical for every customer).
+	admissionGate := services.NewAdmissionGate(pgStore)
+	appState.Admission = admissionGate
+
 	root, extras := buildAPIRouter(appState, authHandler, routeCfg{
 		Panel:              panel,
 		JWTSecret:          cfg.JWTSecret,
@@ -826,34 +865,6 @@ func main() {
 	// mandatory); provisions the node's scoped ACL users and mints/returns its
 	// per-node secret.
 	aclProvisioner := redisacl.NewProvisioner(redisClient)
-	// The cluster secret, for link-boot's BYON answer (the node's derived Redis
-	// password).
-	appState.ClusterSecret = cfg.ClusterSecret
-
-	// How Core reaches its OWN database with pg_dump / pg_restore, for platform
-	// backups. The major version is asked once here rather than per run: it
-	// decides which installed client is used, and the constraint points both
-	// ways - pg_dump refuses a server newer than itself, pg_restore emits SQL an
-	// older one does not understand.
-	appState.PlatformDB = services.PGConn{
-		Host: cfg.DBHost, Port: cfg.DBPort, User: cfg.DBUser,
-		Password: cfg.DBPassword, Name: cfg.DBName, SSLMode: cfg.DBSSLMode,
-	}
-	if major, merr := services.PGServerMajor(db); merr == nil {
-		appState.PlatformDBMajor = major
-	} else {
-		// Not fatal: everything except a platform backup works without it, and
-		// the client choice then falls back to whatever is on PATH.
-		log.Printf("could not read the database major version, platform backups will guess the client: %v", merr)
-	}
-	// The same volume the ticket attachments already live on, so a
-	// bundle is spooled where there is room for it rather than on the
-	// container's own writable layer.
-	appState.PlatformBackupWorkDir = filepath.Join("dylaris_data", "platform-backups")
-	appState.GatewayHubURL = cfg.GatewayHubURL
-	appState.AdminSecret = cfg.AdminSecret
-	appState.SetupEnabled = cfg.SetupEnabled
-	appState.SuspendGrace = cfg.SuspendGrace
 
 	// ACL reconciler - leader-gated. Periodically (and on a Redis reconnect)
 	// re-provisions every paired node's scoped Redis ACL
@@ -893,12 +904,6 @@ func main() {
 		aclProvisioner,
 		cfg.ClusterSecret,
 	)
-	// P0b-5 admission gate. The JOIN half is consulted on the ACL-on gRPC enroll
-	// path for unknown nodes; the NETWORK half runs on the warp enrol instead,
-	// which is the only place a BYON customer's real IP is visible (over gRPC the
-	// peer is the warp leader, identical for every customer).
-	admissionGate := services.NewAdmissionGate(pgStore)
-	appState.Admission = admissionGate
 	// Pre-placement ACL hook: re-apply a node's Redis ACL right before sending a
 	// server-placement command, closing the window where a freshly created
 	// server's keys are NOPERM for the node until its next reconnect. nil-safe.

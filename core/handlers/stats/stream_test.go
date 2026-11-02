@@ -10,7 +10,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -23,7 +22,7 @@ func TestStatsStreamReplaysTheBufferOnlyOnTheFirstConnect(t *testing.T) {
 	shortStreams(t)
 	fs := &statsFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid"}}
 	rdb := handlertest.RedisClient(t)
-	h := &StatsHandler{state: &handlers.AppState{Store: fs, Redis: rdb}}
+	h := &StatsHandler{d: Deps{Store: fs, Redis: rdb}}
 	rdb.XAdd(context.Background(), &redis.XAddArgs{Stream: "dylaris:server:srv-uuid:stats:buffer", Values: map[string]any{"data": `{"cpu":1}`}})
 
 	run := func(lastID string) string {
@@ -56,7 +55,7 @@ func TestStatsStreamOpensWithTheRetryLine(t *testing.T) {
 	shortStreams(t)
 	fs := &statsFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", ActiveSubServer: "main"}}
 	rdb := handlertest.RedisClient(t)
-	h := &StatsHandler{state: &handlers.AppState{Store: fs, Redis: rdb}}
+	h := &StatsHandler{d: Deps{Store: fs, Redis: rdb}}
 	req := mux.SetURLVars(httptest.NewRequest("GET", "/api/servers/1/stats/stream", nil), map[string]string{"id": "1"})
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})

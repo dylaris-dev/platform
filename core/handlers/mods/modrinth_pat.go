@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/pkg/crypto"
 	"dylaris-core/services"
@@ -26,12 +24,12 @@ import (
 // + the "modrinth-pat" purpose tag.
 
 type ModrinthPATHandler struct {
-	state         *handlers.AppState
+	d             Deps
 	clusterSecret string
 }
 
-func NewModrinthPATHandler(state *handlers.AppState, clusterSecret string) *ModrinthPATHandler {
-	return &ModrinthPATHandler{state: state, clusterSecret: clusterSecret}
+func NewModrinthPATHandler(d Deps, clusterSecret string) *ModrinthPATHandler {
+	return &ModrinthPATHandler{d: d, clusterSecret: clusterSecret}
 }
 
 func (h *ModrinthPATHandler) key() []byte {
@@ -59,7 +57,7 @@ func (h *ModrinthPATHandler) Status(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	pat, err := h.state.Store.GetModrinthPAT(userID)
+	pat, err := h.d.Store.GetModrinthPAT(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "DB error", http.StatusInternalServerError)
 		return
@@ -105,7 +103,7 @@ func (h *ModrinthPATHandler) Set(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Failed to encrypt token", http.StatusInternalServerError)
 		return
 	}
-	if err := h.state.Store.SetModrinthPAT(userID, ciphertext, username); err != nil {
+	if err := h.d.Store.SetModrinthPAT(userID, ciphertext, username); err != nil {
 		httpx.SendJSONError(w, "Failed to store token", http.StatusInternalServerError)
 		return
 	}
@@ -124,7 +122,7 @@ func (h *ModrinthPATHandler) Clear(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if err := h.state.Store.ClearModrinthPAT(userID); err != nil {
+	if err := h.d.Store.ClearModrinthPAT(userID); err != nil {
 		httpx.SendJSONError(w, "Failed to clear PAT", http.StatusInternalServerError)
 		return
 	}
@@ -169,7 +167,7 @@ func (h *ModrinthPATHandler) validatePAT(ctx context.Context, plaintext string) 
 // calls. Exported so the modpacks-publish handler can use it without
 // duplicating the crypto wiring.
 func (h *ModrinthPATHandler) LoadPAT(userID string) (string, string, error) {
-	pat, err := h.state.Store.GetModrinthPAT(userID)
+	pat, err := h.d.Store.GetModrinthPAT(userID)
 	if err != nil {
 		return "", "", err
 	}

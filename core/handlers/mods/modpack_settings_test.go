@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/services/corestorage"
 
 	"dylaris-core/services"
 )
@@ -16,16 +16,15 @@ import (
 // newModpackSettingsTestHandler wires a ModpackSettingsHandler against
 // handlertest.SettingsStore (core_storage_http_test.go), which records
 // SetSetting writes into a map so a rejected request can be asserted to
-// never reach the store. FeatureFlags/Events are wired the same way
-// core_storage_gate_test.go does for FeatureSettingsHandler, since Set()
-// unconditionally invalidates flags and publishes events on success.
+// never reach the store. Events and the core storage Manager are wired because
+// Set() publishes an event and invalidates the modpack storage on success.
 func newModpackSettingsTestHandler(fs *handlertest.SettingsStore) *ModpackSettingsHandler {
-	st := withCoreStorage(&handlers.AppState{
-		Store:  fs,
-		Events: services.NewSystemEventsPublisher(nil),
+	ev := services.NewSystemEventsPublisher(nil)
+	return NewModpackSettingsHandler(Deps{
+		Store:       fs,
+		Events:      ev,
+		CoreStorage: &corestorage.Manager{Store: fs, Events: ev},
 	})
-	st.FeatureFlags = services.NewFeatureFlags(st.Store)
-	return NewModpackSettingsHandler(st)
 }
 
 // TestModpackSettingsHandler_Set_ProviderValidation is the regression guard

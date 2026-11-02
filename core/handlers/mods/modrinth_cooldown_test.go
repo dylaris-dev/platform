@@ -12,7 +12,6 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services"
 	"dylaris-core/services/modcompat"
 )
@@ -35,7 +34,7 @@ func TestModrinthProxyBacksOffOn429(t *testing.T) {
 	}))
 	defer up.Close()
 	mr := miniredis.RunT(t)
-	h := NewModrinthHandler(withCoreStorage(&handlers.AppState{Cache: services.NewCache(redis.NewClient(&redis.Options{Addr: mr.Addr()}))}))
+	h := NewModrinthHandler(Deps{Cache: services.NewCache(redis.NewClient(&redis.Options{Addr: mr.Addr()}))})
 	ctx := context.Background()
 
 	get := func(path string) *httptest.ResponseRecorder {

@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/metrics"
 	"dylaris-core/services"
@@ -21,11 +19,11 @@ import (
 // arrives with "and where" attached, and answering the first without the second
 // is what made this configurable only through an environment variable.
 type MetricsDBHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewMetricsDBHandler(state *handlers.AppState) *MetricsDBHandler {
-	return &MetricsDBHandler{state: state}
+func NewMetricsDBHandler(d Deps) *MetricsDBHandler {
+	return &MetricsDBHandler{d: d}
 }
 
 // metricsDBRequest is one screen's worth of decision: whether to record, and
@@ -68,7 +66,7 @@ type metricsDBActive struct {
 
 // Get GET /api/admin/settings/metrics-db. PANEL settings.read.
 func (h *MetricsDBHandler) Get(w http.ResponseWriter, r *http.Request) {
-	stored := services.LoadMetricsDBTarget(h.state.Store)
+	stored := services.LoadMetricsDBTarget(h.d.Store)
 	pwSet := stored.Password != ""
 	stored.Password = ""
 
@@ -76,7 +74,7 @@ func (h *MetricsDBHandler) Get(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"settings": metricsDBResponse{
 			MetricsDBTarget: stored,
-			Enabled:         h.state.FeatureFlags.Get(r.Context(), services.MetricsEnabledSetting, false),
+			Enabled:         h.d.FeatureFlags.Get(r.Context(), services.MetricsEnabledSetting, false),
 			PasswordSet:     pwSet,
 			Active:          h.activeState(),
 		},
@@ -84,7 +82,7 @@ func (h *MetricsDBHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MetricsDBHandler) activeState() metricsDBActive {
-	handle := h.state.Metrics.Handle()
+	handle := h.d.Metrics.Handle()
 	if handle == nil {
 		return metricsDBActive{}
 	}
@@ -199,7 +197,7 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := services.SaveMetricsDBTarget(h.state.Store, target); err != nil {
+	if err := services.SaveMetricsDBTarget(h.d.Store, target); err != nil {
 		httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -219,7 +217,7 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// yet in use" beats a form that refuses a correct setting because of a
 	// transient error at the moment of applying it.
 	applyErr := ""
-	if err := h.state.Metrics.Apply(target.DSN()); err != nil {
+	if err := h.d.Metrics.Apply(target.DSN()); err != nil {
 		applyErr = err.Error()
 	}
 
@@ -258,11 +256,11 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 // The KEY is unchanged (`feature_metrics_enabled`); only the endpoint that owns
 // writing it moved.
 func (h *MetricsDBHandler) setRecording(r *http.Request, on bool) error {
-	if err := h.state.Store.SetSetting(services.MetricsEnabledSetting, strconv.FormatBool(on)); err != nil {
+	if err := h.d.Store.SetSetting(services.MetricsEnabledSetting, strconv.FormatBool(on)); err != nil {
 		return err
 	}
-	h.state.FeatureFlags.Invalidate(services.MetricsEnabledSetting)
-	h.state.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
+	h.d.FeatureFlags.Invalidate(services.MetricsEnabledSetting)
+	h.d.Events.Publish(r.Context(), "features.changed", map[string]interface{}{
 		"feature": "metrics",
 		"enabled": on,
 	})
@@ -282,7 +280,7 @@ func (h *MetricsDBHandler) decodeAndMerge(w http.ResponseWriter, r *http.Request
 		// removed; every other path here either sets one or keeps one.
 		req.Password = ""
 	case req.Password == "":
-		existing := services.LoadMetricsDBTarget(h.state.Store)
+		existing := services.LoadMetricsDBTarget(h.d.Store)
 		if sameMetricsEndpoint(req.MetricsDBTarget, existing) {
 			req.Password = existing.Password
 		}

@@ -207,7 +207,7 @@ func httpGetBeamManifestBytes(ctx context.Context, u string) ([]byte, error) {
 // can never lock every client out either.
 func (h *BeamHandler) effectiveMinVersion(ctx context.Context) string {
 	return h.cachedAutoMinVersion(ctx, func(key string) string {
-		v, _ := h.state.Store.GetSetting(key)
+		v, _ := h.d.Store.GetSetting(key)
 		return v
 	})
 }
