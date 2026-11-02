@@ -3,6 +3,7 @@ package nodes
 import (
 	"context"
 	"database/sql"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
@@ -163,7 +164,7 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	// Node list is admin-only today. In BYON mode a non-admin tenant may list
 	// THEIR OWN nodes; everything else stays admin-only.
-	admin := handlers.IsAdmin(r)
+	admin := reqctx.IsAdmin(r)
 	byon := handlers.ByonActive(h.state, r)
 	if !admin && !byon {
 		httpx.SendJSONError(w, "Forbidden", 403)
@@ -181,7 +182,7 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 
 	// BYON tenant: scope the list to nodes they own.
 	if !admin && byon {
-		uid := handlers.ByonCallerID(r)
+		uid := reqctx.ByonCallerID(r)
 		owned := make([]models.Node, 0, len(nodes))
 		for _, n := range nodes {
 			if n.OwnerID != nil && *n.OwnerID == uid {
@@ -217,13 +218,13 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 			// filter here looked like it finished the job while only the
 			// unprivileged half of it was ever enforced. An admin who needs the
 			// whole fleet asks for the unscoped list, which is still theirs.
-			nodes = filterNodes(nodes, ownedBYONNode(handlers.ByonCallerID(r)))
+			nodes = filterNodes(nodes, ownedBYONNode(reqctx.ByonCallerID(r)))
 		case "placement":
 			// What may I put a server on. Answers the target-node picker in the
 			// create wizard and the transfer dialog, and deliberately hides
 			// another tenant's machine from an operator: their hardware is not
 			// the operator's capacity, and canPlaceOnNode refuses it anyway.
-			nodes = filterNodes(nodes, placeableNode(handlers.ByonCallerID(r), admin, byon))
+			nodes = filterNodes(nodes, placeableNode(reqctx.ByonCallerID(r), admin, byon))
 		case "fleet":
 			// The machines the OPERATOR runs: platform and external, never a
 			// customer's. It backs Settings -> Nodes, which offers Configure,
@@ -1251,7 +1252,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	// AdminUpdateServerOwner. The body names the owner, and the owner gets the
 	// resolver's owner short-circuit: a staff role holding nodes.write could
 	// adopt a deleted customer's world for itself, console and files included.
-	if !handlers.IsAdmin(r) {
+	if !reqctx.IsAdmin(r) {
 		httpx.SendJSONError(w, "Only an administrator can adopt an orphaned server", http.StatusForbidden)
 		return
 	}

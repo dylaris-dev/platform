@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -33,7 +34,7 @@ func TestCreateAndRenameCheckTheNameInsteadOfRewritingIt(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/files/x?server_uuid=s1", strings.NewReader(body))
 		ctx := context.WithValue(req.Context(), "username", "u")
 		ctx = context.WithValue(ctx, "isAdmin", true)
-		ctx = context.WithValue(ctx, apiKeyCtxKey{}, &apiKeyCtx{key: &models.APIKey{ID: 1}})
+		ctx = reqctx.WithAPIKey(ctx, &models.APIKey{ID: 1}, false)
 		rw := httptest.NewRecorder()
 		fn(rw, req.WithContext(ctx))
 		return rw

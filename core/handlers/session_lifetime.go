@@ -50,10 +50,6 @@ func newSessionClaims(username string, isAdmin bool, pwdHash string) *Claims {
 	}
 }
 
-// sessionClaimsKey carries the caller's session claims to handlers that hand
-// out a copy of the session (SessionToken), so the copy is the SAME session.
-const sessionClaimsKey contextKey = "sessionClaims"
-
 // withSessionID gives a token minted before sessions had an id one derived from
 // the token itself, so sliding keeps it and signing out can name it: a fresh
 // random id on each slide would let a copy outlive the sign-out.

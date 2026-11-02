@@ -1,13 +1,12 @@
 package billing
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"io"
 	"log"
 	"net/http"
 	"time"
-
-	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
@@ -78,7 +77,7 @@ func (h *StoreHandler) AccountSummary(w http.ResponseWriter, r *http.Request) {
 	// subscription to bill traffic against" - true of the store's database and
 	// unreadable to somebody whose grant is working, because it describes their
 	// entitlement as missing when it is simply not a purchase.
-	if ent, eerr := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, handlers.IsAdmin(r)); eerr == nil {
+	if ent, eerr := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, reqctx.IsAdmin(r)); eerr == nil {
 		summary["granted"] = ent.Source == services.EntitlementSourceGrant || ent.Source == services.EntitlementSourceBoth
 	}
 	w.Header().Set("Content-Type", "application/json")

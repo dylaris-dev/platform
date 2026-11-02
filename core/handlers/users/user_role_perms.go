@@ -1,6 +1,7 @@
 package users
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http"
 
@@ -53,7 +54,7 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 	// role 'support' into the seeded support PANEL role for any account without
 	// one, which hands a sock-puppet rights the caller never held. The role it
 	// already has is not a promotion: the panel re-sends it on every save.
-	if req.Role != "user" && req.Role != previousRole && !handlers.IsAdmin(r) {
+	if req.Role != "user" && req.Role != previousRole && !reqctx.IsAdmin(r) {
 		httpx.SendJSONError(w, "Only an admin can give someone the admin or support role", http.StatusForbidden)
 		return
 	}
@@ -158,21 +159,21 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 	if terr != nil || target == nil || !(target.IsAdmin || target.Role == "admin") {
 		req.CanDeleteServers = false
 	}
-	if !handlers.IsAdmin(r) && (terr != nil || target == nil || !handlers.MayManageAccount(h.state, r, target)) {
+	if !reqctx.IsAdmin(r) && (terr != nil || target == nil || !handlers.MayManageAccount(h.state, r, target)) {
 		httpx.SendJSONError(w, "You cannot change the permissions of an account with more rights than yours", http.StatusForbidden)
 		return
 	}
 	// mayManageAccount passes on yourself, and the support team decides which
 	// tickets a staff member sees: a staff member could move themselves into
 	// any team, or through all of them, past the cross-team visibility setting.
-	if !handlers.IsAdmin(r) && handlers.ActingOnSelf(r, id) {
+	if !reqctx.IsAdmin(r) && reqctx.ActingOnSelf(r, id) {
 		httpx.SendJSONError(w, "Your own permissions and support team are set by another administrator", http.StatusForbidden)
 		return
 	}
 	// mayManageAccount compares the team the target is in, not the one asked
 	// for: staff could take over a colleague, move them into another team and
 	// read that team's tickets as them. Staff place someone only in their own.
-	if !handlers.IsAdmin(r) && req.SupportTeam != "" && req.SupportTeam != target.SupportTeam {
+	if !reqctx.IsAdmin(r) && req.SupportTeam != "" && req.SupportTeam != target.SupportTeam {
 		actorID, _ := r.Context().Value("userID").(string)
 		me, err := h.state.Store.GetUserByID(actorID)
 		if err != nil || me == nil || me.SupportTeam != req.SupportTeam {
@@ -183,7 +184,7 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 	// Resource changes are a right of their own; a delegated users.write must
 	// not hand it out, to someone else or to the caller themselves. Only a
 	// change from off to on hands it out: the panel re-sends the current value.
-	if req.CanChangeResources && !handlers.IsAdmin(r) && !target.CanChangeResources {
+	if req.CanChangeResources && !reqctx.IsAdmin(r) && !target.CanChangeResources {
 		actorID, _ := r.Context().Value("userID").(string)
 		if !handlers.LoadEffectivePermissions(h.state, actorID).CanChangeResources {
 			httpx.SendJSONError(w, "You cannot grant resource changes you do not hold", http.StatusForbidden)

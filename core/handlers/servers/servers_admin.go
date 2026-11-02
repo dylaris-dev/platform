@@ -1,6 +1,7 @@
 package servers
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -87,7 +88,7 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 	// machines for themselves, an admin's included, and nothing recorded it.
 	// Servers do not move between accounts; this stays as the operator's
 	// escape hatch, on the record.
-	if !handlers.IsAdmin(r) {
+	if !reqctx.IsAdmin(r) {
 		httpx.SendJSONError(w, "Only an administrator can change a server's owner", http.StatusForbidden)
 		return
 	}

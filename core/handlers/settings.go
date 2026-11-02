@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -134,7 +135,7 @@ func (h *SettingsHandler) GetDownloadLimitForUser(isAdmin bool) *int64 {
 
 // GetUserLimits GET /api/settings/filemanager/limits — available to ALL authenticated users
 func (h *SettingsHandler) GetUserLimits(w http.ResponseWriter, r *http.Request) {
-	isAdmin := IsAdmin(r)
+	isAdmin := reqctx.IsAdmin(r)
 	settings := h.loadFileManagerSettings()
 
 	var uploadLimit, downloadLimit *int64

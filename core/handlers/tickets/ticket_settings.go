@@ -1,6 +1,7 @@
 package tickets
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -134,7 +135,7 @@ func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Requ
 	// watches support (1 day erased it on the next sweep), lifts the
 	// attachment quotas and switches on deletion. Same boundary the ticket
 	// migration tools already draw.
-	if !handlers.IsAdmin(r) {
+	if !reqctx.IsAdmin(r) {
 		httpx.SendJSONError(w, "Only an administrator can change the ticket settings", http.StatusForbidden)
 		return
 	}

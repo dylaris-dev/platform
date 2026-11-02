@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"log"
 	"net/http"
 
@@ -134,7 +135,7 @@ const (
 func LogIdentityAudit(state *AppState, r *http.Request, eventType string, actorID, targetID string, metadata map[string]interface{}) {
 	var key *models.APIKey
 	if r != nil {
-		key = APIKeyFromContext(r)
+		key = reqctx.APIKeyFromContext(r)
 	}
 	logIdentityAuditAs(state, r, key, eventType, actorID, targetID, metadata)
 }

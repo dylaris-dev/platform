@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -242,7 +243,7 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	}{
 		Domain: req.Domain, Subdomain: req.Subdomain, HosterDomain: req.HosterDomain,
 		CustomDomain: req.CustomDomain, TargetPort: req.TargetPort,
-	}, handlers.IsAdmin(r))
+	}, reqctx.IsAdmin(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -262,7 +263,7 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 		http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead.", *limit), http.StatusForbidden)
 		return
 	}
-	if !stats.ownsDomain && isCustomDomain && !handlers.IsAdmin(r) {
+	if !stats.ownsDomain && isCustomDomain && !reqctx.IsAdmin(r) {
 		if msg := h.customDomainCapError(stats.custom); msg != "" {
 			http.Error(w, msg, http.StatusForbidden)
 			return

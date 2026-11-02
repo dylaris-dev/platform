@@ -1,12 +1,12 @@
 package gateway
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
@@ -48,7 +48,7 @@ func (h *WarpHandler) GetDeployConfig(w http.ResponseWriter, r *http.Request) {
 // placeholders when this call does not answer, so failing closed costs a
 // snippet, while failing open would be the thing the gate exists to prevent.
 func (h *WarpHandler) mayReadDeployConfig(r *http.Request) bool {
-	if handlers.IsAdmin(r) {
+	if reqctx.IsAdmin(r) {
 		return true
 	}
 	if h.state.FeatureFlags == nil {

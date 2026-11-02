@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql" // Import Models
+	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -238,21 +239,6 @@ func sessionKey(u *models.User) string {
 	return u.Password + "#" + strconv.Itoa(u.SessionEpoch)
 }
 
-// tokenPurposeKey carries the JWT's Purpose claim to handlers that need to tell
-// a fresh password login apart from a long-lived session. Typed, unlike the
-// string keys beside it, so it cannot collide with a request-scoped value set
-// elsewhere.
-type contextKey string
-
-const tokenPurposeKey contextKey = "tokenPurpose"
-
-// TokenPurpose returns the purpose of the JWT that authenticated this request
-// ("" for a normal session).
-func TokenPurpose(r *http.Request) string {
-	p, _ := r.Context().Value(tokenPurposeKey).(string)
-	return p
-}
-
 // purposes whitelisted for setup-token JWTs. Anything else gets 403'd
 // by AuthMiddleware so the bearer of a setup token can't access regular
 // endpoints just because they have a valid signature.
@@ -484,8 +470,8 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// 15 minutes and reaches three paths, so the password is already proven
 		// for its bearer; a normal session token is long-lived and stealable and
 		// proves nothing about who is holding it right now.
-		ctx = context.WithValue(ctx, tokenPurposeKey, claims.Purpose)
-		ctx = context.WithValue(ctx, sessionClaimsKey, claims)
+		ctx = reqctx.WithTokenPurpose(ctx, claims.Purpose)
+		ctx = reqctx.WithSessionClaims(ctx, claims)
 
 		// Resolve userID from DB for invite checks.
 		//
@@ -1316,7 +1302,7 @@ func (h *AuthHandler) SessionToken(w http.ResponseWriter, r *http.Request) {
 	}
 	// A copy of THIS session, not a new one: signing out in the webview then
 	// ends the bearer too, and it cannot be renewed past the 90-day cap.
-	caller, _ := r.Context().Value(sessionClaimsKey).(*Claims)
+	caller, _ := reqctx.SessionClaims(r).(*Claims)
 	token, err := h.copyOfSession(caller, user.Username, user.IsAdmin, sessionKey(user))
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to issue token", http.StatusInternalServerError)

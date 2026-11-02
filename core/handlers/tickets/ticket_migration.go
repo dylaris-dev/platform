@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"database/sql"
+	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -88,7 +89,7 @@ func NewTicketMigrationHandler(state *handlers.AppState) *TicketMigrationHandler
 // Checked in the handler rather than at the route, matching that precedent and
 // so the answer lives next to the code it protects.
 func (h *TicketMigrationHandler) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	if handlers.IsAdmin(r) {
+	if reqctx.IsAdmin(r) {
 		return true
 	}
 	httpx.SendJSONError(w, "Admin only", http.StatusForbidden)

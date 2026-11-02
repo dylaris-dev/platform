@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -44,7 +45,7 @@ import (
 // where the capability depends on the request body, which is what
 // APIKeyPowerGate below is for.
 func (h *APIKeysHandler) keyOwnerContext(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
-	key := APIKeyFromContext(r)
+	key := reqctx.APIKeyFromContext(r)
 	if key == nil {
 		// Only reachable by registering an adapter without the key middleware in
 		// front of it. Same reasoning as the misconfigured server route in
@@ -156,7 +157,7 @@ type powerActionPeek struct {
 // delegating.
 func (h *APIKeysHandler) APIKeyPowerGate(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		key := APIKeyFromContext(r)
+		key := reqctx.APIKeyFromContext(r)
 		if key == nil {
 			httpx.SendJSONError(w, "Route misconfigured: power gate without key auth", http.StatusInternalServerError)
 			return
@@ -179,7 +180,7 @@ func (h *APIKeysHandler) APIKeyPowerGate(next http.HandlerFunc) http.HandlerFunc
 		// The action itself is validated by ServerPowerHandler. An unknown one
 		// resolves to a capability no key can hold, so it is refused here first,
 		// which is the safe order.
-		if !authz.ResolveAPIKey(key.Scope.Permissions, apiKeyServerAllowed(r)).HasCap("power." + peek.Action) {
+		if !authz.ResolveAPIKey(key.Scope.Permissions, reqctx.APIKeyServerAllowed(r)).HasCap("power." + peek.Action) {
 			httpx.SendJSONError(w, "Key lacks required permission", http.StatusForbidden)
 			return
 		}

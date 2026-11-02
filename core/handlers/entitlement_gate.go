@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"log"
 	"net/http"
 	"time"
@@ -71,7 +72,7 @@ func (s *AppState) requireEntitlement(r *http.Request, w http.ResponseWriter, us
 		return true
 	}
 
-	ent, err := services.EffectiveEntitlement(s.Store, userID, time.Now(), s.StoreEnabled, IsAdmin(r))
+	ent, err := services.EffectiveEntitlement(s.Store, userID, time.Now(), s.StoreEnabled, reqctx.IsAdmin(r))
 	if err != nil {
 		httpx.SendJSONError(w, "Could not determine your subscription", http.StatusInternalServerError)
 		return false

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"net/http"
 
 	"dylaris-core/handlers/httpx"
@@ -14,7 +15,7 @@ import (
 // source was about to delete, or left the world on the target with no server
 // row. Operators may still act on a move that is stuck.
 func refuseIfMoving(w http.ResponseWriter, r *http.Request, srv *models.Server) bool {
-	if srv.Status == "migrating" && !operatorOverride(r) {
+	if srv.Status == "migrating" && !reqctx.OperatorOverride(r) {
 		httpx.SendJSONError(w, "Server is being moved to another node. Try again when the move has finished.", http.StatusConflict)
 		return true
 	}

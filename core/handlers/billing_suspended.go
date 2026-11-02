@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"net/http"
 	"time"
 
@@ -46,7 +47,7 @@ func ownerRefusal(state *AppState, r *http.Request, ownerID string) string {
 	if state == nil || state.Store == nil || ownerID == "" {
 		return ""
 	}
-	if r != nil && operatorOverride(r) {
+	if r != nil && reqctx.OperatorOverride(r) {
 		return ""
 	}
 	b, err := state.Store.GetUserBilling(ownerID)
@@ -64,15 +65,6 @@ func ownerRefusal(state *AppState, r *http.Request, ownerID string) string {
 
 // refuseIfSuspended is ownerRefusal plus the 403, so a call site is
 // one if-statement. It reports whether the request was answered.
-// operatorOverride reports whether an operator's bypass of a tenant-facing
-// guard applies to this request: an admin in a panel session, never an API key.
-// The panel asks an operator to confirm these overrides; a key has nobody to
-// ask, so an automation script holding an operator's key started suspended
-// customers' servers and acted inside installs and moves without a word.
-func operatorOverride(r *http.Request) bool {
-	return IsAdmin(r) && APIKeyFromContext(r) == nil
-}
-
 func refuseIfSuspended(w http.ResponseWriter, r *http.Request, state *AppState, srv *models.Server) bool {
 	if srv == nil {
 		return false

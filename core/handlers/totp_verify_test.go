@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -317,7 +318,7 @@ func postJSONAsPurpose(t *testing.T, h http.HandlerFunc, username, purpose strin
 	}
 	req := httptest.NewRequest("POST", "/", bytes.NewReader(raw))
 	ctx := context.WithValue(req.Context(), "username", username) //nolint:staticcheck // matches the middleware's key
-	ctx = context.WithValue(ctx, tokenPurposeKey, purpose)
+	ctx = reqctx.WithTokenPurpose(ctx, purpose)
 	rr := httptest.NewRecorder()
 	h(rr, req.WithContext(ctx))
 	return rr

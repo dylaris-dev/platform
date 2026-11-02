@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,7 +54,7 @@ func NewFileHandler(state *AppState) *FileHandler {
 // being repeated here: the two copies were already free to drift, and the second
 // one is invisible from the settings screen that appears to own them.
 func (h *FileHandler) getTransferLimit(r *http.Request, limitType string) *int64 {
-	isAdmin := IsAdmin(r)
+	isAdmin := reqctx.IsAdmin(r)
 	var key string
 	var def *int64
 	if limitType == "upload" {

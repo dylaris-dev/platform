@@ -1,6 +1,7 @@
 package tabs
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -366,7 +367,7 @@ func (h *ProxyHandler) MintTicket(w http.ResponseWriter, r *http.Request) {
 
 	readOnly := !isAdmin && handlers.IsDemoAccount(h.state, userID)
 	sid := ""
-	if c, _ := r.Context().Value(handlers.SessionClaimsKey).(*handlers.Claims); c != nil {
+	if c, _ := reqctx.SessionClaims(r).(*handlers.Claims); c != nil {
 		sid = c.ID
 	}
 	ticket, terr := h.auth.IssueTabProxyTicket(sid, username, isAdmin, tab.ServerID, tab.ID, readOnly)

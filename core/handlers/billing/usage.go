@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http"
 
@@ -60,7 +61,7 @@ func NewUsageHandler(state *handlers.AppState) *UsageHandler {
 // GetMyUsage GET /api/me/usage — the caller's metered usage for the period.
 // Returns a zero-value row when nothing has been metered yet.
 func (h *UsageHandler) GetMyUsage(w http.ResponseWriter, r *http.Request) {
-	userID := handlers.ByonCallerID(r)
+	userID := reqctx.ByonCallerID(r)
 	if userID == "" {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return

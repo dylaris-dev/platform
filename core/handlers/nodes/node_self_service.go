@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"errors"
 	"log"
@@ -77,7 +78,7 @@ func (h *NodeHandler) myNode(w http.ResponseWriter, r *http.Request) (*models.No
 		httpx.SendJSONError(w, "Node not found", 404)
 		return nil, false
 	}
-	uid := handlers.ByonCallerID(r)
+	uid := reqctx.ByonCallerID(r)
 	if uid == "" || node.OwnerID == nil || *node.OwnerID != uid {
 		// 404 rather than 403: on a /me route, "not yours" and "does not exist"
 		// are the same answer, and the difference would confirm the existence of
@@ -210,7 +211,7 @@ func (h *NodeHandler) ResetMyNodePairing(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if err := resetNodePairing(r.Context(), h.state, node, handlers.ByonCallerID(r)); err != nil {
+	if err := resetNodePairing(r.Context(), h.state, node, reqctx.ByonCallerID(r)); err != nil {
 		log.Printf("reset-my-pairing: %v", err)
 		httpx.SendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
 		return
@@ -297,7 +298,7 @@ func (h *NodeHandler) AdmitMyNode(w http.ResponseWriter, r *http.Request) {
 	if h.state.Redis != nil {
 		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
 	}
-	uid := handlers.ByonCallerID(r)
+	uid := reqctx.ByonCallerID(r)
 	armed, err := h.state.Store.ApproveNodeJoinAttemptForKey(node.Token, fp, uid)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)

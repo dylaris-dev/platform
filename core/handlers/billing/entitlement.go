@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -48,7 +49,7 @@ func (h *EntitlementHandler) GetMine(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, handlers.IsAdmin(r))
+	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, reqctx.IsAdmin(r))
 	if err != nil {
 		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return

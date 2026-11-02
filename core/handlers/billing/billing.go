@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -103,7 +104,7 @@ type trafficPool struct {
 // GetMyBilling GET /api/me/billing - the caller's lifecycle state for the banner.
 // Always succeeds (zero = active).
 func (h *BillingHandler) GetMyBilling(w http.ResponseWriter, r *http.Request) {
-	userID := handlers.ByonCallerID(r)
+	userID := reqctx.ByonCallerID(r)
 	if userID == "" {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return

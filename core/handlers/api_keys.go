@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"context"
 	"crypto/rand"
+	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -363,39 +363,6 @@ const (
 	keyRouteOwner
 )
 
-type apiKeyCtxKey struct{}
-
-// apiKeyCtx is what the middleware injects: the key, plus whether this
-// request's server scope was satisfied.
-//
-// serverAllowed travels with the key because a handler that has to resolve a
-// capability itself - the power route, whose capability is named in the request
-// body - must resolve it exactly as the middleware would have. Hardcoding true
-// there would work today (a server route refuses before reaching the handler
-// when the allowlist misses) and would silently grant every SERVER capability
-// the day such a handler is wired to an owner-shaped route.
-type apiKeyCtx struct {
-	key           *models.APIKey
-	serverAllowed bool
-}
-
-// APIKeyFromContext returns the key that authenticated this request, if any.
-func APIKeyFromContext(r *http.Request) *models.APIKey {
-	c, _ := r.Context().Value(apiKeyCtxKey{}).(*apiKeyCtx)
-	if c == nil {
-		return nil
-	}
-	return c.key
-}
-
-// apiKeyServerAllowed reports whether the key's SERVER capabilities count for
-// this request. False on an owner-shaped route and on any request that did not
-// come through the key middleware.
-func apiKeyServerAllowed(r *http.Request) bool {
-	c, _ := r.Context().Value(apiKeyCtxKey{}).(*apiKeyCtx)
-	return c != nil && c.serverAllowed
-}
-
 // APIKeyCallerID is the realm an owner-scoped key route may act on: the key's
 // creator, and nobody else. Every owner-scoped handler must scope its query
 // with this.
@@ -404,7 +371,7 @@ func apiKeyServerAllowed(r *http.Request) bool {
 // are not tied to a realm by the resolver, so without scoping here, a key
 // carrying one could act on another owner's data.
 func APIKeyCallerID(r *http.Request) string {
-	if k := APIKeyFromContext(r); k != nil {
+	if k := reqctx.APIKeyFromContext(r); k != nil {
 		return k.UserID
 	}
 	return ""
@@ -414,7 +381,7 @@ func APIKeyCallerID(r *http.Request) string {
 // filter with it: owner scoping alone would return every server the owner has,
 // which is wider than the key was minted for.
 func APIKeyAllowedServers(r *http.Request) []string {
-	if k := APIKeyFromContext(r); k != nil {
+	if k := reqctx.APIKeyFromContext(r); k != nil {
 		return k.Scope.Servers
 	}
 	return nil
@@ -573,7 +540,7 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 			// Inject the key so an owner-scoped handler can bind its query to
 			// the key's realm and allowlist. Without this the handler has no way
 			// to tell whose data it may return.
-			r = r.WithContext(context.WithValue(r.Context(), apiKeyCtxKey{}, &apiKeyCtx{key: key, serverAllowed: serverAllowed}))
+			r = r.WithContext(reqctx.WithAPIKey(r.Context(), key, serverAllowed))
 
 			// The demo account is read-only, and AuthMiddleware is where that is
 			// enforced - which a key request never passes through.

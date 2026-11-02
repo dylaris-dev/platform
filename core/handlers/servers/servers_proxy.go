@@ -1,6 +1,7 @@
 package servers
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -98,7 +99,7 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 	// owner never gave. Unlinking only takes rights away and stays with
 	// network.write. Admins as for grants: not on a customer's machine.
 	userID, _ := r.Context().Value("userID").(string)
-	adminHere := handlers.IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, userID)
+	adminHere := reqctx.IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, userID)
 	if !adminHere && (userID == "" || userID != srv.OwnerID) {
 		httpx.SendJSONError(w, "Only the server's owner can link it to a proxy", 403)
 		return

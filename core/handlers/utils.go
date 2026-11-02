@@ -22,11 +22,6 @@ func slugify(name string) string {
 	return s
 }
 
-func IsAdmin(r *http.Request) bool {
-	isAdmin, ok := r.Context().Value("isAdmin").(bool)
-	return ok && isAdmin
-}
-
 // sendConnTestFailure answers a failed "Test connection" with the stage
 // attached.
 //

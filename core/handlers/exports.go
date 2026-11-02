@@ -123,11 +123,6 @@ func PathIsOnContainerRootFS(path string) (onRoot bool, determinable bool) {
 
 func ValidateTabURL(raw string) error { return validateTabURL(raw) }
 
-// SessionClaimsKey is the request-context key the auth middleware stores the
-// session's claims under. The value itself, not a copy: a subpackage reading
-// the context has to ask with the identical key.
-const SessionClaimsKey = sessionClaimsKey
-
 const TabProxyTicketTTL = tabProxyTicketTTL
 
 type SparkDBProvider = sparkDBProvider
@@ -141,8 +136,6 @@ func IsDemoAccount(s *AppState, userID string) bool { return isDemoAccount(s, us
 func GuardAccountTerms(w http.ResponseWriter, r *http.Request, state *AppState, userID string) bool {
 	return guardAccountTerms(w, r, state, userID)
 }
-
-func ByonCallerID(r *http.Request) string { return byonCallerID(r) }
 
 func ValidatePublicBaseURL(subject, raw string) error { return validatePublicBaseURL(subject, raw) }
 
@@ -425,8 +418,6 @@ func MayManageAccount(state *AppState, r *http.Request, target *models.User) boo
 	return mayManageAccount(state, r, target)
 }
 
-func ActingOnSelf(r *http.Request, targetID string) bool { return actingOnSelf(r, targetID) }
-
 // AdminReauthRequest is embedded in the admin account-action bodies; the alias
 // keeps the JSON shape ({"reauth": {...}}) exactly as it was.
 type (
@@ -538,8 +529,6 @@ func NodeReleaseAtLeastKnown(ctx context.Context, st *AppState, nodeToken, since
 
 func NormalizeCaps(caps []string) []string { return normalizeCaps(caps) }
 
-func OperatorOverride(r *http.Request) bool { return operatorOverride(r) }
-
 var PaperMCReleasePattern = paperMCReleasePattern
 
 func ProxyBackendUUIDs(state *AppState, proxyID int) []string {
@@ -622,10 +611,6 @@ func (h *RconHandler) ApplyProps(nodeID int, serverUUID, activeSubServer string,
 	return h.applyProps(nodeID, serverUUID, activeSubServer, enabled, port, password)
 }
 
-type ApiKeyCtx = apiKeyCtx
-
-type ApiKeyCtxKey = apiKeyCtxKey
-
 var DefaultPlacementSettings = defaultPlacementSettings
 
 const ModReportingSince = modReportingSince
@@ -637,9 +622,5 @@ var SubRegexDNS = subRegexDNS
 func (h *PlacementHandler) ScoreNode(ctx context.Context, n *models.Node, req PickNodeRequest, hb *services.NodeHeartbeat) NodeCandidate {
 	return h.scoreNode(ctx, n, req, hb)
 }
-
-// NewAPIKeyCtx is the request context an API key login leaves behind; tests
-// outside this package build it to drive the external endpoints.
-func NewAPIKeyCtx(k *models.APIKey) *ApiKeyCtx { return &apiKeyCtx{key: k} }
 
 const DemoServerUUIDsSetting = demoServerUUIDsSetting

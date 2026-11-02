@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"errors"
 	"log"
@@ -113,7 +114,7 @@ func (h *ServerHandler) GetServerPorts(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Failed to read the server's ports", http.StatusInternalServerError)
 		return
 	}
-	v := portsView{Ports: ports, RoutingMode: h.routingMode(), IsAdmin: handlers.IsAdmin(r)}
+	v := portsView{Ports: ports, RoutingMode: h.routingMode(), IsAdmin: reqctx.IsAdmin(r)}
 	v.CanWrite = v.IsAdmin
 	if h.state.Authz != nil {
 		if res, err := h.state.Authz.Resolve(authz.IdentityFromContext(r.Context()), srv.ID); err == nil {
@@ -155,7 +156,7 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	isAdmin := handlers.IsAdmin(r)
+	isAdmin := reqctx.IsAdmin(r)
 	mode := h.routingMode()
 	if mode == "gateway" {
 		httpx.SendJSONErrorCode(w, "Extra ports need direct routing. Behind the gateway, use the voice chat switch under Routes, and share links or custom tabs for web views.", "ports_gateway_mode", http.StatusConflict)

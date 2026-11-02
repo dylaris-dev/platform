@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"crypto/rand"
+	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -44,7 +45,7 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
-	userID := handlers.ByonCallerID(r)
+	userID := reqctx.ByonCallerID(r)
 	if userID == "" {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -189,7 +190,7 @@ func (h *NodeEnrollHandler) ListTokens(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
-	userID := handlers.ByonCallerID(r)
+	userID := reqctx.ByonCallerID(r)
 	if userID == "" {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -212,7 +213,7 @@ func (h *NodeEnrollHandler) RevokeToken(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
-	userID := handlers.ByonCallerID(r)
+	userID := reqctx.ByonCallerID(r)
 	if userID == "" {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return

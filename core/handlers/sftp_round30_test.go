@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,7 +32,7 @@ func TestAnUploadToASuspendedTenantsServerIsRefused(t *testing.T) {
 	st := suspendedUploadStore{quotaHTTPFakeStore{handlertest.NewSettingsStore()}}
 	h := &FileHandler{state: &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
 	req := newUploadRequest(t, "s1", 10)
-	req = req.WithContext(context.WithValue(req.Context(), apiKeyCtxKey{}, &apiKeyCtx{key: &models.APIKey{ID: 1}}))
+	req = req.WithContext(reqctx.WithAPIKey(req.Context(), &models.APIKey{ID: 1}, false))
 	rw := httptest.NewRecorder()
 	h.UploadFileHandler(rw, req)
 	if rw.Code != http.StatusForbidden || !strings.Contains(rw.Body.String(), "suspended") {

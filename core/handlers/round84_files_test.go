@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"errors"
 	"io"
 	"net/http"
@@ -85,7 +86,7 @@ func TestEveryFileWriteRefusesASuspendedTenant(t *testing.T) {
 			ctx := context.WithValue(req.Context(), "username", "u")
 			ctx = context.WithValue(ctx, "isAdmin", true)
 			// An operator's key carries no override (round 26), unlike a session.
-			ctx = context.WithValue(ctx, apiKeyCtxKey{}, &apiKeyCtx{key: &models.APIKey{ID: 1}})
+			ctx = reqctx.WithAPIKey(ctx, &models.APIKey{ID: 1}, false)
 			rw := httptest.NewRecorder()
 			tc.call(rw, req.WithContext(ctx))
 			if rw.Code != http.StatusForbidden || !strings.Contains(rw.Body.String(), "suspended") {
@@ -139,7 +140,7 @@ func TestFileWritesWaitForAMove(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/files/x?server_uuid=s1", strings.NewReader(`{"path":"a.txt","content":"x"}`))
 	ctx := context.WithValue(req.Context(), "username", "u")
 	ctx = context.WithValue(ctx, "isAdmin", true)
-	ctx = context.WithValue(ctx, apiKeyCtxKey{}, &apiKeyCtx{key: &models.APIKey{ID: 1}})
+	ctx = reqctx.WithAPIKey(ctx, &models.APIKey{ID: 1}, false)
 	rw := httptest.NewRecorder()
 	h.SaveFileHandler(rw, req.WithContext(ctx))
 	if rw.Code != http.StatusConflict || !strings.Contains(rw.Body.String(), "being moved") {

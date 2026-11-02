@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
@@ -136,7 +137,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	// their own nodes. The limit protects the shared control plane (every
 	// container is a DB row + Redis keys + heartbeat/stats work), not the node's
 	// own hardware. Scales with the node's thread count. Admins are exempt.
-	if handlers.ByonActive(h.state, r) && !handlers.IsAdmin(r) {
+	if handlers.ByonActive(h.state, r) && !reqctx.IsAdmin(r) {
 		if reached, capN := h.byonNodeServerCapReached(r.Context(), node); reached {
 			httpx.SendJSONError(w, fmt.Sprintf("This node's server limit (%d) is reached. Stop/delete a server or add another node.", capN), http.StatusForbidden)
 			return
@@ -253,7 +254,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		// The wizard offered the choice and the request carried it, but nothing
 		// passed it on, so every server landed wherever the node picked. Only
 		// for whoever runs the node: an operator, or the owner of their own.
-		if sp := strings.TrimSpace(req.StoragePath); sp != "" && (handlers.IsAdmin(r) || (node.OwnerID != nil && *node.OwnerID == callerID)) {
+		if sp := strings.TrimSpace(req.StoragePath); sp != "" && (reqctx.IsAdmin(r) || (node.OwnerID != nil && *node.OwnerID == callerID)) {
 			configPayload["storagePath"] = sp
 		}
 
@@ -1633,7 +1634,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if srv.Status == "suspended" && !handlers.OperatorOverride(r) {
+	if srv.Status == "suspended" && !reqctx.OperatorOverride(r) {
 		httpx.SendJSONError(w, "Server is suspended. Action blocked.", 403)
 		return
 	}
@@ -1670,7 +1671,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	// economise - but do not read it as evidence that per-server suspension
 	// exists.
 	suspendOverride := ""
-	if handlers.OperatorOverride(r) && (req.Action == "start" || req.Action == "restart") {
+	if reqctx.OperatorOverride(r) && (req.Action == "start" || req.Action == "restart") {
 		if srv.Status == "suspended" {
 			suspendOverride = "server_suspended"
 		} else if b, err := h.state.Store.GetUserBilling(srv.OwnerID); err == nil && b.Status == "suspended" {
@@ -1687,7 +1688,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	// key is checked on setup + reinstall to debounce double-clicks; we
 	// gate power actions on it too. Admins bypass but the frontend prompts
 	// for an explicit confirmation.
-	if !handlers.OperatorOverride(r) {
+	if !reqctx.OperatorOverride(r) {
 		cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
 		if ttl, err := h.state.Redis.TTL(context.Background(), cooldownKey).Result(); err == nil && ttl > 0 {
 			httpx.SendJSONError(w, fmt.Sprintf("Server is finishing install — please wait %d seconds", int(ttl.Seconds())), 429)
@@ -1714,7 +1715,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	if msg := powerTransitionRefusal(req.Action, srv.Status, handlers.OperatorOverride(r)); msg != "" {
+	if msg := powerTransitionRefusal(req.Action, srv.Status, reqctx.OperatorOverride(r)); msg != "" {
 		httpx.SendJSONError(w, msg, http.StatusConflict)
 		return
 	}
@@ -1735,7 +1736,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	}
 	// A move between nodes is driven by Core, not held on the node for its
 	// whole length. Operators may still act on a migration that is stuck.
-	if srv.Status == "migrating" && !handlers.OperatorOverride(r) {
+	if srv.Status == "migrating" && !reqctx.OperatorOverride(r) {
 		httpx.SendJSONError(w, "Server is being moved to another node. Try again when the move has finished.", 409)
 		return
 	}
@@ -2285,7 +2286,7 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 	// Ownership is now enforced by the route's RequireCap("server.settings.write");
 	// BYON availability stays a separate feature-gate, not authz.
 	username, _ := r.Context().Value("username").(string)
-	if !handlers.IsAdmin(r) {
+	if !reqctx.IsAdmin(r) {
 		if !handlers.ByonActive(h.state, r) {
 			httpx.SendJSONError(w, "Server transfer is not enabled", 403)
 			return
@@ -2308,7 +2309,7 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 	// the owner's world onto the invitee's own machine, and an admin invited on a
 	// customer's machine could pull the server onto ours. A transfer is the
 	// owner's decision; oversight moves between platform machines are MoveServer.
-	if handlers.ForeignToCaller(h.state, r, srv.NodeID) || (!handlers.IsAdmin(r) && srv.OwnerID != handlers.ByonCallerID(r)) {
+	if handlers.ForeignToCaller(h.state, r, srv.NodeID) || (!reqctx.IsAdmin(r) && srv.OwnerID != reqctx.ByonCallerID(r)) {
 		httpx.SendJSONError(w, "Only the server's owner can transfer it", 403)
 		return
 	}
@@ -2326,7 +2327,7 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 	// plane, and filling one node by creating and then moving servers onto
 	// another got past it.
 	// ponytail: counted at queue time, so moves queued together can overshoot by the queue depth.
-	if handlers.ByonActive(h.state, r) && !handlers.IsAdmin(r) {
+	if handlers.ByonActive(h.state, r) && !reqctx.IsAdmin(r) {
 		if reached, capN := h.byonNodeServerCapReached(r.Context(), target); reached {
 			httpx.SendJSONError(w, fmt.Sprintf("The target node's server limit (%d) is reached.", capN), http.StatusForbidden)
 			return
@@ -2336,7 +2337,7 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 	// "stopped", which the power gate does not refuse, so a transfer onto the
 	// owner's own machine lifted an operator's suspension. The account-level
 	// cut-off applies here like on every other action the owner takes.
-	if srv.Status == "suspended" && !handlers.OperatorOverride(r) {
+	if srv.Status == "suspended" && !reqctx.OperatorOverride(r) {
 		httpx.SendJSONError(w, "Server is suspended. Action blocked.", http.StatusForbidden)
 		return
 	}

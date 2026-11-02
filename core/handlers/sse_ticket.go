@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"crypto/rand"
+	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -90,7 +91,7 @@ func (h *AuthHandler) MintSSETicket(w http.ResponseWriter, r *http.Request) {
 	ticket := hex.EncodeToString(buf)
 
 	sid := ""
-	if c, _ := r.Context().Value(sessionClaimsKey).(*Claims); c != nil {
+	if c, _ := reqctx.SessionClaims(r).(*Claims); c != nil {
 		sid = c.ID
 	}
 	if err := h.state.Redis.Set(r.Context(), "sse:ticket:"+ticket, username+sseTicketSep+fp+sseTicketSep+sid, sseTicketTTL).Err(); err != nil {

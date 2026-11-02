@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"net/http"
 
 	"dylaris-core/authz"
@@ -29,7 +30,7 @@ import (
 // lookup that fails refuses. The caller's side may stay lenient: reading the
 // caller as weaker than they are only refuses more.
 func mayManageAccount(state *AppState, r *http.Request, target *models.User) bool {
-	if IsAdmin(r) {
+	if reqctx.IsAdmin(r) {
 		return true
 	}
 	if target == nil || target.IsAdmin || target.Role == "admin" || state == nil || state.Authz == nil || state.Store == nil {
@@ -102,7 +103,7 @@ func strictPanelCaps(state *AppState, userID string) (map[string]bool, bool) {
 // themselves BYON, unlimited limits or lifting their own suspension is spending
 // what nobody approved. Writes the refusal and returns false.
 func guardAccountTerms(w http.ResponseWriter, r *http.Request, state *AppState, userID string) bool {
-	if actor, _ := r.Context().Value("userID").(string); !IsAdmin(r) && actor != "" && actor == userID {
+	if actor, _ := r.Context().Value("userID").(string); !reqctx.IsAdmin(r) && actor != "" && actor == userID {
 		httpx.SendJSONError(w, "You cannot change your own account's entitlement, limits or billing", http.StatusForbidden)
 		return false
 	}
@@ -116,10 +117,4 @@ func guardAccountTerms(w http.ResponseWriter, r *http.Request, state *AppState, 
 		return false
 	}
 	return true
-}
-
-// actingOnSelf reports whether the request is aimed at the caller's own account.
-func actingOnSelf(r *http.Request, targetID string) bool {
-	actorID, _ := r.Context().Value("userID").(string)
-	return actorID != "" && actorID == targetID
 }

@@ -2,14 +2,13 @@ package gateway
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
-
-	"dylaris-core/handlers"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -39,7 +38,7 @@ import (
 // It is also a no-op for anything that is not a custom domain: a subdomain of a
 // hoster domain is already ours, so there is nothing to prove.
 func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string, isCustom bool) error {
-	if !isCustom || handlers.IsAdmin(r) {
+	if !isCustom || reqctx.IsAdmin(r) {
 		return nil
 	}
 	domain = strings.ToLower(strings.TrimSpace(domain))
@@ -115,7 +114,7 @@ func customDomainProveFirst(txtName, txtValue string) string {
 // StartCustomDomainClaim refuses to re-arm a permanent block, so a retry
 // cannot launder one.
 func (h *GatewayHandler) armCustomDomainClaim(r *http.Request, userID, domain string, isCustom bool) string {
-	if !isCustom || handlers.IsAdmin(r) {
+	if !isCustom || reqctx.IsAdmin(r) {
 		return ""
 	}
 	domain = strings.ToLower(strings.TrimSpace(domain))

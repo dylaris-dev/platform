@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -104,7 +105,7 @@ func TestSSETicketEndsWithItsSession(t *testing.T) {
 	h, mr := ticketFixture(t, &models.User{ID: "u1", Username: "alice", Password: "hash-1"})
 	req := httptest.NewRequest(http.MethodPost, "/api/sse-ticket", nil)
 	ctx := context.WithValue(req.Context(), "username", "alice")
-	ctx = context.WithValue(ctx, sessionClaimsKey, &Claims{RegisteredClaims: jwt.RegisteredClaims{ID: "s1"}})
+	ctx = reqctx.WithSessionClaims(ctx, &Claims{RegisteredClaims: jwt.RegisteredClaims{ID: "s1"}})
 	rec := httptest.NewRecorder()
 	h.MintSSETicket(rec, req.WithContext(ctx))
 	var out struct{ Ticket string }

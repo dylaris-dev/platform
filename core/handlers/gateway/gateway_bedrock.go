@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -53,7 +54,7 @@ func (h *GatewayHandler) bedrockAllowed(r *http.Request) bool {
 	case "all":
 		return true
 	case "admin":
-		return handlers.IsAdmin(r)
+		return reqctx.IsAdmin(r)
 	}
 	return false
 }

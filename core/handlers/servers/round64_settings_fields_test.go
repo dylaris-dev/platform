@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http/httptest"
 	"regexp"
@@ -78,7 +79,7 @@ func TestExternalServerBlanksSettingsFieldsWithoutTheSettingsCap(t *testing.T) {
 		h := handlers.NewAPIKeysHandler(&handlers.AppState{Store: externalServerStore{}, Authz: resolver})
 		r := httptest.NewRequest("GET", "/api/external/servers/u", nil)
 		r = mux.SetURLVars(r, map[string]string{"uuid": "u"})
-		r = r.WithContext(context.WithValue(r.Context(), handlers.ApiKeyCtxKey{}, handlers.NewAPIKeyCtx(&models.APIKey{ID: 1, UserID: caller})))
+		r = r.WithContext(reqctx.WithAPIKey(r.Context(), &models.APIKey{ID: 1, UserID: caller}, false))
 		rec := httptest.NewRecorder()
 		h.GetExternalServer(rec, r)
 		var out struct{ Server models.Server }
@@ -132,7 +133,7 @@ func TestAdminOnACustomersMachineSeesSettingsFieldsOnlyWhenGranted(t *testing.T)
 	h := handlers.NewAPIKeysHandler(&handlers.AppState{Store: externalServerStore{}, Authz: resolver})
 	r := httptest.NewRequest("GET", "/api/external/servers/u", nil)
 	r = mux.SetURLVars(r, map[string]string{"uuid": "u"})
-	r = r.WithContext(context.WithValue(r.Context(), handlers.ApiKeyCtxKey{}, handlers.NewAPIKeyCtx(&models.APIKey{ID: 1, UserID: "admin-1"})))
+	r = r.WithContext(reqctx.WithAPIKey(r.Context(), &models.APIKey{ID: 1, UserID: "admin-1"}, false))
 	rec := httptest.NewRecorder()
 	h.GetExternalServer(rec, r)
 	var out struct{ Server models.Server }

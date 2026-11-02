@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"database/sql"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -36,7 +37,7 @@ func NewTicketDeletionsHandler(state *handlers.AppState) *TicketDeletionsHandler
 // gate is therefore intentionally KEPT (not RequireCap'd, not removed) - it
 // is the actual boundary for the DELETE method on this shared template.
 func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Request) {
-	if !handlers.IsAdmin(r) {
+	if !reqctx.IsAdmin(r) {
 		httpx.SendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}

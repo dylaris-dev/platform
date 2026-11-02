@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -215,7 +216,7 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal([]byte(raw), &hosters)
 	}
 	enabled, _ := h.state.Store.GetSetting("gateway_custom_domains_enabled")
-	if enabled != "true" && !handlers.IsAdmin(r) {
+	if enabled != "true" && !reqctx.IsAdmin(r) {
 		httpx.SendJSONErrorCode(w, "Your own domains are not enabled on this platform.", "custom_domains_off", http.StatusConflict)
 		return
 	}

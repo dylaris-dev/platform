@@ -1,6 +1,7 @@
 package users
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
@@ -142,7 +143,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// The body decodes into models.User, whose isAdmin is written as sent.
-	if req.User.IsAdmin && !handlers.IsAdmin(r) {
+	if req.User.IsAdmin && !reqctx.IsAdmin(r) {
 		httpx.SendJSONError(w, "Only an admin can create an admin", http.StatusForbidden)
 		return
 	}
@@ -254,7 +255,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "You cannot delete yourself", 403)
 		return
 	}
-	if !handlers.IsAdmin(r) && (err != nil || userToDelete == nil || !handlers.MayManageAccount(h.state, r, userToDelete)) {
+	if !reqctx.IsAdmin(r) && (err != nil || userToDelete == nil || !handlers.MayManageAccount(h.state, r, userToDelete)) {
 		httpx.SendJSONError(w, "You cannot delete an account with more rights than yours", 403)
 		return
 	}
@@ -484,7 +485,7 @@ func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	scope := handlers.AdminRouteScope(id)
 	// A route limit is a quota. Nobody but an admin sets their own, and staff
 	// set it only on accounts they may manage.
-	if !handlers.IsAdmin(r) {
+	if !reqctx.IsAdmin(r) {
 		actorID, _ := r.Context().Value("userID").(string)
 		target, terr := h.state.Store.GetUserByID(id)
 		if actorID == id || terr != nil || target == nil || !handlers.MayManageAccount(h.state, r, target) {

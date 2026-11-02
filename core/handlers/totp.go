@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -282,7 +283,7 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 	// the password, it expires in 15 minutes and it reaches only three paths. The
 	// password is already proven for its bearer, and asking again would block the
 	// forced-enrolment flow behind a prompt the user just answered.
-	if TokenPurpose(r) != "2fa_setup" {
+	if reqctx.TokenPurpose(r) != "2fa_setup" {
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
 			httpx.SendJSONError(w, "Invalid password", http.StatusForbidden)
 			return
@@ -318,7 +319,7 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 	// them all; the caller keeps working on a fresh one. A setup token has no
 	// session to replace - the forced-enrolment page signs in afterwards.
 	endSessionsAfter(h.state, user, "2FA turned on")
-	if TokenPurpose(r) != "2fa_setup" {
+	if reqctx.TokenPurpose(r) != "2fa_setup" {
 		h.reissueOwnSession(w, r, user)
 	}
 

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -103,11 +104,11 @@ func TestADemoAccountKeyCannotWrite(t *testing.T) {
 func TestAnOperatorKeyDoesNotOverrideTenantGuards(t *testing.T) {
 	r := httptest.NewRequest("POST", "/x", nil)
 	r = r.WithContext(context.WithValue(r.Context(), "isAdmin", true))
-	if !operatorOverride(r) {
+	if !reqctx.OperatorOverride(r) {
 		t.Fatal("an operator in a panel session lost the override")
 	}
-	r = r.WithContext(context.WithValue(r.Context(), apiKeyCtxKey{}, &apiKeyCtx{key: &models.APIKey{ID: 1}}))
-	if operatorOverride(r) {
+	r = r.WithContext(reqctx.WithAPIKey(r.Context(), &models.APIKey{ID: 1}, false))
+	if reqctx.OperatorOverride(r) {
 		t.Fatal("an operator's API key carried the override")
 	}
 }

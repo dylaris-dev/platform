@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -343,7 +344,7 @@ const externalNodeTokenDays = 7
 // still join the overlay, and would sit in the list as a machine that never
 // arrives.
 func (h *WarpHandler) MintExternalNodeKey(w http.ResponseWriter, r *http.Request) {
-	if !handlers.IsAdmin(r) {
+	if !reqctx.IsAdmin(r) {
 		httpx.SendJSONError(w, "Only an admin can add an External node", http.StatusForbidden)
 		return
 	}
@@ -351,7 +352,7 @@ func (h *WarpHandler) MintExternalNodeKey(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
 		return
 	}
-	minterID := handlers.ByonCallerID(r)
+	minterID := reqctx.ByonCallerID(r)
 	if minterID == "" {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -546,7 +547,7 @@ func (h *WarpHandler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 // would leave the Link on the old secret, which stops working with the grace,
 // so the roll is refused to it.
 func (h *WarpHandler) RollExternalNodeKey(w http.ResponseWriter, r *http.Request) {
-	if !handlers.IsAdmin(r) {
+	if !reqctx.IsAdmin(r) {
 		httpx.SendJSONError(w, "Only an admin can roll an External node key", http.StatusForbidden)
 		return
 	}
@@ -650,7 +651,7 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
 		return
 	}
-	userID := handlers.ByonCallerID(r)
+	userID := reqctx.ByonCallerID(r)
 	if userID == "" {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -909,7 +910,7 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
 		return
 	}
-	userID := handlers.ByonCallerID(r)
+	userID := reqctx.ByonCallerID(r)
 	if userID == "" {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -1345,7 +1346,7 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
 		return
 	}
-	userID := handlers.ByonCallerID(r)
+	userID := reqctx.ByonCallerID(r)
 	if userID == "" {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -1432,7 +1433,7 @@ func (h *WarpHandler) ListNodeWarpKeys(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
-	userID := handlers.ByonCallerID(r)
+	userID := reqctx.ByonCallerID(r)
 	if userID == "" {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -1487,7 +1488,7 @@ func (h *WarpHandler) BindNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
-	userID := handlers.ByonCallerID(r)
+	userID := reqctx.ByonCallerID(r)
 	if userID == "" {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return

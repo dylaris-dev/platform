@@ -1,6 +1,7 @@
 package users
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -93,7 +94,7 @@ func (h *UsernameHistoryHandler) AdminRename(w http.ResponseWriter, r *http.Requ
 	}
 	// Through the admin route a staff member's own rename skipped the cooldown
 	// the profile applies to everyone else.
-	if !handlers.IsAdmin(r) && handlers.ActingOnSelf(r, targetID) {
+	if !reqctx.IsAdmin(r) && reqctx.ActingOnSelf(r, targetID) {
 		httpx.SendJSONError(w, "Change your own username from your profile", http.StatusForbidden)
 		return
 	}

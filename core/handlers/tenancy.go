@@ -2,16 +2,11 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"net/http"
 
 	"dylaris-core/models"
 )
-
-// byonCallerID returns the authenticated user's id from the request context.
-func byonCallerID(r *http.Request) string {
-	id, _ := r.Context().Value("userID").(string)
-	return id
-}
 
 // byonActive reports whether BYON multi-tenancy node-ownership scoping is on.
 // When off (the default), the platform behaves as today's single-operator panel
@@ -56,11 +51,11 @@ func applyPlacementScope(state *AppState, r *http.Request, req *PickNodeRequest)
 	if !ownershipInForce(state, r) {
 		return // no node has an owner; nothing to scope
 	}
-	if IsAdmin(r) {
+	if reqctx.IsAdmin(r) {
 		req.PlatformOnly = true
 		return
 	}
-	uid := byonCallerID(r)
+	uid := reqctx.ByonCallerID(r)
 	req.OwnerScope = &uid
 }
 
@@ -74,7 +69,7 @@ func ownedByOther(state *AppState, r *http.Request, node *models.Node) bool {
 	if node == nil || node.OwnerID == nil || !ownershipInForce(state, r) {
 		return false
 	}
-	uid := byonCallerID(r)
+	uid := reqctx.ByonCallerID(r)
 	return uid == "" || *node.OwnerID != uid
 }
 
@@ -127,7 +122,7 @@ func (s *AppState) kitOwnedByOther(ownerID string, userID string) bool {
 // and so fleet-wide by construction. Callers answer with "not found", like
 // diskToolNode, so the refusal does not confirm what exists.
 func foreignToCaller(state *AppState, r *http.Request, nodeID int) bool {
-	return state.NodeOwnedByOther(nodeID, byonCallerID(r))
+	return state.NodeOwnedByOther(nodeID, reqctx.ByonCallerID(r))
 }
 
 // canManageNode reports whether the caller may read or configure what is ON a
@@ -150,7 +145,7 @@ func canManageNode(state *AppState, r *http.Request, node *models.Node) bool {
 	if node != nil && node.OwnerID != nil && ownershipInForce(state, r) {
 		return !ownedByOther(state, r, node)
 	}
-	return IsAdmin(r)
+	return reqctx.IsAdmin(r)
 }
 
 // canPlaceOnNode reports whether the caller may place a server on a node.
@@ -174,11 +169,11 @@ func canPlaceOnNode(state *AppState, r *http.Request, node *models.Node) bool {
 	}
 	if node.OwnerID != nil && ownershipInForce(state, r) {
 		// Somebody's own hardware. Only that somebody, admin or not.
-		uid := byonCallerID(r)
+		uid := reqctx.ByonCallerID(r)
 		return uid != "" && *node.OwnerID == uid
 	}
 	// Unowned, or BYON switched off so an owner_id carries no tenancy meaning
 	// any more. Operator territory - and it must stay reachable by SOMEONE, or
 	// turning the feature off would strand every node that still has an owner.
-	return IsAdmin(r)
+	return reqctx.IsAdmin(r)
 }

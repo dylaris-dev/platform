@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -72,8 +73,8 @@ func TestByonCallerID(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := tenancyRequest(c.userID, false)
-			if got := byonCallerID(r); got != c.want {
-				t.Errorf("byonCallerID() = %q, want %q", got, c.want)
+			if got := reqctx.ByonCallerID(r); got != c.want {
+				t.Errorf("reqctx.ByonCallerID() = %q, want %q", got, c.want)
 			}
 		})
 	}

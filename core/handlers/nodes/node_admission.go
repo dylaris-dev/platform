@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -84,7 +85,7 @@ func (h *NodeAdmissionHandler) SetAdmission(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if uid := handlers.ByonCallerID(r); uid != "" {
+	if uid := reqctx.ByonCallerID(r); uid != "" {
 		_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
 			EventType:   "node.admission_changed",
 			ActorUserID: &uid,
@@ -202,7 +203,7 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
-	if err := resetNodePairing(r.Context(), h.state, node, handlers.ByonCallerID(r)); err != nil {
+	if err := resetNodePairing(r.Context(), h.state, node, reqctx.ByonCallerID(r)); err != nil {
 		log.Printf("reset-pairing: %v", err)
 		httpx.SendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
 		return
@@ -276,7 +277,7 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Core has not recorded an address this node authenticated from, so there is nothing to bind its re-admission to. Nothing was changed. Use Reset pairing instead, then admit the node under Connection attempts.", http.StatusConflict)
 		return
 	}
-	uid := handlers.ByonCallerID(r)
+	uid := reqctx.ByonCallerID(r)
 
 	// Same order as ApproveJoinAttempt: the login goes first, because a node
 	// whose key or secret Core still accepts is answered with a challenge and
@@ -381,7 +382,7 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 	if h.state.Redis != nil {
 		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
 	}
-	uid := handlers.ByonCallerID(r)
+	uid := reqctx.ByonCallerID(r)
 	armed, err := h.state.Store.ApproveNodeJoinAttempt(token, seen.PeerIP, seen.PresentedKey, uid)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)

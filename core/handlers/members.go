@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -443,7 +444,7 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	caller, _ := r.Context().Value("userID").(string)
-	adminHere := IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, caller)
+	adminHere := reqctx.IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, caller)
 	if !adminHere && caller != srv.OwnerID && revokeUncoversInheritance(h.state, srv, targetUserID) {
 		httpx.SendJSONError(w, "Removing this member would give them the wider access they inherit from the proxy; only the owner can do that", http.StatusForbidden)
 		return

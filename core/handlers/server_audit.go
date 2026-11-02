@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -58,7 +59,7 @@ const (
 func LogServerAudit(state *AppState, r *http.Request, serverID int, eventType string, actorID, targetID string, metadata map[string]interface{}) {
 	var key *models.APIKey
 	if r != nil {
-		key = APIKeyFromContext(r)
+		key = reqctx.APIKeyFromContext(r)
 	}
 	logServerAuditAs(state, r, key, serverID, eventType, actorID, targetID, metadata)
 }

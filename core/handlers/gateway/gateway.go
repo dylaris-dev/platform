@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -286,7 +287,7 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 		HosterDomain: q.Get("hosterDomain"),
 		CustomDomain: q.Get("customDomain"),
 	}
-	finalDomain, _, err := h.resolveRouteDomain(&req, handlers.IsAdmin(r))
+	finalDomain, _, err := h.resolveRouteDomain(&req, reqctx.IsAdmin(r))
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"available": false,
@@ -361,7 +362,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// isCustomDomain comes from the resolver, not from which FIELD the request
 	// used: a tenant's raw FQDN is normalised into a brought domain, and reading
 	// the field here would have left that one unproven.
-	finalDomain, isCustomDomain, err := h.resolveRouteDomain(&req, handlers.IsAdmin(r))
+	finalDomain, isCustomDomain, err := h.resolveRouteDomain(&req, reqctx.IsAdmin(r))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -386,7 +387,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// A cut-off owner kept claiming addresses on our domains and custom-domain
 	// proofs, which nobody else could then take. An admin may still act for one.
 	refusalFor := account
-	if handlers.IsAdmin(r) {
+	if reqctx.IsAdmin(r) {
 		refusalFor = userID
 	}
 	if msg := handlers.OwnerRefusal(h.state, r, refusalFor); msg != "" {
@@ -434,7 +435,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// The cap counts only addresses on OUR domains, matching CreateLinkRoute and
 	// the over-limit sweep. Routes on the tenant's own domains have their own,
 	// separate cap.
-	if !handlers.IsAdmin(r) {
+	if !reqctx.IsAdmin(r) {
 		limit := h.effectiveRouteLimit(account)
 		if limit != nil && *limit == 0 {
 			http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
