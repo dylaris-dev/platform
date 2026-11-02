@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
@@ -25,11 +24,11 @@ import (
 // status (for the panel banner); an admin sets status + per-user retention
 // overrides. Stripe/other webhooks will later call the same service methods.
 type BillingHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewBillingHandler(state *handlers.AppState) *BillingHandler {
-	return &BillingHandler{state: state}
+func NewBillingHandler(d Deps) *BillingHandler {
+	return &BillingHandler{d: d}
 }
 
 // trafficGB is the divisor for the traffic ceiling: DECIMAL gigabytes, 10^9.
@@ -112,14 +111,14 @@ func (h *BillingHandler) GetMyBilling(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	b, err := h.state.Store.GetUserBilling(userID)
+	b, err := h.d.Store.GetUserBilling(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	payment := ""
-	if h.state.Billing != nil {
-		payment = h.state.Billing.PaymentURL()
+	if h.d.Billing != nil {
+		payment = h.d.Billing.PaymentURL()
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":    true,
@@ -170,7 +169,7 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 	}
 	now := time.Now().UTC()
 	period := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	cells, err := h.state.Store.GetTrafficUsageRegions(userID, period)
+	cells, err := h.d.Store.GetTrafficUsageRegions(userID, period)
 	if err != nil {
 		return nil
 	}
@@ -179,7 +178,7 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 	out := &myTrafficStatus{BillingEnabled: b.TrafficBillingEnabled}
 	limited := false
 	for _, c := range withIdleAllowances(foldTrafficCells(cells)) {
-		lim, err := services.ResolveTrafficLimit(h.state.Store, userID, c.region, c.kind)
+		lim, err := services.ResolveTrafficLimit(h.d.Store, userID, c.region, c.kind)
 		if err != nil {
 			return nil
 		}
@@ -215,11 +214,11 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 	if !limited {
 		return nil
 	}
-	out.DataBillingEnabled, _ = h.state.Store.GetUserDataBillingEnabled(userID)
+	out.DataBillingEnabled, _ = h.d.Store.GetUserDataBillingEnabled(userID)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	out.DataThrottled = services.IsDataThrottled(ctx, h.state.Redis, userID)
-	out.DataThrottleMbit = services.DataThrottleMbit(h.state.Store)
+	out.DataThrottled = services.IsDataThrottled(ctx, h.d.Redis, userID)
+	out.DataThrottleMbit = services.DataThrottleMbit(h.d.Store)
 	out.ResetAt = period.AddDate(0, 1, 0)
 	return out
 }
@@ -234,7 +233,7 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 // automatic non-payment lifecycle and the store webhook (handlers/store.go)
 // keep the graced Suspend (deferred cutoff) - this admin path does not.
 func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request) {
-	if h.state.Billing == nil {
+	if h.d.Billing == nil {
 		httpx.SendJSONError(w, "Billing unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -250,7 +249,7 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 	// admin capability, and a suspension stops every server the account owns
 	// and revokes its link kits for good - it was the one action a holder could
 	// aim at an admin or at staff with more rights than their own.
-	if h.state.Store != nil && !access.GuardAccountTerms(w, r, h.state.Store, h.state.Authz, userID) {
+	if h.d.Store != nil && !access.GuardAccountTerms(w, r, h.d.Store, h.d.Authz, userID) {
 		return
 	}
 	status := req.Status
@@ -266,9 +265,9 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 	// here used to mean active, so a tenant who had stopped paying while held,
 	// or had been held for not paying, came back with everything and stayed.
 	prior := ""
-	if h.state.Store != nil && status != "suspended" {
+	if h.d.Store != nil && status != "suspended" {
 		var err error
-		if prior, err = h.state.Store.LiftAdminHold(userID); err != nil {
+		if prior, err = h.d.Store.LiftAdminHold(userID); err != nil {
 			httpx.SendJSONError(w, "Update failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -277,20 +276,20 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 	switch {
 	case prior != "":
 		status = prior
-		err = h.state.Billing.HoldLifted(userID, prior)
+		err = h.d.Billing.HoldLifted(userID, prior)
 	case status == "past_due":
-		err = h.state.Billing.EnterPastDue(userID)
+		err = h.d.Billing.EnterPastDue(userID)
 	case status == "active":
-		err = h.state.Billing.Reactivate(userID)
+		err = h.d.Billing.Reactivate(userID)
 	case status == "suspended":
-		err = h.state.Billing.SuspendNow(r.Context(), userID)
+		err = h.d.Billing.SuspendNow(r.Context(), userID)
 	}
 	if err != nil {
 		httpx.SendJSONError(w, "Update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventBillingStatusChanged, actorID, userID, map[string]interface{}{"status": status, "requested": req.Status})
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventBillingStatusChanged, actorID, userID, map[string]interface{}{"status": status, "requested": req.Status})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": status})
 }
 
@@ -299,7 +298,7 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 // payment URL the banner links to.
 func (h *BillingHandler) GetBillingSettings(w http.ResponseWriter, r *http.Request) {
 	get := func(key, def string) string {
-		if v, _ := h.state.Store.GetSetting(key); v != "" {
+		if v, _ := h.d.Store.GetSetting(key); v != "" {
 			return v
 		}
 		return def
@@ -397,7 +396,7 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 	// Read BEFORE the write: the tenants who agreed to be charged were shown the
 	// old ceiling, and they are told when it moves. Captured here rather than
 	// compared afterwards, when the old value is gone.
-	bookableBefore := services.R2BookablePerUnit(h.state.Store)
+	bookableBefore := services.R2BookablePerUnit(h.d.Store)
 
 	writes := map[string]string{
 		services.BillingGracePeriodKey:   req.GracePeriod,
@@ -410,13 +409,13 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 		services.BillingPaymentURLKey:    req.PaymentUrl,
 	}
 	for k, v := range writes {
-		if err := h.state.Store.SetSetting(k, v); err != nil {
+		if err := h.d.Store.SetSetting(k, v); err != nil {
 			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
-	if n := services.NotifyBackupBookableChanged(h.state.Store, bookableBefore,
-		services.R2BookablePerUnit(h.state.Store)); n > 0 {
+	if n := services.NotifyBackupBookableChanged(h.d.Store, bookableBefore,
+		services.R2BookablePerUnit(h.d.Store)); n > 0 {
 		log.Printf("billing: bookable backup storage changed, notified %d tenant(s) with metered storage on", n)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
@@ -427,7 +426,7 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 // empty spec clears the override (falls back to the platform default).
 func (h *BillingHandler) SetBillingOverrides(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	if !access.GuardAccountTerms(w, r, h.state.Store, h.state.Authz, userID) {
+	if !access.GuardAccountTerms(w, r, h.d.Store, h.d.Authz, userID) {
 		return
 	}
 	var req struct {
@@ -452,7 +451,7 @@ func (h *BillingHandler) SetBillingOverrides(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "R2 quota must be a non-negative number of GB (0 means none; leave it empty for no limit)", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetUserBillingOverrides(userID, req.GracePeriod, req.R2Retention, req.NodeRetention, req.R2QuotaGb); err != nil {
+	if err := h.d.Store.SetUserBillingOverrides(userID, req.GracePeriod, req.R2Retention, req.NodeRetention, req.R2QuotaGb); err != nil {
 		httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -466,13 +465,13 @@ func (h *BillingHandler) SetBillingOverrides(w http.ResponseWriter, r *http.Requ
 // no row reads back as active with empty overrides.
 func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	b, err := h.state.Store.GetUserBilling(userID)
+	b, err := h.d.Store.GetUserBilling(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	get := func(key, def string) string {
-		if v, _ := h.state.Store.GetSetting(key); v != "" {
+		if v, _ := h.d.Store.GetSetting(key); v != "" {
 			return v
 		}
 		return def

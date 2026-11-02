@@ -10,7 +10,6 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -53,9 +52,9 @@ func TestLiftingAHoldReturnsToWhatThePaymentsSay(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &liftHoldStore{billingGuardStore: billingGuardStore{target: &models.User{ID: "u1", Username: "tenant"}}, prior: tc.prior}
 			rdb := handlertest.RedisClient(t)
-			state := &handlers.AppState{Store: fs, Redis: rdb}
+			state := Deps{Store: fs, Redis: rdb}
 			state.Billing = services.NewBillingLifecycleService(fs, services.NewQueueService(rdb), nil, "https://panel.example.com", 48*time.Hour, true)
-			h := &BillingHandler{state: state}
+			h := &BillingHandler{d: state}
 
 			req := httptest.NewRequest("PATCH", "/api/admin/users/u1/billing", strings.NewReader(`{"status":"`+tc.requested+`"}`))
 			req = mux.SetURLVars(req, map[string]string{"id": "u1"})

@@ -629,6 +629,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		CoreStorage:         appState.CoreStorage,
 		ExternalTicketDBURL: appState.ExternalTicketDBURL,
 	}
+	billingDeps := billing.Deps{
+		Store:          appState.Store,
+		Redis:          appState.Redis,
+		Authz:          appState.Authz,
+		Billing:        appState.Billing,
+		FrontendURL:    appState.FrontendURL,
+		StoreEnabled:   appState.StoreEnabled,
+		StoreURL:       appState.StoreURL,
+		StoreSharedKey: appState.StoreSharedKey,
+	}
 	templatesDeps := templates.Deps{
 		Store:        appState.Store,
 		Authz:        appState.Authz,
@@ -728,9 +738,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
 	tabProxySettingsHandler := tabs.NewTabProxySettingsHandler(tabsDeps)
-	usageHandler := billing.NewUsageHandler(appState)
-	billingHandler := billing.NewBillingHandler(appState)
-	entitlementHandler := billing.NewEntitlementHandler(appState)
+	usageHandler := billing.NewUsageHandler(billingDeps)
+	billingHandler := billing.NewBillingHandler(billingDeps)
+	entitlementHandler := billing.NewEntitlementHandler(billingDeps)
 	plansHandler := handlers.NewPlansHandler(appState)
 	healthHandler := handlers.NewHealthHandler(appState)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
@@ -1624,7 +1634,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- Gateway Endpoints ---
 	gatewayHandler := gateway.NewGatewayHandler(appState)
 	dnsHandler := handlers.NewDNSHandler(appState)
-	trafficLimitHandler := billing.NewTrafficLimitHandler(appState)
+	trafficLimitHandler := billing.NewTrafficLimitHandler(billingDeps)
 	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
 	metricsHandler := stats.NewMetricsHandler(statsDeps)
 	metricsDBHandler := stats.NewMetricsDBHandler(statsDeps)
@@ -1820,7 +1830,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Store-linking (dylaris.com). Gated by StoreEnabled inside each handler.
 	// link/start + status are panel-user authed; link/verify + verify-user are
 	// service-to-service (shared key in X-Store-Key, no panel session).
-	storeHandler := billing.NewStoreHandler(appState)
+	storeHandler := billing.NewStoreHandler(billingDeps)
 	api.HandleFunc("/store/link/start", authHandler.AuthMiddleware(storeHandler.LinkStart)).Methods("POST")
 	api.HandleFunc("/store/status", authHandler.AuthMiddleware(storeHandler.Status)).Methods("GET")
 	// The tenant's own subscription and the two billing switches. Session-authed

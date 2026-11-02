@@ -43,7 +43,7 @@ import (
 // tenant is told which of the two systems is quiet rather than being shown an
 // account that appears to have nothing in it.
 func (h *StoreHandler) AccountSummary(w http.ResponseWriter, r *http.Request) {
-	if !h.state.StoreEnabled {
+	if !h.d.StoreEnabled {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "enabled": false})
 		return
@@ -54,7 +54,7 @@ func (h *StoreHandler) AccountSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	summary, err := storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}.AccountSummary(r.Context(), userID)
+	summary, err := storeclient.Client{URL: h.d.StoreURL, SharedKey: h.d.StoreSharedKey}.AccountSummary(r.Context(), userID)
 	if err != nil {
 		log.Printf("store: account summary for %s: %v", userID, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -69,7 +69,7 @@ func (h *StoreHandler) AccountSummary(w http.ResponseWriter, r *http.Request) {
 	summary["success"] = true
 	summary["enabled"] = true
 	summary["reachable"] = true
-	summary["storeUrl"] = h.state.StoreURL
+	summary["storeUrl"] = h.d.StoreURL
 	// Whether an ADMIN GRANT is what entitles them, which the storefront cannot
 	// know: a grant made in the panel writes Core's billing row and creates no
 	// store subscription at all.
@@ -78,7 +78,7 @@ func (h *StoreHandler) AccountSummary(w http.ResponseWriter, r *http.Request) {
 	// subscription to bill traffic against" - true of the store's database and
 	// unreadable to somebody whose grant is working, because it describes their
 	// entitlement as missing when it is simply not a purchase.
-	if ent, eerr := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, reqctx.IsAdmin(r)); eerr == nil {
+	if ent, eerr := services.EffectiveEntitlement(h.d.Store, userID, time.Now(), h.d.StoreEnabled, reqctx.IsAdmin(r)); eerr == nil {
 		summary["granted"] = ent.Source == services.EntitlementSourceGrant || ent.Source == services.EntitlementSourceBoth
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -93,7 +93,7 @@ func (h *StoreHandler) AccountSummary(w http.ResponseWriter, r *http.Request) {
 // in front of a shared-key channel that would otherwise let any caller name any
 // account.
 func (h *StoreHandler) SetBillingConsent(w http.ResponseWriter, r *http.Request) {
-	if !h.state.StoreEnabled {
+	if !h.d.StoreEnabled {
 		httpx.SendJSONError(w, "The store integration is not configured", http.StatusNotFound)
 		return
 	}
@@ -115,7 +115,7 @@ func (h *StoreHandler) SetBillingConsent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	status, message, err := storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}.SetBillingConsent(r.Context(), userID, req.Traffic, req.Backup)
+	status, message, err := storeclient.Client{URL: h.d.StoreURL, SharedKey: h.d.StoreSharedKey}.SetBillingConsent(r.Context(), userID, req.Traffic, req.Backup)
 	if err != nil {
 		log.Printf("store: billing consent for %s: %v", userID, err)
 		httpx.SendJSONError(w, "The store could not be reached, so nothing was changed.", http.StatusBadGateway)

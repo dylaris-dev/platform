@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
@@ -32,9 +31,9 @@ func (f *billingGuardStore) GetUserByID(string) (*models.User, error) { return f
 func TestBillingStatusCannotBeAimedAtAStrongerAccount(t *testing.T) {
 	fs := &billingGuardStore{target: &models.User{ID: "admin-1", Username: "boss", IsAdmin: true, Role: "admin"}}
 	rdb := handlertest.RedisClient(t)
-	state := &handlers.AppState{Store: fs, Redis: rdb}
+	state := Deps{Store: fs, Redis: rdb}
 	state.Billing = services.NewBillingLifecycleService(fs, services.NewQueueService(rdb), nil, "https://panel.example.com", 48*time.Hour, true)
-	h := &BillingHandler{state: state}
+	h := &BillingHandler{d: state}
 
 	req := httptest.NewRequest("PATCH", "/api/admin/users/admin-1/billing", strings.NewReader(`{"status":"suspended"}`))
 	req = mux.SetURLVars(req, map[string]string{"id": "admin-1"})
@@ -67,9 +66,9 @@ func (f *billingHoldStore) SetUserBillingStatus(string, string, *time.Time, *tim
 func TestAnOperatorReactivationLiftsTheHold(t *testing.T) {
 	fs := &billingHoldStore{billingGuardStore: billingGuardStore{target: &models.User{ID: "u1", Username: "tenant"}}}
 	rdb := handlertest.RedisClient(t)
-	state := &handlers.AppState{Store: fs, Redis: rdb}
+	state := Deps{Store: fs, Redis: rdb}
 	state.Billing = services.NewBillingLifecycleService(fs, services.NewQueueService(rdb), nil, "https://panel.example.com", 48*time.Hour, true)
-	h := &BillingHandler{state: state}
+	h := &BillingHandler{d: state}
 
 	req := httptest.NewRequest("PATCH", "/api/admin/users/u1/billing", strings.NewReader(`{"status":"active"}`))
 	req = mux.SetURLVars(req, map[string]string{"id": "u1"})

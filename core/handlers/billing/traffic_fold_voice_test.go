@@ -3,7 +3,6 @@ package billing
 import (
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/store"
 )
 
@@ -15,7 +14,7 @@ func TestFoldTrafficCellsCarriesVoice(t *testing.T) {
 		{Region: "eu", Kind: store.TrafficKindEdge, Product: store.TrafficProductBYON, Bytes: 1000 * trafficGB, VoiceBytes: 300 * trafficGB},
 		{Region: "eu", Kind: store.TrafficKindEdge, Product: store.TrafficProductRoute, Bytes: 500 * trafficGB, VoiceBytes: 0},
 	}}
-	h := &BillingHandler{state: &handlers.AppState{Store: fs}}
+	h := &BillingHandler{d: Deps{Store: fs}}
 	one := int64(1)
 	st := h.trafficStatusFor("u1", &store.UserBilling{MaxNodes: &one})
 	if st == nil {
@@ -44,7 +43,7 @@ func TestFoldTrafficCellsCarriesBedrock(t *testing.T) {
 		{Region: "eu", Kind: store.TrafficKindEdge, Product: store.TrafficProductBYON, Bytes: 1000 * trafficGB, VoiceBytes: 300 * trafficGB, BedrockBytes: 100 * trafficGB},
 		{Region: "eu", Kind: store.TrafficKindEdge, Product: store.TrafficProductRoute, Bytes: 500 * trafficGB, BedrockBytes: 50 * trafficGB},
 	}}
-	h := &BillingHandler{state: &handlers.AppState{Store: fs}}
+	h := &BillingHandler{d: Deps{Store: fs}}
 	one := int64(1)
 	st := h.trafficStatusFor("u1", &store.UserBilling{MaxNodes: &one})
 	if st == nil || len(st.Pools) == 0 {

@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 )
 
@@ -30,7 +29,7 @@ func TestSetBillingSettings_ValidatesThePaymentURL(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fs := handlertest.NewSettingsStore()
-			h := NewBillingHandler(&handlers.AppState{Store: fs})
+			h := NewBillingHandler(Deps{Store: fs})
 
 			payload := map[string]string{}
 			for k, v := range valid {

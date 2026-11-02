@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
@@ -24,14 +22,14 @@ type usageView struct {
 }
 
 func (h *UsageHandler) viewFor(u *store.TrafficUsage) usageView {
-	lim, _ := services.EffectiveLimits(h.state.Store, u.UserID)
+	lim, _ := services.EffectiveLimits(h.d.Store, u.UserID)
 	// EffectiveLimits answers from the per-user overrides alone, which for
 	// backup storage is one step of a four-step chain. The card drew that
 	// number and the gate refused against the resolved one, so a tenant on an
 	// entitlement or on the operator's allowance was never shown as over while
 	// their backups were being refused - and an administrator, who has no
 	// ceiling at all, was shown one. Both readers now resolve the same way.
-	lim.R2QuotaGB = services.BackupAllowanceGB(h.state.Store, u.UserID, h.state.StoreEnabled)
+	lim.R2QuotaGB = services.BackupAllowanceGB(h.d.Store, u.UserID, h.d.StoreEnabled)
 	// nil is no cap; a 0 cap is a real one and is exceeded by the first byte.
 	over := func(limGB *int64, bytes int64) bool {
 		return limGB != nil && bytes > *limGB*usageGiB
@@ -51,11 +49,11 @@ func (h *UsageHandler) viewFor(u *store.TrafficUsage) usageView {
 // UsageHandler serves per-tenant traffic + storage usage for the BYON billing UI.
 // In solo/hoster mode nothing is metered, so reads return zero rows.
 type UsageHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewUsageHandler(state *handlers.AppState) *UsageHandler {
-	return &UsageHandler{state: state}
+func NewUsageHandler(d Deps) *UsageHandler {
+	return &UsageHandler{d: d}
 }
 
 // GetMyUsage GET /api/me/usage — the caller's metered usage for the period.
@@ -66,7 +64,7 @@ func (h *UsageHandler) GetMyUsage(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	u, err := h.state.Store.GetTrafficUsage(userID, httpx.UsagePeriod(r))
+	u, err := h.d.Store.GetTrafficUsage(userID, httpx.UsagePeriod(r))
 	if err != nil {
 		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
@@ -89,7 +87,7 @@ func (h *UsageHandler) GetMyUsage(w http.ResponseWriter, r *http.Request) {
 // Returns nil for the normal case so the panel has nothing to render and no
 // shape to special-case.
 func (h *UsageHandler) entitlementStateFor(userID string) map[string]interface{} {
-	b, err := h.state.Store.GetUserBilling(userID)
+	b, err := h.d.Store.GetUserBilling(userID)
 	if err != nil || b == nil || b.OverLimitSince == nil {
 		return nil
 	}
@@ -104,7 +102,7 @@ func (h *UsageHandler) entitlementStateFor(userID string) map[string]interface{}
 // Every tenant's usage for the period, busiest first.
 func (h *UsageHandler) GetAllUsage(w http.ResponseWriter, r *http.Request) {
 	period := httpx.UsagePeriod(r)
-	list, err := h.state.Store.ListTrafficUsage(period)
+	list, err := h.d.Store.ListTrafficUsage(period)
 	if err != nil {
 		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return

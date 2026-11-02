@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -24,11 +22,11 @@ import (
 // may use how much, and Core is the ONLY place that number exists - the store
 // used to hold a second copy for the pricing page and the two drifted apart.
 type TrafficLimitHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewTrafficLimitHandler(state *handlers.AppState) *TrafficLimitHandler {
-	return &TrafficLimitHandler{state: state}
+func NewTrafficLimitHandler(d Deps) *TrafficLimitHandler {
+	return &TrafficLimitHandler{d: d}
 }
 
 // trafficLimitBody is the wire shape for a write.
@@ -59,7 +57,7 @@ type trafficLimitBody struct {
 // "no row" and "no limit" look identical from here and only one of them is
 // something an operator meant.
 func (h *TrafficLimitHandler) ListTrafficLimits(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.state.Store.ListTrafficLimits()
+	rows, err := h.d.Store.ListTrafficLimits()
 	if err != nil {
 		http.Error(w, "Failed to read traffic limits", http.StatusInternalServerError)
 		return
@@ -96,7 +94,7 @@ func (h *TrafficLimitHandler) ResolveTrafficLimit(w http.ResponseWriter, r *http
 		http.Error(w, "region and kind are required", http.StatusBadRequest)
 		return
 	}
-	res, err := services.ResolveTrafficLimit(h.state.Store, strings.TrimSpace(q.Get("user")), region, kind)
+	res, err := services.ResolveTrafficLimit(h.d.Store, strings.TrimSpace(q.Get("user")), region, kind)
 	if err != nil {
 		http.Error(w, "Failed to resolve traffic limit", http.StatusInternalServerError)
 		return
@@ -187,12 +185,12 @@ func (h *TrafficLimitHandler) SetTrafficLimit(w http.ResponseWriter, r *http.Req
 	// A missing row deliberately reads as nil, "no purchase cap", which is what
 	// the resolver would have answered.
 	var before *int64
-	if row, err := h.state.Store.GetTrafficLimit(req.Scope, req.Region, req.Kind); err == nil && row != nil {
+	if row, err := h.d.Store.GetTrafficLimit(req.Scope, req.Region, req.Kind); err == nil && row != nil {
 		before = row.MaxPurchaseGB
 	}
 
 	if req.IncludedMode == "default" && req.PurchaseMode == "default" {
-		if err := h.state.Store.DeleteTrafficLimit(req.Scope, req.Region, req.Kind); err != nil {
+		if err := h.d.Store.DeleteTrafficLimit(req.Scope, req.Region, req.Kind); err != nil {
 			http.Error(w, "Failed to clear traffic limit", http.StatusInternalServerError)
 			return
 		}
@@ -204,7 +202,7 @@ func (h *TrafficLimitHandler) SetTrafficLimit(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := h.state.Store.SetTrafficLimit(req.Scope, req.Region, req.Kind, included, purchase); err != nil {
+	if err := h.d.Store.SetTrafficLimit(req.Scope, req.Region, req.Kind, included, purchase); err != nil {
 		http.Error(w, "Failed to save traffic limit", http.StatusInternalServerError)
 		return
 	}
@@ -222,10 +220,10 @@ func (h *TrafficLimitHandler) SetTrafficLimit(w http.ResponseWriter, r *http.Req
 // change that did not happen.
 func (h *TrafficLimitHandler) notifyPurchaseChange(scope, region, kind string, before *int64) {
 	var after *int64
-	if row, err := h.state.Store.GetTrafficLimit(scope, region, kind); err == nil && row != nil {
+	if row, err := h.d.Store.GetTrafficLimit(scope, region, kind); err == nil && row != nil {
 		after = row.MaxPurchaseGB
 	}
-	if n := services.NotifyTrafficPurchaseChanged(h.state.Store, scope, region, kind, before, after); n > 0 {
+	if n := services.NotifyTrafficPurchaseChanged(h.d.Store, scope, region, kind, before, after); n > 0 {
 		log.Printf("traffic-limits: %s/%s/%s purchase cap changed, notified %d tenant(s) with metered traffic on",
 			scope, region, kind, n)
 	}
@@ -303,7 +301,7 @@ func (e *limitError) Error() string { return e.msg }
 // allowance.
 func (h *TrafficLimitHandler) GetDataThrottle(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true, "mbit": services.DataThrottleMbit(h.state.Store),
+		"success": true, "mbit": services.DataThrottleMbit(h.d.Store),
 		"minMbit": services.DataThrottleMinMbit, "defaultMbit": services.DataThrottleDefaultMbit,
 	})
 }
@@ -323,7 +321,7 @@ func (h *TrafficLimitHandler) SetDataThrottle(w http.ResponseWriter, r *http.Req
 		httpx.SendJSONError(w, fmt.Sprintf("The throttle must be between %d and 100000 Mbit/s", services.DataThrottleMinMbit), http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetSetting(services.DataThrottleSettingKey, strconv.Itoa(req.Mbit)); err != nil {
+	if err := h.d.Store.SetSetting(services.DataThrottleSettingKey, strconv.Itoa(req.Mbit)); err != nil {
 		httpx.SendJSONError(w, "Failed to save", http.StatusInternalServerError)
 		return
 	}

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 )
@@ -15,21 +14,21 @@ import (
 // and unlimited limits, or lifted their own suspension, on four routes where
 // only the billing status asked whose account it was.
 func TestPlansWriteCannotBeSpentOnTheCallersOwnAccountBilling(t *testing.T) {
-	calls := map[string]func(s *handlers.AppState, w http.ResponseWriter, r *http.Request){
-		"entitlement grant": func(s *handlers.AppState, w http.ResponseWriter, r *http.Request) {
-			(&EntitlementHandler{state: s}).Grant(w, r)
+	calls := map[string]func(s Deps, w http.ResponseWriter, r *http.Request){
+		"entitlement grant": func(s Deps, w http.ResponseWriter, r *http.Request) {
+			(&EntitlementHandler{d: s}).Grant(w, r)
 		},
-		"entitlement revoke": func(s *handlers.AppState, w http.ResponseWriter, r *http.Request) {
-			(&EntitlementHandler{state: s}).Revoke(w, r)
+		"entitlement revoke": func(s Deps, w http.ResponseWriter, r *http.Request) {
+			(&EntitlementHandler{d: s}).Revoke(w, r)
 		},
-		"billing overrides": func(s *handlers.AppState, w http.ResponseWriter, r *http.Request) {
-			(&BillingHandler{state: s}).SetBillingOverrides(w, r)
+		"billing overrides": func(s Deps, w http.ResponseWriter, r *http.Request) {
+			(&BillingHandler{d: s}).SetBillingOverrides(w, r)
 		},
 	}
 	for name, call := range calls {
 		t.Run(name+"/own account", func(t *testing.T) {
 			st := &termsStore{target: &models.User{ID: handlertest.StaffID}}
-			s := &handlers.AppState{Store: st, Authz: authz.NewResolver(st)}
+			s := Deps{Store: st, Authz: authz.NewResolver(st)}
 			rw := httptest.NewRecorder()
 			call(s, rw, handlertest.StaffRequest("POST", map[string]string{"id": handlertest.StaffID}, `{"kind":"byon","days":30}`))
 			if rw.Code != http.StatusForbidden {
@@ -38,7 +37,7 @@ func TestPlansWriteCannotBeSpentOnTheCallersOwnAccountBilling(t *testing.T) {
 		})
 		t.Run(name+"/an admin", func(t *testing.T) {
 			st := &termsStore{target: &models.User{ID: handlertest.VisAdmin, IsAdmin: true}}
-			s := &handlers.AppState{Store: st, Authz: authz.NewResolver(st)}
+			s := Deps{Store: st, Authz: authz.NewResolver(st)}
 			rw := httptest.NewRecorder()
 			call(s, rw, handlertest.StaffRequest("POST", map[string]string{"id": handlertest.VisAdmin}, `{"kind":"byon","days":30}`))
 			if rw.Code != http.StatusForbidden {

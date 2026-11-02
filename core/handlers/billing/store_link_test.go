@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -197,7 +195,7 @@ func newStoreLinkRedis(t *testing.T) *redis.Client {
 const storeLinkTestKey = "test-shared-key"
 
 func newStoreLinkHandler(fs *storeLinkFakeStore, rdb *redis.Client, withBilling bool) *StoreHandler {
-	state := &handlers.AppState{
+	state := Deps{
 		Store:          fs,
 		Redis:          rdb,
 		StoreEnabled:   true,
@@ -206,7 +204,7 @@ func newStoreLinkHandler(fs *storeLinkFakeStore, rdb *redis.Client, withBilling 
 	if withBilling {
 		state.Billing = services.NewBillingLifecycleService(fs, services.NewQueueService(rdb), nil, "https://panel.example.com", 48*time.Hour, true)
 	}
-	return &StoreHandler{state: state}
+	return &StoreHandler{d: state}
 }
 
 func storeLinkPost(path string, body map[string]interface{}, storeKey string) *http.Request {
@@ -223,7 +221,7 @@ func storeLinkPost(path string, body map[string]interface{}, storeKey string) *h
 func TestStoreHandler_RequireStoreKeyGate(t *testing.T) {
 	t.Run("store integration disabled returns 404", func(t *testing.T) {
 		fs := &storeLinkFakeStore{}
-		h := &StoreHandler{state: &handlers.AppState{Store: fs, StoreEnabled: false}}
+		h := &StoreHandler{d: Deps{Store: fs, StoreEnabled: false}}
 		rec := httptest.NewRecorder()
 		h.LinkVerify(rec, storeLinkPost("/api/store/link/verify", map[string]interface{}{"token": "x"}, "anything"))
 		if rec.Code != http.StatusNotFound {
@@ -338,11 +336,11 @@ func TestLinkVerify_UnknownOrExpiredToken(t *testing.T) {
 	}
 }
 
-// --- Provision: action switch driving h.state.Billing ---
+// --- Provision: action switch driving h.d.Billing ---
 
 func TestProvision_BillingNotAvailable(t *testing.T) {
 	fs := &storeLinkFakeStore{users: map[string]*models.User{"u1": {ID: "u1"}}}
-	h := newStoreLinkHandler(fs, newStoreLinkRedis(t), false) // withBilling=false -> h.state.Billing stays nil
+	h := newStoreLinkHandler(fs, newStoreLinkRedis(t), false) // withBilling=false -> h.d.Billing stays nil
 	rec := httptest.NewRecorder()
 	h.Provision(rec, storeLinkPost("/api/store/provision", map[string]interface{}{"uuid": "u1", "action": "activate"}, storeLinkTestKey))
 	if rec.Code != http.StatusServiceUnavailable {

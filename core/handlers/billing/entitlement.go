@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 
@@ -28,11 +27,11 @@ const maxGrantDays = 730
 // own read, and the admin grant/revoke. Quantities (how many nodes, how much
 // traffic) stay with the billing/limits handlers - this is only about kind.
 type EntitlementHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewEntitlementHandler(state *handlers.AppState) *EntitlementHandler {
-	return &EntitlementHandler{state: state}
+func NewEntitlementHandler(d Deps) *EntitlementHandler {
+	return &EntitlementHandler{d: d}
 }
 
 // entitlementResponse is the wire shape for both reads.
@@ -51,7 +50,7 @@ func (h *EntitlementHandler) GetMine(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, reqctx.IsAdmin(r))
+	ent, err := services.EffectiveEntitlement(h.d.Store, userID, time.Now(), h.d.StoreEnabled, reqctx.IsAdmin(r))
 	if err != nil {
 		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
@@ -63,7 +62,7 @@ func (h *EntitlementHandler) GetMine(w http.ResponseWriter, r *http.Request) {
 // GetForUser GET /api/admin/users/{id}/entitlement - RequireCap("plans.read").
 func (h *EntitlementHandler) GetForUser(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, h.subjectIsAdmin(userID))
+	ent, err := services.EffectiveEntitlement(h.d.Store, userID, time.Now(), h.d.StoreEnabled, h.subjectIsAdmin(userID))
 	if err != nil {
 		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
@@ -97,7 +96,7 @@ func grantKinds(kind string) []string {
 // of colliding with the grant.
 func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	if !access.GuardAccountTerms(w, r, h.state.Store, h.state.Authz, userID) {
+	if !access.GuardAccountTerms(w, r, h.d.Store, h.d.Authz, userID) {
 		return
 	}
 	var req grantRequest
@@ -119,7 +118,7 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 
 	// Guard against granting to a user who does not exist: the upsert would
 	// otherwise fail on the foreign key with an opaque 500.
-	if u, err := h.state.Store.GetUserByID(userID); err != nil || u == nil {
+	if u, err := h.d.Store.GetUserByID(userID); err != nil || u == nil {
 		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
@@ -130,7 +129,7 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	// and now means what it says - two grants with the same deadline - rather
 	// than one grant that happens to cover two things.
 	for _, k := range grantKinds(kind) {
-		if err := h.state.Store.SetUserManualEntitlementKind(userID, k, &expires, actor); err != nil {
+		if err := h.d.Store.SetUserManualEntitlementKind(userID, k, &expires, actor); err != nil {
 			httpx.SendJSONError(w, "Save failed", http.StatusInternalServerError)
 			return
 		}
@@ -146,13 +145,13 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	// A grant is worth exactly one machine of its kind, and that is derived
 	// where the ceiling is read (services.EffectiveLimits) rather than stored.
 	// Nothing writes a purchase column except a purchase.
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventEntitlementGranted, actor, userID, map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventEntitlementGranted, actor, userID, map[string]interface{}{
 		"kind":       kind,
 		"days":       req.Days,
 		"expires_at": expires,
 	})
 
-	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, h.subjectIsAdmin(userID))
+	ent, _ := services.EffectiveEntitlement(h.d.Store, userID, time.Now(), h.d.StoreEnabled, h.subjectIsAdmin(userID))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(entitlementResponse{Success: true, Entitlement: ent})
 }
@@ -165,7 +164,7 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 // A lookup failure answers false: reporting a customer as unlimited because a
 // query failed is the worse of the two wrong answers.
 func (h *EntitlementHandler) subjectIsAdmin(userID string) bool {
-	u, err := h.state.Store.GetUserByID(userID)
+	u, err := h.d.Store.GetUserByID(userID)
 	return err == nil && u != nil && u.IsAdmin
 }
 
@@ -175,19 +174,19 @@ func (h *EntitlementHandler) subjectIsAdmin(userID string) bool {
 // "take back what I gave", not "cut them off" (that is the billing status).
 func (h *EntitlementHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	if !access.GuardAccountTerms(w, r, h.state.Store, h.state.Authz, userID) {
+	if !access.GuardAccountTerms(w, r, h.d.Store, h.d.Authz, userID) {
 		return
 	}
 	// ?kind= takes back ONE of the two. Without it the whole grant goes, which
 	// is what every existing caller means and what the button used to do.
 	switch kind := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("kind"))); kind {
 	case "":
-		if err := h.state.Store.SetUserManualEntitlement(userID, "", nil, ""); err != nil {
+		if err := h.d.Store.SetUserManualEntitlement(userID, "", nil, ""); err != nil {
 			httpx.SendJSONError(w, "Save failed", http.StatusInternalServerError)
 			return
 		}
 	case services.EntitlementByon, services.EntitlementRouteOnly:
-		if err := h.state.Store.SetUserManualEntitlementKind(userID, kind, nil, ""); err != nil {
+		if err := h.d.Store.SetUserManualEntitlementKind(userID, kind, nil, ""); err != nil {
 			httpx.SendJSONError(w, "Save failed", http.StatusInternalServerError)
 			return
 		}
@@ -196,9 +195,9 @@ func (h *EntitlementHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor, _ := r.Context().Value("userID").(string)
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventEntitlementRevoked, actor, userID, nil)
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventEntitlementRevoked, actor, userID, nil)
 
-	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, h.subjectIsAdmin(userID))
+	ent, _ := services.EffectiveEntitlement(h.d.Store, userID, time.Now(), h.d.StoreEnabled, h.subjectIsAdmin(userID))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(entitlementResponse{Success: true, Entitlement: ent})
 }

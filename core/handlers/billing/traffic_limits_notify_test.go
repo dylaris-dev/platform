@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -83,7 +81,7 @@ func TestSetTrafficLimitNotifiesWhenThePurchaseCapMoves(t *testing.T) {
 		},
 		tenants: []store.UserBilling{consenting("u1", 1)},
 	}
-	h := &TrafficLimitHandler{state: &handlers.AppState{Store: st}}
+	h := &TrafficLimitHandler{d: Deps{Store: st}}
 
 	trafficLimitPut(t, h, map[string]any{
 		"scope": "user_default", "region": "eu-central", "kind": "edge",
@@ -109,7 +107,7 @@ func TestSetTrafficLimitQuietWhenOnlyIncludedChanges(t *testing.T) {
 		},
 		tenants: []store.UserBilling{consenting("u1", 1)},
 	}
-	h := &TrafficLimitHandler{state: &handlers.AppState{Store: st}}
+	h := &TrafficLimitHandler{d: Deps{Store: st}}
 
 	trafficLimitPut(t, h, map[string]any{
 		"scope": "user_default", "region": "eu-central", "kind": "edge",
@@ -131,7 +129,7 @@ func TestClearingATrafficLimitNotifies(t *testing.T) {
 		},
 		tenants: []store.UserBilling{consenting("u1", 1)},
 	}
-	h := &TrafficLimitHandler{state: &handlers.AppState{Store: st}}
+	h := &TrafficLimitHandler{d: Deps{Store: st}}
 
 	trafficLimitPut(t, h, map[string]any{
 		"scope": "user_default", "region": "eu-central", "kind": "edge",
