@@ -12,6 +12,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/storagemigrate"
@@ -754,7 +755,7 @@ func NewStorageMigrationHandler(state *handlers.AppState) *StorageMigrationHandl
 func (h *StorageMigrationHandler) Overview(w http.ResponseWriter, r *http.Request) {
 	sets, err := NewStorageDataSetResolver(h.state).List(r.Context())
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to describe storage: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to describe storage: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	type overviewEntry struct {
@@ -768,7 +769,7 @@ func (h *StorageMigrationHandler) Overview(w http.ResponseWriter, r *http.Reques
 		// manifest yet" would tell an operator their last capture is gone.
 		ms, err := h.state.Store.ListStorageManifests(s.ID, 1)
 		if err != nil {
-			handlers.SendJSONError(w, "Failed to load manifests for "+s.ID+": "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to load manifests for "+s.ID+": "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if len(ms) > 0 {
@@ -782,12 +783,12 @@ func (h *StorageMigrationHandler) Overview(w http.ResponseWriter, r *http.Reques
 // GetJob GET /api/admin/storage/migration - PANEL settings.read.
 func (h *StorageMigrationHandler) GetJob(w http.ResponseWriter, r *http.Request) {
 	if h.state.StorageMigration == nil {
-		handlers.SendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
 		return
 	}
 	job, ok, err := h.state.StorageMigration.GetJob(r.Context())
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read job: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read job: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	resp := map[string]interface{}{"success": true, "hasJob": ok}
@@ -802,18 +803,18 @@ func (h *StorageMigrationHandler) GetJob(w http.ResponseWriter, r *http.Request)
 func (h *StorageMigrationHandler) Start(w http.ResponseWriter, r *http.Request) {
 	var req services.StorageMigrationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	// Validate BEFORE the service-availability check, so a request that
 	// violates safety invariant 2 is rejected as 400 regardless of whether
 	// Redis happens to be up.
 	if err := req.Validate(); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if h.state.StorageMigration == nil {
-		handlers.SendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -823,10 +824,10 @@ func (h *StorageMigrationHandler) Start(w http.ResponseWriter, r *http.Request) 
 	job, err := h.state.StorageMigration.Start(r.Context(), req, actorID, actorName)
 	if err != nil {
 		if errors.Is(err, services.ErrStorageMigrationRunning) {
-			handlers.SendJSONError(w, err.Error(), http.StatusConflict)
+			httpx.SendJSONError(w, err.Error(), http.StatusConflict)
 			return
 		}
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -845,15 +846,15 @@ func (h *StorageMigrationHandler) Start(w http.ResponseWriter, r *http.Request) 
 // Cancel POST /api/admin/storage/migration/cancel - PANEL settings.write.
 func (h *StorageMigrationHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	if h.state.StorageMigration == nil {
-		handlers.SendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Storage migration not available", http.StatusServiceUnavailable)
 		return
 	}
 	if err := h.state.StorageMigration.Cancel(r.Context()); err != nil {
 		if errors.Is(err, services.ErrNoStorageMigrationJob) {
-			handlers.SendJSONError(w, err.Error(), http.StatusNotFound)
+			httpx.SendJSONError(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		handlers.SendJSONError(w, err.Error(), http.StatusConflict)
+		httpx.SendJSONError(w, err.Error(), http.StatusConflict)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
@@ -872,7 +873,7 @@ func (h *StorageMigrationHandler) ListManifests(w http.ResponseWriter, r *http.R
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	ms, err := h.state.Store.ListStorageManifests(r.URL.Query().Get("dataSet"), limit)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list manifests: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list manifests: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if ms == nil {
@@ -889,21 +890,21 @@ func (h *StorageMigrationHandler) ListManifests(w http.ResponseWriter, r *http.R
 func (h *StorageMigrationHandler) ExportManifest(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
 		return
 	}
 	m, err := h.state.Store.GetStorageManifest(id)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load manifest: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load manifest: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if m == nil {
-		handlers.SendJSONError(w, "Manifest not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Manifest not found", http.StatusNotFound)
 		return
 	}
 	entries, err := h.state.Store.ListStorageManifestEntries(id)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load manifest entries: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load manifest entries: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -953,20 +954,20 @@ func safeFilenamePart(s string) string {
 func (h *StorageMigrationHandler) DeleteManifest(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
 		return
 	}
 	m, err := h.state.Store.GetStorageManifest(id)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load manifest: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load manifest: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if m == nil {
-		handlers.SendJSONError(w, "Manifest not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Manifest not found", http.StatusNotFound)
 		return
 	}
 	if err := h.state.Store.DeleteStorageManifest(id); err != nil {
-		handlers.SendJSONError(w, "Failed to delete manifest: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete manifest: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)

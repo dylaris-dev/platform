@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -73,7 +74,7 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	domain := mux.Vars(r)["domain"]
 	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
-		handlers.SendJSONError(w, "Route not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
 	var req struct {
@@ -81,14 +82,14 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		TargetPort int   `json:"target_port"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.Enabled == nil {
-		handlers.SendJSONError(w, `Invalid request: expected {"enabled": true|false, "target_port": 1-65535}`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `Invalid request: expected {"enabled": true|false, "target_port": 1-65535}`, http.StatusBadRequest)
 		return
 	}
 	if req.TargetPort == 0 {
 		req.TargetPort = services.VoiceInternalPort
 	}
 	if req.TargetPort < 1 || req.TargetPort > 65535 {
-		handlers.SendJSONError(w, "The voice port must be between 1 and 65535.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "The voice port must be between 1 and 65535.", http.StatusBadRequest)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -106,7 +107,7 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		}
 		if err != nil {
 			log.Printf("voice: route %s: disable: %v", domain, err)
-			handlers.SendJSONError(w, "Failed to turn voice chat off", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to turn voice chat off", http.StatusInternalServerError)
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newLinkRouteVoiceView(nil)})
@@ -119,30 +120,30 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 	}
 	rt, err := h.coreRoute(domain)
 	if err != nil || rt == nil {
-		handlers.SendJSONError(w, "Route not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
 	if msg := handlers.OwnerRefusal(h.state, r, rt.OwnerID); msg != "" {
-		handlers.SendJSONError(w, msg, http.StatusForbidden)
+		httpx.SendJSONError(w, msg, http.StatusForbidden)
 		return
 	}
 	if !h.linkRouteVoiceAllowed(rt.OwnerID) {
-		handlers.SendJSONErrorCode(w, "Voice chat is not available for this account.", "voice_not_allowed", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "Voice chat is not available for this account.", "voice_not_allowed", http.StatusConflict)
 		return
 	}
 	if ok, err := handlers.LinkAnnouncesCap(ctx, h.state.Redis, rt.LinkToken, linkCapVoice); err != nil || !ok {
-		handlers.SendJSONErrorCode(w, "The link of this route has not reported that it can carry voice chat. Make sure it is running and up to date, then try again.", "link_without_voice", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "The link of this route has not reported that it can carry voice chat. Make sure it is running and up to date, then try again.", "link_without_voice", http.StatusConflict)
 		return
 	}
 	region, ok := services.VoiceRegionFor(domain, services.GetEdgesFromRedis(ctx, h.state.Redis))
 	if !ok {
-		handlers.SendJSONErrorCode(w, "Voice chat needs an address on one of the platform's domains.", "no_routes", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "Voice chat needs an address on one of the platform's domains.", "no_routes", http.StatusConflict)
 		return
 	}
 	relays, err := services.LiveVoiceRelays(ctx, h.state.Redis)
 	if err != nil {
 		log.Printf("voice: route %s: %v", domain, err)
-		handlers.SendJSONError(w, "Could not check the voice relays. Try again.", http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not check the voice relays. Try again.", http.StatusBadGateway)
 		return
 	}
 	relayUp := false
@@ -150,29 +151,29 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		relayUp = relayUp || rl.Region == region
 	}
 	if !relayUp {
-		handlers.SendJSONErrorCode(w, "No voice relay is running in this address's region yet.", "no_relay", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "No voice relay is running in this address's region yet.", "no_relay", http.StatusConflict)
 		return
 	}
 
 	prior, err := h.state.Store.GetLinkRouteVoice(domain)
 	if err != nil {
 		log.Printf("voice: route %s: %v", domain, err)
-		handlers.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
 		return
 	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
-		handlers.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
 		return
 	}
 	got, err := h.state.Store.AllocateLinkRouteVoice(domain, region, req.TargetPort, key, services.VoicePortMin, services.VoicePortMax)
 	if errors.Is(err, store.ErrVoicePoolFull) {
-		handlers.SendJSONErrorCode(w, "Every voice port in this region is taken.", "voice_pool_full", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "Every voice port in this region is taken.", "voice_pool_full", http.StatusConflict)
 		return
 	}
 	if err != nil {
 		log.Printf("voice: route %s: allocate: %v", domain, err)
-		handlers.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
 		return
 	}
 	if prior != nil && (prior.Region != got.Region || prior.Port != got.Port) {
@@ -187,7 +188,7 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 				log.Printf("voice: route %s: roll back: %v", domain, derr)
 			}
 		}
-		handlers.SendJSONError(w, "Voice chat could not be published to the gateway. Try again.", http.StatusBadGateway)
+		httpx.SendJSONError(w, "Voice chat could not be published to the gateway. Try again.", http.StatusBadGateway)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newLinkRouteVoiceView(&got)})

@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -53,27 +54,27 @@ func (h *TemplatesHandler) load(w http.ResponseWriter, r *http.Request, need tem
 	s := h.settings(r)
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		handlers.SendJSONError(w, "Template not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Template not found", http.StatusNotFound)
 		return nil, services.TemplateViewer{}, s, false
 	}
 	t, err := h.state.Store.GetTemplate(id)
 	if err != nil {
 		log.Printf("templates: get %d: %v", id, err)
-		handlers.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
 		return nil, services.TemplateViewer{}, s, false
 	}
 	if t == nil {
-		handlers.SendJSONError(w, "Template not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Template not found", http.StatusNotFound)
 		return nil, services.TemplateViewer{}, s, false
 	}
 	v, err := h.viewer(r, t)
 	if err != nil {
 		log.Printf("templates: viewer for %d: %v", id, err)
-		handlers.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
 		return nil, v, s, false
 	}
 	if !services.TemplateCanSee(*t, v, s) {
-		handlers.SendJSONError(w, "Template not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Template not found", http.StatusNotFound)
 		return nil, v, s, false
 	}
 	allowed := true
@@ -87,7 +88,7 @@ func (h *TemplatesHandler) load(w http.ResponseWriter, r *http.Request, need tem
 		allowed = services.TemplateCanEdit(*t, v) && (v.IsAdmin || t.OwnerID == v.UserID)
 	}
 	if !allowed {
-		handlers.SendJSONError(w, "You may not change this template", http.StatusForbidden)
+		httpx.SendJSONError(w, "You may not change this template", http.StatusForbidden)
 		return nil, v, s, false
 	}
 	return t, v, withCap(s, t, h.ownerIsAdmin(t, v)), true
@@ -101,7 +102,7 @@ func (h *TemplatesHandler) refuseSuspended(w http.ResponseWriter, r *http.Reques
 	if msg == "" {
 		return false
 	}
-	handlers.SendJSONError(w, msg, http.StatusForbidden)
+	httpx.SendJSONError(w, msg, http.StatusForbidden)
 	return true
 }
 
@@ -140,7 +141,7 @@ func (h *TemplatesHandler) ownTarget(w http.ResponseWriter, r *http.Request, use
 	_, own, err := h.state.Store.GetUserStoragePrefs(userID)
 	if err != nil {
 		log.Printf("templates: storage prefs of %s: %v", userID, err)
-		handlers.SendJSONError(w, "Could not create the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not create the template", http.StatusInternalServerError)
 		return nil, false
 	}
 	return own, true
@@ -179,7 +180,7 @@ func (h *TemplatesHandler) List(w http.ResponseWriter, r *http.Request) {
 	list, err := h.state.Store.ListTemplatesVisibleTo(v.UserID, v.IsAdmin || v.HasAdminRead, v.IsAdmin || s.PlatformForUsers)
 	if err != nil {
 		log.Printf("templates: list for %s: %v", v.UserID, err)
-		handlers.SendJSONError(w, "Could not list templates", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not list templates", http.StatusInternalServerError)
 		return
 	}
 	out := []templateItem{}
@@ -190,7 +191,7 @@ func (h *TemplatesHandler) List(w http.ResponseWriter, r *http.Request) {
 		if t.OwnerID != v.UserID {
 			if tv.ShareLevel, err = h.state.Store.TemplateShareLevel(t.ID, v.UserID); err != nil {
 				log.Printf("templates: share level %d/%s: %v", t.ID, v.UserID, err)
-				handlers.SendJSONError(w, "Could not list templates", http.StatusInternalServerError)
+				httpx.SendJSONError(w, "Could not list templates", http.StatusInternalServerError)
 				return
 			}
 		}
@@ -289,24 +290,24 @@ func (h *TemplatesHandler) newTemplate(w http.ResponseWriter, r *http.Request, m
 		m.Visibility = "personal"
 	}
 	if !validName(m.Name) {
-		handlers.SendJSONError(w, "Name must be 1 to 64 characters", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Name must be 1 to 64 characters", http.StatusBadRequest)
 		return nil, s, false
 	}
 	if m.Kind != "server" && m.Kind != "proxy" {
-		handlers.SendJSONError(w, "Kind must be server or proxy", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Kind must be server or proxy", http.StatusBadRequest)
 		return nil, s, false
 	}
 	if !validVisibility(m.Visibility) {
-		handlers.SendJSONError(w, "Visibility must be personal, admin or platform", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Visibility must be personal, admin or platform", http.StatusBadRequest)
 		return nil, s, false
 	}
 	if !validField(m.Software) || !validField(m.McVersion) || !validField(m.SoftwareVersion) {
-		handlers.SendJSONError(w, "Software and version fields must be at most 64 characters", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Software and version fields must be at most 64 characters", http.StatusBadRequest)
 		return nil, s, false
 	}
 	sw := models.Template{Software: m.Software, McVersion: m.McVersion, SoftwareVersion: m.SoftwareVersion}
 	if err := services.ValidateTemplateSoftware(&sw); err != nil {
-		handlers.SendJSONError(w, sentence(err), http.StatusBadRequest)
+		httpx.SendJSONError(w, sentence(err), http.StatusBadRequest)
 		return nil, s, false
 	}
 	m.Software, m.McVersion, m.SoftwareVersion = sw.Software, sw.McVersion, sw.SoftwareVersion
@@ -328,7 +329,7 @@ func (h *TemplatesHandler) newTemplate(w http.ResponseWriter, r *http.Request, m
 	}
 	if err := h.state.Store.CreateTemplate(t); err != nil {
 		log.Printf("templates: create for %s: %v", v.UserID, err)
-		handlers.SendJSONError(w, "Could not create the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not create the template", http.StatusInternalServerError)
 		return nil, s, false
 	}
 	return t, withCap(s, t, v.IsAdmin), true
@@ -340,7 +341,7 @@ func (h *TemplatesHandler) newTemplate(w http.ResponseWriter, r *http.Request, m
 // caller's own storage the template would go to (nil = ours).
 func (h *TemplatesHandler) mayCreate(w http.ResponseWriter, s services.TemplateSettings, v services.TemplateViewer, visibility string, own *int) bool {
 	if v.UserID == "" || !services.TemplateCanCreate(visibility, v, s) {
-		handlers.SendJSONError(w, "You may not create this template", http.StatusForbidden)
+		httpx.SendJSONError(w, "You may not create this template", http.StatusForbidden)
 		return false
 	}
 	// Before any row exists: a row whose files can never be written would count
@@ -355,7 +356,7 @@ func (h *TemplatesHandler) mayCreate(w http.ResponseWriter, s services.TemplateS
 		case s.StorageConnectionID == 0 && !h.state.CoreStorageConfigured():
 			msg = "Templates need Core file storage. An admin can set it up under Settings > Storage."
 		}
-		handlers.SendJSONError(w, msg, http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, msg, http.StatusServiceUnavailable)
 		return false
 	}
 	if visibility != "personal" || own != nil || s.MaxPerUser == nil {
@@ -364,12 +365,12 @@ func (h *TemplatesHandler) mayCreate(w http.ResponseWriter, s services.TemplateS
 	n, err := h.personalCount(v.UserID)
 	if err != nil {
 		log.Printf("templates: count for %s: %v", v.UserID, err)
-		handlers.SendJSONError(w, "Could not create the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not create the template", http.StatusInternalServerError)
 		return false
 	}
 	limit := int64(*s.MaxPerUser)
 	if services.AtOrOver(&limit, int64(n)) {
-		handlers.SendJSONErrorCode(w, "You have reached the maximum number of templates", "templates_limit", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "You have reached the maximum number of templates", "templates_limit", http.StatusConflict)
 		return false
 	}
 	return true
@@ -397,12 +398,12 @@ func (h *TemplatesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if caller, _ := h.viewer(r, nil); h.refuseSuspended(w, r, caller.UserID) {
 		return
 	}
-	if !handlers.CapBody(w, r, 64<<10) {
+	if !httpx.CapBody(w, r, 64<<10) {
 		return
 	}
 	var m templateMeta
 	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	t, s, ok := h.newTemplate(w, r, m)
@@ -420,7 +421,7 @@ func (h *TemplatesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok || h.refuseSuspended(w, r, t.OwnerID) {
 		return
 	}
-	if !handlers.CapBody(w, r, 64<<10) {
+	if !httpx.CapBody(w, r, 64<<10) {
 		return
 	}
 	var p struct {
@@ -431,28 +432,28 @@ func (h *TemplatesHandler) Update(w http.ResponseWriter, r *http.Request) {
 		SoftwareVersion *string `json:"softwareVersion"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if p.Name != nil {
 		t.Name = strings.TrimSpace(*p.Name)
 		if !validName(t.Name) {
-			handlers.SendJSONError(w, "Name must be 1 to 64 characters", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Name must be 1 to 64 characters", http.StatusBadRequest)
 			return
 		}
 	}
 	if p.Visibility != nil && *p.Visibility != t.Visibility {
 		if !validVisibility(*p.Visibility) {
-			handlers.SendJSONError(w, "Visibility must be personal, admin or platform", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Visibility must be personal, admin or platform", http.StatusBadRequest)
 			return
 		}
 		if !services.TemplateCanCreate(*p.Visibility, v, s) {
-			handlers.SendJSONError(w, "You may not give this template that visibility", http.StatusForbidden)
+			httpx.SendJSONError(w, "You may not give this template that visibility", http.StatusForbidden)
 			return
 		}
 		// A shared template must not depend on one tenant's bucket and credentials.
 		if *p.Visibility != "personal" && t.BackupStorageID != nil {
-			handlers.SendJSONError(w, "This template is stored in its owner's own storage. Admin and platform templates must live on platform storage.", http.StatusConflict)
+			httpx.SendJSONError(w, "This template is stored in its owner's own storage. Admin and platform templates must live on platform storage.", http.StatusConflict)
 			return
 		}
 		t.Visibility = *p.Visibility
@@ -465,7 +466,7 @@ func (h *TemplatesHandler) Update(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if !validField(*f.in) {
-			handlers.SendJSONError(w, "Software and version fields must be at most 64 characters", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Software and version fields must be at most 64 characters", http.StatusBadRequest)
 			return
 		}
 		*f.out = *f.in
@@ -474,13 +475,13 @@ func (h *TemplatesHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// release let through.
 	if p.Software != nil || p.McVersion != nil || p.SoftwareVersion != nil {
 		if err := services.ValidateTemplateSoftware(t); err != nil {
-			handlers.SendJSONError(w, sentence(err), http.StatusBadRequest)
+			httpx.SendJSONError(w, sentence(err), http.StatusBadRequest)
 			return
 		}
 	}
 	if err := h.state.Store.UpdateTemplate(t); err != nil {
 		log.Printf("templates: update %d: %v", t.ID, err)
-		handlers.SendJSONError(w, "Could not save the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not save the template", http.StatusInternalServerError)
 		return
 	}
 	// Not s: that is the cap of the visibility loaded, which this edit may have changed.
@@ -524,12 +525,12 @@ func (h *TemplatesHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	rowMayGo, filesLeft := h.deleteFiles(r.Context(), t)
 	if !rowMayGo {
-		handlers.SendJSONError(w, "Could not delete the template files", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not delete the template files", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.DeleteTemplate(t.ID); err != nil {
 		log.Printf("templates: delete %d: %v", t.ID, err)
-		handlers.SendJSONError(w, "Could not delete the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not delete the template", http.StatusInternalServerError)
 		return
 	}
 	body := map[string]interface{}{"success": true}

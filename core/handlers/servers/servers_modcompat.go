@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -21,29 +22,29 @@ func (h *ServerModsHandler) ServerCompat(w http.ResponseWriter, r *http.Request)
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	if srv.MinecraftVersion == "" || !validate.IsModrinthLoader(strings.ToLower(srv.InstallerType)) {
-		handlers.SendJSONError(w, "Declare this server's loader and Minecraft version first, otherwise there is nothing to compare against", http.StatusUnprocessableEntity)
+		httpx.SendJSONError(w, "Declare this server's loader and Minecraft version first, otherwise there is nothing to compare against", http.StatusUnprocessableEntity)
 		return
 	}
 	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
 	}
 
 	items, err := serverCompatItems(r.Context(), mods)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read project metadata from Modrinth: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read project metadata from Modrinth: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 
 	mode, specific := handlers.CompatQuery(r)
 	targets, err := handlers.ResolveTargets(r.Context(), srv.MinecraftVersion, mode, specific)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read the Minecraft version list from Modrinth: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read the Minecraft version list from Modrinth: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	loader := strings.ToLower(srv.InstallerType)
@@ -56,7 +57,7 @@ func (h *ServerModsHandler) ServerCompat(w http.ResponseWriter, r *http.Request)
 		Cache:   h.state.AvailabilityCache(),
 	})
 	if err != nil {
-		handlers.SendJSONError(w, "Availability check failed: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Availability check failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "matrix": matrix})

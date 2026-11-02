@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"dylaris-core/handlers/httpx"
 )
 
 // MaintenanceState mirrors the maintenance.* settings keys. Default is "off"
@@ -105,7 +107,7 @@ func (h *MaintenanceHandler) GetState(w http.ResponseWriter, r *http.Request) {
 func (h *MaintenanceHandler) SaveState(w http.ResponseWriter, r *http.Request) {
 	var req MaintenanceState
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if !validMaintenanceLevel(req.BlockLevel) {
@@ -125,7 +127,7 @@ func (h *MaintenanceHandler) SaveState(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, kv := range pairs {
 		if err := h.state.Store.SetSettingBy(kv.k, kv.v, actorID); err != nil {
-			sendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)
 			return
 		}
 	}

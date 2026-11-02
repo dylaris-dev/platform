@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 )
 
 type updateModsRequest struct {
@@ -27,16 +27,16 @@ type updateModsResult struct {
 func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 	build, owner, ok := h.loadBuild(r, packEdit)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	if build.Frozen {
-		handlers.SendJSONError(w, "Build is frozen", http.StatusConflict)
+		httpx.SendJSONError(w, "Build is frozen", http.StatusConflict)
 		return
 	}
 	var req updateModsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -49,7 +49,7 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 	if req.All {
 		content, err := h.state.Store.ListBuildContent(build.ID)
 		if err != nil {
-			handlers.SendJSONError(w, "Failed to load build content", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to load build content", http.StatusInternalServerError)
 			return
 		}
 		for _, e := range content {
@@ -59,12 +59,12 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		if req.ModversionID == 0 {
-			handlers.SendJSONError(w, "modversionId or all required", http.StatusBadRequest)
+			httpx.SendJSONError(w, "modversionId or all required", http.StatusBadRequest)
 			return
 		}
 		mv, err := h.state.Store.GetModversion(req.ModversionID)
 		if err != nil || mv == nil {
-			handlers.SendJSONError(w, "Content not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 			return
 		}
 		// GetModversion is a globally unscoped by-id lookup; loadOwnedBuild only
@@ -73,11 +73,11 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 		// repoint their storage_key/hashes to this caller's storage path. Batch
 		// mode is already safe (it iterates ListBuildContent(build.ID)).
 		if ok, _ := h.state.Store.IsModversionInBuild(build.ID, req.ModversionID); !ok {
-			handlers.SendJSONError(w, "Content not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 			return
 		}
 		if mv.ModrinthProjectID == "" {
-			handlers.SendJSONError(w, "Content is not linked to Modrinth", http.StatusUnprocessableEntity)
+			httpx.SendJSONError(w, "Content is not linked to Modrinth", http.StatusUnprocessableEntity)
 			return
 		}
 		target := req.VersionID
@@ -85,7 +85,7 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 			target = mv.ModrinthLatestVersionID
 		}
 		if target == "" {
-			handlers.SendJSONError(w, "No newer version known for this content", http.StatusUnprocessableEntity)
+			httpx.SendJSONError(w, "No newer version known for this content", http.StatusUnprocessableEntity)
 			return
 		}
 		jobs = append(jobs, job{mvID: mv.ID, target: target})

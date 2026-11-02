@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -205,13 +206,13 @@ func callerMayDelegate(res *authz.Resolution, key string) bool {
 // authorizing.
 func refuseBadPermissionMap(w http.ResponseWriter, perms map[string]bool) bool {
 	if perms == nil {
-		sendJSONError(w, "permissions is required and says what this member may do: "+
+		httpx.SendJSONError(w, "permissions is required and says what this member may do: "+
 			strings.Join(invitePermissionKeys, ", ")+". Send {} for no permissions beyond seeing the server.",
 			http.StatusBadRequest)
 		return true
 	}
 	if bad := unknownPermissionKeys(perms); len(bad) > 0 {
-		sendJSONError(w, "Unknown permission(s): "+strings.Join(bad, ", ")+". Valid keys are "+
+		httpx.SendJSONError(w, "Unknown permission(s): "+strings.Join(bad, ", ")+". Valid keys are "+
 			strings.Join(invitePermissionKeys, ", "), http.StatusBadRequest)
 		return true
 	}
@@ -221,20 +222,20 @@ func refuseBadPermissionMap(w http.ResponseWriter, perms map[string]bool) bool {
 // GetMembers GET /api/servers/{id}/members - the member invites on one server.
 func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
 
 	invites, err := h.state.Store.ListInvitesByServer(serverID)
 	if err != nil {
-		sendJSONError(w, "Failed to load members", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load members", http.StatusInternalServerError)
 		return
 	}
 
@@ -253,14 +254,14 @@ func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
 // member is 409.
 func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
 
@@ -277,13 +278,13 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON: this endpoint takes only username and permissions ("+
+		httpx.SendJSONError(w, "Invalid JSON: this endpoint takes only username and permissions ("+
 			strings.Join(invitePermissionKeys, ", ")+")", http.StatusBadRequest)
 		return
 	}
 
 	if req.Username == "" {
-		sendJSONError(w, "Username required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Username required", http.StatusBadRequest)
 		return
 	}
 
@@ -296,18 +297,18 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
 	targetUser, err := h.state.Store.GetUserByUsername(req.Username)
 	if err != nil {
-		sendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
 	if targetUser.ID == srv.OwnerID {
-		sendJSONError(w, "Cannot invite the server owner", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Cannot invite the server owner", http.StatusBadRequest)
 		return
 	}
 
@@ -320,7 +321,7 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	// outlived the owner revoking whatever they came in through. /api/grants
 	// refuses a grant to yourself for the same reason.
 	if targetUser.ID == inviterID {
-		sendJSONError(w, "Cannot invite yourself", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Cannot invite yourself", http.StatusBadRequest)
 		return
 	}
 
@@ -328,7 +329,7 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 	req.Permissions = h.capPermissions(r, serverID, req.Permissions)
 
 	if err := h.state.Store.CreateInvite(serverID, targetUser.ID, inviterID, req.Permissions); err != nil {
-		sendJSONError(w, "Failed to create invite (user may already be invited)", http.StatusConflict)
+		httpx.SendJSONError(w, "Failed to create invite (user may already be invited)", http.StatusConflict)
 		return
 	}
 	stampBeamAccess(r.Context(), h.state, serverID)
@@ -350,17 +351,17 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 // trail.
 func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
-	targetUserID, ok := parseUserID(w, r, "userId")
+	targetUserID, ok := httpx.ParseUserID(w, r, "userId")
 	if !ok {
 		return
 	}
@@ -371,7 +372,7 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON: this endpoint takes only permissions ("+
+		httpx.SendJSONError(w, "Invalid JSON: this endpoint takes only permissions ("+
 			strings.Join(invitePermissionKeys, ", ")+")", http.StatusBadRequest)
 		return
 	}
@@ -384,7 +385,7 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 	// members.write and members.delete got their role back in full. /api/grants
 	// refuses a grant to yourself for the same reason.
 	if caller, _ := r.Context().Value("userID").(string); caller == targetUserID {
-		sendJSONError(w, "You cannot change your own access", http.StatusForbidden)
+		httpx.SendJSONError(w, "You cannot change your own access", http.StatusForbidden)
 		return
 	}
 	if refuseDelegationWhenOff(w, r, h.state.Store) {
@@ -395,7 +396,7 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 	// removing them, which needs members.delete - the same rule /api/grants
 	// applies to overwriting a grant. This is the older route to the same row.
 	if !h.mayReplaceMemberAccess(r, serverID) {
-		sendJSONError(w, "Changing an existing member's access needs the right to remove members", http.StatusForbidden)
+		httpx.SendJSONError(w, "Changing an existing member's access needs the right to remove members", http.StatusForbidden)
 		return
 	}
 
@@ -403,7 +404,7 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 	req.Permissions = h.capPermissions(r, serverID, req.Permissions)
 
 	if err := h.state.Store.UpdateInvitePermissions(serverID, targetUserID, req.Permissions); err != nil {
-		sendJSONError(w, "Failed to update permissions", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to update permissions", http.StatusInternalServerError)
 		return
 	}
 	stampBeamAccess(r.Context(), h.state, serverID)
@@ -421,35 +422,35 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 // access and records it in the server audit trail.
 func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
-	targetUserID, ok := parseUserID(w, r, "userId")
+	targetUserID, ok := httpx.ParseUserID(w, r, "userId")
 	if !ok {
 		return
 	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	caller, _ := r.Context().Value("userID").(string)
 	adminHere := IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, caller)
 	if !adminHere && caller != srv.OwnerID && revokeUncoversInheritance(h.state, srv, targetUserID) {
-		sendJSONError(w, "Removing this member would give them the wider access they inherit from the proxy; only the owner can do that", http.StatusForbidden)
+		httpx.SendJSONError(w, "Removing this member would give them the wider access they inherit from the proxy; only the owner can do that", http.StatusForbidden)
 		return
 	}
 
 	if err := h.state.Store.DeleteInvite(serverID, targetUserID); err != nil {
-		sendJSONError(w, "Failed to remove member", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to remove member", http.StatusInternalServerError)
 		return
 	}
 	stampBeamAccess(r.Context(), h.state, serverID)
@@ -465,20 +466,20 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 // Returns users who have access via proxy inheritance (read-only view).
 func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
@@ -497,7 +498,7 @@ func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Reque
 	// owner's members to anyone with members.read on the child.
 	proxy, err := h.state.Store.GetServerByID(*srv.ProxyID)
 	if err != nil {
-		sendJSONError(w, "Failed to load inherited members", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load inherited members", http.StatusInternalServerError)
 		return
 	}
 	if proxy == nil || proxy.OwnerID != srv.OwnerID {
@@ -511,7 +512,7 @@ func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Reque
 	// Get all invites on the proxy that have inherit=true
 	proxyInvites, err := h.state.Store.ListInvitesByServer(*srv.ProxyID)
 	if err != nil {
-		sendJSONError(w, "Failed to load inherited members", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load inherited members", http.StatusInternalServerError)
 		return
 	}
 
@@ -553,6 +554,6 @@ func refuseDelegationWhenOff(w http.ResponseWriter, r *http.Request, st store.St
 	if authz.IdentityFromContext(r.Context()).IsAdmin || PermissionsMode(st) != authz.ModeOff {
 		return false
 	}
-	sendJSONError(w, "Delegation is disabled", http.StatusForbidden)
+	httpx.SendJSONError(w, "Delegation is disabled", http.StatusForbidden)
 	return true
 }

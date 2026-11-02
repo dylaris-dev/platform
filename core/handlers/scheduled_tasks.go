@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -82,12 +83,12 @@ func (h *ScheduledTasksHandler) refuseWithoutTaskCap(w http.ResponseWriter, r *h
 		return false
 	}
 	if h.state == nil || h.state.Authz == nil {
-		sendJSONError(w, "Authorization check failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Authorization check failed", http.StatusInternalServerError)
 		return true
 	}
 	res, err := h.state.Authz.Resolve(authz.IdentityFromContext(r.Context()), serverID)
 	if err != nil || !res.HasCap(capID) {
-		sendJSONError(w, "This task needs "+capID+", which you do not hold on this server",
+		httpx.SendJSONError(w, "This task needs "+capID+", which you do not hold on this server",
 			http.StatusForbidden)
 		return true
 	}
@@ -141,7 +142,7 @@ func (h *ScheduledTasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	tasks, err := h.state.Store.ListScheduledTasksByServer(serverID)
 	if err != nil {
-		sendJSONError(w, "Failed to load tasks", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load tasks", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -162,19 +163,19 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// sibling handlers (tabs, backup jobs, members) all answer 404 here.
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	var req scheduledTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Name = normalizeTaskName(req.Name)
 	req.ScheduleCron = strings.TrimSpace(req.ScheduleCron)
 	req.Payload = normalizeTaskPayload(req.Payload)
 	if msg := validateTaskFields(req.Name, req.TaskType, req.Payload); msg != "" {
-		sendJSONError(w, msg, http.StatusBadRequest)
+		httpx.SendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
 	if h.refuseWithoutTaskCap(w, r, serverID, req.TaskType) {
@@ -188,12 +189,12 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		tz = "UTC"
 	}
 	if !services.ValidTimezone(tz) {
-		sendJSONError(w, "Unknown time zone", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Unknown time zone", http.StatusBadRequest)
 		return
 	}
 	next, err := services.ComputeNextRunIn(req.ScheduleCron, tz, time.Now().UTC())
 	if err != nil {
-		sendJSONError(w, "Invalid cron expression", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid cron expression", http.StatusBadRequest)
 		return
 	}
 	if h.refuseIfScheduledTaskLimitReached(w, serverID) {
@@ -224,7 +225,7 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.state.Store.CreateScheduledTask(t)
 	if err != nil {
-		sendJSONError(w, "Failed to create task", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to create task", http.StatusInternalServerError)
 		return
 	}
 	created, _ := h.state.Store.GetScheduledTask(id)
@@ -248,12 +249,12 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	taskID, _ := strconv.Atoi(mux.Vars(r)["taskId"])
 	existing, err := h.state.Store.GetScheduledTask(taskID)
 	if err != nil || existing == nil || existing.ServerID != serverID {
-		sendJSONError(w, "Task not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Task not found", http.StatusNotFound)
 		return
 	}
 	var req scheduledTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	// Create trims the schedule and Update did not, so a PATCH stored one with
@@ -279,7 +280,7 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		existing.Payload = normalizeTaskPayload(req.Payload)
 	}
 	if msg := validateTaskFields(existing.Name, existing.TaskType, existing.Payload); msg != "" {
-		sendJSONError(w, msg, http.StatusBadRequest)
+		httpx.SendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
 	// The PATCHED type, not the request's: changing a "say" task into a
@@ -294,7 +295,7 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	tz := strings.TrimSpace(req.Timezone)
 	if tz != "" && !services.ValidTimezone(tz) {
-		sendJSONError(w, "Unknown time zone", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Unknown time zone", http.StatusBadRequest)
 		return
 	}
 	if (req.ScheduleCron != "" && req.ScheduleCron != existing.ScheduleCron) || (tz != "" && tz != existing.Timezone) {
@@ -306,7 +307,7 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		next, err := services.ComputeNextRunIn(existing.ScheduleCron, existing.Timezone, time.Now().UTC())
 		if err != nil {
-			sendJSONError(w, "Invalid cron expression", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid cron expression", http.StatusBadRequest)
 			return
 		}
 		existing.NextRun = &next
@@ -322,7 +323,7 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		existing.NextRun = nil
 	}
 	if err := h.state.Store.UpdateScheduledTask(existing); err != nil {
-		sendJSONError(w, "Failed to save task", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save task", http.StatusInternalServerError)
 		return
 	}
 
@@ -342,11 +343,11 @@ func (h *ScheduledTasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	taskID, _ := strconv.Atoi(mux.Vars(r)["taskId"])
 	existing, err := h.state.Store.GetScheduledTask(taskID)
 	if err != nil || existing == nil || existing.ServerID != serverID {
-		sendJSONError(w, "Task not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Task not found", http.StatusNotFound)
 		return
 	}
 	if err := h.state.Store.DeleteScheduledTask(taskID); err != nil {
-		sendJSONError(w, "Failed to delete", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete", http.StatusInternalServerError)
 		return
 	}
 
@@ -365,7 +366,7 @@ func (h *ScheduledTasksHandler) ValidateCron(w http.ResponseWriter, r *http.Requ
 		Timezone     string `json:"timezone"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	tz := strings.TrimSpace(req.Timezone)
@@ -414,13 +415,13 @@ func (h *ScheduledTasksHandler) refuseIfScheduledTaskLimitReached(w http.Respons
 	existing, err := h.state.Store.ListScheduledTasksByServer(serverID)
 	if err != nil {
 		// A cap nobody can evaluate must not quietly pass.
-		sendJSONError(w, "Could not count this server's scheduled tasks", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not count this server's scheduled tasks", http.StatusInternalServerError)
 		return true
 	}
 	if !services.AtOrOver(limit, int64(len(existing))) {
 		return false
 	}
-	sendJSONError(w, fmt.Sprintf("Scheduled task limit reached (%d per server). Remove a task, or change the limit in Settings → Servers.", *limit),
+	httpx.SendJSONError(w, fmt.Sprintf("Scheduled task limit reached (%d per server). Remove a task, or change the limit in Settings → Servers.", *limit),
 		http.StatusBadRequest)
 	return true
 }

@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -55,16 +56,16 @@ const (
 func (h *WarpHandler) routeOnlyKey(w http.ResponseWriter, r *http.Request) (key store.WarpAPIKey, token string, ok, cutOff bool) {
 	key, ok = r.Context().Value(warpKeyCtx).(store.WarpAPIKey)
 	if !ok {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return key, "", false, false
 	}
 	// Same shape LinkBoot accepts for a kit: an owner-less link- key is not one.
 	if !strings.HasPrefix(key.NodeID, "link-") || key.OwnerID == "" {
-		handlers.SendJSONError(w, "Not a route-only link key", http.StatusForbidden)
+		httpx.SendJSONError(w, "Not a route-only link key", http.StatusForbidden)
 		return key, "", false, false
 	}
 	if !h.state.GatewayEnabled() || h.state.Gateway == nil || h.state.Redis == nil {
-		handlers.SendJSONError(w, "Gateway routing is disabled", http.StatusConflict)
+		httpx.SendJSONError(w, "Gateway routing is disabled", http.StatusConflict)
 		return key, "", false, false
 	}
 	token = h.state.Gateway.LinkToken(key.NodeID)
@@ -73,7 +74,7 @@ func (h *WarpHandler) routeOnlyKey(w http.ResponseWriter, r *http.Request) (key 
 	if b, berr := h.state.Store.GetUserBilling(key.OwnerID); berr != nil {
 		log.Printf("route-only link %s: billing lookup failed, suspension gate skipped: %v", key.NodeID, berr)
 	} else if store.OwnerCutOff(b, h.state.SuspendGrace, services.OverLimitGrace, time.Now()) {
-		handlers.SendJSONError(w, "Account suspended", http.StatusForbidden)
+		httpx.SendJSONError(w, "Account suspended", http.StatusForbidden)
 		return key, token, false, true
 	}
 	return key, token, true, false
@@ -109,7 +110,7 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.linkRevoked(key.NodeID) {
-		handlers.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
 		return
 	}
 	presence := linkPresenceValue(r.Body)
@@ -122,7 +123,7 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Printf("route-only link %s: heartbeat write failed: %v", key.NodeID, err)
-		handlers.SendJSONError(w, "Heartbeat not recorded", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Heartbeat not recorded", http.StatusServiceUnavailable)
 		return
 	}
 	// Asked again AFTER the write. RevokeLinkKitTeardown marks the key revoked
@@ -132,7 +133,7 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// so this undoes the write itself. Either way no revoked token survives.
 	if h.linkRevoked(key.NodeID) {
 		h.state.Redis.Del(ctx, "link:"+token, "online_link:"+token)
-		handlers.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -202,7 +203,7 @@ func (h *WarpHandler) LinkEdges(w http.ResponseWriter, r *http.Request) {
 	edges, err := readLinkEdges(ctx, h.state.Redis)
 	if err != nil {
 		log.Printf("route-only link %s: reading the edge list failed: %v", key.NodeID, err)
-		handlers.SendJSONError(w, "Edge list unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Edge list unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -268,7 +269,7 @@ func (h *WarpHandler) LinkStats(w http.ResponseWriter, r *http.Request) {
 	}
 	var s protocol.GatewayStats
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&s); err != nil {
-		handlers.SendJSONError(w, "Invalid stats record", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid stats record", http.StatusBadRequest)
 		return
 	}
 	// Region joins Component and ID as something the kit does not get to name.
@@ -279,7 +280,7 @@ func (h *WarpHandler) LinkStats(w http.ResponseWriter, r *http.Request) {
 	s.Component, s.ID, s.Region = "link", key.NodeID, key.Region
 	data, err := protocol.MarshalGatewayStats(s)
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid stats record", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid stats record", http.StatusBadRequest)
 		return
 	}
 	// The same pair of reads LinkHeartbeat does, for the same reason and with
@@ -289,7 +290,7 @@ func (h *WarpHandler) LinkStats(w http.ResponseWriter, r *http.Request) {
 	// will ever write again, and every Core keeps a consumer and a consumer
 	// group on it for as long as it runs.
 	if h.linkRevoked(key.NodeID) {
-		handlers.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -302,14 +303,14 @@ func (h *WarpHandler) LinkStats(w http.ResponseWriter, r *http.Request) {
 		Values: map[string]interface{}{"data": string(data)},
 	}).Err(); err != nil {
 		log.Printf("route-only link %s: stats write failed: %v", key.NodeID, err)
-		handlers.SendJSONError(w, "Stats not recorded", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Stats not recorded", http.StatusServiceUnavailable)
 		return
 	}
 	// Asked again AFTER the write: if the revoke's delete ran before this XAdd,
 	// this undoes the stream it just brought back.
 	if h.linkRevoked(key.NodeID) {
 		h.state.Redis.Del(ctx, stream)
-		handlers.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -338,7 +339,7 @@ func (h *WarpHandler) LinkVoice(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.state.Store.ListLinkRouteVoice()
 	if err != nil {
 		log.Printf("route-only link %s: reading voice ports failed: %v", key.NodeID, err)
-		handlers.SendJSONError(w, "Voice ports unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Voice ports unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	out := make([]linkVoiceRoute, 0)
@@ -372,7 +373,7 @@ func (h *WarpHandler) LinkTargets(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.state.Store.ListCoreLinkRoutes()
 	if err != nil {
 		log.Printf("route-only link %s: reading routes failed: %v", key.NodeID, err)
-		handlers.SendJSONError(w, "Routes unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Routes unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	out := make([]string, 0)

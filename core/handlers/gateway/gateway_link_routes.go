@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -179,7 +180,7 @@ func (h *GatewayHandler) resolveOwnedLinkToken(userID, linkID string) (string, e
 func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userID").(string)
 	if !handlers.RouteOnlyActive(h.state, r) {
-		handlers.SendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
 		return
 	}
 	// The same gate minting a kit passes. Only the panel checked it before, so a
@@ -430,20 +431,20 @@ func (h *GatewayHandler) SetLinkRouteProxyProtocol(w http.ResponseWriter, r *htt
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	domain := mux.Vars(r)["domain"]
 	if domain == "" {
-		handlers.SendJSONError(w, "domain required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "domain required", http.StatusBadRequest)
 		return
 	}
 	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
-		handlers.SendJSONError(w, "Route not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
 	if msg := handlers.OwnerRefusal(h.state, r, userID); msg != "" {
-		handlers.SendJSONError(w, msg, http.StatusForbidden)
+		httpx.SendJSONError(w, msg, http.StatusForbidden)
 		return
 	}
 	enabled, ok := decodeProxyProtocolBody(r)
 	if !ok {
-		handlers.SendJSONError(w, `Invalid request: expected {"enabled": true|false}`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `Invalid request: expected {"enabled": true|false}`, http.StatusBadRequest)
 		return
 	}
 	if h.proxyProtocolOff(w, r, enabled) {
@@ -454,11 +455,11 @@ func (h *GatewayHandler) SetLinkRouteProxyProtocol(w http.ResponseWriter, r *htt
 	}
 	if err := h.state.Gateway.SetCoreOwnedRouteProxyProtocol(domain, enabled); err != nil {
 		if errors.Is(err, services.ErrRouteNotStored) {
-			handlers.SendJSONError(w, "Route not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 			return
 		}
 		log.Printf("proxy-protocol: link route %s: %v", domain, err)
-		handlers.SendJSONError(w, "Failed to update the route", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to update the route", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "proxyProtocol": enabled})

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/mailer"
 	"dylaris-core/services"
 )
@@ -41,33 +42,33 @@ type setUserEmailRequest struct {
 // there.
 func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
-	id, ok := parseUserID(w, r)
+	id, ok := httpx.ParseUserID(w, r)
 	if !ok {
 		return
 	}
 	var req setUserEmailRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	if email == "" || !emailRegex.MatchString(email) {
-		sendJSONError(w, "Invalid email address", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid email address", http.StatusBadRequest)
 		return
 	}
 
 	target, err := h.state.Store.GetUserByID(id)
 	if err != nil || target == nil {
-		sendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 	// The address is where a password reset goes, so this is a password change
 	// by other means.
 	if !mayManageAccount(h.state, r, target) {
-		sendJSONError(w, "You cannot change the email of an account with more rights than yours", http.StatusForbidden)
+		httpx.SendJSONError(w, "You cannot change the email of an account with more rights than yours", http.StatusForbidden)
 		return
 	}
 
@@ -87,7 +88,7 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	// There is no unique index on users.email, so this is the only thing
 	// standing between two accounts and the same reset mailbox.
 	if existing, eerr := h.state.Store.GetUserByEmail(email); eerr == nil && existing != nil && existing.ID != id {
-		sendJSONError(w, "That email address is already in use", http.StatusConflict)
+		httpx.SendJSONError(w, "That email address is already in use", http.StatusConflict)
 		return
 	}
 
@@ -103,7 +104,7 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	// Read before the write: the notice goes to the address being replaced.
 	oldEmail := target.Email
 	if err := h.state.Store.SetUserEmail(id, email); err != nil {
-		sendJSONError(w, "Failed to update the email address", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to update the email address", http.StatusInternalServerError)
 		return
 	}
 

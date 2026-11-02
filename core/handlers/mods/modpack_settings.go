@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 )
 
 type ModpackSettingsHandler struct {
@@ -184,14 +185,14 @@ func modpackS3SecretRebound(req modpackSettings, get func(string) string) bool {
 func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	var req modpackSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Provider == "" {
 		req.Provider = "local"
 	}
 	if !validModpackProvider(req.Provider) {
-		handlers.SendJSONError(w, "provider must be local, s3 or core-storage", http.StatusBadRequest)
+		httpx.SendJSONError(w, "provider must be local, s3 or core-storage", http.StatusBadRequest)
 		return
 	}
 	// Checked for every provider, not only "s3": the writes below persist the
@@ -200,7 +201,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// this on req.Provider == "s3" would leave a save with provider "local" as
 	// an open path for the same credential.
 	if err := handlers.ValidateS3Endpoint("modpacks", req.S3Endpoint); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	get := func(k string) string {
@@ -208,7 +209,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return v
 	}
 	if modpackS3SecretRebound(req, get) {
-		handlers.SendJSONError(w, "the s3 endpoint, bucket or access key changed, so the stored secret cannot be reused - re-enter the secret access key with this change",
+		httpx.SendJSONError(w, "the s3 endpoint, bucket or access key changed, so the stored secret cannot be reused - re-enter the secret access key with this change",
 			http.StatusBadRequest)
 		return
 	}
@@ -216,7 +217,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// above is: the write below persists it either way.
 	req.CorePublicURL = strings.TrimSpace(req.CorePublicURL)
 	if err := handlers.ValidatePublicBaseURL("core public URL", req.CorePublicURL); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -260,13 +261,13 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {
-			handlers.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 	if req.S3SecretKey != "" {
 		if err := h.state.Store.SetSetting("modpack_storage_s3_secret_key", req.S3SecretKey); err != nil {
-			handlers.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -290,19 +291,19 @@ type modpackUserFlagRequest struct {
 // SetUserFlag PATCH /api/admin/users/{id}/modpack-flag - PANEL settings.write
 // (RequireCap at the route).
 func (h *ModpackSettingsHandler) SetUserFlag(w http.ResponseWriter, r *http.Request) {
-	userID, ok := handlers.ParseUserID(w, r)
+	userID, ok := httpx.ParseUserID(w, r)
 	if !ok {
 		return
 	}
 	var req modpackUserFlagRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	// Marks the row manual as a side effect, so the platform authoring toggle's
 	// bulk apply leaves this decision alone (see SetUserCanCreateModpacks).
 	if err := h.state.Store.SetUserCanCreateModpacks(userID, req.CanCreate); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": userID})
@@ -318,12 +319,12 @@ func (h *ModpackSettingsHandler) SetUserFlag(w http.ResponseWriter, r *http.Requ
 // hand" checkbox, which resets EVERY overridden user at once. Without it a row
 // marked manual once would be pinned out of every later toggle forever.
 func (h *ModpackSettingsHandler) ClearUserFlagOverride(w http.ResponseWriter, r *http.Request) {
-	userID, ok := handlers.ParseUserID(w, r)
+	userID, ok := httpx.ParseUserID(w, r)
 	if !ok {
 		return
 	}
 	if err := h.state.Store.ClearUserCanCreateModpacksManual(userID); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": userID})

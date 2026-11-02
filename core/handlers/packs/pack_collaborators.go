@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 
 	"github.com/gorilla/mux"
 )
@@ -27,14 +27,14 @@ func (h *PacksHandler) PackAudit(w http.ResponseWriter, r *http.Request) {
 		p, manages := h.packAccess(r, packID, packDeletePack)
 		isAdmin, _ := r.Context().Value("isAdmin").(bool)
 		if p == nil || (!manages && !isAdmin) {
-			handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+			httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 			return
 		}
 		ownerID = p.OwnerID
 	}
 	events, err := h.state.Store.ListPackAudit(ownerID, packID, 200)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load the history", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load the history", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "events": events})

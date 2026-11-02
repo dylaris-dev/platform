@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
@@ -63,17 +64,17 @@ type nodeServerContents struct {
 // asking.
 func (h *NodeHandler) myNode(w http.ResponseWriter, r *http.Request) (*models.Node, bool) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "DB error", 503)
+		httpx.SendJSONError(w, "DB error", 503)
 		return nil, false
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid node id", 400)
+		httpx.SendJSONError(w, "Invalid node id", 400)
 		return nil, false
 	}
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil || node == nil {
-		handlers.SendJSONError(w, "Node not found", 404)
+		httpx.SendJSONError(w, "Node not found", 404)
 		return nil, false
 	}
 	uid := handlers.ByonCallerID(r)
@@ -81,7 +82,7 @@ func (h *NodeHandler) myNode(w http.ResponseWriter, r *http.Request) (*models.No
 		// 404 rather than 403: on a /me route, "not yours" and "does not exist"
 		// are the same answer, and the difference would confirm the existence of
 		// other tenants' nodes to anyone who guessed an id.
-		handlers.SendJSONError(w, "Node not found", 404)
+		httpx.SendJSONError(w, "Node not found", 404)
 		return nil, false
 	}
 	return node, true
@@ -101,7 +102,7 @@ func (h *NodeHandler) GetMyNodeContents(w http.ResponseWriter, r *http.Request) 
 	}
 	servers, err := h.state.Store.ListServersByNode(node.ID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load servers", 500)
+		httpx.SendJSONError(w, "Failed to load servers", 500)
 		return
 	}
 	out := make([]nodeServerContents, 0, len(servers))
@@ -164,17 +165,17 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 		}
 		handlers.PurgeBackupArchivesForServers(h.state, services.ServerIDs(servers))
 		if err := h.state.Store.DeleteServersByNode(node.ID); err != nil {
-			handlers.SendJSONError(w, "Failed to delete the servers on this machine", 500)
+			httpx.SendJSONError(w, "Failed to delete the servers on this machine", 500)
 			return
 		}
 	}
 
 	if err := h.state.Store.DeleteNode(node.ID); err != nil {
 		if errors.Is(err, store.ErrNodeHasServers) {
-			handlers.SendJSONError(w, "This machine still has servers on it. Delete them with it, or move them to another machine first.", 409)
+			httpx.SendJSONError(w, "This machine still has servers on it. Delete them with it, or move them to another machine first.", 409)
 			return
 		}
-		handlers.SendJSONError(w, "Delete failed", 500)
+		httpx.SendJSONError(w, "Delete failed", 500)
 		return
 	}
 
@@ -211,7 +212,7 @@ func (h *NodeHandler) ResetMyNodePairing(w http.ResponseWriter, r *http.Request)
 	}
 	if err := resetNodePairing(r.Context(), h.state, node, handlers.ByonCallerID(r)); err != nil {
 		log.Printf("reset-my-pairing: %v", err)
-		handlers.SendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -231,7 +232,7 @@ func (h *NodeHandler) GetMyNodeJoinAttempt(w http.ResponseWriter, r *http.Reques
 	}
 	a, err := h.state.Store.GetNodeJoinAttempt(node.Token)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	var out interface{}
@@ -278,19 +279,19 @@ func (h *NodeHandler) AdmitMyNode(w http.ResponseWriter, r *http.Request) {
 		Fingerprint string `json:"fingerprint"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Fingerprint) == "" {
-		handlers.SendJSONError(w, "Say which key to admit", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Say which key to admit", http.StatusBadRequest)
 		return
 	}
 	fp := normalizeFingerprint(req.Fingerprint)
 	if len(fp) != 16 && len(fp) != 64 {
-		handlers.SendJSONError(w, "Paste the fingerprint your machine logs: the line starting with \"nodekey: this node's key fingerprint is\".", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Paste the fingerprint your machine logs: the line starting with \"nodekey: this node's key fingerprint is\".", http.StatusBadRequest)
 		return
 	}
 	// Same order as the operator's Admit: take the current login away first, or
 	// the next connect is answered with a challenge and never reaches the check.
 	if err := (&NodeAdmissionHandler{state: h.state}).revokeNodeLogin(node.ID, false); err != nil {
 		log.Printf("admit-my-node: %v", err)
-		handlers.SendJSONError(w, "Failed to admit the machine", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to admit the machine", http.StatusInternalServerError)
 		return
 	}
 	if h.state.Redis != nil {
@@ -299,11 +300,11 @@ func (h *NodeHandler) AdmitMyNode(w http.ResponseWriter, r *http.Request) {
 	uid := handlers.ByonCallerID(r)
 	armed, err := h.state.Store.ApproveNodeJoinAttemptForKey(node.Token, fp, uid)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	if !armed {
-		handlers.SendJSONError(w, "The admission could not be armed. Try again.", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "The admission could not be armed. Try again.", http.StatusInternalServerError)
 		return
 	}
 	_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{

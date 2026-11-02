@@ -1,7 +1,7 @@
 package packs
 
 import (
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"encoding/json"
 	"github.com/gorilla/mux"
 	"net/http"
@@ -14,18 +14,18 @@ func (h *PacksHandler) SetRecommended(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	p, ok := h.packAccess(r, id, packEdit)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	var req struct {
 		BuildID *int `json:"buildId"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&req); err != nil || req.BuildID == nil || *req.BuildID < 0 {
-		handlers.SendJSONError(w, "Choose a build or automatic latest release", 400)
+		httpx.SendJSONError(w, "Choose a build or automatic latest release", 400)
 		return
 	}
 	if err := h.state.Store.SetPackRecommended(r.Context(), p.ID, *req.BuildID); err != nil {
-		handlers.SendJSONError(w, "Could not set recommended build; it must belong to this pack", 409)
+		httpx.SendJSONError(w, "Could not set recommended build; it must belong to this pack", 409)
 		return
 	}
 	h.audit(r, p.OwnerID, p.ID, "pack.recommended_changed", map[string]any{"buildId": *req.BuildID})

@@ -1,7 +1,7 @@
 package packs
 
 import (
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"encoding/json"
@@ -18,13 +18,13 @@ var modrinthIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 func (h *PacksHandler) Favorites(w http.ResponseWriter, r *http.Request) {
 	user, _ := r.Context().Value("userID").(string)
 	if user == "" {
-		handlers.SendJSONError(w, "Unauthenticated", 401)
+		httpx.SendJSONError(w, "Unauthenticated", 401)
 		return
 	}
 	if r.Method == http.MethodGet {
 		rows, err := h.state.Store.ListModrinthFavorites(r.Context(), user)
 		if err != nil {
-			handlers.SendJSONError(w, "Could not load favorites", 500)
+			httpx.SendJSONError(w, "Could not load favorites", 500)
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "favorites": rows})
@@ -35,25 +35,25 @@ func (h *PacksHandler) Favorites(w http.ResponseWriter, r *http.Request) {
 		Remove    bool   `json:"remove"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || !modrinthIDPattern.MatchString(req.ProjectID) {
-		handlers.SendJSONError(w, "Valid projectId required", 400)
+		httpx.SendJSONError(w, "Valid projectId required", 400)
 		return
 	}
 	f := models.ModrinthFavorite{ProjectID: req.ProjectID}
 	if !req.Remove {
 		projects, err := services.FetchProjects(r.Context(), []string{req.ProjectID})
 		if err != nil {
-			handlers.SendJSONError(w, "Modrinth project lookup failed", 502)
+			httpx.SendJSONError(w, "Modrinth project lookup failed", 502)
 			return
 		}
 		p, ok := projects[req.ProjectID]
 		if !ok {
-			handlers.SendJSONError(w, "Project not found", 404)
+			httpx.SendJSONError(w, "Project not found", 404)
 			return
 		}
 		f.Title = p.Title
 	}
 	if err := h.state.Store.SetModrinthFavorite(r.Context(), user, f, req.Remove); err != nil {
-		handlers.SendJSONError(w, "Could not save favorite", 500)
+		httpx.SendJSONError(w, "Could not save favorite", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -63,13 +63,13 @@ func (h *PacksHandler) Favorites(w http.ResponseWriter, r *http.Request) {
 func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 	user, _ := r.Context().Value("userID").(string)
 	if user == "" {
-		handlers.SendJSONError(w, "Unauthenticated", 401)
+		httpx.SendJSONError(w, "Unauthenticated", 401)
 		return
 	}
 	if r.Method == http.MethodGet {
 		rows, err := h.state.Store.ListModrinthWatches(r.Context(), user, false)
 		if err != nil {
-			handlers.SendJSONError(w, "Could not load alerts", 500)
+			httpx.SendJSONError(w, "Could not load alerts", 500)
 			return
 		}
 		visible := []models.ModrinthWatch{}
@@ -93,20 +93,20 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 		Future    bool     `json:"future"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384)).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request", 400)
+		httpx.SendJSONError(w, "Invalid request", 400)
 		return
 	}
 	if req.Loader != "fabric" && req.Loader != "forge" && req.Loader != "neoforge" && req.Loader != "quilt" {
-		handlers.SendJSONError(w, "Choose a mod loader", 400)
+		httpx.SendJSONError(w, "Choose a mod loader", 400)
 		return
 	}
 	if (!req.Future && len(req.Targets) == 0) || len(req.Targets) > 32 {
-		handlers.SendJSONError(w, "Choose up to 32 target versions or future releases", 400)
+		httpx.SendJSONError(w, "Choose up to 32 target versions or future releases", 400)
 		return
 	}
 	all, err := services.FetchGameVersions(r.Context())
 	if err != nil {
-		handlers.SendJSONError(w, "Could not load Minecraft releases", 502)
+		httpx.SendJSONError(w, "Could not load Minecraft releases", 502)
 		return
 	}
 	releases := services.ReleaseVersions(all)
@@ -117,7 +117,7 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 	targets := []string{}
 	for _, v := range req.Targets {
 		if !valid[v] {
-			handlers.SendJSONError(w, "Target must be a stable Minecraft release", 400)
+			httpx.SendJSONError(w, "Target must be a stable Minecraft release", 400)
 			return
 		}
 		if valid[v] {
@@ -132,13 +132,13 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 	if req.PackID > 0 {
 		pack, ok := h.packAccess(r, req.PackID, packRead)
 		if !ok {
-			handlers.SendJSONError(w, "Forbidden", 403)
+			httpx.SendJSONError(w, "Forbidden", 403)
 			return
 		}
 		if req.BuildID > 0 {
 			build, err := h.state.Store.GetPackBuild(req.BuildID)
 			if err != nil || build == nil || build.PackID != pack.ID {
-				handlers.SendJSONError(w, "Build not found", 404)
+				httpx.SendJSONError(w, "Build not found", 404)
 				return
 			}
 		}
@@ -148,29 +148,29 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 		_ = services.RefreshPackWatchSource(h.state.Store, &watch)
 	} else {
 		if !modrinthIDPattern.MatchString(req.ProjectID) {
-			handlers.SendJSONError(w, "Valid projectId required", 400)
+			httpx.SendJSONError(w, "Valid projectId required", 400)
 			return
 		}
 		projects, err := services.FetchProjects(r.Context(), []string{req.ProjectID})
 		if err != nil {
-			handlers.SendJSONError(w, "Project lookup failed", 502)
+			httpx.SendJSONError(w, "Project lookup failed", 502)
 			return
 		}
 		project, ok := projects[req.ProjectID]
 		if !ok {
-			handlers.SendJSONError(w, "Project not found", 404)
+			httpx.SendJSONError(w, "Project not found", 404)
 			return
 		}
 		watch.Title = project.Title
 		watch.Projects = append(watch.Projects, models.ModrinthWatchProject{ProjectID: req.ProjectID, Title: project.Title, ContentType: project.ProjectType})
 	}
 	if !watch.FollowPack && len(watch.Projects) == 0 || len(watch.Projects) > 512 {
-		handlers.SendJSONError(w, "An alert needs between 1 and 512 linked mods", 422)
+		httpx.SendJSONError(w, "An alert needs between 1 and 512 linked mods", 422)
 		return
 	}
 	watch.Title = strings.TrimSpace(watch.Title)
 	if err := h.state.Store.CreateModrinthWatch(r.Context(), &watch); err != nil {
-		handlers.SendJSONError(w, "Could not create alert; check your 100-alert limit", 409)
+		httpx.SendJSONError(w, "Could not create alert; check your 100-alert limit", 409)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "watch": watch})
@@ -180,16 +180,16 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 func (h *PacksHandler) DeleteWatch(w http.ResponseWriter, r *http.Request) {
 	user, _ := r.Context().Value("userID").(string)
 	if user == "" {
-		handlers.SendJSONError(w, "Unauthenticated", 401)
+		httpx.SendJSONError(w, "Unauthenticated", 401)
 		return
 	}
 	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
 	if err != nil || id <= 0 {
-		handlers.SendJSONError(w, "Invalid id", 400)
+		httpx.SendJSONError(w, "Invalid id", 400)
 		return
 	}
 	if err = h.state.Store.DeleteModrinthWatch(r.Context(), id, user); err != nil {
-		handlers.SendJSONError(w, "Could not remove alert", 500)
+		httpx.SendJSONError(w, "Could not remove alert", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

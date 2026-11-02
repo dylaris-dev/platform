@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -40,12 +41,12 @@ func NewSSHKeysHandler(state *handlers.AppState) *SSHKeysHandler {
 func (h *SSHKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	keys, err := h.state.Store.ListSSHKeysByUser(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load SSH keys", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load SSH keys", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "keys": keys})
@@ -64,22 +65,22 @@ type addSSHKeyRequest struct {
 func (h *SSHKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	var req addSSHKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || len(req.Name) > 128 {
-		handlers.SendJSONError(w, "Give the key a name of up to 128 characters", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Give the key a name of up to 128 characters", http.StatusBadRequest)
 		return
 	}
 	line, fp, err := normalizeSSHPublicKey(req.PublicKey)
 	if err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if rerr := handlers.RequireReauth(h.state, userID, req.Password, req.Code); rerr != nil {
@@ -89,14 +90,14 @@ func (h *SSHKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	added, err := h.state.Store.AddSSHKey(&models.SSHKey{UserID: userID, Name: req.Name, PublicKey: line, Fingerprint: fp}, maxSSHKeysPerUser)
 	switch {
 	case errors.Is(err, store.ErrSSHKeyExists):
-		handlers.SendJSONError(w, "This key is already on your account", http.StatusConflict)
+		httpx.SendJSONError(w, "This key is already on your account", http.StatusConflict)
 		return
 	case err != nil:
 		log.Printf("ssh keys: add for %s: %v", userID, err)
-		handlers.SendJSONError(w, "Failed to add the SSH key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to add the SSH key", http.StatusInternalServerError)
 		return
 	case !added:
-		handlers.SendJSONError(w, "An account can hold up to "+strconv.Itoa(maxSSHKeysPerUser)+" SSH keys. Remove one first.", http.StatusConflict)
+		httpx.SendJSONError(w, "An account can hold up to "+strconv.Itoa(maxSSHKeysPerUser)+" SSH keys. Remove one first.", http.StatusConflict)
 		return
 	}
 	handlers.LogIdentityAudit(h.state, r, AuditEventSSHKeyAdded, userID, userID, map[string]interface{}{"name": req.Name, "fingerprint": fp})
@@ -108,21 +109,21 @@ func (h *SSHKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *SSHKeysHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid key ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid key ID", http.StatusBadRequest)
 		return
 	}
 	found, err := h.state.Store.DeleteSSHKey(userID, id)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to remove the SSH key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to remove the SSH key", http.StatusInternalServerError)
 		return
 	}
 	if !found {
-		handlers.SendJSONError(w, "Key not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Key not found", http.StatusNotFound)
 		return
 	}
 	handlers.LogIdentityAudit(h.state, r, AuditEventSSHKeyRemoved, userID, userID, map[string]interface{}{"id": id})

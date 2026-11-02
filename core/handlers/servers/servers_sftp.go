@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 
 	"github.com/gorilla/mux"
 )
@@ -19,7 +19,7 @@ func (h *ServerHandler) GetSftpCredentials(w http.ResponseWriter, r *http.Reques
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
@@ -42,7 +42,7 @@ func (h *ServerHandler) GetSftpCredentials(w http.ResponseWriter, r *http.Reques
 
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
-		handlers.SendJSONError(w, "Node not found", 404)
+		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
 

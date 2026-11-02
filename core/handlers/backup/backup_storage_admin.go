@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	backupstorage "dylaris-core/storage/backup"
@@ -38,7 +38,7 @@ type adminStorageTarget struct {
 func (h *BackupHandler) AdminListUserStorages(w http.ResponseWriter, r *http.Request) {
 	list, err := h.state.Store.ListBackupStoragesByOwner(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load the user's storage targets", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load the user's storage targets", http.StatusInternalServerError)
 		return
 	}
 	out := make([]adminStorageTarget, 0, len(list))
@@ -48,7 +48,7 @@ func (h *BackupHandler) AdminListUserStorages(w http.ResponseWriter, r *http.Req
 		host, _, _ := services.HostPortFromEndpoint(cfg.Endpoint)
 		usage, err := h.state.Store.BackupStorageUsage(bs.ID)
 		if err != nil {
-			handlers.SendJSONError(w, "Failed to load the user's storage targets", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to load the user's storage targets", http.StatusInternalServerError)
 			return
 		}
 		out = append(out, adminStorageTarget{
@@ -69,20 +69,20 @@ func (h *BackupHandler) AdminDeleteUserStorage(w http.ResponseWriter, r *http.Re
 	userID := mux.Vars(r)["id"]
 	id, err := strconv.Atoi(mux.Vars(r)["storageId"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
 		return
 	}
 	bs, err := h.state.Store.GetBackupStorage(id)
 	if err != nil || bs == nil || bs.OwnerID == nil || *bs.OwnerID != userID {
-		handlers.SendJSONError(w, "Storage target not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Storage target not found", http.StatusNotFound)
 		return
 	}
 	if err := h.state.Store.DeleteBackupStorage(bs.ID); err != nil {
 		if errors.Is(err, store.ErrStorageInUse) {
-			handlers.SendJSONError(w, "Backups, backup schedules, templates or the user's storage choices still use this storage target. The user has to move or delete them first.", http.StatusConflict)
+			httpx.SendJSONError(w, "Backups, backup schedules, templates or the user's storage choices still use this storage target. The user has to move or delete them first.", http.StatusConflict)
 			return
 		}
-		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	actor, _ := r.Context().Value("userID").(string)

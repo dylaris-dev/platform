@@ -7,6 +7,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -243,7 +244,7 @@ func TestParseIntDefault(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := handlers.ParseIntDefault(c.in, c.def); got != c.want {
+			if got := httpx.ParseIntDefault(c.in, c.def); got != c.want {
 				t.Errorf("parseIntDefault(%q, %d) = %d, want %d", c.in, c.def, got, c.want)
 			}
 		})

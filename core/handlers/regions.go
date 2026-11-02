@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 )
 
@@ -21,7 +22,7 @@ func NewRegionsHandler(state *AppState) *RegionsHandler {
 func (h *RegionsHandler) ListRegions(w http.ResponseWriter, r *http.Request) {
 	regions, err := h.state.Store.ListRegions(false)
 	if err != nil {
-		sendJSONError(w, "Failed to load regions", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load regions", http.StatusInternalServerError)
 		return
 	}
 	if regions == nil {

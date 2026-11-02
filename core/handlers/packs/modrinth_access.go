@@ -11,8 +11,7 @@ import (
 	"net/http"
 	"time"
 
-	"dylaris-core/handlers"
-
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -124,7 +123,7 @@ func (h *PacksHandler) ClearModrinthMemberships(w http.ResponseWriter, r *http.R
 	userID, _ := r.Context().Value("userID").(string)
 	n, err := h.state.Store.ClearModrinthMemberships(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not clear", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not clear", http.StatusInternalServerError)
 		return
 	}
 	h.teamScanMu.Lock()

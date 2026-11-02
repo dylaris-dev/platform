@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
@@ -34,11 +35,11 @@ type APIKeysHandler struct {
 	rateLimiter *apiKeyRateLimiter
 	// ipLimiter throttles per source IP BEFORE the key lookup so invalid-key
 	// guessing can't hammer the DB hash lookup unbounded.
-	ipLimiter *IPRateLimiter
+	ipLimiter *httpx.IPRateLimiter
 }
 
 func NewAPIKeysHandler(state *AppState) *APIKeysHandler {
-	return &APIKeysHandler{state: state, rateLimiter: newAPIKeyRateLimiter(), ipLimiter: NewIPRateLimiter()}
+	return &APIKeysHandler{state: state, rateLimiter: newAPIKeyRateLimiter(), ipLimiter: httpx.NewIPRateLimiter()}
 }
 
 type createAPIKeyRequest struct {
@@ -69,31 +70,31 @@ type createAPIKeyResponse struct {
 func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	var req createAPIKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	if msg := apiKeyNameProblem(req.Name); msg != "" {
-		sendJSONError(w, msg, http.StatusBadRequest)
+		httpx.SendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
 	if len(req.Permissions) == 0 {
-		sendJSONError(w, "At least one permission required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "At least one permission required", http.StatusBadRequest)
 		return
 	}
 	if req.ExpiresInDays < 0 || req.ExpiresInDays > maxKeyExpiryDays {
-		sendJSONError(w, fmt.Sprintf("expiresInDays must be between 1 and %d, or 0 for never", maxKeyExpiryDays), http.StatusBadRequest)
+		httpx.SendJSONError(w, fmt.Sprintf("expiresInDays must be between 1 and %d, or 0 for never", maxKeyExpiryDays), http.StatusBadRequest)
 		return
 	}
 
 	for _, p := range req.Permissions {
 		if !authz.ValidKeyCap(p) {
-			sendJSONError(w, "Unknown permission: "+p, http.StatusBadRequest)
+			httpx.SendJSONError(w, "Unknown permission: "+p, http.StatusBadRequest)
 			return
 		}
 	}
@@ -109,13 +110,13 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// who has not turned user keys on gets none minted, whatever the caller
 		// is otherwise entitled to.
 		if !h.userKeysAllowed(r) {
-			sendJSONError(w, "API keys are not enabled for users on this platform", http.StatusForbidden)
+			httpx.SendJSONError(w, "API keys are not enabled for users on this platform", http.StatusForbidden)
 			return
 		}
 		if allowed := h.allowedUserKeyCaps(r); allowed != nil {
 			for _, p := range req.Permissions {
 				if !allowed[p] {
-					sendJSONError(w, "This platform does not allow that permission on a user key: "+p, http.StatusForbidden)
+					httpx.SendJSONError(w, "This platform does not allow that permission on a user key: "+p, http.StatusForbidden)
 					return
 				}
 			}
@@ -134,13 +135,13 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// it at creation rather than mint a key whose only safeguard is the use-time
 		// middleware (defense in depth).
 		if len(serverCaps) > 0 && len(req.Servers) == 0 {
-			sendJSONError(w, "Server capabilities require at least one server in scope", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Server capabilities require at least one server in scope", http.StatusBadRequest)
 			return
 		}
 		for _, serverUUID := range req.Servers {
 			srv, err := h.state.Store.GetServerByUUID(serverUUID)
 			if err != nil {
-				sendJSONError(w, "Server not found: "+serverUUID, http.StatusBadRequest)
+				httpx.SendJSONError(w, "Server not found: "+serverUUID, http.StatusBadRequest)
 				return
 			}
 			res, rerr := h.state.Authz.Resolve(identity, srv.ID)
@@ -148,12 +149,12 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 			// caller cannot reach, so the error alone let any server's uuid into
 			// a key's scope. Holding something on the server is the floor for naming it.
 			if rerr != nil || !res.HasAnyServerCap() {
-				sendJSONError(w, "No access to server: "+serverUUID, http.StatusForbidden)
+				httpx.SendJSONError(w, "No access to server: "+serverUUID, http.StatusForbidden)
 				return
 			}
 			for _, capID := range serverCaps {
 				if !res.HasCap(capID) {
-					sendJSONError(w, "No "+capID+" access to server: "+serverUUID, http.StatusForbidden)
+					httpx.SendJSONError(w, "No "+capID+" access to server: "+serverUUID, http.StatusForbidden)
 					return
 				}
 			}
@@ -164,13 +165,13 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// live keys of one account must not share it.
 	existing, err := h.state.Store.ListAPIKeysByUser(userID)
 	if err != nil {
-		sendJSONError(w, "Failed to check existing keys", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to check existing keys", http.StatusInternalServerError)
 		return
 	}
 	for _, k := range existing {
 		live := k.RevokedAt == nil && (k.ExpiresAt == nil || time.Now().Before(*k.ExpiresAt))
 		if live && strings.EqualFold(k.Name, req.Name) {
-			sendJSONError(w, "You already have a key with this name", http.StatusConflict)
+			httpx.SendJSONError(w, "You already have a key with this name", http.StatusConflict)
 			return
 		}
 	}
@@ -190,7 +191,7 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	plaintext, err := generatePlaintextKey()
 	if err != nil {
-		sendJSONError(w, "Failed to mint key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to mint key", http.StatusInternalServerError)
 		return
 	}
 	rate := req.RatePerMin
@@ -201,7 +202,7 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// million a minute - the per-key limit switched off, leaving only the
 	// per-IP one, which a caller with several addresses does not meet.
 	if rate > maxKeyRatePerMin {
-		sendJSONError(w, fmt.Sprintf("ratePerMin can be at most %d", maxKeyRatePerMin), http.StatusBadRequest)
+		httpx.SendJSONError(w, fmt.Sprintf("ratePerMin can be at most %d", maxKeyRatePerMin), http.StatusBadRequest)
 		return
 	}
 	k := &models.APIKey{
@@ -220,7 +221,7 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := h.state.Store.CreateAPIKey(k)
 	if err != nil {
-		sendJSONError(w, "Failed to save key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save key", http.StatusInternalServerError)
 		return
 	}
 	k.ID = id
@@ -267,12 +268,12 @@ type apiKeyOptions struct {
 func (h *APIKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	keys, err := h.state.Store.ListAPIKeysByUser(userID)
 	if err != nil {
-		sendJSONError(w, "Failed to list keys", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list keys", http.StatusInternalServerError)
 		return
 	}
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
@@ -293,12 +294,12 @@ func (h *APIKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *APIKeysHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	keyID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if err := h.state.Store.RevokeAPIKey(keyID, userID); err != nil {
-		sendJSONError(w, "Key not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Key not found", http.StatusNotFound)
 		return
 	}
 	meta := map[string]interface{}{"keyId": keyID}
@@ -465,13 +466,13 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 		return func(w http.ResponseWriter, r *http.Request) {
 			auth := r.Header.Get("Authorization")
 			if !strings.HasPrefix(auth, "Bearer ") {
-				sendJSONError(w, "Missing Authorization", http.StatusUnauthorized)
+				httpx.SendJSONError(w, "Missing Authorization", http.StatusUnauthorized)
 				return
 			}
 			plaintext := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
 			plaintext = strings.TrimPrefix(plaintext, "dyl_")
 			if plaintext == "" {
-				sendJSONError(w, "Invalid key", http.StatusUnauthorized)
+				httpx.SendJSONError(w, "Invalid key", http.StatusUnauthorized)
 				return
 			}
 			// Failed attempts are throttled by source IP before the DB lookup, so
@@ -479,16 +480,16 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 			// failures are charged: counting valid requests too capped every key
 			// at this number from one host, below the per-key rate it was minted
 			// with.
-			ip := clientIP(r)
-			if h.ipLimiter.exhausted(ip, keyFailuresPerMin) {
+			ip := httpx.ClientIP(r)
+			if h.ipLimiter.Exhausted(ip, keyFailuresPerMin) {
 				w.Header().Set("Retry-After", "60")
-				sendJSONError(w, "Too many requests", http.StatusTooManyRequests)
+				httpx.SendJSONError(w, "Too many requests", http.StatusTooManyRequests)
 				return
 			}
 			key, err := h.state.Store.GetAPIKeyByHash(HashAPIKey(plaintext))
 			if err != nil {
-				h.ipLimiter.allow(ip, keyFailuresPerMin)
-				sendJSONError(w, "Invalid key", http.StatusUnauthorized)
+				h.ipLimiter.Allow(ip, keyFailuresPerMin)
+				httpx.SendJSONError(w, "Invalid key", http.StatusUnauthorized)
 				return
 			}
 
@@ -505,17 +506,17 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 				// pointed at what it may not touch must be throttled like a
 				// guess, or each refusal is a free DB round and an audit write.
 				if keyRefusal(sw.status) {
-					h.ipLimiter.allow(ip, keyFailuresPerMin)
+					h.ipLimiter.Allow(ip, keyFailuresPerMin)
 				}
 				h.auditKeyRequest(r, key, shape, uuidVar, requiredPerm, sw.status)
 			}()
 
 			if key.RevokedAt != nil {
-				sendJSONError(w, "Key revoked", http.StatusUnauthorized)
+				httpx.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
 				return
 			}
 			if key.ExpiresAt != nil && time.Now().After(*key.ExpiresAt) {
-				sendJSONError(w, "Key expired", http.StatusUnauthorized)
+				httpx.SendJSONError(w, "Key expired", http.StatusUnauthorized)
 				return
 			}
 
@@ -530,12 +531,12 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 					// mistake. Failing loudly beats silently granting every
 					// SERVER cap the key holds, which is what inferring the
 					// shape from the path used to do.
-					sendJSONError(w, "Route misconfigured: server-scoped key route without a server", http.StatusInternalServerError)
+					httpx.SendJSONError(w, "Route misconfigured: server-scoped key route without a server", http.StatusInternalServerError)
 					return
 				}
 				serverAllowed = key.Scope.AllowsServer(uuidVar)
 				if !serverAllowed {
-					sendJSONError(w, "Key not scoped to this server", http.StatusForbidden)
+					httpx.SendJSONError(w, "Key not scoped to this server", http.StatusForbidden)
 					return
 				}
 			case keyRouteOwner:
@@ -549,7 +550,7 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 			// rcon.exec, while denying anything the key does not carry.
 			if requiredPerm != "" {
 				if !authz.ResolveAPIKey(key.Scope.Permissions, serverAllowed).HasCap(requiredPerm) {
-					sendJSONError(w, "Key lacks required permission", http.StatusForbidden)
+					httpx.SendJSONError(w, "Key lacks required permission", http.StatusForbidden)
 					return
 				}
 			}
@@ -561,7 +562,7 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 			}
 			if !h.rateLimiter.allow(key.ID, key.RatePerMin) {
 				w.Header().Set("Retry-After", "60")
-				sendJSONError(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				httpx.SendJSONError(w, "Rate limit exceeded", http.StatusTooManyRequests)
 				return
 			}
 			// Best-effort last-used stamp, throttled to ~once/min/key so a
@@ -578,7 +579,7 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 			// enforced - which a key request never passes through.
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				if demo, derr := isDemoAccountChecked(h.state, key.UserID); derr != nil || demo {
-					sendJSONError(w, "This account is read-only", http.StatusForbidden)
+					httpx.SendJSONError(w, "This account is read-only", http.StatusForbidden)
 					return
 				}
 			}
@@ -619,7 +620,7 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 	// An anonymized account's keys are revoked with it (AnonymizeUser); this
 	// covers a key that slipped past that, or an account anonymized before.
 	if err != nil || owner == nil || owner.DeletionStatus == "anonymized" {
-		sendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
 		return false
 	}
 	// Operator gate at USE time, not only at mint. Enforcing it only when a key
@@ -627,7 +628,7 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 	// working afterwards, which is not what an operator who turned it off means.
 	// The owner is loaded here anyway, so this costs nothing extra.
 	if !owner.IsAdmin && !h.userKeysAllowed(r) {
-		sendJSONError(w, "API keys are not enabled for users on this platform", http.StatusForbidden)
+		httpx.SendJSONError(w, "API keys are not enabled for users on this platform", http.StatusForbidden)
 		return false
 	}
 	// A key in use is an account in use, as a login is: an automation-only
@@ -649,7 +650,7 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 	// capabilities were never checked against the list at all.
 	if !owner.IsAdmin {
 		if allowed := h.allowedUserKeyCaps(r); allowed != nil && !allowed[requiredPerm] {
-			sendJSONError(w, "This platform no longer allows that permission on a user key", http.StatusForbidden)
+			httpx.SendJSONError(w, "This platform no longer allows that permission on a user key", http.StatusForbidden)
 			return false
 		}
 	}
@@ -663,7 +664,7 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 	if serverUUID != "" {
 		srv, serr := h.state.Store.GetServerByUUID(serverUUID)
 		if serr != nil || srv == nil {
-			sendJSONError(w, "Server not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 			return false
 		}
 		serverID = srv.ID
@@ -675,11 +676,11 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 		IsAdmin:  owner.IsAdmin,
 	}, serverID)
 	if err != nil {
-		sendJSONError(w, "Could not verify key authorization", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Could not verify key authorization", http.StatusServiceUnavailable)
 		return false
 	}
 	if !res.HasCap(requiredPerm) {
-		sendJSONError(w, "The key's owner no longer has this access", http.StatusForbidden)
+		httpx.SendJSONError(w, "The key's owner no longer has this access", http.StatusForbidden)
 		return false
 	}
 	return true

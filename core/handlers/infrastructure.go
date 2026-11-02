@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -156,13 +157,13 @@ func buildFleetSummary(nodes []models.Node, routes []store.CoreLinkRoute, users 
 func (h *InfrastructureHandler) GetPlayersOnline(w http.ResponseWriter, r *http.Request) {
 	servers, err := h.state.Store.ListServers("")
 	if err != nil {
-		sendJSONError(w, "Could not list servers", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not list servers", http.StatusInternalServerError)
 		return
 	}
 	now := time.Now()
 	n, per, err := services.PlayersOnlineByServer(r.Context(), h.state.Redis, servers, now)
 	if err != nil {
-		sendJSONError(w, "Could not read live server stats", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Could not read live server stats", http.StatusServiceUnavailable)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{

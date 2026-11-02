@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/store"
 )
 
@@ -68,17 +69,17 @@ func actingUserID(r *http.Request) string {
 // owner's realm.
 func (h *ServerRolesHandler) ListServerRoles(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	owner := actingUserID(r)
 	if owner == "" {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	roles, err := h.state.Store.ListServerRolesByOwner(owner)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list server roles", 500)
+		httpx.SendJSONError(w, "Failed to list server roles", 500)
 		return
 	}
 	views := make([]serverRoleView, 0, len(roles))
@@ -93,35 +94,35 @@ func (h *ServerRolesHandler) ListServerRoles(w http.ResponseWriter, r *http.Requ
 // 403, and a duplicate name is 409.
 func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	idn := authz.IdentityFromContext(r.Context())
 	if !idn.IsAdmin && handlers.PermissionsMode(h.state.Store) != authz.ModeAdvanced {
-		handlers.SendJSONError(w, "Custom roles require advanced permissions mode", 403)
+		httpx.SendJSONError(w, "Custom roles require advanced permissions mode", 403)
 		return
 	}
 	owner := actingUserID(r)
 	if owner == "" {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	var req serverRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if req.Name == "" {
-		handlers.SendJSONError(w, "Name is required", 400)
+		httpx.SendJSONError(w, "Name is required", 400)
 		return
 	}
 	if err := validateServerOwnerCaps(req.Capabilities); err != nil {
-		handlers.SendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	id, err := h.state.Store.CreateServerRole(owner, req.Name, req.Capabilities)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to create server role (the name may already be in use)", 409)
+		httpx.SendJSONError(w, "Failed to create server role (the name may already be in use)", 409)
 		return
 	}
 	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventServerRoleCreated, owner, "", map[string]interface{}{
@@ -138,41 +139,41 @@ func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Req
 // 404.
 func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	idn := authz.IdentityFromContext(r.Context())
 	if !idn.IsAdmin && handlers.PermissionsMode(h.state.Store) != authz.ModeAdvanced {
-		handlers.SendJSONError(w, "Custom roles require advanced permissions mode", 403)
+		httpx.SendJSONError(w, "Custom roles require advanced permissions mode", 403)
 		return
 	}
 	owner := actingUserID(r)
 	if owner == "" {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		handlers.SendJSONError(w, "Invalid role ID", 400)
+		httpx.SendJSONError(w, "Invalid role ID", 400)
 		return
 	}
 	var req serverRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if req.Name == "" {
-		handlers.SendJSONError(w, "Name is required", 400)
+		httpx.SendJSONError(w, "Name is required", 400)
 		return
 	}
 	if err := validateServerOwnerCaps(req.Capabilities); err != nil {
-		handlers.SendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	// Read first, for the audit row only: the update is what decides ownership.
 	before, _ := h.state.Store.GetServerRole(id)
 	if err := h.state.Store.UpdateServerRole(id, owner, req.Name, req.Capabilities); err != nil {
-		handlers.SendJSONError(w, "Server role not found", 404)
+		httpx.SendJSONError(w, "Server role not found", 404)
 		return
 	}
 	meta := map[string]interface{}{"role_id": id, "name": req.Name, "capabilities": handlers.NormalizeCaps(req.Capabilities)}
@@ -196,28 +197,28 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 // acting owner's realm; another realm's role is 404.
 func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	idn := authz.IdentityFromContext(r.Context())
 	if !idn.IsAdmin && handlers.PermissionsMode(h.state.Store) != authz.ModeAdvanced {
-		handlers.SendJSONError(w, "Custom roles require advanced permissions mode", 403)
+		httpx.SendJSONError(w, "Custom roles require advanced permissions mode", 403)
 		return
 	}
 	owner := actingUserID(r)
 	if owner == "" {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		handlers.SendJSONError(w, "Invalid role ID", 400)
+		httpx.SendJSONError(w, "Invalid role ID", 400)
 		return
 	}
 	// Read first, for the audit row only: the delete is what decides ownership.
 	before, _ := h.state.Store.GetServerRole(id)
 	if err := h.state.Store.DeleteServerRole(id, owner); err != nil {
-		handlers.SendJSONError(w, "Server role not found", 404)
+		httpx.SendJSONError(w, "Server role not found", 404)
 		return
 	}
 	meta := map[string]interface{}{"role_id": id}

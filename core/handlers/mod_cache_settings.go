@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -136,12 +137,12 @@ func modCacheCredentialRebound(req modCacheSettings, stored func(string) string)
 func (h *ModCacheSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	var req modCacheSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Addr = strings.TrimSpace(req.Addr)
 	if req.DB < 0 || req.DB > 15 {
-		sendJSONError(w, "db must be between 0 and 15", http.StatusBadRequest)
+		httpx.SendJSONError(w, "db must be between 0 and 15", http.StatusBadRequest)
 		return
 	}
 
@@ -150,7 +151,7 @@ func (h *ModCacheSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		return v
 	}
 	if modCacheCredentialRebound(req, stored) {
-		sendJSONError(w, "the Redis address or username changed, so the stored password cannot be reused - re-enter the password with this change", http.StatusBadRequest)
+		httpx.SendJSONError(w, "the Redis address or username changed, so the stored password cannot be reused - re-enter the password with this change", http.StatusBadRequest)
 		return
 	}
 
@@ -183,7 +184,7 @@ func (h *ModCacheSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// got slower.
 	if h.state.Cache != nil {
 		if err := h.state.Cache.Reconfigure(r.Context(), candidate); err != nil {
-			sendJSONError(w, "Could not reach that Redis: "+err.Error(), http.StatusBadGateway)
+			httpx.SendJSONError(w, "Could not reach that Redis: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 	}

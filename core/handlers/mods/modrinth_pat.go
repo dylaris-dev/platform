@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/pkg/crypto"
 	"dylaris-core/services"
 )
@@ -55,12 +56,12 @@ type patStatus struct {
 func (h *ModrinthPATHandler) Status(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	pat, err := h.state.Store.GetModrinthPAT(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "DB error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "DB error", http.StatusInternalServerError)
 		return
 	}
 	if pat == nil {
@@ -81,31 +82,31 @@ func (h *ModrinthPATHandler) Status(w http.ResponseWriter, r *http.Request) {
 func (h *ModrinthPATHandler) Set(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	var req setPATRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Token = strings.TrimSpace(req.Token)
 	if req.Token == "" {
-		handlers.SendJSONError(w, "Token required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Token required", http.StatusBadRequest)
 		return
 	}
 	username, err := h.validatePAT(r.Context(), req.Token)
 	if err != nil {
-		handlers.SendJSONError(w, "Token rejected by Modrinth: "+err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, "Token rejected by Modrinth: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	ciphertext, err := crypto.Encrypt(h.key(), []byte(req.Token))
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to encrypt token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to encrypt token", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.SetModrinthPAT(userID, ciphertext, username); err != nil {
-		handlers.SendJSONError(w, "Failed to store token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to store token", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(patStatus{
@@ -120,11 +121,11 @@ func (h *ModrinthPATHandler) Set(w http.ResponseWriter, r *http.Request) {
 func (h *ModrinthPATHandler) Clear(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	if err := h.state.Store.ClearModrinthPAT(userID); err != nil {
-		handlers.SendJSONError(w, "Failed to clear PAT", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to clear PAT", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

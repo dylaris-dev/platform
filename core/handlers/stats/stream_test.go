@@ -12,6 +12,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -65,8 +66,8 @@ func TestStatsStreamOpensWithTheRetryLine(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the stats stream did not end on its own")
 	}
-	if body := rec.Body.String(); !strings.HasPrefix(body, handlers.SSERetryLine) {
-		t.Errorf("stats stream = %q, want it to open with %q", body, handlers.SSERetryLine)
+	if body := rec.Body.String(); !strings.HasPrefix(body, httpx.SSERetryLine) {
+		t.Errorf("stats stream = %q, want it to open with %q", body, httpx.SSERetryLine)
 	}
 }
 
@@ -83,5 +84,5 @@ func (f *statsFakeStore) GetSetting(string) (string, error)         { return "",
 // shortStreams ends SSE streams after 300 ms; see handlers/stream_age_test.go.
 func shortStreams(t *testing.T) {
 	t.Helper()
-	t.Cleanup(handlers.SetSSEMaxStreamAge(300 * time.Millisecond))
+	t.Cleanup(httpx.SetSSEMaxStreamAge(300 * time.Millisecond))
 }

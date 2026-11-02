@@ -9,6 +9,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
@@ -36,7 +37,7 @@ func NewTicketDeletionsHandler(state *handlers.AppState) *TicketDeletionsHandler
 // is the actual boundary for the DELETE method on this shared template.
 func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Request) {
 	if !handlers.IsAdmin(r) {
-		handlers.SendJSONError(w, "Admin only", http.StatusForbidden)
+		httpx.SendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
 	settings := LoadTicketSettings(h.state)
@@ -53,18 +54,18 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		handlers.SendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
 		return
 	}
 
 	// Snapshot ticket subject + owner BEFORE delete.
 	t, err := h.state.Store.GetTicket(id)
 	if err == sql.ErrNoRows || t == nil {
-		handlers.SendJSONError(w, "Ticket not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Ticket not found", http.StatusNotFound)
 		return
 	}
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -100,7 +101,7 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 
 	// Build audit row.
 	ownerID := t.UserID
-	ip := handlers.ClientIP(r)
+	ip := httpx.ClientIP(r)
 	ua := r.UserAgent()
 	rec := &models.TicketDeletion{
 		TicketID:      id,
@@ -117,14 +118,14 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	// Stamp the audit row first so a half-deleted ticket still has a record.
 	// The audit row is the contract; the cascade is the side-effect.
 	if err := h.state.Store.InsertTicketDeletion(rec); err != nil {
-		handlers.SendJSONError(w, "Failed to audit deletion: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to audit deletion: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.DeleteTicket(id); err != nil {
 		// Audit row is already in; surface the error but don't try to roll
 		// back the audit — a stamped delete that didn't complete is itself
 		// useful information.
-		handlers.SendJSONError(w, "Failed to delete ticket: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete ticket: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -174,7 +175,7 @@ func (h *TicketDeletionsHandler) ListDeletions(w http.ResponseWriter, r *http.Re
 
 	rows, total, err := h.state.Store.ListTicketDeletions(limit, offset, deletedBy)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if rows == nil {

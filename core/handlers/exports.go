@@ -20,15 +20,9 @@ import (
 // handlers. Thin wrappers rather than renames: the unexported names stay what
 // the rest of this package calls.
 
-func SendJSONError(w http.ResponseWriter, message string, code int) {
-	sendJSONError(w, message, code)
-}
-
 func Slugify(name string) string { return slugify(name) }
 
 func GeneratePlaintextKey() (string, error) { return generatePlaintextKey() }
-
-func CapBody(w http.ResponseWriter, r *http.Request, max int64) bool { return capBody(w, r, max) }
 
 type ModpackDelivery = modpackDelivery
 
@@ -69,14 +63,6 @@ func (h *SystemEventsHandler) MayReceive(r *http.Request, payload string) bool {
 	return h.mayReceive(r, payload)
 }
 
-func ParseIntDefault(v string, def int) int { return parseIntDefault(v, def) }
-
-func ClientIP(r *http.Request) string { return clientIP(r) }
-
-func ParseUserID(w http.ResponseWriter, r *http.Request, varName ...string) (string, bool) {
-	return parseUserID(w, r, varName...)
-}
-
 func MatchTOTPStep(code, secret string, now time.Time) (step int64, ok bool) {
 	return matchTOTPStep(code, secret, now)
 }
@@ -87,10 +73,6 @@ func CoreStorageUnavailableResponse(w http.ResponseWriter, err error) {
 
 func SendConnTestFailure(w http.ResponseWriter, check services.ConnCheck) {
 	sendConnTestFailure(w, check)
-}
-
-func SetAttachmentDisposition(w http.ResponseWriter, filename string) {
-	setAttachmentDisposition(w, filename)
 }
 
 // Core storage setting keys, for the subpackages' tests that configure a store.
@@ -108,26 +90,6 @@ const StatsStreamsPerUser = statsStreamsPerUser
 
 func AcquireLiveStream(w http.ResponseWriter, r *http.Request, st store.Store, kind string, max int) (release func(), ok bool) {
 	return acquireLiveStream(w, r, st, kind, max)
-}
-
-func StreamContext(w http.ResponseWriter, r *http.Request) (context.Context, context.CancelFunc) {
-	return streamContext(w, r)
-}
-
-// SSERetryLine opens every SSE stream; exported for the subpackages' tests.
-const SSERetryLine = sseRetryLine
-
-// SetSSEMaxStreamAge changes how long an SSE stream lives before it ends and
-// the client reconnects, and returns the function that restores the previous
-// value. For tests: production never changes it.
-func SetSSEMaxStreamAge(d time.Duration) (restore func()) {
-	prev := sseMaxStreamAge
-	sseMaxStreamAge = d
-	return func() { sseMaxStreamAge = prev }
-}
-
-func SendJSONErrorCode(w http.ResponseWriter, message, code string, status int) {
-	sendJSONErrorCode(w, message, code, status)
 }
 
 func SettingOrUnset(st store.Store, key string) (string, error) { return settingOrUnset(st, key) }
@@ -238,8 +200,6 @@ func (s *AppState) KitOwnedByOther(ownerID string, userID string) bool {
 }
 
 func (s *AppState) DeployConfig() DeployConfig { return s.deployConfig() }
-
-func MustAtoi(s string) int { return mustAtoi(s) }
 
 func NormHost(s string) string { return normHost(s) }
 
@@ -371,10 +331,6 @@ func IsBYONNode(n models.Node) bool { return isBYONNode(n) }
 type DylarisMetadata = dylarisMetadata
 
 // --- mods --------------------------------------------------------------------
-
-func SendCooldown(w http.ResponseWriter, upstream string, left time.Duration) {
-	sendCooldown(w, upstream, left)
-}
 
 // UpstreamCooldown is the per-upstream back-off a proxy handler embeds.
 type UpstreamCooldown = upstreamCooldown

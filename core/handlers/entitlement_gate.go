@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -73,7 +73,7 @@ func (s *AppState) requireEntitlement(r *http.Request, w http.ResponseWriter, us
 
 	ent, err := services.EffectiveEntitlement(s.Store, userID, time.Now(), s.StoreEnabled, IsAdmin(r))
 	if err != nil {
-		sendJSONError(w, "Could not determine your subscription", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not determine your subscription", http.StatusInternalServerError)
 		return false
 	}
 
@@ -86,21 +86,8 @@ func (s *AppState) requireEntitlement(r *http.Request, w http.ResponseWriter, us
 	}
 
 	d := s.denialFor(ctx, ent, userID)
-	sendJSONErrorCode(w, d.Message, d.Code, d.Status)
+	httpx.SendJSONErrorCode(w, d.Message, d.Code, d.Status)
 	return false
-}
-
-// sendJSONErrorCode is sendJSONError plus a stable machine-readable code. The
-// panel needs to tell the three denials apart to render the right call to
-// action, and matching on the prose would break the first time it is reworded.
-func sendJSONErrorCode(w http.ResponseWriter, message, code string, status int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": false,
-		"message": message,
-		"code":    code,
-	})
 }
 
 // denialFor picks the message. Suspension is named first because it is the only

@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-pkg/validate"
 
 	"github.com/gorilla/mux"
@@ -15,21 +16,21 @@ import (
 // LinkServerToProxy: Link a game server to a proxy server
 func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
 	// Check if proxy feature is enabled
 	val, _ := h.state.Store.GetSetting("feature_proxy_enabled")
 	if val == "false" {
-		handlers.SendJSONError(w, "Proxy feature is disabled", 403)
+		httpx.SendJSONError(w, "Proxy feature is disabled", 403)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", 400)
+		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
 
@@ -37,36 +38,36 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 		ProxyID int `json:"proxyId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ProxyID == 0 {
-		handlers.SendJSONError(w, "proxyId required", 400)
+		httpx.SendJSONError(w, "proxyId required", 400)
 		return
 	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
 	if srv.ServerType == "proxy" {
-		handlers.SendJSONError(w, "Cannot link a proxy to another proxy", 400)
+		httpx.SendJSONError(w, "Cannot link a proxy to another proxy", 400)
 		return
 	}
 	// A proxy on this platform dials its backends without a PROXY header, so a
 	// backend that expects one would refuse every player the proxy sends.
 	if srv.ProxyProtocol {
-		handlers.SendJSONErrorCode(w, "Real player IP is on for this server, and a proxy cannot reach a server that expects it. Turn off Real player IP (Routes) and the PROXY setting in the server's own config first, then link it.",
+		httpx.SendJSONErrorCode(w, "Real player IP is on for this server, and a proxy cannot reach a server that expects it. Turn off Real player IP (Routes) and the PROXY setting in the server's own config first, then link it.",
 			"proxy_protocol_on", http.StatusConflict)
 		return
 	}
 
 	proxy, err := h.state.Store.GetServerByID(req.ProxyID)
 	if err != nil {
-		handlers.SendJSONError(w, "Proxy not found", 404)
+		httpx.SendJSONError(w, "Proxy not found", 404)
 		return
 	}
 
 	if proxy.ServerType != "proxy" {
-		handlers.SendJSONError(w, "Target server is not a proxy", 400)
+		httpx.SendJSONError(w, "Target server is not a proxy", 400)
 		return
 	}
 
@@ -84,7 +85,7 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 	// the relationship. Ids are sequential, so the caller needs no access to
 	// the proxy to name it - the check cannot live anywhere but here.
 	if proxy.OwnerID != srv.OwnerID {
-		handlers.SendJSONError(w, "A server can only be linked to a proxy owned by the same account", 403)
+		httpx.SendJSONError(w, "A server can only be linked to a proxy owned by the same account", 403)
 		return
 	}
 
@@ -99,13 +100,13 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 	userID, _ := r.Context().Value("userID").(string)
 	adminHere := handlers.IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, userID)
 	if !adminHere && (userID == "" || userID != srv.OwnerID) {
-		handlers.SendJSONError(w, "Only the server's owner can link it to a proxy", 403)
+		httpx.SendJSONError(w, "Only the server's owner can link it to a proxy", 403)
 		return
 	}
 
 	proxyID := req.ProxyID
 	if err := h.state.Store.UpdateServerProxyID(serverID, &proxyID); err != nil {
-		handlers.SendJSONError(w, "Failed to link server", 500)
+		httpx.SendJSONError(w, "Failed to link server", 500)
 		return
 	}
 	// A move from one proxy to another ends what was inherited from the first.
@@ -131,12 +132,12 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", 400)
+		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
@@ -202,7 +203,7 @@ func (h *ServerHandler) GetProxyEndpoint(w http.ResponseWriter, r *http.Request)
 	}
 	proxy, err := h.state.Store.GetServerByID(*srv.ProxyID)
 	if err != nil {
-		handlers.SendJSONError(w, "Proxy not found", 404)
+		httpx.SendJSONError(w, "Proxy not found", 404)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -233,31 +234,31 @@ func proxyBackendHostname(uuid string) string {
 // UnlinkServerFromProxy: Remove a server's proxy link
 func (h *ServerHandler) UnlinkServerFromProxy(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
 	// Check if proxy feature is enabled
 	val, _ := h.state.Store.GetSetting("feature_proxy_enabled")
 	if val == "false" {
-		handlers.SendJSONError(w, "Proxy feature is disabled", 403)
+		httpx.SendJSONError(w, "Proxy feature is disabled", 403)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", 400)
+		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
 
 	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
 	if err := h.state.Store.UpdateServerProxyID(serverID, nil); err != nil {
-		handlers.SendJSONError(w, "Failed to unlink server", 500)
+		httpx.SendJSONError(w, "Failed to unlink server", 500)
 		return
 	}
 	// Ends access inherited from the proxy; see stampBeamAccess.

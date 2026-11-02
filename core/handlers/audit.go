@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 )
 
@@ -163,7 +164,7 @@ func logIdentityAuditAs(state *AppState, r *http.Request, key *models.APIKey, ev
 		ev.TargetUserID = &t
 	}
 	if r != nil {
-		ev.IPAddress = clientIP(r)
+		ev.IPAddress = httpx.ClientIP(r)
 		ev.UserAgent = r.UserAgent()
 	}
 

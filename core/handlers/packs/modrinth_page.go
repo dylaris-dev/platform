@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -47,11 +47,11 @@ func (h *PacksHandler) modrinthPageClient(w http.ResponseWriter, r *http.Request
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	pack, ok := h.packAccess(r, packID, need)
 	if !ok || pack == nil {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return nil, nil, false
 	}
 	if pack.ModrinthProjectID == "" {
-		handlers.SendJSONError(w, "This pack has no Modrinth project yet. Publish a build first; that creates it.", http.StatusConflict)
+		httpx.SendJSONError(w, "This pack has no Modrinth project yet. Publish a build first; that creates it.", http.StatusConflict)
 		return nil, nil, false
 	}
 	// The caller's own token: Modrinth checks their team rights on every call,
@@ -67,7 +67,7 @@ func (h *PacksHandler) modrinthPageClient(w http.ResponseWriter, r *http.Request
 func (h *PacksHandler) writeModrinthPage(w http.ResponseWriter, r *http.Request, pack *models.Pack, mc *services.ModrinthClient, message string) {
 	page, err := mc.GetProjectPage(r.Context(), pack.ModrinthProjectID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read the Modrinth project: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read the Modrinth project: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	nags, err := mc.ValidateProject(r.Context(), pack.ModrinthProjectID)
@@ -194,29 +194,29 @@ func (h *PacksHandler) EditModrinthPage(w http.ResponseWriter, r *http.Request) 
 	}
 	var edit modrinthPageEdit
 	if err := json.NewDecoder(io.LimitReader(r.Body, 256<<10)).Decode(&edit); err != nil {
-		handlers.SendJSONError(w, "Invalid request", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 	fields, msg := modrinthPageFields(edit)
 	if msg != "" {
-		handlers.SendJSONError(w, msg, http.StatusBadRequest)
+		httpx.SendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
 	if len(fields) > 0 {
 		if err := mc.EditProject(r.Context(), pack.ModrinthProjectID, fields); err != nil {
-			handlers.SendJSONError(w, "Modrinth refused the change: "+err.Error(), http.StatusBadGateway)
+			httpx.SendJSONError(w, "Modrinth refused the change: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 	}
 	if edit.Environment != nil {
 		page, err := mc.GetProjectPage(r.Context(), pack.ModrinthProjectID)
 		if err != nil {
-			handlers.SendJSONError(w, "Could not read the Modrinth project: "+err.Error(), http.StatusBadGateway)
+			httpx.SendJSONError(w, "Could not read the Modrinth project: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 		for _, v := range page.Versions {
 			if err := mc.SetVersionEnvironment(r.Context(), v, *edit.Environment); err != nil {
-				handlers.SendJSONError(w, "Modrinth refused the environment: "+err.Error(), http.StatusBadGateway)
+				httpx.SendJSONError(w, "Modrinth refused the environment: "+err.Error(), http.StatusBadGateway)
 				return
 			}
 		}
@@ -241,13 +241,13 @@ func (h *PacksHandler) UploadModrinthIcon(w http.ResponseWriter, r *http.Request
 	r.Body = http.MaxBytesReader(w, r.Body, maxModrinthIconBytes+64<<10)
 	file, _, err := r.FormFile("icon")
 	if err != nil {
-		handlers.SendJSONError(w, "Choose an image of at most 256 KB.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Choose an image of at most 256 KB.", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 	img, err := io.ReadAll(io.LimitReader(file, maxModrinthIconBytes+1))
 	if err != nil || len(img) == 0 || len(img) > maxModrinthIconBytes {
-		handlers.SendJSONError(w, "Choose an image of at most 256 KB.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Choose an image of at most 256 KB.", http.StatusBadRequest)
 		return
 	}
 	// The bytes decide the type, not the file name.
@@ -255,11 +255,11 @@ func (h *PacksHandler) UploadModrinthIcon(w http.ResponseWriter, r *http.Request
 	ct := http.DetectContentType(img)
 	e, known := ext[ct]
 	if !known {
-		handlers.SendJSONError(w, "The icon must be a PNG, JPEG, WebP or GIF image.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "The icon must be a PNG, JPEG, WebP or GIF image.", http.StatusBadRequest)
 		return
 	}
 	if err := mc.SetProjectIcon(r.Context(), pack.ModrinthProjectID, e, ct, img); err != nil {
-		handlers.SendJSONError(w, "Modrinth refused the icon: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Modrinth refused the icon: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	h.writeModrinthPage(w, r, pack, mc, "Icon updated.")
@@ -275,13 +275,13 @@ func (h *PacksHandler) SubmitModrinthReview(w http.ResponseWriter, r *http.Reque
 	if err == nil {
 		for _, n := range nags {
 			if n.Severity == "required" {
-				handlers.SendJSONError(w, "Complete the required items of the checklist first.", http.StatusConflict)
+				httpx.SendJSONError(w, "Complete the required items of the checklist first.", http.StatusConflict)
 				return
 			}
 		}
 	}
 	if err := mc.SubmitForReview(r.Context(), pack.ModrinthProjectID); err != nil {
-		handlers.SendJSONError(w, "Modrinth did not accept the submission: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Modrinth did not accept the submission: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	h.writeModrinthPage(w, r, pack, mc, "Submitted for review. Modrinth's moderators decide; this usually takes a few days.")

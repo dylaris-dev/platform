@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 )
 
@@ -87,7 +88,7 @@ func (h *TemplatesHandler) Download(w http.ResponseWriter, r *http.Request) {
 		log.Printf("templates: download %d: %v", t.ID, err)
 		if cw.n == 0 {
 			w.Header().Del("Content-Disposition")
-			handlers.SendJSONError(w, "Could not read the template files", http.StatusBadGateway)
+			httpx.SendJSONError(w, "Could not read the template files", http.StatusBadGateway)
 			return
 		}
 		// Bytes are out: returning would end the chunked stream cleanly and the

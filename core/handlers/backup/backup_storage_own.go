@@ -9,8 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
-
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
@@ -51,7 +50,7 @@ func (h *BackupHandler) refuseOwnStorageOff(w http.ResponseWriter, r *http.Reque
 	if h.state.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
 		return false
 	}
-	handlers.SendJSONErrorCode(w, "Your administrator has turned off own storage. Existing data stays reachable.", "own_storage_disabled", http.StatusForbidden)
+	httpx.SendJSONErrorCode(w, "Your administrator has turned off own storage. Existing data stays reachable.", "own_storage_disabled", http.StatusForbidden)
 	return true
 }
 
@@ -63,17 +62,17 @@ func (h *BackupHandler) refuseOwnStorageOff(w http.ResponseWriter, r *http.Reque
 func (h *BackupHandler) ownStorageFor(w http.ResponseWriter, r *http.Request) (*models.BackupStorage, bool) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return nil, false
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
 		return nil, false
 	}
 	bs, err := h.state.Store.GetBackupStorage(id)
 	if err != nil || bs == nil || bs.OwnerID == nil || *bs.OwnerID != userID {
-		handlers.SendJSONError(w, "Backup storage not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Backup storage not found", http.StatusNotFound)
 		return nil, false
 	}
 	return bs, true
@@ -84,12 +83,12 @@ func (h *BackupHandler) ownStorageFor(w http.ResponseWriter, r *http.Request) (*
 func (h *BackupHandler) ListOwnStorages(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	list, err := h.state.Store.ListBackupStoragesByOwner(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load your backup storages", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load your backup storages", http.StatusInternalServerError)
 		return
 	}
 	if list == nil {
@@ -103,7 +102,7 @@ func (h *BackupHandler) ListOwnStorages(w http.ResponseWriter, r *http.Request) 
 func (h *BackupHandler) CreateOwnStorage(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	if h.refuseOwnStorageOff(w, r) {
@@ -111,19 +110,19 @@ func (h *BackupHandler) CreateOwnStorage(w http.ResponseWriter, r *http.Request)
 	}
 	var req models.BackupStorage
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Name == "" {
-		handlers.SendJSONError(w, "name is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "name is required", http.StatusBadRequest)
 		return
 	}
 	if !ownBackupStorageAllowed(req.Provider) {
-		handlers.SendJSONError(w, "Only s3-compatible storage can be connected to an account", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Only s3-compatible storage can be connected to an account", http.StatusBadRequest)
 		return
 	}
 	if err := validateBackupStorageEndpoint(req); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	// Taken from the session, never from the body. A payload-supplied owner is
@@ -135,15 +134,15 @@ func (h *BackupHandler) CreateOwnStorage(w http.ResponseWriter, r *http.Request)
 	id, err := h.state.Store.CreateBackupStorage(&req)
 	if err != nil {
 		if errors.Is(err, store.ErrNameTaken) {
-			handlers.SendJSONError(w, "You already have a backup storage with that name", http.StatusConflict)
+			httpx.SendJSONError(w, "You already have a backup storage with that name", http.StatusConflict)
 			return
 		}
-		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := h.syncBackupsPref(userID, id, req.IsDefault); err != nil {
 		log.Printf("own storage %d: backups preference for %s: %v", id, userID, err)
-		handlers.SendJSONError(w, "The storage was saved, but choosing it for backups failed. Choose it under Account > Storage.", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "The storage was saved, but choosing it for backups failed. Choose it under Account > Storage.", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": id})
@@ -188,7 +187,7 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 		IsDefault *bool `json:"isDefault"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	// Marking it default chooses it for backups, which is refused while off;
@@ -202,11 +201,11 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 		req.IsDefault = *body.IsDefault
 	}
 	if !ownBackupStorageAllowed(req.Provider) {
-		handlers.SendJSONError(w, "Only s3-compatible storage can be connected to an account", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Only s3-compatible storage can be connected to an account", http.StatusBadRequest)
 		return
 	}
 	if err := validateBackupStorageEndpoint(req); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	// Identity comes from the row that was just checked, not from the body: an
@@ -221,18 +220,18 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 	// against.
 	merged, merr := mergeBackupStorageSecret(req, existing)
 	if merr != nil {
-		handlers.SendJSONError(w, merr.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, merr.Error(), http.StatusBadRequest)
 		return
 	}
 	merged.ID, merged.OwnerID = existing.ID, existing.OwnerID
 	if err := h.state.Store.UpdateBackupStorage(&merged); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNameTaken):
-			handlers.SendJSONError(w, "You already have a backup storage with that name", http.StatusConflict)
+			httpx.SendJSONError(w, "You already have a backup storage with that name", http.StatusConflict)
 		case errors.Is(err, sql.ErrNoRows):
-			handlers.SendJSONError(w, "Backup storage not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Backup storage not found", http.StatusNotFound)
 		default:
-			handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		}
 		return
 	}
@@ -242,7 +241,7 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 	}
 	if err := h.syncBackupsPref(*existing.OwnerID, existing.ID, merged.IsDefault); err != nil {
 		log.Printf("own storage %d: backups preference for %s: %v", existing.ID, *existing.OwnerID, err)
-		handlers.SendJSONError(w, "The storage was saved, but updating your backups choice failed. Check it under Account > Storage.", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "The storage was saved, but updating your backups choice failed. Check it under Account > Storage.", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -266,16 +265,16 @@ func (h *BackupHandler) DeleteOwnStorage(w http.ResponseWriter, r *http.Request)
 	if !h.state.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
 		if err := h.clearPrefsNaming(*bs.OwnerID, bs.ID); err != nil {
 			log.Printf("own storage %d: clear prefs: %v", bs.ID, err)
-			handlers.SendJSONError(w, "Could not remove this storage", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Could not remove this storage", http.StatusInternalServerError)
 			return
 		}
 	}
 	if err := h.state.Store.DeleteBackupStorage(bs.ID); err != nil {
 		if errors.Is(err, store.ErrStorageInUse) {
-			handlers.SendJSONError(w, "Backups, backup schedules, templates or your storage choices still use this storage. Under Account > Storage, choose another storage for backups and templates; then move the schedules, and delete the backups and templates stored in it.", http.StatusConflict)
+			httpx.SendJSONError(w, "Backups, backup schedules, templates or your storage choices still use this storage. Under Account > Storage, choose another storage for backups and templates; then move the schedules, and delete the backups and templates stored in it.", http.StatusConflict)
 			return
 		}
-		handlers.SendJSONError(w, err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

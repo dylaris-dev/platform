@@ -4,7 +4,7 @@ import (
 	"log"
 	"net/http"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 )
 
 // minecraftEulaURL is where the panel sends people to read what they accept.
@@ -24,27 +24,27 @@ type eulaStore interface {
 // particular server. Reports whether the request may continue.
 func requireMinecraftEula(w http.ResponseWriter, st eulaStore, userID string, accept bool) bool {
 	if userID == "" {
-		handlers.SendJSONError(w, "Not signed in", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Not signed in", http.StatusUnauthorized)
 		return false
 	}
 	accepted, err := st.MinecraftEulaAccepted(userID)
 	if err != nil {
 		log.Printf("minecraft eula: read %s: %v", userID, err)
-		handlers.SendJSONError(w, "Could not check the Minecraft EULA acceptance", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not check the Minecraft EULA acceptance", http.StatusInternalServerError)
 		return false
 	}
 	if accepted {
 		return true
 	}
 	if !accept {
-		handlers.SendJSONErrorCode(w,
+		httpx.SendJSONErrorCode(w,
 			"Accept the Minecraft EULA ("+minecraftEulaURL+") to install a server. Over the API, send \"acceptMinecraftEula\": true once.",
 			"minecraft_eula_required", http.StatusConflict)
 		return false
 	}
 	if err := st.AcceptMinecraftEula(userID); err != nil {
 		log.Printf("minecraft eula: record %s: %v", userID, err)
-		handlers.SendJSONError(w, "Could not record the Minecraft EULA acceptance", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not record the Minecraft EULA acceptance", http.StatusInternalServerError)
 		return false
 	}
 	return true

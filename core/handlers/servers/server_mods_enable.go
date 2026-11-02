@@ -15,6 +15,7 @@ import (
 
 	"dylaris-pkg/validate"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -49,7 +50,7 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
@@ -59,13 +60,13 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		Enabled *bool `json:"enabled"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&req); err != nil || req.Enabled == nil {
-		handlers.SendJSONError(w, "enabled (true or false) is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "enabled (true or false) is required", http.StatusBadRequest)
 		return
 	}
 	modID, _ := strconv.Atoi(mux.Vars(r)["modId"])
 	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
 	}
 	var target *models.ServerMod
@@ -75,15 +76,15 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if target == nil {
-		handlers.SendJSONError(w, "Mod not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Mod not found", http.StatusNotFound)
 		return
 	}
 	if !validate.IsPlainFileName(target.FileName) {
-		handlers.SendJSONError(w, "This mod's file name cannot be moved safely; remove and reinstall it.", http.StatusConflict)
+		httpx.SendJSONError(w, "This mod's file name cannot be moved safely; remove and reinstall it.", http.StatusConflict)
 		return
 	}
 	if target.Status == models.ServerModInstalling {
-		handlers.SendJSONError(w, "This mod is still being installed.", http.StatusConflict)
+		httpx.SendJSONError(w, "This mod is still being installed.", http.StatusConflict)
 		return
 	}
 	enable := *req.Enabled
@@ -92,7 +93,7 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.state.GRPCRegistry == nil {
-		handlers.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	on, off, offDir := modPaths(srv, target)
@@ -105,16 +106,16 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		_ = h.nodeFileOp(srv, &pb.NodeMessage_CreateReq{CreateReq: &pb.CreateFileReq{Path: offDir, IsDir: true}})
 	}
 	if err := h.nodeFileOp(srv, &pb.NodeMessage_CopyReq{CopyReq: &pb.CopyFileReq{SrcPath: src, DstPath: dst}}); err != nil {
-		handlers.SendJSONError(w, fmt.Sprintf("Could not move %s: %v", target.FileName, err), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("Could not move %s: %v", target.FileName, err), http.StatusBadGateway)
 		return
 	}
 	if err := h.nodeFileOp(srv, &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: src}}); err != nil {
-		handlers.SendJSONError(w, fmt.Sprintf("%s was copied but the old file could not be removed: %v. Try again.", target.FileName, err), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("%s was copied but the old file could not be removed: %v. Try again.", target.FileName, err), http.StatusBadGateway)
 		return
 	}
 	if err := h.state.Store.SetServerModDisabled(target.ID, serverID, !enable); err != nil {
 		if errors.Is(err, store.ErrServerModNotFound) {
-			handlers.SendJSONError(w, "Mod not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Mod not found", http.StatusNotFound)
 			return
 		}
 		// The jar moved and the row did not: every later toggle would then
@@ -123,10 +124,10 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		log.Printf("mods: server %d mod %d: saving disabled=%v failed after the move: %v", serverID, target.ID, !enable, err)
 		if h.nodeFileOp(srv, &pb.NodeMessage_CopyReq{CopyReq: &pb.CopyFileReq{SrcPath: dst, DstPath: src}}) == nil &&
 			h.nodeFileOp(srv, &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: dst}}) == nil {
-			handlers.SendJSONError(w, "The setting could not be saved, so the mod was left as it was. Try again.", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "The setting could not be saved, so the mod was left as it was. Try again.", http.StatusInternalServerError)
 			return
 		}
-		handlers.SendJSONError(w, "The jar moved, but the setting could not be saved", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "The jar moved, but the setting could not be saved", http.StatusInternalServerError)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})

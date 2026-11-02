@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -104,12 +105,12 @@ type trafficPool struct {
 func (h *BillingHandler) GetMyBilling(w http.ResponseWriter, r *http.Request) {
 	userID := handlers.ByonCallerID(r)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	b, err := h.state.Store.GetUserBilling(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	payment := ""
@@ -230,7 +231,7 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 // keep the graced Suspend (deferred cutoff) - this admin path does not.
 func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request) {
 	if h.state.Billing == nil {
-		handlers.SendJSONError(w, "Billing unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Billing unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	userID := mux.Vars(r)["id"]
@@ -238,7 +239,7 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 		Status string `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	// The rule every other account action follows. plans.write is not an
@@ -252,7 +253,7 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 	switch status {
 	case "active", "past_due", "suspended":
 	default:
-		handlers.SendJSONError(w, "Invalid status (active|past_due|suspended)", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid status (active|past_due|suspended)", http.StatusBadRequest)
 		return
 	}
 	// An operator moving the account out of a suspension lifts their own hold;
@@ -264,7 +265,7 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 	if h.state.Store != nil && status != "suspended" {
 		var err error
 		if prior, err = h.state.Store.LiftAdminHold(userID); err != nil {
-			handlers.SendJSONError(w, "Update failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Update failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -281,7 +282,7 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 		err = h.state.Billing.SuspendNow(r.Context(), userID)
 	}
 	if err != nil {
-		handlers.SendJSONError(w, "Update failed: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
@@ -338,12 +339,12 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 		PaymentUrl        string `json:"paymentUrl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	for _, spec := range []string{req.GracePeriod, req.R2Retention, req.NodeRetention} {
 		if !services.ValidRetentionSpec(spec) {
-			handlers.SendJSONError(w, "Invalid retention spec (use e.g. 3d, 2w, 3m)", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid retention spec (use e.g. 3d, 2w, 3m)", http.StatusBadRequest)
 			return
 		}
 	}
@@ -365,13 +366,13 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 			continue
 		}
 		if n, err := strconv.ParseInt(*f.val, 10, 64); err != nil || n < 0 {
-			handlers.SendJSONError(w, f.label+" must be a non-negative number of GB per purchased unit", http.StatusBadRequest)
+			httpx.SendJSONError(w, f.label+" must be a non-negative number of GB per purchased unit", http.StatusBadRequest)
 			return
 		}
 	}
 	for _, ttl := range []string{req.PresignTtlNodeMin, req.PresignTtlByonMin} {
 		if n, err := strconv.Atoi(ttl); err != nil || n <= 0 {
-			handlers.SendJSONError(w, "Presigned URL TTL must be a positive number of minutes", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Presigned URL TTL must be a positive number of minutes", http.StatusBadRequest)
 			return
 		}
 	}
@@ -386,7 +387,7 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 	// URLs already take; empty stays valid and simply renders no link.
 	req.PaymentUrl = strings.TrimSpace(req.PaymentUrl)
 	if err := handlers.ValidatePublicBaseURL("payment URL", req.PaymentUrl); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	// Read BEFORE the write: the tenants who agreed to be charged were shown the
@@ -406,7 +407,7 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 	}
 	for k, v := range writes {
 		if err := h.state.Store.SetSetting(k, v); err != nil {
-			handlers.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -434,21 +435,21 @@ func (h *BillingHandler) SetBillingOverrides(w http.ResponseWriter, r *http.Requ
 		R2QuotaGb *int64 `json:"r2QuotaGb"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	for _, spec := range []string{req.GracePeriod, req.R2Retention, req.NodeRetention} {
 		if spec != "" && !services.ValidRetentionSpec(spec) {
-			handlers.SendJSONError(w, "Invalid retention spec (use e.g. 3d, 2w, 3m)", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid retention spec (use e.g. 3d, 2w, 3m)", http.StatusBadRequest)
 			return
 		}
 	}
 	if req.R2QuotaGb != nil && *req.R2QuotaGb < 0 {
-		handlers.SendJSONError(w, "R2 quota must be a non-negative number of GB (0 means none; leave it empty for no limit)", http.StatusBadRequest)
+		httpx.SendJSONError(w, "R2 quota must be a non-negative number of GB (0 means none; leave it empty for no limit)", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetUserBillingOverrides(userID, req.GracePeriod, req.R2Retention, req.NodeRetention, req.R2QuotaGb); err != nil {
-		handlers.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
@@ -463,7 +464,7 @@ func (h *BillingHandler) GetUserBilling(w http.ResponseWriter, r *http.Request) 
 	userID := mux.Vars(r)["id"]
 	b, err := h.state.Store.GetUserBilling(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	get := func(key, def string) string {

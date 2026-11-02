@@ -1,4 +1,4 @@
-package handlers
+package httpx
 
 import (
 	"net"
@@ -9,7 +9,7 @@ import (
 
 // trustedProxies holds the reverse-proxy networks whose X-Forwarded-For header
 // Core believes. Stored behind an atomic pointer so SetTrustedProxies can be
-// called once at startup and clientIP can read it lock-free on every request.
+// called once at startup and ClientIP can read it lock-free on every request.
 // A nil value means no proxy is trusted and XFF is ignored entirely.
 var trustedProxies atomic.Pointer[[]*net.IPNet]
 
@@ -19,7 +19,7 @@ func SetTrustedProxies(cidrs []*net.IPNet) {
 	trustedProxies.Store(&cidrs)
 }
 
-// clientIP returns the originating client IP for rate limiting and the audit
+// ClientIP returns the originating client IP for rate limiting and the audit
 // log. Returns "" only when RemoteAddr is unparseable, so the downstream
 // NULLIF(...,”)::inet cast keeps the DB row clean.
 //
@@ -40,7 +40,7 @@ func SetTrustedProxies(cidrs []*net.IPNet) {
 // With no trusted proxies configured the peer is never trusted, so this always
 // returns RemoteAddr - correct for a directly exposed Core, and safe (never
 // spoofable) everywhere else.
-func clientIP(r *http.Request) string {
+func ClientIP(r *http.Request) string {
 	peer := remoteAddrIP(r.RemoteAddr)
 
 	if !isTrustedProxy(peer) {

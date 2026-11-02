@@ -25,6 +25,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
@@ -118,13 +119,13 @@ func (h *BeamHandler) GetBeamServers(w http.ResponseWriter, r *http.Request) {
 	// Use ListServersForUser which handles access control
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil || user == nil {
-		handlers.SendJSONError(w, "User not found", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "User not found", http.StatusUnauthorized)
 		return
 	}
 
 	servers, err := h.state.Store.ListServersForUser(user.ID, isAdmin)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load servers", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load servers", http.StatusInternalServerError)
 		return
 	}
 
@@ -205,7 +206,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// GetBeamConfig, so a disabled Beam kept minting tickets and the node, which
 	// never sees this setting, honoured them.
 	if v, _ := h.state.Store.GetSetting("beam.enabled"); v == "false" {
-		handlers.SendJSONError(w, "Beam is disabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "Beam is disabled", http.StatusForbidden)
 		return
 	}
 
@@ -222,14 +223,14 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		serverUUID = req.ServerUUID
 	}
 	if serverUUID == "" {
-		handlers.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
 
 	// Resolve server
 	server, err := h.state.Store.GetServerByUUID(serverUUID)
 	if err != nil || server == nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
@@ -250,7 +251,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// was refused.
 	allowed, filePerms := h.canBeam(r, server.ID)
 	if !allowed {
-		handlers.SendJSONError(w, "Access denied", http.StatusForbidden)
+		httpx.SendJSONError(w, "Access denied", http.StatusForbidden)
 		return
 	}
 
@@ -260,11 +261,11 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	demo, err := handlers.IsDemoAccountChecked(h.state, userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
 		return
 	}
 	if demo {
-		handlers.SendJSONError(w, "Not available in the demo", http.StatusForbidden)
+		httpx.SendJSONError(w, "Not available in the demo", http.StatusForbidden)
 		return
 	}
 
@@ -301,7 +302,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if nodeDiscoveryID == "" {
-		handlers.SendJSONError(w, "Server has no assigned node", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Server has no assigned node", http.StatusBadRequest)
 		return
 	}
 
@@ -382,7 +383,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	ticketString, err := beamauth.SignBeamTicketWithNodeProof(
 		h.jwtSecret, claims, beamauth.BeamTicketTTL, nodeProofSecret)
 	if err != nil {
-		handlers.SendJSONError(w, fmt.Sprintf("Failed to sign ticket: %v", err), http.StatusInternalServerError)
+		httpx.SendJSONError(w, fmt.Sprintf("Failed to sign ticket: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -586,7 +587,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !validBeamPlatforms[platform] {
-		handlers.SendJSONError(w, "Invalid platform", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid platform", http.StatusBadRequest)
 		return
 	}
 
@@ -609,12 +610,12 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 		// problem the visitor can only wait out, and its detail belongs in the
 		// log rather than in a stranger's browser.
 		if errors.Is(resolveErr, errBeamPlatformNotInManifest) {
-			handlers.SendJSONError(w, "Beam is not available for "+platform+" yet.", http.StatusNotFound)
+			httpx.SendJSONError(w, "Beam is not available for "+platform+" yet.", http.StatusNotFound)
 			return
 		}
 		log.Printf("beam-download: cannot resolve %s from the signed release manifest "+
 			"(check beam.release_manifest, or set beam.download_link): %v", platform, resolveErr)
-		handlers.SendJSONError(w, "The Beam download is temporarily unavailable. Please try again shortly.",
+		httpx.SendJSONError(w, "The Beam download is temporarily unavailable. Please try again shortly.",
 			http.StatusServiceUnavailable)
 		return
 	}
@@ -654,7 +655,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 		if lastErr != nil {
 			msg += ": " + lastErr.Error()
 		}
-		handlers.SendJSONError(w, msg, http.StatusBadGateway)
+		httpx.SendJSONError(w, msg, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -671,7 +672,7 @@ func (h *BeamHandler) GetBeamDownload(w http.ResponseWriter, r *http.Request) {
 	verified, size, vErr := verifiedBeamBody(resp.Body, expectedSHA)
 	if vErr != nil {
 		log.Printf("beam-download: REFUSING %s for platform=%s: %v", winningURL, platform, vErr)
-		handlers.SendJSONError(w, "The Beam binary served for "+platform+
+		httpx.SendJSONError(w, "The Beam binary served for "+platform+
 			" does not match the signed release manifest, so it was not delivered."+
 			" If beam.download_link is set, that mirror is serving something else.",
 			http.StatusBadGateway)

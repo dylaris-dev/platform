@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
@@ -86,7 +87,7 @@ func (h *PlayersHandler) GetLists(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	out := playerListsResponse{
@@ -234,7 +235,7 @@ func (h *PlayersHandler) GetOnline(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	// Each call was an RCON round trip to the server, with nothing in between:
@@ -275,17 +276,17 @@ func (h *PlayersHandler) Action(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	var req playerActionRequest
 	if derr := json.NewDecoder(r.Body).Decode(&req); derr != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	cmd, cerr := buildPlayerCommand(req.Action, req.Player, req.Reason, req.Message)
 	if cerr != nil {
-		sendJSONError(w, cerr.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, cerr.Error(), http.StatusBadRequest)
 		return
 	}
 	resp := h.rcon.execAgainstServer(r.Context(), srv.ID, srv.UUID, srv.NodeID, rconRequest{Command: cmd})

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"encoding/json"
 	"net/http"
@@ -27,12 +28,12 @@ func NewCPUPinningHandler(state *AppState) *CPUPinningHandler {
 func (h *CPUPinningHandler) GetNodeCPU(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid node ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid node ID", http.StatusBadRequest)
 		return
 	}
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil {
-		sendJSONError(w, "Node not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 	// Allowed: the node's owner, an admin on a platform node, or a user whose
@@ -44,11 +45,11 @@ func (h *CPUPinningHandler) GetNodeCPU(w http.ResponseWriter, r *http.Request) {
 	perms := LoadEffectivePermissions(h.state, userID)
 	staffMay := perms.CanChangeResources && !ownedByOther(h.state, r, node)
 	if !canManageNode(h.state, r, node) && !staffMay {
-		sendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	if h.state.CPUPinning == nil {
-		sendJSONError(w, "CPU pinning unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "CPU pinning unavailable", http.StatusServiceUnavailable)
 		return
 	}
 

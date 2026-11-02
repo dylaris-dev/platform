@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"dylaris-core/handlers/httpx"
 )
 
 // AuditPolicy holds the platform-wide audit settings. Today only the
@@ -55,7 +57,7 @@ func (h *AuditSettingsHandler) GetPolicy(w http.ResponseWriter, r *http.Request)
 func (h *AuditSettingsHandler) SavePolicy(w http.ResponseWriter, r *http.Request) {
 	var p AuditPolicy
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if p.ServerRetentionDays < 0 {
@@ -66,7 +68,7 @@ func (h *AuditSettingsHandler) SavePolicy(w http.ResponseWriter, r *http.Request
 	}
 	actorID, _ := r.Context().Value("userID").(string)
 	if err := h.state.Store.SetSettingBy("audit.server_retention_days", fmt.Sprintf("%d", p.ServerRetentionDays), actorID); err != nil {
-		sendJSONError(w, "Failed to save", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{

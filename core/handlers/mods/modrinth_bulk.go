@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 )
 
 // Bulk Modrinth lookups for the Content tab's Update all.
@@ -73,7 +73,7 @@ func modrinthIDsQuery(ids []string) string {
 func (h *ModrinthHandler) Versions(w http.ResponseWriter, r *http.Request) {
 	ids, ok := parseModrinthIDs(r.URL.Query().Get("ids"))
 	if !ok {
-		handlers.SendJSONError(w, "ids must be 1 to 100 comma-separated Modrinth ids", http.StatusBadRequest)
+		httpx.SendJSONError(w, "ids must be 1 to 100 comma-separated Modrinth ids", http.StatusBadRequest)
 		return
 	}
 	h.proxyJSONWith(r.Context(), modrinthProjectTTL, modrinthBaseURL+"/versions"+modrinthIDsQuery(ids), w, stripVersionChangelogs)
@@ -85,7 +85,7 @@ func (h *ModrinthHandler) Versions(w http.ResponseWriter, r *http.Request) {
 func (h *ModrinthHandler) Projects(w http.ResponseWriter, r *http.Request) {
 	ids, ok := parseModrinthIDs(r.URL.Query().Get("ids"))
 	if !ok {
-		handlers.SendJSONError(w, "ids must be 1 to 100 comma-separated Modrinth ids", http.StatusBadRequest)
+		httpx.SendJSONError(w, "ids must be 1 to 100 comma-separated Modrinth ids", http.StatusBadRequest)
 		return
 	}
 	h.proxyJSONWith(r.Context(), modrinthProjectTTL, modrinthBaseURL+"/projects"+modrinthIDsQuery(ids), w, slimProjects)
@@ -146,11 +146,11 @@ func (h *ModrinthHandler) LatestFromHashes(w http.ResponseWriter, r *http.Reques
 	r.Body = http.MaxBytesReader(w, r.Body, modrinthBulkBodyLimit)
 	var req latestFromHashesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if msg := req.validate(); msg != "" {
-		handlers.SendJSONError(w, msg, http.StatusBadRequest)
+		httpx.SendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
 	body, _ := json.Marshal(req)

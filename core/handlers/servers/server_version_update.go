@@ -16,6 +16,7 @@ import (
 	"dylaris-pkg/validate"
 	pb "dylaris-proto/node"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -50,16 +51,16 @@ func (h *ServerModsHandler) UnmanagedMods(w http.ResponseWriter, r *http.Request
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	if srv.ActiveSubServer == "" {
-		handlers.SendJSONError(w, "No active sub-server", http.StatusBadRequest)
+		httpx.SendJSONError(w, "No active sub-server", http.StatusBadRequest)
 		return
 	}
 	known, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
 	}
 	// A missing directory lists as EMPTY (listServerDirFor turns the node's 404
@@ -83,7 +84,7 @@ func (h *ServerModsHandler) UnmanagedMods(w http.ResponseWriter, r *http.Request
 		listings[dir] = entries
 	}
 	if reached == 0 && lastErr != nil {
-		handlers.SendJSONError(w, "Could not read this server's files from its node: "+lastErr.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read this server's files from its node: "+lastErr.Error(), http.StatusBadGateway)
 		return
 	}
 
@@ -158,20 +159,20 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	if srv.ActiveSubServer == "" {
-		handlers.SendJSONError(w, "No active sub-server", http.StatusBadRequest)
+		httpx.SendJSONError(w, "No active sub-server", http.StatusBadRequest)
 		return
 	}
 	var req identifyModsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if len(req.Files) == 0 {
-		handlers.SendJSONError(w, "files required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "files required", http.StatusBadRequest)
 		return
 	}
 
@@ -179,11 +180,11 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 	byDir := map[string][]string{}
 	for _, f := range req.Files {
 		if f.Directory != "mods" && f.Directory != "plugins" {
-			handlers.SendJSONError(w, "directory must be 'mods' or 'plugins'", http.StatusBadRequest)
+			httpx.SendJSONError(w, "directory must be 'mods' or 'plugins'", http.StatusBadRequest)
 			return
 		}
 		if !validate.IsPlainFileName(f.Name) {
-			handlers.SendJSONError(w, "file names must be plain file names, without any path", http.StatusBadRequest)
+			httpx.SendJSONError(w, "file names must be plain file names, without any path", http.StatusBadRequest)
 			return
 		}
 		byDir[f.Directory] = append(byDir[f.Directory], f.Name)
@@ -213,7 +214,7 @@ func (h *ServerModsHandler) IdentifyMods(w http.ResponseWriter, r *http.Request)
 	for dir, names := range byDir {
 		hashes, err := h.hashServerFiles(srv.NodeID, srv.UUID, path.Join(srv.ActiveSubServer, dir), names)
 		if err != nil {
-			handlers.SendJSONError(w, "Node could not hash these files: "+err.Error(), http.StatusBadGateway)
+			httpx.SendJSONError(w, "Node could not hash these files: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 		var sha1s []string
@@ -321,7 +322,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
@@ -329,20 +330,20 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	}
 	var req versionUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Minecraft = strings.TrimSpace(req.Minecraft)
 	if req.Minecraft == "" {
-		handlers.SendJSONError(w, "minecraft is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "minecraft is required", http.StatusBadRequest)
 		return
 	}
 	if srv.ActiveSubServer == "" {
-		handlers.SendJSONError(w, "No active sub-server to update", http.StatusBadRequest)
+		httpx.SendJSONError(w, "No active sub-server to update", http.StatusBadRequest)
 		return
 	}
 	if srv.Status == "pending_setup" {
-		handlers.SendJSONError(w, "Set the server up before changing its Minecraft version", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Set the server up before changing its Minecraft version", http.StatusBadRequest)
 		return
 	}
 	loader := strings.ToLower(strings.TrimSpace(req.Loader))
@@ -350,7 +351,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		loader = strings.ToLower(srv.InstallerType)
 	}
 	if !validate.IsModrinthLoader(loader) {
-		handlers.SendJSONError(w, "This server's loader is not one Modrinth knows, so its mods cannot be resolved for another version. Declare the loader first.", http.StatusUnprocessableEntity)
+		httpx.SendJSONError(w, "This server's loader is not one Modrinth knows, so its mods cannot be resolved for another version. Declare the loader first.", http.StatusUnprocessableEntity)
 		return
 	}
 	// The update reinstalls the server like a setup does, so it needs the same
@@ -362,7 +363,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 
 	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
 	}
 	// The update writes every mod's new jar into the loaded directory, so a
@@ -374,13 +375,13 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if len(off) > 0 {
-		handlers.SendJSONErrorCode(w, fmt.Sprintf("Switch these mods on or remove them first: %s.", strings.Join(off, ", ")),
+		httpx.SendJSONErrorCode(w, fmt.Sprintf("Switch these mods on or remove them first: %s.", strings.Join(off, ", ")),
 			"mods_switched_off", http.StatusConflict)
 		return
 	}
 	install, unavailable, err := resolveServerModTargets(mods, loader, req.Minecraft)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not resolve target versions from Modrinth: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not resolve target versions from Modrinth: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	if len(unavailable) > 0 && !req.DropUnavailable {
@@ -395,11 +396,11 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
-		handlers.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if h.state.Queue == nil {
-		handlers.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -413,12 +414,12 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	targetDir := defaultTargetDirForLoader(loader)
 
 	if !javaImageAllowed(h.state.Store, req.JavaImage) {
-		handlers.SendJSONError(w, javaImageRefused, http.StatusBadRequest)
+		httpx.SendJSONError(w, javaImageRefused, http.StatusBadRequest)
 		return
 	}
 	javaImage := resolveJavaImage(req.JavaImage, srv.GameImage)
 	if javaImage == "" {
-		handlers.SendJSONError(w, "javaImage is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "javaImage is required", http.StatusBadRequest)
 		return
 	}
 
@@ -475,13 +476,13 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// availability check reads as "current". build_number gets the loader build,
 	// matching the column name and what an orphan import writes into it.
 	if err := h.state.Store.UpdateServerSetup(serverID, javaImage, "", srv.ActiveSubServer, srv.ExtraJvmFlags, loader, req.Minecraft, req.InstallerVersion); err != nil {
-		handlers.SendJSONError(w, "Failed to update the server record", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to update the server record", http.StatusInternalServerError)
 		return
 	}
 	h.state.Store.UpdateServerStatus(serverID, "installing")
 
 	if err := h.state.Queue.SendCommand(context.Background(), node.Token, "update_server_version", configPayload, installerPayload); err != nil {
-		handlers.SendJSONError(w, "Failed to queue the version update", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to queue the version update", http.StatusInternalServerError)
 		return
 	}
 
@@ -653,7 +654,7 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
@@ -664,40 +665,40 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	}
 	var req copySubServerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.TargetName = strings.TrimSpace(req.TargetName)
 	if !validate.IsSubServerName(req.TargetName) {
-		handlers.SendJSONError(w, "targetName must be a single plain directory name", http.StatusBadRequest)
+		httpx.SendJSONError(w, "targetName must be a single plain directory name", http.StatusBadRequest)
 		return
 	}
 	if srv.ActiveSubServer == "" {
-		handlers.SendJSONError(w, "No active sub-server to copy", http.StatusBadRequest)
+		httpx.SendJSONError(w, "No active sub-server to copy", http.StatusBadRequest)
 		return
 	}
 	if req.TargetName == srv.ActiveSubServer {
-		handlers.SendJSONError(w, "The copy needs a different name from the sub-server it copies", http.StatusBadRequest)
+		httpx.SendJSONError(w, "The copy needs a different name from the sub-server it copies", http.StatusBadRequest)
 		return
 	}
 	if srv.Status == "online" || srv.Status == "installing" {
-		handlers.SendJSONError(w, "Stop the server before copying it: a running server's world files are copied mid-write", http.StatusConflict)
+		httpx.SendJSONError(w, "Stop the server before copying it: a running server's world files are copied mid-write", http.StatusConflict)
 		return
 	}
 	// Booting, restarting or still saving on the way down: the world files are
 	// being written just the same, and a boot now reads "starting" for minutes.
 	if inPowerTransition(srv.Status) {
-		handlers.SendJSONError(w, "The server is "+srv.Status+". Copy it once it has stopped: its world files are being written", http.StatusConflict)
+		httpx.SendJSONError(w, "The server is "+srv.Status+". Copy it once it has stopped: its world files are being written", http.StatusConflict)
 		return
 	}
 
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
-		handlers.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if h.state.Queue == nil {
-		handlers.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -712,7 +713,7 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	// whole point of the check is that the answer is not knowable from here.
 	entries, lerr := h.listServerDir(srv.NodeID, srv.UUID, "")
 	if lerr != nil {
-		handlers.SendJSONError(w, "The node did not answer, so it is not known whether that name is already taken: "+lerr.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "The node did not answer, so it is not known whether that name is already taken: "+lerr.Error(), http.StatusBadGateway)
 		return
 	}
 	// A copy CREATES a sub-server, so it is held to the same cap as creating one
@@ -723,7 +724,7 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if subServerNameTaken(entries, req.TargetName) {
-		handlers.SendJSONError(w, "A sub-server called "+req.TargetName+" already exists. Pick another name.", http.StatusConflict)
+		httpx.SendJSONError(w, "A sub-server called "+req.TargetName+" already exists. Pick another name.", http.StatusConflict)
 		return
 	}
 
@@ -732,7 +733,7 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		"sourceSubServer": srv.ActiveSubServer,
 		"targetSubServer": req.TargetName,
 	}, nil); err != nil {
-		handlers.SendJSONError(w, "Failed to queue the copy", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to queue the copy", http.StatusInternalServerError)
 		return
 	}
 

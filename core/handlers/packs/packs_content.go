@@ -16,6 +16,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage/modpack"
@@ -57,7 +58,7 @@ func (h *PacksHandler) loadBuild(r *http.Request, need packNeed) (*models.PackBu
 func (h *PacksHandler) ListContent(w http.ResponseWriter, r *http.Request) {
 	packID := atoiVar(r, "id")
 	if _, ok := h.ownsPack(r, packID); !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	// Owning the pack in the path says nothing about the build in it. Without
@@ -68,12 +69,12 @@ func (h *PacksHandler) ListContent(w http.ResponseWriter, r *http.Request) {
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
 	b, err := h.state.Store.GetPackBuild(buildID)
 	if err != nil || b == nil || b.PackID != packID {
-		handlers.SendJSONError(w, "Build not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
 	}
 	entries, err := h.state.Store.ListBuildContent(buildID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list content", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list content", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "content": entries})
@@ -94,16 +95,16 @@ type addModrinthRequest struct {
 func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 	b, owner, ok := h.loadBuild(r, packEdit)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	if b.Frozen {
-		handlers.SendJSONError(w, "Build is frozen", http.StatusConflict)
+		httpx.SendJSONError(w, "Build is frozen", http.StatusConflict)
 		return
 	}
 	var req addModrinthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.VersionID == "" {
-		handlers.SendJSONError(w, "versionId required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "versionId required", http.StatusBadRequest)
 		return
 	}
 	if req.Side == "" {
@@ -113,26 +114,26 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 		req.ContentType = models.ContentTypeMod
 	}
 	if !validContentSide(req.Side) {
-		handlers.SendJSONError(w, "Invalid side", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid side", http.StatusBadRequest)
 		return
 	}
 
 	v, err := services.FetchModrinthVersion(req.VersionID)
 	if err != nil {
-		handlers.SendJSONError(w, "Modrinth version lookup failed", http.StatusBadGateway)
+		httpx.SendJSONError(w, "Modrinth version lookup failed", http.StatusBadGateway)
 		return
 	}
 	if req.ProjectID != "" && req.ProjectID != v.ProjectID {
-		handlers.SendJSONError(w, "Version does not belong to the selected Modrinth project", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Version does not belong to the selected Modrinth project", http.StatusBadRequest)
 		return
 	}
 	if err := validateModrinthContent(b, v, req.ContentType); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusUnprocessableEntity)
+		httpx.SendJSONError(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
 	existing, err := h.state.Store.ListBuildContent(b.ID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read existing build content", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read existing build content", http.StatusInternalServerError)
 		return
 	}
 	have := map[string]bool{v.ProjectID: true}
@@ -142,7 +143,7 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 			projectSides[entry.ModrinthProjectID] |= contentSideMask(entry.Side)
 		}
 		if contentSideMask(entry.Side)&contentSideMask(req.Side) != 0 && (entry.ModrinthProjectID == v.ProjectID || strings.EqualFold(entry.TargetPath, targetPathFor(req.ContentType, v.PrimaryFile().Filename))) {
-			handlers.SendJSONError(w, "This build already contains that project or target path. Update or remove its existing entry first.", http.StatusConflict)
+			httpx.SendJSONError(w, "This build already contains that project or target path. Update or remove its existing entry first.", http.StatusConflict)
 			return
 		}
 	}
@@ -152,7 +153,7 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.addModrinthVersion(owner, b, v, req.Side, req.ContentType); err != nil {
-		handlers.SendJSONError(w, "Failed to add mod", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to add mod", http.StatusInternalServerError)
 		return
 	}
 
@@ -281,7 +282,7 @@ func validateStoredModZip(ra io.ReaderAt, size int64) error {
 func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	b, owner, ok := h.loadBuild(r, packEdit)
 	if !ok || b.Frozen {
-		handlers.SendJSONError(w, "Forbidden or frozen", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden or frozen", http.StatusForbidden)
 		return
 	}
 
@@ -291,7 +292,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	// down this path checks a size at all, so without this an ordinary user who
 	// owns a pack could write an unbounded file to Core's disk and then have it
 	// streamed on into modpack storage. The ticket upload had the same gap.
-	if !handlers.CapBody(w, r, maxPackContentUploadBytes) {
+	if !httpx.CapBody(w, r, maxPackContentUploadBytes) {
 		return
 	}
 
@@ -303,16 +304,16 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(8 << 20); err != nil { // 8 MiB in RAM, rest to disk
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			handlers.SendJSONError(w, "Upload exceeds the 1 GiB per-file limit", http.StatusRequestEntityTooLarge)
+			httpx.SendJSONError(w, "Upload exceeds the 1 GiB per-file limit", http.StatusRequestEntityTooLarge)
 			return
 		}
-		handlers.SendJSONError(w, "Upload too large or malformed", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Upload too large or malformed", http.StatusBadRequest)
 		return
 	}
 	defer r.MultipartForm.RemoveAll()
 	f, hdr, err := r.FormFile("file")
 	if err != nil {
-		handlers.SendJSONError(w, "file field required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "file field required", http.StatusBadRequest)
 		return
 	}
 	defer f.Close()
@@ -325,39 +326,39 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		contentType = models.ContentTypeMod
 	}
 	if !validContentSide(side) || !validContentType(contentType) {
-		handlers.SendJSONError(w, "Invalid content type or side", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid content type or side", http.StatusBadRequest)
 		return
 	}
 	// Sanitize the client-supplied filename: normalize backslashes, take the
 	// base name, and reject traversal so it cannot escape the zip/target path.
 	fileName := path.Base(strings.ReplaceAll(hdr.Filename, `\`, "/"))
 	if fileName == "." || fileName == "/" || fileName == "" || strings.Contains(fileName, "..") {
-		handlers.SendJSONError(w, "Invalid file name", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid file name", http.StatusBadRequest)
 		return
 	}
 	targetPath := r.FormValue("targetPath")
 	archive := r.FormValue("archive") == "true"
 	if targetPath != "" && !validContentTarget(targetPath) || archive && (targetPath != "" || !strings.HasSuffix(strings.ToLower(fileName), ".zip")) {
-		handlers.SendJSONError(w, "Invalid target path or archive options", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid target path or archive options", http.StatusBadRequest)
 		return
 	}
 	if targetPath == "" {
 		targetPath = targetPathFor(contentType, fileName)
 	}
 	if !validContentTarget(targetPath) {
-		handlers.SendJSONError(w, "Invalid target path", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid target path", http.StatusBadRequest)
 		return
 	}
 	isBundle := archive || contentType == models.ContentTypeMod && strings.HasSuffix(strings.ToLower(fileName), ".zip")
 	if !isBundle {
 		entries, err := h.state.Store.ListBuildContent(b.ID)
 		if err != nil {
-			handlers.SendJSONError(w, "Failed to check existing content", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to check existing content", http.StatusInternalServerError)
 			return
 		}
 		for _, entry := range entries {
 			if strings.EqualFold(entry.TargetPath, targetPath) && contentSideMask(entry.Side)&contentSideMask(side) != 0 {
-				handlers.SendJSONError(w, "This build already contains that target path. Edit or remove the existing entry first.", http.StatusConflict)
+				httpx.SendJSONError(w, "This build already contains that target path. Edit or remove the existing entry first.", http.StatusConflict)
 				return
 			}
 		}
@@ -365,7 +366,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 
 	prov, err := h.state.BuildModpackStorageProvider()
 	if err != nil || prov == nil {
-		handlers.SendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
+		httpx.SendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
 		return
 	}
 	slug := handlers.Slugify(strings.TrimSuffix(fileName, ".jar"))
@@ -381,7 +382,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 
 	meta, herr := h.storeUploadedContent(r.Context(), prov, f, hdr, fileName, contentType, owner, slug, uploadContentOptions{targetPath: targetPath, archive: archive})
 	if herr != nil {
-		handlers.SendJSONError(w, herr.msg, herr.status)
+		httpx.SendJSONError(w, herr.msg, herr.status)
 		return
 	}
 	md5hex, innerSha1, innerSha512 := meta.md5, meta.innerSha1, meta.innerSha512
@@ -393,7 +394,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// The object is stored and nothing points at it yet.
 		h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, key)
-		handlers.SendJSONError(w, "Failed to save mod", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save mod", http.StatusInternalServerError)
 		return
 	}
 	mv := &models.Modversion{
@@ -432,7 +433,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	mvID, err := h.state.Store.CreateModversion(mv)
 	if err != nil {
 		h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, key)
-		handlers.SendJSONError(w, "Failed to save version", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save version", http.StatusInternalServerError)
 		return
 	}
 	if mv.StorageKey == "" {
@@ -440,7 +441,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, key)
 	}
 	if _, err := h.state.Store.AttachModversionToBuild(b.ID, mvID, side); err != nil {
-		handlers.SendJSONError(w, "Failed to attach", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to attach", http.StatusInternalServerError)
 		return
 	}
 	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
@@ -452,12 +453,12 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 func (h *PacksHandler) RemoveContent(w http.ResponseWriter, r *http.Request) {
 	b, _, ok := h.loadBuild(r, packDelete)
 	if !ok || b.Frozen {
-		handlers.SendJSONError(w, "Forbidden or frozen", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden or frozen", http.StatusForbidden)
 		return
 	}
 	mvID, _ := strconv.Atoi(mux.Vars(r)["modversionId"])
 	if err := h.state.Store.DetachFromBuild(b.ID, mvID); err != nil {
-		handlers.SendJSONError(w, "Failed to remove", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to remove", http.StatusInternalServerError)
 		return
 	}
 	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
@@ -474,27 +475,27 @@ type setSideRequest struct {
 func (h *PacksHandler) SetSide(w http.ResponseWriter, r *http.Request) {
 	b, _, ok := h.loadBuild(r, packEdit)
 	if !ok || b.Frozen {
-		handlers.SendJSONError(w, "Forbidden or frozen", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden or frozen", http.StatusForbidden)
 		return
 	}
 	mvID, _ := strconv.Atoi(mux.Vars(r)["modversionId"])
 	var req setSideRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Side != models.SideClient && req.Side != models.SideServer && req.Side != models.SideBoth {
-		handlers.SendJSONError(w, "Invalid side", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid side", http.StatusBadRequest)
 		return
 	}
 	// AttachModversionToBuild is an upsert: without this check a caller could pass
 	// another tenant's modversionId and pull it into their own build.
 	if ok, _ := h.state.Store.IsModversionInBuild(b.ID, mvID); !ok {
-		handlers.SendJSONError(w, "Content not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 		return
 	}
 	if _, err := h.state.Store.AttachModversionToBuild(b.ID, mvID, req.Side); err != nil {
-		handlers.SendJSONError(w, "Failed to set side", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to set side", http.StatusInternalServerError)
 		return
 	}
 	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})

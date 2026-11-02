@@ -13,6 +13,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 
 	"github.com/gorilla/mux"
 )
@@ -241,16 +242,16 @@ func (h *ProxyHandler) allowHostRequest(w http.ResponseWriter, r *http.Request, 
 func (h *ProxyHandler) HostMint(w http.ResponseWriter, r *http.Request) {
 	label := TabProxyHostLabel(r.Host, h.state.TabProxyHostSuffix)
 	if label == "" {
-		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
-		handlers.SendJSONError(w, "Tab proxy disabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "Tab proxy disabled", http.StatusForbidden)
 		return
 	}
 	tab, err := h.getTabByHostLabel(label)
 	if err != nil || tab == nil {
-		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	ticket, ok := h.allowMint(w, r, tab)
@@ -292,17 +293,17 @@ func (h *ProxyHandler) HostMint(w http.ResponseWriter, r *http.Request) {
 func (h *ProxyHandler) allowMint(w http.ResponseWriter, r *http.Request, tab *proxyTab) (string, bool) {
 	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return "", false
 	}
 	ticket := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 	claims, err := h.auth.ParseTabProxyTicket(ticket)
 	if err != nil {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return "", false
 	}
 	if claims.TabID != tab.ID {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return "", false
 	}
 	return ticket, true
@@ -324,29 +325,29 @@ func (h *ProxyHandler) allowMint(w http.ResponseWriter, r *http.Request, tab *pr
 // this could simply ask for another. It never touches a URL or storage.
 func (h *ProxyHandler) MintTicket(w http.ResponseWriter, r *http.Request) {
 	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) {
-		handlers.SendJSONError(w, "Tab proxy disabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "Tab proxy disabled", http.StatusForbidden)
 		return
 	}
 	serverID, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server id", http.StatusBadRequest)
 		return
 	}
 	tabID, err := strconv.Atoi(mux.Vars(r)["tabId"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid tab id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid tab id", http.StatusBadRequest)
 		return
 	}
 	tab, err := h.getTabByID(serverID, tabID)
 	if err != nil || tab == nil {
-		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	// A ticket for a tab that cannot be served is a credential for nothing, and
 	// minting one would report success to a panel that is about to render a frame
 	// the content host will refuse. The same three conditions HostContent applies.
 	if !tab.Enabled || tab.Mode != "proxied" || !tab.ProxyHostLabel.Valid || tab.ProxyHostLabel.String == "" {
-		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 
@@ -359,7 +360,7 @@ func (h *ProxyHandler) MintTicket(w http.ResponseWriter, r *http.Request) {
 	// caller who lost it between routing and now must not receive one.
 	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
 	if rerr != nil || !res.HasCap(tabsReadCap) {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -370,7 +371,7 @@ func (h *ProxyHandler) MintTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	ticket, terr := h.auth.IssueTabProxyTicket(sid, username, isAdmin, tab.ServerID, tab.ID, readOnly)
 	if terr != nil {
-		handlers.SendJSONError(w, "Failed to mint proxy ticket", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to mint proxy ticket", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -568,25 +569,25 @@ type shareResolveResponse struct {
 func (h *ProxyHandler) ResolveShare(w http.ResponseWriter, r *http.Request) {
 	token := mux.Vars(r)["token"]
 	if !h.state.FeatureFlags.IsTabProxyEnabled(r.Context()) || h.state.TabProxyHostSuffix == "" {
-		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	tab, err := h.getTabByShareToken(token)
 	if err != nil || tab == nil || !tab.Enabled || tab.Mode != "proxied" {
-		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	if tab.Surface != "page" && tab.Surface != "both" {
 		// Not published as a page: the tab exists, but no standalone link does.
-		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	if !tab.ProxyHostLabel.Valid || tab.ProxyHostLabel.String == "" {
-		handlers.SendJSONError(w, "Not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	if shareTokenExpired(tab.ShareExpires, time.Now()) {
-		handlers.SendJSONError(w, "This link has expired", http.StatusGone)
+		httpx.SendJSONError(w, "This link has expired", http.StatusGone)
 		return
 	}
 

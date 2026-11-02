@@ -1,4 +1,4 @@
-package handlers
+package httpx
 
 import (
 	"mime"
@@ -31,7 +31,7 @@ func TestAFilenameCannotEscapeItsContentDispositionParameter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
-			setAttachmentDisposition(w, tt.filename)
+			SetAttachmentDisposition(w, tt.filename)
 			got := w.Header().Get("Content-Disposition")
 
 			// Parse it the way a client does, rather than eyeballing the string.
@@ -60,7 +60,7 @@ func TestAFilenameCannotEscapeItsContentDispositionParameter(t *testing.T) {
 // sending no disposition is not (the browser may then render the body).
 func TestAnUnencodableFilenameStillDisposesAsAttachment(t *testing.T) {
 	w := httptest.NewRecorder()
-	setAttachmentDisposition(w, strings.Repeat("\x00", 4))
+	SetAttachmentDisposition(w, strings.Repeat("\x00", 4))
 	got := w.Header().Get("Content-Disposition")
 	if !strings.HasPrefix(got, "attachment") {
 		t.Errorf("Content-Disposition = %q, want it to still start with attachment", got)

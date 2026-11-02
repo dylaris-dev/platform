@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
@@ -29,26 +30,26 @@ func NewStatsHandler(state *handlers.AppState) *StatsHandler {
 // Sets a watching key so nodes only publish when someone is actually watching.
 func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil || h.state.Redis == nil {
-		handlers.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		handlers.SendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
 	release, ok := handlers.AcquireLiveStream(w, r, h.state.Store, "stats", handlers.StatsStreamsPerUser)
@@ -86,7 +87,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	}()
 	defer close(watchDone)
 
-	ctx, cancel := handlers.StreamContext(w, r)
+	ctx, cancel := httpx.StreamContext(w, r)
 	defer cancel()
 
 	// Say first whether the buffer describes a RUNNING server. The node stops
@@ -165,20 +166,20 @@ func readStatsStreamState(ctx context.Context, rdb *redis.Client, bufferKey, sta
 // Returns historical stats data points from PostgreSQL.
 func (h *StatsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
@@ -234,20 +235,20 @@ func (h *StatsHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 // Returns disk usage data for the server.
 func (h *StatsHandler) GetDisk(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil || h.state.Redis == nil {
-		handlers.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
@@ -287,17 +288,17 @@ type coreLoadEntry struct {
 // with no cores.
 func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil || h.state.Redis == nil {
-		handlers.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	serverID, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	out := struct {
@@ -321,7 +322,7 @@ func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
 	}
 	others, err := h.state.Store.ListServerPinningByNode(node.ID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read the node's servers", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not read the node's servers", http.StatusInternalServerError)
 		return
 	}
 	all := make([]int, 0, len(published.Cores))

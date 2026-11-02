@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -80,6 +81,6 @@ func refuseIfSuspended(w http.ResponseWriter, r *http.Request, state *AppState, 
 	if msg == "" {
 		return false
 	}
-	sendJSONError(w, msg, http.StatusForbidden)
+	httpx.SendJSONError(w, msg, http.StatusForbidden)
 	return true
 }

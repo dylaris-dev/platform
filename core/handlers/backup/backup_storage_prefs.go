@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 )
 
 // Where a tenant's NEW backups and templates go: Dylaris storage (null) or one
@@ -15,7 +15,7 @@ import (
 func (h *BackupHandler) GetStoragePrefs(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	// With own storage off, new data goes to the platform storage whatever is
@@ -30,7 +30,7 @@ func (h *BackupHandler) GetStoragePrefs(w http.ResponseWriter, r *http.Request) 
 	backups, templates, err := h.state.Store.GetUserStoragePrefs(userID)
 	if err != nil {
 		log.Printf("storage prefs for %s: %v", userID, err)
-		handlers.SendJSONError(w, "Failed to load your storage choices", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load your storage choices", http.StatusInternalServerError)
 		return
 	}
 	// Show what backups actually use: a NULL pref resolves to the own default
@@ -39,7 +39,7 @@ func (h *BackupHandler) GetStoragePrefs(w http.ResponseWriter, r *http.Request) 
 		def, err := h.state.Store.GetUserDefaultBackupStorage(userID)
 		if err != nil {
 			log.Printf("storage prefs default for %s: %v", userID, err)
-			handlers.SendJSONError(w, "Failed to load your storage choices", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to load your storage choices", http.StatusInternalServerError)
 			return
 		}
 		if def != nil {
@@ -60,16 +60,16 @@ func (h *BackupHandler) GetStoragePrefs(w http.ResponseWriter, r *http.Request) 
 func (h *BackupHandler) PutStoragePrefs(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	// Two ids fit in a few bytes; the cap only stops a huge body from being decoded.
-	if !handlers.CapBody(w, r, 4<<10) {
+	if !httpx.CapBody(w, r, 4<<10) {
 		return
 	}
 	var body map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	writes := []struct {
@@ -87,7 +87,7 @@ func (h *BackupHandler) PutStoragePrefs(w http.ResponseWriter, r *http.Request) 
 		}
 		var id *int
 		if err := json.Unmarshal(raw, &id); err != nil {
-			handlers.SendJSONError(w, wr.field+" must be a storage id or null", http.StatusBadRequest)
+			httpx.SendJSONError(w, wr.field+" must be a storage id or null", http.StatusBadRequest)
 			return
 		}
 		if id != nil {
@@ -100,18 +100,18 @@ func (h *BackupHandler) PutStoragePrefs(w http.ResponseWriter, r *http.Request) 
 			// Same 404 for missing and foreign as ownStorageFor: a distinct answer
 			// would confirm that an id exists.
 			if err != nil || bs == nil || bs.OwnerID == nil || *bs.OwnerID != userID {
-				handlers.SendJSONError(w, "Storage not found", http.StatusNotFound)
+				httpx.SendJSONError(w, "Storage not found", http.StatusNotFound)
 				return
 			}
 			if !ownBackupStorageAllowed(bs.Provider) {
-				handlers.SendJSONError(w, "Only s3-compatible storage can be chosen", http.StatusBadRequest)
+				httpx.SendJSONError(w, "Only s3-compatible storage can be chosen", http.StatusBadRequest)
 				return
 			}
 		}
 		chosen[wr.field] = id
 	}
 	if len(chosen) == 0 {
-		handlers.SendJSONError(w, "Nothing to change: send backupsStorageId and/or templatesStorageId", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Nothing to change: send backupsStorageId and/or templatesStorageId", http.StatusBadRequest)
 		return
 	}
 	for _, wr := range writes {
@@ -121,7 +121,7 @@ func (h *BackupHandler) PutStoragePrefs(w http.ResponseWriter, r *http.Request) 
 		}
 		if err := wr.set(userID, id); err != nil {
 			log.Printf("storage prefs %s for %s: %v", wr.field, userID, err)
-			handlers.SendJSONError(w, "Failed to save your storage choice", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save your storage choice", http.StatusInternalServerError)
 			return
 		}
 	}

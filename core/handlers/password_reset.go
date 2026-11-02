@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/mailer"
 	"dylaris-core/services"
 
@@ -39,7 +40,7 @@ type forgotPasswordRequest struct {
 func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	var req forgotPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
@@ -143,7 +144,7 @@ type validateResetTokenRequest struct {
 func (h *PasswordResetHandler) ValidateResetToken(w http.ResponseWriter, r *http.Request) {
 	var req validateResetTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if len(req.Token) < 16 {
@@ -192,16 +193,16 @@ type resetPasswordRequest struct {
 func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req resetPasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if len(req.Token) < 16 {
-		sendJSONError(w, "Invalid token", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid token", http.StatusBadRequest)
 		return
 	}
 	policy := LoadAuthPolicy(h.state)
 	if len(req.Password) < policy.PasswordMinLength {
-		sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", policy.PasswordMinLength), http.StatusBadRequest)
+		httpx.SendJSONError(w, fmt.Sprintf("Password must be at least %d characters", policy.PasswordMinLength), http.StatusBadRequest)
 		return
 	}
 
@@ -209,7 +210,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	if err != nil || user == nil {
 		// Same response shape as the verify-email gone branch — caller-side
 		// renders "your link expired, request a new one".
-		sendJSONError(w, "Reset link is invalid or expired", http.StatusGone)
+		httpx.SendJSONError(w, "Reset link is invalid or expired", http.StatusGone)
 		return
 	}
 
@@ -222,7 +223,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		if stored != "" && stored != "[]" {
 			if !verifySecurityAnswersAgainstStored(stored, req.SecurityAnswers) {
 				LogIdentityAudit(h.state, r, AuditEventSecurityAnswersFailedAtReset, "", user.ID, nil)
-				sendJSONError(w, "Security answers did not match", http.StatusUnauthorized)
+				httpx.SendJSONError(w, "Security answers did not match", http.StatusUnauthorized)
 				return
 			}
 		}
@@ -230,7 +231,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		sendJSONError(w, "Failed to hash password", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to hash password", http.StatusInternalServerError)
 		return
 	}
 
@@ -241,13 +242,13 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	// live link behind. Atomic is both simpler and stricter.
 	ok, err := h.state.Store.ResetPasswordWithToken(user.ID, req.Token, string(hashed))
 	if err != nil {
-		sendJSONError(w, "Failed to update password", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to update password", http.StatusInternalServerError)
 		return
 	}
 	if !ok {
 		// Spent by a concurrent reset, replaced by a newer link, or ended by
 		// an address change since it was read above.
-		sendJSONError(w, "Reset link is invalid or expired", http.StatusGone)
+		httpx.SendJSONError(w, "Reset link is invalid or expired", http.StatusGone)
 		return
 	}
 

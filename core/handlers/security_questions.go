@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"dylaris-core/handlers/httpx"
 )
 
 type SecurityQuestionsHandler struct {
@@ -86,12 +88,12 @@ func (h *SecurityQuestionsHandler) GetPool(w http.ResponseWriter, r *http.Reques
 func (h *SecurityQuestionsHandler) GetMyQuestions(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	questions, err := h.state.Store.GetUserSecurityQuestions(userID)
 	if err != nil {
-		sendJSONError(w, "Failed to load questions", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load questions", http.StatusInternalServerError)
 		return
 	}
 	if questions == nil {
@@ -117,23 +119,23 @@ type setMyQuestionsRequest struct {
 func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	policy := LoadAuthPolicy(h.state)
 	if !policy.SecurityQuestionsEnabled {
-		sendJSONError(w, "Security questions are disabled by the administrator", http.StatusForbidden)
+		httpx.SendJSONError(w, "Security questions are disabled by the administrator", http.StatusForbidden)
 		return
 	}
 
 	var req setMyQuestionsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	hashedJSON, err := buildHashedQAJSON(req.Items, LoadSecurityQuestionPool(h.state), policy.SecurityQuestionsCount)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	// Re-authenticate immediately before the write, and after every cheap check.
@@ -148,7 +150,7 @@ func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http
 		return
 	}
 	if err := h.state.Store.SetUserSecurityQuestions(userID, hashedJSON); err != nil {
-		sendJSONError(w, "Failed to save", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save", http.StatusInternalServerError)
 		return
 	}
 
@@ -179,7 +181,7 @@ type setAdminPoolRequest struct {
 func (h *SecurityQuestionsHandler) SetAdminPool(w http.ResponseWriter, r *http.Request) {
 	var req setAdminPoolRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	cleaned := make([]string, 0, len(req.Pool))
@@ -196,14 +198,14 @@ func (h *SecurityQuestionsHandler) SetAdminPool(w http.ResponseWriter, r *http.R
 		cleaned = append(cleaned, q)
 	}
 	if len(cleaned) < 3 {
-		sendJSONError(w, "Pool must contain at least 3 distinct questions", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Pool must contain at least 3 distinct questions", http.StatusBadRequest)
 		return
 	}
 
 	payload, _ := json.Marshal(cleaned)
 	actorID, _ := r.Context().Value("userID").(string)
 	if err := h.state.Store.SetSettingBy("auth.security_questions_pool", string(payload), actorID); err != nil {
-		sendJSONError(w, "Failed to save pool", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save pool", http.StatusInternalServerError)
 		return
 	}
 

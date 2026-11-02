@@ -9,8 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
-
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage/modpack"
@@ -30,19 +29,19 @@ type replaceModrinthRequest struct {
 func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Request) {
 	build, owner, ok := h.loadBuild(r, packEdit)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	// loadOwnedBuild does not gate frozen; replacing content on a frozen build
 	// would break byte-identity of an already-published build, so reject here.
 	if build.Frozen {
-		handlers.SendJSONError(w, "Build is frozen", http.StatusConflict)
+		httpx.SendJSONError(w, "Build is frozen", http.StatusConflict)
 		return
 	}
 	mvID, _ := strconv.Atoi(mux.Vars(r)["modversionId"])
 	mv, err := h.state.Store.GetModversion(mvID)
 	if err != nil || mv == nil {
-		handlers.SendJSONError(w, "Content not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 		return
 	}
 	// GetModversion is a globally unscoped by-id lookup; loadOwnedBuild only proves
@@ -50,16 +49,16 @@ func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Reques
 	// check a caller could pass another tenant's modversionId and repoint their
 	// storage_key/hashes to this caller's storage path.
 	if ok, _ := h.state.Store.IsModversionInBuild(build.ID, mvID); !ok {
-		handlers.SendJSONError(w, "Content not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 		return
 	}
 	var req replaceModrinthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.VersionID == "" {
-		handlers.SendJSONError(w, "versionId required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "versionId required", http.StatusBadRequest)
 		return
 	}
 	if err := h.swapModversionToModrinth(r.Context(), owner, build, mv, req.VersionID); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	publishPackEvent(r, h.state, "pack_content.changed", build.PackID, map[string]interface{}{"buildId": build.ID})

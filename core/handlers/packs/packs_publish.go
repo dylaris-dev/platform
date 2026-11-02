@@ -9,8 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
-
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -85,7 +84,7 @@ func (h *PacksHandler) createModrinthProject(r *http.Request, mc *services.Modri
 // than that the request was wrong.
 func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	if h.pat == nil {
-		handlers.SendJSONError(w, "Publishing not available", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Publishing not available", http.StatusServiceUnavailable)
 		return
 	}
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
@@ -93,16 +92,16 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 
 	pack, err := h.state.Store.GetPack(packID)
 	if err != nil || pack == nil || !h.mayEditPack(r, pack) {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	build, err := h.state.Store.GetPackBuild(buildID)
 	if err != nil || build == nil || build.PackID != packID {
-		handlers.SendJSONError(w, "Build not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
 	}
 	if build.ModrinthPublished {
-		handlers.SendJSONError(w, "This build is already published. Create a new build for changes.", http.StatusConflict)
+		httpx.SendJSONError(w, "This build is already published. Create a new build for changes.", http.StatusConflict)
 		return
 	}
 
@@ -113,13 +112,13 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		channel = build.Channel
 	}
 	if channel != models.ChannelBeta && channel != models.ChannelRelease {
-		handlers.SendJSONError(w, "channel must be beta or release", http.StatusBadRequest)
+		httpx.SendJSONError(w, "channel must be beta or release", http.StatusBadRequest)
 		return
 	}
 
 	content, err := h.state.Store.ListBuildContent(buildID)
 	if err != nil || len(content) == 0 {
-		handlers.SendJSONError(w, "Build has no content yet — add some before publishing", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Build has no content yet — add some before publishing", http.StatusBadRequest)
 		return
 	}
 
@@ -142,7 +141,7 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	caller, _ := r.Context().Value("userID").(string)
 	pat, username, err := h.pat.LoadPAT(caller)
 	if err != nil {
-		handlers.SendJSONError(w, "Connect your Modrinth token first (Account, Modrinth).", http.StatusPreconditionRequired)
+		httpx.SendJSONError(w, "Connect your Modrinth token first (Account, Modrinth).", http.StatusPreconditionRequired)
 		return
 	}
 
@@ -157,18 +156,18 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	if build.Frozen && build.MrpackStorageKey != "" {
 		prov, perr := h.state.BuildModpackStorageProvider()
 		if perr != nil || prov == nil {
-			handlers.SendJSONError(w, "Modpack storage misconfigured; cannot read frozen build", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Modpack storage misconfigured; cannot read frozen build", http.StatusInternalServerError)
 			return
 		}
 		mrpack, err = prov.Get(r.Context(), build.MrpackStorageKey)
 		if err != nil {
-			handlers.SendJSONError(w, "Failed to read stored .mrpack: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to read stored .mrpack: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	} else {
 		mrpack, err = h.persistMrpackForBuild(r.Context(), pack, build, content)
 		if err != nil {
-			handlers.SendJSONError(w, "Failed to build .mrpack: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to build .mrpack: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -179,13 +178,13 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	if projectID == "" {
 		created, err := h.createModrinthProject(r, mc, pack)
 		if err != nil {
-			handlers.SendJSONError(w, "Modrinth create project failed: "+err.Error(), http.StatusBadGateway)
+			httpx.SendJSONError(w, "Modrinth create project failed: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 		projectID = created.ID
 		pack.ModrinthProjectID = projectID
 		if err := h.state.Store.UpdatePack(pack); err != nil {
-			handlers.SendJSONError(w, "Project created ("+projectID+") but local update failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Project created ("+projectID+") but local update failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		// The pack now follows the new project's team; the caller just
@@ -218,7 +217,7 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		ProjectID:     projectID,
 	}, mrpack, filename)
 	if err != nil {
-		handlers.SendJSONError(w, "Modrinth upload failed: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Modrinth upload failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 
@@ -227,7 +226,7 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	build.ModrinthPublished = true
 	build.PublishedAt = &now
 	if err := h.state.Store.UpdatePackBuild(build); err != nil {
-		handlers.SendJSONError(w, "Published "+created.ID+" but local stamp failed: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Published "+created.ID+" but local stamp failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 

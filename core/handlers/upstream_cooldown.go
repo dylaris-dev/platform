@@ -54,10 +54,3 @@ func (c *upstreamCooldown) trip(h http.Header, now time.Time) time.Duration {
 	}
 	return d
 }
-
-// sendCooldown answers a caller while the upstream is cooling down.
-func sendCooldown(w http.ResponseWriter, upstream string, left time.Duration) {
-	secs := int(left.Seconds()) + 1
-	w.Header().Set("Retry-After", strconv.Itoa(secs))
-	sendJSONError(w, upstream+" is rate limiting requests, try again in "+strconv.Itoa(secs)+" seconds", http.StatusServiceUnavailable)
-}

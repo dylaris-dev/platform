@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 
 	"github.com/gorilla/mux"
 )
@@ -67,34 +68,34 @@ func (h *ServerHandler) migrationPhase(ctx context.Context, uuid string) string 
 // progress or it has already finished.
 func (h *ServerHandler) CancelMigration(w http.ResponseWriter, r *http.Request) {
 	if h.state.Redis == nil {
-		handlers.SendJSONError(w, "Migration state unavailable", 503)
+		httpx.SendJSONError(w, "Migration state unavailable", 503)
 		return
 	}
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", 400)
+		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
 	// A customer's own transfer is theirs to cancel, not staff's.
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil || handlers.ForeignToCaller(h.state, r, srv.NodeID) {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 	ctx := context.Background()
 	// A migration is in progress iff the per-server migration lock is held.
 	lockHeld, err := h.state.Redis.Exists(ctx, fmt.Sprintf("dylaris:server:%s:migration", srv.UUID)).Result()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read migration state", 500)
+		httpx.SendJSONError(w, "Failed to read migration state", 500)
 		return
 	}
 	if lockHeld == 0 {
-		handlers.SendJSONError(w, "No migration is in progress for this server", 409)
+		httpx.SendJSONError(w, "No migration is in progress for this server", 409)
 		return
 	}
 	if phase := h.migrationPhase(ctx, srv.UUID); !isCancellableMigrationPhase(phase) {
-		handlers.SendJSONError(w, "Migration can no longer be cancelled (phase: "+phase+")", 409)
+		httpx.SendJSONError(w, "Migration can no longer be cancelled (phase: "+phase+")", 409)
 		return
 	}
 	username, _ := r.Context().Value("username").(string)
@@ -102,7 +103,7 @@ func (h *ServerHandler) CancelMigration(w http.ResponseWriter, r *http.Request) 
 		username = "admin"
 	}
 	if err := h.state.Redis.Set(ctx, fmt.Sprintf("dylaris:server:%s:migration:cancel", srv.UUID), username, migrationCancelFlagTTL).Err(); err != nil {
-		handlers.SendJSONError(w, "Failed to request cancellation", 500)
+		httpx.SendJSONError(w, "Failed to request cancellation", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{

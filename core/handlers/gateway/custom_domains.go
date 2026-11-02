@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -66,7 +67,7 @@ func (h *CustomDomainHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	claims, err := h.state.Store.ListCustomDomainClaimsByUser(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not load your custom domains", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not load your custom domains", http.StatusInternalServerError)
 		return
 	}
 	out := make([]customDomainView, 0, len(claims))
@@ -87,11 +88,11 @@ func (h *CustomDomainHandler) IssueTXTToken(w http.ResponseWriter, r *http.Reque
 
 	claim, err := h.state.Store.GetCustomDomainClaim(userID, domain)
 	if err != nil {
-		handlers.SendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
+		httpx.SendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
 		return
 	}
 	if claim.State == store.ClaimVerified {
-		handlers.SendJSONError(w, "That domain is already verified", http.StatusBadRequest)
+		httpx.SendJSONError(w, "That domain is already verified", http.StatusBadRequest)
 		return
 	}
 	// Reuse an existing token. Re-minting would invalidate a record the customer
@@ -99,11 +100,11 @@ func (h *CustomDomainHandler) IssueTXTToken(w http.ResponseWriter, r *http.Reque
 	if claim.TXTToken == "" {
 		token, terr := services.NewTXTToken()
 		if terr != nil {
-			handlers.SendJSONError(w, "Could not generate a verification token", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Could not generate a verification token", http.StatusInternalServerError)
 			return
 		}
 		if serr := h.state.Store.SetCustomDomainTXTToken(claim.ID, token); serr != nil {
-			handlers.SendJSONError(w, "Could not store the verification token", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Could not store the verification token", http.StatusInternalServerError)
 			return
 		}
 		claim.TXTToken = token
@@ -122,19 +123,19 @@ func (h *CustomDomainHandler) VerifyTXT(w http.ResponseWriter, r *http.Request) 
 
 	claim, err := h.state.Store.GetCustomDomainClaim(userID, domain)
 	if err != nil {
-		handlers.SendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
+		httpx.SendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
 		return
 	}
 	if claim.State == store.ClaimVerified && claim.FailingSince == nil {
-		handlers.SendJSONError(w, "That domain is already verified", http.StatusBadRequest)
+		httpx.SendJSONError(w, "That domain is already verified", http.StatusBadRequest)
 		return
 	}
 	if claim.TXTToken == "" {
-		handlers.SendJSONError(w, "Request a verification token for this domain first", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Request a verification token for this domain first", http.StatusBadRequest)
 		return
 	}
 	if wait := h.verifyCooldown(r.Context(), userID, domain); wait > 0 {
-		handlers.SendJSONErrorCode(w, fmt.Sprintf("You checked this domain a moment ago. Try again in %s.", roundUpMinutes(wait)),
+		httpx.SendJSONErrorCode(w, fmt.Sprintf("You checked this domain a moment ago. Try again in %s.", roundUpMinutes(wait)),
 			"verify_cooldown", http.StatusTooManyRequests)
 		return
 	}
@@ -142,13 +143,13 @@ func (h *CustomDomainHandler) VerifyTXT(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if !services.CheckTXTToken(ctx, h.resolver, domain, claim.TXTToken) {
-		handlers.SendJSONError(w,
+		httpx.SendJSONError(w,
 			"The TXT record was not found yet. DNS changes can take a few minutes to publish.",
 			http.StatusConflict)
 		return
 	}
 	if err := h.state.Store.MarkCustomDomainVerified(claim.ID); err != nil {
-		handlers.SendJSONError(w, "Could not record the verification", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not record the verification", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -204,7 +205,7 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 		Domain string `json:"domain"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
-		handlers.SendJSONError(w, `Invalid request: expected {"domain": "play.example.com"}`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `Invalid request: expected {"domain": "play.example.com"}`, http.StatusBadRequest)
 		return
 	}
 	domain := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(req.Domain), "."))
@@ -215,16 +216,16 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 	}
 	enabled, _ := h.state.Store.GetSetting("gateway_custom_domains_enabled")
 	if enabled != "true" && !handlers.IsAdmin(r) {
-		handlers.SendJSONErrorCode(w, "Your own domains are not enabled on this platform.", "custom_domains_off", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "Your own domains are not enabled on this platform.", "custom_domains_off", http.StatusConflict)
 		return
 	}
 	if _, _, err := resolveBroughtDomain(domain, hosters, true, nil); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	claims, err := h.state.Store.ListCustomDomainClaimsByUser(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not load your custom domains", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not load your custom domains", http.StatusInternalServerError)
 		return
 	}
 	known := false
@@ -232,12 +233,12 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 		known = known || c.Domain == domain
 	}
 	if !known && len(claims) >= maxClaimsPerUser {
-		handlers.SendJSONErrorCode(w, fmt.Sprintf("You can add up to %d domains.", maxClaimsPerUser), "too_many_domains", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, fmt.Sprintf("You can add up to %d domains.", maxClaimsPerUser), "too_many_domains", http.StatusConflict)
 		return
 	}
 	claim, err := h.state.Store.RequestCustomDomainClaim(userID, domain)
 	if err != nil || claim == nil {
-		handlers.SendJSONError(w, "Could not add the domain", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not add the domain", http.StatusInternalServerError)
 		return
 	}
 	if claim.TXTToken == "" && claim.State != store.ClaimVerified {
@@ -246,7 +247,7 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 			terr = h.state.Store.SetCustomDomainTXTToken(claim.ID, token)
 		}
 		if terr != nil {
-			handlers.SendJSONError(w, "Could not generate a verification token", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Could not generate a verification token", http.StatusInternalServerError)
 			return
 		}
 		claim.TXTToken = token
@@ -263,28 +264,28 @@ func (h *CustomDomainHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	domain := strings.ToLower(strings.TrimSpace(mux.Vars(r)["domain"]))
 	owned, err := services.OwnedServerUUIDs(h.state.Store, userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not check your routes", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not check your routes", http.StatusInternalServerError)
 		return
 	}
 	routes, err := services.ReadRoutesFromRedis(r.Context(), h.state.Redis)
 	if err != nil {
 		// Not knowing the routes is not "there are none".
-		handlers.SendJSONError(w, "Could not check your routes", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Could not check your routes", http.StatusServiceUnavailable)
 		return
 	}
 	for _, rt := range routes {
 		if strings.EqualFold(rt.Domain, domain) && services.RouteHeldBy(rt, userID, owned) {
-			handlers.SendJSONErrorCode(w, "Delete the routes on "+domain+" first.", "domain_in_use", http.StatusConflict)
+			httpx.SendJSONErrorCode(w, "Delete the routes on "+domain+" first.", "domain_in_use", http.StatusConflict)
 			return
 		}
 	}
 	found, err := h.state.Store.DeleteCustomDomainClaim(userID, domain)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not remove the domain", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not remove the domain", http.StatusInternalServerError)
 		return
 	}
 	if !found {
-		handlers.SendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
+		httpx.SendJSONError(w, "No claim on that domain for your account", http.StatusNotFound)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

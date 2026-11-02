@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"encoding/json"
 	"net/http"
@@ -22,13 +23,13 @@ func NewModuleHandler(state *AppState) *ModuleHandler {
 // whose UI moved into the Infrastructure module's Routes tab.
 func (h *ModuleHandler) GetModulesHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
 	modules, err := h.state.Store.ListModules()
 	if err != nil {
-		sendJSONError(w, "Failed to load modules", 500)
+		httpx.SendJSONError(w, "Failed to load modules", 500)
 		return
 	}
 
@@ -92,7 +93,7 @@ func (h *ModuleHandler) GetModulesHandler(w http.ResponseWriter, r *http.Request
 // "all" regardless.
 func (h *ModuleHandler) SetModuleAccessRoleHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	vars := mux.Vars(r)
@@ -102,32 +103,32 @@ func (h *ModuleHandler) SetModuleAccessRoleHandler(w http.ResponseWriter, r *htt
 		Role string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if req.Role != "all" && req.Role != "admin" {
-		sendJSONError(w, "role must be 'all' or 'admin'", 400)
+		httpx.SendJSONError(w, "role must be 'all' or 'admin'", 400)
 		return
 	}
 	mod, err := h.state.Store.GetModuleByID(id)
 	if err != nil {
-		sendJSONError(w, "Module not found", 404)
+		httpx.SendJSONError(w, "Module not found", 404)
 		return
 	}
 	if mod.Name == "Servers" {
-		sendJSONError(w, "Servers module is always visible to all users", 400)
+		httpx.SendJSONError(w, "Servers module is always visible to all users", 400)
 		return
 	}
 	if mod.Name == "Admin" {
-		sendJSONError(w, "Admin module is always admin-only", 400)
+		httpx.SendJSONError(w, "Admin module is always admin-only", 400)
 		return
 	}
 	if mod.Name == "Infrastructure" {
-		sendJSONError(w, "Infrastructure module is always admin-only", 400)
+		httpx.SendJSONError(w, "Infrastructure module is always admin-only", 400)
 		return
 	}
 	if err := h.state.Store.SetModuleAccessRole(id, req.Role); err != nil {
-		sendJSONError(w, "Update failed", 500)
+		httpx.SendJSONError(w, "Update failed", 500)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "modules.changed", nil)
@@ -138,18 +139,18 @@ func (h *ModuleHandler) SetModuleAccessRoleHandler(w http.ResponseWriter, r *htt
 // (Phase 4 Task 19).
 func (h *ModuleHandler) CreateModuleHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
 	var req models.Module
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 
 	if req.IsSystem {
-		sendJSONError(w, "System modules cannot be created via API", 403)
+		httpx.SendJSONError(w, "System modules cannot be created via API", 403)
 		return
 	}
 	// An iframe module is shown to every user it is visible to. Its address
@@ -157,14 +158,14 @@ func (h *ModuleHandler) CreateModuleHandler(w http.ResponseWriter, r *http.Reque
 	// custom tab's applies: a parsable http or https address.
 	if req.Type == "iframe" || req.URL != "" {
 		if err := validateTabURL(req.URL); err != nil {
-			sendJSONError(w, err.Error(), http.StatusBadRequest)
+			httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
 
 	id, err := h.state.Store.CreateModule(&req)
 	if err != nil {
-		sendJSONError(w, "Create failed", 500)
+		httpx.SendJSONError(w, "Create failed", 500)
 		return
 	}
 
@@ -202,7 +203,7 @@ var builtInModules = map[string]bool{
 // route (Phase 4 Task 19).
 func (h *ModuleHandler) DeleteModuleHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
@@ -211,16 +212,16 @@ func (h *ModuleHandler) DeleteModuleHandler(w http.ResponseWriter, r *http.Reque
 
 	mod, err := h.state.Store.GetModuleByID(id)
 	if err != nil || mod == nil {
-		sendJSONError(w, "Module not found", 404)
+		httpx.SendJSONError(w, "Module not found", 404)
 		return
 	}
 	if mod.IsSystem || builtInModules[mod.Name] {
-		sendJSONError(w, "Built-in modules cannot be deleted", 400)
+		httpx.SendJSONError(w, "Built-in modules cannot be deleted", 400)
 		return
 	}
 
 	if err := h.state.Store.DeleteModule(id); err != nil {
-		sendJSONError(w, "Delete failed", 500)
+		httpx.SendJSONError(w, "Delete failed", 500)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "modules.changed", nil)
@@ -231,7 +232,7 @@ func (h *ModuleHandler) DeleteModuleHandler(w http.ResponseWriter, r *http.Reque
 // "settings.write") at the route (Phase 4 Task 19).
 func (h *ModuleHandler) UpdateModulePositionHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
@@ -242,12 +243,12 @@ func (h *ModuleHandler) UpdateModulePositionHandler(w http.ResponseWriter, r *ht
 		Position int `json:"position"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 
 	if err := h.state.Store.UpdateModulePosition(id, req.Position); err != nil {
-		sendJSONError(w, "Update failed", 500)
+		httpx.SendJSONError(w, "Update failed", 500)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "modules.changed", nil)
@@ -258,7 +259,7 @@ func (h *ModuleHandler) UpdateModulePositionHandler(w http.ResponseWriter, r *ht
 // at the route (Phase 4 Task 19).
 func (h *ModuleHandler) ToggleModuleHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
@@ -269,23 +270,23 @@ func (h *ModuleHandler) ToggleModuleHandler(w http.ResponseWriter, r *http.Reque
 		IsEnabled bool `json:"isEnabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 
 	// Prevent disabling the Servers module (default system module)
 	mod, err := h.state.Store.GetModuleByID(id)
 	if err != nil {
-		sendJSONError(w, "Module not found", 404)
+		httpx.SendJSONError(w, "Module not found", 404)
 		return
 	}
 	if mod.IsSystem && !req.IsEnabled {
-		sendJSONError(w, mod.Name+" module cannot be disabled", 400)
+		httpx.SendJSONError(w, mod.Name+" module cannot be disabled", 400)
 		return
 	}
 
 	if err := h.state.Store.UpdateModuleStatus(id, req.IsEnabled); err != nil {
-		sendJSONError(w, "Update failed", 500)
+		httpx.SendJSONError(w, "Update failed", 500)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "modules.changed", nil)

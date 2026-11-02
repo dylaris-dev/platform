@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+
+	"dylaris-core/handlers/httpx"
 )
 
 // The identity audit trail records what happens to ACCOUNTS: registrations,
@@ -45,7 +47,7 @@ type identityAuditRow struct {
 // List GET /api/admin/audit/identity?eventType=&targetUserId=&limit=
 func (h *IdentityAuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	if h.state == nil || h.state.Store == nil {
-		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
 	q := r.URL.Query()
@@ -59,7 +61,7 @@ func (h *IdentityAuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	events, err := h.state.Store.ListAuditIdentity(target, q.Get("eventType"), limit)
 	if err != nil {
-		sendJSONError(w, "Failed to read the identity log", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the identity log", http.StatusInternalServerError)
 		return
 	}
 

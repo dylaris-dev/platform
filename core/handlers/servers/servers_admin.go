@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
@@ -21,7 +22,7 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 	userID, _ := r.Context().Value("userID").(string)
 	servers, err := h.state.Store.ListServersForUser(userID, true)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	if servers == nil {
@@ -87,7 +88,7 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 	// Servers do not move between accounts; this stays as the operator's
 	// escape hatch, on the record.
 	if !handlers.IsAdmin(r) {
-		handlers.SendJSONError(w, "Only an administrator can change a server's owner", http.StatusForbidden)
+		httpx.SendJSONError(w, "Only an administrator can change a server's owner", http.StatusForbidden)
 		return
 	}
 	vars := mux.Vars(r)
@@ -97,7 +98,7 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 		UserID string `json:"userId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UserID == "" {
-		handlers.SendJSONError(w, "userId required", 400)
+		httpx.SendJSONError(w, "userId required", 400)
 		return
 	}
 
@@ -106,17 +107,17 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 	// the customer's world for themselves.
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil || handlers.ForeignToCaller(h.state, r, srv.NodeID) {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
 	if _, err := h.state.Store.GetUserByID(req.UserID); err != nil {
-		handlers.SendJSONError(w, "User not found", 404)
+		httpx.SendJSONError(w, "User not found", 404)
 		return
 	}
 
 	if err := h.state.Store.UpdateServerOwner(serverID, &req.UserID); err != nil {
-		handlers.SendJSONError(w, "Failed to update owner", 500)
+		httpx.SendJSONError(w, "Failed to update owner", 500)
 		return
 	}
 	// The previous owner and everyone their grants let in lose the server here.

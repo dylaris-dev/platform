@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 )
 
 // TabProxySettingsHandler is the admin GET/PUT bundle for the WS5 custom-tab
@@ -52,7 +53,7 @@ func (h *TabProxySettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *TabProxySettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	var req tabProxySettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.MaxPerUserPerServer <= 0 {
@@ -86,7 +87,7 @@ func (h *TabProxySettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, kv := range writes {
 		if err := h.state.Store.SetSetting(kv.k, kv.v); err != nil {
-			handlers.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		h.state.FeatureFlags.Invalidate(kv.k)

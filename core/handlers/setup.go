@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -74,7 +75,7 @@ func (h *SetupHandler) Status(w http.ResponseWriter, r *http.Request) {
 	adminCount, aerr := h.state.Store.CountAdmins()
 	userCount, uerr := h.state.Store.CountUsers()
 	if aerr != nil || uerr != nil {
-		sendJSONError(w, "Could not read the setup state", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Could not read the setup state", http.StatusServiceUnavailable)
 		return
 	}
 	gate := h.setupGate(userCount, adminCount)

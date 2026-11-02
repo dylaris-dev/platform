@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+
+	"dylaris-core/handlers/httpx"
 )
 
 // Spark profiler integration. Backend surface is intentionally
@@ -46,12 +48,12 @@ func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	var req sparkProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.URL = strings.TrimSpace(req.URL)
 	if !sparkURLPattern.MatchString(req.URL) {
-		sendJSONError(w, "URL must be a spark.lucko.me share link", http.StatusBadRequest)
+		httpx.SendJSONError(w, "URL must be a spark.lucko.me share link", http.StatusBadRequest)
 		return
 	}
 	srv, _ := h.state.Store.GetServerByID(serverID)
@@ -74,7 +76,7 @@ func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 	// store-interface ripple for V1.
 	db := h.dbFromState()
 	if db == nil {
-		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "DB unavailable", http.StatusInternalServerError)
 		return
 	}
 	_, err = db.Exec(`INSERT INTO spark_profiles
@@ -84,7 +86,7 @@ func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 		serverID, srv.ActiveSubServer, req.URL, startedAt, requestedBy,
 	)
 	if err != nil {
-		sendJSONError(w, "Failed to record profile", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to record profile", http.StatusInternalServerError)
 		return
 	}
 
@@ -101,13 +103,13 @@ func (h *SparkHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	db := h.dbFromState()
 	if db == nil {
-		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "DB unavailable", http.StatusInternalServerError)
 		return
 	}
 	rows, err := db.Query(`SELECT id, server_id, sub_server_name, url, started_at, completed_at, requested_by
 		FROM spark_profiles WHERE server_id=$1 ORDER BY completed_at DESC LIMIT 50`, serverID)
 	if err != nil {
-		sendJSONError(w, "Query failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Query failed", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -130,7 +132,7 @@ func (h *SparkHandler) List(w http.ResponseWriter, r *http.Request) {
 		var startedAt sql.NullTime
 		var requestedBy sql.NullString
 		if err := rows.Scan(&p.ID, &p.ServerID, &p.SubServerName, &p.URL, &startedAt, &p.CompletedAt, &requestedBy); err != nil {
-			sendJSONError(w, "Query failed", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Query failed", http.StatusInternalServerError)
 			return
 		}
 		if startedAt.Valid {
@@ -157,16 +159,16 @@ func (h *SparkHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	profileID, _ := strconv.Atoi(mux.Vars(r)["profileId"])
 	db := h.dbFromState()
 	if db == nil {
-		sendJSONError(w, "DB unavailable", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "DB unavailable", http.StatusInternalServerError)
 		return
 	}
 	res, err := db.Exec(`DELETE FROM spark_profiles WHERE id=$1 AND server_id=$2`, profileID, serverID)
 	if err != nil {
-		sendJSONError(w, "Delete failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Delete failed", http.StatusInternalServerError)
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		sendJSONError(w, "Not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "spark_profiles.changed", map[string]interface{}{

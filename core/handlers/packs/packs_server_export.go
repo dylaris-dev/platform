@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 
 	"golang.org/x/sync/singleflight"
@@ -227,20 +227,20 @@ func (h *PacksHandler) exportServerPack(w http.ResponseWriter, r *http.Request, 
 	f, err := h.openServerPack(r.Context(), content)
 	if errors.Is(err, errServerPackBusy) {
 		w.Header().Set("Retry-After", "60")
-		handlers.SendJSONError(w, "The server archive is being prepared. Try the download again in a minute.", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "The server archive is being prepared. Try the download again in a minute.", http.StatusServiceUnavailable)
 		return
 	}
 	if err != nil {
 		if r.Context().Err() == nil {
 			log.Printf("server export: render failed for build %d: %v", build.ID, err)
 		}
-		handlers.SendJSONError(w, "Failed to prepare server archive", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to prepare server archive", http.StatusInternalServerError)
 		return
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read server archive", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read server archive", http.StatusInternalServerError)
 		return
 	}
 	filename := pack.InternalSlug + "-" + build.VersionString + "-server.zip"
@@ -255,5 +255,5 @@ func (h *PacksHandler) exportServerPack(w http.ResponseWriter, r *http.Request, 
 // anyone holding the URL. A link already out there gets a clear 410 rather
 // than a 404 that reads like a typo.
 func (h *PacksHandler) ServeRemovedShare(w http.ResponseWriter, r *http.Request) {
-	handlers.SendJSONError(w, "Public pack share links have been removed. Ask the pack's owner for access.", http.StatusGone)
+	httpx.SendJSONError(w, "Public pack share links have been removed. Ask the pack's owner for access.", http.StatusGone)
 }

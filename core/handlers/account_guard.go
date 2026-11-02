@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 )
 
@@ -102,16 +103,16 @@ func strictPanelCaps(state *AppState, userID string) (map[string]bool, bool) {
 // what nobody approved. Writes the refusal and returns false.
 func guardAccountTerms(w http.ResponseWriter, r *http.Request, state *AppState, userID string) bool {
 	if actor, _ := r.Context().Value("userID").(string); !IsAdmin(r) && actor != "" && actor == userID {
-		sendJSONError(w, "You cannot change your own account's entitlement, limits or billing", http.StatusForbidden)
+		httpx.SendJSONError(w, "You cannot change your own account's entitlement, limits or billing", http.StatusForbidden)
 		return false
 	}
 	target, err := state.Store.GetUserByID(userID)
 	if err != nil || target == nil {
-		sendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return false
 	}
 	if !mayManageAccount(state, r, target) {
-		sendJSONError(w, "You cannot change the terms of an account with more rights than yours", http.StatusForbidden)
+		httpx.SendJSONError(w, "You cannot change the terms of an account with more rights than yours", http.StatusForbidden)
 		return false
 	}
 	return true

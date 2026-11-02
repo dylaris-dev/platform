@@ -17,7 +17,7 @@ import (
 //	layer 2  handlers/<domain>          layer 0-1, services/**, store, models, authz, grpc, storage/**, pkg/**
 //	layer 1  guard access audit reauth  layer 0, services/**, store, models, authz, grpc, storage/**, pkg/**
 //	         nodeops gate               (no lateral imports inside layer 1)
-//	layer 0  httpx reqctx validate      stdlib, models, mux, pkg/** only
+//	layer 0  httpx reqctx validate      stdlib, models, mux, google/uuid, pkg/** only
 //	services/**                         never imports handlers/**
 //	handlertest                         only from _test.go files; never imports handlers or a layer-2 package
 //
@@ -151,13 +151,15 @@ func layeringViolation(from, to string, internal bool) string {
 		}
 	case layer0Pkgs[from]:
 		ext := strings.TrimPrefix(to, "ext:")
-		if !internal && (isStdlib(ext) || ext == "github.com/gorilla/mux" || ext == "dylaris-pkg" || strings.HasPrefix(ext, "dylaris-pkg/")) {
+		// google/uuid is a leaf library with no imports of its own; httpx needs
+		// it for the path-parameter parser (ParseUserID)
+		if !internal && (isStdlib(ext) || ext == "github.com/gorilla/mux" || ext == "github.com/google/uuid" || ext == "dylaris-pkg" || strings.HasPrefix(ext, "dylaris-pkg/")) {
 			return ""
 		}
 		if to == "models" || strings.HasPrefix(to, "pkg/") {
 			return ""
 		}
-		return "layer 0 imports only stdlib, models, mux and pkg"
+		return "layer 0 imports only stdlib, models, mux, google/uuid and pkg"
 	case layer1Pkgs[from]:
 		if internal && !layer0Pkgs[to] && !lowerShared(to) {
 			return "layer 1 imports only layer 0, services, store, models, authz, grpc, storage and pkg"

@@ -12,6 +12,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -54,15 +55,15 @@ func (h *GatewayHandler) voiceAllowed(srv *models.Server) bool {
 // GetServerVoice GET /api/servers/{id}/voice - the server's voice port, if
 // any, and whether it may turn voice on.
 func (h *GatewayHandler) GetServerVoice(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByID(handlers.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	vp, err := h.state.Store.GetVoicePort(srv.ID)
 	if err != nil {
 		log.Printf("voice: server %d: %v", srv.ID, err)
-		handlers.SendJSONError(w, "Failed to read the voice chat setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the voice chat setting", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newVoiceView(vp, h.voiceAllowed(srv))})
@@ -81,14 +82,14 @@ func (h *GatewayHandler) GetServerVoice(w http.ResponseWriter, r *http.Request) 
 // RequireGatewayEnabled, the gate is checked here for on only). Turning
 // something off is how an owner gets out of a state, never into one.
 func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByID(handlers.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	enabled, ok := decodeProxyProtocolBody(r)
 	if !ok {
-		handlers.SendJSONError(w, `Invalid request: expected {"enabled": true|false}`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `Invalid request: expected {"enabled": true|false}`, http.StatusBadRequest)
 		return
 	}
 	if enabled {
@@ -107,7 +108,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		changed, err := DisableServerVoice(ctx, h.state, srv)
 		if err != nil {
 			log.Printf("voice: server %d: disable: %v", srv.ID, err)
-			handlers.SendJSONError(w, "Failed to turn voice chat off", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to turn voice chat off", http.StatusInternalServerError)
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newVoiceView(nil, h.voiceAllowed(srv)), "restartRequired": changed})
@@ -115,29 +116,29 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if !h.voiceAllowed(srv) {
-		handlers.SendJSONErrorCode(w, "Voice chat is not available for this server.", "voice_not_allowed", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "Voice chat is not available for this server.", "voice_not_allowed", http.StatusConflict)
 		return
 	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil || !handlers.NodeReleaseAtLeast(ctx, h.state, node.Token, voiceNodeSince) {
-		handlers.SendJSONErrorCode(w, "This server's node is too old for voice chat. Update the node, then try again.", "node_too_old", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "This server's node is too old for voice chat. Update the node, then try again.", "node_too_old", http.StatusConflict)
 		return
 	}
 	routes, err := services.ReadRoutesFromRedis(ctx, h.state.Redis)
 	if err != nil {
 		log.Printf("voice: server %d: read routes: %v", srv.ID, err)
-		handlers.SendJSONError(w, "Could not read this server's routes. Try again.", http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read this server's routes. Try again.", http.StatusBadGateway)
 		return
 	}
 	host, region, ok := services.VoiceRouteFor(routes, services.GetEdgesFromRedis(ctx, h.state.Redis), srv.UUID)
 	if !ok {
-		handlers.SendJSONErrorCode(w, "Voice chat needs an address on one of the platform's domains. Add a route first.", "no_routes", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "Voice chat needs an address on one of the platform's domains. Add a route first.", "no_routes", http.StatusConflict)
 		return
 	}
 	relays, err := services.LiveVoiceRelays(ctx, h.state.Redis)
 	if err != nil {
 		log.Printf("voice: server %d: %v", srv.ID, err)
-		handlers.SendJSONError(w, "Could not check the voice relays. Try again.", http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not check the voice relays. Try again.", http.StatusBadGateway)
 		return
 	}
 	relayUp := false
@@ -145,49 +146,49 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		relayUp = relayUp || rl.Region == region
 	}
 	if !relayUp {
-		handlers.SendJSONErrorCode(w, "No voice relay is running in this server's region yet.", "no_relay", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "No voice relay is running in this server's region yet.", "no_relay", http.StatusConflict)
 		return
 	}
 	if srv.ActiveSubServer == "" {
-		handlers.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
 		return
 	}
 	rh := handlers.NewRconHandler(h.state)
 	mod, rel, content, err := rh.FindVoiceConfig(srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	switch {
 	case errors.Is(err, handlers.ErrVoiceModMissing):
-		handlers.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
 		return
 	case errors.Is(err, handlers.ErrVoiceModAmbiguous):
-		handlers.SendJSONErrorCode(w, "Both Simple Voice Chat and Plasmo Voice are installed. Remove one, then try again.", "voice_mod_ambiguous", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "Both Simple Voice Chat and Plasmo Voice are installed. Remove one, then try again.", "voice_mod_ambiguous", http.StatusConflict)
 		return
 	case err != nil:
 		log.Printf("voice: server %d: %v", srv.ID, err)
-		handlers.SendJSONError(w, "Could not read the server's files on its node. Try again.", http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read the server's files on its node. Try again.", http.StatusBadGateway)
 		return
 	}
 
 	prior, err := h.state.Store.GetVoicePort(srv.ID)
 	if err != nil {
 		log.Printf("voice: server %d: %v", srv.ID, err)
-		handlers.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
 		return
 	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
-		handlers.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
 		return
 	}
 	got, err := h.state.Store.AllocateVoicePort(store.VoicePort{
 		ServerID: srv.ID, Region: region, Mod: mod, InternalPort: services.VoiceInternalPort, UplinkKey: key, Host: host,
 	}, services.VoicePortMin, services.VoicePortMax)
 	if errors.Is(err, store.ErrVoicePoolFull) {
-		handlers.SendJSONErrorCode(w, "Every voice port in this region is taken.", "voice_pool_full", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "Every voice port in this region is taken.", "voice_pool_full", http.StatusConflict)
 		return
 	}
 	if err != nil {
 		log.Printf("voice: server %d: allocate: %v", srv.ID, err)
-		handlers.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
 		return
 	}
 
@@ -199,7 +200,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		if err := rh.WriteNodeFileString(srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
 			log.Printf("voice: server %d: write %s: %v", srv.ID, rel, err)
 			h.rollbackVoice(ctx, srv, prior, false)
-			handlers.SendJSONError(w, "The node could not write the voice chat config. Try again.", http.StatusBadGateway)
+			httpx.SendJSONError(w, "The node could not write the voice chat config. Try again.", http.StatusBadGateway)
 			return
 		}
 	}
@@ -213,7 +214,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 	if err := services.PublishVoice(ctx, h.state.Redis, got); err != nil {
 		log.Printf("voice: server %d: %v", srv.ID, err)
 		h.rollbackVoice(ctx, srv, prior, true)
-		handlers.SendJSONError(w, "Voice chat could not be published to the gateway. Try again.", http.StatusBadGateway)
+		httpx.SendJSONError(w, "Voice chat could not be published to the gateway. Try again.", http.StatusBadGateway)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newVoiceView(&got, true), "restartRequired": true})
@@ -322,7 +323,7 @@ func writeBackVoiceConfig(st *handlers.AppState, srv *models.Server) {
 func (h *GatewayHandler) ListVoicePermissions(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.state.Store.ListVoicePermissions()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list voice permissions", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list voice permissions", http.StatusInternalServerError)
 		return
 	}
 	global := h.state.FeatureFlags != nil && h.state.FeatureFlags.IsVoiceChatEnabled(r.Context())
@@ -337,11 +338,11 @@ func (h *GatewayHandler) SetVoicePermission(w http.ResponseWriter, r *http.Reque
 		Allowed *bool  `json:"allowed"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Allowed == nil || !services.ValidVoicePermissionScope(req.Scope) {
-		handlers.SendJSONError(w, `Invalid request: expected {"scope": "server:<id>|user:<id>|role:<id>", "allowed": true|false}`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `Invalid request: expected {"scope": "server:<id>|user:<id>|role:<id>", "allowed": true|false}`, http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetVoicePermission(req.Scope, *req.Allowed); err != nil {
-		handlers.SendJSONError(w, "Failed to save the voice permission", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save the voice permission", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
@@ -352,11 +353,11 @@ func (h *GatewayHandler) SetVoicePermission(w http.ResponseWriter, r *http.Reque
 func (h *GatewayHandler) DeleteVoicePermission(w http.ResponseWriter, r *http.Request) {
 	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
 	if !services.ValidVoicePermissionScope(scope) {
-		handlers.SendJSONError(w, "Invalid scope", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid scope", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.DeleteVoicePermission(scope); err != nil {
-		handlers.SendJSONError(w, "Failed to delete the voice permission", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete the voice permission", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

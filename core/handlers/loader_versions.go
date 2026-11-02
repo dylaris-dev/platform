@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/httpx"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -44,13 +45,13 @@ var loaderGameVersion = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,99}$`)
 func (h *VersionHandler) GetLoaderVersions(w http.ResponseWriter, r *http.Request) {
 	software, mc := r.URL.Query().Get("software"), r.URL.Query().Get("minecraft")
 	if !loaderGameVersion.MatchString(mc) || strings.Contains(mc, "..") {
-		SendJSONError(w, "A valid Minecraft version is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "A valid Minecraft version is required", http.StatusBadRequest)
 		return
 	}
 	switch software {
 	case "fabric", "quilt", "forge", "neoforge":
 	default:
-		SendJSONError(w, "Unknown mod loader", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Unknown mod loader", http.StatusBadRequest)
 		return
 	}
 	key := "dylaris:loader-versions:" + software + ":" + mc
@@ -63,7 +64,7 @@ func (h *VersionHandler) GetLoaderVersions(w http.ResponseWriter, r *http.Reques
 	}
 	versions, err := h.fetchLoaderVersions(r.Context(), software, mc)
 	if err != nil {
-		SendJSONError(w, "Failed to fetch loader versions: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Failed to fetch loader versions: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	data, _ := json.Marshal(map[string]any{"success": true, "software": software, "minecraft": mc, "versions": versions})

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -71,32 +72,32 @@ type VoiceServerStat struct {
 // the period (default: the current month), plus Bedrock bytes per server.
 func (h *VoiceStatsHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
 	if h.state.Redis == nil {
-		sendJSONError(w, "Redis is not configured", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Redis is not configured", http.StatusServiceUnavailable)
 		return
 	}
 	period := usagePeriod(r)
 	ports, err := h.state.Store.ListVoicePorts()
 	if err != nil {
 		log.Printf("[voice] overview: list ports: %v", err)
-		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	usage, err := h.state.Store.ListVoiceUsage(period)
 	if err != nil {
 		log.Printf("[voice] overview: list usage: %v", err)
-		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	bedrock, err := h.state.Store.ListBedrockUsage(period)
 	if err != nil {
 		log.Printf("[voice] overview: list bedrock usage: %v", err)
-		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	relays, err := services.LiveVoiceRelays(r.Context(), h.state.Redis)
 	if err != nil {
 		log.Printf("[voice] overview: %v", err)
-		sendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/store"
 )
 
@@ -44,7 +45,7 @@ func NewPermissionsModeHandler(state *AppState) *PermissionsModeHandler {
 // GetMode GET /api/authz/mode -> {"success":true,"mode":"off|simple|advanced"}.
 func (h *PermissionsModeHandler) GetMode(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -60,16 +61,16 @@ type setPermissionsModeRequest struct {
 // SetMode PUT /api/admin/settings/permissions-mode <- {"mode":"..."}.
 func (h *PermissionsModeHandler) SetMode(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	var req setPermissionsModeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if err := SetPermissionsMode(h.state.Store, req.Mode); err != nil {
-		sendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

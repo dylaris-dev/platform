@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
@@ -37,14 +38,14 @@ const (
 func (h *NotificationsHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	includeRead := r.URL.Query().Get("unread_only") != "1"
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	list, err := h.state.Store.ListNotifications(userID, includeRead, limit)
 	if err != nil {
-		sendJSONError(w, "Failed to load notifications", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load notifications", http.StatusInternalServerError)
 		return
 	}
 	if list == nil {
@@ -63,7 +64,7 @@ func (h *NotificationsHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *NotificationsHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	n, _ := h.state.Store.CountUnreadNotifications(userID)
@@ -79,11 +80,11 @@ func (h *NotificationsHandler) MarkRead(w http.ResponseWriter, r *http.Request) 
 	userID, _ := r.Context().Value("userID").(string)
 	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
 	if err != nil || id <= 0 {
-		sendJSONError(w, "Invalid id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.MarkNotificationRead(id, userID); err != nil {
-		sendJSONError(w, "Update failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -94,7 +95,7 @@ func (h *NotificationsHandler) MarkRead(w http.ResponseWriter, r *http.Request) 
 func (h *NotificationsHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if err := h.state.Store.MarkAllNotificationsRead(userID); err != nil {
-		sendJSONError(w, "Update failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -105,16 +106,16 @@ func (h *NotificationsHandler) MarkAllRead(w http.ResponseWriter, r *http.Reques
 func (h *NotificationsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user, _ := r.Context().Value("userID").(string)
 	if user == "" {
-		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	id, err := strconv.ParseInt(mux.Vars(r)["id"], 10, 64)
 	if err != nil || id <= 0 {
-		sendJSONError(w, "Invalid id", 400)
+		httpx.SendJSONError(w, "Invalid id", 400)
 		return
 	}
 	if err = h.state.Store.DeleteNotification(id, user); err != nil {
-		sendJSONError(w, "Delete failed", 500)
+		httpx.SendJSONError(w, "Delete failed", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

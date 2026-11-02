@@ -1,15 +1,15 @@
 package handlers
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
+
+	"dylaris-core/handlers/httpx"
 )
 
 // sseTicketTTL is the lifetime of an SSE auth ticket. AuthMiddleware also
@@ -29,34 +29,6 @@ const sseTicketSep = ""
 // ticket somebody got hold of was a read-everything credential for as long as
 // they kept using it.
 var sseTicketPaths = regexp.MustCompile(`^/api/(system/events|servers/[0-9]+/(console|stats)/stream)$`)
-
-// sseMaxStreamAge ends every stream after this long. The browser reconnects on
-// its own, and the reconnect goes through authentication and the capability
-// check again. A stream was checked once, when it opened, and then ran until
-// the client left - through a revoked permission, a removal from the server,
-// a password change, for days.
-//
-// Shorter than sseTicketTTL on purpose. The ticket slides forward when a
-// stream opens, not while it runs, so a stream that lived exactly as long as
-// the ticket reconnected with a ticket that had just expired: the reconnect
-// was refused, and the console sat dead until the page minted a new one.
-var sseMaxStreamAge = 4 * time.Minute
-
-// sseRetryLine tells the browser to reconnect after one second instead of its
-// default of about three, so the rotation above is a blink, not a gap.
-const sseRetryLine = "retry: 1000\n\n"
-
-// streamContext bounds one stream's lifetime and opens it with the retry
-// line. Every stream handler calls it once, after its last refusal (a refusal
-// is a JSON error, which a line written before it would turn into a 200) and
-// at the start of what it streams. Not flushed here: it rides out with the
-// stream's first flush, or with the end of the response, which is the only
-// moment the browser needs it - and a flush of its own would add a write per
-// stream.
-func streamContext(w http.ResponseWriter, r *http.Request) (context.Context, context.CancelFunc) {
-	io.WriteString(w, sseRetryLine)
-	return context.WithTimeout(r.Context(), sseMaxStreamAge)
-}
 
 // sseEventID is a Redis stream ID, the only Last-Event-ID a console resume
 // accepts.
@@ -89,13 +61,13 @@ func parseSSETicket(val string) (username, fp, sessionID string, legacy bool) {
 // normal Bearer header to obtain the ticket.
 func (h *AuthHandler) MintSSETicket(w http.ResponseWriter, r *http.Request) {
 	if h.state.Redis == nil {
-		sendJSONError(w, "Ticket store unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Ticket store unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	username, _ := r.Context().Value("username").(string)
 	if username == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	// The ticket carries the fingerprint of the password it was minted under,
@@ -104,7 +76,7 @@ func (h *AuthHandler) MintSSETicket(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store != nil {
 		user, err := h.state.Store.GetUserByUsername(username)
 		if err != nil || user == nil {
-			sendJSONError(w, "Could not verify account", http.StatusServiceUnavailable)
+			httpx.SendJSONError(w, "Could not verify account", http.StatusServiceUnavailable)
 			return
 		}
 		fp = passwordFingerprint(sessionKey(user))
@@ -112,7 +84,7 @@ func (h *AuthHandler) MintSSETicket(w http.ResponseWriter, r *http.Request) {
 
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
-		sendJSONError(w, "Failed to generate ticket", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate ticket", http.StatusInternalServerError)
 		return
 	}
 	ticket := hex.EncodeToString(buf)
@@ -122,7 +94,7 @@ func (h *AuthHandler) MintSSETicket(w http.ResponseWriter, r *http.Request) {
 		sid = c.ID
 	}
 	if err := h.state.Redis.Set(r.Context(), "sse:ticket:"+ticket, username+sseTicketSep+fp+sseTicketSep+sid, sseTicketTTL).Err(); err != nil {
-		sendJSONError(w, "Failed to store ticket", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Failed to store ticket", http.StatusServiceUnavailable)
 		return
 	}
 

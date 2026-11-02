@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/store"
 )
 
@@ -77,7 +78,7 @@ func validatePanelCaps(caps []string) error {
 func parsePanelRoleID(w http.ResponseWriter, r *http.Request) (int, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		sendJSONError(w, "Invalid role ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid role ID", http.StatusBadRequest)
 		return 0, false
 	}
 	return id, true
@@ -92,12 +93,12 @@ type panelRoleRequest struct {
 // their capabilities.
 func (h *PanelRolesHandler) ListPanelRoles(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	roles, err := h.state.Store.ListPanelRoles()
 	if err != nil {
-		sendJSONError(w, "Failed to list panel roles", 500)
+		httpx.SendJSONError(w, "Failed to list panel roles", 500)
 		return
 	}
 	views := make([]panelRoleView, 0, len(roles))
@@ -130,12 +131,12 @@ type panelAssignmentView struct {
 // enumerate accounts either.
 func (h *PanelRolesHandler) ListPanelAssignments(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	assignments, err := h.state.Store.ListUserPanelAssignments()
 	if err != nil {
-		sendJSONError(w, "Failed to list panel role assignments", 500)
+		httpx.SendJSONError(w, "Failed to list panel role assignments", 500)
 		return
 	}
 	views := make([]panelAssignmentView, 0, len(assignments))
@@ -154,20 +155,20 @@ func (h *PanelRolesHandler) ListPanelAssignments(w http.ResponseWriter, r *http.
 // name answers 409 with that reason rather than a bare 500.
 func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	var req panelRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if req.Name == "" {
-		sendJSONError(w, "Name is required", 400)
+		httpx.SendJSONError(w, "Name is required", 400)
 		return
 	}
 	if err := validatePanelCaps(req.Capabilities); err != nil {
-		sendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
@@ -179,7 +180,7 @@ func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		// The dominant failure is the UNIQUE(name) violation; surface it as a
 		// conflict with a clear message rather than a bare 500.
-		sendJSONError(w, "Failed to create panel role (the name may already be in use)", 409)
+		httpx.SendJSONError(w, "Failed to create panel role (the name may already be in use)", 409)
 		return
 	}
 	LogIdentityAudit(h.state, r, AuditEventPanelRoleCreated, actorID, "", map[string]interface{}{
@@ -195,7 +196,7 @@ func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Reque
 // replaces its capability set.
 func (h *PanelRolesHandler) UpdatePanelRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	id, ok := parsePanelRoleID(w, r)
@@ -204,28 +205,28 @@ func (h *PanelRolesHandler) UpdatePanelRole(w http.ResponseWriter, r *http.Reque
 	}
 	var req panelRoleRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if req.Name == "" {
-		sendJSONError(w, "Name is required", 400)
+		httpx.SendJSONError(w, "Name is required", 400)
 		return
 	}
 	if err := validatePanelCaps(req.Capabilities); err != nil {
-		sendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	existing, err := h.state.Store.GetPanelRole(id)
 	if err != nil || existing == nil {
-		sendJSONError(w, "Panel role not found", 404)
+		httpx.SendJSONError(w, "Panel role not found", 404)
 		return
 	}
 	if existing.IsSystem {
-		sendJSONError(w, "System roles cannot be edited", 403)
+		httpx.SendJSONError(w, "System roles cannot be edited", 403)
 		return
 	}
 	if err := h.state.Store.UpdatePanelRole(id, req.Name, req.Capabilities); err != nil {
-		sendJSONError(w, "Failed to update panel role", 500)
+		httpx.SendJSONError(w, "Failed to update panel role", 500)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
@@ -243,7 +244,7 @@ func (h *PanelRolesHandler) UpdatePanelRole(w http.ResponseWriter, r *http.Reque
 // System roles are refused with 403; an unknown id is 404.
 func (h *PanelRolesHandler) DeletePanelRole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	id, ok := parsePanelRoleID(w, r)
@@ -252,15 +253,15 @@ func (h *PanelRolesHandler) DeletePanelRole(w http.ResponseWriter, r *http.Reque
 	}
 	existing, err := h.state.Store.GetPanelRole(id)
 	if err != nil || existing == nil {
-		sendJSONError(w, "Panel role not found", 404)
+		httpx.SendJSONError(w, "Panel role not found", 404)
 		return
 	}
 	if existing.IsSystem {
-		sendJSONError(w, "System roles cannot be deleted", 403)
+		httpx.SendJSONError(w, "System roles cannot be deleted", 403)
 		return
 	}
 	if err := h.state.Store.DeletePanelRole(id); err != nil {
-		sendJSONError(w, "Failed to delete panel role", 500)
+		httpx.SendJSONError(w, "Failed to delete panel role", 500)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)

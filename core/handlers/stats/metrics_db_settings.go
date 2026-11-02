@@ -8,6 +8,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/metrics"
 	"dylaris-core/services"
 )
@@ -106,11 +107,11 @@ func (h *MetricsDBHandler) Test(w http.ResponseWriter, r *http.Request) {
 	target := req.MetricsDBTarget
 
 	if !target.Configured() {
-		handlers.SendJSONError(w, "Enter the database to test first.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Enter the database to test first.", http.StatusBadRequest)
 		return
 	}
 	if err := target.Validate(); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -172,14 +173,14 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 	target := req.MetricsDBTarget
 	if err := target.Validate(); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	// Recording with nowhere to record is the one combination that cannot be
 	// stored. Switching the feature ON is a request for history, and there is
 	// no fallback database to give it to any more.
 	if req.Enabled && !target.Configured() {
-		handlers.SendJSONError(w, "Name the statistics database before switching recording on.",
+		httpx.SendJSONError(w, "Name the statistics database before switching recording on.",
 			http.StatusBadRequest)
 		return
 	}
@@ -192,14 +193,14 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 	if target.Configured() {
 		probe = services.ProbeMetricsDB(r.Context(), target)
 		if !probe.Reachable {
-			handlers.SendJSONError(w, "Not saved, because the database could not be used: "+probe.Error,
+			httpx.SendJSONError(w, "Not saved, because the database could not be used: "+probe.Error,
 				http.StatusBadGateway)
 			return
 		}
 	}
 
 	if err := services.SaveMetricsDBTarget(h.state.Store, target); err != nil {
-		handlers.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -208,7 +209,7 @@ func (h *MetricsDBHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// in whatever target is stored - so a switch that landed first would open a
 	// window recording into the OLD database.
 	if err := h.setRecording(r, req.Enabled); err != nil {
-		handlers.SendJSONError(w, "The database was saved but the switch was not: "+err.Error(),
+		httpx.SendJSONError(w, "The database was saved but the switch was not: "+err.Error(),
 			http.StatusInternalServerError)
 		return
 	}
@@ -271,7 +272,7 @@ func (h *MetricsDBHandler) setRecording(r *http.Request, on bool) error {
 func (h *MetricsDBHandler) decodeAndMerge(w http.ResponseWriter, r *http.Request) (metricsDBRequest, bool) {
 	var req metricsDBRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return metricsDBRequest{}, false
 	}
 	req.MetricsDBTarget = req.MetricsDBTarget.Normalize()

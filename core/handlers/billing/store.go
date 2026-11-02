@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -51,11 +52,11 @@ func NewStoreHandler(state *handlers.AppState) *StoreHandler {
 // proceed; otherwise it writes the error response and returns false.
 func (h *StoreHandler) requireStoreKey(w http.ResponseWriter, r *http.Request) bool {
 	if !h.state.StoreEnabled {
-		handlers.SendJSONError(w, "Store integration not enabled", http.StatusNotFound)
+		httpx.SendJSONError(w, "Store integration not enabled", http.StatusNotFound)
 		return false
 	}
 	if !h.validStoreKey(r) {
-		handlers.SendJSONError(w, "Invalid store key", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Invalid store key", http.StatusUnauthorized)
 		return false
 	}
 	return true
@@ -73,7 +74,7 @@ func (h *StoreHandler) validStoreKey(r *http.Request) bool {
 // the login routes, and anyone with a free store account could spend that count
 // through the store's own connect page - activations, suspensions and usage
 // reads for every customer then got 429 for as long as they kept it up.
-func (h *StoreHandler) LimitUnlessStoreKey(l *handlers.IPRateLimiter, perMin int, next http.HandlerFunc) http.HandlerFunc {
+func (h *StoreHandler) LimitUnlessStoreKey(l *httpx.IPRateLimiter, perMin int, next http.HandlerFunc) http.HandlerFunc {
 	limited := l.Limit(perMin, next)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if h.state.StoreEnabled && h.validStoreKey(r) {
@@ -89,23 +90,23 @@ func (h *StoreHandler) LimitUnlessStoreKey(l *handlers.IPRateLimiter, perMin int
 // redirect URL. The browser then lands on dylaris.com/connect?token=...
 func (h *StoreHandler) LinkStart(w http.ResponseWriter, r *http.Request) {
 	if !h.state.StoreEnabled {
-		handlers.SendJSONError(w, "Store integration not enabled", http.StatusNotFound)
+		httpx.SendJSONError(w, "Store integration not enabled", http.StatusNotFound)
 		return
 	}
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	user, err := h.state.Store.GetUserByID(userID)
 	if err != nil || user == nil {
-		handlers.SendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
-		handlers.SendJSONError(w, "Failed to mint token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to mint token", http.StatusInternalServerError)
 		return
 	}
 	token := hex.EncodeToString(tokenBytes)
@@ -114,7 +115,7 @@ func (h *StoreHandler) LinkStart(w http.ResponseWriter, r *http.Request) {
 	// verify. Newline-delimited; verify tolerates an absent username (old tokens).
 	value := user.ID + "\n" + user.Email + "\n" + user.Username
 	if err := h.state.Redis.Set(r.Context(), storeLinkTokenPrefix+token, value, storeLinkTokenTTL).Err(); err != nil {
-		handlers.SendJSONError(w, "Failed to store token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to store token", http.StatusInternalServerError)
 		return
 	}
 
@@ -140,19 +141,19 @@ func (h *StoreHandler) LinkVerify(w http.ResponseWriter, r *http.Request) {
 		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" {
-		handlers.SendJSONError(w, "Invalid token", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid token", http.StatusBadRequest)
 		return
 	}
 
 	// GetDel = atomic read-and-consume, so a token can never be redeemed twice.
 	value, err := h.state.Redis.GetDel(r.Context(), storeLinkTokenPrefix+req.Token).Result()
 	if err != nil || value == "" {
-		handlers.SendJSONError(w, "Invalid or expired token", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Invalid or expired token", http.StatusUnauthorized)
 		return
 	}
 	parts := strings.SplitN(value, "\n", 3)
 	if len(parts) < 2 {
-		handlers.SendJSONError(w, "Malformed token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Malformed token", http.StatusInternalServerError)
 		return
 	}
 	username := ""
@@ -179,7 +180,7 @@ func (h *StoreHandler) VerifyUser(w http.ResponseWriter, r *http.Request) {
 	}
 	uuid := strings.TrimSpace(r.URL.Query().Get("uuid"))
 	if uuid == "" {
-		handlers.SendJSONError(w, "Missing uuid", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Missing uuid", http.StatusBadRequest)
 		return
 	}
 	user, err := h.state.Store.GetUserByID(uuid)
@@ -207,17 +208,17 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	uuid := strings.TrimSpace(r.URL.Query().Get("uuid"))
 	if uuid == "" {
-		handlers.SendJSONError(w, "Missing uuid", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Missing uuid", http.StatusBadRequest)
 		return
 	}
 	period, ok := storeUsagePeriod(r.URL.Query().Get("period"), time.Now())
 	if !ok {
-		handlers.SendJSONError(w, "Invalid period", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid period", http.StatusBadRequest)
 		return
 	}
 	usage, err := h.state.Store.GetTrafficUsage(uuid, period)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read usage", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read usage", http.StatusInternalServerError)
 		return
 	}
 	// The per-(region, kind) breakdown, each cell carrying the limit that
@@ -233,7 +234,7 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	// configured a limit for.
 	cells, err := h.state.Store.GetTrafficUsageRegions(uuid, period)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read usage", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read usage", http.StatusInternalServerError)
 		return
 	}
 	// Non-regional kinds are folded into ONE cell BEFORE limits are resolved.
@@ -257,7 +258,7 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	for _, k := range order {
 		lim, err := services.ResolveTrafficLimit(h.state.Store, uuid, k.region, k.kind)
 		if err != nil {
-			handlers.SendJSONError(w, "Failed to resolve traffic limits", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to resolve traffic limits", http.StatusInternalServerError)
 			return
 		}
 		regions = append(regions, map[string]interface{}{
@@ -416,7 +417,7 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.state.Billing == nil {
-		handlers.SendJSONError(w, "Billing not available", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Billing not available", http.StatusServiceUnavailable)
 		return
 	}
 	var req struct {
@@ -457,13 +458,13 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		DataBillingEnabled *bool `json:"dataBillingEnabled,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
-		handlers.SendJSONError(w, "Invalid request", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 
 	user, err := h.state.Store.GetUserByID(req.UUID)
 	if err != nil || user == nil {
-		handlers.SendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
@@ -475,18 +476,18 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// it later finds the account paid up - and the entitlement below still
 		// follows the purchase.
 		if err := h.state.Billing.Reactivate(req.UUID); err != nil {
-			handlers.SendJSONError(w, "Failed to activate billing", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to activate billing", http.StatusInternalServerError)
 			return
 		}
 		nodes, setNodes, nerr := parseEntitlement(req.MaxNodes)
 		links, setLinks, lerr := parseEntitlement(req.MaxLinks)
 		if nerr != nil || lerr != nil {
-			handlers.SendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
 			return
 		}
 		if setNodes || setLinks {
 			if err := h.state.Store.SetUserPurchasedEntitlement(req.UUID, nodes, setNodes, links, setLinks); err != nil {
-				handlers.SendJSONError(w, "Activated but failed to apply entitlement", http.StatusInternalServerError)
+				httpx.SendJSONError(w, "Activated but failed to apply entitlement", http.StatusInternalServerError)
 				return
 			}
 			// A purchase RETIRES the manual grant for what was bought. The grant
@@ -509,19 +510,19 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// refused it, and the guard kept them stopped instead of billed.
 		if req.TrafficBillingEnabled != nil || req.BackupBillingEnabled != nil {
 			if err := h.state.Store.SetUserBillingConsent(req.UUID, req.TrafficBillingEnabled, req.BackupBillingEnabled); err != nil {
-				handlers.SendJSONError(w, "Activated but failed to record the billing consent", http.StatusInternalServerError)
+				httpx.SendJSONError(w, "Activated but failed to record the billing consent", http.StatusInternalServerError)
 				return
 			}
 		}
 		if req.DataBillingEnabled != nil {
 			if err := h.state.Store.SetUserDataBillingEnabled(req.UUID, *req.DataBillingEnabled); err != nil {
-				handlers.SendJSONError(w, "Activated but failed to record the data billing consent", http.StatusInternalServerError)
+				httpx.SendJSONError(w, "Activated but failed to record the data billing consent", http.StatusInternalServerError)
 				return
 			}
 		}
 		routes, setRoutes, rerr := parseRoutePool(req.MaxRoutes)
 		if rerr != nil {
-			handlers.SendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
 			return
 		}
 		if setRoutes {
@@ -531,13 +532,13 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 			// domains, which is what a 0 in this table already says.
 			if routes == nil {
 				if err := h.state.Store.DeleteGatewayRouteLimit(handlers.UserRouteScope(req.UUID)); err != nil {
-					handlers.SendJSONError(w, "Activated but failed to clear the route pool", http.StatusInternalServerError)
+					httpx.SendJSONError(w, "Activated but failed to clear the route pool", http.StatusInternalServerError)
 					return
 				}
 			} else {
 				n := int(*routes)
 				if err := h.state.Store.SetGatewayRouteLimit(handlers.UserRouteScope(req.UUID), &n); err != nil {
-					handlers.SendJSONError(w, "Activated but failed to apply the route pool", http.StatusInternalServerError)
+					httpx.SendJSONError(w, "Activated but failed to apply the route pool", http.StatusInternalServerError)
 					return
 				}
 			}
@@ -547,16 +548,16 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// tenant already cut off used to put them back into grace, with
 		// everything running again, on every retry Stripe made.
 		if err := h.state.Billing.EnterPastDueUnlessSuspended(req.UUID); err != nil {
-			handlers.SendJSONError(w, "Failed to set past_due", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to set past_due", http.StatusInternalServerError)
 			return
 		}
 	case "suspend":
 		if err := h.state.Billing.Suspend(r.Context(), req.UUID); err != nil {
-			handlers.SendJSONError(w, "Failed to suspend", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to suspend", http.StatusInternalServerError)
 			return
 		}
 	default:
-		handlers.SendJSONError(w, "Unknown action", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Unknown action", http.StatusBadRequest)
 		return
 	}
 
@@ -573,7 +574,7 @@ func (h *StoreHandler) Status(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -629,7 +630,7 @@ func (h *StoreHandler) BackupDefaults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	// A nil billing row means "no purchase", which is what per-unit asks for:

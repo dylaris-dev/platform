@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/servers"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -70,33 +70,33 @@ func (h *TemplatesHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 	if !ok || h.refuseSuspended(w, r, t.OwnerID) {
 		return
 	}
-	if !handlers.CapBody(w, r, 4<<10) {
+	if !httpx.CapBody(w, r, 4<<10) {
 		return
 	}
 	var p struct {
 		VersionID string `json:"versionId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil || !modrinthVersionID.MatchString(p.VersionID) {
-		handlers.SendJSONError(w, "A Modrinth version id is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "A Modrinth version id is required", http.StatusBadRequest)
 		return
 	}
 	software := strings.ToLower(strings.TrimSpace(t.Software))
 	if software == "" || software == "vanilla" {
-		handlers.SendJSONError(w, "Vanilla servers load no mods or plugins. Set the template software to a loader such as paper or fabric first.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Vanilla servers load no mods or plugins. Set the template software to a loader such as paper or fabric first.", http.StatusBadRequest)
 		return
 	}
 	v, err := fetchModrinthVersion(r.Context(), p.VersionID)
 	if err != nil {
 		if services.ModrinthNotFound(err) {
-			handlers.SendJSONError(w, "Modrinth does not know this version", http.StatusNotFound)
+			httpx.SendJSONError(w, "Modrinth does not know this version", http.StatusNotFound)
 			return
 		}
 		log.Printf("templates: modrinth version %s: %v", p.VersionID, err)
-		handlers.SendJSONError(w, "Modrinth did not answer. Try again in a moment.", http.StatusBadGateway)
+		httpx.SendJSONError(w, "Modrinth did not answer. Try again in a moment.", http.StatusBadGateway)
 		return
 	}
 	if v.ID == "" || v.ProjectID == "" || len(v.Files) == 0 {
-		handlers.SendJSONError(w, "This Modrinth version has no file", http.StatusBadRequest)
+		httpx.SendJSONError(w, "This Modrinth version has no file", http.StatusBadRequest)
 		return
 	}
 	f := v.Files[0]
@@ -107,23 +107,23 @@ func (h *TemplatesHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !strings.HasPrefix(f.URL, "https://cdn.modrinth.com/") || !hexSha1.MatchString(f.Hashes["sha1"]) || !hexSha512.MatchString(f.Hashes["sha512"]) {
-		handlers.SendJSONError(w, "This Modrinth file is not served from the Modrinth CDN with checksums", http.StatusBadRequest)
+		httpx.SendJSONError(w, "This Modrinth file is not served from the Modrinth CDN with checksums", http.StatusBadRequest)
 		return
 	}
 	// The file name is Modrinth's, so it must stay one path segment.
 	name := f.Filename
 	if strings.ContainsAny(name, `/\`) || !strings.HasSuffix(strings.ToLower(name), ".jar") {
-		handlers.SendJSONError(w, "This Modrinth file is not a plain jar", http.StatusBadRequest)
+		httpx.SendJSONError(w, "This Modrinth file is not a plain jar", http.StatusBadRequest)
 		return
 	}
 	rel, ok := services.TemplateRelPath(servers.DefaultTargetDirForLoader(software) + "/" + name)
 	if !ok || strings.Count(rel, "/") != 1 {
-		handlers.SendJSONError(w, "This Modrinth file name cannot be used as a template path", http.StatusBadRequest)
+		httpx.SendJSONError(w, "This Modrinth file name cannot be used as a template path", http.StatusBadRequest)
 		return
 	}
 	fail := func(what string, err error) {
 		log.Printf("templates: modrinth %s %d/%s: %v", what, t.ID, rel, err)
-		handlers.SendJSONError(w, "Could not store the Modrinth reference", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not store the Modrinth reference", http.StatusInternalServerError)
 	}
 	refs, err := h.state.Store.ListTemplateModrinth(t.ID)
 	if err != nil {
@@ -144,7 +144,7 @@ func (h *TemplatesHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if kept >= maxTemplateRefs {
-		handlers.SendJSONError(w, "This template already has "+strconv.Itoa(maxTemplateRefs)+" Modrinth references, the most one template may keep. Remove one first.", http.StatusConflict)
+		httpx.SendJSONError(w, "This template already has "+strconv.Itoa(maxTemplateRefs)+" Modrinth references, the most one template may keep. Remove one first.", http.StatusConflict)
 		return
 	}
 	ref := models.TemplateModrinthRef{
@@ -195,17 +195,17 @@ func (h *TemplatesHandler) DeleteModrinth(w http.ResponseWriter, r *http.Request
 	}
 	refID, err := strconv.Atoi(mux.Vars(r)["refId"])
 	if err != nil || refID <= 0 {
-		handlers.SendJSONError(w, "Reference not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Reference not found", http.StatusNotFound)
 		return
 	}
 	found, err := h.state.Store.DeleteTemplateModrinth(t.ID, refID)
 	if err != nil {
 		log.Printf("templates: delete modrinth %d/%d: %v", t.ID, refID, err)
-		handlers.SendJSONError(w, "Could not remove the reference", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not remove the reference", http.StatusInternalServerError)
 		return
 	}
 	if !found {
-		handlers.SendJSONError(w, "Reference not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Reference not found", http.StatusNotFound)
 		return
 	}
 	h.written(w, r, t, nil)

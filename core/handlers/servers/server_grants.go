@@ -9,6 +9,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -44,44 +45,44 @@ func dedupeCaps(in []string) []string {
 // Phase 4/6 wire audit + permissions_mode enforcement here.
 func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	var req assignGrantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if req.Username == "" {
-		handlers.SendJSONError(w, "Username required", 400)
+		httpx.SendJSONError(w, "Username required", 400)
 		return
 	}
 	if err := validateServerOwnerCaps(req.GrantCaps); err != nil {
-		handlers.SendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	if err := validateServerOwnerCaps(req.DenyCaps); err != nil {
-		handlers.SendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 
 	idn := authz.IdentityFromContext(r.Context())
 	if idn.UserID == "" {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	if !idn.IsAdmin && handlers.PermissionsMode(h.state.Store) == authz.ModeOff {
-		handlers.SendJSONError(w, "Delegation is disabled", 403)
+		httpx.SendJSONError(w, "Delegation is disabled", 403)
 		return
 	}
 
 	target, err := h.state.Store.GetUserByUsername(req.Username)
 	if err != nil || target == nil {
-		handlers.SendJSONError(w, "User not found", 404)
+		httpx.SendJSONError(w, "User not found", 404)
 		return
 	}
 	if target.ID == idn.UserID {
-		handlers.SendJSONError(w, "Cannot assign a grant to yourself", 400)
+		httpx.SendJSONError(w, "Cannot assign a grant to yourself", 400)
 		return
 	}
 
@@ -91,12 +92,12 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	if req.ServerID != nil {
 		srv, err = h.state.Store.GetServerByID(*req.ServerID)
 		if err != nil || srv == nil {
-			handlers.SendJSONError(w, "Server not found", 404)
+			httpx.SendJSONError(w, "Server not found", 404)
 			return
 		}
 		ownerUserID = srv.OwnerID
 		if target.ID == srv.OwnerID {
-			handlers.SendJSONError(w, "Cannot assign a grant to the server owner", 400)
+			httpx.SendJSONError(w, "Cannot assign a grant to the server owner", 400)
 			return
 		}
 	} else {
@@ -109,7 +110,7 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	if req.ServerRoleID != nil {
 		role, rerr := h.state.Store.GetServerRole(*req.ServerRoleID)
 		if rerr != nil || role == nil || role.OwnerUserID != ownerUserID {
-			handlers.SendJSONError(w, "Server role not found in this realm", 404)
+			httpx.SendJSONError(w, "Server role not found in this realm", 404)
 			return
 		}
 		roleCaps = role.Capabilities
@@ -126,16 +127,16 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	if req.ServerID != nil && !isOwnerOrAdmin {
 		res, rerr := h.state.Authz.Resolve(idn, *req.ServerID)
 		if rerr != nil {
-			handlers.SendJSONError(w, "Authorization check failed", 500)
+			httpx.SendJSONError(w, "Authorization check failed", 500)
 			return
 		}
 		if !res.HasCap("members.write") {
-			handlers.SendJSONError(w, "Forbidden", 403)
+			httpx.SendJSONError(w, "Forbidden", 403)
 			return
 		}
 		requested := dedupeCaps(append(append([]string{}, roleCaps...), req.GrantCaps...))
 		if len(authz.CapSubset(res, requested)) != len(requested) {
-			handlers.SendJSONError(w, "Cannot grant capabilities you do not hold", 403)
+			httpx.SendJSONError(w, "Cannot grant capabilities you do not hold", 403)
 			return
 		}
 		// "inherit" makes a grant flow down to every child server, which
@@ -145,7 +146,7 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 		// member could hand a second account rights on child servers they
 		// cannot reach themselves.
 		if req.Inherit {
-			handlers.SendJSONError(w, "Only the owner can let a grant flow down to child servers", 403)
+			httpx.SendJSONError(w, "Only the owner can let a grant flow down to child servers", 403)
 			return
 		}
 		delegatorRes = res
@@ -163,13 +164,13 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	// revoking it, and revoking needs members.delete. A member holding only
 	// members.write could empty a co-admin's grant this way.
 	if hadGrant && delegatorRes != nil && !delegatorRes.HasCap("members.delete") {
-		handlers.SendJSONError(w, "Changing an existing member's access needs the right to remove members", 403)
+		httpx.SendJSONError(w, "Changing an existing member's access needs the right to remove members", 403)
 		return
 	}
 
 	ov := store.CapOverrides{Grant: req.GrantCaps, Deny: req.DenyCaps}
 	if err := h.state.Store.UpsertServerGrant(req.ServerID, target.ID, ownerUserID, req.ServerRoleID, ov, req.Inherit); err != nil {
-		handlers.SendJSONError(w, "Failed to assign grant", 500)
+		httpx.SendJSONError(w, "Failed to assign grant", 500)
 		return
 	}
 	// A nil ServerID is an ACCOUNT-wide grant, which the resolver honours on
@@ -228,26 +229,26 @@ type revokeGrantRequest struct {
 // (removing access is always safe for an authorized manager).
 func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	var req revokeGrantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if req.Username == "" {
-		handlers.SendJSONError(w, "Username required", 400)
+		httpx.SendJSONError(w, "Username required", 400)
 		return
 	}
 	idn := authz.IdentityFromContext(r.Context())
 	if idn.UserID == "" {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	target, err := h.state.Store.GetUserByUsername(req.Username)
 	if err != nil || target == nil {
-		handlers.SendJSONError(w, "User not found", 404)
+		httpx.SendJSONError(w, "User not found", 404)
 		return
 	}
 
@@ -255,7 +256,7 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 	if req.ServerID != nil {
 		srv, serr := h.state.Store.GetServerByID(*req.ServerID)
 		if serr != nil || srv == nil {
-			handlers.SendJSONError(w, "Server not found", 404)
+			httpx.SendJSONError(w, "Server not found", 404)
 			return
 		}
 		ownerUserID = srv.OwnerID
@@ -264,15 +265,15 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 		if !(adminHere || srv.OwnerID == idn.UserID) {
 			res, rerr := h.state.Authz.Resolve(idn, *req.ServerID)
 			if rerr != nil {
-				handlers.SendJSONError(w, "Authorization check failed", 500)
+				httpx.SendJSONError(w, "Authorization check failed", 500)
 				return
 			}
 			if !res.HasCap("members.delete") {
-				handlers.SendJSONError(w, "Forbidden", 403)
+				httpx.SendJSONError(w, "Forbidden", 403)
 				return
 			}
 			if handlers.RevokeUncoversInheritance(h.state, srv, target.ID) {
-				handlers.SendJSONError(w, "Removing this grant would give them the wider access they inherit from the proxy; only the owner can do that", 403)
+				httpx.SendJSONError(w, "Removing this grant would give them the wider access they inherit from the proxy; only the owner can do that", 403)
 				return
 			}
 		}
@@ -282,10 +283,10 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 
 	if err := h.state.Store.DeleteServerGrant(req.ServerID, ownerUserID, target.ID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			handlers.SendJSONError(w, "Grant not found", 404)
+			httpx.SendJSONError(w, "Grant not found", 404)
 			return
 		}
-		handlers.SendJSONError(w, "Failed to revoke grant", 500)
+		httpx.SendJSONError(w, "Failed to revoke grant", 500)
 		return
 	}
 	if req.ServerID != nil {
@@ -324,17 +325,17 @@ type grantView struct {
 // Gated at the route with RequireCap("roles.read"); admin short-circuits.
 func (h *ServerRolesHandler) ListGrants(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 	owner := actingUserID(r)
 	if owner == "" {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	grants, err := h.state.Store.ListGrantsByOwner(owner)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list grants", 500)
+		httpx.SendJSONError(w, "Failed to list grants", 500)
 		return
 	}
 	views := make([]grantView, 0, len(grants))

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -101,12 +102,12 @@ type PickNodeResponse struct {
 func (h *PlacementHandler) PickNode(w http.ResponseWriter, r *http.Request) {
 	var req PickNodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	// A negative padding would shrink the request and make every node fit.
 	if p := req.RAMPaddingMB; p != nil && !models.ValidRAMPaddingMB(*p) {
-		sendJSONError(w, ramPaddingRefused, http.StatusBadRequest)
+		httpx.SendJSONError(w, ramPaddingRefused, http.StatusBadRequest)
 		return
 	}
 
@@ -371,24 +372,24 @@ type SetNodePlacementRequest struct {
 // Lets admins (or a nodes.write cap holder) override the global defaults for a
 // single node.
 func (h *PlacementHandler) SetNodePlacement(w http.ResponseWriter, r *http.Request) {
-	id := mustAtoi(extractIDFromPath(r, "/api/nodes/", "/placement"))
+	id := httpx.MustAtoi(extractIDFromPath(r, "/api/nodes/", "/placement"))
 	if id <= 0 {
-		sendJSONError(w, "Invalid node id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid node id", http.StatusBadRequest)
 		return
 	}
 	// Overcommit on a customer's machine decides how much of their hardware the
 	// scheduler hands out; that is theirs to set.
 	if foreignToCaller(h.state, r, id) {
-		sendJSONError(w, "Node not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 	var req SetNodePlacementRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.CPUOvercommitRatio <= 0 || req.RAMOvercommitRatio <= 0 {
-		sendJSONError(w, "Overcommit ratios must be > 0", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Overcommit ratios must be > 0", http.StatusBadRequest)
 		return
 	}
 	// Validated before either write, so a bad padding does not leave the
@@ -398,18 +399,18 @@ func (h *PlacementHandler) SetNodePlacement(w http.ResponseWriter, r *http.Reque
 	if paddingSet && string(req.RAMPaddingMB) != "null" {
 		var n int
 		if err := json.Unmarshal(req.RAMPaddingMB, &n); err != nil || !models.ValidRAMPaddingMB(n) {
-			sendJSONError(w, fmt.Sprintf("ramPaddingMb must be a whole number from 0 to %d, or null", models.MaxRAMPaddingMB), http.StatusBadRequest)
+			httpx.SendJSONError(w, fmt.Sprintf("ramPaddingMb must be a whole number from 0 to %d, or null", models.MaxRAMPaddingMB), http.StatusBadRequest)
 			return
 		}
 		padding = &n
 	}
 	if err := h.state.Store.SetNodePlacement(id, req.CPUOvercommitRatio, req.RAMOvercommitRatio); err != nil {
-		sendJSONError(w, "Failed to update placement", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to update placement", http.StatusInternalServerError)
 		return
 	}
 	if paddingSet {
 		if err := h.state.Store.SetNodeRAMPadding(id, padding); err != nil {
-			sendJSONError(w, "Failed to update RAM padding", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to update RAM padding", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -432,7 +433,7 @@ func (h *PlacementHandler) AvailableTagsHandler(w http.ResponseWriter, r *http.R
 	region := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
 	nodes, err := h.state.Store.ListNodes()
 	if err != nil {
-		sendJSONError(w, "Failed to list nodes", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list nodes", http.StatusInternalServerError)
 		return
 	}
 	seen := map[string]bool{}
@@ -467,7 +468,7 @@ func (h *PlacementHandler) AvailableTagsHandler(w http.ResponseWriter, r *http.R
 func (h *PlacementHandler) AvailableRegionsHandler(w http.ResponseWriter, r *http.Request) {
 	nodes, err := h.state.Store.ListNodes()
 	if err != nil {
-		sendJSONError(w, "Failed to list nodes", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list nodes", http.StatusInternalServerError)
 		return
 	}
 	seen := map[string]bool{}

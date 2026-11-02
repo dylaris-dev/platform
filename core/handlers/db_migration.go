@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -51,12 +52,12 @@ func (req dbTargetRequest) toParams() services.DBConnParams {
 // settings.read (RequireCap at the route).
 func (h *DBMigrationHandler) GetMigration(w http.ResponseWriter, r *http.Request) {
 	if h.state.DBMigration == nil {
-		sendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
 		return
 	}
 	job, ok, err := h.state.DBMigration.GetJob(r.Context())
 	if err != nil {
-		sendJSONError(w, "Failed to read job: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read job: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	resp := map[string]interface{}{"success": true, "hasJob": ok}
@@ -70,12 +71,12 @@ func (h *DBMigrationHandler) GetMigration(w http.ResponseWriter, r *http.Request
 // target. PANEL settings.write (RequireCap at the route).
 func (h *DBMigrationHandler) StartMigration(w http.ResponseWriter, r *http.Request) {
 	if h.state.DBMigration == nil {
-		sendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
 		return
 	}
 	var req dbTargetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -86,9 +87,9 @@ func (h *DBMigrationHandler) StartMigration(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		switch {
 		case err == services.ErrMigrationRunning:
-			sendJSONError(w, err.Error(), http.StatusConflict)
+			httpx.SendJSONError(w, err.Error(), http.StatusConflict)
 		default:
-			sendJSONError(w, err.Error(), http.StatusBadRequest)
+			httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		}
 		return
 	}
@@ -112,7 +113,7 @@ func (h *DBMigrationHandler) StartMigration(w http.ResponseWriter, r *http.Reque
 func (h *DBMigrationHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
 	var req dbTargetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	params := req.toParams()
@@ -158,12 +159,12 @@ func (h *DBMigrationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 // per-table report plus a human-readable log.
 func (h *DBMigrationHandler) VerifyMigration(w http.ResponseWriter, r *http.Request) {
 	if h.state.DBMigration == nil {
-		sendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "DB migration not available", http.StatusServiceUnavailable)
 		return
 	}
 	var req dbTargetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -173,7 +174,7 @@ func (h *DBMigrationHandler) VerifyMigration(w http.ResponseWriter, r *http.Requ
 
 	report, err := h.state.DBMigration.VerifyTarget(ctx, req.toParams())
 	if err != nil {
-		sendJSONError(w, "Verify failed: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Verify failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "report": report})
@@ -227,11 +228,11 @@ func (h *DBMigrationHandler) ConvertHypertable(w http.ResponseWriter, r *http.Re
 
 	tsInstalled, err := h.state.Store.TimescaleEnabled(ctx)
 	if err != nil {
-		sendJSONError(w, "Failed to check TimescaleDB: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to check TimescaleDB: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if !tsInstalled {
-		sendJSONError(w, "The TimescaleDB extension is not installed in this database. Switch to a TimescaleDB image first.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "The TimescaleDB extension is not installed in this database. Switch to a TimescaleDB image first.", http.StatusBadRequest)
 		return
 	}
 	if isHyper, _ := h.state.Store.IsServerStatsHypertable(ctx); isHyper {
@@ -240,7 +241,7 @@ func (h *DBMigrationHandler) ConvertHypertable(w http.ResponseWriter, r *http.Re
 	}
 
 	if err := h.state.Store.ConvertServerStatsToHypertable(ctx); err != nil {
-		sendJSONError(w, "Conversion failed: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Conversion failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 

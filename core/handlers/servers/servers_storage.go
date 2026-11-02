@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 
 	"github.com/gorilla/mux"
 )
@@ -48,19 +49,19 @@ func (h *ServerHandler) GetServerStoragePath(w http.ResponseWriter, r *http.Requ
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", 400)
+		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
-		handlers.SendJSONError(w, "Node not found", 404)
+		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
 
@@ -100,7 +101,7 @@ func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Requ
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", 400)
+		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
 
@@ -108,13 +109,13 @@ func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Requ
 		TargetPath string `json:"targetPath"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TargetPath == "" {
-		handlers.SendJSONError(w, "targetPath is required", 400)
+		httpx.SendJSONError(w, "targetPath is required", 400)
 		return
 	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
@@ -124,18 +125,18 @@ func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Requ
 
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
-		handlers.SendJSONError(w, "Node not found", 404)
+		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
 
 	if h.state.Queue == nil {
-		handlers.SendJSONError(w, "Queue not available", 503)
+		httpx.SendJSONError(w, "Queue not available", 503)
 		return
 	}
 
 	if err := h.state.Queue.SendMigrateCommand(r.Context(), node.Token, srv.UUID, req.TargetPath); err != nil {
 		log.Printf("Failed to queue migrate_storage for server %d: %v", serverID, err)
-		handlers.SendJSONError(w, "Failed to queue migration", 500)
+		httpx.SendJSONError(w, "Failed to queue migration", 500)
 		return
 	}
 

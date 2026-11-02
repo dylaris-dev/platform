@@ -16,6 +16,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage/modpack"
@@ -451,18 +452,18 @@ func (h *PacksHandler) ExportMrpack(w http.ResponseWriter, r *http.Request) {
 	}
 	p, ok := h.packAccess(r, packID, need)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
 	build, err := h.state.Store.GetPackBuild(buildID)
 	if err != nil || build == nil || build.PackID != packID {
-		handlers.SendJSONError(w, "Build not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
 	}
 	content, err := h.state.Store.ListBuildContent(buildID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load content", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load content", http.StatusInternalServerError)
 		return
 	}
 	switch kind {
@@ -471,12 +472,12 @@ func (h *PacksHandler) ExportMrpack(w http.ResponseWriter, r *http.Request) {
 		return
 	case "", "client":
 	default:
-		handlers.SendJSONError(w, "Unknown download kind", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Unknown download kind", http.StatusBadRequest)
 		return
 	}
 	data, err := h.renderMrpack(r.Context(), p, build, content)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to build .mrpack: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to build .mrpack: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-modrinth-modpack+zip")

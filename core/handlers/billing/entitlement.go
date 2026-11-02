@@ -8,6 +8,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
@@ -44,12 +45,12 @@ type entitlementResponse struct {
 func (h *EntitlementHandler) GetMine(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, handlers.IsAdmin(r))
 	if err != nil {
-		handlers.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -61,7 +62,7 @@ func (h *EntitlementHandler) GetForUser(w http.ResponseWriter, r *http.Request) 
 	userID := mux.Vars(r)["id"]
 	ent, err := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, h.subjectIsAdmin(userID))
 	if err != nil {
-		handlers.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -98,25 +99,25 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	}
 	var req grantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	kind := strings.TrimSpace(strings.ToLower(req.Kind))
 	switch kind {
 	case services.EntitlementByon, services.EntitlementRouteOnly, services.EntitlementBoth:
 	default:
-		handlers.SendJSONError(w, `kind must be "byon", "route_only" or "both"`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `kind must be "byon", "route_only" or "both"`, http.StatusBadRequest)
 		return
 	}
 	if req.Days < 1 || req.Days > maxGrantDays {
-		handlers.SendJSONError(w, "days must be between 1 and 730", http.StatusBadRequest)
+		httpx.SendJSONError(w, "days must be between 1 and 730", http.StatusBadRequest)
 		return
 	}
 
 	// Guard against granting to a user who does not exist: the upsert would
 	// otherwise fail on the foreign key with an opaque 500.
 	if u, err := h.state.Store.GetUserByID(userID); err != nil || u == nil {
-		handlers.SendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
@@ -127,7 +128,7 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	// than one grant that happens to cover two things.
 	for _, k := range grantKinds(kind) {
 		if err := h.state.Store.SetUserManualEntitlementKind(userID, k, &expires, actor); err != nil {
-			handlers.SendJSONError(w, "Save failed", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -179,16 +180,16 @@ func (h *EntitlementHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	switch kind := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("kind"))); kind {
 	case "":
 		if err := h.state.Store.SetUserManualEntitlement(userID, "", nil, ""); err != nil {
-			handlers.SendJSONError(w, "Save failed", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed", http.StatusInternalServerError)
 			return
 		}
 	case services.EntitlementByon, services.EntitlementRouteOnly:
 		if err := h.state.Store.SetUserManualEntitlementKind(userID, kind, nil, ""); err != nil {
-			handlers.SendJSONError(w, "Save failed", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed", http.StatusInternalServerError)
 			return
 		}
 	default:
-		handlers.SendJSONError(w, `kind must be "byon" or "route_only", or omitted to revoke both`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `kind must be "byon" or "route_only", or omitted to revoke both`, http.StatusBadRequest)
 		return
 	}
 	actor, _ := r.Context().Value("userID").(string)

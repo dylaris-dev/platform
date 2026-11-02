@@ -12,6 +12,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
@@ -48,7 +49,7 @@ func (h *NodeAdmissionHandler) GetAdmission(w http.ResponseWriter, r *http.Reque
 	}
 	cidrs, err := h.state.Store.ListAdmissionCIDRs()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load CIDRs", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load CIDRs", http.StatusInternalServerError)
 		return
 	}
 	if cidrs == nil {
@@ -66,21 +67,21 @@ func (h *NodeAdmissionHandler) GetAdmission(w http.ResponseWriter, r *http.Reque
 func (h *NodeAdmissionHandler) SetAdmission(w http.ResponseWriter, r *http.Request) {
 	var req admissionPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	validJoin := map[string]bool{"disabled": true, "open": true, "one-shot": true}
 	validIP := map[string]bool{"allow": true, "deny": true}
 	if !validJoin[req.JoinMode] || !validIP[req.IPMode] {
-		handlers.SendJSONError(w, "Invalid joinMode or ipMode", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid joinMode or ipMode", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetSetting("node_join_mode", req.JoinMode); err != nil {
-		handlers.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.SetSetting("node_admission_ip_mode", req.IPMode); err != nil {
-		handlers.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if uid := handlers.ByonCallerID(r); uid != "" {
@@ -104,16 +105,16 @@ func (h *NodeAdmissionHandler) AddCIDR(w http.ResponseWriter, r *http.Request) {
 		Label string `json:"label"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	_, netw, perr := net.ParseCIDR(strings.TrimSpace(req.CIDR))
 	if perr != nil {
-		handlers.SendJSONError(w, "Invalid CIDR", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid CIDR", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.AddAdmissionCIDR(netw.String(), strings.TrimSpace(req.Label)); err != nil {
-		handlers.SendJSONError(w, "Failed to add CIDR", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to add CIDR", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "cidr": netw.String()})
@@ -124,7 +125,7 @@ func (h *NodeAdmissionHandler) AddCIDR(w http.ResponseWriter, r *http.Request) {
 func (h *NodeAdmissionHandler) DeleteCIDR(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	if err := h.state.Store.DeleteAdmissionCIDR(id); err != nil {
-		handlers.SendJSONError(w, "Failed to delete CIDR", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete CIDR", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
@@ -198,12 +199,12 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 	// A customer re-pairs their own machine (scope=own); resetting it from the
 	// fleet routes restarts their game servers.
 	if err != nil || node == nil || handlers.ForeignToCaller(h.state, r, node.ID) {
-		handlers.SendJSONError(w, "Node not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 	if err := resetNodePairing(r.Context(), h.state, node, handlers.ByonCallerID(r)); err != nil {
 		log.Printf("reset-pairing: %v", err)
-		handlers.SendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -262,17 +263,17 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	node, err := h.state.Store.GetNodeByID(id)
 	if err != nil || node == nil || handlers.ForeignToCaller(h.state, r, node.ID) {
-		handlers.SendJSONError(w, "Node not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 	fromIP, err := h.state.Store.GetNodeLastAuthPeerIP(node.ID)
 	if err != nil {
 		log.Printf("roll-secret: node %d: read last auth address: %v", node.ID, err)
-		handlers.SendJSONError(w, "Database error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	if fromIP == "" {
-		handlers.SendJSONError(w, "Core has not recorded an address this node authenticated from, so there is nothing to bind its re-admission to. Nothing was changed. Use Reset pairing instead, then admit the node under Connection attempts.", http.StatusConflict)
+		httpx.SendJSONError(w, "Core has not recorded an address this node authenticated from, so there is nothing to bind its re-admission to. Nothing was changed. Use Reset pairing instead, then admit the node under Connection attempts.", http.StatusConflict)
 		return
 	}
 	uid := handlers.ByonCallerID(r)
@@ -282,7 +283,7 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 	// never reaches the branch that consumes an admission.
 	if err := h.revokeNodeLogin(node.ID, false); err != nil {
 		log.Printf("roll-secret: %v", err)
-		handlers.SendJSONError(w, "Failed to revoke the node's key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to revoke the node's key", http.StatusInternalServerError)
 		return
 	}
 	if h.state.Redis != nil {
@@ -303,7 +304,7 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 		// state either way - log why arming failed, or this 500 explains
 		// nothing afterwards.
 		log.Printf("roll-secret: node %d: arm join approval failed (armed=%v): %v", node.ID, armed, err)
-		handlers.SendJSONError(w, "The node's key is revoked, but its re-admission could not be armed. It will appear under Connection attempts, where you can admit it.", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "The node's key is revoked, but its re-admission could not be armed. It will appear under Connection attempts, where you can admit it.", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -321,7 +322,7 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 func (h *NodeAdmissionHandler) ListJoinAttempts(w http.ResponseWriter, r *http.Request) {
 	attempts, err := h.state.Store.ListNodeJoinAttempts()
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "attempts": attempts})
@@ -348,11 +349,11 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 	// Roll key already follow: an operator must not be able to let a different
 	// key onto a machine that is not theirs.
 	if err != nil || node == nil {
-		handlers.SendJSONError(w, "No node with that identity", http.StatusNotFound)
+		httpx.SendJSONError(w, "No node with that identity", http.StatusNotFound)
 		return
 	}
 	if handlers.ForeignToCaller(h.state, r, node.ID) {
-		handlers.SendJSONError(w, "This machine belongs to a customer. They admit it themselves under My infrastructure, with the fingerprint their machine logs.", http.StatusConflict)
+		httpx.SendJSONError(w, "This machine belongs to a customer. They admit it themselves under My infrastructure, with the fingerprint their machine logs.", http.StatusConflict)
 		return
 	}
 	// The admission is for the attempt the operator was shown. Anyone who knows
@@ -363,18 +364,18 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 		PresentedKey string `json:"presentedKey"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&seen); err != nil || seen.PeerIP == "" {
-		handlers.SendJSONError(w, "Say which attempt you are admitting: its address and key, as listed.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Say which attempt you are admitting: its address and key, as listed.", http.StatusBadRequest)
 		return
 	}
 	staleView := "That attempt changed since the list was loaded. Reload it and check the address and key again."
 	if cur, err := h.state.Store.GetNodeJoinAttempt(token); err != nil || cur == nil ||
 		cur.PeerIP != seen.PeerIP || cur.PresentedKey != seen.PresentedKey {
-		handlers.SendJSONError(w, staleView, http.StatusConflict)
+		httpx.SendJSONError(w, staleView, http.StatusConflict)
 		return
 	}
 	if err := h.revokeNodeLogin(node.ID, false); err != nil {
 		log.Printf("approve-join: %v", err)
-		handlers.SendJSONError(w, "Failed to revoke the node's key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to revoke the node's key", http.StatusInternalServerError)
 		return
 	}
 	if h.state.Redis != nil {
@@ -383,14 +384,14 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 	uid := handlers.ByonCallerID(r)
 	armed, err := h.state.Store.ApproveNodeJoinAttempt(token, seen.PeerIP, seen.PresentedKey, uid)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	if !armed {
 		// No row, a row with no observed address, or one rewritten since the
 		// check above. There is nothing the operator actually saw to bind the
 		// admission to.
-		handlers.SendJSONError(w, staleView, http.StatusConflict)
+		httpx.SendJSONError(w, staleView, http.StatusConflict)
 		return
 	}
 	if uid != "" {
@@ -411,7 +412,7 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 // keeps trying, which is the point: dismissing is not blocking.
 func (h *NodeAdmissionHandler) DismissJoinAttempt(w http.ResponseWriter, r *http.Request) {
 	if err := h.state.Store.DeleteNodeJoinAttempt(mux.Vars(r)["token"]); err != nil {
-		handlers.SendJSONError(w, "Database error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

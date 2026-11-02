@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -80,29 +81,29 @@ func (h *PortsAdminHandler) GetOverview(w http.ResponseWriter, r *http.Request) 
 	rows, err := h.state.Store.ListAllServerPorts(q)
 	if err != nil {
 		log.Printf("ports admin: %v", err)
-		handlers.SendJSONError(w, "Failed to read the ports", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the ports", http.StatusInternalServerError)
 		return
 	}
 	all := rows
 	if q != "" {
 		if all, err = h.state.Store.ListAllServerPorts(""); err != nil {
-			handlers.SendJSONError(w, "Failed to read the ports", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to read the ports", http.StatusInternalServerError)
 			return
 		}
 	}
 	nodes, err := h.state.Store.ListNodes()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read the nodes", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the nodes", http.StatusInternalServerError)
 		return
 	}
 	own, err := h.state.Store.GetNodeExtraPortRanges()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read the node ranges", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the node ranges", http.StatusInternalServerError)
 		return
 	}
 	hosts, err := h.state.Store.GetNodeExtraPortsHosts()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read the node addresses", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the node addresses", http.StatusInternalServerError)
 		return
 	}
 	settings := h.settingsView()
@@ -152,14 +153,14 @@ func (h *PortsAdminHandler) SetSettings(w http.ResponseWriter, r *http.Request) 
 		MaxPerUser *string `json:"maxPerUser"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if req.Range != nil {
 		*req.Range = strings.TrimSpace(*req.Range)
 		if *req.Range != "" {
 			if _, _, err := services.ParsePortRange(*req.Range); err != nil {
-				handlers.SendJSONErrorCode(w, "The port range is invalid: "+err.Error()+".", "port_range_invalid", http.StatusBadRequest)
+				httpx.SendJSONErrorCode(w, "The port range is invalid: "+err.Error()+".", "port_range_invalid", http.StatusBadRequest)
 				return
 			}
 		}
@@ -168,7 +169,7 @@ func (h *PortsAdminHandler) SetSettings(w http.ResponseWriter, r *http.Request) 
 		v := strings.TrimSpace(*req.MaxPerUser)
 		if v != "" && v != services.LimitUnlimited {
 			if n, err := strconv.Atoi(v); err != nil || n < 0 {
-				handlers.SendJSONError(w, `maxPerUser must be "", "unlimited" or a number of 0 or more`, http.StatusBadRequest)
+				httpx.SendJSONError(w, `maxPerUser must be "", "unlimited" or a number of 0 or more`, http.StatusBadRequest)
 				return
 			}
 		}
@@ -177,7 +178,7 @@ func (h *PortsAdminHandler) SetSettings(w http.ResponseWriter, r *http.Request) 
 	set := func(key, val string) bool {
 		if err := h.state.Store.SetSetting(key, val); err != nil {
 			log.Printf("ports admin: save %s: %v", key, err)
-			handlers.SendJSONError(w, "Failed to save the settings", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save the settings", http.StatusInternalServerError)
 			return false
 		}
 		return true
@@ -198,10 +199,10 @@ func (h *PortsAdminHandler) SetSettings(w http.ResponseWriter, r *http.Request) 
 // "" goes back to the global range, host "" to the node's public IP, a host
 // left out stays. Refused when the range overlaps the node's game ports.
 func (h *PortsAdminHandler) SetNodeRange(w http.ResponseWriter, r *http.Request) {
-	nodeID := handlers.MustAtoi(mux.Vars(r)["id"])
+	nodeID := httpx.MustAtoi(mux.Vars(r)["id"])
 	node, err := h.state.Store.GetNodeByID(nodeID)
 	if err != nil || node == nil {
-		handlers.SendJSONError(w, "Node not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
 	var req struct {
@@ -209,36 +210,36 @@ func (h *PortsAdminHandler) SetNodeRange(w http.ResponseWriter, r *http.Request)
 		Host  *string `json:"host"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var host string
 	if req.Host != nil {
 		if host, err = normPortsHost(*req.Host); err != nil {
-			handlers.SendJSONErrorCode(w, "The address is invalid: "+err.Error()+".", "ports_host_invalid", http.StatusBadRequest)
+			httpx.SendJSONErrorCode(w, "The address is invalid: "+err.Error()+".", "ports_host_invalid", http.StatusBadRequest)
 			return
 		}
 	}
 	req.Range = strings.TrimSpace(req.Range)
 	if req.Range != "" {
 		if _, _, err := services.ParsePortRange(req.Range); err != nil {
-			handlers.SendJSONErrorCode(w, "The port range is invalid: "+err.Error()+".", "port_range_invalid", http.StatusBadRequest)
+			httpx.SendJSONErrorCode(w, "The port range is invalid: "+err.Error()+".", "port_range_invalid", http.StatusBadRequest)
 			return
 		}
 		if hb := services.LoadHeartbeat(r.Context(), h.state.Redis, node.Token); hb != nil && services.PortRangesOverlap(req.Range, hb.PortRange) {
-			handlers.SendJSONErrorCode(w, "The range overlaps this node's game port range "+hb.PortRange+". Pick one outside it.", "ports_range_conflict", http.StatusBadRequest)
+			httpx.SendJSONErrorCode(w, "The range overlaps this node's game port range "+hb.PortRange+". Pick one outside it.", "ports_range_conflict", http.StatusBadRequest)
 			return
 		}
 	}
 	if err := h.state.Store.SetNodeExtraPortRange(nodeID, req.Range); err != nil {
 		log.Printf("ports admin: node %d range: %v", nodeID, err)
-		handlers.SendJSONError(w, "Failed to save the range", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save the range", http.StatusInternalServerError)
 		return
 	}
 	if req.Host != nil {
 		if err := h.state.Store.SetNodeExtraPortsHost(nodeID, host); err != nil {
 			log.Printf("ports admin: node %d host: %v", nodeID, err)
-			handlers.SendJSONError(w, "Failed to save the address", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save the address", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -270,7 +271,7 @@ func normPortsHost(s string) (string, error) {
 func (h *PortsAdminHandler) ListPermissions(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.state.Store.ListPortPermissions()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read the port permissions", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the port permissions", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "permissions": rows, "global": h.settingsView().Enabled})
@@ -283,11 +284,11 @@ func (h *PortsAdminHandler) SetPermission(w http.ResponseWriter, r *http.Request
 		Allowed *bool  `json:"allowed"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Allowed == nil || !services.ValidPortScope(req.Scope, false) {
-		handlers.SendJSONError(w, `Invalid request: expected {"scope": "server:<id>|user:<id>|role:<id>", "allowed": true|false}`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `Invalid request: expected {"scope": "server:<id>|user:<id>|role:<id>", "allowed": true|false}`, http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetPortPermission(req.Scope, *req.Allowed); err != nil {
-		handlers.SendJSONError(w, "Failed to save the port permission", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save the port permission", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
@@ -297,11 +298,11 @@ func (h *PortsAdminHandler) SetPermission(w http.ResponseWriter, r *http.Request
 func (h *PortsAdminHandler) DeletePermission(w http.ResponseWriter, r *http.Request) {
 	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
 	if !services.ValidPortScope(scope, false) {
-		handlers.SendJSONError(w, "Invalid scope", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid scope", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.DeletePortPermission(scope); err != nil {
-		handlers.SendJSONError(w, "Failed to delete the port permission", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete the port permission", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
@@ -311,7 +312,7 @@ func (h *PortsAdminHandler) DeletePermission(w http.ResponseWriter, r *http.Requ
 func (h *PortsAdminHandler) ListLimits(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.state.Store.ListPortLimits()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read the port limits", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the port limits", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "limits": rows, "global": h.settingsView().MaxPerUser})
@@ -325,20 +326,20 @@ func (h *PortsAdminHandler) SetLimit(w http.ResponseWriter, r *http.Request) {
 		MaxPorts json.RawMessage `json:"maxPorts"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !services.ValidPortScope(req.Scope, true) || len(req.MaxPorts) == 0 {
-		handlers.SendJSONError(w, `Invalid request: expected {"scope": "user:<id>|role:<id>", "maxPorts": null|<n>}`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `Invalid request: expected {"scope": "user:<id>|role:<id>", "maxPorts": null|<n>}`, http.StatusBadRequest)
 		return
 	}
 	var max *int
 	if string(req.MaxPorts) != "null" {
 		var n int
 		if err := json.Unmarshal(req.MaxPorts, &n); err != nil || n < 0 {
-			handlers.SendJSONError(w, "maxPorts must be null or a number of 0 or more", http.StatusBadRequest)
+			httpx.SendJSONError(w, "maxPorts must be null or a number of 0 or more", http.StatusBadRequest)
 			return
 		}
 		max = &n
 	}
 	if err := h.state.Store.SetPortLimit(req.Scope, max); err != nil {
-		handlers.SendJSONError(w, "Failed to save the port limit", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save the port limit", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
@@ -348,11 +349,11 @@ func (h *PortsAdminHandler) SetLimit(w http.ResponseWriter, r *http.Request) {
 func (h *PortsAdminHandler) DeleteLimit(w http.ResponseWriter, r *http.Request) {
 	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
 	if !services.ValidPortScope(scope, true) {
-		handlers.SendJSONError(w, "Invalid scope", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid scope", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.DeletePortLimit(scope); err != nil {
-		handlers.SendJSONError(w, "Failed to delete the port limit", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete the port limit", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

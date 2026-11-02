@@ -13,6 +13,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
@@ -329,7 +330,7 @@ func redactReachResults(results []storagereach.CoreResult) []storagereach.CoreRe
 func sendReachRefusal(w http.ResponseWriter, err error) {
 	var refusal *sharedStorageRefusal
 	if !errors.As(err, &refusal) {
-		sendJSONError(w, err.Error(), http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

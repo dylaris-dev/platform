@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	pb "dylaris-proto/node"
 
@@ -116,7 +117,7 @@ func refuseIfSubServerLimitReached(w http.ResponseWriter, state *AppState, nodeI
 	}
 	entries, err := listServerDirFor(state, nodeID, serverUUID, "")
 	if err != nil {
-		sendJSONError(w, "The node did not answer, so the number of sub-servers is not known: "+err.Error(),
+		httpx.SendJSONError(w, "The node did not answer, so the number of sub-servers is not known: "+err.Error(),
 			http.StatusBadGateway)
 		return true
 	}
@@ -132,7 +133,7 @@ func refuseIfOverSubServerLimit(w http.ResponseWriter, limit *int64, have int) b
 	if !services.AtOrOver(limit, int64(have)) {
 		return false
 	}
-	sendJSONError(w, fmt.Sprintf("Sub-server limit reached (%d). Change the limit in Settings → Servers.", *limit),
+	httpx.SendJSONError(w, fmt.Sprintf("Sub-server limit reached (%d). Change the limit in Settings → Servers.", *limit),
 		http.StatusBadRequest)
 	return true
 }

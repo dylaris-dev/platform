@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -155,13 +156,13 @@ func NewSystemEventsHandler(state *AppState) *SystemEventsHandler {
 // every 15s keep the connection alive across proxies that idle-close at 60s.
 func (h *SystemEventsHandler) StreamEvents(w http.ResponseWriter, r *http.Request) {
 	if h.state.Redis == nil {
-		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		sendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
 	release, ok := acquireLiveStream(w, r, h.state.Store, "events", eventStreamsPerUser)
@@ -183,7 +184,7 @@ func (h *SystemEventsHandler) StreamEvents(w http.ResponseWriter, r *http.Reques
 	userID, _ := r.Context().Value("userID").(string)
 	defer presenceTrack(r.Context(), h.state.Redis, h.state.CoreID, userID)()
 
-	ctx, cancel := streamContext(w, r)
+	ctx, cancel := httpx.StreamContext(w, r)
 	defer cancel()
 	pubsub := h.state.Redis.Subscribe(ctx, services.SystemEventsChannel)
 	defer pubsub.Close()

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/mailer"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -77,13 +78,13 @@ func (h *RegistrationHandler) RegistrationStatus(w http.ResponseWriter, r *http.
 func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	policy := LoadAuthPolicy(h.state)
 	if !policy.RegistrationEnabled {
-		sendJSONError(w, "Registration is disabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "Registration is disabled", http.StatusForbidden)
 		return
 	}
 
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	username := strings.TrimSpace(req.Username)
@@ -91,15 +92,15 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	password := req.Password
 
 	if !validate.IsUsername(username) {
-		sendJSONError(w, "Invalid username (3–32 chars, letters/digits/._- only)", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid username (3–32 chars, letters/digits/._- only)", http.StatusBadRequest)
 		return
 	}
 	if !emailRegex.MatchString(email) {
-		sendJSONError(w, "Invalid email address", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid email address", http.StatusBadRequest)
 		return
 	}
 	if len(password) < policy.PasswordMinLength {
-		sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", policy.PasswordMinLength), http.StatusBadRequest)
+		httpx.SendJSONError(w, fmt.Sprintf("Password must be at least %d characters", policy.PasswordMinLength), http.StatusBadRequest)
 		return
 	}
 
@@ -109,7 +110,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	// `newcomer`. The database has the last word (unique index on
 	// LOWER(username)); this is the friendly message.
 	if taken, _ := h.state.Store.UsernameTaken(username, ""); taken {
-		sendJSONError(w, "Username is taken", http.StatusConflict)
+		httpx.SendJSONError(w, "Username is taken", http.StatusConflict)
 		return
 	}
 
@@ -124,13 +125,13 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	} else if err != nil && err != sql.ErrNoRows {
-		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		sendJSONError(w, "Failed to hash password", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to hash password", http.StatusInternalServerError)
 		return
 	}
 
@@ -142,7 +143,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.state.Store.CreateUser(user); err != nil {
 		log.Printf("registration: CreateUser failed for username=%q: %v", username, err)
-		sendJSONError(w, "Failed to create account", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to create account", http.StatusInternalServerError)
 		return
 	}
 
@@ -157,7 +158,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 			if derr := h.state.Store.DeleteUser(user.ID); derr != nil {
 				log.Printf("registration: rollback of half-created user %s failed; the row is now orphaned and holds the username: %v", user.ID, derr)
 			}
-			sendJSONError(w, "Security questions are required for registration", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Security questions are required for registration", http.StatusBadRequest)
 			return
 		}
 		if len(req.SecurityQuestions) > 0 {
@@ -166,7 +167,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 				if derr := h.state.Store.DeleteUser(user.ID); derr != nil {
 					log.Printf("registration: rollback of half-created user %s failed; the row is now orphaned and holds the username: %v", user.ID, derr)
 				}
-				sendJSONError(w, err.Error(), http.StatusBadRequest)
+				httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			if err := h.state.Store.SetUserSecurityQuestions(user.ID, hashedJSON); err != nil {
@@ -177,7 +178,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 					if derr := h.state.Store.DeleteUser(user.ID); derr != nil {
 						log.Printf("registration: rollback of half-created user %s failed; the row is now orphaned and holds the username: %v", user.ID, derr)
 					}
-					sendJSONError(w, "Failed to save security questions", http.StatusInternalServerError)
+					httpx.SendJSONError(w, "Failed to save security questions", http.StatusInternalServerError)
 					return
 				}
 				// Optional: account exists, user can set questions in profile.
@@ -188,12 +189,12 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	if policy.EmailVerifyRequired {
 		token, err := randomToken(32)
 		if err != nil {
-			sendJSONError(w, "Failed to generate verification token", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to generate verification token", http.StatusInternalServerError)
 			return
 		}
 		if err := h.state.Store.SetEmailVerificationToken(user.ID, token); err != nil {
 			log.Printf("registration: SetEmailVerificationToken failed: %v", err)
-			sendJSONError(w, "Failed to persist verification token", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to persist verification token", http.StatusInternalServerError)
 			return
 		}
 		// In the background, like the other anonymous senders: the result was
@@ -241,22 +242,22 @@ type verifyEmailRequest struct {
 func (h *RegistrationHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 	var req verifyEmailRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if len(req.Token) < 16 {
-		sendJSONError(w, "Invalid token", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid token", http.StatusBadRequest)
 		return
 	}
 
 	user, err := h.state.Store.GetUserByEmailVerificationToken(req.Token)
 	if err == sql.ErrNoRows || user == nil {
 		// Token gone — could be already verified or expired.
-		sendJSONError(w, "Verification link is invalid or already used", http.StatusGone)
+		httpx.SendJSONError(w, "Verification link is invalid or already used", http.StatusGone)
 		return
 	}
 	if err != nil {
-		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -264,12 +265,12 @@ func (h *RegistrationHandler) VerifyEmail(w http.ResponseWriter, r *http.Request
 	// account's address now, unless another account took it in the meantime.
 	if user.PendingEmail != "" {
 		if other, oerr := h.state.Store.GetUserByEmail(user.PendingEmail); oerr == nil && other != nil && other.ID != user.ID {
-			sendJSONError(w, "That email address is already in use by another account", http.StatusConflict)
+			httpx.SendJSONError(w, "That email address is already in use by another account", http.StatusConflict)
 			return
 		}
 		oldEmail, newEmail, ok, cerr := h.state.Store.ConfirmPendingEmail(user.ID)
 		if cerr != nil {
-			sendJSONError(w, "Failed to verify email", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to verify email", http.StatusInternalServerError)
 			return
 		}
 		if ok {
@@ -280,7 +281,7 @@ func (h *RegistrationHandler) VerifyEmail(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if err := h.state.Store.MarkEmailVerified(user.ID); err != nil {
-		sendJSONError(w, "Failed to verify email", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to verify email", http.StatusInternalServerError)
 		return
 	}
 	LogIdentityAudit(h.state, r, "email_verified", "", user.ID, nil)
@@ -304,18 +305,18 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 	if !policy.EmailVerifyRequired {
 		// If verification isn't required, the endpoint is meaningless. Be
 		// explicit so the UI can hide the button accordingly.
-		sendJSONError(w, "Email verification is not required by this server", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Email verification is not required by this server", http.StatusBadRequest)
 		return
 	}
 
 	var req resendVerificationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	if !emailRegex.MatchString(email) {
-		sendJSONError(w, "Invalid email address", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid email address", http.StatusBadRequest)
 		return
 	}
 
@@ -344,11 +345,11 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 
 	token, err := randomToken(32)
 	if err != nil {
-		sendJSONError(w, "Failed to generate token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.SetEmailVerificationToken(user.ID, token); err != nil {
-		sendJSONError(w, "Failed to persist token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to persist token", http.StatusInternalServerError)
 		return
 	}
 	// In the background: an unverified account answered after a mail round

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/mailer"
 )
 
@@ -202,7 +203,7 @@ func (h *AuthSettingsHandler) GetAuthPolicy(w http.ResponseWriter, r *http.Reque
 func (h *AuthSettingsHandler) SaveAuthPolicy(w http.ResponseWriter, r *http.Request) {
 	var p AuthPolicy
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if p.PasswordMinLength < 4 {
@@ -265,7 +266,7 @@ func (h *AuthSettingsHandler) SaveAuthPolicy(w http.ResponseWriter, r *http.Requ
 	}
 	for _, kv := range pairs {
 		if err := h.state.Store.SetSettingBy(kv.k, kv.v, actorID); err != nil {
-			sendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)
 			return
 		}
 	}
@@ -382,7 +383,7 @@ func smtpCredentialRebound(dto SMTPConfigDTO, purpose string, get func(string) s
 func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Request) {
 	var dto SMTPConfigDTO
 	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	enc := strings.ToLower(strings.TrimSpace(dto.Encryption))
@@ -408,7 +409,7 @@ func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Requ
 		return v
 	}
 	if smtpCredentialRebound(dto, purpose, get) {
-		sendJSONError(w, "the SMTP host, port or username changed, so the stored password cannot be reused - re-enter the password with this change", http.StatusBadRequest)
+		httpx.SendJSONError(w, "the SMTP host, port or username changed, so the stored password cannot be reused - re-enter the password with this change", http.StatusBadRequest)
 		return
 	}
 	pairs := []struct{ k, v string }{}
@@ -425,7 +426,7 @@ func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Requ
 	}...)
 	for _, kv := range pairs {
 		if err := h.state.Store.SetSettingBy(kv.k, kv.v, actorID); err != nil {
-			sendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)
 			return
 		}
 	}
@@ -433,7 +434,7 @@ func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Requ
 	// wiping the secret when an admin re-opens the form to flip from_name.
 	if dto.Password != "" {
 		if err := h.state.Store.SetSettingBy("smtp."+purpose+".password", dto.Password, actorID); err != nil {
-			sendJSONError(w, "Failed to save password", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save password", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -441,7 +442,7 @@ func (h *AuthSettingsHandler) SaveSMTPConfig(w http.ResponseWriter, r *http.Requ
 	// and forth must not cost the credential.
 	if strings.TrimSpace(dto.ResendAPIKey) != "" {
 		if err := h.state.Store.SetSettingBy(mailer.SettingKeyResendAPIKey, strings.TrimSpace(dto.ResendAPIKey), actorID); err != nil {
-			sendJSONError(w, "Failed to save the Resend API key", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save the Resend API key", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -474,13 +475,13 @@ func (h *AuthSettingsHandler) TestSendSMTP(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if to == "" {
-		sendJSONError(w, "No recipient — provide 'to' or set your account email first", http.StatusBadRequest)
+		httpx.SendJSONError(w, "No recipient — provide 'to' or set your account email first", http.StatusBadRequest)
 		return
 	}
 
 	transport, err := mailer.Load(h.state.Store, "default")
 	if err != nil {
-		sendJSONError(w, "Mail not configured: "+err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, "Mail not configured: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	err = transport.Send(mailer.Message{

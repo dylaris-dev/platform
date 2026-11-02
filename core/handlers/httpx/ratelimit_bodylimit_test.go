@@ -1,4 +1,4 @@
-package handlers
+package httpx
 
 import (
 	"encoding/json"
@@ -52,7 +52,7 @@ func TestLimitBody_OversizedJSONBecomesA400(t *testing.T) {
 			Username string `json:"username"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+			SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -79,7 +79,7 @@ func TestLimitBody_LeavesRealisticPayloadsAlone(t *testing.T) {
 			TOTP     string `json:"totp"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+			SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
 		got = req.Username

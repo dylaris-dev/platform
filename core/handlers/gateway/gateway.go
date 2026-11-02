@@ -15,6 +15,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/store"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
@@ -101,7 +102,7 @@ func (h *GatewayHandler) AdminDeleteRoute(w http.ResponseWriter, r *http.Request
 	// nothing.
 	if err := h.state.Gateway.DeleteRoute(domain); err != nil {
 		log.Printf("AdminDeleteRoute: %s: %v", domain, err)
-		handlers.SendJSONError(w, "Failed to delete route", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete route", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -117,12 +118,12 @@ func (h *GatewayHandler) BulkDeleteRoutesBySuffix(w http.ResponseWriter, r *http
 		Suffix string `json:"suffix"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	suffix := strings.ToLower(strings.TrimSpace(req.Suffix))
 	if suffix == "" {
-		handlers.SendJSONError(w, "suffix required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "suffix required", http.StatusBadRequest)
 		return
 	}
 
@@ -310,7 +311,7 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request) {
 	serverID := mux.Vars(r)["id"]
 
-	server, err := h.state.Store.GetServerByID(handlers.MustAtoi(serverID))
+	server, err := h.state.Store.GetServerByID(httpx.MustAtoi(serverID))
 	if err != nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
 		return
@@ -334,7 +335,7 @@ func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request)
 // domain the user owns via CNAME, and a raw {domain} for scripts. 201 means
 // queued, not live; 409 means the domain is already routed to someone else.
 func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Request) {
-	serverID := handlers.MustAtoi(mux.Vars(r)["id"])
+	serverID := httpx.MustAtoi(mux.Vars(r)["id"])
 	userID := r.Context().Value("userID").(string)
 
 	// Three input shapes, listed in priority order:
@@ -670,7 +671,7 @@ func (h *GatewayHandler) loadBlockedRoutePrefixes() map[string]bool {
 // network.write; this only verifies the domain really belongs to the server
 // named in the path.
 func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Request) {
-	serverID := handlers.MustAtoi(mux.Vars(r)["id"])
+	serverID := httpx.MustAtoi(mux.Vars(r)["id"])
 	domain := mux.Vars(r)["domain"]
 
 	if domain == "" {
@@ -732,7 +733,7 @@ func (h *GatewayHandler) proxyProtocolOff(w http.ResponseWriter, r *http.Request
 	if !enabled || (h.state.FeatureFlags != nil && h.state.FeatureFlags.IsProxyProtocolEnabled(r.Context())) {
 		return false
 	}
-	handlers.SendJSONErrorCode(w, "Real player IP forwarding is not enabled on this platform.", "proxy_protocol_disabled", http.StatusConflict)
+	httpx.SendJSONErrorCode(w, "Real player IP forwarding is not enabled on this platform.", "proxy_protocol_disabled", http.StatusConflict)
 	return true
 }
 
@@ -748,7 +749,7 @@ func (h *GatewayHandler) proxyProtocolNoLink(w http.ResponseWriter, r *http.Requ
 	routes, err := services.ReadRoutesFromRedis(ctx, h.state.Redis)
 	if err != nil {
 		log.Printf("proxy-protocol: link check: %v", err)
-		handlers.SendJSONErrorCode(w, "Could not check the links of this server's routes. Try again.", "link_check_failed", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "Could not check the links of this server's routes. Try again.", "link_check_failed", http.StatusConflict)
 		return true
 	}
 	found := false
@@ -760,16 +761,16 @@ func (h *GatewayHandler) proxyProtocolNoLink(w http.ResponseWriter, r *http.Requ
 		ok, err := handlers.LinkAnnouncesCap(ctx, h.state.Redis, rt.TunnelID, handlers.LinkCapClientAddr)
 		if err != nil {
 			log.Printf("proxy-protocol: link check: route %s: %v", rt.Domain, err)
-			handlers.SendJSONErrorCode(w, "Could not check the links of this server's routes. Try again.", "link_check_failed", http.StatusConflict)
+			httpx.SendJSONErrorCode(w, "Could not check the links of this server's routes. Try again.", "link_check_failed", http.StatusConflict)
 			return true
 		}
 		if !ok {
-			handlers.SendJSONErrorCode(w, fmt.Sprintf("The link of route %s has not reported that it can pass the player IP. Update the link, then try again.", rt.Domain), "link_without_client_addr", http.StatusConflict)
+			httpx.SendJSONErrorCode(w, fmt.Sprintf("The link of route %s has not reported that it can pass the player IP. Update the link, then try again.", rt.Domain), "link_without_client_addr", http.StatusConflict)
 			return true
 		}
 	}
 	if !found {
-		handlers.SendJSONErrorCode(w, "This server has no gateway route yet. Add a route first.", "no_routes", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, "This server has no gateway route yet. Add a route first.", "no_routes", http.StatusConflict)
 		return true
 	}
 	return false
@@ -796,9 +797,9 @@ func decodeProxyProtocolBody(r *http.Request) (bool, bool) {
 // message follow it. A failure after the column answers 502 so the caller saves
 // again, which rewrites all three.
 func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByID(handlers.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
@@ -806,7 +807,7 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 	}
 	mode, ok := decodeProxyModeBody(r)
 	if !ok {
-		handlers.SendJSONError(w, `Invalid request: expected {"mode": "auto"|"on"|"off"}`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `Invalid request: expected {"mode": "auto"|"on"|"off"}`, http.StatusBadRequest)
 		return
 	}
 	if mode == store.ProxyModeAuto {
@@ -822,18 +823,18 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 	}
 	if err := h.state.Store.SetServerProxyMode(srv.ID, mode); err != nil {
 		log.Printf("proxy-protocol: server %d: mode: %v", srv.ID, err)
-		handlers.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
 		return
 	}
 	if err := services.ApplyServerProxyProtocol(r.Context(), h.state.Store, h.state.Redis, h.state.Gateway, srv.ID, srv.UUID, enabled); err != nil {
 		log.Printf("proxy-protocol: server %d: %v", srv.ID, err)
 		switch {
 		case errors.Is(err, services.ErrProxyProtocolNodeKey):
-			handlers.SendJSONError(w, "The setting was saved, but the node could not be told. Save again to apply it.", http.StatusBadGateway)
+			httpx.SendJSONError(w, "The setting was saved, but the node could not be told. Save again to apply it.", http.StatusBadGateway)
 		case errors.Is(err, services.ErrProxyProtocolHub):
-			handlers.SendJSONError(w, "The setting was saved, but the gateway could not be told. Save again to apply it.", http.StatusBadGateway)
+			httpx.SendJSONError(w, "The setting was saved, but the gateway could not be told. Save again to apply it.", http.StatusBadGateway)
 		default:
-			handlers.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
 		}
 		return
 	}
@@ -878,14 +879,14 @@ func decodeProxyModeBody(r *http.Request) (string, bool) {
 func (h *GatewayHandler) setServerProxyAuto(w http.ResponseWriter, r *http.Request, srv *models.Server) {
 	if err := h.state.Store.SetServerProxyMode(srv.ID, store.ProxyModeAuto); err != nil {
 		log.Printf("proxy-protocol: server %d: mode: %v", srv.ID, err)
-		handlers.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
 		return
 	}
 	ready, _ := h.state.Redis.Get(r.Context(), services.ServerProxyReadyKey(srv.UUID)).Result()
 	if srv.ProxyProtocol && ready != "1" {
 		if err := services.ApplyServerProxyProtocol(r.Context(), h.state.Store, h.state.Redis, h.state.Gateway, srv.ID, srv.UUID, false); err != nil {
 			log.Printf("proxy-protocol: server %d: auto: %v", srv.ID, err)
-			handlers.SendJSONError(w, "The setting was saved, but forwarding could not be switched off yet. Save again.", http.StatusBadGateway)
+			httpx.SendJSONError(w, "The setting was saved, but forwarding could not be switched off yet. Save again.", http.StatusBadGateway)
 			return
 		}
 	}
@@ -897,14 +898,14 @@ func (h *GatewayHandler) setServerProxyAuto(w http.ResponseWriter, r *http.Reque
 // "yes" (expects a PROXY header), "no", or "unknown" (not reported yet, or an
 // older node).
 func (h *GatewayHandler) GetServerProxyProtocol(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByID(handlers.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	mode, err := h.state.Store.GetServerProxyMode(srv.ID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read the setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the setting", http.StatusInternalServerError)
 		return
 	}
 	detected := "unknown"

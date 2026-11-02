@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sync"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/store"
 )
 
@@ -57,12 +58,12 @@ func acquireLiveStream(w http.ResponseWriter, r *http.Request, st store.Store, k
 	holder := userID
 	if st != nil && userID != "" {
 		if demo, _ := st.GetSetting(demoAccountUUIDSetting); demo == userID {
-			holder = "demo@" + clientIP(r)
+			holder = "demo@" + httpx.ClientIP(r)
 		}
 	}
 	release, ok = liveStreams.acquire(kind+":"+holder, max)
 	if !ok {
-		sendJSONError(w, "Too many open live views - close some panel tabs", http.StatusTooManyRequests)
+		httpx.SendJSONError(w, "Too many open live views - close some panel tabs", http.StatusTooManyRequests)
 	}
 	return release, ok
 }

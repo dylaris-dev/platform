@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -174,7 +175,7 @@ func NewServerHandler(state *handlers.AppState) *ServerHandler {
 // list the panel already holds if that load ever shows.
 func (h *ServerHandler) GetGatewayPlayers(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil || h.state.Redis == nil {
-		handlers.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
@@ -182,7 +183,7 @@ func (h *ServerHandler) GetGatewayPlayers(w http.ResponseWriter, r *http.Request
 	username, _ := r.Context().Value("username").(string)
 	servers, err := h.state.Store.ListServersForUser(userID, isAdmin)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	servers = handlers.ApplyResolvedTabPermissions(h.state, servers, userID, username)
@@ -201,7 +202,7 @@ func (h *ServerHandler) GetGatewayPlayers(w http.ResponseWriter, r *http.Request
 // any they were invited to, or the whole fleet for an admin.
 func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
@@ -210,7 +211,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 
 	servers, err := h.state.Store.ListServersForUser(userID, isAdmin)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -373,7 +374,7 @@ func (h *VersionHandler) GetVersions(w http.ResponseWriter, r *http.Request) {
 	software := r.URL.Query().Get("software")
 	provider, ok := softwareProviders[software]
 	if !ok {
-		sendJSONError(w, "Unknown software: "+software, http.StatusBadRequest)
+		httpx.SendJSONError(w, "Unknown software: "+software, http.StatusBadRequest)
 		return
 	}
 
@@ -392,7 +393,7 @@ func (h *VersionHandler) GetVersions(w http.ResponseWriter, r *http.Request) {
 
 	versions, err := provider.FetchVersions()
 	if err != nil {
-		sendJSONError(w, "Failed to fetch versions: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Failed to fetch versions: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 

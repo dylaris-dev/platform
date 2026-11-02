@@ -9,6 +9,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -49,7 +50,7 @@ func (h *StoreHandler) AccountSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -93,12 +94,12 @@ func (h *StoreHandler) AccountSummary(w http.ResponseWriter, r *http.Request) {
 // account.
 func (h *StoreHandler) SetBillingConsent(w http.ResponseWriter, r *http.Request) {
 	if !h.state.StoreEnabled {
-		handlers.SendJSONError(w, "The store integration is not configured", http.StatusNotFound)
+		httpx.SendJSONError(w, "The store integration is not configured", http.StatusNotFound)
 		return
 	}
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	var req struct {
@@ -106,25 +107,25 @@ func (h *StoreHandler) SetBillingConsent(w http.ResponseWriter, r *http.Request)
 		Backup  *bool `json:"backup"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid input", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid input", http.StatusBadRequest)
 		return
 	}
 	if req.Traffic == nil && req.Backup == nil {
-		handlers.SendJSONError(w, "Nothing to change", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Nothing to change", http.StatusBadRequest)
 		return
 	}
 
 	status, message, err := h.state.StoreSetBillingConsent(r.Context(), userID, req.Traffic, req.Backup)
 	if err != nil {
 		log.Printf("store: billing consent for %s: %v", userID, err)
-		handlers.SendJSONError(w, "The store could not be reached, so nothing was changed.", http.StatusBadGateway)
+		httpx.SendJSONError(w, "The store could not be reached, so nothing was changed.", http.StatusBadGateway)
 		return
 	}
 	if status != http.StatusOK {
 		// The store's own words. It knows why - no subscription, no meter
 		// configured, not billed through Stripe - and each of those sends the
 		// reader somewhere different.
-		handlers.SendJSONError(w, message, status)
+		httpx.SendJSONError(w, message, status)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

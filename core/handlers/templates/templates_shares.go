@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 
 	"github.com/google/uuid"
@@ -22,28 +22,28 @@ type shareRequest struct {
 // shareTarget decodes {username, level} and resolves the user. Sharing with an
 // unknown user, the caller or the owner is a 400.
 func (h *TemplatesHandler) shareTarget(w http.ResponseWriter, r *http.Request, callerID, ownerID string) (*models.User, string, bool) {
-	if !handlers.CapBody(w, r, 16<<10) {
+	if !httpx.CapBody(w, r, 16<<10) {
 		return nil, "", false
 	}
 	var p shareRequest
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return nil, "", false
 	}
 	if p.Level != "use" && p.Level != "edit" {
-		handlers.SendJSONError(w, "Level must be use or edit", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Level must be use or edit", http.StatusBadRequest)
 		return nil, "", false
 	}
 	name := strings.TrimSpace(p.Username)
 	if name == "" {
-		handlers.SendJSONError(w, "Username is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Username is required", http.StatusBadRequest)
 		return nil, "", false
 	}
 	// One answer for unknown, owner and self, so the form does not double as a
 	// username lookup beyond what it has to.
 	u, err := h.state.Store.GetUserByUsername(name)
 	if err != nil || u == nil || u.ID == callerID || u.ID == ownerID {
-		handlers.SendJSONError(w, "Cannot share with that user. Check the username; you cannot share with yourself or the owner.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Cannot share with that user. Check the username; you cannot share with yourself or the owner.", http.StatusBadRequest)
 		return nil, "", false
 	}
 	return u, p.Level, true
@@ -58,7 +58,7 @@ func (h *TemplatesHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 	shares, err := h.state.Store.ListTemplateShares(t.ID)
 	if err != nil {
 		log.Printf("templates: shares of %d: %v", t.ID, err)
-		handlers.SendJSONError(w, "Could not list the shares", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not list the shares", http.StatusInternalServerError)
 		return
 	}
 	if shares == nil {
@@ -79,7 +79,7 @@ func (h *TemplatesHandler) PutShare(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.state.Store.UpsertTemplateShare(t.ID, u.ID, level); err != nil {
 		log.Printf("templates: share %d with %s: %v", t.ID, u.ID, err)
-		handlers.SendJSONError(w, "Could not save the share", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not save the share", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "userId": u.ID, "username": u.Username, "level": level})
@@ -93,12 +93,12 @@ func (h *TemplatesHandler) DeleteShare(w http.ResponseWriter, r *http.Request) {
 	}
 	target := mux.Vars(r)["userId"]
 	if _, err := uuid.Parse(target); err != nil {
-		handlers.SendJSONError(w, "Invalid user ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.DeleteTemplateShare(t.ID, target); err != nil {
 		log.Printf("templates: unshare %d: %v", t.ID, err)
-		handlers.SendJSONError(w, "Could not remove the share", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not remove the share", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
@@ -111,7 +111,7 @@ func (h *TemplatesHandler) ListOwnerShares(w http.ResponseWriter, r *http.Reques
 	shares, err := h.state.Store.ListOwnerShares(id.UserID)
 	if err != nil {
 		log.Printf("templates: owner shares of %s: %v", id.UserID, err)
-		handlers.SendJSONError(w, "Could not list the shares", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not list the shares", http.StatusInternalServerError)
 		return
 	}
 	if shares == nil {
@@ -130,7 +130,7 @@ func (h *TemplatesHandler) PutOwnerShare(w http.ResponseWriter, r *http.Request)
 	}
 	if err := h.state.Store.UpsertOwnerShare(id.UserID, u.ID, level); err != nil {
 		log.Printf("templates: owner share %s with %s: %v", id.UserID, u.ID, err)
-		handlers.SendJSONError(w, "Could not save the share", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not save the share", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "userId": u.ID, "username": u.Username, "level": level})
@@ -141,12 +141,12 @@ func (h *TemplatesHandler) DeleteOwnerShare(w http.ResponseWriter, r *http.Reque
 	id := authz.IdentityFromContext(r.Context())
 	target := r.URL.Query().Get("userId")
 	if _, err := uuid.Parse(target); err != nil {
-		handlers.SendJSONError(w, "Invalid user ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.DeleteOwnerShare(id.UserID, target); err != nil {
 		log.Printf("templates: owner unshare %s: %v", id.UserID, err)
-		handlers.SendJSONError(w, "Could not remove the share", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not remove the share", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})

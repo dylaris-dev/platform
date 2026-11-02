@@ -10,8 +10,7 @@ import (
 	"strconv"
 	"unicode/utf8"
 
-	"dylaris-core/handlers"
-
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/storage/modpack"
 
@@ -78,29 +77,29 @@ func (h *PacksHandler) loadOwnedContentModversion(r *http.Request, need packNeed
 func (h *PacksHandler) GetContentText(w http.ResponseWriter, r *http.Request) {
 	_, mv, prov, ok := h.loadOwnedContentModversion(r, packRead)
 	if !ok {
-		handlers.SendJSONError(w, "Content not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 		return
 	}
 	if mv.StorageKey == "" {
-		handlers.SendJSONError(w, "This content has no editable file (Modrinth reference)", http.StatusUnprocessableEntity)
+		httpx.SendJSONError(w, "This content has no editable file (Modrinth reference)", http.StatusUnprocessableEntity)
 		return
 	}
 	raw, err := readEditableObject(r.Context(), prov, mv.StorageKey)
 	if errors.Is(err, errNotEditableObject) {
-		handlers.SendJSONError(w, "Content is not editable text", http.StatusUnsupportedMediaType)
+		httpx.SendJSONError(w, "Content is not editable text", http.StatusUnsupportedMediaType)
 		return
 	}
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read content", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read content", http.StatusInternalServerError)
 		return
 	}
 	data, found := modpack.ReadZipEntry(raw, mv.TargetPath, maxEditableTextBytes)
 	if !found {
-		handlers.SendJSONError(w, "No editable file at the content path", http.StatusUnprocessableEntity)
+		httpx.SendJSONError(w, "No editable file at the content path", http.StatusUnprocessableEntity)
 		return
 	}
 	if len(data) > maxEditableTextBytes || !utf8.Valid(data) {
-		handlers.SendJSONError(w, "Content is not editable text", http.StatusUnsupportedMediaType)
+		httpx.SendJSONError(w, "Content is not editable text", http.StatusUnsupportedMediaType)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "text": string(data), "targetPath": mv.TargetPath})
@@ -117,49 +116,49 @@ type setContentTextRequest struct {
 func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 	b, mv, prov, ok := h.loadOwnedContentModversion(r, packEdit)
 	if !ok {
-		handlers.SendJSONError(w, "Content not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 		return
 	}
 	if b.Frozen {
-		handlers.SendJSONError(w, "Build is frozen", http.StatusConflict)
+		httpx.SendJSONError(w, "Build is frozen", http.StatusConflict)
 		return
 	}
 	if mv.StorageKey == "" {
-		handlers.SendJSONError(w, "This content has no editable file (Modrinth reference)", http.StatusUnprocessableEntity)
+		httpx.SendJSONError(w, "This content has no editable file (Modrinth reference)", http.StatusUnprocessableEntity)
 		return
 	}
 	curRaw, err := readEditableObject(r.Context(), prov, mv.StorageKey)
 	if errors.Is(err, errNotEditableObject) {
-		handlers.SendJSONError(w, "This content is not an editable text file", http.StatusUnprocessableEntity)
+		httpx.SendJSONError(w, "This content is not an editable text file", http.StatusUnprocessableEntity)
 		return
 	}
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read content", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read content", http.StatusInternalServerError)
 		return
 	}
 	cur, found := modpack.ReadZipEntry(curRaw, mv.TargetPath, maxEditableTextBytes)
 	if !found || !utf8.Valid(cur) {
-		handlers.SendJSONError(w, "This content is not an editable text file", http.StatusUnprocessableEntity)
+		httpx.SendJSONError(w, "This content is not an editable text file", http.StatusUnprocessableEntity)
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxEditableTextBytes+1))
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Failed to read body", http.StatusBadRequest)
 		return
 	}
 	var req setContentTextRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	newBytes := []byte(req.Text)
 	if len(newBytes) > maxEditableTextBytes {
-		handlers.SendJSONError(w, "Text too large", http.StatusRequestEntityTooLarge)
+		httpx.SendJSONError(w, "Text too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 	zipBytes, err := modpack.BuildContentZip(mv.TargetPath, newBytes)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to wrap content", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to wrap content", http.StatusInternalServerError)
 		return
 	}
 	md5hex, _, _ := modpack.Hashes(zipBytes)
@@ -179,7 +178,7 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 	oldKey := mv.StorageKey
 	newKey := editedContentKey(oldKey, md5hex)
 	if err := prov.Put(r.Context(), newKey, zipBytes); err != nil {
-		handlers.SendJSONError(w, "Storage put failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Storage put failed", http.StatusInternalServerError)
 		return
 	}
 	mv.StorageKey = newKey
@@ -201,7 +200,7 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 		if newKey != oldKey {
 			h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, newKey)
 		}
-		handlers.SendJSONError(w, "Failed to save content", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save content", http.StatusInternalServerError)
 		return
 	}
 	// Safe-cutover ordering, exactly like swapModversionToModrinth: the row is

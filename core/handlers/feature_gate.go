@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services/storagereach"
 )
 
@@ -221,12 +222,12 @@ func (s *AppState) RequireUserCanCreateModpacks(next http.HandlerFunc) http.Hand
 		}
 		userID, _ := r.Context().Value("userID").(string)
 		if userID == "" {
-			sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+			httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 		user, err := s.Store.GetUserByID(userID)
 		if err != nil || user == nil {
-			sendJSONError(w, "User not found", http.StatusUnauthorized)
+			httpx.SendJSONError(w, "User not found", http.StatusUnauthorized)
 			return
 		}
 		if !user.CanCreateModpacks {
@@ -245,7 +246,7 @@ func (s *AppState) RequireTemplatesAudience(next http.HandlerFunc) http.HandlerF
 	return func(w http.ResponseWriter, r *http.Request) {
 		isAdmin, _ := r.Context().Value("isAdmin").(bool)
 		if !isAdmin && s.FeatureFlags.TemplatesAudience(r.Context()) != "all" {
-			sendJSONError(w, "Templates are not available to you on this platform.", http.StatusForbidden)
+			httpx.SendJSONError(w, "Templates are not available to you on this platform.", http.StatusForbidden)
 			return
 		}
 		next(w, r)

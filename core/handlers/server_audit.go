@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
@@ -101,7 +102,7 @@ func logServerAuditAs(state *AppState, r *http.Request, key *models.APIKey, serv
 		ev.TargetUserID = &t
 	}
 	if r != nil {
-		ev.IPAddress = clientIP(r)
+		ev.IPAddress = httpx.ClientIP(r)
 		ev.UserAgent = r.UserAgent()
 	}
 	if err := state.Store.InsertServerAudit(ev); err != nil {
@@ -169,12 +170,12 @@ func NewServerAuditHandler(state *AppState) *ServerAuditHandler {
 func (h *ServerAuditHandler) gateView(w http.ResponseWriter, r *http.Request) (*models.Server, string, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		sendJSONError(w, "Invalid server id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server id", http.StatusBadRequest)
 		return nil, "", false
 	}
 	srv, err := h.state.Store.GetServerByID(id)
 	if err != nil || srv == nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return nil, "", false
 	}
 	userID, _ := r.Context().Value("userID").(string)
@@ -190,12 +191,12 @@ func (h *ServerAuditHandler) ListAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	limit := parseIntDefault(q.Get("limit"), 100)
-	offset := parseIntDefault(q.Get("offset"), 0)
+	limit := httpx.ParseIntDefault(q.Get("limit"), 100)
+	offset := httpx.ParseIntDefault(q.Get("offset"), 0)
 	eventType := q.Get("eventType")
 	events, total, err := h.state.Store.ListServerAudit(srv.ID, eventType, limit, offset)
 	if err != nil {
-		sendJSONError(w, "Failed to load audit", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load audit", http.StatusInternalServerError)
 		return
 	}
 	if events == nil {
@@ -219,7 +220,7 @@ func (h *ServerAuditHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	enabled, force, count, err := h.state.Store.GetServerAuditState(srv.ID)
 	if err != nil {
-		sendJSONError(w, "Failed to load state", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load state", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -244,20 +245,20 @@ type setForceRequest struct {
 func (h *ServerAuditHandler) SetForce(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
-		sendJSONError(w, "Invalid id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
 	if _, err := h.state.Store.GetServerByID(id); err != nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	var req setForceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetServerAuditForceOn(id, req.ForceOn); err != nil {
-		sendJSONError(w, "Update failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
 	// Self-audit: the act of flipping the toggle is itself audited iff the

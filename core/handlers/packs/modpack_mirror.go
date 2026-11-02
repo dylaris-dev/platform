@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 
 	"github.com/gorilla/mux"
 )
@@ -20,9 +21,9 @@ import (
 // which made every install URL a permanent public download. Every refusal is
 // the same 404, so the route is not an oracle for which keys exist.
 func (h *PacksHandler) ModpackMirror(w http.ResponseWriter, r *http.Request) {
-	notFound := func() { handlers.SendJSONError(w, "Not found", http.StatusNotFound) }
+	notFound := func() { httpx.SendJSONError(w, "Not found", http.StatusNotFound) }
 	if !h.state.FeatureFlags.IsModpacksEnabled(r.Context()) {
-		handlers.SendJSONError(w, "Modpacks are disabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "Modpacks are disabled", http.StatusForbidden)
 		return
 	}
 	// path.Clean resolves every ".." segment, so a cleaned key that starts with
@@ -39,7 +40,7 @@ func (h *PacksHandler) ModpackMirror(w http.ResponseWriter, r *http.Request) {
 	}
 	prov, err := h.state.BuildModpackStorageProvider()
 	if err != nil || prov == nil {
-		handlers.SendJSONError(w, "Storage not configured", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Storage not configured", http.StatusInternalServerError)
 		return
 	}
 	// Streamed rather than redirected, so the node only ever talks to the host

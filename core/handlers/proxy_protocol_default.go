@@ -6,6 +6,7 @@ import (
 
 	"dylaris-pkg/release"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -63,7 +64,7 @@ func proxyProtocolInstallGate(w http.ResponseWriter, st *AppState, srv *models.S
 			}
 		}
 	}
-	sendJSONErrorCode(w, "Real player IP is on for this server, and this install cannot be set up to expect it, so nobody could join. Turn off Real player IP (Routes) first, then install.",
+	httpx.SendJSONErrorCode(w, "Real player IP is on for this server, and this install cannot be set up to expect it, so nobody could join. Turn off Real player IP (Routes) first, then install.",
 		"proxy_protocol_on", http.StatusConflict)
 	return false, true
 }

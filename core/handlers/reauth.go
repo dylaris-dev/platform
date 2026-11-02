@@ -5,6 +5,8 @@ import (
 	"net/http"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"dylaris-core/handlers/httpx"
 )
 
 // Re-authentication for the actions that turn a borrowed session into a
@@ -92,7 +94,7 @@ const reauthFailedHeader = "X-Dylaris-Reauth"
 // writeReauthError answers a failed re-authentication.
 func writeReauthError(w http.ResponseWriter, e *reauthError) {
 	w.Header().Set(reauthFailedHeader, "failed")
-	sendJSONError(w, e.message, e.status)
+	httpx.SendJSONError(w, e.message, e.status)
 }
 
 // adminReauthRequest is the shape the ADMIN account-management actions carry
@@ -130,7 +132,7 @@ type adminReauthRequest struct {
 func requireAdminReauth(w http.ResponseWriter, r *http.Request, state *AppState, body adminReauthRequest) bool {
 	actorID, _ := r.Context().Value("userID").(string)
 	if actorID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}
 	if rerr := requireReauth(state, actorID, body.Reauth.Password, body.Reauth.Code); rerr != nil {

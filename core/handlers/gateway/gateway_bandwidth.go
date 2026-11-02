@@ -8,6 +8,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -70,7 +71,7 @@ func bandwidthRange(name string) (window, step time.Duration) {
 // per-component sparkline from.
 func (h *GatewayBandwidthHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	window, step := bandwidthRange(r.URL.Query().Get("range"))
@@ -132,18 +133,18 @@ func (h *GatewayBandwidthHandler) SetRebalanceMode(w http.ResponseWriter, r *htt
 		Mode string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 	switch req.Mode {
 	case "off", "dry-run", "armed":
 	default:
-		handlers.SendJSONError(w, "mode must be off, dry-run, or armed", http.StatusBadRequest)
+		httpx.SendJSONError(w, "mode must be off, dry-run, or armed", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetSetting("warp_rebalance_mode", req.Mode); err != nil {
 		log.Printf("set warp_rebalance_mode: %v", err)
-		handlers.SendJSONError(w, "Failed to save mode", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save mode", http.StatusInternalServerError)
 		return
 	}
 	h.state.FeatureFlags.Invalidate("warp_rebalance_mode")

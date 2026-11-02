@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-pkg/validate"
 
@@ -71,38 +72,38 @@ const consoleRetainedLines = 5000
 // lines were dropped by retention rather than never written.
 func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil || h.state.Redis == nil {
-		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
 	subServer := r.URL.Query().Get("sub_server")
 	if subServer != "" && !validate.IsSubServerName(subServer) {
-		sendJSONError(w, "Invalid sub_server", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid sub_server", http.StatusBadRequest)
 		return
 	}
 	before := r.URL.Query().Get("before")
 	if before != "" && !sseEventID.MatchString(before) {
-		sendJSONError(w, "Invalid before", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid before", http.StatusBadRequest)
 		return
 	}
 	count := consoleHistoryMax
 	if c := r.URL.Query().Get("count"); c != "" {
 		n, err := strconv.Atoi(c)
 		if err != nil || n < 1 {
-			sendJSONError(w, "Invalid count", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid count", http.StatusBadRequest)
 			return
 		}
 		count = min(n, consoleHistoryMax)
@@ -165,26 +166,26 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 // `event: gap` says the resume point was already trimmed.
 func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil || h.state.Redis == nil {
-		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		sendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
 	release, ok := acquireLiveStream(w, r, h.state.Store, "console", consoleStreamsPerUser)
@@ -200,13 +201,13 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 
 	subServer := r.URL.Query().Get("sub_server")
 	if subServer != "" && !validate.IsSubServerName(subServer) {
-		sendJSONError(w, "Invalid sub_server", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid sub_server", http.StatusBadRequest)
 		return
 	}
 	streamKey := consoleStreamKey(srv, subServer)
 	lastID, ok := consoleResumeID(r)
 	if !ok {
-		sendJSONError(w, "Invalid after", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid after", http.StatusBadRequest)
 		return
 	}
 
@@ -214,7 +215,7 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 	if consoleRedis == nil {
 		consoleRedis = h.state.Redis
 	}
-	ctx, cancel := streamContext(w, r)
+	ctx, cancel := httpx.StreamContext(w, r)
 	defer cancel()
 	if lastID != "$" && consoleResumeLostLines(ctx, h.state.Redis, streamKey, lastID) {
 		// No id: field, so the browser's Last-Event-ID stays on the last line.
@@ -329,14 +330,14 @@ func compareStreamIDs(a, b string) int {
 // command, not that the server has run it.
 func (h *ConsoleHandler) SendCommand(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil || h.state.Redis == nil {
-		sendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		sendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
 		return
 	}
 
@@ -345,23 +346,23 @@ func (h *ConsoleHandler) SendCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, consoleCommandMaxBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
 	req.Command = strings.TrimSpace(req.Command)
 	if req.Command == "" {
-		sendJSONError(w, "Command required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Command required", http.StatusBadRequest)
 		return
 	}
 	if msg := consoleCommandProblem(req.Command); msg != "" {
-		sendJSONError(w, msg, http.StatusBadRequest)
+		httpx.SendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	// Only a server that is running reads its input. A command sent to a
@@ -370,7 +371,7 @@ func (h *ConsoleHandler) SendCommand(w http.ResponseWriter, r *http.Request) {
 	// moment it next came up - and nothing bounded how much could wait there,
 	// in the Redis every tenant shares.
 	if !consoleAcceptsInput(srv.Status) {
-		sendJSONError(w, "Server is not running", http.StatusConflict)
+		httpx.SendJSONError(w, "Server is not running", http.StatusConflict)
 		return
 	}
 
@@ -381,7 +382,7 @@ func (h *ConsoleHandler) SendCommand(w http.ResponseWriter, r *http.Request) {
 	// nothing is reading, and the newest commands are the ones to keep.
 	pipe.LTrim(r.Context(), queueKey, -consoleInputBacklog, -1)
 	if _, err := pipe.Exec(r.Context()); err != nil {
-		sendJSONError(w, "Failed to send command", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to send command", http.StatusInternalServerError)
 		return
 	}
 

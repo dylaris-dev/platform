@@ -7,6 +7,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -134,12 +135,12 @@ func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Requ
 	// attachment quotas and switches on deletion. Same boundary the ticket
 	// migration tools already draw.
 	if !handlers.IsAdmin(r) {
-		handlers.SendJSONError(w, "Only an administrator can change the ticket settings", http.StatusForbidden)
+		httpx.SendJSONError(w, "Only an administrator can change the ticket settings", http.StatusForbidden)
 		return
 	}
 	var s TicketSettings
 	if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if s.AuditRetentionDays < 0 {
@@ -176,7 +177,7 @@ func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Requ
 	}
 	for _, kv := range pairs {
 		if err := h.state.Store.SetSettingBy(kv.k, kv.v, actorID); err != nil {
-			handlers.SendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)
 			return
 		}
 	}

@@ -65,17 +65,6 @@ func validateSubdomain(sub, mode string) bool {
 	}
 }
 
-func mustAtoi(s string) int {
-	n := 0
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0
-		}
-		n = n*10 + int(c-'0')
-	}
-	return n
-}
-
 // SettingMaxCustomDomains caps the routes one account may hold on its own
 // domains. Those cost us no address, but each one is a claim the verifier
 // queries a tenant-chosen nameserver for and a key every edge loads, and there

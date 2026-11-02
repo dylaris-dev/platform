@@ -16,6 +16,7 @@ import (
 
 	"dylaris-pkg/validate"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -78,12 +79,12 @@ func (h *ServerModsHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
 	}
 	h.fillProjectMeta(r.Context(), mods)
@@ -152,7 +153,7 @@ func (h *ServerModsHandler) ModpackContents(w http.ResponseWriter, r *http.Reque
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	// The scan is advisory: a failure to read its state just means no scan.
@@ -165,7 +166,7 @@ func (h *ServerModsHandler) ModpackContents(w http.ResponseWriter, r *http.Reque
 	}
 	contents, err := h.state.Store.ListServerModpackContents(serverID, srv.ActiveSubServer)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list modpack contents", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list modpack contents", http.StatusInternalServerError)
 		return
 	}
 	installerType := ""
@@ -186,7 +187,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
@@ -194,7 +195,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	}
 	var req installModRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.ProjectID = strings.TrimSpace(req.ProjectID)
@@ -202,7 +203,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	req.DownloadURL = strings.TrimSpace(req.DownloadURL)
 	req.FileName = strings.TrimSpace(req.FileName)
 	if req.ProjectID == "" || req.VersionID == "" || req.DownloadURL == "" || req.FileName == "" {
-		handlers.SendJSONError(w, "projectId, versionId, downloadUrl, fileName required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "projectId, versionId, downloadUrl, fileName required", http.StatusBadRequest)
 		return
 	}
 	// A server that knows its loader and Minecraft version only takes a build
@@ -216,24 +217,24 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		cancel()
 		if err != nil {
 			if services.ModrinthNotFound(err) {
-				handlers.SendJSONError(w, "Modrinth has no version "+req.VersionID, http.StatusBadRequest)
+				httpx.SendJSONError(w, "Modrinth has no version "+req.VersionID, http.StatusBadRequest)
 				return
 			}
 			var upstream *services.ModrinthHTTPError
 			if errors.As(err, &upstream) && upstream.Status == http.StatusTooManyRequests {
-				handlers.SendCooldown(w, "Modrinth", handlers.UpstreamCooldownDefault)
+				httpx.SendCooldown(w, "Modrinth", handlers.UpstreamCooldownDefault)
 				return
 			}
 			log.Printf("install mod: fetching version %s from Modrinth: %v", req.VersionID, err)
-			handlers.SendJSONError(w, "Could not reach Modrinth to check this build against the server. Try again in a moment.", http.StatusBadGateway)
+			httpx.SendJSONError(w, "Could not reach Modrinth to check this build against the server. Try again in a moment.", http.StatusBadGateway)
 			return
 		}
 		if v.ProjectID != req.ProjectID {
-			handlers.SendJSONError(w, "versionId does not belong to projectId", http.StatusBadRequest)
+			httpx.SendJSONError(w, "versionId does not belong to projectId", http.StatusBadRequest)
 			return
 		}
 		if ok, reason := handlers.ModVersionFits(srv.InstallerType, srv.MinecraftVersion, v.Loaders, v.GameVersions); !ok {
-			handlers.SendJSONError(w, reason, http.StatusConflict)
+			httpx.SendJSONError(w, reason, http.StatusConflict)
 			return
 		}
 		f := v.PrimaryFile()
@@ -246,18 +247,18 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	// under a name that is not the file on disk - and uninstall aims at the
 	// recorded one. Refusing here makes the 200 mean what it says.
 	if !validate.IsPlainFileName(req.FileName) {
-		handlers.SendJSONError(w, "fileName must be a plain file name, without any path", http.StatusBadRequest)
+		httpx.SendJSONError(w, "fileName must be a plain file name, without any path", http.StatusBadRequest)
 		return
 	}
 	// Trust-but-verify: the panel sends a downloadUrl it pulled from Modrinth,
 	// but a tampered POST could send anything. Enforce that the host is a
 	// known Modrinth CDN.
 	if !isAllowedModrinthURL(req.DownloadURL) {
-		handlers.SendJSONError(w, "downloadUrl must point to cdn.modrinth.com", http.StatusBadRequest)
+		httpx.SendJSONError(w, "downloadUrl must point to cdn.modrinth.com", http.StatusBadRequest)
 		return
 	}
 	if srv.ActiveSubServer == "" {
-		handlers.SendJSONError(w, "No active sub-server — set one up first", http.StatusBadRequest)
+		httpx.SendJSONError(w, "No active sub-server — set one up first", http.StatusBadRequest)
 		return
 	}
 	targetDir := req.TargetDir
@@ -265,23 +266,23 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		targetDir = defaultTargetDirForLoader(srv.InstallerType)
 	}
 	if targetDir != "mods" && targetDir != "plugins" {
-		handlers.SendJSONError(w, "targetDir must be 'mods' or 'plugins'", http.StatusBadRequest)
+		httpx.SendJSONError(w, "targetDir must be 'mods' or 'plugins'", http.StatusBadRequest)
 		return
 	}
 	// Filename sanitation: no slashes, no upward traversal.
 	cleanName := path.Base(req.FileName)
 	if cleanName == "" || cleanName == "." || cleanName == ".." || strings.ContainsAny(cleanName, "\\/") {
-		handlers.SendJSONError(w, "invalid fileName", http.StatusBadRequest)
+		httpx.SendJSONError(w, "invalid fileName", http.StatusBadRequest)
 		return
 	}
 
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
-		handlers.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if h.state.Queue == nil {
-		handlers.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -305,7 +306,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	// A switched-off mod's jar is in .disabled/; installing over it would put a
 	// second, enabled copy next to it and lose track of the first.
 	if prev != nil && prev.Disabled {
-		handlers.SendJSONError(w, "This mod is switched off. Switch it on first, then update or roll it back.", http.StatusConflict)
+		httpx.SendJSONError(w, "This mod is switched off. Switch it on first, then update or roll it back.", http.StatusConflict)
 		return
 	}
 	previousFileName := ""
@@ -365,7 +366,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	// a node that answered before the upsert landed had its report dropped,
 	// leaving the row "installing" for good.
 	if _, err := h.state.Store.UpsertServerMod(mod); err != nil {
-		handlers.SendJSONError(w, "Could not record the install: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not record the install: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -390,7 +391,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 			log.Printf("install mod: marking the undispatched install of %s failed: %v", req.ProjectID, serr)
 		}
 		h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
-		handlers.SendJSONError(w, "Failed to queue install", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to queue install", http.StatusInternalServerError)
 		return
 	}
 
@@ -414,12 +415,12 @@ func (h *ServerModsHandler) ModHistory(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	entries, err := h.state.Store.ListServerModHistory(serverID, srv.ActiveSubServer)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read the mod history", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not read the mod history", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "history": entries})
@@ -430,23 +431,23 @@ func (h *ServerModsHandler) ModHistory(w http.ResponseWriter, r *http.Request) {
 func (h *ServerModsHandler) SetUpdatesPaused(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if _, ok := h.getServer(serverID); !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	var req struct {
 		Paused *bool `json:"paused"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&req); err != nil || req.Paused == nil {
-		handlers.SendJSONError(w, "paused (true or false) is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "paused (true or false) is required", http.StatusBadRequest)
 		return
 	}
 	modID, _ := strconv.Atoi(mux.Vars(r)["modId"])
 	if err := h.state.Store.SetServerModUpdatesPaused(modID, serverID, *req.Paused); err != nil {
 		if errors.Is(err, store.ErrServerModNotFound) {
-			handlers.SendJSONError(w, "Mod not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Mod not found", http.StatusNotFound)
 			return
 		}
-		handlers.SendJSONError(w, "Could not save the setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not save the setting", http.StatusInternalServerError)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{
@@ -461,7 +462,7 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
@@ -477,33 +478,33 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if target == nil {
-		handlers.SendJSONError(w, "Mod not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Mod not found", http.StatusNotFound)
 		return
 	}
 
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
-		handlers.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	// A switched-off jar is in .disabled/, where remove_mod (mods|plugins only)
 	// does not reach: delete it with the plain file operation instead.
 	if target.Disabled {
 		if !validate.IsPlainFileName(target.FileName) {
-			handlers.SendJSONError(w, "This mod's file name cannot be removed safely.", http.StatusConflict)
+			httpx.SendJSONError(w, "This mod's file name cannot be removed safely.", http.StatusConflict)
 			return
 		}
 		_, off, _ := modPaths(srv, target)
 		if h.state.GRPCRegistry == nil {
-			handlers.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
+			httpx.SendJSONError(w, "Node unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		if err := h.nodeFileOp(srv, &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: off}}); err != nil {
-			handlers.SendJSONError(w, "Failed to remove the switched-off jar: "+err.Error(), http.StatusBadGateway)
+			httpx.SendJSONError(w, "Failed to remove the switched-off jar: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 		if err := h.state.Store.DeleteServerMod(modID, serverID); err != nil {
-			handlers.SendJSONError(w, "Failed to remove mod entry", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to remove mod entry", http.StatusInternalServerError)
 			return
 		}
 		h.state.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
@@ -517,7 +518,7 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 	// and delete the row regardless, which left the jar loading on the server with
 	// nothing in the UI left to remove it with.
 	if h.state.Queue == nil {
-		handlers.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Queue unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if err := h.state.Queue.SendCommand(context.Background(), node.Token, "remove_mod", map[string]interface{}{
@@ -526,11 +527,11 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 		"targetDir":       targetDir,
 		"fileName":        target.FileName,
 	}, nil); err != nil {
-		handlers.SendJSONError(w, "Failed to queue removal", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to queue removal", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.DeleteServerMod(modID, serverID); err != nil {
-		handlers.SendJSONError(w, "Failed to remove mod entry", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to remove mod entry", http.StatusInternalServerError)
 		return
 	}
 

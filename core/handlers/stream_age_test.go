@@ -12,14 +12,13 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 )
 
 func shortStreams(t *testing.T) {
 	t.Helper()
-	prev := sseMaxStreamAge
-	sseMaxStreamAge = 300 * time.Millisecond
-	t.Cleanup(func() { sseMaxStreamAge = prev })
+	t.Cleanup(httpx.SetSSEMaxStreamAge(300 * time.Millisecond))
 }
 
 // A stream used to be checked once, when it opened, and then run until the
@@ -61,16 +60,16 @@ func TestConsoleStreamEndsAndResumesAfterTheLastLine(t *testing.T) {
 // that lived as long as the ticket reconnected with one that had just expired,
 // and the console went dead until a reload.
 func TestStreamsEndBeforeTheirTicket(t *testing.T) {
-	if sseMaxStreamAge >= sseTicketTTL {
-		t.Fatalf("sseMaxStreamAge %v must be shorter than sseTicketTTL %v, or the reconnect carries an expired ticket", sseMaxStreamAge, sseTicketTTL)
+	if httpx.SSEMaxStreamAge() >= sseTicketTTL {
+		t.Fatalf("sseMaxStreamAge %v must be shorter than sseTicketTTL %v, or the reconnect carries an expired ticket", httpx.SSEMaxStreamAge(), sseTicketTTL)
 	}
 	// Room for the reconnect itself: the browser waits the retry interval,
 	// then the request has to arrive.
-	if sseTicketTTL-sseMaxStreamAge < 30*time.Second {
-		t.Fatalf("only %v between stream end and ticket expiry", sseTicketTTL-sseMaxStreamAge)
+	if sseTicketTTL-httpx.SSEMaxStreamAge() < 30*time.Second {
+		t.Fatalf("only %v between stream end and ticket expiry", sseTicketTTL-httpx.SSEMaxStreamAge())
 	}
-	if sseRetryLine != "retry: 1000\n\n" {
-		t.Fatalf("sseRetryLine = %q", sseRetryLine)
+	if httpx.SSERetryLine != "retry: 1000\n\n" {
+		t.Fatalf("httpx.SSERetryLine = %q", httpx.SSERetryLine)
 	}
 }
 
@@ -96,11 +95,11 @@ func TestStreamsOpenWithTheRetryLine(t *testing.T) {
 		return mux.SetURLVars(r, map[string]string{"id": "1"})
 	}
 	console := &ConsoleHandler{state: &AppState{Store: fs, Redis: rdb}}
-	if body := run("console", func(rec *httptest.ResponseRecorder) { console.StreamConsole(rec, req("/api/servers/1/console/stream")) }); !strings.HasPrefix(body, sseRetryLine) {
-		t.Errorf("console stream = %q, want it to open with %q", body, sseRetryLine)
+	if body := run("console", func(rec *httptest.ResponseRecorder) { console.StreamConsole(rec, req("/api/servers/1/console/stream")) }); !strings.HasPrefix(body, httpx.SSERetryLine) {
+		t.Errorf("console stream = %q, want it to open with %q", body, httpx.SSERetryLine)
 	}
 	events := NewSystemEventsHandler(&AppState{Store: fs, Redis: rdb})
-	if body := run("events", func(rec *httptest.ResponseRecorder) { events.StreamEvents(rec, req("/api/system/events")) }); !strings.Contains(body, sseRetryLine) {
-		t.Errorf("system events stream = %q, want %q", body, sseRetryLine)
+	if body := run("events", func(rec *httptest.ResponseRecorder) { events.StreamEvents(rec, req("/api/system/events")) }); !strings.Contains(body, httpx.SSERetryLine) {
+		t.Errorf("system events stream = %q, want %q", body, httpx.SSERetryLine)
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -123,13 +124,13 @@ type sharedPack struct {
 func (h *PacksHandler) List(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	h.discoverTeamPacks(r.Context(), userID)
 	own, err := h.state.Store.ListPacksByOwner(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list packs", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list packs", http.StatusInternalServerError)
 		return
 	}
 	packs := []models.Pack{}
@@ -144,7 +145,7 @@ func (h *PacksHandler) List(w http.ResponseWriter, r *http.Request) {
 	shared := []sharedPack{}
 	memberships, err := h.state.Store.ListModrinthMemberships(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list packs", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list packs", http.StatusInternalServerError)
 		return
 	}
 	for _, cached := range memberships {
@@ -184,17 +185,17 @@ func (h *PacksHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	var req packRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
-		handlers.SendJSONError(w, "Name is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Name is required", http.StatusBadRequest)
 		return
 	}
 	slug := strings.TrimSpace(req.Slug)
@@ -202,7 +203,7 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		slug = handlers.Slugify(req.Name)
 	}
 	if !packSlugRe.MatchString(slug) {
-		handlers.SendJSONError(w, "Invalid slug", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid slug", http.StatusBadRequest)
 		return
 	}
 	_, mc, ok := h.callerModrinth(w, r)
@@ -219,10 +220,10 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	created, err := h.createModrinthProject(r, mc, p)
 	if err != nil {
 		if services.ModrinthTokenRejected(err) {
-			handlers.SendJSONError(w, "Modrinth rejected your token. Renew it under Account, Modrinth.", http.StatusPreconditionRequired)
+			httpx.SendJSONError(w, "Modrinth rejected your token. Renew it under Account, Modrinth.", http.StatusPreconditionRequired)
 			return
 		}
-		handlers.SendJSONError(w, "Modrinth did not create the project (is the slug taken on Modrinth?): "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Modrinth did not create the project (is the slug taken on Modrinth?): "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	p.ModrinthProjectID = created.ID
@@ -231,9 +232,9 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "duplicate") || strings.Contains(msg, "unique") {
-			handlers.SendJSONError(w, "A pack with that slug already exists; the Modrinth draft "+created.ID+" was created and can be imported or deleted on Modrinth.", http.StatusConflict)
+			httpx.SendJSONError(w, "A pack with that slug already exists; the Modrinth draft "+created.ID+" was created and can be imported or deleted on Modrinth.", http.StatusConflict)
 		} else {
-			handlers.SendJSONError(w, "Failed to create pack", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to create pack", http.StatusInternalServerError)
 		}
 		return
 	}
@@ -250,7 +251,7 @@ func (h *PacksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	p, ok := h.ownsPack(r, packID)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	_, canEdit := h.packAccess(r, packID, packEdit)
@@ -277,12 +278,12 @@ func (h *PacksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	p, ok := h.packAccess(r, packID, packEdit)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	var req packRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if n := strings.TrimSpace(req.Name); n != "" {
@@ -292,7 +293,7 @@ func (h *PacksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		p.Summary = strings.TrimSpace(*req.Summary)
 	}
 	if err := h.state.Store.UpdatePack(p); err != nil {
-		handlers.SendJSONError(w, "Failed to update", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to update", http.StatusInternalServerError)
 		return
 	}
 	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": p.OwnerID})
@@ -304,12 +305,12 @@ func (h *PacksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	p, ok := h.packAccess(r, packID, packDeletePack)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	dirs := h.state.PackDirsOfPack(p)
 	if err := h.state.Store.DeletePack(packID, p.OwnerID); err != nil {
-		handlers.SendJSONError(w, "Failed to delete", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete", http.StatusInternalServerError)
 		return
 	}
 	h.state.DropPackDirs(dirs)
@@ -338,12 +339,12 @@ type buildPatchRequest struct {
 func (h *PacksHandler) ListBuilds(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	if _, ok := h.ownsPack(r, packID); !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	builds, err := h.state.Store.ListPackBuilds(packID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list builds", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list builds", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "builds": builds})
@@ -390,25 +391,25 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	_, ok := h.packAccess(r, packID, packEdit)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	var req buildRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.VersionString) == "" {
-		handlers.SendJSONError(w, "versionString is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "versionString is required", http.StatusBadRequest)
 		return
 	}
 	// reject path chars: VersionString feeds the download filename and the node-side install paths
 	if !safeKeyComponent(strings.TrimSpace(req.VersionString)) {
-		handlers.SendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
+		httpx.SendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
 		return
 	}
 	if bad := validateBuildKeyComponents(strings.TrimSpace(req.Minecraft), strings.TrimSpace(req.Loader), strings.TrimSpace(req.LoaderVersion)); bad != "" {
-		handlers.SendJSONError(w, bad+" contains invalid path characters", http.StatusBadRequest)
+		httpx.SendJSONError(w, bad+" contains invalid path characters", http.StatusBadRequest)
 		return
 	}
 	b := &models.PackBuild{
@@ -423,11 +424,11 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 	if req.SourceBuildID != 0 {
 		source, err := h.state.Store.GetPackBuild(req.SourceBuildID)
 		if err != nil || source == nil || source.PackID != packID {
-			handlers.SendJSONError(w, "Source build not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Source build not found", http.StatusNotFound)
 			return
 		}
 		if source.Minecraft != b.Minecraft || source.Loader != b.Loader {
-			handlers.SendJSONError(w, "Copying requires the same Minecraft version and loader; use Minecraft migration for another environment", http.StatusUnprocessableEntity)
+			httpx.SendJSONError(w, "Copying requires the same Minecraft version and loader; use Minecraft migration for another environment", http.StatusUnprocessableEntity)
 			return
 		}
 		b.MinJava, b.MinMemory = source.MinJava, source.MinMemory
@@ -440,7 +441,7 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 		id, err = h.state.Store.CreatePackBuild(b)
 	}
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to create build (version may exist)", http.StatusConflict)
+		httpx.SendJSONError(w, "Failed to create build (version may exist)", http.StatusConflict)
 		return
 	}
 	b.ID = id
@@ -455,21 +456,21 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
 	p, ok := h.packAccess(r, packID, packEdit)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	b, err := h.state.Store.GetPackBuild(buildID)
 	if err != nil || b == nil || b.PackID != packID {
-		handlers.SendJSONError(w, "Build not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
 	}
 	if b.Frozen || b.ModrinthPublished {
-		handlers.SendJSONError(w, "Build is published and frozen", http.StatusConflict)
+		httpx.SendJSONError(w, "Build is published and frozen", http.StatusConflict)
 		return
 	}
 	var patch buildPatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	// PATCH must distinguish an omitted setting from intentionally clearing it.
@@ -477,7 +478,7 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 	if patch.VersionString != nil {
 		req.VersionString = *patch.VersionString
 		if strings.TrimSpace(req.VersionString) == "" {
-			handlers.SendJSONError(w, "versionString is required", http.StatusBadRequest)
+			httpx.SendJSONError(w, "versionString is required", http.StatusBadRequest)
 			return
 		}
 	}
@@ -498,13 +499,13 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 	oldDirs := h.state.PackBuildDirs(p, b)
 	if v := strings.TrimSpace(req.VersionString); v != "" {
 		if !safeKeyComponent(v) {
-			handlers.SendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
+			httpx.SendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
 			return
 		}
 		b.VersionString = v
 	}
 	if bad := validateBuildKeyComponents(strings.TrimSpace(req.Minecraft), strings.TrimSpace(req.Loader), strings.TrimSpace(req.LoaderVersion)); bad != "" {
-		handlers.SendJSONError(w, bad+" contains invalid path characters", http.StatusBadRequest)
+		httpx.SendJSONError(w, bad+" contains invalid path characters", http.StatusBadRequest)
 		return
 	}
 	b.Minecraft = strings.TrimSpace(req.Minecraft)
@@ -512,7 +513,7 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 	b.LoaderVersion = strings.TrimSpace(req.LoaderVersion)
 	b.Changelog = req.Changelog
 	if err := h.state.Store.UpdatePackBuild(b); err != nil {
-		handlers.SendJSONError(w, "Failed to update build", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to update build", http.StatusInternalServerError)
 		return
 	}
 	if newDirs := h.state.PackBuildDirs(p, b); newDirs[0] != oldDirs[0] {
@@ -530,12 +531,12 @@ func (h *PacksHandler) DeleteBuild(w http.ResponseWriter, r *http.Request) {
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
 	p, ok := h.packAccess(r, packID, packDelete)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	b, err := h.state.Store.GetPackBuild(buildID)
 	if err != nil || b == nil || b.PackID != packID {
-		handlers.SendJSONError(w, "Build not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
 	}
 	if b.Frozen || b.ModrinthPublished {
@@ -543,13 +544,13 @@ func (h *PacksHandler) DeleteBuild(w http.ResponseWriter, r *http.Request) {
 			ConfirmVersion string `json:"confirmVersion"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.ConfirmVersion != b.VersionString {
-			handlers.SendJSONError(w, "Confirm the exact build version to delete a frozen or published build", http.StatusConflict)
+			httpx.SendJSONError(w, "Confirm the exact build version to delete a frozen or published build", http.StatusConflict)
 			return
 		}
 	}
 	dirs := h.state.PackBuildDirs(p, b)
 	if err := h.state.Store.DeletePackBuild(buildID, packID); err != nil {
-		handlers.SendJSONError(w, "Failed to delete build", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete build", http.StatusInternalServerError)
 		return
 	}
 	h.state.DropPackDirs(dirs)

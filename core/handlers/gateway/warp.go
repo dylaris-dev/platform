@@ -19,6 +19,7 @@ import (
 
 	"dylaris-pkg/validate"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
@@ -46,24 +47,24 @@ func (h *WarpHandler) WarpAPIKeyMiddleware(next http.HandlerFunc) http.HandlerFu
 	return func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if !strings.HasPrefix(auth, "Bearer ") {
-			handlers.SendJSONError(w, "Missing Authorization", http.StatusUnauthorized)
+			httpx.SendJSONError(w, "Missing Authorization", http.StatusUnauthorized)
 			return
 		}
 		plaintext := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
 		key, err := h.state.Store.GetWarpAPIKeyByHash(handlers.HashAPIKey(plaintext))
 		if errors.Is(err, sql.ErrNoRows) {
-			handlers.SendJSONError(w, "Invalid warp key", http.StatusUnauthorized)
+			httpx.SendJSONError(w, "Invalid warp key", http.StatusUnauthorized)
 			return
 		}
 		if err != nil {
 			// Not an answer about the key. A 401 here told a link booting during a
 			// database blip that its key was revoked, and it exited for good.
 			log.Printf("warp key lookup failed: %v", err)
-			handlers.SendJSONError(w, "Could not check the key right now", http.StatusServiceUnavailable)
+			httpx.SendJSONError(w, "Could not check the key right now", http.StatusServiceUnavailable)
 			return
 		}
 		if key.RevokedAt != nil {
-			handlers.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
+			httpx.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
 			return
 		}
 		ctx := context.WithValue(r.Context(), warpKeyCtx, *key)
@@ -79,7 +80,7 @@ func (h *WarpHandler) WarpAPIKeyMiddleware(next http.HandlerFunc) http.HandlerFu
 func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	key, ok := r.Context().Value(warpKeyCtx).(store.WarpAPIKey)
 	if !ok {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -88,7 +89,7 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	// home nodes don't enroll into a dormant overlay (matches the panel, which
 	// only offers the mint-key button when routing is gateway+beam).
 	if !h.state.GatewayEnabled() {
-		handlers.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode before enrolling warp peers.", http.StatusConflict)
+		httpx.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode before enrolling warp peers.", http.StatusConflict)
 		return
 	}
 	// A route-only kit never joins the overlay: its link talks to Core over
@@ -97,7 +98,7 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	// no route-only machine can become a warp peer by running a warp client with
 	// its key.
 	if strings.HasPrefix(key.NodeID, "link-") {
-		handlers.SendJSONError(w, "A route-only link key does not join the overlay; run the route-only kit instead.", http.StatusForbidden)
+		httpx.SendJSONError(w, "A route-only link key does not join the overlay; run the route-only kit instead.", http.StatusForbidden)
 		return
 	}
 	var req struct {
@@ -105,7 +106,7 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		TunnelSubnets []string `json:"tunnel_subnets"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PublicKey == "" {
-		handlers.SendJSONError(w, "Invalid request (public_key required)", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request (public_key required)", http.StatusBadRequest)
 		return
 	}
 
@@ -123,7 +124,7 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		if b, berr := h.state.Store.GetUserBilling(key.OwnerID); berr != nil {
 			log.Printf("warp enroll: billing lookup for owner of key %d failed, suspension gate skipped: %v", key.ID, berr)
 		} else if store.OwnerCutOff(b, h.state.SuspendGrace, services.OverLimitGrace, time.Now()) {
-			handlers.SendJSONError(w, "Account suspended", http.StatusForbidden)
+			httpx.SendJSONError(w, "Account suspended", http.StatusForbidden)
 			return
 		}
 	}
@@ -145,16 +146,16 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	// refused above and never get this far. The JOIN gate (open / one-shot / disabled) stays on the
 	// gRPC path, where it can be consumed exactly once per successful node enrol.
 	if h.state.Admission != nil && strings.HasPrefix(key.NodeID, "node-") {
-		allowed, reason, aerr := h.state.Admission.CheckNetwork(r.Context(), net.ParseIP(handlers.ClientIP(r)))
+		allowed, reason, aerr := h.state.Admission.CheckNetwork(r.Context(), net.ParseIP(httpx.ClientIP(r)))
 		if aerr != nil {
 			// Fail closed: a DB fault must not silently open admission.
 			log.Printf("warp enroll: admission check failed for key %d: %v", key.ID, aerr)
-			handlers.SendJSONError(w, "Could not verify admission", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Could not verify admission", http.StatusInternalServerError)
 			return
 		}
 		if !allowed {
-			log.Printf("warp enroll: rejected key %d (%s) from %s", key.ID, reason, handlers.ClientIP(r))
-			handlers.SendJSONError(w, "This machine's network is not allowed to join", http.StatusForbidden)
+			log.Printf("warp enroll: rejected key %d (%s) from %s", key.ID, reason, httpx.ClientIP(r))
+			httpx.SendJSONError(w, "This machine's network is not allowed to join", http.StatusForbidden)
 			return
 		}
 	}
@@ -165,11 +166,11 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		// a server-side fault (no region configured, DB, IP allocation, leader
 		// key) — surface it as 500 and log it instead of leaking internals.
 		if errors.Is(err, store.ErrWarpLimitReached) {
-			handlers.SendJSONError(w, "Connection limit reached for this key", http.StatusConflict)
+			httpx.SendJSONError(w, "Connection limit reached for this key", http.StatusConflict)
 			return
 		}
 		if errors.Is(err, services.ErrInvalidFixedWGIP) || errors.Is(err, store.ErrWarpIPTaken) {
-			handlers.SendJSONError(w, err.Error(), http.StatusConflict)
+			httpx.SendJSONError(w, err.Error(), http.StatusConflict)
 			return
 		}
 		// Named rather than folded into the generic 500, because the fix is a
@@ -177,11 +178,11 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 		// every five seconds with nothing on either side saying why.
 		if errors.Is(err, services.ErrNoWarpLeader) {
 			log.Printf("warp enroll refused (key=%d): %v - add a leader for this region under Settings -> Warp", key.ID, err)
-			handlers.SendJSONError(w, "No tunnel endpoint is available yet.", http.StatusConflict)
+			httpx.SendJSONError(w, "No tunnel endpoint is available yet.", http.StatusConflict)
 			return
 		}
 		log.Printf("warp enroll failed (key=%d): %v", key.ID, err)
-		handlers.SendJSONError(w, "Enrollment failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Enrollment failed", http.StatusInternalServerError)
 		return
 	}
 	// The service now fills region subnet, region pubkey and the failover endpoint
@@ -208,22 +209,22 @@ func stampOverlayAddrs(res *services.EnrollResult) {
 func (h *WarpHandler) Assignment(w http.ResponseWriter, r *http.Request) {
 	key, ok := r.Context().Value(warpKeyCtx).(store.WarpAPIKey)
 	if !ok {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	pubkey := strings.TrimSpace(r.URL.Query().Get("public_key"))
 	if pubkey == "" {
-		handlers.SendJSONError(w, "public_key required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "public_key required", http.StatusBadRequest)
 		return
 	}
 	res, err := h.svc.Assignment(r.Context(), key, pubkey)
 	if err != nil {
 		if errors.Is(err, services.ErrWarpPeerNotFound) {
-			handlers.SendJSONError(w, "Peer not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Peer not found", http.StatusNotFound)
 			return
 		}
 		log.Printf("warp assignment failed (key=%d): %v", key.ID, err)
-		handlers.SendJSONError(w, "Assignment failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Assignment failed", http.StatusInternalServerError)
 		return
 	}
 	// The 30s poll is also the cheap address-refresh channel: warp reads the two
@@ -246,7 +247,7 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 		Region    string `json:"region"` // "" = auto-assign at enroll
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 	// link- and node- are the ids of a customer's link kit and node key, always
@@ -254,7 +255,7 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 	// key carrying one was a second, owner-less row for the customer's id - which
 	// link-boot answered with that customer's tunnel token and Redis login.
 	if strings.HasPrefix(req.NodeID, "link-") || strings.HasPrefix(req.NodeID, "node-") {
-		handlers.SendJSONError(w, "node_id prefixes link- and node- are reserved for customer keys", http.StatusBadRequest)
+		httpx.SendJSONError(w, "node_id prefixes link- and node- are reserved for customer keys", http.StatusBadRequest)
 		return
 	}
 	if req.Policy != "fixed" && req.Policy != "general" {
@@ -278,22 +279,22 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 	// subnet. Reject early so a junk key is never stored (the enroll path re-checks).
 	if req.FixedWGIP != "" {
 		if req.Region == "" {
-			handlers.SendJSONError(w, "fixed_wg_ip requires a region", http.StatusBadRequest)
+			httpx.SendJSONError(w, "fixed_wg_ip requires a region", http.StatusBadRequest)
 			return
 		}
 		reg, rerr := h.state.Store.GetWarpRegion(req.Region)
 		if rerr != nil || reg == nil {
-			handlers.SendJSONError(w, "Unknown region for fixed_wg_ip", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Unknown region for fixed_wg_ip", http.StatusBadRequest)
 			return
 		}
 		if verr := services.ValidateFixedWGIP(req.FixedWGIP, reg.Subnet); verr != nil {
-			handlers.SendJSONError(w, verr.Error(), http.StatusBadRequest)
+			httpx.SendJSONError(w, verr.Error(), http.StatusBadRequest)
 			return
 		}
 	}
 	plaintext, err := handlers.GeneratePlaintextKey()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
 	}
 	id, err := h.state.Store.CreateWarpAPIKey(store.WarpAPIKey{
@@ -302,7 +303,7 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 		NodeID: req.NodeID, Region: req.Region,
 	})
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to create key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to create key", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -343,45 +344,45 @@ const externalNodeTokenDays = 7
 // arrives.
 func (h *WarpHandler) MintExternalNodeKey(w http.ResponseWriter, r *http.Request) {
 	if !handlers.IsAdmin(r) {
-		handlers.SendJSONError(w, "Only an admin can add an External node", http.StatusForbidden)
+		httpx.SendJSONError(w, "Only an admin can add an External node", http.StatusForbidden)
 		return
 	}
 	if !h.state.GatewayEnabled() || h.state.Gateway == nil {
-		handlers.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
+		httpx.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
 		return
 	}
 	minterID := handlers.ByonCallerID(r)
 	if minterID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	var req struct {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 	// Same rule as a tenant's machine: the name becomes the node's name (the
 	// enroll token's label) and lands in the deploy file's comments.
 	name := strings.TrimSpace(req.Name)
 	if !validate.IsLocationName(name) {
-		handlers.SendJSONError(w, "Name this location: 4 to 20 characters, letters, digits and hyphens, not starting or ending with a hyphen.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Name this location: 4 to 20 characters, letters, digits and hyphens, not starting or ending with a hyphen.", http.StatusBadRequest)
 		return
 	}
 	nodeID, err := handlers.GenerateNodeWarpIdentity()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to generate node identity", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate node identity", http.StatusInternalServerError)
 		return
 	}
 	plaintext, err := handlers.GeneratePlaintextKey()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
 	}
 	tb := make([]byte, 32)
 	if _, err := rand.Read(tb); err != nil {
-		handlers.SendJSONError(w, "Failed to generate token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
 	token := hex.EncodeToString(tb)
@@ -395,7 +396,7 @@ func (h *WarpHandler) MintExternalNodeKey(w http.ResponseWriter, r *http.Request
 		NodeID:    nodeID,
 	})
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to create the node key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to create the node key", http.StatusInternalServerError)
 		return
 	}
 	exp := time.Now().AddDate(0, 0, externalNodeTokenDays)
@@ -404,7 +405,7 @@ func (h *WarpHandler) MintExternalNodeKey(w http.ResponseWriter, r *http.Request
 		if derr := h.state.Store.DeleteWarpAPIKeyByID(id); derr != nil {
 			log.Printf("warp: external node %s: removing key %d failed too; revoke it from the Warp key list: %v", nodeID, id, derr)
 		}
-		handlers.SendJSONError(w, "Failed to create the enroll token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to create the enroll token", http.StatusInternalServerError)
 		return
 	}
 	// Only while TLS is on, for the reason MintToken gives.
@@ -436,7 +437,7 @@ func (h *WarpHandler) MintExternalNodeKey(w http.ResponseWriter, r *http.Request
 func (h *WarpHandler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	keys, err := h.state.Store.ListWarpAPIKeys()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load enrollment keys", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load enrollment keys", http.StatusInternalServerError)
 		return
 	}
 	type peerView struct {
@@ -505,22 +506,22 @@ func (h *WarpHandler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 func (h *WarpHandler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid key id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid key id", http.StatusBadRequest)
 		return
 	}
 	key, err := h.state.Store.GetWarpAPIKeyByID(id)
 	if err != nil || key == nil {
-		handlers.SendJSONError(w, "Key not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Key not found", http.StatusNotFound)
 		return
 	}
 	// Tenant link kits have their own teardown (routes + tunnel key); routing one
 	// through here would revoke the key and leave those behind.
 	if key.OwnerID != "" {
-		handlers.SendJSONError(w, "This is a tenant link kit — revoke it from Protected Addresses", http.StatusBadRequest)
+		httpx.SendJSONError(w, "This is a tenant link kit — revoke it from Protected Addresses", http.StatusBadRequest)
 		return
 	}
 	if derr := h.state.Store.RevokeWarpAPIKeyByID(id); derr != nil {
-		handlers.SendJSONError(w, "Failed to revoke key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to revoke key", http.StatusInternalServerError)
 		return
 	}
 	removed := 0
@@ -546,41 +547,41 @@ func (h *WarpHandler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 // so the roll is refused to it.
 func (h *WarpHandler) RollExternalNodeKey(w http.ResponseWriter, r *http.Request) {
 	if !handlers.IsAdmin(r) {
-		handlers.SendJSONError(w, "Only an admin can roll an External node key", http.StatusForbidden)
+		httpx.SendJSONError(w, "Only an admin can roll an External node key", http.StatusForbidden)
 		return
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid key id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid key id", http.StatusBadRequest)
 		return
 	}
 	key, err := h.state.Store.GetWarpAPIKeyByID(id)
 	if err != nil || key == nil || key.OwnerID != "" || key.RevokedAt != nil || !strings.HasPrefix(key.NodeID, "node-") {
-		handlers.SendJSONError(w, "External node key not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "External node key not found", http.StatusNotFound)
 		return
 	}
 	if key.BoundNodeID != 0 {
 		node, err := h.state.Store.GetNodeByID(key.BoundNodeID)
 		if err != nil || node == nil {
-			handlers.SendJSONError(w, "Failed to load the node", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to load the node", http.StatusInternalServerError)
 			return
 		}
 		if !services.NodeSwapsLinkKey(r.Context(), h.state.Redis, node.Token) {
-			handlers.SendJSONError(w, "This machine's node is offline, or cannot move its Link onto a new key by itself (it needs node 2026.10.12 or later with LINK_AUTO_UPDATE=true). Revoke the key and add the machine again instead.", http.StatusConflict)
+			httpx.SendJSONError(w, "This machine's node is offline, or cannot move its Link onto a new key by itself (it needs node 2026.10.12 or later with LINK_AUTO_UPDATE=true). Revoke the key and add the machine again instead.", http.StatusConflict)
 			return
 		}
 	}
 	plaintext, err := handlers.GeneratePlaintextKey()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.RollWarpAPIKeyHash(key.NodeID, handlers.HashAPIKey(plaintext)); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			handlers.SendJSONError(w, "External node key not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "External node key not found", http.StatusNotFound)
 			return
 		}
-		handlers.SendJSONError(w, "Failed to roll the key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to roll the key", http.StatusInternalServerError)
 		return
 	}
 	log.Printf("warp: rolled External node key %d (%s); old secret valid for %s", id, key.NodeID, store.WarpKeyRollGrace)
@@ -600,16 +601,16 @@ func (h *WarpHandler) RollExternalNodeKey(w http.ResponseWriter, r *http.Request
 func (h *WarpHandler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid key id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid key id", http.StatusBadRequest)
 		return
 	}
 	key, err := h.state.Store.GetWarpAPIKeyByID(id)
 	if err != nil || key == nil {
-		handlers.SendJSONError(w, "Key not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Key not found", http.StatusNotFound)
 		return
 	}
 	if key.OwnerID != "" {
-		handlers.SendJSONError(w, "This is a tenant link kit — remove it from Protected Addresses", http.StatusBadRequest)
+		httpx.SendJSONError(w, "This is a tenant link kit — remove it from Protected Addresses", http.StatusBadRequest)
 		return
 	}
 
@@ -620,7 +621,7 @@ func (h *WarpHandler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 		removed = h.svc.DisconnectKeyPeers(ctx, id)
 	}
 	if derr := h.state.Store.DeleteWarpAPIKeyByID(id); derr != nil {
-		handlers.SendJSONError(w, "Failed to delete key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete key", http.StatusInternalServerError)
 		return
 	}
 	log.Printf("warp: deleted enrollment key %d (%s), disconnected %d peer(s)", id, key.Name, removed)
@@ -640,18 +641,18 @@ func (h *WarpHandler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 // refuses it.
 func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	if !handlers.RouteOnlyActive(h.state, r) {
-		handlers.SendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
 		return
 	}
 	// Route-only needs the gateway: routes and link tunnels only exist in
 	// gateway/both routing mode. Match LinkBoot, which refuses otherwise.
 	if !h.state.GatewayEnabled() || h.state.Gateway == nil {
-		handlers.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
+		httpx.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
 		return
 	}
 	userID := handlers.ByonCallerID(r)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	// A link kit is the route-only product. See entitlement_gate.go for why the
@@ -663,17 +664,17 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	// gets past, which is what an account holding no route-only product has.
 	lim, lerr := services.EffectiveLimits(h.state.Store, userID)
 	if lerr != nil {
-		handlers.SendJSONError(w, "Failed to resolve limits", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to resolve limits", http.StatusInternalServerError)
 		return
 	}
 	if lim.MaxLinks != nil {
 		used, cerr := h.state.Store.CountLinkKitsByOwner(userID)
 		if cerr != nil {
-			handlers.SendJSONError(w, "Failed to count links", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to count links", http.StatusInternalServerError)
 			return
 		}
 		if services.AtOrOver(lim.MaxLinks, int64(used)) {
-			handlers.SendJSONError(w, fmt.Sprintf("Link limit reached (%d)", *lim.MaxLinks), http.StatusForbidden)
+			httpx.SendJSONError(w, fmt.Sprintf("Link limit reached (%d)", *lim.MaxLinks), http.StatusForbidden)
 			return
 		}
 	}
@@ -688,12 +689,12 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 
 	nodeID, err := handlers.GenerateLinkIdentity()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to generate link identity", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate link identity", http.StatusInternalServerError)
 		return
 	}
 	plaintext, err := handlers.GeneratePlaintextKey()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
 	}
 	// The policy columns are warp's and mean nothing for a kit key, which never
@@ -712,15 +713,15 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 		// when two mints race.
 		created, err := h.state.Store.CreateLinkKitUnderCap(kit, *lim.MaxLinks)
 		if err != nil {
-			handlers.SendJSONError(w, "Failed to create link kit", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to create link kit", http.StatusInternalServerError)
 			return
 		}
 		if !created {
-			handlers.SendJSONError(w, fmt.Sprintf("Link limit reached (%d)", *lim.MaxLinks), http.StatusForbidden)
+			httpx.SendJSONError(w, fmt.Sprintf("Link limit reached (%d)", *lim.MaxLinks), http.StatusForbidden)
 			return
 		}
 	} else if _, err := h.state.Store.CreateWarpAPIKey(kit); err != nil {
-		handlers.SendJSONError(w, "Failed to create link kit", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to create link kit", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -742,7 +743,7 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 	key, ok := r.Context().Value(warpKeyCtx).(store.WarpAPIKey)
 	if !ok {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	// A node's warp key must never get a ROUTE-ONLY answer: that would give the
@@ -758,11 +759,11 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 	// kit, and answering it would hand out whichever link that id names.
 	linkKey := strings.HasPrefix(key.NodeID, "link-") && key.OwnerID != ""
 	if !nodeKey && !linkKey {
-		handlers.SendJSONError(w, "Not a route-only link key", http.StatusForbidden)
+		httpx.SendJSONError(w, "Not a route-only link key", http.StatusForbidden)
 		return
 	}
 	if !h.state.GatewayEnabled() || h.state.Gateway == nil {
-		handlers.SendJSONError(w, "Gateway routing is disabled", http.StatusConflict)
+		httpx.SendJSONError(w, "Gateway routing is disabled", http.StatusConflict)
 		return
 	}
 	// A HARD-suspended tenant's link (suspended past the grace) cannot boot.
@@ -781,7 +782,7 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 		if berr != nil {
 			log.Printf("link-boot: billing lookup for %s failed, suspension gate skipped: %v", key.NodeID, berr)
 		} else if store.OwnerCutOff(b, h.state.SuspendGrace, services.OverLimitGrace, time.Now()) {
-			handlers.SendJSONError(w, "Account suspended", http.StatusForbidden)
+			httpx.SendJSONError(w, "Account suspended", http.StatusForbidden)
 			return
 		}
 	}
@@ -790,7 +791,7 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 	if fresh, ferr := h.state.Store.GetWarpAPIKeyByNodeID(key.NodeID); ferr != nil {
 		log.Printf("link-boot: fresh revoke check for %s failed, proceeding: %v", key.NodeID, ferr)
 	} else if fresh.RevokedAt != nil {
-		handlers.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
 		return
 	}
 	if nodeKey {
@@ -846,13 +847,13 @@ func (h *WarpHandler) nodeLinkBoot(w http.ResponseWriter, key store.WarpAPIKey) 
 	// with the new kit whose key was never bound in the panel - its Link also
 	// waits forever, so the message has to name both causes.
 	if key.BoundNodeID == 0 {
-		handlers.SendJSONError(w, "This key is not bound to an enrolled node yet: a new node is still enrolling, or an existing node's key must be bound to it in the panel (Update this machine). The Link retries until it has.", http.StatusConflict)
+		httpx.SendJSONError(w, "This key is not bound to an enrolled node yet: a new node is still enrolling, or an existing node's key must be bound to it in the panel (Update this machine). The Link retries until it has.", http.StatusConflict)
 		return
 	}
 	node, err := h.state.Store.GetNodeByID(key.BoundNodeID)
 	if err != nil {
 		log.Printf("link-boot: node %d bound to key %s could not be loaded: %v", key.BoundNodeID, key.NodeID, err)
-		handlers.SendJSONError(w, "Failed to load the node", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load the node", http.StatusInternalServerError)
 		return
 	}
 	// The binding was owner-checked when it was made. Asked again on every boot
@@ -870,20 +871,20 @@ func (h *WarpHandler) nodeLinkBoot(w http.ResponseWriter, key store.WarpAPIKey) 
 	}
 	if nodeOwner != key.OwnerID {
 		log.Printf("link-boot: key %s is bound to node %d, which its owner does not own; refused", key.NodeID, node.ID)
-		handlers.SendJSONError(w, "This key does not belong to that machine's owner", http.StatusForbidden)
+		httpx.SendJSONError(w, "This key does not belong to that machine's owner", http.StatusForbidden)
 		return
 	}
 	secret, ok, err := redisacl.LoadNodeSecret(h.state.Store, h.state.ClusterSecret, node.ID)
 	if err != nil {
 		log.Printf("link-boot: loading the secret of node %d for key %s failed: %v", node.ID, key.NodeID, err)
-		handlers.SendJSONError(w, "Failed to load the node's credentials", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load the node's credentials", http.StatusInternalServerError)
 		return
 	}
 	// No secret has two causes as well: a new node still enrolling, and a node
 	// whose pairing was reset and that has not been let back in. The Link waits
 	// out both, so the message names both.
 	if !ok {
-		handlers.SendJSONError(w, "This key's node has not finished pairing: a new node is still enrolling, or its pairing was reset and it must be admitted again in the panel. The Link retries until it has.", http.StatusConflict)
+		httpx.SendJSONError(w, "This key's node has not finished pairing: a new node is still enrolling, or its pairing was reset and it must be admitted again in the panel. The Link retries until it has.", http.StatusConflict)
 		return
 	}
 	log.Printf("link-boot: node key %s booted the Link of node %d", key.NodeID, node.ID)
@@ -905,17 +906,17 @@ func (h *WarpHandler) nodeLinkBoot(w http.ResponseWriter, key store.WarpAPIKey) 
 // via the kit's reveal flow, not listed here.
 func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 	if !handlers.RouteOnlyActive(h.state, r) {
-		handlers.SendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
 		return
 	}
 	userID := handlers.ByonCallerID(r)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	keys, err := h.state.Store.ListWarpAPIKeysByOwner(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load link kits", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load link kits", http.StatusInternalServerError)
 		return
 	}
 	type linkKit struct {
@@ -975,21 +976,21 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	linkID := mux.Vars(r)["linkID"]
 	if !strings.HasPrefix(linkID, "link-") {
-		handlers.SendJSONError(w, "Invalid link id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid link id", http.StatusBadRequest)
 		return
 	}
 	key, err := h.state.Store.GetWarpAPIKeyByNodeID(linkID)
 	if err != nil {
-		handlers.SendJSONError(w, "Link not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Link not found", http.StatusNotFound)
 		return
 	}
 	if key.OwnerID != userID && (!isAdmin || h.state.KitOwnedByOther(key.OwnerID, userID)) {
-		handlers.SendJSONError(w, "Link not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Link not found", http.StatusNotFound)
 		return
 	}
 
@@ -1002,7 +1003,7 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 	removed, rerr := services.RevokeLinkKitTeardown(ctx, h.state.Store, h.state.Gateway, h.state.Redis, linkID, key.OwnerID)
 	if rerr != nil {
 		log.Printf("revoke link %s: %v", linkID, rerr)
-		handlers.SendJSONError(w, "Failed to revoke link", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to revoke link", http.StatusInternalServerError)
 		return
 	}
 	// A kit key cannot enroll any more, but a kit from the warp era may still be
@@ -1038,18 +1039,18 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 	userID, _ := r.Context().Value("userID").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return "", false
 	}
 	// Same reason RevokeLinkKit and RevokeNodeWarpKey check it: the two kinds of
 	// key must not be reachable through each other's endpoint.
 	if !strings.HasPrefix(id, prefix) {
-		handlers.SendJSONError(w, "Invalid id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return "", false
 	}
 	key, err := h.state.Store.GetWarpAPIKeyByNodeID(id)
 	if err != nil {
-		handlers.SendJSONError(w, notFound, http.StatusNotFound)
+		httpx.SendJSONError(w, notFound, http.StatusNotFound)
 		return "", false
 	}
 	// Same message for "not yours" as for "does not exist", so a reply cannot
@@ -1062,26 +1063,26 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 	// External node key boots that machine's Link. The admin way to act on one
 	// is RevokeAPIKey / DeleteAPIKey under /api/admin/warp/keys.
 	if key.OwnerID == "" || (key.OwnerID != userID && (!isAdmin || h.state.KitOwnedByOther(key.OwnerID, userID))) {
-		handlers.SendJSONError(w, notFound, http.StatusNotFound)
+		httpx.SendJSONError(w, notFound, http.StatusNotFound)
 		return "", false
 	}
 	// A revoked key is not rollable: rolling it would quietly bring a revoked
 	// identity back to life under a new secret.
 	if key.RevokedAt != nil {
-		handlers.SendJSONError(w, notFound, http.StatusNotFound)
+		httpx.SendJSONError(w, notFound, http.StatusNotFound)
 		return "", false
 	}
 	plaintext, err := handlers.GeneratePlaintextKey()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return "", false
 	}
 	if err := h.state.Store.RollWarpAPIKeyHash(id, handlers.HashAPIKey(plaintext)); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			handlers.SendJSONError(w, notFound, http.StatusNotFound)
+			httpx.SendJSONError(w, notFound, http.StatusNotFound)
 			return "", false
 		}
-		handlers.SendJSONError(w, "Failed to roll the key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to roll the key", http.StatusInternalServerError)
 		return "", false
 	}
 	log.Printf("rolled warp key %s (owner %s); identity and peer left in place", id, key.OwnerID)
@@ -1093,7 +1094,7 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 // tenant's servers keep resolving to the same node row.
 func (h *WarpHandler) RollNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 	if !handlers.ByonActive(h.state, r) {
-		handlers.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
 	nodeID := mux.Vars(r)["nodeID"]
@@ -1146,7 +1147,7 @@ func (h *WarpHandler) RollLinkKit(w http.ResponseWriter, r *http.Request) {
 func (h *WarpHandler) ListRegions(w http.ResponseWriter, r *http.Request) {
 	regions, err := h.svc.RegionsOverview(r.Context())
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load regions", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load regions", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1161,15 +1162,15 @@ func (h *WarpHandler) UpsertRegion(w http.ResponseWriter, r *http.Request) {
 		Enabled bool   `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Region == "" || req.Subnet == "" {
-		handlers.SendJSONError(w, "region and subnet are required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "region and subnet are required", http.StatusBadRequest)
 		return
 	}
 	if _, _, err := net.ParseCIDR(req.Subnet); err != nil {
-		handlers.SendJSONError(w, "subnet must be a CIDR (e.g. 10.99.1.0/24)", http.StatusBadRequest)
+		httpx.SendJSONError(w, "subnet must be a CIDR (e.g. 10.99.1.0/24)", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.UpsertWarpRegion(req.Region, req.Subnet, req.Enabled); err != nil {
-		handlers.SendJSONError(w, "Failed to save region", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save region", http.StatusInternalServerError)
 		return
 	}
 	// Mirror to Redis for the warp leader's boot resolve. Best-effort: the DB write
@@ -1208,11 +1209,11 @@ func (h *WarpHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
 	region := mux.Vars(r)["region"]
 	peers, err := h.state.Store.ListWarpPeersByRegion(region)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not verify the region is empty", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not verify the region is empty", http.StatusInternalServerError)
 		return
 	}
 	if len(peers) > 0 {
-		handlers.SendJSONError(w, fmt.Sprintf(
+		httpx.SendJSONError(w, fmt.Sprintf(
 			"Region still has %d enrolled peer(s). Revoke or delete their enrollment keys first - deleting the region removes its leaders, and Core can no longer reach a leader it has no row for, so those tunnels would stay up with nothing able to remove them.",
 			len(peers)), http.StatusConflict)
 		return
@@ -1222,21 +1223,21 @@ func (h *WarpHandler) DeleteRegion(w http.ResponseWriter, r *http.Request) {
 	// delete cascades away. The row coming back is not the problem; a delete
 	// that reports success and then quietly undoes itself is.
 	if leader, lerr := h.announcingLeaderIn(r.Context(), region); lerr != nil {
-		handlers.SendJSONError(w, "Could not check whether the region's leaders are still running", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Could not check whether the region's leaders are still running", http.StatusServiceUnavailable)
 		return
 	} else if leader != "" {
-		handlers.SendJSONError(w, fmt.Sprintf(
+		httpx.SendJSONError(w, fmt.Sprintf(
 			"Leader %q in this region is still running and registers itself, so the region would be re-created within a minute. Stop that warp leader first, or disable the region instead.",
 			leader), http.StatusConflict)
 		return
 	}
 	removed, err := h.state.Store.DeleteWarpRegion(region)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to delete region", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete region", http.StatusInternalServerError)
 		return
 	}
 	if !removed {
-		handlers.SendJSONError(w, "Region not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Region not found", http.StatusNotFound)
 		return
 	}
 	log.Printf("warp: deleted region %s (no enrolled peers)", region)
@@ -1274,11 +1275,11 @@ func (h *WarpHandler) UpsertLeader(w http.ResponseWriter, r *http.Request) {
 		Enabled  bool   `json:"enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.LeaderID == "" || req.Region == "" || req.Endpoint == "" {
-		handlers.SendJSONError(w, "leaderId, region and endpoint are required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "leaderId, region and endpoint are required", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.UpsertWarpLeader(req.LeaderID, req.Region, req.Endpoint, req.Enabled); err != nil {
-		handlers.SendJSONError(w, "Failed to save leader (does the region exist?)", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save leader (does the region exist?)", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
@@ -1295,20 +1296,20 @@ func (h *WarpHandler) DeleteLeader(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	alive, aerr := services.LeaderAnnouncing(ctx, h.state.Redis, leaderID)
 	if aerr != nil {
-		handlers.SendJSONError(w, "Could not check whether this leader is still running", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Could not check whether this leader is still running", http.StatusServiceUnavailable)
 		return
 	}
 	if alive {
-		handlers.SendJSONError(w, "This leader is still running and registers itself, so it would come back within a minute. Stop the warp leader first, or disable it instead - a disabled leader stays disabled.", http.StatusConflict)
+		httpx.SendJSONError(w, "This leader is still running and registers itself, so it would come back within a minute. Stop the warp leader first, or disable it instead - a disabled leader stays disabled.", http.StatusConflict)
 		return
 	}
 	removed, err := h.state.Store.DeleteWarpLeader(leaderID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to delete leader", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to delete leader", http.StatusInternalServerError)
 		return
 	}
 	if !removed {
-		handlers.SendJSONError(w, "Leader not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Leader not found", http.StatusNotFound)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
@@ -1336,17 +1337,17 @@ func (h *WarpHandler) DeleteLeader(w http.ResponseWriter, r *http.Request) {
 // the operator to pass the other secret by hand, per customer.
 func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 	if !handlers.ByonActive(h.state, r) {
-		handlers.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
 	// The overlay only exists in gateway/both routing mode; matches Enroll.
 	if !h.state.GatewayEnabled() || h.state.Gateway == nil {
-		handlers.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
+		httpx.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
 		return
 	}
 	userID := handlers.ByonCallerID(r)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	// A warp key attaches a machine of their own, which is the BYON product.
@@ -1356,7 +1357,7 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 
 	lim, lerr := services.EffectiveLimits(h.state.Store, userID)
 	if lerr != nil {
-		handlers.SendJSONError(w, "Failed to resolve limits", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to resolve limits", http.StatusInternalServerError)
 		return
 	}
 	if lim.MaxNodes != nil {
@@ -1368,11 +1369,11 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		// counted is not refused. See services.NodeSlots.
 		slots, serr := services.CountNodeSlots(h.state.Store, userID)
 		if serr != nil {
-			handlers.SendJSONError(w, "Failed to count nodes", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to count nodes", http.StatusInternalServerError)
 			return
 		}
 		if services.Exceeds(lim.MaxNodes, slots.UsedWithWarpKey()) {
-			handlers.SendJSONError(w, fmt.Sprintf("Node limit reached (%d). Remove a machine, or revoke an unused key or enroll token, before adding another.", *lim.MaxNodes), http.StatusForbidden)
+			httpx.SendJSONError(w, fmt.Sprintf("Node limit reached (%d). Remove a machine, or revoke an unused key or enroll token, before adding another.", *lim.MaxNodes), http.StatusForbidden)
 			return
 		}
 	}
@@ -1387,18 +1388,18 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 	// when its enroll token is redeemed.
 	name := strings.TrimSpace(req.Name)
 	if !validate.IsLocationName(name) {
-		handlers.SendJSONError(w, "Name this location: 4 to 20 characters, letters, digits and hyphens, not starting or ending with a hyphen.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Name this location: 4 to 20 characters, letters, digits and hyphens, not starting or ending with a hyphen.", http.StatusBadRequest)
 		return
 	}
 
 	nodeID, err := handlers.GenerateNodeWarpIdentity()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to generate node identity", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate node identity", http.StatusInternalServerError)
 		return
 	}
 	plaintext, err := handlers.GeneratePlaintextKey()
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
 	}
 	// One customer machine, one warp peer; kill_old so a restart re-enrolls
@@ -1412,7 +1413,7 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		NodeID:    nodeID,
 		OwnerID:   userID,
 	}); err != nil {
-		handlers.SendJSONError(w, "Failed to create the node key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to create the node key", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1428,17 +1429,17 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 // metadata only (the secret is stored as a hash and is gone after minting).
 func (h *WarpHandler) ListNodeWarpKeys(w http.ResponseWriter, r *http.Request) {
 	if !handlers.ByonActive(h.state, r) {
-		handlers.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
 	userID := handlers.ByonCallerID(r)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	keys, err := h.state.Store.ListWarpAPIKeysByOwner(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load node keys", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load node keys", http.StatusInternalServerError)
 		return
 	}
 	type nodeKey struct {
@@ -1483,30 +1484,30 @@ func (h *WarpHandler) ListNodeWarpKeys(w http.ResponseWriter, r *http.Request) {
 // the platform token minted with it (store.BindWarpKeyFromEnrollToken).
 func (h *WarpHandler) BindNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 	if !handlers.ByonActive(h.state, r) {
-		handlers.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
 	userID := handlers.ByonCallerID(r)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	var req struct {
 		Node int `json:"node"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Node <= 0 {
-		handlers.SendJSONError(w, "Choose the machine this key belongs to", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Choose the machine this key belongs to", http.StatusBadRequest)
 		return
 	}
 	key, status, msg := handlers.OwnNodeKey(h.state.Store, mux.Vars(r)["nodeID"], userID)
 	if key == nil {
-		handlers.SendJSONError(w, msg, status)
+		httpx.SendJSONError(w, msg, status)
 		return
 	}
 	// Same answer for "not yours" as for "does not exist", as for the key.
 	node, err := h.state.Store.GetNodeByID(req.Node)
 	if err != nil || node.OwnerID == nil || *node.OwnerID != userID {
-		handlers.SendJSONError(w, "Machine not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Machine not found", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1516,34 +1517,34 @@ func (h *WarpHandler) BindNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if key.BoundNodeID != 0 {
-		handlers.SendJSONError(w, "This key already belongs to another machine", http.StatusConflict)
+		httpx.SendJSONError(w, "This key already belongs to another machine", http.StatusConflict)
 		return
 	}
 	// Asked before the write so the refusal can say why. The unique index on
 	// bound_node_id is what holds it under a race.
 	keys, err := h.state.Store.ListWarpAPIKeysByOwner(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load node keys", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load node keys", http.StatusInternalServerError)
 		return
 	}
 	for _, k := range keys {
 		if k.BoundNodeID == node.ID {
-			handlers.SendJSONError(w, "This machine already has a key for its Link", http.StatusConflict)
+			httpx.SendJSONError(w, "This machine already has a key for its Link", http.StatusConflict)
 			return
 		}
 	}
 	bound, err := h.state.Store.BindWarpAPIKey(key.ID, node.ID)
 	if errors.Is(err, store.ErrWarpKeyNodeTaken) {
-		handlers.SendJSONError(w, "This machine already has a key for its Link", http.StatusConflict)
+		httpx.SendJSONError(w, "This machine already has a key for its Link", http.StatusConflict)
 		return
 	}
 	if err != nil {
 		log.Printf("bind node key %s to node %d: %v", key.NodeID, node.ID, err)
-		handlers.SendJSONError(w, "Failed to bind the key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to bind the key", http.StatusInternalServerError)
 		return
 	}
 	if !bound {
-		handlers.SendJSONError(w, "This key changed in the meantime. Reload and try again.", http.StatusConflict)
+		httpx.SendJSONError(w, "This key changed in the meantime. Reload and try again.", http.StatusConflict)
 		return
 	}
 	log.Printf("bind node key %s to node %d (owner %s)", key.NodeID, node.ID, userID)
@@ -1580,25 +1581,25 @@ func (h *WarpHandler) BindNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 // RevokeLinkKitTeardown.
 func (h *WarpHandler) RevokeNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 	if !handlers.ByonActive(h.state, r) {
-		handlers.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
+		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
 	userID, _ := r.Context().Value("userID").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	nodeID := mux.Vars(r)["nodeID"]
 	// Prefix-checked for the same reason RevokeLinkKit checks its own: the two
 	// kinds of key must not be revocable through each other's endpoint.
 	if !strings.HasPrefix(nodeID, "node-") {
-		handlers.SendJSONError(w, "Invalid node key id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid node key id", http.StatusBadRequest)
 		return
 	}
 	key, err := h.state.Store.GetWarpAPIKeyByNodeID(nodeID)
 	if err != nil {
-		handlers.SendJSONError(w, "Node key not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Node key not found", http.StatusNotFound)
 		return
 	}
 	// Same message for "not yours" as for "does not exist": a different one would
@@ -1606,11 +1607,11 @@ func (h *WarpHandler) RevokeNodeWarpKey(w http.ResponseWriter, r *http.Request) 
 	// and is answered the same way: this endpoint has no capability, and the
 	// admin kill switch for that key is RevokeAPIKey under /api/admin/warp/keys.
 	if key.OwnerID == "" || (key.OwnerID != userID && (!isAdmin || h.state.UserOwnedByOther(&key.OwnerID, userID))) {
-		handlers.SendJSONError(w, "Node key not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Node key not found", http.StatusNotFound)
 		return
 	}
 	if err := h.state.Store.RevokeWarpAPIKeyByNodeID(nodeID); err != nil {
-		handlers.SendJSONError(w, "Failed to revoke the node key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to revoke the node key", http.StatusInternalServerError)
 		return
 	}
 	removed := 0

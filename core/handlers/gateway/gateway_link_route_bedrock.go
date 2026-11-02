@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -63,39 +64,39 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 		Bedrock *bool `json:"bedrock"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.Java == nil || req.Bedrock == nil {
-		handlers.SendJSONError(w, `Invalid request: expected {"java": true|false, "bedrock": true|false}`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `Invalid request: expected {"java": true|false, "bedrock": true|false}`, http.StatusBadRequest)
 		return
 	}
 	if !*req.Java && !*req.Bedrock {
-		handlers.SendJSONErrorCode(w, "A route needs Java, Bedrock or both.", "edition_invalid", http.StatusBadRequest)
+		httpx.SendJSONErrorCode(w, "A route needs Java, Bedrock or both.", "edition_invalid", http.StatusBadRequest)
 		return
 	}
 	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
-		handlers.SendJSONError(w, "Route not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
 	// The stored row decides, not only the live entry ownsCoreRoute also
 	// accepts: the key and the edition belong to the row's owner.
 	rt, err := h.coreRoute(domain)
 	if err != nil || rt == nil || (!isAdmin && rt.OwnerID != userID) {
-		handlers.SendJSONError(w, "Route not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
 	prior, err := h.state.Store.GetLinkRouteEdition(domain)
 	if err != nil {
 		log.Printf("bedrock: link route %s: %v", domain, err)
-		handlers.SendJSONError(w, "Failed to read the Bedrock setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the Bedrock setting", http.StatusInternalServerError)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if *req.Bedrock && (prior == nil || !prior.Bedrock) {
 		if !h.bedrockAllowed(r) {
-			handlers.SendJSONErrorCode(w, bedrockOff, "bedrock_disabled", http.StatusConflict)
+			httpx.SendJSONErrorCode(w, bedrockOff, "bedrock_disabled", http.StatusConflict)
 			return
 		}
 		if msg := handlers.OwnerRefusal(h.state, r, rt.OwnerID); msg != "" {
-			handlers.SendJSONError(w, msg, http.StatusForbidden)
+			httpx.SendJSONError(w, msg, http.StatusForbidden)
 			return
 		}
 		if !h.state.GatewayEnabled() || h.state.Redis == nil {
@@ -105,11 +106,11 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 		entries, err := services.LiveBedrockEntries(ctx, h.state.Redis)
 		if err != nil {
 			log.Printf("bedrock: link route %s: %v", domain, err)
-			handlers.SendJSONError(w, "Could not check the Bedrock entries. Try again.", http.StatusBadGateway)
+			httpx.SendJSONError(w, "Could not check the Bedrock entries. Try again.", http.StatusBadGateway)
 			return
 		}
 		if refusal := linkRouteBedrockRefusal(domain, services.GetEdgesFromRedis(ctx, h.state.Redis), entries); refusal != "" {
-			handlers.SendJSONErrorCode(w, refusal, "bedrock_unavailable", http.StatusConflict)
+			httpx.SendJSONErrorCode(w, refusal, "bedrock_unavailable", http.StatusConflict)
 			return
 		}
 	}
@@ -120,17 +121,17 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 	}
 	key := make([]byte, 16)
 	if _, err := rand.Read(key); err != nil {
-		handlers.SendJSONError(w, "Failed to create the Floodgate key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to create the Floodgate key", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.SetLinkRouteEdition(domain, *req.Java, *req.Bedrock, key); err != nil {
 		log.Printf("bedrock: link route %s: %v", domain, err)
-		handlers.SendJSONError(w, "Failed to save the route", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save the route", http.StatusInternalServerError)
 		return
 	}
 	if err := h.bedrockService().PublishEditions(ctx, services.BedrockActive(r.Context(), h.state.FeatureFlags)); err != nil {
 		log.Printf("bedrock: link route %s: publish editions: %v", domain, err)
-		handlers.SendJSONError(w, "The route was saved, but the gateway could not be told yet. It applies within a minute.", http.StatusBadGateway)
+		httpx.SendJSONError(w, "The route was saved, but the gateway could not be told yet. It applies within a minute.", http.StatusBadGateway)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true,
@@ -145,21 +146,21 @@ func (h *GatewayHandler) GetLinkRouteFloodgateKey(w http.ResponseWriter, r *http
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	domain := mux.Vars(r)["domain"]
 	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
-		handlers.SendJSONError(w, "Route not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
 	e, err := h.state.Store.GetLinkRouteEdition(domain)
 	if err != nil {
 		log.Printf("bedrock: link route %s: key: %v", domain, err)
-		handlers.SendJSONError(w, "Failed to read the Floodgate key", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the Floodgate key", http.StatusInternalServerError)
 		return
 	}
 	if e != nil && !isAdmin && e.OwnerID != userID {
-		handlers.SendJSONError(w, "Route not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
 	if e == nil {
-		handlers.SendJSONError(w, "This address has no Floodgate key yet. Give it Bedrock first.", http.StatusNotFound)
+		httpx.SendJSONError(w, "This address has no Floodgate key yet. Give it Bedrock first.", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")

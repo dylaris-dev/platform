@@ -14,6 +14,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -315,13 +316,13 @@ func sendTechnicError(w http.ResponseWriter, err error) {
 	var user technicUserError
 	switch {
 	case errors.As(err, &cool):
-		sendCooldown(w, "Technic", cool.left)
+		httpx.SendCooldown(w, "Technic", cool.left)
 	case errors.As(err, &user):
-		sendJSONError(w, user.msg, http.StatusUnprocessableEntity)
+		httpx.SendJSONError(w, user.msg, http.StatusUnprocessableEntity)
 	case errors.Is(err, errTechnicNotFound):
-		sendJSONError(w, "Technic pack not found.", http.StatusNotFound)
+		httpx.SendJSONError(w, "Technic pack not found.", http.StatusNotFound)
 	default:
-		sendJSONError(w, "Technic could not be reached: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Technic could not be reached: "+err.Error(), http.StatusBadGateway)
 	}
 }
 
@@ -392,7 +393,7 @@ type technicPackOut struct {
 func (h *TechnicHandler) Pack(w http.ResponseWriter, r *http.Request) {
 	slug := mux.Vars(r)["slug"]
 	if !technicSlugRe.MatchString(slug) {
-		sendJSONError(w, "Invalid Technic pack name.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid Technic pack name.", http.StatusBadRequest)
 		return
 	}
 	p, err := h.fetchPack(r.Context(), slug)

@@ -13,6 +13,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -79,7 +80,7 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 	}
 
 	if left, ok := h.cool.Blocked(time.Now()); ok {
-		handlers.SendCooldown(w, "Modrinth", left)
+		httpx.SendCooldown(w, "Modrinth", left)
 		return
 	}
 
@@ -89,7 +90,7 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 	}
 	req, err := http.NewRequestWithContext(ctx, method, urlStr, bodyReader)
 	if err != nil {
-		handlers.SendJSONError(w, "Bad upstream request", http.StatusBadGateway)
+		httpx.SendJSONError(w, "Bad upstream request", http.StatusBadGateway)
 		return
 	}
 	req.Header.Set("User-Agent", services.DylarisUserAgent())
@@ -100,12 +101,12 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 
 	resp, err := h.http.Do(req)
 	if err != nil {
-		handlers.SendJSONError(w, "Upstream call failed: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Upstream call failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusTooManyRequests {
-		handlers.SendCooldown(w, "Modrinth", h.cool.Trip(resp.Header, time.Now()))
+		httpx.SendCooldown(w, "Modrinth", h.cool.Trip(resp.Header, time.Now()))
 		return
 	}
 	// Bounded: a bulk version-files answer for a large server is a few MB, and
@@ -113,7 +114,7 @@ func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, m
 	// liked. Over the cap is an error, not a truncated (invalid) JSON body.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, modrinthMaxBody+1))
 	if len(body) > modrinthMaxBody {
-		handlers.SendJSONError(w, "Modrinth response too large", http.StatusBadGateway)
+		httpx.SendJSONError(w, "Modrinth response too large", http.StatusBadGateway)
 		return
 	}
 
@@ -233,7 +234,7 @@ func (h *ModrinthHandler) Project(w http.ResponseWriter, r *http.Request) {
 		slug = strings.TrimPrefix(r.URL.Path, "/api/modrinth/project/")
 	}
 	if slug == "" {
-		handlers.SendJSONError(w, "slug required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "slug required", http.StatusBadRequest)
 		return
 	}
 	upstream := fmt.Sprintf("%s/project/%s", modrinthBaseURL, url.PathEscape(slug))
@@ -251,7 +252,7 @@ func (h *ModrinthHandler) ProjectVersions(w http.ResponseWriter, r *http.Request
 		slug = path
 	}
 	if slug == "" {
-		handlers.SendJSONError(w, "slug required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "slug required", http.StatusBadRequest)
 		return
 	}
 	values := url.Values{}
@@ -279,7 +280,7 @@ func (h *ModrinthHandler) ProjectVersions(w http.ResponseWriter, r *http.Request
 func (h *ModrinthHandler) Version(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/modrinth/version/")
 	if id == "" {
-		handlers.SendJSONError(w, "version id required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "version id required", http.StatusBadRequest)
 		return
 	}
 	upstream := fmt.Sprintf("%s/version/%s", modrinthBaseURL, url.PathEscape(id))

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
@@ -26,7 +27,7 @@ func (h *TimezoneHandler) GetMine(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
 	tz, format, err := h.state.Store.GetUserTimePreferences(userID)
 	if err != nil {
-		sendJSONError(w, "Could not load your time settings", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not load your time settings", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"timezone": tz, "timeFormat": format})
@@ -41,22 +42,22 @@ func (h *TimezoneHandler) SetMine(w http.ResponseWriter, r *http.Request) {
 		TimeFormat string `json:"timeFormat"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Timezone != "" && !services.ValidTimezone(req.Timezone) {
-		sendJSONError(w, "Unknown time zone", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Unknown time zone", http.StatusBadRequest)
 		return
 	}
 	if req.TimeFormat == "" {
 		req.TimeFormat = "auto"
 	}
 	if !validTimeFormats[req.TimeFormat] {
-		sendJSONError(w, "timeFormat must be auto, 24h or 12h", http.StatusBadRequest)
+		httpx.SendJSONError(w, "timeFormat must be auto, 24h or 12h", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetUserTimePreferences(userID, req.Timezone, req.TimeFormat); err != nil {
-		sendJSONError(w, "Could not save your time settings", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not save your time settings", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "timezone": req.Timezone, "timeFormat": req.TimeFormat})
@@ -68,7 +69,7 @@ func (h *TimezoneHandler) GetServer(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	own, eff, err := h.state.Store.GetServerTimezone(serverID)
 	if err != nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"timezone": own, "effective": eff})
@@ -83,15 +84,15 @@ func (h *TimezoneHandler) SetServer(w http.ResponseWriter, r *http.Request) {
 		Timezone string `json:"timezone"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Timezone != "" && !services.ValidTimezone(req.Timezone) {
-		sendJSONError(w, "Unknown time zone", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Unknown time zone", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetServerTimezone(serverID, req.Timezone); err != nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	_, eff, _ := h.state.Store.GetServerTimezone(serverID)

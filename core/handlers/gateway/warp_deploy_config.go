@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -26,7 +27,7 @@ import (
 // above is about are exactly the ones this still answers.
 func (h *WarpHandler) GetDeployConfig(w http.ResponseWriter, r *http.Request) {
 	if !h.mayReadDeployConfig(r) {
-		handlers.SendJSONError(w, "This is only available with a BYON or route-only subscription", http.StatusForbidden)
+		httpx.SendJSONError(w, "This is only available with a BYON or route-only subscription", http.StatusForbidden)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{

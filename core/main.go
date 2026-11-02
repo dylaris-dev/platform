@@ -28,6 +28,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/backup"
 	"dylaris-core/handlers/gateway"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/storageapi"
 	"dylaris-core/handlers/tabs"
 	"dylaris-core/metrics"
@@ -304,7 +305,7 @@ func main() {
 	// Which reverse-proxy networks may set X-Forwarded-For. Installed before any
 	// handler serves, so the rate limiters and the audit log key on a client IP
 	// that a direct client cannot forge. Process-global, read-only after this.
-	handlers.SetTrustedProxies(cfg.TrustedProxyCIDRs)
+	httpx.SetTrustedProxies(cfg.TrustedProxyCIDRs)
 
 	// gRPC Registry for Node connections
 	grpcRegistry := nodegrpc.NewRegistry()

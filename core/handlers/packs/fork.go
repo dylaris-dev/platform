@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/storage/modpack"
 	"encoding/hex"
@@ -29,7 +30,7 @@ var forkSlots = make(chan struct{}, 2)
 func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 	source, _, ok := h.loadBuild(r, packRead)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	user, _ := r.Context().Value("userID").(string)
@@ -40,33 +41,33 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 		VersionString string `json:"versionString"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&req); err != nil || req.TargetPackID < 0 {
-		handlers.SendJSONError(w, "Invalid fork request", 400)
+		httpx.SendJSONError(w, "Invalid fork request", 400)
 		return
 	}
 	original, ok := h.packAccess(r, source.PackID, packRead)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	target := &models.Pack{OwnerID: user, InternalName: strings.TrimSpace(req.Name), Summary: original.Summary, ModrinthVisibility: "unlisted"}
 	if req.TargetPackID > 0 {
 		target, ok = h.packAccess(r, req.TargetPackID, packEdit)
 		if !ok {
-			handlers.SendJSONError(w, "Target edit access is required", 403)
+			httpx.SendJSONError(w, "Target edit access is required", 403)
 			return
 		}
 		builds, err := h.state.Store.ListPackBuilds(target.ID)
 		if err != nil {
-			handlers.SendJSONError(w, "Could not inspect the target", 500)
+			httpx.SendJSONError(w, "Could not inspect the target", 500)
 			return
 		}
 		if len(builds) > 0 {
-			handlers.SendJSONError(w, "The target must be empty: it may not contain any builds", 409)
+			httpx.SendJSONError(w, "The target must be empty: it may not contain any builds", 409)
 			return
 		}
 	} else {
 		if target.InternalName == "" || len([]rune(target.InternalName)) > 128 {
-			handlers.SendJSONError(w, "A pack name of 1-128 characters is required", 400)
+			httpx.SendJSONError(w, "A pack name of 1-128 characters is required", 400)
 			return
 		}
 		target.InternalSlug = strings.TrimSpace(req.Slug)
@@ -77,17 +78,17 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !packSlugRe.MatchString(target.InternalSlug) {
-			handlers.SendJSONError(w, "Invalid target slug", 400)
+			httpx.SendJSONError(w, "Invalid target slug", 400)
 			return
 		}
 		own, err := h.state.Store.ListPacksByOwner(user)
 		if err != nil {
-			handlers.SendJSONError(w, "Could not inspect existing packs", 500)
+			httpx.SendJSONError(w, "Could not inspect existing packs", 500)
 			return
 		}
 		for _, p := range own {
 			if p.InternalSlug == target.InternalSlug {
-				handlers.SendJSONError(w, "A pack with this slug already exists", 409)
+				httpx.SendJSONError(w, "A pack with this slug already exists", 409)
 				return
 			}
 		}
@@ -97,30 +98,30 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 		version = source.VersionString
 	}
 	if len([]rune(version)) > 64 || !safeKeyComponent(version) {
-		handlers.SendJSONError(w, "Invalid target build version", 400)
+		httpx.SendJSONError(w, "Invalid target build version", 400)
 		return
 	}
 	select {
 	case forkSlots <- struct{}{}:
 		defer func() { <-forkSlots }()
 	default:
-		handlers.SendJSONError(w, "Other pack copies are in progress. Try again shortly.", 503)
+		httpx.SendJSONError(w, "Other pack copies are in progress. Try again shortly.", 503)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	rows, err := h.state.Store.ListBuildContent(source.ID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read source content", 500)
+		httpx.SendJSONError(w, "Could not read source content", 500)
 		return
 	}
 	if len(rows) > 2000 {
-		handlers.SendJSONError(w, "A fork supports up to 2000 content entries", 422)
+		httpx.SendJSONError(w, "A fork supports up to 2000 content entries", 422)
 		return
 	}
 	folders, err := h.state.Store.ListPackFolders(ctx, source.ID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read source folders", 500)
+		httpx.SendJSONError(w, "Could not read source folders", 500)
 		return
 	}
 	forkID := strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -159,13 +160,13 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if entry.Filesize < 0 || entry.Filesize > maxForkObjectBytes || total+entry.Filesize > maxForkUploadBytes {
-			handlers.SendJSONError(w, "Uploaded fork content exceeds the 1 GB/file or 2 GB total limit", 422)
+			httpx.SendJSONError(w, "Uploaded fork content exceeds the 1 GB/file or 2 GB total limit", 422)
 			return
 		}
 		if provider == nil {
 			provider, err = h.state.BuildModpackStorageProvider()
 			if err != nil || provider == nil {
-				handlers.SendJSONError(w, "Modpack storage is unavailable", 503)
+				httpx.SendJSONError(w, "Modpack storage is unavailable", 503)
 				return
 			}
 		}
@@ -173,7 +174,7 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 		// Track before writing: even a partially failed provider write is ours to remove.
 		staged = append(staged, key)
 		if err = copyForkArtifact(ctx, provider, entry.StorageKey, key, *entry); err != nil {
-			handlers.SendJSONError(w, "Could not copy and verify an uploaded file; the source was kept unchanged", 502)
+			httpx.SendJSONError(w, "Could not copy and verify an uploaded file; the source was kept unchanged", 502)
 			return
 		}
 		total += entry.Filesize
@@ -182,12 +183,12 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 	}
 	// Recheck grants after storage work; a revoked invitation cannot finish a fork.
 	if _, ok = h.packAccess(r, source.PackID, packRead); !ok {
-		handlers.SendJSONError(w, "Source access was revoked", 403)
+		httpx.SendJSONError(w, "Source access was revoked", 403)
 		return
 	}
 	if target.ID > 0 {
 		if _, ok = h.packAccess(r, target.ID, packEdit); !ok {
-			handlers.SendJSONError(w, "Target access was revoked", 403)
+			httpx.SendJSONError(w, "Target access was revoked", 403)
 			return
 		}
 	}
@@ -195,7 +196,7 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 	f := &models.PackFork{SourcePackID: source.PackID, SourceBuildID: source.ID, Target: target, Build: b, CatalogSuffix: forkID, Content: rows, Folders: folders}
 	packID, _, err := h.state.Store.ForkPackBuild(ctx, f)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not finish the fork: target must still be empty and its slug unique", 409)
+		httpx.SendJSONError(w, "Could not finish the fork: target must still be empty and its slug unique", 409)
 		return
 	}
 	committed = true

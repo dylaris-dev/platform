@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-pkg/beam/quota"
 	"dylaris-pkg/validate"
@@ -283,17 +284,17 @@ func (h *FileHandler) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	serverUUID, _, err := h.getServerUUIDRead(r)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusForbidden)
+		httpx.SendJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	if serverUUID == "" {
-		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
 
 	nodeID, err := h.getNodeIDForServer(serverUUID)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusNotFound)
+		httpx.SendJSONError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
@@ -303,22 +304,22 @@ func (h *FileHandler) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 		Payload:    &pb.NodeMessage_ListReq{ListReq: &pb.ListFilesReq{Path: pathParam}},
 	}, 30*time.Second)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 		return
 	}
 
 	if errResp := resp.GetError(); errResp != nil {
 		if errResp.Code == 403 {
-			sendJSONError(w, errResp.Message, http.StatusForbidden)
+			httpx.SendJSONError(w, errResp.Message, http.StatusForbidden)
 		} else {
-			sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+			httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		}
 		return
 	}
 
 	listResp := resp.GetListResp()
 	if listResp == nil {
-		sendJSONError(w, "unexpected response from node", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "unexpected response from node", http.StatusInternalServerError)
 		return
 	}
 
@@ -342,17 +343,17 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 	path := r.URL.Query().Get("path")
 	serverUUID, viaDemoBypass, err := h.getServerUUIDRead(r)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusForbidden)
+		httpx.SendJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	if serverUUID == "" {
-		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
 
 	nodeID, err := h.getNodeIDForServer(serverUUID)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusNotFound)
+		httpx.SendJSONError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
@@ -368,23 +369,23 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 
 	ch, err := h.state.GRPCRegistry.SendRequestStreaming(nodeID, msg)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 		return
 	}
 	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
 	data, errResp, rerr := collectNodeFile(ch, maxOpenFileBytes)
 	if errResp != nil {
-		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 	if rerr != nil {
-		sendJSONError(w, rerr.Error(), readErrStatus(rerr))
+		httpx.SendJSONError(w, rerr.Error(), readErrStatus(rerr))
 		return
 	}
 	data, readonly, derr := decodeOpenedFile(path, data, maxOpenFileBytes)
 	if derr != nil {
-		sendJSONError(w, derr.Error(), readErrStatus(derr))
+		httpx.SendJSONError(w, derr.Error(), readErrStatus(derr))
 		return
 	}
 
@@ -444,7 +445,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 		capped := int64(saveBodyLimit)
 		limit = &capped
 	}
-	if !capBodyLimit(w, r, limit) {
+	if !httpx.CapBodyLimit(w, r, limit) {
 		return
 	}
 
@@ -456,25 +457,25 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			sendJSONError(w, "File is too large or exceeds your upload limit", http.StatusRequestEntityTooLarge)
+			httpx.SendJSONError(w, "File is too large or exceeds your upload limit", http.StatusRequestEntityTooLarge)
 			return
 		}
-		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	if !validate.IsSafeRelPath(req.Path) {
-		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 
 	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusForbidden)
+		httpx.SendJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	if serverUUID == "" {
-		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
 	if h.refuseSuspendedWrite(w, r, serverUUID) {
@@ -483,13 +484,13 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 
 	nodeID, err := h.getNodeIDForServer(serverUUID)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusNotFound)
+		httpx.SendJSONError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
 	conn, ok := h.state.GRPCRegistry.GetConnection(nodeID)
 	if !ok {
-		sendJSONError(w, fmt.Sprintf("Node %d not connected", nodeID), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("Node %d not connected", nodeID), http.StatusBadGateway)
 		return
 	}
 
@@ -507,11 +508,11 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.state.GRPCRegistry.SendRequest(nodeID, writeReqMsg, 30*time.Second)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 	// Listen for the node's verdict before the first chunk goes out.
@@ -533,7 +534,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 		if err := conn.Send(chunkMsg); err != nil {
-			sendJSONError(w, fmt.Sprintf("Failed to send chunk: %v", err), http.StatusBadGateway)
+			httpx.SendJSONError(w, fmt.Sprintf("Failed to send chunk: %v", err), http.StatusBadGateway)
 			return
 		}
 	}
@@ -547,11 +548,11 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	if err := conn.Send(doneMsg); err != nil {
-		sendJSONError(w, fmt.Sprintf("Failed to send transfer done: %v", err), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("Failed to send transfer done: %v", err), http.StatusBadGateway)
 		return
 	}
 	if status, msg, ok := confirmNodeWrite(wait); !ok {
-		sendJSONError(w, msg, status)
+		httpx.SendJSONError(w, msg, status)
 		return
 	}
 
@@ -569,26 +570,26 @@ func (h *FileHandler) CreateFileHandler(w http.ResponseWriter, r *http.Request) 
 		IsDir bool   `json:"is_dir"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	if !validate.IsSafeRelPath(req.Path) {
-		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	if _, file := path.Split(req.Path); !validate.IsPlainFileName(file) {
-		sendJSONError(w, "Invalid file name", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid file name", http.StatusBadRequest)
 		return
 	}
 
 	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusForbidden)
+		httpx.SendJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	if serverUUID == "" {
-		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
 	if h.refuseSuspendedWrite(w, r, serverUUID) {
@@ -597,7 +598,7 @@ func (h *FileHandler) CreateFileHandler(w http.ResponseWriter, r *http.Request) 
 
 	nodeID, err := h.getNodeIDForServer(serverUUID)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusNotFound)
+		httpx.SendJSONError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
@@ -607,11 +608,11 @@ func (h *FileHandler) CreateFileHandler(w http.ResponseWriter, r *http.Request) 
 		Payload:    &pb.NodeMessage_CreateReq{CreateReq: &pb.CreateFileReq{Path: req.Path, IsDir: req.IsDir}},
 	}, 30*time.Second)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -626,7 +627,7 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 		NewPath string `json:"newPath"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
@@ -634,22 +635,22 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 	// oldPath resolves to the server directory there, and a rename of that
 	// moves the whole server out from under its UUID.
 	if !validate.IsSafeRelPath(req.OldPath) || strings.TrimSpace(req.OldPath) == "" {
-		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	_, newFile := path.Split(req.NewPath)
 	if !validate.IsPlainFileName(newFile) {
-		sendJSONError(w, "Invalid file name", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid file name", http.StatusBadRequest)
 		return
 	}
 
 	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusForbidden)
+		httpx.SendJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	if serverUUID == "" {
-		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
 	if h.refuseSuspendedWrite(w, r, serverUUID) {
@@ -658,12 +659,12 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 
 	nodeID, err := h.getNodeIDForServer(serverUUID)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusNotFound)
+		httpx.SendJSONError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
 	if oldNodeWouldRewrite(newFile) && !h.nodeRenamesFreely(r.Context(), nodeID) {
-		sendJSONError(w, "This server's node must be updated before a file can be renamed to a name with spaces or special characters.", http.StatusConflict)
+		httpx.SendJSONError(w, "This server's node must be updated before a file can be renamed to a name with spaces or special characters.", http.StatusConflict)
 		return
 	}
 
@@ -673,11 +674,11 @@ func (h *FileHandler) RenameFileHandler(w http.ResponseWriter, r *http.Request) 
 		Payload:    &pb.NodeMessage_RenameReq{RenameReq: &pb.RenameFileReq{OldPath: req.OldPath, NewName: newFile}},
 	}, 30*time.Second)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -714,17 +715,17 @@ func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
 		NewPath string `json:"newPath"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusForbidden)
+		httpx.SendJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	if serverUUID == "" {
-		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
 	if h.refuseSuspendedWrite(w, r, serverUUID) {
@@ -733,7 +734,7 @@ func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
 
 	nodeID, err := h.getNodeIDForServer(serverUUID)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusNotFound)
+		httpx.SendJSONError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
@@ -743,11 +744,11 @@ func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
 	// wants) and is destructive here: the node resolves both ends to the root
 	// and copies the tree onto itself, truncating every file it walks.
 	if !validate.IsSafeRelPath(req.OldPath) || !validate.IsSafeRelPath(req.NewPath) {
-		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.OldPath) == "" || strings.TrimSpace(req.NewPath) == "" {
-		sendJSONError(w, "Source and destination path are required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Source and destination path are required", http.StatusBadRequest)
 		return
 	}
 
@@ -757,11 +758,11 @@ func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
 		Payload:    &pb.NodeMessage_CopyReq{CopyReq: &pb.CopyFileReq{SrcPath: req.OldPath, DstPath: req.NewPath}},
 	}, 60*time.Second)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -775,23 +776,23 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 		Path string `json:"path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	serverUUID, err := h.getServerUUID(r, "files.delete")
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusForbidden)
+		httpx.SendJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	if serverUUID == "" {
-		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
 
 	nodeID, err := h.getNodeIDForServer(serverUUID)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusNotFound)
+		httpx.SendJSONError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
@@ -800,7 +801,7 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 	// and all. The node refuses it too; refusing early keeps the request from
 	// ever reaching a node running an older build.
 	if !validate.IsSafeRelPath(req.Path) || strings.TrimSpace(req.Path) == "" {
-		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	resp, err := h.sendGRPCMsg(nodeID, &pb.NodeMessage{
@@ -809,11 +810,11 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 		Payload:    &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: req.Path}},
 	}, 30*time.Second)
 	if err != nil {
-		sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
-		sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+		httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 		return
 	}
 
@@ -891,7 +892,7 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 		if done := resp.GetTransferDone(); done != nil && done.TotalBytes == 0 {
 			w.Header().Set("Content-Type", "application/octet-stream")
 			if done.Filename != "" {
-				setAttachmentDisposition(w, done.Filename)
+				httpx.SetAttachmentDisposition(w, done.Filename)
 			}
 			headerWritten = true
 			continue
@@ -1004,7 +1005,7 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 		if done := resp.GetTransferDone(); done != nil && done.TotalBytes == 0 {
 			w.Header().Set("Content-Type", "application/octet-stream")
 			if done.Filename != "" {
-				setAttachmentDisposition(w, done.Filename)
+				httpx.SetAttachmentDisposition(w, done.Filename)
 			}
 			headerWritten = true
 			continue
@@ -1042,12 +1043,12 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	// one with no server at all, and only then answered 403. So server_uuid
 	// comes in the query: in the form, finding it would mean parsing the body.
 	if r.URL.Query().Get("server_uuid") == "" {
-		sendJSONError(w, "server_uuid required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
 		return
 	}
 	serverUUID, err := h.getServerUUID(r, "files.write")
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusForbidden)
+		httpx.SendJSONError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	// The cut-off Beam and SFTP apply: an upload is new data a suspended
@@ -1057,13 +1058,13 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	uploadLimit := h.getTransferLimit(r, "upload")
-	if !capBodyLimit(w, r, uploadLimit) {
+	if !httpx.CapBodyLimit(w, r, uploadLimit) {
 		return
 	}
 	// 32MiB in memory; anything larger spills to a temp file on disk. Passing
 	// uploadLimit here would buffer the whole (up to multi-GB) upload in RAM.
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		sendJSONError(w, "File is too large or exceeds your upload limit", http.StatusBadRequest)
+		httpx.SendJSONError(w, "File is too large or exceeds your upload limit", http.StatusBadRequest)
 		return
 	}
 
@@ -1077,13 +1078,13 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	// It is answered here, before the server and node are looked up: there is
 	// nothing to ask a node about.
 	if len(r.MultipartForm.File["files"]) == 0 {
-		sendJSONError(w, "No files in the request: the file part must be named \"files\"", http.StatusBadRequest)
+		httpx.SendJSONError(w, "No files in the request: the file part must be named \"files\"", http.StatusBadRequest)
 		return
 	}
 
 	path := r.FormValue("path")
 	if !validate.IsSafeRelPath(path) {
-		sendJSONError(w, "Invalid path", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 
@@ -1107,7 +1108,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 					freeBytes = 0
 				}
 				if diskInfo.Total+totalUploadSize > diskInfo.Limit {
-					sendJSONError(w, fmt.Sprintf(
+					httpx.SendJSONError(w, fmt.Sprintf(
 						"Storage limit reached: %s free, the upload is %s.",
 						formatBytesHuman(freeBytes),
 						formatBytesHuman(totalUploadSize),
@@ -1129,13 +1130,13 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	for _, fh := range r.MultipartForm.File["files"] {
 		quotaUploadSize += fh.Size
 		if quota.ExceedsSizeCap(fh.Size, sizeCap) {
-			sendJSONError(w, fmt.Sprintf("Upload of %s exceeds the %s per-file limit",
+			httpx.SendJSONError(w, fmt.Sprintf("Upload of %s exceeds the %s per-file limit",
 				formatBytesHuman(fh.Size), formatBytesHuman(*sizeCap)), http.StatusRequestEntityTooLarge)
 			return
 		}
 	}
 	if ok, used, limit := quota.CheckDailyQuota(r.Context(), h.state.Redis, username, quotaUploadSize); !ok {
-		sendJSONError(w, fmt.Sprintf("Daily upload quota reached — %s of %s used today, upload is %s",
+		httpx.SendJSONError(w, fmt.Sprintf("Daily upload quota reached — %s of %s used today, upload is %s",
 			formatBytesHuman(used), formatBytesHuman(*limit), formatBytesHuman(quotaUploadSize)),
 			http.StatusRequestEntityTooLarge)
 		return
@@ -1143,13 +1144,13 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 
 	nodeID, err := h.getNodeIDForServer(serverUUID)
 	if err != nil {
-		sendJSONError(w, err.Error(), http.StatusNotFound)
+		httpx.SendJSONError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
 	conn, ok := h.state.GRPCRegistry.GetConnection(nodeID)
 	if !ok {
-		sendJSONError(w, fmt.Sprintf("Node %d not connected", nodeID), http.StatusBadGateway)
+		httpx.SendJSONError(w, fmt.Sprintf("Node %d not connected", nodeID), http.StatusBadGateway)
 		return
 	}
 
@@ -1158,7 +1159,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	// instead of being skipped while the answer says success.
 	for _, fileHeader := range files {
 		if !validate.IsPlainFileName(fileHeader.Filename) {
-			sendJSONError(w, fmt.Sprintf("Invalid file name %q", fileHeader.Filename), http.StatusBadRequest)
+			httpx.SendJSONError(w, fmt.Sprintf("Invalid file name %q", fileHeader.Filename), http.StatusBadRequest)
 			return
 		}
 	}
@@ -1171,7 +1172,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 
 		file, err := fileHeader.Open()
 		if err != nil {
-			sendJSONError(w, "Could not open uploaded file", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Could not open uploaded file", http.StatusInternalServerError)
 			return
 		}
 
@@ -1190,12 +1191,12 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		resp, err := h.state.GRPCRegistry.SendRequest(nodeID, writeReqMsg, 30*time.Second)
 		if err != nil {
 			file.Close()
-			sendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
+			httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 			return
 		}
 		if errResp := resp.GetError(); errResp != nil {
 			file.Close()
-			sendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
+			httpx.SendJSONError(w, errResp.Message, nodeErrorStatus(errResp.Code))
 			return
 		}
 
@@ -1224,7 +1225,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 				}
 				if err := conn.Send(chunkMsg); err != nil {
 					file.Close()
-					sendJSONError(w, fmt.Sprintf("Failed to send chunk: %v", err), http.StatusBadGateway)
+					httpx.SendJSONError(w, fmt.Sprintf("Failed to send chunk: %v", err), http.StatusBadGateway)
 					return
 				}
 				offset += int64(n)
@@ -1234,7 +1235,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 			}
 			if readErr != nil {
 				file.Close()
-				sendJSONError(w, fmt.Sprintf("Failed to read file: %v", readErr), http.StatusInternalServerError)
+				httpx.SendJSONError(w, fmt.Sprintf("Failed to read file: %v", readErr), http.StatusInternalServerError)
 				return
 			}
 		}
@@ -1249,13 +1250,13 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 			},
 		}
 		if err := conn.Send(doneMsg); err != nil {
-			sendJSONError(w, fmt.Sprintf("Failed to send transfer done: %v", err), http.StatusBadGateway)
+			httpx.SendJSONError(w, fmt.Sprintf("Failed to send transfer done: %v", err), http.StatusBadGateway)
 			return
 		}
 		// The node commits the file on TransferDone and says how that went.
 		// "Uploaded" used to go out without asking, over a full quota too.
 		if status, msg, ok := confirmNodeWrite(wait); !ok {
-			sendJSONError(w, fmt.Sprintf("%s: %s", sanitizedName, msg), status)
+			httpx.SendJSONError(w, fmt.Sprintf("%s: %s", sanitizedName, msg), status)
 			return
 		}
 		uploadedBytes += offset

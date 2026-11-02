@@ -1,4 +1,4 @@
-package handlers
+package httpx
 
 import (
 	"errors"
@@ -24,8 +24,8 @@ func TestCapBody_RefusesFromContentLengthWithoutReading(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader("body"))
 	req.ContentLength = 5000
 
-	if capBody(rec, req, 1000) {
-		t.Fatal("capBody accepted a request whose declared Content-Length is over the limit")
+	if CapBody(rec, req, 1000) {
+		t.Fatal("CapBody accepted a request whose declared Content-Length is over the limit")
 	}
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("status = %d, want 413", rec.Code)
@@ -53,8 +53,8 @@ func TestCapBody_StillCapsWhenContentLengthIsAbsentOrLies(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader(body))
 			req.ContentLength = tc.declared
 
-			if !capBody(rec, req, 1000) {
-				t.Fatal("capBody refused up front on a Content-Length that does not exceed the limit")
+			if !CapBody(rec, req, 1000) {
+				t.Fatal("CapBody refused up front on a Content-Length that does not exceed the limit")
 			}
 			buf := make([]byte, 5000)
 			var total int
@@ -87,8 +87,8 @@ func TestCapBody_AllowsWhatFits(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader("small"))
 	req.ContentLength = 5
 
-	if !capBody(rec, req, 1000) {
-		t.Fatalf("capBody refused a 5-byte body against a 1000-byte limit (status %d)", rec.Code)
+	if !CapBody(rec, req, 1000) {
+		t.Fatalf("CapBody refused a 5-byte body against a 1000-byte limit (status %d)", rec.Code)
 	}
 	if rec.Code != http.StatusOK {
 		t.Errorf("wrote status %d before the handler ran", rec.Code)

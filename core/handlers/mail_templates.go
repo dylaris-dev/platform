@@ -7,6 +7,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/mailer"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -67,7 +68,7 @@ func (h *MailTemplatesHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *MailTemplatesHandler) Get(w http.ResponseWriter, r *http.Request) {
 	def, ok := mailer.DefinitionByKey(mux.Vars(r)["key"])
 	if !ok {
-		sendJSONError(w, "Unknown template", http.StatusNotFound)
+		httpx.SendJSONError(w, "Unknown template", http.StatusNotFound)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "template": h.view(def)})
@@ -82,32 +83,32 @@ type saveTemplateRequest struct {
 func (h *MailTemplatesHandler) Save(w http.ResponseWriter, r *http.Request) {
 	def, ok := mailer.DefinitionByKey(mux.Vars(r)["key"])
 	if !ok {
-		sendJSONError(w, "Unknown template", http.StatusNotFound)
+		httpx.SendJSONError(w, "Unknown template", http.StatusNotFound)
 		return
 	}
 	var req saveTemplateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid request", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 	req.Subject, req.Body = strings.TrimSpace(req.Subject), strings.TrimSpace(req.Body)
 	if req.Body == "" {
 		// An empty body is not an edit, it is a mail with nothing in it. Reset
 		// is its own action (DELETE) and says so.
-		sendJSONError(w, "The body cannot be empty. Use Reset to go back to the default wording.", http.StatusBadRequest)
+		httpx.SendJSONError(w, "The body cannot be empty. Use Reset to go back to the default wording.", http.StatusBadRequest)
 		return
 	}
 	// Refuse a placeholder the definition does not declare. A typo would
 	// otherwise render as nothing at all: an empty gap where a link should be,
 	// in a mail nobody re-reads, found by a customer who cannot finish signing up.
 	if err := def.Validate(mailer.Template{Subject: req.Subject, Body: req.Body}); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.UpsertMailTemplate(&models.MailTemplate{
 		Key: def.Key, Subject: req.Subject, Body: req.Body,
 	}); err != nil {
-		sendJSONError(w, "Could not save the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not save the template", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "template": h.view(def)})
@@ -117,11 +118,11 @@ func (h *MailTemplatesHandler) Save(w http.ResponseWriter, r *http.Request) {
 func (h *MailTemplatesHandler) Reset(w http.ResponseWriter, r *http.Request) {
 	def, ok := mailer.DefinitionByKey(mux.Vars(r)["key"])
 	if !ok {
-		sendJSONError(w, "Unknown template", http.StatusNotFound)
+		httpx.SendJSONError(w, "Unknown template", http.StatusNotFound)
 		return
 	}
 	if err := h.state.Store.DeleteMailTemplate(def.Key); err != nil {
-		sendJSONError(w, "Could not reset the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not reset the template", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "template": h.view(def)})
@@ -136,7 +137,7 @@ func (h *MailTemplatesHandler) Reset(w http.ResponseWriter, r *http.Request) {
 func (h *MailTemplatesHandler) Preview(w http.ResponseWriter, r *http.Request) {
 	def, ok := mailer.DefinitionByKey(mux.Vars(r)["key"])
 	if !ok {
-		sendJSONError(w, "Unknown template", http.StatusNotFound)
+		httpx.SendJSONError(w, "Unknown template", http.StatusNotFound)
 		return
 	}
 	var req saveTemplateRequest
@@ -146,7 +147,7 @@ func (h *MailTemplatesHandler) Preview(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.Subject) != "" || strings.TrimSpace(req.Body) != "" {
 		override = &mailer.Template{Key: def.Key, Subject: req.Subject, Body: req.Body}
 		if err := def.Validate(*override); err != nil {
-			sendJSONError(w, err.Error(), http.StatusBadRequest)
+			httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -162,7 +163,7 @@ func (h *MailTemplatesHandler) Preview(w http.ResponseWriter, r *http.Request) {
 func (h *MailTemplatesHandler) TestSend(w http.ResponseWriter, r *http.Request) {
 	def, ok := mailer.DefinitionByKey(mux.Vars(r)["key"])
 	if !ok {
-		sendJSONError(w, "Unknown template", http.StatusNotFound)
+		httpx.SendJSONError(w, "Unknown template", http.StatusNotFound)
 		return
 	}
 	var req struct {
@@ -179,7 +180,7 @@ func (h *MailTemplatesHandler) TestSend(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if to == "" {
-		sendJSONError(w, "No recipient - provide an address or set your account email first", http.StatusBadRequest)
+		httpx.SendJSONError(w, "No recipient - provide an address or set your account email first", http.StatusBadRequest)
 		return
 	}
 	// Example values, never real ones: a test send must not put a working

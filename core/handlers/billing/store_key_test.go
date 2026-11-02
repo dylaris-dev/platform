@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 )
 
 // TestRequireStoreKey pins the store-linking service-to-service trust gate
@@ -122,7 +123,7 @@ func TestRequireStoreKey(t *testing.T) {
 // Everyone without the key still is.
 func TestTheStoreKeySkipsTheRateLimit(t *testing.T) {
 	h := &StoreHandler{state: &handlers.AppState{StoreEnabled: true, StoreSharedKey: "secret"}}
-	limited := h.LimitUnlessStoreKey(handlers.NewIPRateLimiter(), 2, func(w http.ResponseWriter, _ *http.Request) {
+	limited := h.LimitUnlessStoreKey(httpx.NewIPRateLimiter(), 2, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 	call := func(key string) int {

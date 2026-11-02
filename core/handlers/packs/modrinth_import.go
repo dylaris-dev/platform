@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage/modpack"
@@ -45,12 +46,12 @@ type importProjectRow struct {
 func (h *PacksHandler) callerModrinth(w http.ResponseWriter, r *http.Request) (string, *services.ModrinthClient, bool) {
 	userID, _ := r.Context().Value("userID").(string)
 	if h.pat == nil {
-		handlers.SendJSONError(w, "Modrinth is not available", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Modrinth is not available", http.StatusServiceUnavailable)
 		return "", nil, false
 	}
 	pat, _, err := h.pat.LoadPAT(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Connect your Modrinth token first (Account, Modrinth).", http.StatusPreconditionRequired)
+		httpx.SendJSONError(w, "Connect your Modrinth token first (Account, Modrinth).", http.StatusPreconditionRequired)
 		return "", nil, false
 	}
 	return userID, services.NewModrinthClient(pat), true
@@ -95,12 +96,12 @@ func (h *PacksHandler) ListModrinthProjects(w http.ResponseWriter, r *http.Reque
 	}
 	projects, err := memberModpacks(r.Context(), mc)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read your Modrinth projects: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read your Modrinth projects: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	hidden, err := h.state.Store.HiddenModrinthProjects(userID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read hidden projects", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not read hidden projects", http.StatusInternalServerError)
 		return
 	}
 	hiddenSet := map[string]bool{}
@@ -126,11 +127,11 @@ func (h *PacksHandler) SetModrinthProjectHidden(w http.ResponseWriter, r *http.R
 		Hidden bool `json:"hidden"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || projectID == "" || len(projectID) > 64 {
-		handlers.SendJSONError(w, "Invalid request", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetModrinthProjectHidden(userID, projectID, req.Hidden); err != nil {
-		handlers.SendJSONError(w, "Could not save", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not save", http.StatusInternalServerError)
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
@@ -148,7 +149,7 @@ func (h *PacksHandler) ImportModrinthProject(w http.ResponseWriter, r *http.Requ
 	projectID := mux.Vars(r)["projectId"]
 	projects, err := memberModpacks(r.Context(), mc)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read your Modrinth projects: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read your Modrinth projects: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	var project *services.ModrinthProjectSummary
@@ -158,7 +159,7 @@ func (h *PacksHandler) ImportModrinthProject(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if project == nil {
-		handlers.SendJSONError(w, "That Modrinth modpack is not one of yours.", http.StatusForbidden)
+		httpx.SendJSONError(w, "That Modrinth modpack is not one of yours.", http.StatusForbidden)
 		return
 	}
 	// One Modrinth project is one pack: a teammate who imported it first
@@ -177,7 +178,7 @@ func (h *PacksHandler) ImportModrinthProject(w http.ResponseWriter, r *http.Requ
 	for n := 2; taken[slug] || !packSlugRe.MatchString(slug); n++ {
 		slug = handlers.Slugify(project.Slug) + "-" + strconv.Itoa(n)
 		if n > 50 {
-			handlers.SendJSONError(w, "Could not find a free slug for this pack", http.StatusConflict)
+			httpx.SendJSONError(w, "Could not find a free slug for this pack", http.StatusConflict)
 			return
 		}
 	}
@@ -192,7 +193,7 @@ func (h *PacksHandler) ImportModrinthProject(w http.ResponseWriter, r *http.Requ
 	}
 	id, err := h.state.Store.CreatePack(p)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to create pack", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to create pack", http.StatusInternalServerError)
 		return
 	}
 	p.ID = id
@@ -224,7 +225,7 @@ func (h *PacksHandler) ListModrinthVersions(w http.ResponseWriter, r *http.Reque
 	}
 	versions, err := mc.ProjectVersions(r.Context(), pack.ModrinthProjectID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read the Modrinth versions: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read the Modrinth versions: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	builds, _ := h.state.Store.ListPackBuilds(pack.ID)
@@ -254,7 +255,7 @@ func (h *PacksHandler) ImportModrinthVersion(w http.ResponseWriter, r *http.Requ
 	versionID := mux.Vars(r)["versionId"]
 	versions, err := mc.ProjectVersions(r.Context(), pack.ModrinthProjectID)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read the Modrinth versions: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read the Modrinth versions: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	var version *services.ModrinthProjectVersion
@@ -264,7 +265,7 @@ func (h *PacksHandler) ImportModrinthVersion(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if version == nil {
-		handlers.SendJSONError(w, "That version does not belong to this pack's Modrinth project.", http.StatusNotFound)
+		httpx.SendJSONError(w, "That version does not belong to this pack's Modrinth project.", http.StatusNotFound)
 		return
 	}
 	builds, _ := h.state.Store.ListPackBuilds(pack.ID)
@@ -278,13 +279,13 @@ func (h *PacksHandler) ImportModrinthVersion(w http.ResponseWriter, r *http.Requ
 	}
 	prov, err := h.state.BuildModpackStorageProvider()
 	if err != nil || prov == nil {
-		handlers.SendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
+		httpx.SendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
 		return
 	}
 	result, ierr := h.importVersion(r.Context(), prov, pack, version, names)
 	if ierr != nil {
 		log.Printf("packs: import of modrinth version %s into pack %d failed: %s", versionID, pack.ID, ierr.msg)
-		handlers.SendJSONError(w, ierr.msg, ierr.status)
+		httpx.SendJSONError(w, ierr.msg, ierr.status)
 		return
 	}
 	h.audit(r, pack.OwnerID, pack.ID, "build.imported", map[string]any{"modrinthVersion": versionID, "buildId": result.BuildID})

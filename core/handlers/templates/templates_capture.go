@@ -16,6 +16,7 @@ import (
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-pkg/validate"
@@ -131,33 +132,33 @@ func (h *TemplatesHandler) Capture(w http.ResponseWriter, r *http.Request) {
 	if caller, _ := h.viewer(r, nil); h.refuseSuspended(w, r, caller.UserID) {
 		return
 	}
-	if !handlers.CapBody(w, r, 64<<10) {
+	if !httpx.CapBody(w, r, 64<<10) {
 		return
 	}
 	var req captureRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	// A missing server and one the caller may not read look the same.
 	res, err := h.state.Authz.Resolve(authz.IdentityFromContext(r.Context()), req.ServerID)
 	if req.ServerID <= 0 || err != nil || !res.HasCap("files.read") {
-		handlers.SendJSONError(w, "You may not read files on that server", http.StatusForbidden)
+		httpx.SendJSONError(w, "You may not read files on that server", http.StatusForbidden)
 		return
 	}
 	if !validate.IsSubServerName(req.SubServer) || len(req.Selected) == 0 || len(req.Selected) > maxCaptureSelected {
-		handlers.SendJSONError(w, "Choose a sub-server and at least one path to capture", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Choose a sub-server and at least one path to capture", http.StatusBadRequest)
 		return
 	}
 	for _, p := range req.Selected {
 		if !validate.IsSafeRelPath(p) {
-			handlers.SendJSONError(w, "Invalid path", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid path", http.StatusBadRequest)
 			return
 		}
 	}
 	srv, err := h.state.Store.GetServerByID(req.ServerID)
 	if err != nil || srv == nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	h.fillFromInstall(&req, srv)
@@ -174,10 +175,10 @@ func (h *TemplatesHandler) Capture(w http.ResponseWriter, r *http.Request) {
 			tooLargeNote(w, note)
 		case errors.Is(err, errNode), errors.Is(err, errNodeIncomplete):
 			log.Printf("templates: capture from server %d: %v", srv.ID, err)
-			handlers.SendJSONError(w, withNote("The server's node could not read those files.", note), http.StatusBadGateway)
+			httpx.SendJSONError(w, withNote("The server's node could not read those files.", note), http.StatusBadGateway)
 		default:
 			log.Printf("templates: capture from server %d: %v", srv.ID, err)
-			handlers.SendJSONError(w, withNote("Could not capture the files.", note), http.StatusInternalServerError)
+			httpx.SendJSONError(w, withNote("Could not capture the files.", note), http.StatusInternalServerError)
 		}
 		return
 	}

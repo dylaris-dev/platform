@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/servers"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -95,15 +96,15 @@ func (h *GatewayHandler) bedrockAvailability(ctx context.Context, srv *models.Se
 
 // GetServerBedrock GET /api/servers/{id}/bedrock.
 func (h *GatewayHandler) GetServerBedrock(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByID(handlers.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	rows, err := h.state.Store.ListRouteEditions(srv.ID)
 	if err != nil {
 		log.Printf("bedrock: server %d: %v", srv.ID, err)
-		handlers.SendJSONError(w, "Failed to read the Bedrock setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the Bedrock setting", http.StatusInternalServerError)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -127,9 +128,9 @@ func (h *GatewayHandler) GetServerBedrock(w http.ResponseWriter, r *http.Request
 // taking it away or changing Java never is, so an owner can always get out of
 // a state. The table is written first and the gateway list after it.
 func (h *GatewayHandler) SetRouteEdition(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByID(handlers.MustAtoi(mux.Vars(r)["id"]))
+	srv, err := h.state.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	var req struct {
@@ -138,11 +139,11 @@ func (h *GatewayHandler) SetRouteEdition(w http.ResponseWriter, r *http.Request)
 		Bedrock *bool  `json:"bedrock"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Java == nil || req.Bedrock == nil || req.Domain == "" {
-		handlers.SendJSONError(w, `Invalid request: expected {"domain": "...", "java": true|false, "bedrock": true|false}`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `Invalid request: expected {"domain": "...", "java": true|false, "bedrock": true|false}`, http.StatusBadRequest)
 		return
 	}
 	if !*req.Java && !*req.Bedrock {
-		handlers.SendJSONErrorCode(w, "A route needs Java, Bedrock or both.", "edition_invalid", http.StatusBadRequest)
+		httpx.SendJSONErrorCode(w, "A route needs Java, Bedrock or both.", "edition_invalid", http.StatusBadRequest)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -150,7 +151,7 @@ func (h *GatewayHandler) SetRouteEdition(w http.ResponseWriter, r *http.Request)
 	routes, err := services.ReadRoutesFromRedis(ctx, h.state.Redis)
 	if err != nil {
 		log.Printf("bedrock: server %d: read routes: %v", srv.ID, err)
-		handlers.SendJSONError(w, "Could not read this server's routes. Try again.", http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read this server's routes. Try again.", http.StatusBadGateway)
 		return
 	}
 	found := false
@@ -161,13 +162,13 @@ func (h *GatewayHandler) SetRouteEdition(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if !found {
-		handlers.SendJSONError(w, "Route not found for this server", http.StatusNotFound)
+		httpx.SendJSONError(w, "Route not found for this server", http.StatusNotFound)
 		return
 	}
 	rows, err := h.state.Store.ListRouteEditions(srv.ID)
 	if err != nil {
 		log.Printf("bedrock: server %d: %v", srv.ID, err)
-		handlers.SendJSONError(w, "Failed to read the Bedrock setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the Bedrock setting", http.StatusInternalServerError)
 		return
 	}
 	hadBedrock := false
@@ -178,25 +179,25 @@ func (h *GatewayHandler) SetRouteEdition(w http.ResponseWriter, r *http.Request)
 	}
 	if *req.Bedrock && !hadBedrock {
 		if !h.bedrockAllowed(r) {
-			handlers.SendJSONErrorCode(w, bedrockOff, "bedrock_disabled", http.StatusConflict)
+			httpx.SendJSONErrorCode(w, bedrockOff, "bedrock_disabled", http.StatusConflict)
 			return
 		}
 		if handlers.RefuseIfSuspended(w, r, h.state, srv) {
 			return
 		}
 		if _, refusal := h.bedrockAvailability(ctx, srv); refusal != "" {
-			handlers.SendJSONErrorCode(w, refusal, "bedrock_unavailable", http.StatusConflict)
+			httpx.SendJSONErrorCode(w, refusal, "bedrock_unavailable", http.StatusConflict)
 			return
 		}
 	}
 	if err := h.state.Store.SetRouteEdition(srv.ID, req.Domain, *req.Java, *req.Bedrock); err != nil {
 		log.Printf("bedrock: server %d: route %s: %v", srv.ID, req.Domain, err)
-		handlers.SendJSONError(w, "Failed to save the route", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save the route", http.StatusInternalServerError)
 		return
 	}
 	if err := h.bedrockService().PublishEditions(ctx, services.BedrockActive(r.Context(), h.state.FeatureFlags)); err != nil {
 		log.Printf("bedrock: server %d: publish editions: %v", srv.ID, err)
-		handlers.SendJSONError(w, "The route was saved, but the gateway could not be told yet. It applies within a minute.", http.StatusBadGateway)
+		httpx.SendJSONError(w, "The route was saved, but the gateway could not be told yet. It applies within a minute.", http.StatusBadGateway)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true,

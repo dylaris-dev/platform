@@ -16,6 +16,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	backupstorage "dylaris-core/storage/backup"
@@ -44,7 +45,7 @@ func validSubServer(w http.ResponseWriter, sub *string) bool {
 		return true // NULL / empty means the whole container, which is a valid job
 	}
 	if !validate.IsSubServerName(*sub) {
-		handlers.SendJSONError(w, "Invalid sub-server name", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid sub-server name", http.StatusBadRequest)
 		return false
 	}
 	return true
@@ -101,7 +102,7 @@ func NewBackupHandler(state *handlers.AppState) *BackupHandler {
 func (h *BackupHandler) ListStorages(w http.ResponseWriter, r *http.Request) {
 	storages, err := h.state.Store.ListBackupStorages()
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	if storages == nil {
@@ -139,31 +140,31 @@ func validBackupProvider(p string) bool {
 func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 	var req models.BackupStorage
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if req.Name == "" || req.Provider == "" {
-		handlers.SendJSONError(w, "name and provider are required", 400)
+		httpx.SendJSONError(w, "name and provider are required", 400)
 		return
 	}
 	// A platform storage: an ownerId in the body would file it into a tenant's
 	// account, with a provider the tenant guard does not cover.
 	req.OwnerID = nil
 	if !validBackupProvider(req.Provider) {
-		handlers.SendJSONError(w, "invalid provider (expected shared, s3, node-local, core-storage or connection)", 400)
+		httpx.SendJSONError(w, "invalid provider (expected shared, s3, node-local, core-storage or connection)", 400)
 		return
 	}
 	if err := validateBackupStorageEndpoint(req); err != nil {
-		handlers.SendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	id, err := h.state.Store.CreateBackupStorage(&req)
 	if err != nil {
 		if errors.Is(err, store.ErrNameTaken) {
-			handlers.SendJSONError(w, "A backup storage with that name already exists", 409)
+			httpx.SendJSONError(w, "A backup storage with that name already exists", 409)
 			return
 		}
-		handlers.SendJSONError(w, err.Error(), 500)
+		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": id})
@@ -174,12 +175,12 @@ func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid ID", 400)
+		httpx.SendJSONError(w, "Invalid ID", 400)
 		return
 	}
 	var req models.BackupStorage
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	req.ID = id
@@ -188,11 +189,11 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validBackupProvider(req.Provider) {
-		handlers.SendJSONError(w, "invalid provider (expected shared, s3, node-local, core-storage or connection)", 400)
+		httpx.SendJSONError(w, "invalid provider (expected shared, s3, node-local, core-storage or connection)", 400)
 		return
 	}
 	if err := validateBackupStorageEndpoint(req); err != nil {
-		handlers.SendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	// The panel edits with the secret redacted, so an update normally carries no
@@ -203,7 +204,7 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 	// mergeBackupStorageSecret.
 	merged, merr := mergeBackupStorageSecret(req, existing)
 	if merr != nil {
-		handlers.SendJSONError(w, merr.Error(), 400)
+		httpx.SendJSONError(w, merr.Error(), 400)
 		return
 	}
 	req = merged
@@ -216,11 +217,11 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 	if backupStorageLocation(req) != backupStorageLocation(*existing) {
 		inUse, ierr := h.state.Store.BackupStorageInUse(id)
 		if ierr != nil {
-			handlers.SendJSONError(w, "Could not check what uses this storage", 500)
+			httpx.SendJSONError(w, "Could not check what uses this storage", 500)
 			return
 		}
 		if inUse {
-			handlers.SendJSONError(w, "Backups or schedules still use this storage, so where it stores them cannot change. Add a new storage for the new location and point the schedules at it.", http.StatusConflict)
+			httpx.SendJSONError(w, "Backups or schedules still use this storage, so where it stores them cannot change. Add a new storage for the new location and point the schedules at it.", http.StatusConflict)
 			return
 		}
 	}
@@ -230,11 +231,11 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 	if err := h.state.Store.UpdateBackupStorage(&req); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNameTaken):
-			handlers.SendJSONError(w, "A backup storage with that name already exists", 409)
+			httpx.SendJSONError(w, "A backup storage with that name already exists", 409)
 		case errors.Is(err, sql.ErrNoRows):
-			handlers.SendJSONError(w, "Backup storage not found", 404)
+			httpx.SendJSONError(w, "Backup storage not found", 404)
 		default:
-			handlers.SendJSONError(w, err.Error(), 500)
+			httpx.SendJSONError(w, err.Error(), 500)
 		}
 		return
 	}
@@ -260,7 +261,7 @@ func backupStorageLocation(s models.BackupStorage) string {
 func (h *BackupHandler) DeleteStorage(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid ID", 400)
+		httpx.SendJSONError(w, "Invalid ID", 400)
 		return
 	}
 	if _, ok := h.platformStorage(w, id); !ok {
@@ -268,10 +269,10 @@ func (h *BackupHandler) DeleteStorage(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.state.Store.DeleteBackupStorage(id); err != nil {
 		if errors.Is(err, store.ErrStorageInUse) {
-			handlers.SendJSONError(w, "Backups or backup schedules still use this storage. Move the schedules to another storage first; it can be deleted once the backups stored on it are deleted or have aged out under retention.", 409)
+			httpx.SendJSONError(w, "Backups or backup schedules still use this storage. Move the schedules to another storage first; it can be deleted once the backups stored on it are deleted or have aged out under retention.", 409)
 			return
 		}
-		handlers.SendJSONError(w, err.Error(), 500)
+		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -284,7 +285,7 @@ func (h *BackupHandler) DeleteStorage(w http.ResponseWriter, r *http.Request) {
 func (h *BackupHandler) platformStorage(w http.ResponseWriter, id int) (*models.BackupStorage, bool) {
 	bs, err := h.state.Store.GetBackupStorage(id)
 	if err != nil || bs == nil || bs.OwnerID != nil {
-		handlers.SendJSONError(w, "Backup storage not found", 404)
+		httpx.SendJSONError(w, "Backup storage not found", 404)
 		return nil, false
 	}
 	return bs, true
@@ -296,7 +297,7 @@ func (h *BackupHandler) platformStorage(w http.ResponseWriter, id int) (*models.
 func (h *BackupHandler) TestStorage(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid ID", 400)
+		httpx.SendJSONError(w, "Invalid ID", 400)
 		return
 	}
 	storage, ok := h.platformStorage(w, id)
@@ -373,12 +374,12 @@ func (h *BackupHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	_ = srv
 	jobs, err := h.state.Store.ListBackupJobs(serverID)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	kept, err := h.state.Store.BackupKeptByJob(serverID)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "jobs": backupJobViews(jobs, kept)})
@@ -408,7 +409,7 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	var req models.BackupJob
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if !validSubServer(w, req.SubServer) {
@@ -436,7 +437,7 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		req.Timezone = "UTC"
 	}
 	if err := services.CheckBackupSchedule(req.Schedule, req.Timezone); err != nil {
-		handlers.SendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	if h.refuseUnusableStorage(w, r, serverID, req.StorageID, nil) {
@@ -446,7 +447,7 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	id, err := h.state.Store.CreateBackupJob(&req)
 	if err != nil {
 		log.Printf("create backup job for server %d: %v", serverID, err)
-		handlers.SendJSONError(w, "Failed to create the backup job", 500)
+		httpx.SendJSONError(w, "Failed to create the backup job", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": id})
@@ -462,7 +463,7 @@ func (h *BackupHandler) PreviewSchedule(w http.ResponseWriter, r *http.Request) 
 		Timezone string `json:"timezone"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	tz := strings.TrimSpace(req.Timezone)
@@ -504,22 +505,22 @@ func (h *BackupHandler) refuseUnusableStorage(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrForeignBackupStorage):
-			handlers.SendJSONError(w, "That backup storage belongs to another account", 400)
+			httpx.SendJSONError(w, "That backup storage belongs to another account", 400)
 		// sql.ErrNoRows as well as the service's own sentinel: the store answers a
 		// missing row with the driver error, and both mean the same thing to the
 		// caller. Measured on production after the first cut of this check, which
 		// sent a storage id that does not exist into the generic branch below.
 		case errors.Is(err, services.ErrNoBackupStorage), errors.Is(err, sql.ErrNoRows):
-			handlers.SendJSONError(w, "No such backup storage", 400)
+			httpx.SendJSONError(w, "No such backup storage", 400)
 		default:
 			log.Printf("backup job storage %d for server %d: %v", *storageID, serverID, err)
-			handlers.SendJSONError(w, "That backup storage could not be used", 400)
+			httpx.SendJSONError(w, "That backup storage could not be used", 400)
 		}
 		return true
 	}
 	unchanged := previous != nil && *previous == *storageID
 	if bs.OwnerID != nil && !unchanged && !services.OwnStorageAllowedFor(r.Context(), h.state.FeatureFlags, h.state.Store, owner) {
-		handlers.SendJSONErrorCode(w, "Own storage is turned off on this platform. Choose a platform storage.", "own_storage_disabled", http.StatusForbidden)
+		httpx.SendJSONErrorCode(w, "Own storage is turned off on this platform. Choose a platform storage.", "own_storage_disabled", http.StatusForbidden)
 		return true
 	}
 	return false
@@ -563,7 +564,7 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	var req updateBackupJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 
@@ -588,7 +589,7 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 		// cannot move under runs it already has. A different scope is a new job.
 		if deref(next.SubServer) != deref(job.SubServer) {
 			if runs, err := h.state.Store.ListBackupRuns(jobID, 1); err != nil || len(runs) > 0 {
-				handlers.SendJSONError(w, "This job already has backups, which restore into what it covers. Create a new job for a different sub-server.", http.StatusConflict)
+				httpx.SendJSONError(w, "This job already has backups, which restore into what it covers. Create a new job for a different sub-server.", http.StatusConflict)
 				return
 			}
 		}
@@ -629,7 +630,7 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if next.Schedule != job.Schedule || next.Timezone != job.Timezone {
 		if err := services.CheckBackupSchedule(next.Schedule, next.Timezone); err != nil {
-			handlers.SendJSONError(w, err.Error(), 400)
+			httpx.SendJSONError(w, err.Error(), 400)
 			return
 		}
 	}
@@ -644,7 +645,7 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.state.Store.UpdateBackupJob(&next); err != nil {
 		log.Printf("update backup job %d: %v", jobID, err)
-		handlers.SendJSONError(w, "Failed to update the backup job", 500)
+		httpx.SendJSONError(w, "Failed to update the backup job", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -660,14 +661,14 @@ func (h *BackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
 	// Same rule as DeleteRun: a restore waiting on one of these archives has
 	// usually stopped the server already, and the download would fail.
 	if busy, err := h.state.Store.BackupJobRestoring(jobID); err != nil || busy {
-		handlers.SendJSONError(w, "A backup of this schedule is being restored. Delete it once the restore has finished.", http.StatusConflict)
+		httpx.SendJSONError(w, "A backup of this schedule is being restored. Delete it once the restore has finished.", http.StatusConflict)
 		return
 	}
 	// The runs cascade with the job and take their storage keys with them, so
 	// the archives have to go first or nothing can ever name them again.
 	handlers.PurgeBackupArchivesForJob(h.state, jobID)
 	if err := h.state.Store.DeleteBackupJob(jobID); err != nil {
-		handlers.SendJSONError(w, err.Error(), 500)
+		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -694,10 +695,10 @@ func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 		// a policy decision in the same bucket as a broken queue, which is what
 		// an operator's alerting and any API client both key off.
 		if errors.Is(err, errBackupQuotaReached) || errors.Is(err, services.ErrNodeUpdateRequired) || errors.Is(err, errBackupAlreadyRunning) {
-			handlers.SendJSONError(w, err.Error(), http.StatusConflict)
+			httpx.SendJSONError(w, err.Error(), http.StatusConflict)
 			return
 		}
-		handlers.SendJSONError(w, err.Error(), 500)
+		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "runId": runID})
@@ -714,7 +715,7 @@ func (h *BackupHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	runs, err := h.state.Store.ListBackupRuns(jobID, 50)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	if runs == nil {
@@ -729,21 +730,21 @@ func (h *BackupHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.Atoi(mux.Vars(r)["runId"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid run ID", 400)
+		httpx.SendJSONError(w, "Invalid run ID", 400)
 		return
 	}
 	run, err := h.state.Store.GetBackupRun(runID)
 	if err != nil {
-		handlers.SendJSONError(w, "Run not found", 404)
+		httpx.SendJSONError(w, "Run not found", 404)
 		return
 	}
 	job, err := h.state.Store.GetBackupJob(run.JobID)
 	if err != nil {
-		handlers.SendJSONError(w, "Job not found", 404)
+		httpx.SendJSONError(w, "Job not found", 404)
 		return
 	}
 	if !h.hasServerAccess(r, job.ServerID, "backups.read") {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	// Same resolution the run path uses: the archive's own storage, else the
@@ -754,15 +755,15 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 		services.BackupJobOwner(h.state.Store, job.ServerID))
 	if err != nil {
 		if errors.Is(err, services.ErrNoBackupStorage) {
-			handlers.SendJSONError(w, "No backup storage is configured", 400)
+			httpx.SendJSONError(w, "No backup storage is configured", 400)
 		} else {
-			handlers.SendJSONError(w, "Storage not found", 404)
+			httpx.SendJSONError(w, "Storage not found", 404)
 		}
 		return
 	}
 	provider, err := backupstorage.Open(r.Context(), bs, h.backupDeps())
 	if err != nil {
-		handlers.SendJSONError(w, err.Error(), 500)
+		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
 
@@ -777,7 +778,7 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 	// Local fallback: stream the file through Core with the right headers.
 	reader, err := provider.Get(r.Context(), run.StorageKey)
 	if err != nil {
-		handlers.SendJSONError(w, "Object not found", 404)
+		httpx.SendJSONError(w, "Object not found", 404)
 		return
 	}
 	defer reader.Close()
@@ -795,17 +796,17 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.Atoi(mux.Vars(r)["runId"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid run ID", 400)
+		httpx.SendJSONError(w, "Invalid run ID", 400)
 		return
 	}
 	run, err := h.state.Store.GetBackupRun(runID)
 	if err != nil {
-		handlers.SendJSONError(w, "Run not found", 404)
+		httpx.SendJSONError(w, "Run not found", 404)
 		return
 	}
 	job, err := h.state.Store.GetBackupJob(run.JobID)
 	if err != nil {
-		handlers.SendJSONError(w, "Job not found", 404)
+		httpx.SendJSONError(w, "Job not found", 404)
 		return
 	}
 	// Authorization first, and only then what state the run is in. The other
@@ -813,16 +814,16 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	// complete successfully" - which is a fact about somebody else's backup, so
 	// run ids could be walked to learn which exist and which succeeded.
 	if !h.hasServerAccess(r, job.ServerID, "backups.restore") {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	if run.Status != "success" {
-		handlers.SendJSONError(w, "Cannot restore a run that did not complete successfully", 400)
+		httpx.SendJSONError(w, "Cannot restore a run that did not complete successfully", 400)
 		return
 	}
 	srv, err := h.state.Store.GetServerByID(job.ServerID)
 	if err != nil {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 	if handlers.RefuseIfSuspended(w, r, h.state, srv) {
@@ -837,7 +838,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	// Refused even for an operator while it moves, as before; the busy check
 	// below lets one through for a stuck move on every other path.
 	if srv.Status == "migrating" {
-		handlers.SendJSONError(w, "The server is being moved. Restore it once the move has finished.", http.StatusConflict)
+		httpx.SendJSONError(w, "The server is being moved. Restore it once the move has finished.", http.StatusConflict)
 		return
 	}
 	if handlers.RefuseIfServerBusy(w, r, h.state, srv) {
@@ -845,7 +846,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	}
 	node, err := h.state.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
-		handlers.SendJSONError(w, "Node not found", 404)
+		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
 	// Same resolution the run path uses. This is the one that matters most: a
@@ -854,9 +855,9 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	storage, err := services.ResolveRunStorage(h.state.Store, run, job.StorageID, srv.OwnerID)
 	if err != nil {
 		if errors.Is(err, services.ErrNoBackupStorage) {
-			handlers.SendJSONError(w, "No backup storage is configured", 400)
+			httpx.SendJSONError(w, "No backup storage is configured", 400)
 		} else {
-			handlers.SendJSONError(w, "Storage not found", 404)
+			httpx.SendJSONError(w, "Storage not found", 404)
 		}
 		return
 	}
@@ -876,13 +877,13 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		Status:      "queued",
 	})
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to record restore: "+err.Error(), 500)
+		httpx.SendJSONError(w, "Failed to record restore: "+err.Error(), 500)
 		return
 	}
 
 	if h.state.Queue == nil {
 		h.state.Store.UpdateBackupRestoreStatus(restoreID, "failed", "queue unavailable", time.Now())
-		handlers.SendJSONError(w, "Queue unavailable", 500)
+		httpx.SendJSONError(w, "Queue unavailable", 500)
 		return
 	}
 
@@ -895,7 +896,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, services.ErrNodeUpdateRequired) {
 			status = http.StatusConflict
 		}
-		handlers.SendJSONError(w, err.Error(), status)
+		httpx.SendJSONError(w, err.Error(), status)
 		return
 	}
 	// The sub-server the ARCHIVE covers, not the one the job names today. A job
@@ -936,7 +937,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	// retired dylaris:node:<token>:queue list, which nothing reads anymore.
 	if err := h.state.Queue.SendRawCommand(r.Context(), node.Token, payload); err != nil {
 		h.state.Store.UpdateBackupRestoreStatus(restoreID, "failed", "queue push failed: "+err.Error(), time.Now())
-		handlers.SendJSONError(w, "Failed to queue restore: "+err.Error(), 500)
+		httpx.SendJSONError(w, "Failed to queue restore: "+err.Error(), 500)
 		return
 	}
 
@@ -952,7 +953,7 @@ func (h *BackupHandler) ListRestores(w http.ResponseWriter, r *http.Request) {
 	}
 	restores, err := h.state.Store.ListBackupRestores(serverID, 25)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	if restores == nil {
@@ -973,25 +974,25 @@ func (h *BackupHandler) ListRestores(w http.ResponseWriter, r *http.Request) {
 func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.Atoi(mux.Vars(r)["runId"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid run ID", 400)
+		httpx.SendJSONError(w, "Invalid run ID", 400)
 		return
 	}
 	run, err := h.state.Store.GetBackupRun(runID)
 	if err != nil {
-		handlers.SendJSONError(w, "Run not found", 404)
+		httpx.SendJSONError(w, "Run not found", 404)
 		return
 	}
 	job, err := h.state.Store.GetBackupJob(run.JobID)
 	if err != nil {
-		handlers.SendJSONError(w, "Job not found", 404)
+		httpx.SendJSONError(w, "Job not found", 404)
 		return
 	}
 	if !h.hasServerAccess(r, job.ServerID, "backups.delete") {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 	if busy, err := h.state.Store.BackupRunRestoring(runID); err != nil || busy {
-		handlers.SendJSONError(w, "This backup is being restored. Delete it once the restore has finished.", http.StatusConflict)
+		httpx.SendJSONError(w, "This backup is being restored. Delete it once the restore has finished.", http.StatusConflict)
 		return
 	}
 	// Best-effort object delete first; even if the storage is unreachable we
@@ -1021,7 +1022,7 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.state.Store.DeleteBackupRun(runID); err != nil {
-		handlers.SendJSONError(w, err.Error(), 500)
+		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -1106,12 +1107,12 @@ func (h *BackupHandler) backupDeps() backupstorage.Deps {
 func (h *BackupHandler) resolveServer(w http.ResponseWriter, r *http.Request) (int, *models.Server, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", 400)
+		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return 0, nil, false
 	}
 	srv, err := h.state.Store.GetServerByID(id)
 	if err != nil {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return 0, nil, false
 	}
 	return id, srv, true
@@ -1124,16 +1125,16 @@ func (h *BackupHandler) resolveServer(w http.ResponseWriter, r *http.Request) (i
 func (h *BackupHandler) resolveJobWithAccess(w http.ResponseWriter, r *http.Request, capID string) (int, *models.BackupJob, bool) {
 	jobID, err := strconv.Atoi(mux.Vars(r)["jobId"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid job ID", 400)
+		httpx.SendJSONError(w, "Invalid job ID", 400)
 		return 0, nil, false
 	}
 	job, err := h.state.Store.GetBackupJob(jobID)
 	if err != nil {
-		handlers.SendJSONError(w, "Job not found", 404)
+		httpx.SendJSONError(w, "Job not found", 404)
 		return 0, nil, false
 	}
 	if !h.hasServerAccess(r, job.ServerID, capID) {
-		handlers.SendJSONError(w, "Forbidden", 403)
+		httpx.SendJSONError(w, "Forbidden", 403)
 		return 0, nil, false
 	}
 	return jobID, job, true

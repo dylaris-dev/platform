@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/pkg/crypto"
 	"dylaris-core/services"
@@ -46,7 +47,7 @@ func NewPlatformBackupHandler(state *handlers.AppState) *PlatformBackupHandler {
 func (h *PlatformBackupHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 	jobs, err := h.state.Store.ListPlatformBackupJobs()
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "jobs": jobs})
@@ -66,15 +67,15 @@ type platformBackupJobRequest struct {
 func (h *PlatformBackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	var req platformBackupJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.Name) == "" {
-		handlers.SendJSONError(w, "A name is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "A name is required", http.StatusBadRequest)
 		return
 	}
 	if err := req.Selection.Validate(); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -84,7 +85,7 @@ func (h *PlatformBackupHandler) CreateJob(w http.ResponseWriter, r *http.Request
 		tz = "UTC"
 	}
 	if err := services.CheckBackupSchedule(schedule, tz); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -102,7 +103,7 @@ func (h *PlatformBackupHandler) CreateJob(w http.ResponseWriter, r *http.Request
 	}
 	id, err := h.state.Store.CreatePlatformBackupJob(job)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	job.ID = id
@@ -117,7 +118,7 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 	}
 	var req platformBackupJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if strings.TrimSpace(req.Name) != "" {
@@ -132,14 +133,14 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 	}
 	if job.Schedule != prevSchedule || job.Timezone != prevZone {
 		if err := services.CheckBackupSchedule(job.Schedule, job.Timezone); err != nil {
-			handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+			httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
 	// A selection is replaced wholesale rather than merged: the components are
 	// booleans, and a merge could never express "stop including the modpacks".
 	if err := req.Selection.Validate(); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	job.Selection = req.Selection
@@ -158,7 +159,7 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := h.state.Store.UpdatePlatformBackupJob(job); err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "job": job})
@@ -175,10 +176,10 @@ func (h *PlatformBackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request
 	}
 	if err := services.DeletePlatformBackupJob(r.Context(), h.state.Store, job.ID, h.DeleteRunArchive); err != nil {
 		if errors.Is(err, services.ErrPlatformBackupRunning) {
-			handlers.SendJSONError(w, "A backup of this job is running; try again when it finishes", http.StatusConflict)
+			httpx.SendJSONError(w, "A backup of this job is running; try again when it finishes", http.StatusConflict)
 			return
 		}
-		handlers.SendJSONError(w, err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadGateway)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true})
@@ -197,7 +198,7 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 	}
 	runner, err := h.runner()
 	if err != nil {
-		handlers.SendJSONError(w, err.Error(), 500)
+		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
 	// Not on the request's context: a closed tab or a proxy timeout cancelled
@@ -259,7 +260,7 @@ func (h *PlatformBackupHandler) ListRuns(w http.ResponseWriter, r *http.Request)
 	}
 	runs, err := h.state.Store.ListPlatformBackupRuns(job.ID, 50)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "runs": runs})
@@ -274,31 +275,31 @@ func (h *PlatformBackupHandler) ListRuns(w http.ResponseWriter, r *http.Request)
 func (h *PlatformBackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid run id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid run id", http.StatusBadRequest)
 		return
 	}
 	run, err := h.state.Store.GetPlatformBackupRun(id)
 	if err != nil || run == nil {
-		handlers.SendJSONError(w, "Run not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Run not found", http.StatusNotFound)
 		return
 	}
 	if run.Status != "success" || run.StorageKey == "" {
-		handlers.SendJSONError(w, "This run produced no archive", http.StatusConflict)
+		httpx.SendJSONError(w, "This run produced no archive", http.StatusConflict)
 		return
 	}
 	bs, err := services.ResolveJobStorage(h.state.Store, run.StorageID, "")
 	if err != nil {
-		handlers.SendJSONError(w, "The storage this run wrote to is not available", http.StatusConflict)
+		httpx.SendJSONError(w, "The storage this run wrote to is not available", http.StatusConflict)
 		return
 	}
 	store, err := backupstorage.Open(r.Context(), bs, NewBackupHandler(h.state).backupDeps())
 	if err != nil {
-		handlers.SendJSONError(w, "Could not open the storage", 500)
+		httpx.SendJSONError(w, "Could not open the storage", 500)
 		return
 	}
 	rc, err := store.Get(r.Context(), run.StorageKey)
 	if err != nil {
-		handlers.SendJSONError(w, "The archive could not be read", 500)
+		httpx.SendJSONError(w, "The archive could not be read", 500)
 		return
 	}
 	defer rc.Close()
@@ -320,7 +321,7 @@ func (h *PlatformBackupHandler) DownloadRun(w http.ResponseWriter, r *http.Reque
 func (h *PlatformBackupHandler) ListTargets(w http.ResponseWriter, r *http.Request) {
 	targets, err := h.state.Store.ListBackupTargetServers()
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{
@@ -337,7 +338,7 @@ func (h *PlatformBackupHandler) ListTargets(w http.ResponseWriter, r *http.Reque
 func (h *PlatformBackupHandler) PassphraseStatus(w http.ResponseWriter, r *http.Request) {
 	v, err := handlers.SettingOrUnset(h.state.Store, services.PlatformBackupPassphraseSetting)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true, "isSet": v != ""})
@@ -354,29 +355,29 @@ type setPassphraseRequest struct {
 func (h *PlatformBackupHandler) SetPassphrase(w http.ResponseWriter, r *http.Request) {
 	var req setPassphraseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	if len(req.Passphrase) < crypto.MinPassphraseLength {
-		handlers.SendJSONError(w, fmt.Sprintf("The passphrase must be at least %d characters", crypto.MinPassphraseLength), http.StatusBadRequest)
+		httpx.SendJSONError(w, fmt.Sprintf("The passphrase must be at least %d characters", crypto.MinPassphraseLength), http.StatusBadRequest)
 		return
 	}
 	existing, err := handlers.SettingOrUnset(h.state.Store, services.PlatformBackupPassphraseSetting)
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	if existing != "" && !req.Replace {
 		// Refused rather than overwritten, because the consequence is invisible
 		// at the moment of the change and only appears at a restore: every
 		// bundle written under the old passphrase still needs the old one.
-		handlers.SendJSONError(w,
+		httpx.SendJSONError(w,
 			"A backup passphrase is already set. Replacing it does not re-encrypt bundles already written - those still need the old passphrase. Send replace: true to confirm.",
 			http.StatusConflict)
 		return
 	}
 	if err := h.state.Store.SetSetting(services.PlatformBackupPassphraseSetting, req.Passphrase); err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"success": true})
@@ -535,12 +536,12 @@ func derefBool(v *bool, fallback bool) bool {
 func (h *PlatformBackupHandler) loadJob(w http.ResponseWriter, r *http.Request) (*models.PlatformBackupJob, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid job id", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid job id", http.StatusBadRequest)
 		return nil, false
 	}
 	job, err := h.state.Store.GetPlatformBackupJob(id)
 	if err != nil || job == nil {
-		handlers.SendJSONError(w, "Job not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Job not found", http.StatusNotFound)
 		return nil, false
 	}
 	return job, true

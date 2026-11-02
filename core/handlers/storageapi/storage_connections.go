@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage"
@@ -118,7 +119,7 @@ func storageConnectionSecretRebound(req storageConnectionRequest, existing *mode
 func (h *StorageConnectionsHandler) ListConnections(w http.ResponseWriter, r *http.Request) {
 	conns, err := h.state.Store.ListStorageConnections()
 	if err != nil {
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	if conns == nil {
@@ -132,19 +133,19 @@ func (h *StorageConnectionsHandler) ListConnections(w http.ResponseWriter, r *ht
 func (h *StorageConnectionsHandler) CreateConnection(w http.ResponseWriter, r *http.Request) {
 	var req storageConnectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if req.Name == "" || req.Provider == "" {
-		handlers.SendJSONError(w, "name and provider are required", 400)
+		httpx.SendJSONError(w, "name and provider are required", 400)
 		return
 	}
 	if !validStorageConnectionProvider(req.Provider) {
-		handlers.SendJSONError(w, "invalid provider (expected s3)", 400)
+		httpx.SendJSONError(w, "invalid provider (expected s3)", 400)
 		return
 	}
 	if err := validateStorageConnectionEndpoint(req.Config); err != nil {
-		handlers.SendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	conn := models.StorageConnection{
@@ -157,10 +158,10 @@ func (h *StorageConnectionsHandler) CreateConnection(w http.ResponseWriter, r *h
 	id, err := h.state.Store.CreateStorageConnection(&conn)
 	if err != nil {
 		if errors.Is(err, store.ErrNameTaken) {
-			handlers.SendJSONError(w, "A storage connection with that name already exists", 409)
+			httpx.SendJSONError(w, "A storage connection with that name already exists", 409)
 			return
 		}
-		handlers.SendJSONError(w, err.Error(), 500)
+		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": id})
@@ -173,33 +174,33 @@ func (h *StorageConnectionsHandler) CreateConnection(w http.ResponseWriter, r *h
 func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid ID", 400)
+		httpx.SendJSONError(w, "Invalid ID", 400)
 		return
 	}
 	var req storageConnectionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if !validStorageConnectionProvider(req.Provider) {
-		handlers.SendJSONError(w, "invalid provider (expected s3)", 400)
+		httpx.SendJSONError(w, "invalid provider (expected s3)", 400)
 		return
 	}
 	if err := validateStorageConnectionEndpoint(req.Config); err != nil {
-		handlers.SendJSONError(w, err.Error(), 400)
+		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	existing, gerr := h.state.Store.GetStorageConnection(id)
 	if gerr != nil {
 		if errors.Is(gerr, sql.ErrNoRows) {
-			handlers.SendJSONError(w, "Storage connection not found", 404)
+			httpx.SendJSONError(w, "Storage connection not found", 404)
 			return
 		}
-		handlers.SendJSONError(w, "Database error", 500)
+		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
 	if storageConnectionSecretRebound(req, existing) {
-		handlers.SendJSONError(w, errStorageConnectionSecretRequired.Error(), 400)
+		httpx.SendJSONError(w, errStorageConnectionSecretRequired.Error(), 400)
 		return
 	}
 	conn := models.StorageConnection{
@@ -212,17 +213,17 @@ func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *h
 	if err := h.state.Store.UpdateStorageConnection(&conn); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNameTaken):
-			handlers.SendJSONError(w, "A storage connection with that name already exists", 409)
+			httpx.SendJSONError(w, "A storage connection with that name already exists", 409)
 		case errors.Is(err, sql.ErrNoRows):
-			handlers.SendJSONError(w, "Storage connection not found", 404)
+			httpx.SendJSONError(w, "Storage connection not found", 404)
 		default:
-			handlers.SendJSONError(w, err.Error(), 500)
+			httpx.SendJSONError(w, err.Error(), 500)
 		}
 		return
 	}
 	if req.SecretAccessKey != "" {
 		if err := h.state.Store.SetStorageConnectionSecret(id, req.SecretAccessKey); err != nil {
-			handlers.SendJSONError(w, err.Error(), 500)
+			httpx.SendJSONError(w, err.Error(), 500)
 			return
 		}
 	}
@@ -237,20 +238,20 @@ func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *h
 func (h *StorageConnectionsHandler) DeleteConnection(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid ID", 400)
+		httpx.SendJSONError(w, "Invalid ID", 400)
 		return
 	}
 	// A template's files live on the connection it was created on, and deleting
 	// a template needs that connection; removing it would strand them for good.
 	if inUse, err := h.templatesUse(id); err != nil {
-		handlers.SendJSONError(w, "Could not check which templates use this connection", 500)
+		httpx.SendJSONError(w, "Could not check which templates use this connection", 500)
 		return
 	} else if inUse != "" {
-		handlers.SendJSONError(w, inUse, http.StatusConflict)
+		httpx.SendJSONError(w, inUse, http.StatusConflict)
 		return
 	}
 	if err := h.state.Store.DeleteStorageConnection(id); err != nil {
-		handlers.SendJSONError(w, err.Error(), 500)
+		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
 	// A modpack setting can point at this connection, and the cached "is modpack
@@ -286,12 +287,12 @@ func (h *StorageConnectionsHandler) templatesUse(id int) (string, error) {
 func (h *StorageConnectionsHandler) TestConnection(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid ID", 400)
+		httpx.SendJSONError(w, "Invalid ID", 400)
 		return
 	}
 	conn, err := h.state.Store.GetStorageConnection(id)
 	if err != nil {
-		handlers.SendJSONError(w, "Connection not found", 404)
+		httpx.SendJSONError(w, "Connection not found", 404)
 		return
 	}
 	prov, err := handlers.StorageConnectionProvider(conn)
@@ -362,18 +363,18 @@ func (h *StorageConnectionsHandler) TestDraftConnection(w http.ResponseWriter, r
 		ID int `json:"id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid request", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 	if !validStorageConnectionProvider(req.Provider) {
-		handlers.SendJSONError(w, "Unsupported provider", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Unsupported provider", http.StatusBadRequest)
 		return
 	}
 	// The submitted endpoint reaches a dialer, so it gets the same fail-closed
 	// check a save gets, at the point where the operator can still read the
 	// error.
 	if err := validateStorageConnectionEndpoint(req.Config); err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -386,20 +387,20 @@ func (h *StorageConnectionsHandler) TestDraftConnection(w http.ResponseWriter, r
 
 	if conn.SecretAccessKey == "" {
 		if req.ID == 0 {
-			handlers.SendJSONError(w, errStorageConnectionTestNeedsSecret.Error(), http.StatusBadRequest)
+			httpx.SendJSONError(w, errStorageConnectionTestNeedsSecret.Error(), http.StatusBadRequest)
 			return
 		}
 		existing, err := h.state.Store.GetStorageConnection(req.ID)
 		if err != nil {
-			handlers.SendJSONError(w, "Connection not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Connection not found", http.StatusNotFound)
 			return
 		}
 		if storageConnectionSecretRebound(req.storageConnectionRequest, existing) {
-			handlers.SendJSONError(w, errStorageConnectionSecretRequired.Error(), http.StatusBadRequest)
+			httpx.SendJSONError(w, errStorageConnectionSecretRequired.Error(), http.StatusBadRequest)
 			return
 		}
 		if !existing.SecretSet {
-			handlers.SendJSONError(w, errStorageConnectionTestNeedsSecret.Error(), http.StatusBadRequest)
+			httpx.SendJSONError(w, errStorageConnectionTestNeedsSecret.Error(), http.StatusBadRequest)
 			return
 		}
 		conn.SecretAccessKey = existing.SecretAccessKey

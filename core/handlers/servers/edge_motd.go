@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
@@ -42,16 +42,16 @@ func (h *ServerHandler) GetServerEdgeMotd(w http.ResponseWriter, r *http.Request
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", 400)
+		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
 	if _, err := h.state.Store.GetServerByID(serverID); err != nil {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 	mode, text, err := h.state.Store.GetServerEdgeMotd(serverID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to read edge MOTD config", 500)
+		httpx.SendJSONError(w, "Failed to read edge MOTD config", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "mode": mode, "customText": text})
@@ -65,12 +65,12 @@ func (h *ServerHandler) SetServerEdgeMotd(w http.ResponseWriter, r *http.Request
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", 400)
+		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 	var req struct {
@@ -78,11 +78,11 @@ func (h *ServerHandler) SetServerEdgeMotd(w http.ResponseWriter, r *http.Request
 		CustomText string `json:"customText"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 	if !validEdgeMotdMode(req.Mode) {
-		handlers.SendJSONError(w, "Invalid mode (must be auto, custom, or off)", 400)
+		httpx.SendJSONError(w, "Invalid mode (must be auto, custom, or off)", 400)
 		return
 	}
 	text := strings.TrimSpace(req.CustomText)
@@ -90,7 +90,7 @@ func (h *ServerHandler) SetServerEdgeMotd(w http.ResponseWriter, r *http.Request
 		text = text[:maxEdgeMotdTextLen]
 	}
 	if err := h.state.Store.SetServerEdgeMotd(serverID, req.Mode, text); err != nil {
-		handlers.SendJSONError(w, "Failed to update edge MOTD config", 500)
+		httpx.SendJSONError(w, "Failed to update edge MOTD config", 500)
 		return
 	}
 	// Publish immediately so the edge picks it up without waiting for the periodic

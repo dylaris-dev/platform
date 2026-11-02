@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage"
@@ -480,10 +481,10 @@ func parseMultipart(w http.ResponseWriter, r *http.Request) bool {
 	if err := r.ParseMultipartForm(8 << 20); err != nil { // 8 MiB in RAM, rest to disk
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			handlers.SendJSONErrorCode(w, "The upload is larger than the template size limit", "templates_too_large", http.StatusRequestEntityTooLarge)
+			httpx.SendJSONErrorCode(w, "The upload is larger than the template size limit", "templates_too_large", http.StatusRequestEntityTooLarge)
 			return false
 		}
-		handlers.SendJSONError(w, "Upload too large or malformed", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Upload too large or malformed", http.StatusBadRequest)
 		return false
 	}
 	return true
@@ -493,7 +494,7 @@ func tooLarge(w http.ResponseWriter) { tooLargeNote(w, "") }
 
 // tooLargeNote is tooLarge with note (see discard) appended.
 func tooLargeNote(w http.ResponseWriter, note string) {
-	handlers.SendJSONErrorCode(w, withNote("The template would exceed its size limit.", note), "templates_too_large", http.StatusRequestEntityTooLarge)
+	httpx.SendJSONErrorCode(w, withNote("The template would exceed its size limit.", note), "templates_too_large", http.StatusRequestEntityTooLarge)
 }
 
 func withNote(msg, note string) string {
@@ -524,25 +525,25 @@ func (h *TemplatesHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	// own storage, where the transit ceiling applies. Extraction then applies
 	// the template's real cap.
 	s.MaxSizeBytes = s.SizeCap("personal", v.IsAdmin, own != nil)
-	if !handlers.CapBody(w, r, bodyLimit(requestBound(s, own != nil))) || !parseMultipart(w, r) {
+	if !httpx.CapBody(w, r, bodyLimit(requestBound(s, own != nil))) || !parseMultipart(w, r) {
 		return
 	}
 	defer r.MultipartForm.RemoveAll()
 	var m templateMeta
 	if err := json.Unmarshal([]byte(r.FormValue("meta")), &m); err != nil {
-		handlers.SendJSONError(w, "meta must be the template details as JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "meta must be the template details as JSON", http.StatusBadRequest)
 		return
 	}
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		handlers.SendJSONError(w, "file field required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "file field required", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 	staged, err := stage(file)
 	if err != nil {
 		log.Printf("templates: stage upload: %v", err)
-		handlers.SendJSONError(w, "Could not read the upload", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not read the upload", http.StatusInternalServerError)
 		return
 	}
 	defer os.Remove(staged)
@@ -567,12 +568,12 @@ func (h *TemplatesHandler) extractFailed(w http.ResponseWriter, t *models.Templa
 	case errors.Is(err, errTooLarge):
 		tooLargeNote(w, note)
 	case errors.Is(err, errBadZip):
-		handlers.SendJSONError(w, withNote("The file is not a readable zip archive.", note), http.StatusBadRequest)
+		httpx.SendJSONError(w, withNote("The file is not a readable zip archive.", note), http.StatusBadRequest)
 	case errors.Is(err, errTooManyEntries):
-		handlers.SendJSONError(w, withNote(fmt.Sprintf("The archive has more than %d files and folders.", maxZipEntries), note), http.StatusBadRequest)
+		httpx.SendJSONError(w, withNote(fmt.Sprintf("The archive has more than %d files and folders.", maxZipEntries), note), http.StatusBadRequest)
 	default:
 		log.Printf("templates: extract into %d: %v", t.ID, err)
-		handlers.SendJSONError(w, withNote("Could not store the template files.", note), http.StatusInternalServerError)
+		httpx.SendJSONError(w, withNote("Could not store the template files.", note), http.StatusInternalServerError)
 	}
 }
 
@@ -623,13 +624,13 @@ func (h *TemplatesHandler) Files(w http.ResponseWriter, r *http.Request) {
 	files, err := h.state.TemplateList(r.Context(), t)
 	if err != nil {
 		log.Printf("templates: list files of %d: %v", t.ID, err)
-		handlers.SendJSONError(w, "Could not list the template files", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not list the template files", http.StatusInternalServerError)
 		return
 	}
 	refs, err := h.state.Store.ListTemplateModrinth(t.ID)
 	if err != nil {
 		log.Printf("templates: list modrinth of %d: %v", t.ID, err)
-		handlers.SendJSONError(w, "Could not list the template files", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not list the template files", http.StatusInternalServerError)
 		return
 	}
 	out := make([]fileEntry, 0, len(files)+len(refs))
@@ -661,7 +662,7 @@ type modrinthEntry struct {
 func relParam(w http.ResponseWriter, raw string) (string, bool) {
 	rel, ok := services.TemplateRelPath(raw)
 	if !ok {
-		handlers.SendJSONError(w, "Invalid file path", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid file path", http.StatusBadRequest)
 	}
 	return rel, ok
 }
@@ -682,29 +683,29 @@ func (h *TemplatesHandler) GetText(w http.ResponseWriter, r *http.Request) {
 			// A reference has no bytes here; say so rather than "not found".
 			refs, lerr := h.state.Store.ListTemplateModrinth(t.ID)
 			if lerr == nil && slices.ContainsFunc(refs, func(m models.TemplateModrinthRef) bool { return m.Path == rel }) {
-				handlers.SendJSONError(w, "This file is a Modrinth reference and is downloaded when the template is installed.", http.StatusBadRequest)
+				httpx.SendJSONError(w, "This file is a Modrinth reference and is downloaded when the template is installed.", http.StatusBadRequest)
 				return
 			}
-			handlers.SendJSONError(w, "File not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "File not found", http.StatusNotFound)
 			return
 		}
 		log.Printf("templates: read %d/%s: %v", t.ID, rel, err)
-		handlers.SendJSONError(w, "Could not read the file", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not read the file", http.StatusInternalServerError)
 		return
 	}
 	defer rc.Close()
 	b, err := io.ReadAll(io.LimitReader(rc, maxTextFileBytes+1))
 	if err != nil {
 		log.Printf("templates: read %d/%s: %v", t.ID, rel, err)
-		handlers.SendJSONError(w, "Could not read the file", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not read the file", http.StatusInternalServerError)
 		return
 	}
 	if len(b) > maxTextFileBytes {
-		handlers.SendJSONError(w, "The file is larger than 1 MiB and cannot be edited here", http.StatusRequestEntityTooLarge)
+		httpx.SendJSONError(w, "The file is larger than 1 MiB and cannot be edited here", http.StatusRequestEntityTooLarge)
 		return
 	}
 	if !utf8.Valid(b) {
-		handlers.SendJSONError(w, "The file is not UTF-8 text and cannot be edited here", http.StatusUnsupportedMediaType)
+		httpx.SendJSONError(w, "The file is not UTF-8 text and cannot be edited here", http.StatusUnsupportedMediaType)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"path": rel, "content": string(b)})
@@ -717,7 +718,7 @@ func (h *TemplatesHandler) PutText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// JSON escaping can grow content several times over; the decoded length is checked below.
-	if !handlers.CapBody(w, r, 8*maxTextFileBytes) {
+	if !httpx.CapBody(w, r, 8*maxTextFileBytes) {
 		return
 	}
 	var p struct {
@@ -725,7 +726,7 @@ func (h *TemplatesHandler) PutText(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		handlers.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	rel, ok := relParam(w, p.Path)
@@ -733,12 +734,12 @@ func (h *TemplatesHandler) PutText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(p.Content) > maxTextFileBytes || !utf8.ValidString(p.Content) {
-		handlers.SendJSONError(w, "Content must be UTF-8 text of at most 1 MiB", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Content must be UTF-8 text of at most 1 MiB", http.StatusBadRequest)
 		return
 	}
 	data := []byte(p.Content)
 	if ok, reason := contentAllowed(rel, bytes.NewReader(data), int64(len(data)), s.ContentPolicy); !ok {
-		handlers.SendJSONError(w, reason, http.StatusBadRequest)
+		httpx.SendJSONError(w, reason, http.StatusBadRequest)
 		return
 	}
 	if !h.fits(w, r, t, s, map[string]int64{rel: int64(len(data))}) {
@@ -746,12 +747,12 @@ func (h *TemplatesHandler) PutText(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.state.TemplateWrite(r.Context(), t, rel, bytes.NewReader(data), int64(len(data))); err != nil {
 		log.Printf("templates: write %d/%s: %v", t.ID, rel, err)
-		handlers.SendJSONError(w, "Could not save the file", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not save the file", http.StatusInternalServerError)
 		return
 	}
 	if err := dropRefsAt(h.state, t, []string{rel}); err != nil {
 		log.Printf("templates: drop modrinth at %d/%s: %v", t.ID, rel, err)
-		handlers.SendJSONError(w, "Could not save the file", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not save the file", http.StatusInternalServerError)
 		return
 	}
 	h.written(w, r, t, nil)
@@ -765,7 +766,7 @@ func (h *TemplatesHandler) fits(w http.ResponseWriter, r *http.Request, t *model
 	total, err := sizeWith(r.Context(), h.state, t, add)
 	if err != nil {
 		log.Printf("templates: size of %d: %v", t.ID, err)
-		handlers.SendJSONError(w, "Could not check the template size", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not check the template size", http.StatusInternalServerError)
 		return false
 	}
 	if services.Exceeds(s.MaxSizeBytes, total) {
@@ -924,14 +925,14 @@ func (h *TemplatesHandler) AddFiles(w http.ResponseWriter, r *http.Request) {
 	defer removeStaged(files)
 	if status != 0 {
 		if status == http.StatusRequestEntityTooLarge {
-			handlers.SendJSONErrorCode(w, msg, "templates_too_large", status)
+			httpx.SendJSONErrorCode(w, msg, "templates_too_large", status)
 		} else {
-			handlers.SendJSONError(w, msg, status)
+			httpx.SendJSONError(w, msg, status)
 		}
 		return
 	}
 	if len(paths) > 0 && len(paths) != len(files) {
-		handlers.SendJSONError(w, "Every file needs exactly one path field", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Every file needs exactly one path field", http.StatusBadRequest)
 		return
 	}
 	if dir != "" {
@@ -966,20 +967,20 @@ func (h *TemplatesHandler) AddFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		if _, dup := seen[rel]; dup {
 			// Refused, not deduped: which copy "wins" would depend on request order.
-			handlers.SendJSONError(w, "The same path appears twice: "+rel, http.StatusBadRequest)
+			httpx.SendJSONError(w, "The same path appears twice: "+rel, http.StatusBadRequest)
 			return
 		}
 		seen[rel] = true
 		f, err := os.Open(sf.tmp)
 		if err != nil {
-			handlers.SendJSONError(w, "Could not read the upload", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Could not read the upload", http.StatusInternalServerError)
 			return
 		}
 		if services.TemplateJarReferable(rel, s.ContentPolicy) {
 			j, err := services.HashTemplateJar(rel, f)
 			f.Close()
 			if err != nil {
-				handlers.SendJSONError(w, "Could not read the upload", http.StatusInternalServerError)
+				httpx.SendJSONError(w, "Could not read the upload", http.StatusInternalServerError)
 				return
 			}
 			jars = append(jars, j)
@@ -1001,7 +1002,7 @@ func (h *TemplatesHandler) AddFiles(w http.ResponseWriter, r *http.Request) {
 	for _, a := range take {
 		f, err := os.Open(a.f.tmp)
 		if err != nil {
-			handlers.SendJSONError(w, "Could not read the upload", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Could not read the upload", http.StatusInternalServerError)
 			return
 		}
 		err = h.state.TemplateWrite(r.Context(), t, a.rel, f, a.f.size)
@@ -1010,7 +1011,7 @@ func (h *TemplatesHandler) AddFiles(w http.ResponseWriter, r *http.Request) {
 			log.Printf("templates: write %d/%s: %v", t.ID, a.rel, err)
 			// Files written before this one stay; record their size.
 			_ = refreshSize(r.Context(), h.state, t)
-			handlers.SendJSONError(w, "Could not store "+a.rel, http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Could not store "+a.rel, http.StatusInternalServerError)
 			return
 		}
 		written = append(written, a.rel)
@@ -1022,7 +1023,7 @@ func (h *TemplatesHandler) AddFiles(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("templates: modrinth references of %d: %v", t.ID, err)
 		_ = refreshSize(r.Context(), h.state, t)
-		handlers.SendJSONError(w, "Could not store the Modrinth references", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not store the Modrinth references", http.StatusInternalServerError)
 		return
 	}
 	h.written(w, r, t, skipped.list())
@@ -1040,12 +1041,12 @@ func (h *TemplatesHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.state.TemplateDelete(r.Context(), t, rel); err != nil {
 		log.Printf("templates: delete %d/%s: %v", t.ID, rel, err)
-		handlers.SendJSONError(w, "Could not delete the file", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not delete the file", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.DeleteTemplateModrinthPath(t.ID, rel); err != nil {
 		log.Printf("templates: delete modrinth %d/%s: %v", t.ID, rel, err)
-		handlers.SendJSONError(w, "Could not delete the file", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not delete the file", http.StatusInternalServerError)
 		return
 	}
 	h.written(w, r, t, nil)

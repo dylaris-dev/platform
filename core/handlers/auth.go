@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -128,21 +129,21 @@ func (h *AuthHandler) DemoStatus(w http.ResponseWriter, r *http.Request) {
 // Returns 404 when no demo account is configured (feature off).
 func (h *AuthHandler) DemoLogin(w http.ResponseWriter, r *http.Request) {
 	if !h.state.StoreEnabled {
-		sendJSONError(w, "Demo is not enabled", http.StatusNotFound)
+		httpx.SendJSONError(w, "Demo is not enabled", http.StatusNotFound)
 		return
 	}
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
 	uuid, _ := h.state.Store.GetSetting(demoAccountUUIDSetting)
 	if uuid == "" {
-		sendJSONError(w, "Demo is not enabled", http.StatusNotFound)
+		httpx.SendJSONError(w, "Demo is not enabled", http.StatusNotFound)
 		return
 	}
 	u, err := h.state.Store.GetUserByID(uuid)
 	if err != nil || u == nil {
-		sendJSONError(w, "Demo account unavailable", http.StatusNotFound)
+		httpx.SendJSONError(w, "Demo account unavailable", http.StatusNotFound)
 		return
 	}
 	// Checked again here and not only when the account was designated: it can
@@ -150,12 +151,12 @@ func (h *AuthHandler) DemoLogin(w http.ResponseWriter, r *http.Request) {
 	// session would then hold it.
 	if caps, ok := strictPanelCaps(h.state, u.ID); u.IsAdmin || !ok || len(caps) > 0 {
 		log.Printf("demo login: the demo account %s holds staff rights, refusing", u.Username)
-		sendJSONError(w, "Demo account unavailable", http.StatusNotFound)
+		httpx.SendJSONError(w, "Demo account unavailable", http.StatusNotFound)
 		return
 	}
 	token, err := h.IssueToken(u.Username, false, sessionKey(u))
 	if err != nil {
-		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
 		return
 	}
 	setSessionCookie(w, r, token, int(sessionTTL.Seconds()))
@@ -308,7 +309,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 					// minutes kept a signed-out session's ticket alive for good.
 					if sessionRevoked(r.Context(), h.state.Store, h.state.Redis, ticketSID) {
 						h.state.Redis.Del(r.Context(), key)
-						sendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
+						httpx.SendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
 						return
 					}
 					// Sliding window: keep long-lived streams alive.
@@ -339,19 +340,19 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 						user, uerr := h.state.Store.GetUserByUsername(username)
 						if errors.Is(uerr, sql.ErrNoRows) || (uerr == nil && user == nil) {
 							h.state.Redis.Del(r.Context(), key)
-							sendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
+							httpx.SendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
 							return
 						}
 						if uerr != nil {
 							log.Printf("auth: could not resolve SSE ticket holder %q: %v", username, uerr)
-							sendJSONError(w, "Could not verify account", http.StatusServiceUnavailable)
+							httpx.SendJSONError(w, "Could not verify account", http.StatusServiceUnavailable)
 							return
 						}
 						// The same rule the session token follows: a ticket minted
 						// under an older password is over.
 						if ticketFp != "" && ticketFp != passwordFingerprint(sessionKey(user)) {
 							h.state.Redis.Del(r.Context(), key)
-							sendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
+							httpx.SendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
 							return
 						}
 						isAdmin = user.IsAdmin
@@ -392,7 +393,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		if authHeader == "" {
 			if tok := sessionTokenFromCookie(r); tok != "" {
 				if !requireSameOriginForCookieAuth(r, h.state.FrontendURL) {
-					sendJSONError(w, "Cross-origin request refused", http.StatusForbidden)
+					httpx.SendJSONError(w, "Cross-origin request refused", http.StatusForbidden)
 					return
 				}
 				authHeader = "Bearer " + tok
@@ -400,7 +401,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 		if authHeader == "" {
-			sendJSONError(w, "Missing Authorization Header", http.StatusUnauthorized)
+			httpx.SendJSONError(w, "Missing Authorization Header", http.StatusUnauthorized)
 			return
 		}
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
@@ -416,7 +417,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			if cookieAuth {
 				clearSessionCookie(w, r)
 			}
-			sendJSONError(w, "Invalid Token", http.StatusUnauthorized)
+			httpx.SendJSONError(w, "Invalid Token", http.StatusUnauthorized)
 			return
 		}
 		// Signed out on this device. Same answer as a dead token: to the panel
@@ -426,7 +427,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			if cookieAuth {
 				clearSessionCookie(w, r)
 			}
-			sendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
+			httpx.SendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
 			return
 		}
 
@@ -434,7 +435,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// must reject them with 403 - bearer doesn't have a full session yet.
 		if claims.Purpose == "2fa_setup" {
 			if m, ok := setupTokenAllowedPaths[r.URL.Path]; !ok || m != r.Method {
-				sendJSONError(w, "Token is restricted to 2FA setup - finish enrollment first", http.StatusForbidden)
+				httpx.SendJSONError(w, "Token is restricted to 2FA setup - finish enrollment first", http.StatusForbidden)
 				return
 			}
 		}
@@ -444,7 +445,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// AuthMiddleware) - they must never authenticate a normal /api call,
 		// even though they share the session signing key.
 		if claims.Purpose == "tab_proxy" {
-			sendJSONError(w, "Token is restricted to the tab proxy", http.StatusForbidden)
+			httpx.SendJSONError(w, "Token is restricted to the tab proxy", http.StatusForbidden)
 			return
 		}
 
@@ -472,7 +473,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// with its own issuer, for its own audience - is refused here without
 		// anyone having to remember to extend a list.
 		if claims.Issuer != "" {
-			sendJSONError(w, "Token was not issued for the panel API", http.StatusForbidden)
+			httpx.SendJSONError(w, "Token was not issued for the panel API", http.StatusForbidden)
 			return
 		}
 
@@ -503,12 +504,12 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		if h.state.Store != nil {
 			user, err := h.state.Store.GetUserByUsername(claims.Username)
 			if errors.Is(err, sql.ErrNoRows) || (err == nil && user == nil) {
-				sendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
+				httpx.SendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
 				return
 			}
 			if err != nil {
 				log.Printf("auth: could not resolve %q: %v", claims.Username, err)
-				sendJSONError(w, "Could not verify account", http.StatusServiceUnavailable)
+				httpx.SendJSONError(w, "Could not verify account", http.StatusServiceUnavailable)
 				return
 			}
 
@@ -527,7 +528,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			// passed as that user. An account with no password at all has an
 			// empty fingerprint on both sides and still matches.
 			if claims.ExpiresAt == nil || claims.PwdFp != passwordFingerprint(sessionKey(user)) {
-				sendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
+				httpx.SendJSONError(w, "Your session has ended - please sign in again", http.StatusUnauthorized)
 				return
 			}
 
@@ -573,11 +574,11 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				// settings read silently lifted the read-only gate.
 				demo, derr := isDemoAccountChecked(h.state, user.ID)
 				if derr != nil {
-					sendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
+					httpx.SendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
 					return
 				}
 				if demo {
-					sendJSONError(w, "The demo account is read-only", http.StatusForbidden)
+					httpx.SendJSONError(w, "The demo account is read-only", http.StatusForbidden)
 					return
 				}
 			}
@@ -637,7 +638,7 @@ const invalidLoginMessage = "Invalid username or password"
 // it does not read as bad credentials.
 func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -650,19 +651,19 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if err == sql.ErrNoRows {
 		// Same wording as the wrong-password branch below, deliberately: a
 		// distinct "user not found" turns the login form into a username oracle.
-		sendJSONError(w, invalidLoginMessage, http.StatusUnauthorized)
+		httpx.SendJSONError(w, invalidLoginMessage, http.StatusUnauthorized)
 		return
 	} else if err != nil {
 		if dbUnavailable(err) {
-			sendJSONError(w, "The database is currently unavailable — please try again in a moment.", http.StatusServiceUnavailable)
+			httpx.SendJSONError(w, "The database is currently unavailable — please try again in a moment.", http.StatusServiceUnavailable)
 			return
 		}
-		sendJSONError(w, "Database Error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database Error", http.StatusInternalServerError)
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-		sendJSONError(w, invalidLoginMessage, http.StatusUnauthorized)
+		httpx.SendJSONError(w, invalidLoginMessage, http.StatusUnauthorized)
 		return
 	}
 
@@ -734,7 +735,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !ok {
-			sendJSONError(w, "Invalid 2FA code", http.StatusUnauthorized)
+			httpx.SendJSONError(w, "Invalid 2FA code", http.StatusUnauthorized)
 			return
 		}
 	}
@@ -743,7 +744,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	// same window as the token.
 	tokenString, err := h.IssueToken(user.Username, user.IsAdmin, sessionKey(user))
 	if err != nil {
-		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
 		return
 	}
 
@@ -814,7 +815,7 @@ func (h *AuthHandler) GetProfileHandler(w http.ResponseWriter, r *http.Request) 
 	// STORE REFACTOR
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil {
-		sendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
@@ -839,14 +840,14 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil {
-		sendJSONError(w, "User not found", 404)
+		httpx.SendJSONError(w, "User not found", 404)
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.OldPassword)); err != nil {
 		// 403, not 401: the panel reads a 401 as an expired session and signs
 		// the user out instead of showing this.
-		sendJSONError(w, "Invalid current password", http.StatusForbidden)
+		httpx.SendJSONError(w, "Invalid current password", http.StatusForbidden)
 		return
 	}
 
@@ -868,19 +869,19 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 				// Removing the address would lock the account out at its next
 				// sign-in with nowhere to send the confirmation it then needs.
 				if LoadAuthPolicy(h.state).EmailVerifyRequired && !isAdmin {
-					sendJSONError(w, "An email address is required on this platform", http.StatusBadRequest)
+					httpx.SendJSONError(w, "An email address is required on this platform", http.StatusBadRequest)
 					return
 				}
 			} else {
 				if !validate.IsEmail(newEmail) {
-					sendJSONError(w, "Invalid email address", http.StatusBadRequest)
+					httpx.SendJSONError(w, "Invalid email address", http.StatusBadRequest)
 					return
 				}
 				// There is no unique index on users.email; this check is the only
 				// thing between two accounts and one reset mailbox. Same answer
 				// the admin door gives.
 				if existing, eerr := h.state.Store.GetUserByEmail(newEmail); eerr == nil && existing != nil && existing.ID != user.ID {
-					sendJSONError(w, "That email address is already in use", http.StatusConflict)
+					httpx.SendJSONError(w, "That email address is already in use", http.StatusConflict)
 					return
 				}
 			}
@@ -888,7 +889,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			// mails the new address, and switching between two strangers'
 			// addresses in a loop sent them mail from this domain without end.
 			if !verificationResendAllowed(user.EmailVerificationSentAt, time.Now(), resendVerificationCooldown) {
-				sendJSONError(w, "Please wait a minute before changing your address again", http.StatusTooManyRequests)
+				httpx.SendJSONError(w, "Please wait a minute before changing your address again", http.StatusTooManyRequests)
 				return
 			}
 			emailChanged = true
@@ -909,7 +910,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	if renaming {
 		newName = strings.TrimSpace(*req.NewUsername)
 		if newName == "" {
-			sendJSONError(w, "Username cannot be empty", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Username cannot be empty", http.StatusBadRequest)
 			return
 		}
 		// The rename path historically skipped the charset regex the register/
@@ -917,25 +918,25 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		// beam daily-upload counter dylaris:beam:daily:<username>:<date>), so a ':'
 		// or space here lets a user collide/hijack another user's key namespace.
 		if !validate.IsUsername(newName) {
-			sendJSONError(w, "Invalid username: 3-32 characters, must start with a letter or digit, then letters, digits, '.', '_' or '-'", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid username: 3-32 characters, must start with a letter or digit, then letters, digits, '.', '_' or '-'", http.StatusBadRequest)
 			return
 		}
 		allow, cooldownDays, _ := h.state.Store.GetUserAccountPolicy()
 		if !allow && !isAdmin {
-			sendJSONError(w, "Username changes are disabled by the admin", http.StatusForbidden)
+			httpx.SendJSONError(w, "Username changes are disabled by the admin", http.StatusForbidden)
 			return
 		}
 		if !isAdmin && user.LastUsernameChange != nil {
 			earliest := user.LastUsernameChange.Add(time.Duration(cooldownDays) * 24 * time.Hour)
 			if time.Now().Before(earliest) {
 				w.Header().Set("Retry-After", earliest.UTC().Format(time.RFC3339))
-				sendJSONError(w, "Username cooldown active; try again on "+earliest.Format("2006-01-02"), http.StatusTooManyRequests)
+				httpx.SendJSONError(w, "Username cooldown active; try again on "+earliest.Format("2006-01-02"), http.StatusTooManyRequests)
 				return
 			}
 		}
 		// Case-INSENSITIVE; the unique index on LOWER(username) is the real guard.
 		if taken, _ := h.state.Store.UsernameTaken(newName, user.ID); taken {
-			sendJSONError(w, "Username already taken", http.StatusConflict)
+			httpx.SendJSONError(w, "Username already taken", http.StatusConflict)
 			return
 		}
 	}
@@ -943,13 +944,13 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		// Enforce the same length policy the register + reset paths apply; this
 		// self-service field previously accepted any non-empty password.
 		if min := LoadAuthPolicy(h.state).PasswordMinLength; len(*req.NewPassword) < min {
-			sendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), http.StatusBadRequest)
+			httpx.SendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), http.StatusBadRequest)
 			return
 		}
 	}
 	if req.MinecraftUsername != nil {
 		if mc := strings.TrimSpace(*req.MinecraftUsername); mc != "" && !validate.IsMinecraftUsername(mc) {
-			sendJSONError(w, "Invalid Minecraft username: 3-16 characters, letters, digits or _", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid Minecraft username: 3-16 characters, letters, digits or _", http.StatusBadRequest)
 			return
 		}
 	}
@@ -971,7 +972,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if !ok {
-			sendJSONError(w, "Invalid 2FA code", http.StatusForbidden)
+			httpx.SendJSONError(w, "Invalid 2FA code", http.StatusForbidden)
 			return
 		}
 	}
@@ -987,11 +988,11 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	if emailChanged && newEmail != "" && LoadAuthPolicy(h.state).EmailVerifyRequired {
 		token, terr := randomToken(32)
 		if terr != nil {
-			sendJSONError(w, "Update failed", 500)
+			httpx.SendJSONError(w, "Update failed", 500)
 			return
 		}
 		if err := h.state.Store.SetPendingEmail(user.ID, newEmail, token); err != nil {
-			sendJSONError(w, "Update failed", 500)
+			httpx.SendJSONError(w, "Update failed", 500)
 			return
 		}
 		LogIdentityAudit(h.state, r, "user_email_change_requested", user.ID, user.ID, nil)
@@ -1002,7 +1003,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			if cerr := h.state.Store.SetPendingEmail(user.ID, "", ""); cerr != nil {
 				log.Printf("profile: could not withdraw the pending address of %s: %v", user.Username, cerr)
 			}
-			sendJSONError(w, "Your current address is unchanged: the confirmation mail to the new one could not be sent", http.StatusBadGateway)
+			httpx.SendJSONError(w, "Your current address is unchanged: the confirmation mail to the new one could not be sent", http.StatusBadGateway)
 			return
 		}
 		pendingSet = true
@@ -1017,10 +1018,10 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			// The pre-check above is best-effort UX; the username UNIQUE
 			// constraint is the real guard against a concurrent rename race.
 			if errors.Is(err, store.ErrUsernameTaken) {
-				sendJSONError(w, "Username already taken", http.StatusConflict)
+				httpx.SendJSONError(w, "Username already taken", http.StatusConflict)
 				return
 			}
-			sendJSONError(w, "Rename failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Rename failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		h.state.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": user.ID})
@@ -1032,7 +1033,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	if req.NewPassword != nil && *req.NewPassword != "" {
 		hashed, herr := bcrypt.GenerateFromPassword([]byte(*req.NewPassword), bcrypt.DefaultCost)
 		if herr != nil {
-			sendJSONError(w, "Update failed", 500)
+			httpx.SendJSONError(w, "Update failed", 500)
 			return
 		}
 		user.Password = string(hashed)
@@ -1054,13 +1055,13 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	// their own profile save could get is_admin back.
 	if passwordChanged {
 		if err := h.state.Store.UpdateUserPassword(user.ID, user.Password); err != nil {
-			sendJSONError(w, "Update failed", 500)
+			httpx.SendJSONError(w, "Update failed", 500)
 			return
 		}
 	}
 	if req.MinecraftUsername != nil {
 		if err := h.state.Store.SetUserMinecraftUsername(user.ID, user.MinecraftUsername); err != nil {
-			sendJSONError(w, "Update failed", 500)
+			httpx.SendJSONError(w, "Update failed", 500)
 			return
 		}
 	}
@@ -1070,7 +1071,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	emailVerifySent := false
 	if emailChanged {
 		if err := h.state.Store.SetUserEmail(user.ID, newEmail); err != nil {
-			sendJSONError(w, "Update failed", 500)
+			httpx.SendJSONError(w, "Update failed", 500)
 			return
 		}
 		LogIdentityAudit(h.state, r, AuditEventUserEmailChanged, user.ID, user.ID, nil)
@@ -1116,13 +1117,13 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 // caller has accepted the Minecraft EULA. Setup asks before the first install.
 func (h *AuthHandler) MinecraftEulaStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
 	userID, _ := r.Context().Value("userID").(string)
 	accepted, err := h.state.Store.MinecraftEulaAccepted(userID)
 	if err != nil {
-		sendJSONError(w, "Could not read the Minecraft EULA acceptance", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not read the Minecraft EULA acceptance", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "accepted": accepted})
@@ -1143,22 +1144,22 @@ func (h *AuthHandler) UpdateMinecraftUsernameHandler(w http.ResponseWriter, r *h
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.MinecraftUsername == nil {
-		sendJSONError(w, "minecraftUsername is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "minecraftUsername is required", http.StatusBadRequest)
 		return
 	}
 	mc := strings.TrimSpace(*req.MinecraftUsername)
 	if mc != "" && !validate.IsMinecraftUsername(mc) {
-		sendJSONError(w, "Invalid Minecraft username: 3-16 characters, letters, digits or _", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid Minecraft username: 3-16 characters, letters, digits or _", http.StatusBadRequest)
 		return
 	}
 
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil || user == nil {
-		sendJSONError(w, "User not found", 404)
+		httpx.SendJSONError(w, "User not found", 404)
 		return
 	}
 	if err := h.state.Store.SetUserMinecraftUsername(user.ID, mc); err != nil {
-		sendJSONError(w, "Update failed", 500)
+		httpx.SendJSONError(w, "Update failed", 500)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "minecraftUsername": mc})
@@ -1211,17 +1212,17 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) LogoutEverywhere(w http.ResponseWriter, r *http.Request) {
 	username, _ := r.Context().Value("username").(string)
 	if username == "" || h.state.Store == nil {
-		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil || user == nil {
-		sendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
 		return
 	}
 	if err := endAllSessions(h.state, user); err != nil {
 		log.Printf("auth: could not end the sessions of %s: %v", user.Username, err)
-		sendJSONError(w, "Could not end your other sessions", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not end your other sessions", http.StatusInternalServerError)
 		return
 	}
 	LogIdentityAudit(h.state, r, AuditEventSessionsRevoked, user.ID, user.ID, nil)
@@ -1300,17 +1301,17 @@ func (h *AuthHandler) SessionToken(w http.ResponseWriter, r *http.Request) {
 		// Deliberately not "forbidden for you": the endpoint should read as
 		// absent from anywhere it does not apply, so nothing invites a caller
 		// to go looking for a way in.
-		sendJSONError(w, "Not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
 	username, _ := r.Context().Value("username").(string)
 	if username == "" || h.state.Store == nil {
-		sendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil || user == nil {
-		sendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Account no longer exists", http.StatusUnauthorized)
 		return
 	}
 	// A copy of THIS session, not a new one: signing out in the webview then
@@ -1318,7 +1319,7 @@ func (h *AuthHandler) SessionToken(w http.ResponseWriter, r *http.Request) {
 	caller, _ := r.Context().Value(sessionClaimsKey).(*Claims)
 	token, err := h.copyOfSession(caller, user.Username, user.IsAdmin, sessionKey(user))
 	if err != nil {
-		sendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to issue token", http.StatusInternalServerError)
 		return
 	}
 	// Never cached, never referred onward: this response body IS a credential.

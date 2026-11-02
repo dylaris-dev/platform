@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -65,7 +66,7 @@ func (h *SettingsHandler) GetFileManagerSettings(w http.ResponseWriter, r *http.
 func (h *SettingsHandler) SaveFileManagerSettings(w http.ResponseWriter, r *http.Request) {
 	var req FileManagerSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -81,7 +82,7 @@ func (h *SettingsHandler) SaveFileManagerSettings(w http.ResponseWriter, r *http
 
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
-			sendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
 			return
 		}
 	}
@@ -179,7 +180,7 @@ func (h *SettingsHandler) GetFeatureSettings(w http.ResponseWriter, r *http.Requ
 func (h *SettingsHandler) SaveFeatureSettings(w http.ResponseWriter, r *http.Request) {
 	var req FeatureSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -189,7 +190,7 @@ func (h *SettingsHandler) SaveFeatureSettings(w http.ResponseWriter, r *http.Req
 	}
 
 	if err := h.state.Store.SetSetting("feature_proxy_enabled", proxyVal); err != nil {
-		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
 
@@ -373,12 +374,12 @@ func (h *SettingsHandler) GetGatewayRouteOptions(w http.ResponseWriter, r *http.
 func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	var req GatewaySettings
 	if err := json.Unmarshal(body, &req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	// null is "no cap", so an ABSENT maxCustomDomains must be told apart from
@@ -398,11 +399,11 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 			continue
 		}
 		if !isHostname(dom, 2) {
-			sendJSONError(w, "Invalid hoster domain: "+dom, http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid hoster domain: "+dom, http.StatusBadRequest)
 			return
 		}
 		if seen[dom] {
-			sendJSONError(w, "Duplicate hoster domain: "+dom, http.StatusBadRequest)
+			httpx.SendJSONError(w, "Duplicate hoster domain: "+dom, http.StatusBadRequest)
 			return
 		}
 		seen[dom] = true
@@ -420,7 +421,7 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	// only surface as a customer whose CNAME never works.
 	cnameLabel := strings.ToLower(strings.TrimSpace(req.CnameTarget))
 	if cnameLabel != "" && !subRegexDNS.MatchString(cnameLabel) {
-		sendJSONError(w, "CNAME target must be a single label such as \"route\", not a full domain — it is combined with each hoster domain automatically", http.StatusBadRequest)
+		httpx.SendJSONError(w, "CNAME target must be a single label such as \"route\", not a full domain — it is combined with each hoster domain automatically", http.StatusBadRequest)
 		return
 	}
 
@@ -438,14 +439,14 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	blockedJSON, _ := json.Marshal(blocked)
 
 	if req.MaxCustomDomains != nil && *req.MaxCustomDomains < 0 {
-		sendJSONError(w, "Custom domain limit must be 0 or more (0 means none; leave it unset for no limit)", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Custom domain limit must be 0 or more (0 means none; leave it unset for no limit)", http.StatusBadRequest)
 		return
 	}
 
 	// Save port-enable settings
 	if present.MaxCustomDomains != nil {
 		if err := h.state.Store.SetSetting(SettingMaxCustomDomains, services.FormatLimitSetting(req.MaxCustomDomains)); err != nil {
-			sendJSONError(w, "Failed to save setting: "+SettingMaxCustomDomains, http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save setting: "+SettingMaxCustomDomains, http.StatusInternalServerError)
 			return
 		}
 	}
@@ -458,7 +459,7 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	}
 	for _, p := range portSettings {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
-			sendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
 			return
 		}
 	}
@@ -497,7 +498,7 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 			err = h.state.Store.SetGatewayRouteLimit(l.scope, l.max)
 		}
 		if err != nil {
-			sendJSONError(w, "Failed to save limit: "+l.scope, http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save limit: "+l.scope, http.StatusInternalServerError)
 			return
 		}
 	}
@@ -581,16 +582,16 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 		RAMPaddingMB *int `json:"ramPaddingMb"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req := body.PlacementSettings
 	if req.CPUOvercommitDefault <= 0 || req.RAMOvercommitDefault <= 0 {
-		sendJSONError(w, "Overcommit ratios must be > 0", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Overcommit ratios must be > 0", http.StatusBadRequest)
 		return
 	}
 	if body.RAMPaddingMB != nil && !models.ValidRAMPaddingMB(*body.RAMPaddingMB) {
-		sendJSONError(w, fmt.Sprintf("Container RAM headroom must be from 0 to %d MB", models.MaxRAMPaddingMB), http.StatusBadRequest)
+		httpx.SendJSONError(w, fmt.Sprintf("Container RAM headroom must be from 0 to %d MB", models.MaxRAMPaddingMB), http.StatusBadRequest)
 		return
 	}
 	// The buffer is a floor, so it has a floor of its own: below it a path can be
@@ -655,7 +656,7 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
-			sendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
 			return
 		}
 	}
@@ -805,24 +806,24 @@ func (h *SettingsHandler) GetServerSettings(w http.ResponseWriter, r *http.Reque
 func (h *SettingsHandler) SaveServerSettings(w http.ResponseWriter, r *http.Request) {
 	var req ServerSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
 	if req.MaxSubServers != nil && *req.MaxSubServers < 0 {
-		sendJSONError(w, "Sub-server limit must be 0 or more (0 means none; leave it unset for no limit)", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Sub-server limit must be 0 or more (0 means none; leave it unset for no limit)", http.StatusBadRequest)
 		return
 	}
 	if req.MaxScheduledTasks != nil && *req.MaxScheduledTasks < 0 {
-		sendJSONError(w, "Scheduled task limit must be 0 or more (0 means none; leave it unset for no limit)", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Scheduled task limit must be 0 or more (0 means none; leave it unset for no limit)", http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetSetting(SettingMaxSubServers, services.FormatLimitSetting(req.MaxSubServers)); err != nil {
-		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.SetSetting(SettingMaxScheduledTasks, services.FormatLimitSetting(req.MaxScheduledTasks)); err != nil {
-		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
 
@@ -977,7 +978,7 @@ func beamManualOverride(req BeamSettings) string {
 func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Request) {
 	var req BeamSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -993,7 +994,7 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 	// operator can still see the error.
 	req.DownloadLink = strings.TrimSpace(req.DownloadLink)
 	if err := validatePublicBaseURL("beam download link", req.DownloadLink); err != nil {
-		sendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -1037,7 +1038,7 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
-			sendJSONError(w, "Failed to save", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -1207,19 +1208,19 @@ func (h *SettingsHandler) GetBackupConfig(w http.ResponseWriter, r *http.Request
 func (h *SettingsHandler) SaveBackupConfig(w http.ResponseWriter, r *http.Request) {
 	var req BackupConfig
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if !validBackupMode(req.Mode) {
-		sendJSONError(w, "Invalid backup mode (expected s3, node-local, shared, or core-storage)", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid backup mode (expected s3, node-local, shared, or core-storage)", http.StatusBadRequest)
 		return
 	}
 	if req.QuotaPerServerGB != nil && *req.QuotaPerServerGB < 0 {
-		sendJSONError(w, "Backup quota must be 0 or more GB (0 means none; leave it unset for no limit)", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Backup quota must be 0 or more GB (0 means none; leave it unset for no limit)", http.StatusBadRequest)
 		return
 	}
 	if req.DefaultUserQuotaGB != nil && *req.DefaultUserQuotaGB < 0 {
-		sendJSONError(w, "Default user backup allowance must be 0 or more GB (0 means none; leave it unset for no limit)", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Default user backup allowance must be 0 or more GB (0 means none; leave it unset for no limit)", http.StatusBadRequest)
 		return
 	}
 
@@ -1231,7 +1232,7 @@ func (h *SettingsHandler) SaveBackupConfig(w http.ResponseWriter, r *http.Reques
 	}
 	for _, p := range pairs {
 		if err := h.state.Store.SetSetting(p.k, p.v); err != nil {
-			sendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
 			return
 		}
 	}
@@ -1293,24 +1294,24 @@ func (h *SettingsHandler) GetRoutingMode(w http.ResponseWriter, r *http.Request)
 func (h *SettingsHandler) SaveRoutingMode(w http.ResponseWriter, r *http.Request) {
 	var req RoutingModeSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if !validRoutingMode(req.Mode) {
-		sendJSONError(w, "Invalid mode: must be ip_port, both, or gateway", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid mode: must be ip_port, both, or gateway", http.StatusBadRequest)
 		return
 	}
 	if !validFileMode(req.FileMode) {
-		sendJSONError(w, "Invalid fileMode: must be sftp, both, or beam", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid fileMode: must be sftp, both, or beam", http.StatusBadRequest)
 		return
 	}
 
 	if err := h.state.Store.SetSetting("routing_mode", req.Mode); err != nil {
-		sendJSONError(w, "Failed to save routing_mode", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save routing_mode", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.SetSetting("file_access_mode", req.FileMode); err != nil {
-		sendJSONError(w, "Failed to save file_access_mode", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save file_access_mode", http.StatusInternalServerError)
 		return
 	}
 
@@ -1503,32 +1504,32 @@ func (h *SettingsHandler) GetWarpFirewallSettings(w http.ResponseWriter, r *http
 func (h *SettingsHandler) SaveWarpFirewallSettings(w http.ResponseWriter, r *http.Request) {
 	var req WarpFirewallSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	norm, err := normalizeWarpPorts(req.AllowedPorts)
 	if err != nil {
-		sendJSONError(w, "Invalid ports: "+err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid ports: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if norm == "" {
-		sendJSONError(w, "At least one port is required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "At least one port is required", http.StatusBadRequest)
 		return
 	}
 	subnets, serr := normalizeTunnelSubnets(req.TunnelSubnets)
 	if serr != nil {
-		sendJSONError(w, "Invalid tunnel subnets: "+serr.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid tunnel subnets: "+serr.Error(), http.StatusBadRequest)
 		return
 	}
 	// Empty is allowed: unset just means the deploy snippet keeps showing a
 	// placeholder. Unlike the port allowlist this is client configuration Core
 	// hands out, not a rule the leaders enforce, so there is nothing to publish.
 	if err := h.state.Store.SetSetting("warp_tunnel_subnets", subnets); err != nil {
-		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.SetSetting("warp_spoke_allowed_ports", norm); err != nil {
-		sendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
 	propagated := true

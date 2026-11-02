@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -78,7 +79,7 @@ var templatePush = pushTemplateZip
 func (h *ServerHandler) resolveTemplateInstall(w http.ResponseWriter, r *http.Request, req *SetupServerRequest) *models.Template {
 	in := &req.Installer
 	if in.TemplateID <= 0 {
-		handlers.SendJSONError(w, "installer.templateId is required for template", http.StatusBadRequest)
+		httpx.SendJSONError(w, "installer.templateId is required for template", http.StatusBadRequest)
 		return nil
 	}
 	// The template decides the software and the layout; a field that would
@@ -86,7 +87,7 @@ func (h *ServerHandler) resolveTemplateInstall(w http.ResponseWriter, r *http.Re
 	if in.Version != "" || in.McVersion != "" || in.Loader != "" || in.URL != "" || in.Structure != "" ||
 		in.Software != "" || in.ModrinthProjectID != "" || in.ModrinthVersionID != "" || in.ModrinthProjectSlug != "" ||
 		in.PackID != 0 || in.BuildID != 0 || in.TechnicSlug != "" || in.TechnicBuild != "" {
-		handlers.SendJSONError(w, "A template install takes templateId and wipePaths only", http.StatusBadRequest)
+		httpx.SendJSONError(w, "A template install takes templateId and wipePaths only", http.StatusBadRequest)
 		return nil
 	}
 	t, ok := h.visibleTemplate(w, r, in.TemplateID)
@@ -95,7 +96,7 @@ func (h *ServerHandler) resolveTemplateInstall(w http.ResponseWriter, r *http.Re
 	}
 	typ, software, version, mcVersion, loader, err := services.TemplateInstallPlan(*t)
 	if err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return nil
 	}
 	in.Type, in.Software, in.Version, in.McVersion, in.Loader, in.Structure = typ, software, version, mcVersion, loader, "direct"
@@ -112,17 +113,17 @@ func (h *ServerHandler) templateModrinth(w http.ResponseWriter, r *http.Request,
 	refs, err := h.state.Store.ListTemplateModrinth(t.ID)
 	if err != nil {
 		log.Printf("template install: modrinth references of %d: %v", t.ID, err)
-		handlers.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
 		return nil, nil, false
 	}
 	files, err := services.TemplateModrinthFiles(refs)
 	if err != nil {
-		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return nil, nil, false
 	}
 	if len(files) > 0 {
 		if node, err := h.state.Store.GetNodeByID(nodeID); err == nil && handlers.NodeReleaseAtLeastKnown(r.Context(), h.state, node.Token, templateModrinthSince) {
-			handlers.SendJSONError(w, templateModrinthRefused, http.StatusConflict)
+			httpx.SendJSONError(w, templateModrinthRefused, http.StatusConflict)
 			return nil, nil, false
 		}
 	}
@@ -136,21 +137,21 @@ func (h *ServerHandler) visibleTemplate(w http.ResponseWriter, r *http.Request, 
 	t, err := h.state.Store.GetTemplate(id)
 	if err != nil {
 		log.Printf("template install: get %d: %v", id, err)
-		handlers.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
 		return nil, false
 	}
 	if t == nil {
-		handlers.SendJSONError(w, "Template not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Template not found", http.StatusNotFound)
 		return nil, false
 	}
 	v, err := h.state.TemplateViewer(r, t)
 	if err != nil {
 		log.Printf("template install: viewer for %d: %v", id, err)
-		handlers.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
 		return nil, false
 	}
 	if !services.TemplateCanSee(*t, v, services.LoadTemplateSettings(r.Context(), h.state.FeatureFlags)) {
-		handlers.SendJSONError(w, "Template not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Template not found", http.StatusNotFound)
 		return nil, false
 	}
 	return t, true

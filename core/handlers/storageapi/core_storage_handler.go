@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/services/storagereach"
 )
@@ -62,7 +63,7 @@ func (h *CoreStorageHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
 func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	var req handlers.CoreStorageConfig
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req = handlers.NormalizeCoreStorageCandidate(req)
@@ -83,12 +84,12 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 		// deliberately leave blank).
 		conn, err := h.state.Store.GetStorageConnection(effective.ConnectionID)
 		if err != nil {
-			handlers.SendJSONError(w, "Selected storage connection not found", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Selected storage connection not found", http.StatusBadRequest)
 			return
 		}
 		connCfg := handlers.CoreStorageConfigFromConnection(conn)
 		if err := handlers.ValidateCoreStorageConfig(connCfg); err != nil {
-			handlers.SendJSONError(w, "Selected storage connection is not usable: "+err.Error(), http.StatusBadRequest)
+			httpx.SendJSONError(w, "Selected storage connection is not usable: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		// After validation, before any write: a saved connection is still
@@ -102,7 +103,7 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 		}
 	} else {
 		if err := handlers.ValidateCoreStorageConfig(effective); err != nil {
-			handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
+			httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		// After validation, before any write: a refused save must never leave
@@ -128,7 +129,7 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 		if errors.As(err, &writeErr) {
 			msg = "Failed to save setting: " + writeErr.Key
 		}
-		handlers.SendJSONError(w, msg, http.StatusInternalServerError)
+		httpx.SendJSONError(w, msg, http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -166,7 +167,7 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 
 	var candidate handlers.CoreStorageConfig
 	if err := json.NewDecoder(r.Body).Decode(&candidate); err != nil && err != io.EOF {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	candidate = handlers.NormalizeCoreStorageCandidate(candidate)
@@ -251,12 +252,12 @@ func (h *CoreStorageHandler) StorageReachStatus(w http.ResponseWriter, r *http.R
 	ctx := r.Context()
 	faults, err := storagereach.Faults(ctx, h.state.Redis)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read storage health", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Could not read storage health", http.StatusServiceUnavailable)
 		return
 	}
 	online, err := services.OnlineCoreIDs(ctx, h.state.Redis)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read the online Core set", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Could not read the online Core set", http.StatusServiceUnavailable)
 		return
 	}
 	if faults == nil {

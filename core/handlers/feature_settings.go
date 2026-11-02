@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -233,23 +234,23 @@ func (h *FeatureSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	var req featureSettingsPayload
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.ModConfigs != nil && *req.ModConfigs != "off" && *req.ModConfigs != "admin" && *req.ModConfigs != "all" {
-		sendJSONError(w, "modConfigs must be off, admin or all", http.StatusBadRequest)
+		httpx.SendJSONError(w, "modConfigs must be off, admin or all", http.StatusBadRequest)
 		return
 	}
 	if req.Bedrock != nil && *req.Bedrock != "off" && *req.Bedrock != "admin" && *req.Bedrock != "all" {
-		sendJSONError(w, "bedrock must be off, admin or all", http.StatusBadRequest)
+		httpx.SendJSONError(w, "bedrock must be off, admin or all", http.StatusBadRequest)
 		return
 	}
 	if req.OwnStorage != nil && *req.OwnStorage != "off" && *req.OwnStorage != "admin" && *req.OwnStorage != "all" {
-		sendJSONError(w, "ownStorage must be off, admin or all", http.StatusBadRequest)
+		httpx.SendJSONError(w, "ownStorage must be off, admin or all", http.StatusBadRequest)
 		return
 	}
 	if msg := validateTemplateFields(&req); msg != "" {
-		sendJSONError(w, msg, http.StatusBadRequest)
+		httpx.SendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
 	// A setting naming a connection that does not exist would make every new
@@ -258,11 +259,11 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		conn, err := h.state.Store.GetStorageConnection(*id)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			log.Printf("feature settings: look up storage connection %d: %v", *id, err)
-			sendJSONError(w, "Could not check the storage connection", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Could not check the storage connection", http.StatusInternalServerError)
 			return
 		}
 		if conn == nil {
-			sendJSONError(w, "templatesStorageConnectionId must be 0 (Core storage) or an existing storage connection", http.StatusBadRequest)
+			httpx.SendJSONError(w, "templatesStorageConnectionId must be 0 (Core storage) or an existing storage connection", http.StatusBadRequest)
 			return
 		}
 	}
@@ -343,7 +344,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := h.state.Store.SetSetting(kv.key, boolStr(kv.val)); err != nil {
-			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		h.state.FeatureFlags.Invalidate(kv.cacheKey)
@@ -360,7 +361,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// make the field impossible to edit after a capability is renamed.
 	if req.ModConfigs != nil {
 		if err := h.state.Store.SetSetting(services.ModConfigsSettingKey, *req.ModConfigs); err != nil {
-			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		h.state.FeatureFlags.Invalidate(services.ModConfigsSettingKey)
@@ -372,7 +373,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 
 	if req.OwnStorage != nil {
 		if err := h.state.Store.SetSetting(services.OwnStorageSettingKey, *req.OwnStorage); err != nil {
-			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		h.state.FeatureFlags.Invalidate(services.OwnStorageSettingKey)
@@ -384,7 +385,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 
 	if req.Bedrock != nil {
 		if err := h.state.Store.SetSetting(services.BedrockSettingKey, *req.Bedrock); err != nil {
-			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		h.state.FeatureFlags.Invalidate(services.BedrockSettingKey)
@@ -404,13 +405,13 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.saveTemplateSettings(r.Context(), &req); err != nil {
-		sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if req.UserAPIKeyAllowedCaps != nil {
 		if err := h.state.Store.SetSetting("apikeys_user_allowed_caps", sanitizeKeyCapList(*req.UserAPIKeyAllowedCaps)); err != nil {
-			sendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		h.state.FeatureFlags.Invalidate("apikeys_user_allowed_caps")

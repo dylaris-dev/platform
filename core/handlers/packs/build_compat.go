@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -14,16 +15,16 @@ import (
 func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
 	build, _, ok := h.loadBuild(r, packRead)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	if build.Minecraft == "" || build.Loader == "" {
-		handlers.SendJSONError(w, "This build has no Minecraft version or loader set, so nothing can be compared against it", http.StatusUnprocessableEntity)
+		httpx.SendJSONError(w, "This build has no Minecraft version or loader set, so nothing can be compared against it", http.StatusUnprocessableEntity)
 		return
 	}
 	content, err := h.state.Store.ListBuildContent(build.ID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load build content", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load build content", http.StatusInternalServerError)
 		return
 	}
 
@@ -53,12 +54,12 @@ func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
 		loader = build.Loader
 	}
 	if loader != "fabric" && loader != "forge" && loader != "neoforge" && loader != "quilt" && loader != "vanilla" {
-		handlers.SendJSONError(w, "Unsupported target loader", 400)
+		httpx.SendJSONError(w, "Unsupported target loader", 400)
 		return
 	}
 	targets, err := handlers.ResolveTargets(r.Context(), build.Minecraft, mode, specific)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not read the Minecraft version list from Modrinth: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not read the Minecraft version list from Modrinth: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	if mode == services.CompatModeSpecific && specific == build.Minecraft {
@@ -73,7 +74,7 @@ func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
 		Cache:   h.state.AvailabilityCache(),
 	})
 	if err != nil {
-		handlers.SendJSONError(w, "Availability check failed: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Availability check failed: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "matrix": matrix})

@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers/beam"
 	"dylaris-core/handlers/billing"
 	"dylaris-core/handlers/gateway"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/mods"
 	"dylaris-core/handlers/nodes"
 	"dylaris-core/handlers/packs"
@@ -705,14 +706,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// It lived at /solder/mirror/ until Solder was removed, because the same
 	// route served the Technic launcher. Its own rate-limiter instance, not a
 	// shared one: a client exhausting one budget must not lock another.
-	mirrorLimiter := handlers.NewIPRateLimiter()
+	mirrorLimiter := httpx.NewIPRateLimiter()
 	r.HandleFunc("/mirror/{rest:.*}", mirrorLimiter.Limit(handlers.ModpackMirrorRequestsPerMinute, packsHandler.ModpackMirror)).Methods("GET")
 
 	// --- REMOVED PUBLIC SHARE LINKS ---
 	// Build share links are gone (owner decision 2026-10-31). The route stays
 	// on the ROOT router, public, so a link already out there gets a clear 410
 	// instead of the API's 401.
-	shareLimiter := handlers.NewIPRateLimiter()
+	shareLimiter := httpx.NewIPRateLimiter()
 	r.HandleFunc("/api/share/{token}", shareLimiter.Limit(30, packsHandler.ServeRemovedShare)).Methods("GET")
 
 	// Custom-tab reverse proxy: the CONTENT never appears on this router.
@@ -743,10 +744,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// against. Splitting them per route (keying the bucket by route+IP) would
 	// make each number mean what it looks like, and would also hand an anonymous
 	// caller the SUM of them, so it is deliberately not done.
-	authLimiter := handlers.NewIPRateLimiter()
+	authLimiter := httpx.NewIPRateLimiter()
 
 	// --- PUBLIC ENDPOINTS ---
-	api.HandleFunc("/auth/login", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.LoginHandler))).Methods("POST")
+	api.HandleFunc("/auth/login", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.LoginHandler))).Methods("POST")
 	// Unauthenticated: it only clears the session cookie, and the state somebody
 	// most needs to clear is an expired session they can no longer authenticate
 	// with. Rate-limited anyway, so it cannot be used as free traffic.
@@ -774,7 +775,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// mode. Atomic CTE in Store.CreateFirstAdmin prevents racing inserts
 	// across N Cores.
 	api.HandleFunc("/setup/status", setupHandler.Status).Methods("GET")
-	api.HandleFunc("/setup/admin", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, setupHandler.CreateAdmin))).Methods("POST")
+	api.HandleFunc("/setup/admin", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, setupHandler.CreateAdmin))).Methods("POST")
 
 	// --- Scheduled Tasks ---
 	// Cron preview - pure transform, available to anyone authed.
@@ -809,14 +810,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// checks a PASSWORD (see requireReauth). A password check on an unthrottled
 	// route is a guessing oracle, and this one sits behind a session the guesser
 	// already holds - which is exactly the situation the check exists for.
-	api.HandleFunc("/me/api-keys", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.write")(apiKeysHandler.Create))))).Methods("POST")
+	api.HandleFunc("/me/api-keys", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.write")(apiKeysHandler.Create))))).Methods("POST")
 	api.HandleFunc("/me/api-keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.delete")(apiKeysHandler.Revoke))).Methods("DELETE")
 	// The keys the caller signs in to SFTP with. Own account only, like the
 	// API keys above; adding one re-asks password and code, so it is throttled
 	// and body-capped for the same reason.
 	sshKeysHandler := users.NewSSHKeysHandler(appState)
 	api.HandleFunc("/me/ssh-keys", authHandler.AuthMiddleware(sshKeysHandler.List)).Methods("GET")
-	api.HandleFunc("/me/ssh-keys", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(sshKeysHandler.Create)))).Methods("POST")
+	api.HandleFunc("/me/ssh-keys", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.AuthMiddleware(sshKeysHandler.Create)))).Methods("POST")
 	api.HandleFunc("/me/ssh-keys/{id:[0-9]+}", authHandler.AuthMiddleware(sshKeysHandler.Delete)).Methods("DELETE")
 	// --- External API surface: Authorization: Bearer dyl_<key> ---
 	//
@@ -856,7 +857,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Browse + project metadata are cached in Redis (5 min / 1 h). All authed.
 	// Per-IP rate limit on the Modrinth proxy: each distinct query is a cache
 	// miss that both hits Modrinth and grows the Redis cache, so cap volume.
-	modrinthLimiter := handlers.NewIPRateLimiter()
+	modrinthLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/modrinth/search", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Search))).Methods("GET")
 	api.HandleFunc("/modrinth/project/{slug}", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.Project))).Methods("GET")
 	api.HandleFunc("/modrinth/project/{slug}/versions", modrinthLimiter.Limit(120, authHandler.AuthMiddleware(modrinthHandler.ProjectVersions))).Methods("GET")
@@ -866,7 +867,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Bulk lookups for Update all: a whole server's mods in a handful of calls.
 	// Their own bucket, so a run neither starves browsing nor is starved by it,
 	// and a low one, since each call stands for up to a thousand mods.
-	modrinthBulkLimiter := handlers.NewIPRateLimiter()
+	modrinthBulkLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/modrinth/versions", modrinthBulkLimiter.Limit(30, authHandler.AuthMiddleware(modrinthHandler.Versions))).Methods("GET")
 	api.HandleFunc("/modrinth/projects", modrinthBulkLimiter.Limit(30, authHandler.AuthMiddleware(modrinthHandler.Projects))).Methods("GET")
 	api.HandleFunc("/modrinth/version-files/update", modrinthBulkLimiter.Limit(30, authHandler.AuthMiddleware(modrinthHandler.LatestFromHashes))).Methods("POST")
@@ -874,7 +875,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// tighter than Modrinth. Technic answers 429 after a short burst, and its
 	// cooldown is shared, so one panel typing fast must not stall every other
 	// customer's setup.
-	technicLimiter := handlers.NewIPRateLimiter()
+	technicLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/technic/search", technicLimiter.Limit(20, authHandler.AuthMiddleware(technicHandler.Search))).Methods("GET")
 	api.HandleFunc("/technic/pack/{slug}", technicLimiter.Limit(30, authHandler.AuthMiddleware(technicHandler.Pack))).Methods("GET")
 	// Per-server installed mods + install/uninstall dispatch.
@@ -959,7 +960,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.deleted", packsHandler.DeleteBuild)))))).Methods("DELETE")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListContent)))).Methods("GET")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.Folders)))).Methods("GET")
-	forkLimiter := handlers.NewIPRateLimiter()
+	forkLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/packs/{id:[0-9]+}/recommended", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetRecommended))))).Methods("PATCH")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/fork", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.Authz.RequireCap("modpack.read")(forkLimiter.Limit(3, appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ForkBuild))))))).Methods("POST")
 	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.folder_created", packsHandler.Folders)))))).Methods("POST")
@@ -979,11 +980,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// share one budget. Add-files has its own. It was raised to 1200/min while
 	// the panel sent one request per subfolder; the panel now bundles up to 200
 	// files / 100 MiB per request, so it is back to 60/min.
-	templateArchiveLimiter := handlers.NewIPRateLimiter()
-	templateAddFilesLimiter := handlers.NewIPRateLimiter()
+	templateArchiveLimiter := httpx.NewIPRateLimiter()
+	templateAddFilesLimiter := httpx.NewIPRateLimiter()
 	// A download zips the whole template on the fly, from our storage or a
 	// tenant bucket: 30/min is far above a person clicking, far below a loop.
-	templateDownloadLimiter := handlers.NewIPRateLimiter()
+	templateDownloadLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/templates/upload", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateArchiveLimiter.Limit(5, templatesHandler.Upload)))).Methods("POST")
 	api.HandleFunc("/templates/capture", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateArchiveLimiter.Limit(5, templatesHandler.Capture)))).Methods("POST")
 	api.HandleFunc("/templates/owner-shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.ListOwnerShares))).Methods("GET")
@@ -1122,7 +1123,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// minute; a link boots once. Their own limiter, so a machine stuck retrying
 	// can neither be unbounded nor drain the login budget of the address it
 	// shares with its owner's browser.
-	kitBootLimiter := handlers.NewIPRateLimiter()
+	kitBootLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/warp/enroll", kitBootLimiter.Limit(300, warpHandler.WarpAPIKeyMiddleware(warpHandler.Enroll))).Methods("POST")
 	api.HandleFunc("/warp/assignment", kitBootLimiter.Limit(300, warpHandler.WarpAPIKeyMiddleware(warpHandler.Assignment))).Methods("GET")
 	// Warp admin registry: regions + leaders (PANEL topology.*; Phase 4 Task 18)
@@ -1149,7 +1150,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// can never drain the login budget of the same address. The ceiling leaves
 	// room for ~25 kits behind one IP: route-only is for people behind CGNAT,
 	// and a carrier puts many customers behind one address.
-	linkAPILimiter := handlers.NewIPRateLimiter()
+	linkAPILimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/warp/link/edges", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkEdges))).Methods("GET")
 	api.HandleFunc("/warp/link/heartbeat", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkHeartbeat))).Methods("POST")
 	api.HandleFunc("/warp/link/stats", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkStats))).Methods("POST")
@@ -1201,7 +1202,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.GetProfileHandler)).Methods("GET")
 	// Limited on its own count, so heads never drain the login budget: each
 	// name Core has not seen costs up to two upstream requests.
-	avatarLimiter := handlers.NewIPRateLimiter()
+	avatarLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/avatar/{name}", avatarLimiter.Limit(240, authHandler.AuthMiddleware(avatarHandler.Get))).Methods("GET")
 	// Rate limited like the public auth routes: each call checks the current
 	// password (a stolen session could otherwise guess it without limit) and
@@ -1209,7 +1210,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/auth/profile", authLimiter.Limit(10, authHandler.AuthMiddleware(authHandler.UpdateProfileHandler))).Methods("PUT")
 	// Own bucket: no password is checked here, and sharing authLimiter would let
 	// a few name saves spend the per-IP login budget.
-	mcNameLimiter := handlers.NewIPRateLimiter()
+	mcNameLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/auth/profile/minecraft", mcNameLimiter.Limit(30, authHandler.AuthMiddleware(authHandler.UpdateMinecraftUsernameHandler))).Methods("PUT")
 	// Whether the caller has accepted the Minecraft EULA, so setup asks once.
 	// Accepting rides on the install request itself (acceptMinecraftEula).
@@ -1219,9 +1220,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// body-limited like every other credential endpoint: an authenticated
 	// session must not be a password-guessing oracle just because the guesser is
 	// already logged in (a borrowed laptop, a stolen token).
-	api.HandleFunc("/auth/2fa/verify", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(authHandler.VerifyTOTPHandler)))).Methods("POST")
-	api.HandleFunc("/auth/2fa/disable", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(authHandler.DisableTOTPHandler)))).Methods("POST")
-	api.HandleFunc("/auth/2fa/regenerate-backup-codes", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(authHandler.RegenerateBackupCodesHandler)))).Methods("POST")
+	api.HandleFunc("/auth/2fa/verify", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.AuthMiddleware(authHandler.VerifyTOTPHandler)))).Methods("POST")
+	api.HandleFunc("/auth/2fa/disable", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.AuthMiddleware(authHandler.DisableTOTPHandler)))).Methods("POST")
+	api.HandleFunc("/auth/2fa/regenerate-backup-codes", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.AuthMiddleware(authHandler.RegenerateBackupCodesHandler)))).Methods("POST")
 	api.HandleFunc("/auth/2fa/status", authHandler.AuthMiddleware(authHandler.Get2FAStatusHandler)).Methods("GET")
 	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/2fa", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(authHandler.AdminResetTOTPHandler))).Methods("DELETE")
 
@@ -1313,8 +1314,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Per IP: each new ticket notifies every supporter and each added watcher
 	// gets a notification carrying the ticket title, so unthrottled these were
 	// a free notification flood (and add-watcher a username oracle).
-	ticketLimiter := handlers.NewIPRateLimiter()
-	watcherLimiter := handlers.NewIPRateLimiter() // its own count: watchers must not use up ticket creation
+	ticketLimiter := httpx.NewIPRateLimiter()
+	watcherLimiter := httpx.NewIPRateLimiter() // its own count: watchers must not use up ticket creation
 	api.HandleFunc("/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketLimiter.Limit(10, ticketsHandler.CreateTicket)))).Methods("POST")
 	api.HandleFunc("/tickets/inbox", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketsHandler.ListInboxTickets)))).Methods("GET")
 	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.GetTicket))).Methods("GET")
@@ -1365,8 +1366,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/notifications/{id:[0-9]+}/read", authHandler.AuthMiddleware(notificationsHandler.MarkRead)).Methods("POST")
 	api.HandleFunc("/notifications/read-all", authHandler.AuthMiddleware(notificationsHandler.MarkAllRead)).Methods("POST")
 	api.HandleFunc("/notifications/{id:[0-9]+}", authHandler.AuthMiddleware(notificationsHandler.Delete)).Methods("DELETE")
-	favoriteLimiter := handlers.NewIPRateLimiter()
-	watchLimiter := handlers.NewIPRateLimiter()
+	favoriteLimiter := httpx.NewIPRateLimiter()
+	watchLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/me/modrinth-favorites", authHandler.AuthMiddleware(packsHandler.Favorites)).Methods("GET")
 	api.HandleFunc("/me/modrinth-favorites", authHandler.AuthMiddleware(favoriteLimiter.Limit(30, packsHandler.Favorites))).Methods("PUT")
 	api.HandleFunc("/me/modrinth-watches", authHandler.AuthMiddleware(packsHandler.Watches)).Methods("GET")
@@ -1529,7 +1530,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/servers/{id:[0-9]+}/sftp-credentials", authHandler.AuthMiddleware(appState.Authz.RequireCap("sftp.access")(serverHandler.GetSftpCredentials))).Methods("GET")
 
 	api.HandleFunc("/versions/software", versionHandler.GetSoftwareList).Methods("GET")
-	loaderVersionLimiter := handlers.NewIPRateLimiter()
+	loaderVersionLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/versions/loaders", loaderVersionLimiter.Limit(120, authHandler.AuthMiddleware(versionHandler.GetLoaderVersions))).Methods("GET")
 	api.HandleFunc("/versions", authHandler.AuthMiddleware(versionHandler.GetVersions)).Methods("GET")
 
@@ -1741,13 +1742,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// becoming a way to read and change anyone's billing.
 	api.HandleFunc("/store/account-summary", authHandler.AuthMiddleware(storeHandler.AccountSummary)).Methods("GET")
 	api.HandleFunc("/store/billing-consent", authHandler.AuthMiddleware(storeHandler.SetBillingConsent)).Methods("POST")
-	api.HandleFunc("/store/link/verify", storeHandler.LimitUnlessStoreKey(authLimiter, 20, handlers.LimitBody(handlers.CredentialBodyLimit, storeHandler.LinkVerify))).Methods("POST")
+	api.HandleFunc("/store/link/verify", storeHandler.LimitUnlessStoreKey(authLimiter, 20, httpx.LimitBody(httpx.CredentialBodyLimit, storeHandler.LinkVerify))).Methods("POST")
 	api.HandleFunc("/store/verify-user", storeHandler.LimitUnlessStoreKey(authLimiter, 60, storeHandler.VerifyUser)).Methods("GET")
 	api.HandleFunc("/store/usage", storeHandler.LimitUnlessStoreKey(authLimiter, 60, storeHandler.GetUsage)).Methods("GET")
 	// What one unit includes, so the store can print it on the pricing page
 	// without keeping a second copy of a number edited here.
 	api.HandleFunc("/store/backup-defaults", storeHandler.LimitUnlessStoreKey(authLimiter, 60, storeHandler.BackupDefaults)).Methods("GET")
-	api.HandleFunc("/store/provision", storeHandler.LimitUnlessStoreKey(authLimiter, 60, handlers.LimitBody(handlers.CredentialBodyLimit, storeHandler.Provision))).Methods("POST")
+	api.HandleFunc("/store/provision", storeHandler.LimitUnlessStoreKey(authLimiter, 60, httpx.LimitBody(httpx.CredentialBodyLimit, storeHandler.Provision))).Methods("POST")
 	// Migration progress poll - owner-or-admin, ungated (reads are harmless).
 	api.HandleFunc("/servers/{id:[0-9]+}/migration-status", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetMigrationStatus))).Methods("GET")
 	// /gateway/route-options stays EXEMPT-authed: the user-facing route form needs
@@ -1798,30 +1799,30 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- Registration + Email Verify ---
 	// Public - login page polls registration-status to decide whether to show the register link.
 	api.HandleFunc("/auth/registration-status", registrationHandler.RegistrationStatus).Methods("GET")
-	api.HandleFunc("/auth/register", authLimiter.Limit(5, handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.Register))).Methods("POST")
+	api.HandleFunc("/auth/register", authLimiter.Limit(5, httpx.LimitBody(httpx.CredentialBodyLimit, registrationHandler.Register))).Methods("POST")
 	// Public one-click read-only demo session (rate-limited). 404 when no demo account is set.
 	// GET on the same path only reports whether a demo exists, so a caller can
 	// decide whether to offer it without minting a session to find out.
-	api.HandleFunc("/auth/demo-login", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.DemoLogin))).Methods("POST")
+	api.HandleFunc("/auth/demo-login", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.DemoLogin))).Methods("POST")
 	api.HandleFunc("/auth/demo-login", authLimiter.Limit(30, authHandler.DemoStatus)).Methods("GET")
-	api.HandleFunc("/auth/verify-email", authLimiter.Limit(20, handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.VerifyEmail))).Methods("POST")
+	api.HandleFunc("/auth/verify-email", authLimiter.Limit(20, httpx.LimitBody(httpx.CredentialBodyLimit, registrationHandler.VerifyEmail))).Methods("POST")
 	// Rate-limited like /auth/forgot-password, the other endpoint that sends
 	// mail on an anonymous request. The handler additionally holds a per-address
 	// cooldown, because a per-IP limit does not protect a mailbox from a caller
 	// who changes address.
-	api.HandleFunc("/auth/resend-verification", authLimiter.Limit(5, handlers.LimitBody(handlers.CredentialBodyLimit, registrationHandler.ResendVerification))).Methods("POST")
+	api.HandleFunc("/auth/resend-verification", authLimiter.Limit(5, httpx.LimitBody(httpx.CredentialBodyLimit, registrationHandler.ResendVerification))).Methods("POST")
 
 	// --- Password reset - all public, all enumeration-safe ---
-	api.HandleFunc("/auth/forgot-password", authLimiter.Limit(5, handlers.LimitBody(handlers.CredentialBodyLimit, passwordResetHandler.ForgotPassword))).Methods("POST")
-	api.HandleFunc("/auth/validate-reset-token", authLimiter.Limit(20, handlers.LimitBody(handlers.CredentialBodyLimit, passwordResetHandler.ValidateResetToken))).Methods("POST")
-	api.HandleFunc("/auth/reset-password", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, passwordResetHandler.ResetPassword))).Methods("POST")
+	api.HandleFunc("/auth/forgot-password", authLimiter.Limit(5, httpx.LimitBody(httpx.CredentialBodyLimit, passwordResetHandler.ForgotPassword))).Methods("POST")
+	api.HandleFunc("/auth/validate-reset-token", authLimiter.Limit(20, httpx.LimitBody(httpx.CredentialBodyLimit, passwordResetHandler.ValidateResetToken))).Methods("POST")
+	api.HandleFunc("/auth/reset-password", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, passwordResetHandler.ResetPassword))).Methods("POST")
 
 	// --- Security questions ---
 	// Public: pool query used by /register and /reset-password to render pickers.
 	api.HandleFunc("/auth/security-questions/pool", securityQuestionsHandler.GetPool).Methods("GET")
 	// Authenticated: user manages their own questions in profile.
 	api.HandleFunc("/me/security-questions", authHandler.AuthMiddleware(securityQuestionsHandler.GetMyQuestions)).Methods("GET")
-	api.HandleFunc("/me/security-questions", authLimiter.Limit(10, handlers.LimitBody(handlers.CredentialBodyLimit, authHandler.AuthMiddleware(securityQuestionsHandler.SetMyQuestions)))).Methods("PUT")
+	api.HandleFunc("/me/security-questions", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.AuthMiddleware(securityQuestionsHandler.SetMyQuestions)))).Methods("PUT")
 	// Admin: pool management (PANEL settings.*).
 	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(securityQuestionsHandler.GetAdminPool))).Methods("GET")
 	api.HandleFunc("/admin/settings/security-questions-pool", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(securityQuestionsHandler.SetAdminPool))).Methods("PUT")
@@ -1849,7 +1850,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Its own limiter: every mint costs a server lookup and two node-secret
 	// decryptions. The app asks once per connect and once per upload resume, so
 	// 120/min per IP stays far above a real client, NAT included.
-	beamTicketLimiter := handlers.NewIPRateLimiter()
+	beamTicketLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/beam/ticket", beamTicketLimiter.Limit(120, authHandler.AuthMiddleware(beamHandler.GetBeamTicket))).Methods("GET", "POST")
 	api.HandleFunc("/beam/config", authHandler.AuthMiddleware(beamHandler.GetBeamConfig)).Methods("GET")
 	// Rate-limited because this is the only session-less route that makes Core
@@ -1860,7 +1861,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// exception. 10/min per IP is far above any human clicking "download Beam"
 	// - the app's own updater fetches from GitHub directly and never comes
 	// through here - and caps what a single source can amplify.
-	beamDownloadLimiter := handlers.NewIPRateLimiter()
+	beamDownloadLimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/beam/download", beamDownloadLimiter.Limit(10, beamHandler.GetBeamDownload)).Methods("GET")
 	// Caller's own Beam update-channel preference (own data, authed-exempt).
 
@@ -1917,8 +1918,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// Schedule preview - pure transform, available to anyone authed. The panel
 	// calls it as the user types, so it is bounded per IP and by body size.
-	schedulePreviewLimiter := handlers.NewIPRateLimiter()
-	api.HandleFunc("/backup-schedules/preview", schedulePreviewLimiter.Limit(120, handlers.LimitBody(4<<10, authHandler.AuthMiddleware(backupHandler.PreviewSchedule)))).Methods("POST")
+	schedulePreviewLimiter := httpx.NewIPRateLimiter()
+	api.HandleFunc("/backup-schedules/preview", schedulePreviewLimiter.Limit(120, httpx.LimitBody(4<<10, authHandler.AuthMiddleware(backupHandler.PreviewSchedule)))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.ListJobs))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.create")(backupHandler.CreateJob))).Methods("POST")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(backupHandler.UpdateJob))).Methods("PATCH")

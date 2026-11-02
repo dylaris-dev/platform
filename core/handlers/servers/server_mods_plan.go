@@ -12,6 +12,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
@@ -32,28 +33,28 @@ func (h *ServerModsHandler) Plan(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	srv, ok := h.getServer(serverID)
 	if !ok {
-		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	var req struct {
 		VersionID string `json:"versionId"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.VersionID = strings.TrimSpace(req.VersionID)
 	if req.VersionID == "" {
-		handlers.SendJSONError(w, "versionId required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "versionId required", http.StatusBadRequest)
 		return
 	}
 	if !handlers.ModFitKnown(srv.InstallerType, srv.MinecraftVersion) {
-		handlers.SendJSONError(w, "Declare the server's loader and Minecraft version first", http.StatusConflict)
+		httpx.SendJSONError(w, "Declare the server's loader and Minecraft version first", http.StatusConflict)
 		return
 	}
 	mods, err := h.state.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to list mods", http.StatusInternalServerError)
 		return
 	}
 	// A failed row's jar is not there, so its project is still something a
@@ -74,14 +75,14 @@ func (h *ServerModsHandler) Plan(w http.ResponseWriter, r *http.Request) {
 		var upstream *services.ModrinthHTTPError
 		switch {
 		case errors.As(err, &fit):
-			handlers.SendJSONError(w, fit.Reason, http.StatusConflict)
+			httpx.SendJSONError(w, fit.Reason, http.StatusConflict)
 		case services.ModrinthNotFound(err):
-			handlers.SendJSONError(w, "Modrinth has no version "+req.VersionID, http.StatusBadRequest)
+			httpx.SendJSONError(w, "Modrinth has no version "+req.VersionID, http.StatusBadRequest)
 		case errors.As(err, &upstream) && upstream.Status == http.StatusTooManyRequests:
-			handlers.SendCooldown(w, "Modrinth", handlers.UpstreamCooldownDefault)
+			httpx.SendCooldown(w, "Modrinth", handlers.UpstreamCooldownDefault)
 		default:
 			log.Printf("mod plan: server %d version %s: %v", serverID, req.VersionID, err)
-			handlers.SendJSONError(w, "Could not reach Modrinth to work out the dependencies. Try again in a moment.", http.StatusBadGateway)
+			httpx.SendJSONError(w, "Could not reach Modrinth to work out the dependencies. Try again in a moment.", http.StatusBadGateway)
 		}
 		return
 	}

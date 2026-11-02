@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 
@@ -43,23 +44,23 @@ func (h *PlansHandler) SetUserLimitOverrides(w http.ResponseWriter, r *http.Requ
 		TrafficCombinedGb *int64          `json:"trafficCombinedGb"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	for _, v := range []*int64{req.TrafficEdgeGb, req.TrafficRelayGb, req.TrafficCombinedGb} {
 		if v != nil && *v < 0 {
-			sendJSONError(w, "Limit overrides must be >= 0 (0 means none; omit the field for no limit)", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Limit overrides must be >= 0 (0 means none; omit the field for no limit)", http.StatusBadRequest)
 			return
 		}
 	}
 	nodes, nerr := parseAdminCeiling(req.MaxNodes)
 	links, lerr := parseAdminCeiling(req.MaxLinks)
 	if nerr != nil || lerr != nil {
-		sendJSONError(w, `Node and link ceilings are null (follow the purchase), "unlimited" or a number >= 0`, http.StatusBadRequest)
+		httpx.SendJSONError(w, `Node and link ceilings are null (follow the purchase), "unlimited" or a number >= 0`, http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetUserLimitOverrides(userID, nodes, links, req.TrafficEdgeGb, req.TrafficRelayGb, req.TrafficCombinedGb); err != nil {
-		sendJSONError(w, "Failed to save overrides", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save overrides", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

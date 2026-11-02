@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -315,15 +316,15 @@ func (h *TrafficLimitHandler) SetDataThrottle(w http.ResponseWriter, r *http.Req
 		Mbit int `json:"mbit"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if req.Mbit < services.DataThrottleMinMbit || req.Mbit > 100000 {
-		handlers.SendJSONError(w, fmt.Sprintf("The throttle must be between %d and 100000 Mbit/s", services.DataThrottleMinMbit), http.StatusBadRequest)
+		httpx.SendJSONError(w, fmt.Sprintf("The throttle must be between %d and 100000 Mbit/s", services.DataThrottleMinMbit), http.StatusBadRequest)
 		return
 	}
 	if err := h.state.Store.SetSetting(services.DataThrottleSettingKey, strconv.Itoa(req.Mbit)); err != nil {
-		handlers.SendJSONError(w, "Failed to save", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to save", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "mbit": req.Mbit})

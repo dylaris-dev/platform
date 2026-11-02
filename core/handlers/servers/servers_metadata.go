@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/httpx"
 
 	"github.com/gorilla/mux"
 )
@@ -27,14 +28,14 @@ import (
 // PATCH /api/servers/{id}/loader-metadata (gated by RequireCap("server.settings.write") at the route)
 func (h *ServerHandler) DeclareServerLoaderMetadata(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		handlers.SendJSONError(w, "Database not connected", 503)
+		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
 	vars := mux.Vars(r)
 	serverID, err := strconv.Atoi(vars["id"])
 	if err != nil {
-		handlers.SendJSONError(w, "Invalid server ID", 400)
+		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return
 	}
 
@@ -44,19 +45,19 @@ func (h *ServerHandler) DeclareServerLoaderMetadata(w http.ResponseWriter, r *ht
 		BuildNumber      string `json:"buildNumber"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", 400)
+		httpx.SendJSONError(w, "Invalid JSON", 400)
 		return
 	}
 
 	installerType := strings.ToLower(strings.TrimSpace(req.InstallerType))
 	if !validate.IsModrinthLoader(installerType) {
-		handlers.SendJSONError(w, "Invalid installerType: must be a known loader (paper, spigot, bukkit, purpur, fabric, forge, quilt, neoforge, velocity, waterfall, bungeecord)", 400)
+		httpx.SendJSONError(w, "Invalid installerType: must be a known loader (paper, spigot, bukkit, purpur, fabric, forge, quilt, neoforge, velocity, waterfall, bungeecord)", 400)
 		return
 	}
 
 	minecraftVersion := strings.TrimSpace(req.MinecraftVersion)
 	if !validate.IsMcVersion(minecraftVersion) {
-		handlers.SendJSONError(w, "Invalid minecraftVersion: expected a Minecraft version like 1.20 or 1.20.4", 400)
+		httpx.SendJSONError(w, "Invalid minecraftVersion: expected a Minecraft version like 1.20 or 1.20.4", 400)
 		return
 	}
 
@@ -64,7 +65,7 @@ func (h *ServerHandler) DeclareServerLoaderMetadata(w http.ResponseWriter, r *ht
 
 	srv, err := h.state.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
-		handlers.SendJSONError(w, "Server not found", 404)
+		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 
@@ -76,7 +77,7 @@ func (h *ServerHandler) DeclareServerLoaderMetadata(w http.ResponseWriter, r *ht
 	}
 
 	if err := h.state.Store.UpdateServerLoaderMetadata(serverID, installerType, minecraftVersion, buildNumber); err != nil {
-		handlers.SendJSONError(w, "Failed to update server metadata", 500)
+		httpx.SendJSONError(w, "Failed to update server metadata", 500)
 		return
 	}
 

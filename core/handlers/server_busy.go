@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 )
 
@@ -14,7 +15,7 @@ import (
 // row. Operators may still act on a move that is stuck.
 func refuseIfMoving(w http.ResponseWriter, r *http.Request, srv *models.Server) bool {
 	if srv.Status == "migrating" && !operatorOverride(r) {
-		sendJSONError(w, "Server is being moved to another node. Try again when the move has finished.", http.StatusConflict)
+		httpx.SendJSONError(w, "Server is being moved to another node. Try again when the move has finished.", http.StatusConflict)
 		return true
 	}
 	return false
@@ -31,7 +32,7 @@ func refuseIfServerBusy(w http.ResponseWriter, r *http.Request, state *AppState,
 	}
 	if state.Redis != nil {
 		if busy, err := state.Redis.Get(context.Background(), nodeBusyKey(srv.UUID)).Result(); err == nil && busy != "" {
-			sendJSONError(w, "The node is still working on this server ("+busy+"). Try again when it has finished.", http.StatusConflict)
+			httpx.SendJSONError(w, "The node is still working on this server ("+busy+"). Try again when it has finished.", http.StatusConflict)
 			return true
 		}
 	}

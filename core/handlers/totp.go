@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 
 	"github.com/pquerna/otp"
@@ -107,10 +108,10 @@ var errTooManyCodes = errors.New("too many wrong codes")
 // codeCheckFailed answers a code check that could not be made.
 func codeCheckFailed(w http.ResponseWriter, err error) {
 	if errors.Is(err, errTooManyCodes) {
-		sendJSONError(w, "Too many wrong codes. Try again in 15 minutes.", http.StatusTooManyRequests)
+		httpx.SendJSONError(w, "Too many wrong codes. Try again in 15 minutes.", http.StatusTooManyRequests)
 		return
 	}
-	sendJSONError(w, "Verification failed", http.StatusInternalServerError)
+	httpx.SendJSONError(w, "Verification failed", http.StatusInternalServerError)
 }
 
 // reserveCodeAttempt counts an attempt BEFORE the code is checked and reports
@@ -185,13 +186,13 @@ type SetupTOTPResponse struct {
 // derived from the same secret to confirm possession.
 func (h *AuthHandler) SetupTOTPHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
 	username, _ := r.Context().Value("username").(string)
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil {
-		sendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
@@ -200,7 +201,7 @@ func (h *AuthHandler) SetupTOTPHandler(w http.ResponseWriter, r *http.Request) {
 		AccountName: user.Username,
 	})
 	if err != nil {
-		sendJSONError(w, "Failed to generate secret", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate secret", http.StatusInternalServerError)
 		return
 	}
 
@@ -234,26 +235,26 @@ type VerifyTOTPResponse struct {
 // Backup codes are returned in cleartext exactly once — never retrievable later.
 func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
 	username, _ := r.Context().Value("username").(string)
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil {
-		sendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
 	var req VerifyTOTPRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Code = strings.TrimSpace(req.Code)
 	req.Secret = strings.TrimSpace(req.Secret)
 
 	if req.Secret == "" || req.Code == "" {
-		sendJSONError(w, "Secret and code required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Secret and code required", http.StatusBadRequest)
 		return
 	}
 	// Enrolment while 2FA is on replaced the authenticator and the backup codes
@@ -261,7 +262,7 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 	// factor was the one that did not ask for it. Switching authenticators
 	// goes through disable, which asks for a current code.
 	if user.Is2FAEnabled {
-		sendJSONError(w, "Two-factor authentication is already on. Turn it off first to switch authenticators.", http.StatusConflict)
+		httpx.SendJSONError(w, "Two-factor authentication is already on. Turn it off first to switch authenticators.", http.StatusConflict)
 		return
 	}
 
@@ -283,7 +284,7 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 	// forced-enrolment flow behind a prompt the user just answered.
 	if TokenPurpose(r) != "2fa_setup" {
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-			sendJSONError(w, "Invalid password", http.StatusForbidden)
+			httpx.SendJSONError(w, "Invalid password", http.StatusForbidden)
 			return
 		}
 	}
@@ -295,18 +296,18 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 		// operator's log gets the detail, and it never contains the secret or the
 		// code.
 		log.Printf("2fa setup: rejected code for user %s: %s", user.Username, diagnoseRejectedTOTP(req.Secret, req.Code, time.Now()))
-		sendJSONError(w, "Invalid code", http.StatusForbidden)
+		httpx.SendJSONError(w, "Invalid code", http.StatusForbidden)
 		return
 	}
 
 	plainCodes, hashedJSON, err := newBackupCodes()
 	if err != nil {
-		sendJSONError(w, "Failed to generate backup codes", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate backup codes", http.StatusInternalServerError)
 		return
 	}
 
 	if err := h.state.Store.SetUserTOTP(user.ID, req.Secret, hashedJSON, true); err != nil {
-		sendJSONError(w, "Failed to enable 2FA", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to enable 2FA", http.StatusInternalServerError)
 		return
 	}
 
@@ -334,27 +335,27 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 // TOTP/backup code. Returns the new codes in cleartext exactly once.
 func (h *AuthHandler) RegenerateBackupCodesHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
 	username, _ := r.Context().Value("username").(string)
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil {
-		sendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 	if !user.Is2FAEnabled {
-		sendJSONError(w, "2FA is not enabled — set it up first", http.StatusBadRequest)
+		httpx.SendJSONError(w, "2FA is not enabled — set it up first", http.StatusBadRequest)
 		return
 	}
 
 	var req DisableTOTPRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-		sendJSONError(w, "Invalid password", http.StatusForbidden)
+		httpx.SendJSONError(w, "Invalid password", http.StatusForbidden)
 		return
 	}
 	ok, err := h.verifyTOTPOrBackup(user, req.Code)
@@ -363,17 +364,17 @@ func (h *AuthHandler) RegenerateBackupCodesHandler(w http.ResponseWriter, r *htt
 		return
 	}
 	if !ok {
-		sendJSONError(w, "Invalid code", http.StatusForbidden)
+		httpx.SendJSONError(w, "Invalid code", http.StatusForbidden)
 		return
 	}
 
 	plainCodes, hashedJSON, err := newBackupCodes()
 	if err != nil {
-		sendJSONError(w, "Failed to generate backup codes", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to generate backup codes", http.StatusInternalServerError)
 		return
 	}
 	if err := h.state.Store.SetUserTOTPBackupCodes(user.ID, hashedJSON); err != nil {
-		sendJSONError(w, "Failed to persist new codes", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to persist new codes", http.StatusInternalServerError)
 		return
 	}
 
@@ -394,13 +395,13 @@ func (h *AuthHandler) RegenerateBackupCodesHandler(w http.ResponseWriter, r *htt
 // when they're running low (single-digit) and regenerate proactively.
 func (h *AuthHandler) Get2FAStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
 	username, _ := r.Context().Value("username").(string)
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil {
-		sendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
@@ -429,27 +430,27 @@ type DisableTOTPRequest struct {
 // TOTP/backup code to mitigate session-hijack risk.
 func (h *AuthHandler) DisableTOTPHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
 	username, _ := r.Context().Value("username").(string)
 	user, err := h.state.Store.GetUserByUsername(username)
 	if err != nil {
-		sendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 	if !user.Is2FAEnabled {
-		sendJSONError(w, "2FA is not enabled", http.StatusBadRequest)
+		httpx.SendJSONError(w, "2FA is not enabled", http.StatusBadRequest)
 		return
 	}
 
 	var req DisableTOTPRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-		sendJSONError(w, "Invalid password", http.StatusForbidden)
+		httpx.SendJSONError(w, "Invalid password", http.StatusForbidden)
 		return
 	}
 	ok, err := h.verifyTOTPOrBackup(user, req.Code)
@@ -458,12 +459,12 @@ func (h *AuthHandler) DisableTOTPHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !ok {
-		sendJSONError(w, "Invalid code", http.StatusForbidden)
+		httpx.SendJSONError(w, "Invalid code", http.StatusForbidden)
 		return
 	}
 
 	if err := h.state.Store.DisableUserTOTP(user.ID); err != nil {
-		sendJSONError(w, "Failed to disable 2FA", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to disable 2FA", http.StatusInternalServerError)
 		return
 	}
 
@@ -482,20 +483,20 @@ func (h *AuthHandler) DisableTOTPHandler(w http.ResponseWriter, r *http.Request)
 // the user logs in with just their password and can re-enable 2FA.
 func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
-		sendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
+		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
-	id, ok := parseUserID(w, r)
+	id, ok := httpx.ParseUserID(w, r)
 	if !ok {
 		return
 	}
 	target, terr := h.state.Store.GetUserByID(id)
 	if terr != nil || target == nil {
-		sendJSONError(w, "User not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 	if !mayManageAccount(h.state, r, target) {
-		sendJSONError(w, "You cannot reset 2FA on an account with more rights than yours", http.StatusForbidden)
+		httpx.SendJSONError(w, "You cannot reset 2FA on an account with more rights than yours", http.StatusForbidden)
 		return
 	}
 	// Taking somebody's second factor away leaves their password as the whole
@@ -510,7 +511,7 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.state.Store.DisableUserTOTP(id); err != nil {
-		sendJSONError(w, "Reset failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Reset failed", http.StatusInternalServerError)
 		return
 	}
 

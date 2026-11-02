@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
@@ -49,12 +50,12 @@ func (h *APIKeysHandler) keyOwnerContext(w http.ResponseWriter, r *http.Request)
 		// front of it. Same reasoning as the misconfigured server route in
 		// apiKeyMiddleware: fail loudly rather than run a panel handler with no
 		// principal at all.
-		sendJSONError(w, "Route misconfigured: external adapter without key auth", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Route misconfigured: external adapter without key auth", http.StatusInternalServerError)
 		return nil, false
 	}
 	owner, err := h.state.Store.GetUserByID(key.UserID)
 	if err != nil || owner == nil {
-		sendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
 		return nil, false
 	}
 	ctx := context.WithValue(r.Context(), "userID", owner.ID)
@@ -70,7 +71,7 @@ func (h *APIKeysHandler) ExternalServerRoute(next http.HandlerFunc) http.Handler
 	return func(w http.ResponseWriter, r *http.Request) {
 		srv, err := h.state.Store.GetServerByUUID(mux.Vars(r)["uuid"])
 		if err != nil || srv == nil {
-			sendJSONError(w, "Server not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 			return
 		}
 		r, ok := h.keyOwnerContext(w, r)
@@ -115,21 +116,21 @@ func (h *APIKeysHandler) ExternalJobInServer(next http.HandlerFunc) http.Handler
 	return func(w http.ResponseWriter, r *http.Request) {
 		jobID, err := strconv.Atoi(mux.Vars(r)["jobId"])
 		if err != nil {
-			sendJSONError(w, "Invalid job ID", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid job ID", http.StatusBadRequest)
 			return
 		}
 		job, err := h.state.Store.GetBackupJob(jobID)
 		if err != nil || job == nil {
-			sendJSONError(w, "Job not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Job not found", http.StatusNotFound)
 			return
 		}
 		srv, err := h.state.Store.GetServerByUUID(mux.Vars(r)["uuid"])
 		if err != nil || srv == nil {
-			sendJSONError(w, "Server not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 			return
 		}
 		if job.ServerID != srv.ID {
-			sendJSONError(w, "Job not found", http.StatusNotFound)
+			httpx.SendJSONError(w, "Job not found", http.StatusNotFound)
 			return
 		}
 		next(w, r)
@@ -157,7 +158,7 @@ func (h *APIKeysHandler) APIKeyPowerGate(next http.HandlerFunc) http.HandlerFunc
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := APIKeyFromContext(r)
 		if key == nil {
-			sendJSONError(w, "Route misconfigured: power gate without key auth", http.StatusInternalServerError)
+			httpx.SendJSONError(w, "Route misconfigured: power gate without key auth", http.StatusInternalServerError)
 			return
 		}
 		// A power request is a two-field JSON object. Anything longer is not one,
@@ -165,21 +166,21 @@ func (h *APIKeysHandler) APIKeyPowerGate(next http.HandlerFunc) http.HandlerFunc
 		// to peek at it.
 		body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
 		if err != nil {
-			sendJSONError(w, "Invalid body", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid body", http.StatusBadRequest)
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 
 		var peek powerActionPeek
 		if err := json.Unmarshal(body, &peek); err != nil {
-			sendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+			httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
 		// The action itself is validated by ServerPowerHandler. An unknown one
 		// resolves to a capability no key can hold, so it is refused here first,
 		// which is the safe order.
 		if !authz.ResolveAPIKey(key.Scope.Permissions, apiKeyServerAllowed(r)).HasCap("power." + peek.Action) {
-			sendJSONError(w, "Key lacks required permission", http.StatusForbidden)
+			httpx.SendJSONError(w, "Key lacks required permission", http.StatusForbidden)
 			return
 		}
 		// The middleware re-checked the owner and the operator's list against
@@ -215,7 +216,7 @@ func (h *APIKeysHandler) APIKeyPowerGate(next http.HandlerFunc) http.HandlerFunc
 func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Request) {
 	ownerID := APIKeyCallerID(r)
 	if ownerID == "" {
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	allowed := APIKeyAllowedServers(r)
@@ -231,12 +232,12 @@ func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Requ
 	}
 	owner, err := h.state.Store.GetUserByID(ownerID)
 	if err != nil || owner == nil {
-		sendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
 		return
 	}
 	servers, err := h.state.Store.ListServersForUser(ownerID, owner.IsAdmin)
 	if err != nil {
-		sendJSONError(w, "Database error", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	// The same filter the panel's own list applies. Without it a grant row
@@ -260,7 +261,7 @@ func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Requ
 func (h *APIKeysHandler) GetExternalServer(w http.ResponseWriter, r *http.Request) {
 	srv, err := h.state.Store.GetServerByUUID(mux.Vars(r)["uuid"])
 	if err != nil || srv == nil {
-		sendJSONError(w, "Server not found", http.StatusNotFound)
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	ownerID := APIKeyCallerID(r)

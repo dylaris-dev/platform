@@ -8,6 +8,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -42,12 +43,12 @@ type migratedItem struct {
 func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 	source, owner, ok := h.loadBuild(r, packEdit)
 	if !ok {
-		handlers.SendJSONError(w, "Forbidden", http.StatusForbidden)
+		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	var req migrateBuildRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		handlers.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 	req.Minecraft = strings.TrimSpace(req.Minecraft)
@@ -55,36 +56,36 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		req.Loader = source.Loader
 	}
 	if req.Loader != "fabric" && req.Loader != "forge" && req.Loader != "neoforge" && req.Loader != "quilt" && req.Loader != "vanilla" {
-		handlers.SendJSONError(w, "Unsupported target loader", 400)
+		httpx.SendJSONError(w, "Unsupported target loader", 400)
 		return
 	}
 	req.VersionString = strings.TrimSpace(req.VersionString)
 	if req.Minecraft == "" || req.VersionString == "" {
-		handlers.SendJSONError(w, "minecraft and versionString are required", http.StatusBadRequest)
+		httpx.SendJSONError(w, "minecraft and versionString are required", http.StatusBadRequest)
 		return
 	}
 	if req.Minecraft == source.Minecraft && req.Loader == source.Loader {
-		handlers.SendJSONError(w, "The target Minecraft version is the one this build already uses", http.StatusBadRequest)
+		httpx.SendJSONError(w, "The target Minecraft version is the one this build already uses", http.StatusBadRequest)
 		return
 	}
 	// VersionString feeds the download filename and the node-side install paths:
 	// the same constraint CreateBuild enforces.
 	if !safeKeyComponent(req.VersionString) {
-		handlers.SendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
+		httpx.SendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
 		return
 	}
 	if bad := validateBuildKeyComponents(req.Minecraft, req.Loader, strings.TrimSpace(req.LoaderVersion)); bad != "" {
-		handlers.SendJSONError(w, bad+" contains invalid path characters", http.StatusBadRequest)
+		httpx.SendJSONError(w, bad+" contains invalid path characters", http.StatusBadRequest)
 		return
 	}
 	if source.Loader == "" {
-		handlers.SendJSONError(w, "This build has no loader set, so its content cannot be resolved against another Minecraft version", http.StatusUnprocessableEntity)
+		httpx.SendJSONError(w, "This build has no loader set, so its content cannot be resolved against another Minecraft version", http.StatusUnprocessableEntity)
 		return
 	}
 	if strings.TrimSpace(req.LoaderVersion) == "" && req.Loader != "vanilla" {
 		version, err := handlers.NewVersionHandler(h.state).PreferredLoaderVersion(r.Context(), req.Loader, req.Minecraft)
 		if err != nil {
-			handlers.SendJSONError(w, "Could not resolve the target loader version: "+err.Error(), http.StatusBadGateway)
+			httpx.SendJSONError(w, "Could not resolve the target loader version: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 		req.LoaderVersion = version
@@ -92,13 +93,13 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 
 	content, err := h.state.Store.ListBuildContent(source.ID)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to load build content", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to load build content", http.StatusInternalServerError)
 		return
 	}
 
 	resolved, unavailable, uploads, err := h.resolveMigrationTargets(content, req.Loader, req.Minecraft)
 	if err != nil {
-		handlers.SendJSONError(w, "Could not resolve target versions from Modrinth: "+err.Error(), http.StatusBadGateway)
+		httpx.SendJSONError(w, "Could not resolve target versions from Modrinth: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	if len(unavailable) > 0 && !req.DropUnavailable {
@@ -127,7 +128,7 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 	}
 	newID, err := h.state.Store.CreatePackBuild(target)
 	if err != nil {
-		handlers.SendJSONError(w, "Failed to create the target build (that version string may already exist)", http.StatusConflict)
+		httpx.SendJSONError(w, "Failed to create the target build (that version string may already exist)", http.StatusConflict)
 		return
 	}
 	target.ID = newID

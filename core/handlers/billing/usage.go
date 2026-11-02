@@ -6,6 +6,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -61,12 +62,12 @@ func NewUsageHandler(state *handlers.AppState) *UsageHandler {
 func (h *UsageHandler) GetMyUsage(w http.ResponseWriter, r *http.Request) {
 	userID := handlers.ByonCallerID(r)
 	if userID == "" {
-		handlers.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 	u, err := h.state.Store.GetTrafficUsage(userID, handlers.UsagePeriod(r))
 	if err != nil {
-		handlers.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	// entitlement is what the tenant HOLDS against what they bought, which is a
@@ -104,7 +105,7 @@ func (h *UsageHandler) GetAllUsage(w http.ResponseWriter, r *http.Request) {
 	period := handlers.UsagePeriod(r)
 	list, err := h.state.Store.ListTrafficUsage(period)
 	if err != nil {
-		handlers.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
 	}
 	views := make([]usageView, 0, len(list))
