@@ -15,6 +15,8 @@ Newest release first. The format is fixed and checked in CI - see the
 
 ### Features
 - The panel answers faster under load, and an open panel tab uses fewer server resources.
+- The server list ping of a server behind the gateway is answered by the gateway itself, at most a second old,
+  so your server sees far fewer status requests however often players refresh.
 
 ### Breaking
 - Nothing.
@@ -23,7 +25,8 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Fixes
-- Nothing.
+- Joining with a mistyped server address now shows "Unknown server address" right away. A flood of such joins
+  could also slow the gateway down for players on other servers; that is fixed and already live.
 
 ## 2026.11.02.2
 
