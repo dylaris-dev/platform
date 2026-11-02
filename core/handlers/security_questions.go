@@ -7,6 +7,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 )
 
@@ -154,7 +155,7 @@ func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http
 		return
 	}
 
-	LogIdentityAudit(h.state, r, AuditEventSecurityQuestionsSet, userID, userID, map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventSecurityQuestionsSet, userID, userID, map[string]interface{}{
 		"count": len(req.Items),
 	})
 
@@ -209,7 +210,7 @@ func (h *SecurityQuestionsHandler) SetAdminPool(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	LogIdentityAudit(h.state, r, AuditEventSecurityQuestionsPoolUpdated, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventSecurityQuestionsPoolUpdated, actorID, "", map[string]interface{}{
 		"count": len(cleaned),
 	})
 

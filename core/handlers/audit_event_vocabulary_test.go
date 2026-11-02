@@ -3,6 +3,8 @@ package handlers
 import (
 	"reflect"
 	"testing"
+
+	"dylaris-core/handlers/audit"
 )
 
 // maintenance_toggled was five things at once: real maintenance mode, starting
@@ -17,14 +19,14 @@ import (
 // after an incident.
 func TestTheDataMovingEventsHaveTheirOwnNames(t *testing.T) {
 	names := map[string]string{
-		"maintenance":           AuditEventMaintenanceToggled,
-		"db migration":          AuditEventDBMigrationStarted,
-		"hypertable conversion": AuditEventDBHypertableConverted,
-		"storage migration":     AuditEventStorageMigrationStart,
-		"storage cancel":        AuditEventStorageMigrationCancel,
-		"manifest delete":       AuditEventStorageManifestDeleted,
-		"orphan delete":         AuditEventStorageOrphansDeleted,
-		"lifecycle apply":       AuditEventStorageLifecycleSet,
+		"maintenance":           audit.AuditEventMaintenanceToggled,
+		"db migration":          audit.AuditEventDBMigrationStarted,
+		"hypertable conversion": audit.AuditEventDBHypertableConverted,
+		"storage migration":     audit.AuditEventStorageMigrationStart,
+		"storage cancel":        audit.AuditEventStorageMigrationCancel,
+		"manifest delete":       audit.AuditEventStorageManifestDeleted,
+		"orphan delete":         audit.AuditEventStorageOrphansDeleted,
+		"lifecycle apply":       audit.AuditEventStorageLifecycleSet,
 	}
 	seen := map[string]string{}
 	for what, id := range names {
@@ -42,8 +44,8 @@ func TestTheDataMovingEventsHaveTheirOwnNames(t *testing.T) {
 	}
 	// The one that keeps the old id is the one it was always named after, so
 	// rows written before the split still read correctly.
-	if AuditEventMaintenanceToggled != "maintenance_toggled" {
+	if audit.AuditEventMaintenanceToggled != "maintenance_toggled" {
 		t.Errorf("maintenance changed id to %q; the rows already written would become unreadable",
-			AuditEventMaintenanceToggled)
+			audit.AuditEventMaintenanceToggled)
 	}
 }

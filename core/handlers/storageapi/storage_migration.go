@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -831,7 +832,7 @@ func (h *StorageMigrationHandler) Start(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventStorageMigrationStart, actorID, "", storageMigrationAuditPayload(req, job.ID))
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventStorageMigrationStart, actorID, "", storageMigrationAuditPayload(req, job.ID))
 	if h.state.Events != nil {
 		h.state.Events.Publish(r.Context(), "storagemigration.changed", nil)
 	}
@@ -858,7 +859,7 @@ func (h *StorageMigrationHandler) Cancel(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventStorageMigrationCancel, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventStorageMigrationCancel, actorID, "", map[string]interface{}{
 		"action": "storage_migration_cancel",
 	})
 	if h.state.Events != nil {
@@ -971,7 +972,7 @@ func (h *StorageMigrationHandler) DeleteManifest(w http.ResponseWriter, r *http.
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventStorageManifestDeleted, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventStorageManifestDeleted, actorID, "", map[string]interface{}{
 		"action":     "storage_manifest_delete",
 		"manifestId": id,
 	})

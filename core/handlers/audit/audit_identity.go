@@ -1,4 +1,4 @@
-package handlers
+package audit
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/store"
 )
 
 // The identity audit trail records what happens to ACCOUNTS: registrations,
@@ -22,11 +23,11 @@ import (
 // and seeded into the "support" panel role while no route in the tree checked
 // it, so granting it conferred nothing.
 type IdentityAuditHandler struct {
-	state *AppState
+	st store.Store
 }
 
-func NewIdentityAuditHandler(state *AppState) *IdentityAuditHandler {
-	return &IdentityAuditHandler{state: state}
+func NewIdentityAuditHandler(st store.Store) *IdentityAuditHandler {
+	return &IdentityAuditHandler{st: st}
 }
 
 // identityAuditRow is the wire shape: the stored event plus the names its two
@@ -46,7 +47,7 @@ type identityAuditRow struct {
 
 // List GET /api/admin/audit/identity?eventType=&targetUserId=&limit=
 func (h *IdentityAuditHandler) List(w http.ResponseWriter, r *http.Request) {
-	if h.state == nil || h.state.Store == nil {
+	if h.st == nil {
 		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
@@ -59,7 +60,7 @@ func (h *IdentityAuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	if t := q.Get("targetUserId"); t != "" {
 		target = &t
 	}
-	events, err := h.state.Store.ListAuditIdentity(target, q.Get("eventType"), limit)
+	events, err := h.st.ListAuditIdentity(target, q.Get("eventType"), limit)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to read the identity log", http.StatusInternalServerError)
 		return
@@ -70,7 +71,7 @@ func (h *IdentityAuditHandler) List(w http.ResponseWriter, r *http.Request) {
 	// reading about here are the DELETED ones, and their identity lives in the
 	// row's own metadata, which is the only place it can survive them.
 	names := map[string]string{}
-	if users, uerr := h.state.Store.ListUsers(); uerr == nil {
+	if users, uerr := h.st.ListUsers(); uerr == nil {
 		for _, u := range users {
 			names[u.ID] = u.Username
 		}

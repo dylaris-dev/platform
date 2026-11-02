@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
@@ -311,7 +312,7 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 	actor := userID
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    id,
-		EventType:   handlers.TicketEventCreated,
+		EventType:   audit.TicketEventCreated,
 		ActorUserID: &actor,
 		Metadata: map[string]interface{}{
 			"category":     cat.Name,
@@ -810,9 +811,9 @@ func (h *TicketsHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
-	eventType := handlers.TicketEventStatusChanged
+	eventType := audit.TicketEventStatusChanged
 	if (previous == "closed" || previous == "resolved") && (newStatus == "open" || newStatus == "in_progress") {
-		eventType = handlers.TicketEventReopened
+		eventType = audit.TicketEventReopened
 	}
 	actor := userID
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
@@ -878,7 +879,7 @@ func (h *TicketsHandler) UpdatePriority(w http.ResponseWriter, r *http.Request) 
 	actor := userID
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    id,
-		EventType:   handlers.TicketEventPriorityChanged,
+		EventType:   audit.TicketEventPriorityChanged,
 		ActorUserID: &actor,
 		Metadata: map[string]interface{}{
 			"from": previous,
@@ -940,9 +941,9 @@ func (h *TicketsHandler) UpdateAssignment(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
-	eventType := handlers.TicketEventAssigned
+	eventType := audit.TicketEventAssigned
 	if req.AssignedUserID == nil && team == "" {
-		eventType = handlers.TicketEventUnassigned
+		eventType = audit.TicketEventUnassigned
 	}
 	meta := map[string]interface{}{"team": team}
 	if req.AssignedUserID != nil {
@@ -1052,7 +1053,7 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 	actor := userID
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    id,
-		EventType:   handlers.TicketEventWatcherAdded,
+		EventType:   audit.TicketEventWatcherAdded,
 		ActorUserID: &actor,
 		Metadata: map[string]interface{}{
 			"target_user_id": target,
@@ -1125,7 +1126,7 @@ func (h *TicketsHandler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 	actor := userID
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    id,
-		EventType:   handlers.TicketEventWatcherRemoved,
+		EventType:   audit.TicketEventWatcherRemoved,
 		ActorUserID: &actor,
 		Metadata: map[string]interface{}{
 			"target_user_id": targetID,

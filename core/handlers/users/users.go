@@ -12,6 +12,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -184,7 +185,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	creatorID, _ := r.Context().Value("userID").(string)
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventUserCreated, creatorID, req.User.ID, map[string]interface{}{"admin": req.User.IsAdmin})
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserCreated, creatorID, req.User.ID, map[string]interface{}{"admin": req.User.IsAdmin})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -215,7 +216,7 @@ func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventDeletionCancelledByAdmin, actorID, id, nil)
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventDeletionCancelledByAdmin, actorID, id, nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -372,7 +373,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		deleted["username"] = userToDelete.Username
 		deleted["email"] = userToDelete.Email
 	}
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventUserHardDeleted, actorID, "", deleted)
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserHardDeleted, actorID, "", deleted)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -432,7 +433,7 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 	handlers.StampBeamAccessForUser(r.Context(), h.state, id)
 	sshRevoked := handlers.RevokeAllSSHKeys(h.state, id, "admin password reset")
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 	// The owner hears about it: an operator account setting passwords is also
 	// what a compromised operator account looks like.
 	handlers.NotifyPasswordChanged(h.state, target.Email, target.Username)

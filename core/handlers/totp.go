@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -313,7 +314,7 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	LogIdentityAudit(h.state, r, AuditEvent2FASetupCompleted, user.ID, user.ID, map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEvent2FASetupCompleted, user.ID, user.ID, map[string]interface{}{
 		"backup_codes_generated": backupCodeCount,
 	})
 	// A session that predates the second factor was never asked for it. End
@@ -380,7 +381,7 @@ func (h *AuthHandler) RegenerateBackupCodesHandler(w http.ResponseWriter, r *htt
 		return
 	}
 
-	LogIdentityAudit(h.state, r, AuditEvent2FABackupRegenerated, user.ID, user.ID, map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEvent2FABackupRegenerated, user.ID, user.ID, map[string]interface{}{
 		"count": backupCodeCount,
 	})
 
@@ -470,7 +471,7 @@ func (h *AuthHandler) DisableTOTPHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	LogIdentityAudit(h.state, r, AuditEvent2FADisabled, user.ID, user.ID, nil)
+	audit.LogIdentity(h.state.Store, r, audit.AuditEvent2FADisabled, user.ID, user.ID, nil)
 	// Same as enabling: a change to the second factor ends every session of
 	// the account; the caller gets a fresh one.
 	endSessionsAfter(h.state, user, "2FA turned off")
@@ -526,7 +527,7 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 	revoked := revokeAllAPIKeys(h.state, id, "admin 2FA reset")
 	stampBeamAccessForUser(r.Context(), h.state, id)
 	sshRevoked := revokeAllSSHKeys(h.state, id, "admin 2FA reset")
-	LogIdentityAudit(h.state, r, AuditEvent2FAAdminReset, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
+	audit.LogIdentity(h.state.Store, r, audit.AuditEvent2FAAdminReset, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -624,7 +625,7 @@ func verifyTOTPOrBackupWith(state *AppState, user *models.User, code string, cla
 			// are a strong signal that codes leaked. The handler caller
 			// owns the request so we can't grab it here; we log via the
 			// nil-request path which still captures actor/target IDs.
-			LogIdentityAudit(state, nil, AuditEvent2FABackupCodeConsumed, user.ID, user.ID, map[string]interface{}{
+			audit.LogIdentity(state.Store, nil, audit.AuditEvent2FABackupCodeConsumed, user.ID, user.ID, map[string]interface{}{
 				"remaining": len(remaining),
 			})
 			return true, nil

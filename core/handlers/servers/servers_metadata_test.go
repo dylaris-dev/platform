@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -112,8 +113,8 @@ func TestDeclareServerLoaderMetadata_ValidPersists(t *testing.T) {
 		t.Fatalf("audit events = %d, want 1: %+v", len(fs.auditEvents), fs.auditEvents)
 	}
 	ev := fs.auditEvents[0]
-	if ev.ServerID != 1 || ev.EventType != handlers.ServerAuditEventLoaderMetadataDeclared {
-		t.Fatalf("audit event = %+v, want serverID=1 eventType=%q", ev, handlers.ServerAuditEventLoaderMetadataDeclared)
+	if ev.ServerID != 1 || ev.EventType != audit.ServerAuditEventLoaderMetadataDeclared {
+		t.Fatalf("audit event = %+v, want serverID=1 eventType=%q", ev, audit.ServerAuditEventLoaderMetadataDeclared)
 	}
 	if ev.Metadata["from_installer_type"] != "upload" || ev.Metadata["to_installer_type"] != "paper" {
 		t.Fatalf("audit metadata installer_type = %+v", ev.Metadata)

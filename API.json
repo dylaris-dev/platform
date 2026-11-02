@@ -5208,6 +5208,7 @@
       "path": "/api/templates",
       "auth": "session",
       "authorization": "no capability",
+      "description": "the templates the caller may see, each with what they may do with it, plus the limits the panel shows sizes against.",
       "handler": "TemplatesHandler.List",
       "group": "templates",
       "external": false
@@ -5217,6 +5218,7 @@
       "path": "/api/templates",
       "auth": "session",
       "authorization": "no capability",
+      "description": "an empty template.",
       "handler": "TemplatesHandler.Create",
       "group": "templates",
       "external": false
@@ -5226,6 +5228,7 @@
       "path": "/api/templates/capture",
       "auth": "session",
       "authorization": "no capability",
+      "description": "makes a template from files of a running server.",
       "handler": "TemplatesHandler.Capture",
       "group": "templates",
       "external": false
@@ -5244,6 +5247,7 @@
       "path": "/api/templates/owner-shares",
       "auth": "session",
       "authorization": "no capability",
+      "description": "who the caller shares all their personal templates with.",
       "handler": "TemplatesHandler.ListOwnerShares",
       "group": "templates",
       "external": false
@@ -5253,6 +5257,7 @@
       "path": "/api/templates/owner-shares",
       "auth": "session",
       "authorization": "no capability",
+      "description": "{username, level}; shares all of the caller's personal templates, present and future.",
       "handler": "TemplatesHandler.PutOwnerShare",
       "group": "templates",
       "external": false
@@ -5262,6 +5267,7 @@
       "path": "/api/templates/upload",
       "auth": "session",
       "authorization": "no capability",
+      "description": "multipart meta (JSON, as for create) and file (a zip).",
       "handler": "TemplatesHandler.Upload",
       "group": "templates",
       "external": false
@@ -5271,6 +5277,7 @@
       "path": "/api/templates/{id:[0-9]+}",
       "auth": "session",
       "authorization": "no capability",
+      "description": "the files first, then the row, so a storage failure leaves a row that can be deleted again rather than orphaned files; on the owner's own storage the row goes anyway, with a warning.",
       "handler": "TemplatesHandler.Delete",
       "group": "templates",
       "external": false
@@ -5289,6 +5296,7 @@
       "path": "/api/templates/{id:[0-9]+}",
       "auth": "session",
       "authorization": "no capability",
+      "description": "name, visibility, software and versions.",
       "handler": "TemplatesHandler.Update",
       "group": "templates",
       "external": false
@@ -5298,6 +5306,7 @@
       "path": "/api/templates/{id:[0-9]+}/download",
       "auth": "session",
       "authorization": "no capability",
+      "description": "the template's files as a zip.",
       "handler": "TemplatesHandler.Download",
       "group": "templates",
       "external": false
@@ -5307,6 +5316,7 @@
       "path": "/api/templates/{id:[0-9]+}/files",
       "auth": "session",
       "authorization": "no capability",
+      "description": "a file or a folder.",
       "handler": "TemplatesHandler.DeleteFile",
       "group": "templates",
       "external": false
@@ -5316,6 +5326,7 @@
       "path": "/api/templates/{id:[0-9]+}/files",
       "auth": "session",
       "authorization": "no capability",
+      "description": "every file, path relative to the template.",
       "handler": "TemplatesHandler.Files",
       "group": "templates",
       "external": false
@@ -5325,6 +5336,7 @@
       "path": "/api/templates/{id:[0-9]+}/files",
       "auth": "session",
       "authorization": "no capability",
+      "description": "multipart: repeated \"file\" parts stored under the repeated \"path\" fields in order (legacy: under the folder \"dir\").",
       "handler": "TemplatesHandler.AddFiles",
       "group": "templates",
       "external": false
@@ -5334,6 +5346,7 @@
       "path": "/api/templates/{id:[0-9]+}/files/text",
       "auth": "session",
       "authorization": "no capability",
+      "description": "a text file up to 1 MiB.",
       "handler": "TemplatesHandler.GetText",
       "group": "templates",
       "external": false
@@ -5343,6 +5356,7 @@
       "path": "/api/templates/{id:[0-9]+}/files/text",
       "auth": "session",
       "authorization": "no capability",
+      "description": "writes {path, content}.",
       "handler": "TemplatesHandler.PutText",
       "group": "templates",
       "external": false
@@ -5352,6 +5366,7 @@
       "path": "/api/templates/{id:[0-9]+}/modrinth",
       "auth": "session",
       "authorization": "no capability",
+      "description": "body {versionId}: keeps that Modrinth version's primary file as a reference in plugins/ or mods/.",
       "handler": "TemplatesHandler.AddModrinth",
       "group": "templates",
       "external": false
@@ -5361,6 +5376,7 @@
       "path": "/api/templates/{id:[0-9]+}/modrinth/{refId:[0-9]+}",
       "auth": "session",
       "authorization": "no capability",
+      "description": "removes one Modrinth reference of this template.",
       "handler": "TemplatesHandler.DeleteModrinth",
       "group": "templates",
       "external": false
@@ -5379,6 +5395,7 @@
       "path": "/api/templates/{id:[0-9]+}/shares",
       "auth": "session",
       "authorization": "no capability",
+      "description": "{username, level}; sets or changes one share.",
       "handler": "TemplatesHandler.PutShare",
       "group": "templates",
       "external": false

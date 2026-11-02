@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services/demo"
@@ -381,7 +382,7 @@ func auditPlayerAction(state *AppState, r *http.Request, serverID int, action, p
 		meta["player"] = p
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	LogServerAudit(state, r, serverID, ServerAuditEventPlayerAction, actorID, "", meta)
+	audit.LogServer(state.Store, r, serverID, ServerAuditEventPlayerAction, actorID, "", meta)
 }
 
 // ServerAuditEventPlayerAction is one players.manage action (kick, ban, op,

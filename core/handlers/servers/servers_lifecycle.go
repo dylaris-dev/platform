@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/guard"
 
 	"dylaris-core/authz"
@@ -930,15 +931,15 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		go h.snapshotModpackContents(serverID, subName, originalInstallerType, snapshotBuild, externalMrpackURL, false)
 	}
 
-	audit := map[string]interface{}{
+	auditMeta := map[string]interface{}{
 		"sub_server": subName,
 		"installer":  req.Installer.Type,
 		"version":    req.Installer.McVersion,
 	}
 	if tmpl != nil {
-		audit["template"] = tmpl.ID
+		auditMeta["template"] = tmpl.ID
 	}
-	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventSetup, actorID, "", audit)
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventSetup, actorID, "", auditMeta)
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
@@ -1221,7 +1222,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventReinstall, actorID, "", map[string]interface{}{
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventReinstall, actorID, "", map[string]interface{}{
 		"sub_server": subName,
 		"installer":  installerType,
 		"version":    mcVersion,
@@ -1463,7 +1464,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventSubServerSwitched, actorID, "", map[string]interface{}{
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventSubServerSwitched, actorID, "", map[string]interface{}{
 		"from": srv.ActiveSubServer,
 		"to":   subName,
 	})
@@ -1835,7 +1836,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	if suspendOverride != "" {
 		powerMeta["admin_suspend_override"] = suspendOverride
 	}
-	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventPowerAction, userID, "", powerMeta)
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventPowerAction, userID, "", powerMeta)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -1887,7 +1888,7 @@ func (h *ServerHandler) UpdateServerName(w http.ResponseWriter, r *http.Request)
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventNameChanged, actorID, "", map[string]interface{}{
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventNameChanged, actorID, "", map[string]interface{}{
 		"from": previousName,
 		"to":   name,
 	})
@@ -2137,7 +2138,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		auditMeta["memoryGuardAction"] = *req.MemoryGuardAction
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventResourcesChanged, actorID, "", auditMeta)
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventResourcesChanged, actorID, "", auditMeta)
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	// No start command is sent or stored: the node rebuilds it from what is on
@@ -2615,7 +2616,7 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventSubServerDeleted, actorID, "", map[string]interface{}{
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventSubServerDeleted, actorID, "", map[string]interface{}{
 		"sub_server": subServerName,
 		"was_active": wasActive,
 	})
@@ -2880,7 +2881,7 @@ func (h *ServerHandler) UpdateServerRuntime(w http.ResponseWriter, r *http.Reque
 	// flag can carry a secret (-Dsome.token=...), and the audit trail kept every
 	// old value for as long as the retention allows, which by default is forever.
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventRuntimeChanged, actorID, "", map[string]interface{}{
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventRuntimeChanged, actorID, "", map[string]interface{}{
 		"java_image":        javaImage,
 		"jvm_flags_changed": srv.ExtraJvmFlags != extraFlags,
 	})

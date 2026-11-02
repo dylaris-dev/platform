@@ -8,6 +8,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -129,9 +130,9 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 	meta := map[string]interface{}{
 		"serverId": serverID, "serverUuid": srv.UUID, "previousOwner": srv.OwnerID, "newOwner": req.UserID,
 	}
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventServerOwnerChanged, actorID, srv.OwnerID, meta)
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventServerOwnerChanged, actorID, srv.OwnerID, meta)
 	if req.UserID != srv.OwnerID {
-		handlers.LogIdentityAudit(h.state, r, handlers.AuditEventServerOwnerChanged, actorID, req.UserID, meta)
+		audit.LogIdentity(h.state.Store, r, audit.AuditEventServerOwnerChanged, actorID, req.UserID, meta)
 	}
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)

@@ -8,6 +8,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/store"
 )
@@ -143,7 +144,7 @@ func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Failed to create panel role (the name may already be in use)", 409)
 		return
 	}
-	LogIdentityAudit(h.state, r, AuditEventPanelRoleCreated, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventPanelRoleCreated, actorID, "", map[string]interface{}{
 		"role_id": id, "name": req.Name, "capabilities": access.NormalizeCaps(req.Capabilities),
 	})
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -190,7 +191,7 @@ func (h *PanelRolesHandler) UpdatePanelRole(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventPanelRoleUpdated, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventPanelRoleUpdated, actorID, "", map[string]interface{}{
 		"role_id": id, "name": req.Name, "previous_name": existing.Name,
 		"capabilities": access.NormalizeCaps(req.Capabilities), "previous_capabilities": access.NormalizeCaps(existing.Capabilities),
 	})
@@ -225,7 +226,7 @@ func (h *PanelRolesHandler) DeletePanelRole(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	LogIdentityAudit(h.state, r, AuditEventPanelRoleDeleted, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventPanelRoleDeleted, actorID, "", map[string]interface{}{
 		"role_id": id, "name": existing.Name, "capabilities": access.NormalizeCaps(existing.Capabilities),
 	})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

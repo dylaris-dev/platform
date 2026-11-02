@@ -93,23 +93,14 @@ func groupOf(path string) string {
 // GenerateJSON renders the machine-readable reference for the core module rooted
 // at coreDir. Same parse as Generate, so the two documents cannot drift.
 func GenerateJSON(coreDir string) (string, error) {
-	routes, err := Parse(filepath.Join(coreDir, "routes.go"), []string{
-		filepath.Join(coreDir, "handlers"),
-		filepath.Join(coreDir, "handlers", "packs"),
-		filepath.Join(coreDir, "handlers", "servers"),
-		filepath.Join(coreDir, "handlers", "users"),
-		filepath.Join(coreDir, "handlers", "storageapi"),
-		filepath.Join(coreDir, "handlers", "mods"),
-		filepath.Join(coreDir, "handlers", "nodes"),
-		filepath.Join(coreDir, "handlers", "gateway"),
-		filepath.Join(coreDir, "handlers", "beam"),
-		filepath.Join(coreDir, "handlers", "billing"),
-		filepath.Join(coreDir, "handlers", "tabs"),
-		filepath.Join(coreDir, "handlers", "backup"),
-		filepath.Join(coreDir, "handlers", "stats"),
-		filepath.Join(coreDir, "handlers", "tickets"),
-		coreDir,
-	})
+	// The same walk as Generate: a hard-coded list here missed every handler
+	// package added after it was written, and their routes lost their
+	// descriptions in this document while API.md kept them.
+	dirs, err := handlerDirs(filepath.Join(coreDir, "handlers"))
+	if err != nil {
+		return "", err
+	}
+	routes, err := Parse(filepath.Join(coreDir, "routes.go"), append(dirs, coreDir))
 	if err != nil {
 		return "", err
 	}

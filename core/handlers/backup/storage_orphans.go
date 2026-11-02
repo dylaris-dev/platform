@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -236,7 +237,7 @@ func (h *BackupHandler) DeleteOrphans(w http.ResponseWriter, r *http.Request) {
 	}
 	// Audited whatever happened: a partial run deleted real files.
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventStorageOrphansDeleted, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventStorageOrphansDeleted, actorID, "", map[string]interface{}{
 		"storageId":   bs.ID,
 		"requested":   len(req.Keys),
 		"includeLive": req.IncludeLive,
@@ -360,7 +361,7 @@ func (h *BackupHandler) ApplyLifecycle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventStorageLifecycleSet, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventStorageLifecycleSet, actorID, "", map[string]interface{}{
 		"storageId": bs.ID,
 		"bucket":    st.Bucket(),
 		"rules":     len(merged),

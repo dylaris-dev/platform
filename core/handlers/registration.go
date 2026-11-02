@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/mailer"
 	"dylaris-core/models"
@@ -220,7 +221,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	LogIdentityAudit(h.state, r, "user_registered", "", user.ID, map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, "user_registered", "", user.ID, map[string]interface{}{
 		"username": user.Username,
 		"email":    user.Email,
 	})
@@ -274,7 +275,7 @@ func (h *RegistrationHandler) VerifyEmail(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if ok {
-			LogIdentityAudit(h.state, r, AuditEventUserEmailChanged, user.ID, user.ID, nil)
+			audit.LogIdentity(h.state.Store, r, audit.AuditEventUserEmailChanged, user.ID, user.ID, nil)
 			notifyAddressChanged(h.state, oldEmail, newEmail, user.Username)
 			json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": user.Username})
 			return
@@ -284,7 +285,7 @@ func (h *RegistrationHandler) VerifyEmail(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Failed to verify email", http.StatusInternalServerError)
 		return
 	}
-	LogIdentityAudit(h.state, r, "email_verified", "", user.ID, nil)
+	audit.LogIdentity(h.state.Store, r, "email_verified", "", user.ID, nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,

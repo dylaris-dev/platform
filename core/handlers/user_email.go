@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/mailer"
 	"dylaris-core/services"
@@ -114,7 +115,7 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	// the identity log is readable by anyone with audit access, and the row
 	// already names WHO was changed and by WHOM, which is what an investigation
 	// needs.
-	LogIdentityAudit(h.state, r, AuditEventUserEmailChanged, actorID, id, nil)
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserEmailChanged, actorID, id, nil)
 	notifyAddressChanged(h.state, oldEmail, email, target.Username)
 
 	// Send the verification the account now needs. Only when the policy

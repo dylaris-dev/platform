@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
@@ -421,8 +422,8 @@ func TestAssignGrant_IsAudited(t *testing.T) {
 			t.Fatalf("audit rows = %d, want 1: this is the gap - the grant was invisible", len(fs.serverAudit))
 		}
 		ev := fs.serverAudit[0]
-		if ev.EventType != handlers.ServerAuditEventMemberInvited {
-			t.Errorf("eventType = %q, want %q", ev.EventType, handlers.ServerAuditEventMemberInvited)
+		if ev.EventType != audit.ServerAuditEventMemberInvited {
+			t.Errorf("eventType = %q, want %q", ev.EventType, audit.ServerAuditEventMemberInvited)
 		}
 		if ev.ServerID != 42 {
 			t.Errorf("serverId = %d, want 42", ev.ServerID)
@@ -447,8 +448,8 @@ func TestAssignGrant_IsAudited(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 		}
-		if len(fs.serverAudit) != 1 || fs.serverAudit[0].EventType != handlers.ServerAuditEventMemberPermsChanged {
-			t.Fatalf("audit = %+v, want one %s", fs.serverAudit, handlers.ServerAuditEventMemberPermsChanged)
+		if len(fs.serverAudit) != 1 || fs.serverAudit[0].EventType != audit.ServerAuditEventMemberPermsChanged {
+			t.Fatalf("audit = %+v, want one %s", fs.serverAudit, audit.ServerAuditEventMemberPermsChanged)
 		}
 	})
 
@@ -467,8 +468,8 @@ func TestAssignGrant_IsAudited(t *testing.T) {
 		if len(fs.serverAudit) != 0 {
 			t.Errorf("a server audit row was written for a grant that names no server: %+v", fs.serverAudit)
 		}
-		if len(fs.identityAudit) != 1 || fs.identityAudit[0].EventType != handlers.AuditEventAccountGrantAssigned {
-			t.Fatalf("identity audit = %+v, want one %s", fs.identityAudit, handlers.AuditEventAccountGrantAssigned)
+		if len(fs.identityAudit) != 1 || fs.identityAudit[0].EventType != audit.AuditEventAccountGrantAssigned {
+			t.Fatalf("identity audit = %+v, want one %s", fs.identityAudit, audit.AuditEventAccountGrantAssigned)
 		}
 	})
 
@@ -517,8 +518,8 @@ func TestRevokeGrant_IsAudited(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 		}
-		if len(fs.serverAudit) != 1 || fs.serverAudit[0].EventType != handlers.ServerAuditEventMemberRemoved {
-			t.Fatalf("audit = %+v, want one %s", fs.serverAudit, handlers.ServerAuditEventMemberRemoved)
+		if len(fs.serverAudit) != 1 || fs.serverAudit[0].EventType != audit.ServerAuditEventMemberRemoved {
+			t.Fatalf("audit = %+v, want one %s", fs.serverAudit, audit.ServerAuditEventMemberRemoved)
 		}
 	})
 
@@ -530,8 +531,8 @@ func TestRevokeGrant_IsAudited(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 		}
-		if len(fs.identityAudit) != 1 || fs.identityAudit[0].EventType != handlers.AuditEventAccountGrantRevoked {
-			t.Fatalf("identity audit = %+v, want one %s", fs.identityAudit, handlers.AuditEventAccountGrantRevoked)
+		if len(fs.identityAudit) != 1 || fs.identityAudit[0].EventType != audit.AuditEventAccountGrantRevoked {
+			t.Fatalf("identity audit = %+v, want one %s", fs.identityAudit, audit.AuditEventAccountGrantRevoked)
 		}
 	})
 }

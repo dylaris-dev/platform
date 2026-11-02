@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -748,7 +749,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	// logged in is the strongest possible signal that the account is alive.
 	if user.DeletionStatus == "pending_deletion" {
 		if err := h.state.Store.CancelUserDeletion(user.ID); err == nil {
-			LogIdentityAudit(h.state, r, AuditEventDeletionCancelledAtLogin, user.ID, user.ID, nil)
+			audit.LogIdentity(h.state.Store, r, audit.AuditEventDeletionCancelledAtLogin, user.ID, user.ID, nil)
 		}
 	}
 
@@ -983,7 +984,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			httpx.SendJSONError(w, "Update failed", 500)
 			return
 		}
-		LogIdentityAudit(h.state, r, "user_email_change_requested", user.ID, user.ID, nil)
+		audit.LogIdentity(h.state.Store, r, "user_email_change_requested", user.ID, user.ID, nil)
 		if err := sendEmailChangeConfirmation(h.state, newEmail, user.Username, token); err != nil {
 			services.ReportOperatorError("profile-email-change", "verification mail to %s failed: %v", newEmail, err)
 			// Withdrawn: a pending address nobody was told about would only read
@@ -1062,7 +1063,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			httpx.SendJSONError(w, "Update failed", 500)
 			return
 		}
-		LogIdentityAudit(h.state, r, AuditEventUserEmailChanged, user.ID, user.ID, nil)
+		audit.LogIdentity(h.state.Store, r, audit.AuditEventUserEmailChanged, user.ID, user.ID, nil)
 		notifyAddressChanged(h.state, oldEmail, newEmail, user.Username)
 		emailVerifySent = sendChangedEmailVerification(h.state, user.ID, newEmail, user.Username, "profile-email-change")
 	}
@@ -1213,7 +1214,7 @@ func (h *AuthHandler) LogoutEverywhere(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Could not end your other sessions", http.StatusInternalServerError)
 		return
 	}
-	LogIdentityAudit(h.state, r, AuditEventSessionsRevoked, user.ID, user.ID, nil)
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventSessionsRevoked, user.ID, user.ID, nil)
 	h.reissueOwnSession(w, r, user)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

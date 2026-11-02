@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -231,10 +232,10 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// before the key is first used.
 	for _, u := range req.Servers {
 		if srv, serr := h.state.Store.GetServerByUUID(u); serr == nil && srv != nil {
-			EnableServerAuditIfNeeded(h.state, srv.ID)
+			audit.EnableServerAuditIfNeeded(h.state.Store, srv.ID)
 		}
 	}
-	LogIdentityAudit(h.state, r, AuditEventAPIKeyCreated, userID, userID, map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventAPIKeyCreated, userID, userID, map[string]interface{}{
 		"keyId":       id,
 		"name":        k.Name,
 		"servers":     req.Servers,
@@ -311,7 +312,7 @@ func (h *APIKeysHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	LogIdentityAudit(h.state, r, AuditEventAPIKeyRevoked, userID, userID, meta)
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventAPIKeyRevoked, userID, userID, meta)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -604,7 +605,7 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 	// the platform refuses is not in use.
 	if owner.DeletionStatus == "pending_deletion" {
 		if err := h.state.Store.CancelUserDeletion(owner.ID); err == nil {
-			logIdentityAuditAs(h.state, r, key, AuditEventDeletionCancelledByAPIKey, owner.ID, owner.ID, nil)
+			audit.LogIdentityAs(h.state.Store, r, key, audit.AuditEventDeletionCancelledByAPIKey, owner.ID, owner.ID, nil)
 		}
 	}
 

@@ -26,6 +26,7 @@ import (
 	"dylaris-core/database"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/backup"
 	"dylaris-core/handlers/gateway"
 	"dylaris-core/handlers/httpx"
@@ -335,7 +336,7 @@ func main() {
 	// chokepoint covers console/stats/overview reads on demo servers.
 	appState.Authz.SetDemoRead(appState.IsDemoServerID)
 	appState.Authz.SetForeignNode(appState.NodeOwnedByOther)
-	appState.Authz.SetServerWriteAudit(handlers.RecordServerWrite(appState))
+	appState.Authz.SetServerWriteAudit(audit.RecordServerWrite(appState.Store))
 
 	// Precompute the cluster-wide gRPC-TLS fingerprint once so handlers can hand it
 	// to BYON operators without re-deriving. Non-secret; safe to expose.

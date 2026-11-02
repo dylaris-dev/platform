@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
@@ -186,12 +187,12 @@ func TestDeleteUserIsOnTheRecord(t *testing.T) {
 
 	var row *models.AuditEventIdentity
 	for i := range fs.auditRows {
-		if fs.auditRows[i].EventType == handlers.AuditEventUserHardDeleted {
+		if fs.auditRows[i].EventType == audit.AuditEventUserHardDeleted {
 			row = &fs.auditRows[i]
 		}
 	}
 	if row == nil {
-		t.Fatalf("no %q row was written; the deletion left no trace at all", handlers.AuditEventUserHardDeleted)
+		t.Fatalf("no %q row was written; the deletion left no trace at all", audit.AuditEventUserHardDeleted)
 	}
 	if row.ActorUserID == nil || *row.ActorUserID == "" {
 		t.Error("the row does not say WHO removed the account")
@@ -225,7 +226,7 @@ func TestARefusedDeleteWritesNoRow(t *testing.T) {
 		t.Fatalf("status = %d, want 409", rr.Code)
 	}
 	for _, row := range fs.auditRows {
-		if row.EventType == handlers.AuditEventUserHardDeleted {
+		if row.EventType == audit.AuditEventUserHardDeleted {
 			t.Fatal("a refused delete was recorded as a deletion")
 		}
 	}

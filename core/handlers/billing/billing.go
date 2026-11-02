@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/handlers/validate"
@@ -289,7 +290,7 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventBillingStatusChanged, actorID, userID, map[string]interface{}{"status": status, "requested": req.Status})
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventBillingStatusChanged, actorID, userID, map[string]interface{}{"status": status, "requested": req.Status})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": status})
 }
 

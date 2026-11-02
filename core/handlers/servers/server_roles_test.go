@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 
 	"github.com/gorilla/mux"
 
@@ -243,7 +244,7 @@ func TestServerRoles_CrudIsAudited(t *testing.T) {
 	fs.getRole = &store.ServerRole{ID: 4, OwnerUserID: "someone-else", Name: "Theirs"}
 	h.DeleteServerRole(httptest.NewRecorder(), serverRoleReq("DELETE", "/api/server-roles/4", map[string]string{"id": "4"}, nil))
 
-	want := []string{handlers.AuditEventServerRoleCreated, handlers.AuditEventServerRoleUpdated, handlers.AuditEventServerRoleDeleted, handlers.AuditEventServerRoleDeleted}
+	want := []string{audit.AuditEventServerRoleCreated, audit.AuditEventServerRoleUpdated, audit.AuditEventServerRoleDeleted, audit.AuditEventServerRoleDeleted}
 	if len(fs.audits) != len(want) {
 		t.Fatalf("got %d audit rows, want %d", len(fs.audits), len(want))
 	}

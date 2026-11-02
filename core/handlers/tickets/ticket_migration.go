@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -644,7 +645,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	handlers.LogIdentityAudit(h.state, r, "ticket_restore_executed", userID, "", map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, "ticket_restore_executed", userID, "", map[string]interface{}{
 		"backup": t.BackupName,
 	})
 

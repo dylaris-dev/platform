@@ -1,4 +1,4 @@
-package handlers
+package audit
 
 import (
 	"os"
@@ -23,9 +23,9 @@ var noProducerByDesign = map[string]string{
 // therefore recorded power actions and member changes but stayed silent on
 // every action that reinstalls a server or destroys a world - the ones an
 // owner most needs to see. The constants, the vocabulary comment and the
-// LogServerAudit helper all existed; only the calls were missing.
+// LogServer helper (then LogServerAudit) all existed; only the calls were missing.
 func TestEveryDeclaredAuditEventHasAProducer(t *testing.T) {
-	root := ".."
+	root := filepath.Join("..", "..") // all of core
 
 	declared := regexp.MustCompile(`(?m)^\s*(ServerAuditEvent\w+)\s+=`)
 	src, err := os.ReadFile("server_audit.go")

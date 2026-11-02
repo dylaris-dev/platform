@@ -8,6 +8,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
@@ -206,15 +207,15 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 		"inherit":      req.Inherit,
 	}
 	if req.ServerID != nil {
-		handlers.EnableServerAuditIfNeeded(h.state, *req.ServerID)
-		event := handlers.ServerAuditEventMemberInvited
+		audit.EnableServerAuditIfNeeded(h.state.Store, *req.ServerID)
+		event := audit.ServerAuditEventMemberInvited
 		if hadGrant {
-			event = handlers.ServerAuditEventMemberPermsChanged
+			event = audit.ServerAuditEventMemberPermsChanged
 		}
-		handlers.LogServerAudit(h.state, r, *req.ServerID, event, idn.UserID, target.ID, auditMeta)
+		audit.LogServer(h.state.Store, r, *req.ServerID, event, idn.UserID, target.ID, auditMeta)
 	} else {
 		auditMeta["ownerUserId"] = ownerUserID
-		handlers.LogIdentityAudit(h.state, r, handlers.AuditEventAccountGrantAssigned, idn.UserID, target.ID, auditMeta)
+		audit.LogIdentity(h.state.Store, r, audit.AuditEventAccountGrantAssigned, idn.UserID, target.ID, auditMeta)
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -300,10 +301,10 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 	// when reconstructing an incident: "when did they stop having it" is the
 	// other half of "when did they get it".
 	if req.ServerID != nil {
-		handlers.LogServerAudit(h.state, r, *req.ServerID, handlers.ServerAuditEventMemberRemoved, idn.UserID, target.ID,
+		audit.LogServer(h.state.Store, r, *req.ServerID, audit.ServerAuditEventMemberRemoved, idn.UserID, target.ID,
 			map[string]interface{}{"username": target.Username})
 	} else {
-		handlers.LogIdentityAudit(h.state, r, handlers.AuditEventAccountGrantRevoked, idn.UserID, target.ID,
+		audit.LogIdentity(h.state.Store, r, audit.AuditEventAccountGrantRevoked, idn.UserID, target.ID,
 			map[string]interface{}{"username": target.Username, "ownerUserId": ownerUserID})
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

@@ -8,6 +8,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 
 	"github.com/gorilla/mux"
 
@@ -126,7 +127,7 @@ func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Req
 		httpx.SendJSONError(w, "Failed to create server role (the name may already be in use)", 409)
 		return
 	}
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventServerRoleCreated, owner, "", map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventServerRoleCreated, owner, "", map[string]interface{}{
 		"role_id": id, "name": req.Name, "capabilities": access.NormalizeCaps(req.Capabilities),
 	})
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -182,7 +183,7 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 		meta["previous_name"] = before.Name
 		meta["previous_capabilities"] = access.NormalizeCaps(before.Capabilities)
 	}
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventServerRoleUpdated, owner, "", meta)
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventServerRoleUpdated, owner, "", meta)
 	// A role's capabilities are every holder's: changing them changes who may
 	// reach the files of every server in this realm.
 	handlers.StampBeamAccessForOwner(r.Context(), h.state, owner)
@@ -227,7 +228,7 @@ func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Req
 		meta["name"] = before.Name
 		meta["capabilities"] = access.NormalizeCaps(before.Capabilities)
 	}
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventServerRoleDeleted, owner, "", meta)
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventServerRoleDeleted, owner, "", meta)
 	handlers.StampBeamAccessForOwner(r.Context(), h.state, owner)
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})

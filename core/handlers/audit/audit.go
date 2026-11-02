@@ -1,4 +1,4 @@
-package handlers
+package audit
 
 import (
 	"log"
@@ -7,9 +7,10 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/store"
 )
 
-// Identity audit event types. Used by LogIdentityAudit callers
+// Identity audit event types. Used by LogIdentity callers
 // to keep event_type strings consistent. New event types
 // (user_registered, login_failed, password_reset_requested, …)
 // should be appended here so there's one canonical list.
@@ -128,22 +129,22 @@ const (
 	TicketEventAutoClosed        = "auto_closed"
 )
 
-// LogIdentityAudit writes an append-only identity-domain audit row.
+// LogIdentity writes an append-only identity-domain audit row.
 // Best-effort: errors are logged but never propagated — losing an audit row
 // must never block the originating user action. Pass actorID = "" for system
 // events (no human actor), targetID = "" when not applicable.
-func LogIdentityAudit(state *AppState, r *http.Request, eventType string, actorID, targetID string, metadata map[string]interface{}) {
+func LogIdentity(st store.Store, r *http.Request, eventType string, actorID, targetID string, metadata map[string]interface{}) {
 	var key *models.APIKey
 	if r != nil {
 		key = reqctx.APIKeyFromContext(r)
 	}
-	logIdentityAuditAs(state, r, key, eventType, actorID, targetID, metadata)
+	LogIdentityAs(st, r, key, eventType, actorID, targetID, metadata)
 }
 
-// logIdentityAuditAs is LogIdentityAudit with the acting key named explicitly
+// LogIdentityAs is LogIdentity with the acting key named explicitly
 // (nil for none). It returns the new row's id, or 0 when nothing was written.
-func logIdentityAuditAs(state *AppState, r *http.Request, key *models.APIKey, eventType string, actorID, targetID string, metadata map[string]interface{}) int64 {
-	if state == nil || state.Store == nil {
+func LogIdentityAs(st store.Store, r *http.Request, key *models.APIKey, eventType string, actorID, targetID string, metadata map[string]interface{}) int64 {
+	if st == nil {
 		return 0
 	}
 
@@ -169,7 +170,7 @@ func logIdentityAuditAs(state *AppState, r *http.Request, key *models.APIKey, ev
 		ev.UserAgent = r.UserAgent()
 	}
 
-	if err := state.Store.InsertAuditIdentity(ev); err != nil {
+	if err := st.InsertAuditIdentity(ev); err != nil {
 		log.Printf("audit: failed to insert %s event: %v", eventType, err)
 		return 0
 	}

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 
 	"github.com/gorilla/mux"
@@ -82,7 +82,7 @@ func (h *ServerHandler) DeclareServerLoaderMetadata(w http.ResponseWriter, r *ht
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogServerAudit(h.state, r, serverID, handlers.ServerAuditEventLoaderMetadataDeclared, actorID, "", map[string]interface{}{
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventLoaderMetadataDeclared, actorID, "", map[string]interface{}{
 		"from_installer_type":    srv.InstallerType,
 		"to_installer_type":      installerType,
 		"from_minecraft_version": srv.MinecraftVersion,

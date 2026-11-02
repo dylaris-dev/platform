@@ -19,6 +19,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -634,7 +635,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	aid := userID
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    t.ID,
-		EventType:   handlers.TicketEventAttachmentAdded,
+		EventType:   audit.TicketEventAttachmentAdded,
 		ActorUserID: &aid,
 		Metadata: map[string]interface{}{
 			"filename": filename,
@@ -783,7 +784,7 @@ func (h *TicketAttachmentsHandler) DeleteAttachment(w http.ResponseWriter, r *ht
 	}
 	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    t.ID,
-		EventType:   handlers.TicketEventAttachmentRemoved,
+		EventType:   audit.TicketEventAttachmentRemoved,
 		ActorUserID: &userID,
 		Metadata: map[string]interface{}{
 			"filename": a.Filename,

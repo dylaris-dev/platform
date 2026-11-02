@@ -1,4 +1,4 @@
-package handlers
+package audit
 
 import (
 	"encoding/json"
@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
 )
@@ -44,7 +45,7 @@ const (
 	ServerAuditEventAPIKeyDenied = "api_key_denied"
 )
 
-// LogServerAudit appends one audit row when the server has audit enabled
+// LogServer appends one audit row when the server has audit enabled
 // (either auto-flipped by InviteMember or admin-forced). Best-effort:
 // failures log but never block the originating request.
 //
@@ -56,23 +57,23 @@ const (
 // name beside the owner: a key counts like an invited member, so its first
 // action on a server with auditing off switches auditing on for good. Every
 // producer gets that here, without knowing about keys.
-func LogServerAudit(state *AppState, r *http.Request, serverID int, eventType string, actorID, targetID string, metadata map[string]interface{}) {
+func LogServer(st store.Store, r *http.Request, serverID int, eventType string, actorID, targetID string, metadata map[string]interface{}) {
 	var key *models.APIKey
 	if r != nil {
 		key = reqctx.APIKeyFromContext(r)
 	}
-	logServerAuditAs(state, r, key, serverID, eventType, actorID, targetID, metadata)
+	LogServerAs(st, r, key, serverID, eventType, actorID, targetID, metadata)
 }
 
-// logServerAuditAs is LogServerAudit with the acting key named explicitly (nil
+// LogServerAs is LogServer with the acting key named explicitly (nil
 // for none). It returns the new row's id, or 0 when nothing was written.
-func logServerAuditAs(state *AppState, r *http.Request, key *models.APIKey, serverID int, eventType string, actorID, targetID string, metadata map[string]interface{}) int64 {
-	if state == nil || state.Store == nil || serverID <= 0 {
+func LogServerAs(st store.Store, r *http.Request, key *models.APIKey, serverID int, eventType string, actorID, targetID string, metadata map[string]interface{}) int64 {
+	if st == nil || serverID <= 0 {
 		return 0
 	}
 	// Gate on the effective audit state. Avoids inserting rows that nobody
 	// can ever see — they'd just consume disk + retention sweep cycles.
-	enabled, force, _, err := state.Store.GetServerAuditState(serverID)
+	enabled, force, _, err := st.GetServerAuditState(serverID)
 	if err != nil {
 		log.Printf("server-audit: state lookup for %d: %v", serverID, err)
 		return 0
@@ -81,7 +82,7 @@ func logServerAuditAs(state *AppState, r *http.Request, key *models.APIKey, serv
 		if key == nil {
 			return 0
 		}
-		EnableServerAuditIfNeeded(state, serverID)
+		EnableServerAuditIfNeeded(st, serverID)
 	}
 
 	ev := &models.ServerAuditEvent{
@@ -106,7 +107,7 @@ func logServerAuditAs(state *AppState, r *http.Request, key *models.APIKey, serv
 		ev.IPAddress = httpx.ClientIP(r)
 		ev.UserAgent = r.UserAgent()
 	}
-	if err := state.Store.InsertServerAudit(ev); err != nil {
+	if err := st.InsertServerAudit(ev); err != nil {
 		log.Printf("server-audit: insert %s for %d: %v", eventType, serverID, err)
 		return 0
 	}
@@ -129,10 +130,10 @@ func logServerAuditAs(state *AppState, r *http.Request, key *models.APIKey, serv
 //
 // RequireCap calls this only for an action that succeeded and that no handler
 // has already described, so there is nothing to filter here.
-func RecordServerWrite(state *AppState) authz.WriteAuditFunc {
+func RecordServerWrite(st store.Store) authz.WriteAuditFunc {
 	return func(r *http.Request, serverID int, capID string, status int) {
 		actorID, _ := r.Context().Value("userID").(string)
-		LogServerAudit(state, r, serverID, capID, actorID, "", map[string]interface{}{
+		LogServer(st, r, serverID, capID, actorID, "", map[string]interface{}{
 			"method": r.Method,
 			"path":   r.URL.Path,
 		})
@@ -142,15 +143,15 @@ func RecordServerWrite(state *AppState) authz.WriteAuditFunc {
 // EnableServerAuditIfNeeded flips audit_enabled to TRUE the first time it's
 // called on a server that hasn't enabled it yet. Called from the member
 // invite path. Cheap when audit is already on — just one indexed SELECT.
-func EnableServerAuditIfNeeded(state *AppState, serverID int) {
-	if state == nil || state.Store == nil {
+func EnableServerAuditIfNeeded(st store.Store, serverID int) {
+	if st == nil {
 		return
 	}
-	enabled, _, _, err := state.Store.GetServerAuditState(serverID)
+	enabled, _, _, err := st.GetServerAuditState(serverID)
 	if err != nil || enabled {
 		return
 	}
-	if err := state.Store.SetServerAuditEnabled(serverID, true); err != nil {
+	if err := st.SetServerAuditEnabled(serverID, true); err != nil {
 		log.Printf("server-audit: enable for %d: %v", serverID, err)
 	}
 }
@@ -158,11 +159,11 @@ func EnableServerAuditIfNeeded(state *AppState, serverID int) {
 // ── Endpoints ────────────────────────────────────────────────────────
 
 type ServerAuditHandler struct {
-	state *AppState
+	st store.Store
 }
 
-func NewServerAuditHandler(state *AppState) *ServerAuditHandler {
-	return &ServerAuditHandler{state: state}
+func NewServerAuditHandler(st store.Store) *ServerAuditHandler {
+	return &ServerAuditHandler{st: st}
 }
 
 // gateView loads the server for an audit-log read. Access control lives at
@@ -174,7 +175,7 @@ func (h *ServerAuditHandler) gateView(w http.ResponseWriter, r *http.Request) (*
 		httpx.SendJSONError(w, "Invalid server id", http.StatusBadRequest)
 		return nil, "", false
 	}
-	srv, err := h.state.Store.GetServerByID(id)
+	srv, err := h.st.GetServerByID(id)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return nil, "", false
@@ -195,7 +196,7 @@ func (h *ServerAuditHandler) ListAudit(w http.ResponseWriter, r *http.Request) {
 	limit := httpx.ParseIntDefault(q.Get("limit"), 100)
 	offset := httpx.ParseIntDefault(q.Get("offset"), 0)
 	eventType := q.Get("eventType")
-	events, total, err := h.state.Store.ListServerAudit(srv.ID, eventType, limit, offset)
+	events, total, err := h.st.ListServerAudit(srv.ID, eventType, limit, offset)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load audit", http.StatusInternalServerError)
 		return
@@ -219,7 +220,7 @@ func (h *ServerAuditHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	enabled, force, count, err := h.state.Store.GetServerAuditState(srv.ID)
+	enabled, force, count, err := h.st.GetServerAuditState(srv.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load state", http.StatusInternalServerError)
 		return
@@ -249,7 +250,7 @@ func (h *ServerAuditHandler) SetForce(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
-	if _, err := h.state.Store.GetServerByID(id); err != nil {
+	if _, err := h.st.GetServerByID(id); err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
@@ -258,7 +259,7 @@ func (h *ServerAuditHandler) SetForce(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetServerAuditForceOn(id, req.ForceOn); err != nil {
+	if err := h.st.SetServerAuditForceOn(id, req.ForceOn); err != nil {
 		httpx.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
@@ -267,7 +268,7 @@ func (h *ServerAuditHandler) SetForce(w http.ResponseWriter, r *http.Request) {
 	// the row right before the table effectively stops accepting writes.
 	if req.ForceOn {
 		actorID, _ := r.Context().Value("userID").(string)
-		LogServerAudit(h.state, r, id, ServerAuditEventForceOnChanged, actorID, "", map[string]interface{}{
+		LogServer(h.st, r, id, ServerAuditEventForceOnChanged, actorID, "", map[string]interface{}{
 			"force_on": req.ForceOn,
 		})
 	}

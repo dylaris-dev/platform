@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 
@@ -97,7 +98,7 @@ func (h *TimezoneHandler) SetServer(w http.ResponseWriter, r *http.Request) {
 	}
 	_, eff, _ := h.state.Store.GetServerTimezone(serverID)
 	actorID, _ := r.Context().Value("userID").(string)
-	LogServerAudit(h.state, r, serverID, ServerAuditEventTimezoneChanged, actorID, "", map[string]interface{}{"to": req.Timezone})
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventTimezoneChanged, actorID, "", map[string]interface{}{"to": req.Timezone})
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "timezone": req.Timezone, "effective": eff})
 }

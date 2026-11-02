@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/handlers/audit"
 	"dylaris-core/models"
 
 	"github.com/alicebob/miniredis/v2"
@@ -92,13 +93,13 @@ func TestKeyWriteIsRecordedWithTheKeyAndSwitchesAuditingOn(t *testing.T) {
 func TestKeyActionAHandlerDescribesIsRecordedOnce(t *testing.T) {
 	fs, h := keyAuditFixture([]string{"power.start"})
 	inner := func(w http.ResponseWriter, r *http.Request) {
-		LogServerAudit(h.state, r, 10, ServerAuditEventPowerAction, "owner-1", "", map[string]interface{}{"action": "start"})
+		audit.LogServer(h.state.Store, r, 10, audit.ServerAuditEventPowerAction, "owner-1", "", map[string]interface{}{"action": "start"})
 		w.WriteHeader(http.StatusOK)
 	}
 	if code := serve(h.APIKeyServerRoute("")(inner), "POST", "uuid-a"); code != http.StatusOK {
 		t.Fatalf("status %d", code)
 	}
-	if len(fs.serverAudits) != 1 || fs.serverAudits[0].EventType != ServerAuditEventPowerAction ||
+	if len(fs.serverAudits) != 1 || fs.serverAudits[0].EventType != audit.ServerAuditEventPowerAction ||
 		fs.serverAudits[0].ActorAPIKeyName != "deploy-bot" {
 		t.Fatalf("rows %+v, want exactly one power_action carrying the key", fs.serverAudits)
 	}
@@ -106,7 +107,7 @@ func TestKeyActionAHandlerDescribesIsRecordedOnce(t *testing.T) {
 
 func TestPanelActionOnAServerWithAuditingOffStaysUnrecorded(t *testing.T) {
 	fs, h := keyAuditFixture(nil)
-	LogServerAudit(h.state, httptest.NewRequest("POST", "/x", nil), 10, "console.send", "owner-1", "", nil)
+	audit.LogServer(h.state.Store, httptest.NewRequest("POST", "/x", nil), 10, "console.send", "owner-1", "", nil)
 	if len(fs.serverAudits) != 0 || fs.auditOn[10] {
 		t.Fatalf("rows %+v auditOn %v; a request without a key must not switch auditing on", fs.serverAudits, fs.auditOn[10])
 	}
@@ -127,7 +128,7 @@ func TestRefusedKeyRequestsAreRecordedBundled(t *testing.T) {
 				t.Fatalf("status %d, want 403", code)
 			}
 		}
-		if len(fs.serverAudits) != 1 || fs.serverAudits[0].EventType != ServerAuditEventAPIKeyDenied ||
+		if len(fs.serverAudits) != 1 || fs.serverAudits[0].EventType != audit.ServerAuditEventAPIKeyDenied ||
 			fs.serverAudits[0].ActorAPIKeyName != "deploy-bot" || fs.serverAudits[0].Metadata["count"] != int64(2) {
 			t.Fatalf("rows %+v, want one api_key_denied with count 2", fs.serverAudits)
 		}
@@ -140,7 +141,7 @@ func TestRefusedKeyRequestsAreRecordedBundled(t *testing.T) {
 		if len(fs.serverAudits) != 0 || fs.auditOn[20] {
 			t.Fatalf("someone else's server got rows %+v / auditing %v", fs.serverAudits, fs.auditOn[20])
 		}
-		if len(fs.identityAudits) != 1 || fs.identityAudits[0].EventType != AuditEventAPIKeyDenied {
+		if len(fs.identityAudits) != 1 || fs.identityAudits[0].EventType != audit.AuditEventAPIKeyDenied {
 			t.Fatalf("identity rows %+v, want one api_key_denied", fs.identityAudits)
 		}
 	})
@@ -153,7 +154,7 @@ func TestRefusedKeyRequestsAreRecordedBundled(t *testing.T) {
 		if len(fs.serverAudits) != 0 || fs.auditOn[20] {
 			t.Fatalf("a server the owner cannot reach got rows %+v / auditing %v", fs.serverAudits, fs.auditOn[20])
 		}
-		if len(fs.identityAudits) != 1 || fs.identityAudits[0].EventType != AuditEventAPIKeyDenied {
+		if len(fs.identityAudits) != 1 || fs.identityAudits[0].EventType != audit.AuditEventAPIKeyDenied {
 			t.Fatalf("identity rows %+v, want one api_key_denied", fs.identityAudits)
 		}
 	})
@@ -164,7 +165,7 @@ func TestRefusedKeyRequestsAreRecordedBundled(t *testing.T) {
 		if code := serve(h.APIKeyServerRoute("console.send")(reachedInner), "POST", "uuid-a"); code != http.StatusUnauthorized {
 			t.Fatalf("status %d, want 401", code)
 		}
-		if len(fs.serverAudits) != 1 || fs.serverAudits[0].EventType != ServerAuditEventAPIKeyDenied {
+		if len(fs.serverAudits) != 1 || fs.serverAudits[0].EventType != audit.ServerAuditEventAPIKeyDenied {
 			t.Fatalf("rows %+v, want one api_key_denied", fs.serverAudits)
 		}
 	})
@@ -331,7 +332,7 @@ func TestCreateValidatesTheKey(t *testing.T) {
 			if !fs.auditOn[10] {
 				t.Fatal("auditing not switched on for the server in the key's scope")
 			}
-			if len(fs.identityAudits) != 1 || fs.identityAudits[0].EventType != AuditEventAPIKeyCreated {
+			if len(fs.identityAudits) != 1 || fs.identityAudits[0].EventType != audit.AuditEventAPIKeyCreated {
 				t.Fatalf("identity rows %+v, want api_key_created", fs.identityAudits)
 			}
 			var resp createAPIKeyResponse

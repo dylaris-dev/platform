@@ -6,6 +6,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -108,7 +109,7 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 	}
 	handlers.StampBeamUUIDs(r.Context(), h.state, reach)
 
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventUserRoleChanged, actorID, id, map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserRoleChanged, actorID, id, map[string]interface{}{
 		"from": previousRole,
 		"to":   req.Role,
 	})
@@ -212,7 +213,7 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventUserPermissionsChanged, actorID, id, map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserPermissionsChanged, actorID, id, map[string]interface{}{
 		"can_delete_servers":   req.CanDeleteServers,
 		"can_change_resources": req.CanChangeResources,
 		"support_team":         req.SupportTeam,
@@ -291,7 +292,7 @@ func (h *UserHandler) SetUserPanelRoleHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventUserPanelRoleChanged, actorID, id, map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserPanelRoleChanged, actorID, id, map[string]interface{}{
 		"panel_role_id": req.PanelRoleID,
 		"grant_caps":    req.GrantCaps,
 		"deny_caps":     req.DenyCaps,

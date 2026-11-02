@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/handlertest"
 
@@ -545,8 +546,8 @@ func TestServerPowerHandler_BillingSuspended(t *testing.T) {
 			t.Fatalf("want 1 audit event, got %d", len(fs.insertedAudits))
 		}
 		ev := fs.insertedAudits[0]
-		if ev.EventType != handlers.ServerAuditEventPowerAction {
-			t.Errorf("event type = %q, want %q", ev.EventType, handlers.ServerAuditEventPowerAction)
+		if ev.EventType != audit.ServerAuditEventPowerAction {
+			t.Errorf("event type = %q, want %q", ev.EventType, audit.ServerAuditEventPowerAction)
 		}
 		if ev.Metadata["admin_suspend_override"] != "owner_billing_suspended" {
 			t.Errorf("override marker = %v, want owner_billing_suspended", ev.Metadata["admin_suspend_override"])

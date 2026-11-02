@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/mailer"
 	"dylaris-core/services"
@@ -114,7 +115,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 		}
 	}(user.Email, user.Username, policy.PasswordResetLinkTTLMinutes)
 
-	LogIdentityAudit(h.state, r, AuditEventPasswordResetRequested, "", user.ID, map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventPasswordResetRequested, "", user.ID, map[string]interface{}{
 		"email":       user.Email,
 		"ttl_minutes": policy.PasswordResetLinkTTLMinutes,
 	})
@@ -222,7 +223,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		stored, _ := h.state.Store.GetUserSecurityQuestionsRaw(user.ID)
 		if stored != "" && stored != "[]" {
 			if !verifySecurityAnswersAgainstStored(stored, req.SecurityAnswers) {
-				LogIdentityAudit(h.state, r, AuditEventSecurityAnswersFailedAtReset, "", user.ID, nil)
+				audit.LogIdentity(h.state.Store, r, audit.AuditEventSecurityAnswersFailedAtReset, "", user.ID, nil)
 				httpx.SendJSONError(w, "Security answers did not match", http.StatusUnauthorized)
 				return
 			}
@@ -258,7 +259,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	revoked := revokeAllAPIKeys(h.state, user.ID, "password reset")
 	stampBeamAccessForUser(r.Context(), h.state, user.ID)
 	sshRevoked := revokeAllSSHKeys(h.state, user.ID, "password reset")
-	LogIdentityAudit(h.state, r, AuditEventPasswordResetCompleted, "", user.ID, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventPasswordResetCompleted, "", user.ID, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,

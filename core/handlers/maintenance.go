@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 )
 
@@ -132,7 +133,7 @@ func (h *MaintenanceHandler) SaveState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	LogIdentityAudit(h.state, r, AuditEventMaintenanceToggled, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventMaintenanceToggled, actorID, "", map[string]interface{}{
 		"active":       req.Active,
 		"block_level":  req.BlockLevel,
 		"expected_end": req.ExpectedEnd,

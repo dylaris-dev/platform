@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/backup"
 	"dylaris-core/handlers/beam"
 	"dylaris-core/handlers/billing"
@@ -613,8 +614,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	ticketAttachmentsHandler := tickets.NewTicketAttachmentsHandler(appState)
 	cannedResponsesHandler := tickets.NewCannedResponsesHandler(appState)
 	notificationsHandler := handlers.NewNotificationsHandler(appState)
-	serverAuditHandler := handlers.NewServerAuditHandler(appState)
-	identityAuditHandler := handlers.NewIdentityAuditHandler(appState)
+	serverAuditHandler := audit.NewServerAuditHandler(appState.Store)
+	identityAuditHandler := audit.NewIdentityAuditHandler(appState.Store)
 	auditSettingsHandler := handlers.NewAuditSettingsHandler(appState)
 	ticketMigrationHandler := tickets.NewTicketMigrationHandler(appState)
 	systemEventsHandler := handlers.NewSystemEventsHandler(appState)

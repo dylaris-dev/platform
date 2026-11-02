@@ -9,6 +9,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -339,8 +340,8 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 
 	// First member invite flips audit_enabled on. Cheap no-op when
 	// already on. The audit row for the invite is written right after.
-	EnableServerAuditIfNeeded(h.state, serverID)
-	LogServerAudit(h.state, r, serverID, ServerAuditEventMemberInvited, inviterID, targetUser.ID, map[string]interface{}{
+	audit.EnableServerAuditIfNeeded(h.state.Store, serverID)
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventMemberInvited, inviterID, targetUser.ID, map[string]interface{}{
 		"username":    targetUser.Username,
 		"permissions": req.Permissions,
 	})
@@ -413,7 +414,7 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	actorID, _ := r.Context().Value("userID").(string)
-	LogServerAudit(h.state, r, serverID, ServerAuditEventMemberPermsChanged, actorID, targetUserID, map[string]interface{}{
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventMemberPermsChanged, actorID, targetUserID, map[string]interface{}{
 		"permissions": req.Permissions,
 	})
 
@@ -459,7 +460,7 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	actorID, _ := r.Context().Value("userID").(string)
-	LogServerAudit(h.state, r, serverID, ServerAuditEventMemberRemoved, actorID, targetUserID, nil)
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventMemberRemoved, actorID, targetUserID, nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

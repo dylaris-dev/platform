@@ -8,6 +8,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -145,7 +146,7 @@ func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	// A grant is worth exactly one machine of its kind, and that is derived
 	// where the ceiling is read (services.EffectiveLimits) rather than stored.
 	// Nothing writes a purchase column except a purchase.
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventEntitlementGranted, actor, userID, map[string]interface{}{
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventEntitlementGranted, actor, userID, map[string]interface{}{
 		"kind":       kind,
 		"days":       req.Days,
 		"expires_at": expires,
@@ -195,7 +196,7 @@ func (h *EntitlementHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor, _ := r.Context().Value("userID").(string)
-	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventEntitlementRevoked, actor, userID, nil)
+	audit.LogIdentity(h.state.Store, r, audit.AuditEventEntitlementRevoked, actor, userID, nil)
 
 	ent, _ := services.EffectiveEntitlement(h.state.Store, userID, time.Now(), h.state.StoreEnabled, h.subjectIsAdmin(userID))
 	w.Header().Set("Content-Type", "application/json")

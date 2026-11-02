@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -100,7 +101,7 @@ func (h *SSHKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "An account can hold up to "+strconv.Itoa(maxSSHKeysPerUser)+" SSH keys. Remove one first.", http.StatusConflict)
 		return
 	}
-	handlers.LogIdentityAudit(h.state, r, AuditEventSSHKeyAdded, userID, userID, map[string]interface{}{"name": req.Name, "fingerprint": fp})
+	audit.LogIdentity(h.state.Store, r, AuditEventSSHKeyAdded, userID, userID, map[string]interface{}{"name": req.Name, "fingerprint": fp})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "fingerprint": fp,
 		"note": "SFTP accepts the key within a minute."})
 }
@@ -126,7 +127,7 @@ func (h *SSHKeysHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Key not found", http.StatusNotFound)
 		return
 	}
-	handlers.LogIdentityAudit(h.state, r, AuditEventSSHKeyRemoved, userID, userID, map[string]interface{}{"id": id})
+	audit.LogIdentity(h.state.Store, r, AuditEventSSHKeyRemoved, userID, userID, map[string]interface{}{"id": id})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 

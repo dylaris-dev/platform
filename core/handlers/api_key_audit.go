@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/models"
 )
 
@@ -71,19 +72,19 @@ func (h *APIKeysHandler) auditKeyRequest(r *http.Request, key *models.APIKey, sh
 			serverID = 0
 		}
 		if serverID > 0 {
-			h.auditBundled(r, key, serverID, ServerAuditEventAPIKeyDenied, "denied", meta)
+			h.auditBundled(r, key, serverID, audit.ServerAuditEventAPIKeyDenied, "denied", meta)
 		} else {
-			h.auditBundled(r, key, 0, AuditEventAPIKeyDenied, "denied", meta)
+			h.auditBundled(r, key, 0, audit.AuditEventAPIKeyDenied, "denied", meta)
 		}
 	case status == http.StatusTooManyRequests:
-		h.auditBundled(r, key, 0, AuditEventAPIKeyRateLimited, "rate_limited", meta)
+		h.auditBundled(r, key, 0, audit.AuditEventAPIKeyRateLimited, "rate_limited", meta)
 	case read:
 		if status >= 200 && status < 300 {
 			if serverID > 0 {
 				h.auditBundled(r, key, serverID, kind, kind, meta)
 			} else {
 				meta["capability"] = requiredPerm
-				h.auditBundled(r, key, 0, AuditEventAPIKeyRead, kind, meta)
+				h.auditBundled(r, key, 0, audit.AuditEventAPIKeyRead, kind, meta)
 			}
 		}
 	default:
@@ -91,10 +92,10 @@ func (h *APIKeysHandler) auditKeyRequest(r *http.Request, key *models.APIKey, sh
 			return // the handler wrote its own entry, which carries the key
 		}
 		if serverID > 0 {
-			logServerAuditAs(h.state, r, key, serverID, kind, key.UserID, "", meta)
+			audit.LogServerAs(h.state.Store, r, key, serverID, kind, key.UserID, "", meta)
 		} else {
 			meta["capability"] = requiredPerm
-			logIdentityAuditAs(h.state, r, key, AuditEventAPIKeyUsed, key.UserID, key.UserID, meta)
+			audit.LogIdentityAs(h.state.Store, r, key, audit.AuditEventAPIKeyUsed, key.UserID, key.UserID, meta)
 		}
 	}
 }
@@ -157,9 +158,9 @@ func (h *APIKeysHandler) auditBundled(r *http.Request, key *models.APIKey, serve
 	meta["windowMinutes"] = int(keyAuditWindow / time.Minute)
 	var id int64
 	if serverID > 0 {
-		id = logServerAuditAs(h.state, r, key, serverID, eventType, key.UserID, "", meta)
+		id = audit.LogServerAs(h.state.Store, r, key, serverID, eventType, key.UserID, "", meta)
 	} else {
-		id = logIdentityAuditAs(h.state, r, key, eventType, key.UserID, key.UserID, meta)
+		id = audit.LogIdentityAs(h.state.Store, r, key, eventType, key.UserID, key.UserID, meta)
 	}
 	if rdb != nil && id > 0 {
 		rdb.Set(ctx, counter+":row", id, keyAuditWindow)

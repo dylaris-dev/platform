@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/audit"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -73,8 +74,8 @@ func TestCreateUserTakesThePasswordFromTheWire(t *testing.T) {
 		t.Fatal("nothing reached the store")
 	}
 	// Creating an account - possibly an admin - left no record before.
-	if len(fake.audits) != 1 || fake.audits[0] != handlers.AuditEventUserCreated {
-		t.Errorf("audit events = %v, want one %q", fake.audits, handlers.AuditEventUserCreated)
+	if len(fake.audits) != 1 || fake.audits[0] != audit.AuditEventUserCreated {
+		t.Errorf("audit events = %v, want one %q", fake.audits, audit.AuditEventUserCreated)
 	}
 	if fake.created.Password == "" {
 		t.Fatal("the account was persisted with an empty password")

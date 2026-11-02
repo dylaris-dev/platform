@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -294,7 +295,7 @@ func TestPanelRoles_CrudIsAudited(t *testing.T) {
 	h.UpdatePanelRole(httptest.NewRecorder(), panelRoleReq("PATCH", "/api/admin/panel-roles/5", vars, true, body))
 	h.DeletePanelRole(httptest.NewRecorder(), panelRoleReq("DELETE", "/api/admin/panel-roles/5", vars, true, nil))
 
-	want := []string{AuditEventPanelRoleCreated, AuditEventPanelRoleUpdated, AuditEventPanelRoleDeleted}
+	want := []string{audit.AuditEventPanelRoleCreated, audit.AuditEventPanelRoleUpdated, audit.AuditEventPanelRoleDeleted}
 	if len(fs.audits) != len(want) {
 		t.Fatalf("got %d audit rows, want %d", len(fs.audits), len(want))
 	}
