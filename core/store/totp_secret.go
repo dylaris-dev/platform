@@ -31,7 +31,7 @@ func (s *PostgresStore) SetTOTPEncryptionKey(clusterSecret string) {
 // decodeTOTPSecret opens a sealed secret. A value it cannot open reads as "".
 // pquerna DOES validate a code against "" (an empty HMAC key, so a public
 // code): every check refuses an empty secret before validating
-// (handlers.matchTOTPStep). A key mismatch then locks the authenticator out;
+// (reauth.MatchTOTPStep). A key mismatch then locks the authenticator out;
 // backup codes still work.
 func (s *PostgresStore) decodeTOTPSecret(userID, value string) string {
 	if !strings.HasPrefix(value, totpEncMarker) {

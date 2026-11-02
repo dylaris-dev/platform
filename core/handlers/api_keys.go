@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"dylaris-core/authz"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reauth"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services/demo"
@@ -54,7 +54,7 @@ type createAPIKeyRequest struct {
 	// A key outlives the session that minted it: it authenticates by its own
 	// hash, so the password change that kills every session leaves it working.
 	// See requireReauth.
-	reauthFields
+	reauth.ReauthFields
 }
 
 type createAPIKeyResponse struct {
@@ -186,8 +186,8 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Last rather than first on purpose: nothing above this line writes anything,
 	// and a bcrypt comparison in front of the request validation would let a
 	// malformed body buy CPU time. Nothing is persisted before it either way.
-	if rerr := requireReauth(h.state, userID, req.Password, req.Code); rerr != nil {
-		writeReauthError(w, rerr)
+	if rerr := reauth.RequireReauth(h.state.Store, reauthCodeVerifier(h.state), userID, req.Password, req.Code); rerr != nil {
+		reauth.WriteReauthError(w, rerr)
 		return
 	}
 
@@ -777,34 +777,4 @@ func (w *keyStatusWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
-}
-
-// revokeAllAPIKeys revokes every live key of an account and returns how many.
-// It runs on each way an account is RECOVERED - a reset by mail, an operator
-// setting the password or resetting the second factor - because each of them
-// means the account was out of its owner's hands, and a key minted in that
-// time is a way back in that no session check sees. A voluntary password
-// change in the profile does not call it: the owner is signed in and holds
-// their keys.
-func revokeAllAPIKeys(state *AppState, userID, why string) int {
-	if state == nil || state.Store == nil {
-		return 0
-	}
-	keys, err := state.Store.ListAPIKeysByUser(userID)
-	if err != nil {
-		log.Printf("%s: list API keys of %s: %v", why, userID, err)
-		return 0
-	}
-	revoked := 0
-	for _, k := range keys {
-		if k.RevokedAt != nil {
-			continue
-		}
-		if rerr := state.Store.RevokeAPIKey(k.ID, userID); rerr != nil {
-			log.Printf("%s: revoke API key %d of %s: %v", why, k.ID, userID, rerr)
-			continue
-		}
-		revoked++
-	}
-	return revoked
 }

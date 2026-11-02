@@ -37,7 +37,7 @@ func TestAdminAccountActionsReauthenticate(t *testing.T) {
 
 	// Every package under handlers/, at any depth: the handlers live in
 	// handlers/<domain> subpackages and reach the check through whichever
-	// package holds it (handlers.RequireAdminReauth today).
+	// package holds it (reauth.RequireAdminReauth today).
 	files := handlertest.SourceFiles(t, handlertest.HandlersRoot(t))
 	fset := token.NewFileSet()
 	found := map[string]bool{}

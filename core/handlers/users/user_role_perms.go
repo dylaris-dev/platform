@@ -7,6 +7,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/handlers/reauth"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -18,7 +19,7 @@ import (
 
 type setRoleRequest struct {
 	Role string `json:"role"`
-	handlers.AdminReauthRequest
+	reauth.AdminReauthRequest
 }
 
 // SetUserRole PUT /api/admin/users/{id}/role
@@ -92,7 +93,7 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 	// Only a REAL change asks: the panel re-sends the current role on every
 	// save, which is the same reason the promotion guard above compares against
 	// previousRole.
-	if req.Role != previousRole && !handlers.RequireAdminReauth(w, r, h.state, req.AdminReauthRequest) {
+	if req.Role != previousRole && !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), req.AdminReauthRequest) {
 		return
 	}
 
@@ -124,7 +125,7 @@ type setPermissionsRequest struct {
 	CanDeleteServers   bool   `json:"canDeleteServers"`
 	CanChangeResources bool   `json:"canChangeResources"`
 	SupportTeam        string `json:"supportTeam"`
-	handlers.AdminReauthRequest
+	reauth.AdminReauthRequest
 }
 
 // SetUserPermissions PUT /api/admin/users/{id}/permissions
@@ -203,7 +204,7 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 		target.CanDeleteServers != req.CanDeleteServers ||
 		target.CanChangeResources != req.CanChangeResources ||
 		target.SupportTeam != req.SupportTeam
-	if changed && !handlers.RequireAdminReauth(w, r, h.state, req.AdminReauthRequest) {
+	if changed && !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), req.AdminReauthRequest) {
 		return
 	}
 
@@ -231,7 +232,7 @@ type setPanelRoleRequest struct {
 	PanelRoleID *int     `json:"panelRoleId"`
 	GrantCaps   []string `json:"grantCaps"`
 	DenyCaps    []string `json:"denyCaps"`
-	handlers.AdminReauthRequest
+	reauth.AdminReauthRequest
 }
 
 // SetUserPanelRoleHandler PUT /api/admin/users/{id}/panel-role
@@ -277,7 +278,7 @@ func (h *UserHandler) SetUserPanelRoleHandler(w http.ResponseWriter, r *http.Req
 	// re-sent by an unrelated save: this endpoint is called to CHANGE the
 	// assignment, and the read it would take to tell a no-op apart is not worth
 	// a branch on the one action that hands out panel power.
-	if !handlers.RequireAdminReauth(w, r, h.state, req.AdminReauthRequest) {
+	if !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), req.AdminReauthRequest) {
 		return
 	}
 

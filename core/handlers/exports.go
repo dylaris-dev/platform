@@ -8,6 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"dylaris-core/handlers/reauth"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage"
@@ -56,10 +57,6 @@ func (s *AppState) BuildCoreStorageProvider(subPrefix string) (storage.StoragePr
 // so the packs tests can prove their events reach only the pack owner.
 func (h *SystemEventsHandler) MayReceive(r *http.Request, payload string) bool {
 	return h.mayReceive(r, payload)
-}
-
-func MatchTOTPStep(code, secret string, now time.Time) (step int64, ok bool) {
-	return matchTOTPStep(code, secret, now)
 }
 
 func CoreStorageUnavailableResponse(w http.ResponseWriter, err error) {
@@ -321,31 +318,10 @@ const (
 
 // AdminReauthRequest is embedded in the admin account-action bodies; the alias
 // keeps the JSON shape ({"reauth": {...}}) exactly as it was.
-type (
-	AdminReauthRequest = adminReauthRequest
-	ReauthFields       = reauthFields
-)
-
-func RequireAdminReauth(w http.ResponseWriter, r *http.Request, state *AppState, body adminReauthRequest) bool {
-	return requireAdminReauth(w, r, state, body)
-}
-
-func RequireReauth(state *AppState, userID, password, code string) *reauthError {
-	return requireReauth(state, userID, password, code)
-}
-
-func WriteReauthError(w http.ResponseWriter, e *reauthError) { writeReauthError(w, e) }
+type ()
 
 func NotifyPasswordChanged(state *AppState, email, username string) {
 	notifyPasswordChanged(state, email, username)
-}
-
-func RevokeAllAPIKeys(state *AppState, userID, why string) int {
-	return revokeAllAPIKeys(state, userID, why)
-}
-
-func RevokeAllSSHKeys(state *AppState, userID, why string) int {
-	return revokeAllSSHKeys(state, userID, why)
 }
 
 func StampBeamAccessForUser(ctx context.Context, state *AppState, userID string) {
@@ -459,3 +435,7 @@ func NeoForgeMajor(v string) (string, bool) { return neoForgeMajor(v) }
 func (h *PlacementHandler) ScoreNode(ctx context.Context, n *models.Node, req PickNodeRequest, hb *services.NodeHeartbeat) NodeCandidate {
 	return h.scoreNode(ctx, n, req, hb)
 }
+
+// ReauthCodeVerifier is the second-factor check re-authentication hands to
+// reauth.RequireAdminReauth / RequireReauth, for the subpackages.
+func ReauthCodeVerifier(state *AppState) reauth.CodeVerifier { return reauthCodeVerifier(state) }

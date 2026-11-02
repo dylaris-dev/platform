@@ -15,10 +15,11 @@ import (
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reauth"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/services"
 
-	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -27,35 +28,11 @@ import (
 const totpIssuer = "Dylaris"
 
 const (
-	// totpStepSeconds and totpSkewSteps mirror what totp.Validate does by
-	// default: 30-second steps, plus or minus one for clock drift.
-	totpStepSeconds = 30
-	totpSkewSteps   = 1
 	// totpReplayTTL is how long a spent step is remembered. It only has to
 	// outlive the window in which the code is still acceptable, which is the
 	// skew on both sides of the step; the rest is margin.
-	totpReplayTTL = 3 * totpStepSeconds * time.Second
+	totpReplayTTL = 3 * reauth.TOTPStepSeconds * time.Second
 )
-
-// matchTOTPStep reports which time step a code belongs to, or ok=false for
-// none. totp.Validate answers only yes or no, and "which step" is what makes a
-// code claimable exactly once.
-func matchTOTPStep(code, secret string, now time.Time) (step int64, ok bool) {
-	// An empty secret is an empty HMAC key, and the code for it is public:
-	// pquerna validates it. A secret the store cannot open reads as "".
-	if secret == "" {
-		return 0, false
-	}
-	opts := totp.ValidateOpts{Period: totpStepSeconds, Skew: 0, Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1}
-	for off := -totpSkewSteps; off <= totpSkewSteps; off++ {
-		t := now.Add(time.Duration(off) * totpStepSeconds * time.Second)
-		valid, err := totp.ValidateCustom(code, secret, t, opts)
-		if err == nil && valid {
-			return t.Unix() / totpStepSeconds, true
-		}
-	}
-	return 0, false
-}
 
 // claimTOTPStep takes one time step for one account and reports whether it was
 // still free. A step yields exactly one code, so claiming the step spends the
@@ -104,13 +81,9 @@ const (
 
 func wrongCodeKey(userID string) string { return "auth:2fa_wrong:" + userID }
 
-// errTooManyCodes is verifyTOTPOrBackupWith refusing to check a code because
-// the account is over the limit. Callers answer it with codeCheckFailed.
-var errTooManyCodes = errors.New("too many wrong codes")
-
 // codeCheckFailed answers a code check that could not be made.
 func codeCheckFailed(w http.ResponseWriter, err error) {
-	if errors.Is(err, errTooManyCodes) {
+	if errors.Is(err, reauth.ErrTooManyCodes) {
 		httpx.SendJSONError(w, "Too many wrong codes. Try again in 15 minutes.", http.StatusTooManyRequests)
 		return
 	}
@@ -292,7 +265,7 @@ func (h *AuthHandler) VerifyTOTPHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if _, ok := matchTOTPStep(req.Code, req.Secret, time.Now()); !ok {
+	if _, ok := reauth.MatchTOTPStep(req.Code, req.Secret, time.Now()); !ok {
 		// Say WHY in the log. "Invalid code" alone left clock skew and a stale
 		// authenticator entry indistinguishable, and both are common enough that
 		// diagnosing them meant guessing. The response stays generic; only the
@@ -506,11 +479,11 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 	// credential, and the administrator's own session is not proof that the
 	// administrator asked for it. A DELETE carrying a body is unusual and
 	// deliberate: the alternative was a second method for the same action.
-	var req adminReauthRequest
+	var req reauth.AdminReauthRequest
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req) // an absent body fails the check below, with its own message
 	}
-	if !requireAdminReauth(w, r, h.state, req) {
+	if !reauth.RequireAdminReauth(w, r, h.state.Store, reauthCodeVerifier(h.state), req) {
 		return
 	}
 	if err := h.state.Store.DisableUserTOTP(id); err != nil {
@@ -524,9 +497,9 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 	// The sessions go too: a 2FA reset is asked for because someone else may
 	// be holding the account, and their session would otherwise outlive it.
 	endSessionsAfter(h.state, target, "2FA reset by an operator")
-	revoked := revokeAllAPIKeys(h.state, id, "admin 2FA reset")
+	revoked := services.RevokeAllAPIKeys(h.state.Store, id, "admin 2FA reset")
 	stampBeamAccessForUser(r.Context(), h.state, id)
-	sshRevoked := revokeAllSSHKeys(h.state, id, "admin 2FA reset")
+	sshRevoked := services.RevokeAllSSHKeys(h.state.Store, id, "admin 2FA reset")
 	audit.LogIdentity(h.state.Store, r, audit.AuditEvent2FAAdminReset, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -547,6 +520,17 @@ func (h *AuthHandler) verifyTOTPOrBackup(user *models.User, code string) (bool, 
 // two more structs for one call each.
 func verifyTOTPOrBackupFor(state *AppState, user *models.User, code string) (bool, error) {
 	return verifyTOTPOrBackupWith(state, user, code, true)
+}
+
+// reauthCodeVerifier is the second-factor check re-authentication runs:
+// verifyTOTPOrBackupWith without spending the step (see there for why). It
+// lives here because the check needs the replay and wrong-code limits, the
+// backup-code store and the identity audit, none of which belong to the
+// reauth package.
+func reauthCodeVerifier(state *AppState) reauth.CodeVerifier {
+	return func(user *models.User, code string) (bool, error) {
+		return verifyTOTPOrBackupWith(state, user, code, false)
+	}
 }
 
 // verifyTOTPOrBackupWith is the same check with the one-time claim as a
@@ -573,7 +557,7 @@ func verifyTOTPOrBackupWith(state *AppState, user *models.User, code string, cla
 	// turning 2FA off is the step before changing the address without a code.
 	// Reserved BEFORE the check, so a right code past the limit is not spent.
 	if !reserveCodeAttempt(context.Background(), state, user.ID) {
-		return false, errTooManyCodes
+		return false, reauth.ErrTooManyCodes
 	}
 	defer func() {
 		if ok {
@@ -584,7 +568,7 @@ func verifyTOTPOrBackupWith(state *AppState, user *models.User, code string, cla
 	// 1) TOTP — fast path for the regular case, and single-use like the backup
 	// codes below.
 	if user.TOTPSecret != "" {
-		if step, ok := matchTOTPStep(code, user.TOTPSecret, time.Now()); ok {
+		if step, ok := reauth.MatchTOTPStep(code, user.TOTPSecret, time.Now()); ok {
 			if !claimStep || claimTOTPStep(state, user.ID, step) {
 				return true, nil
 			}

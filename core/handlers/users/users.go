@@ -14,6 +14,7 @@ import (
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reauth"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -74,7 +75,7 @@ type createUserRequest struct {
 	// carry one. Plaintext on the way in, hashed into req.User.Password below
 	// - never assign this field to the model directly.
 	Password string `json:"password"`
-	handlers.AdminReauthRequest
+	reauth.AdminReauthRequest
 }
 
 // createsPrivilegedAccount reports whether this create hands out power rather
@@ -159,7 +160,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// it holds nothing until somebody grants it something, and every route that
 	// grants is gated the same way. Gating routine user creation as well would
 	// train operators to type their password without reading the dialog.
-	if createsPrivilegedAccount(req) && !handlers.RequireAdminReauth(w, r, h.state, req.AdminReauthRequest) {
+	if createsPrivilegedAccount(req) && !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), req.AdminReauthRequest) {
 		return
 	}
 
@@ -283,11 +284,11 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	// Deletion is the most destructive account action and cannot be undone -
 	// it tears down link kits, BYON nodes and addresses - yet it was the one
 	// that skipped the re-proof a password, email, role or 2FA change asks for.
-	var reauth handlers.AdminReauthRequest
+	var reauthReq reauth.AdminReauthRequest
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&reauth)
+		_ = json.NewDecoder(r.Body).Decode(&reauthReq)
 	}
-	if !handlers.RequireAdminReauth(w, r, h.state, reauth) {
+	if !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), reauthReq) {
 		return
 	}
 
@@ -389,7 +390,7 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 
 	var req struct {
 		Password string `json:"password"`
-		handlers.AdminReauthRequest
+		reauth.AdminReauthRequest
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Password == "" {
 		httpx.SendJSONError(w, "Password is required", 400)
@@ -412,7 +413,7 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 	// Setting somebody else's password is taking their account over, so the
 	// question is not what this session may do but whether the administrator is
 	// the one asking. Last, after every cheap check and before the hash.
-	if !handlers.RequireAdminReauth(w, r, h.state, req.AdminReauthRequest) {
+	if !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), req.AdminReauthRequest) {
 		return
 	}
 
@@ -429,9 +430,9 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 	// An operator sets someone's password because the account is not in its
 	// owner's hands any more. The password change ended the sessions; the API
 	// keys are the other way in, and they used to keep working.
-	revoked := handlers.RevokeAllAPIKeys(h.state, id, "admin password reset")
+	revoked := services.RevokeAllAPIKeys(h.state.Store, id, "admin password reset")
 	handlers.StampBeamAccessForUser(r.Context(), h.state, id)
-	sshRevoked := handlers.RevokeAllSSHKeys(h.state, id, "admin password reset")
+	sshRevoked := services.RevokeAllSSHKeys(h.state.Store, id, "admin password reset")
 	actorID, _ := r.Context().Value("userID").(string)
 	audit.LogIdentity(h.state.Store, r, audit.AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 	// The owner hears about it: an operator account setting passwords is also

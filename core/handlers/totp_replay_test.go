@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/handlers/reauth"
 	"dylaris-core/models"
 
 	"github.com/alicebob/miniredis/v2"
@@ -68,7 +69,7 @@ func TestTOTPNextStepStillWorksAfterOneIsSpent(t *testing.T) {
 	if ok, _ := verifyTOTPOrBackupFor(state, user, codeAt(t, secret, now)); !ok {
 		t.Fatal("the current code was rejected")
 	}
-	next := codeAt(t, secret, now.Add(totpStepSeconds*time.Second))
+	next := codeAt(t, secret, now.Add(reauth.TOTPStepSeconds*time.Second))
 	if next == codeAt(t, secret, now) {
 		t.Skip("the two steps produced the same digits; nothing to tell apart")
 	}
@@ -118,17 +119,17 @@ func TestMatchTOTPStep(t *testing.T) {
 	secret := totpSecretFor(t)
 	now := time.Now()
 
-	cur, ok := matchTOTPStep(codeAt(t, secret, now), secret, now)
+	cur, ok := reauth.MatchTOTPStep(codeAt(t, secret, now), secret, now)
 	if !ok {
 		t.Fatal("the current step's code matched nothing")
 	}
-	if want := now.Unix() / totpStepSeconds; cur != want {
+	if want := now.Unix() / reauth.TOTPStepSeconds; cur != want {
 		t.Errorf("step = %d, want %d", cur, want)
 	}
 
 	for _, off := range []int64{-1, 1} {
-		at := now.Add(time.Duration(off) * totpStepSeconds * time.Second)
-		got, ok := matchTOTPStep(codeAt(t, secret, at), secret, now)
+		at := now.Add(time.Duration(off) * reauth.TOTPStepSeconds * time.Second)
+		got, ok := reauth.MatchTOTPStep(codeAt(t, secret, at), secret, now)
 		if !ok {
 			t.Errorf("a code %d step(s) away was not accepted; clock drift would lock people out", off)
 			continue
@@ -138,7 +139,7 @@ func TestMatchTOTPStep(t *testing.T) {
 		}
 	}
 
-	if _, ok := matchTOTPStep("000000", secret, now.Add(48*time.Hour)); ok {
+	if _, ok := reauth.MatchTOTPStep("000000", secret, now.Add(48*time.Hour)); ok {
 		t.Error("a code from two days away matched")
 	}
 }

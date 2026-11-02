@@ -18,6 +18,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/handlers/reauth"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -604,7 +605,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 	// typos, not credential guesses, and burning the token on them would only
 	// train people to click through the confirmation faster.
 	h.consumeRestoreToken(req.Token)
-	if _, ok := handlers.MatchTOTPStep(strings.TrimSpace(req.TOTPCode), user.TOTPSecret, time.Now()); !ok {
+	if _, ok := reauth.MatchTOTPStep(strings.TrimSpace(req.TOTPCode), user.TOTPSecret, time.Now()); !ok {
 		httpx.SendJSONError(w, "Invalid 2FA code", http.StatusUnauthorized)
 		return
 	}

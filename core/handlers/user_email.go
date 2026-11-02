@@ -9,6 +9,7 @@ import (
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reauth"
 	"dylaris-core/mailer"
 	"dylaris-core/services"
 )
@@ -31,7 +32,7 @@ func NewUserEmailHandler(state *AppState) *UserEmailHandler {
 
 type setUserEmailRequest struct {
 	Email string `json:"email"`
-	adminReauthRequest
+	reauth.AdminReauthRequest
 }
 
 // SetEmail PATCH /api/admin/users/{id}/email - RequireCap("users.write") at the
@@ -99,7 +100,7 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	// front of the validation would let a malformed body buy CPU time - the
 	// same order the API key mint gives its own reasons for. A save that
 	// changes nothing returned above without asking at all.
-	if !requireAdminReauth(w, r, h.state, req.adminReauthRequest) {
+	if !reauth.RequireAdminReauth(w, r, h.state.Store, reauthCodeVerifier(h.state), req.AdminReauthRequest) {
 		return
 	}
 

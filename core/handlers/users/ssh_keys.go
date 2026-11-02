@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/handlers/reauth"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -59,7 +60,7 @@ type addSSHKeyRequest struct {
 	// A key opens every file the account can reach, without the second
 	// factor, so adding one asks for the password and the code again - the
 	// same rule as minting an API key.
-	handlers.ReauthFields
+	reauth.ReauthFields
 }
 
 // Create POST /me/ssh-keys
@@ -84,8 +85,8 @@ func (h *SSHKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if rerr := handlers.RequireReauth(h.state, userID, req.Password, req.Code); rerr != nil {
-		handlers.WriteReauthError(w, rerr)
+	if rerr := reauth.RequireReauth(h.state.Store, handlers.ReauthCodeVerifier(h.state), userID, req.Password, req.Code); rerr != nil {
+		reauth.WriteReauthError(w, rerr)
 		return
 	}
 	added, err := h.state.Store.AddSSHKey(&models.SSHKey{UserID: userID, Name: req.Name, PublicKey: line, Fingerprint: fp}, maxSSHKeysPerUser)

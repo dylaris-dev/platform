@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/reauth"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -1046,7 +1047,7 @@ func TestAPIKeysCreate_RefusesTheWrongAccountPassword(t *testing.T) {
 			}
 			// Marked, or the panel reads the 401 as an expired session and
 			// signs the user out over a typo.
-			if rec.Header().Get(reauthFailedHeader) != "failed" {
+			if rec.Header().Get(reauth.FailedHeader) != "failed" {
 				t.Error("the refused re-authentication is not marked for the panel")
 			}
 			if len(fs.createCalls) != 0 {
