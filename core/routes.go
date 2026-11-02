@@ -11,6 +11,7 @@ import (
 	"dylaris-core/handlers/backup"
 	"dylaris-core/handlers/beam"
 	"dylaris-core/handlers/billing"
+	"dylaris-core/handlers/console"
 	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/gateway"
 	"dylaris-core/handlers/health"
@@ -733,6 +734,15 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		ReleaseVersion:   appState.ReleaseVersion,
 		CoreID:           appState.CoreID,
 	}
+	consoleDeps := console.Deps{
+		Store:        appState.Store,
+		Redis:        appState.Redis,
+		ConsoleRedis: appState.ConsoleRedis,
+		Authz:        appState.Authz,
+		Events:       appState.Events,
+		GRPCRegistry: appState.GRPCRegistry,
+		StoreEnabled: appState.StoreEnabled,
+	}
 
 	// Initialize handlers
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
@@ -805,7 +815,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	}
 	nodeHandler := nodes.NewNodeHandler(nodesDeps)
 
-	consoleHandler := handlers.NewConsoleHandler(appState)
+	consoleHandler := console.NewConsoleHandler(consoleDeps)
 	statsHandler := stats.NewStatsHandler(statsDeps)
 	versionHandler := health.NewVersionHandler(healthDeps)
 	beamHandler := beam.NewBeamHandler(beamDeps, cfg.BeamJWTSecret, cfg.ClusterSecret)
@@ -831,7 +841,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	auditSettingsHandler := handlers.NewAuditSettingsHandler(appState)
 	ticketMigrationHandler := tickets.NewTicketMigrationHandler(ticketsDeps)
 	systemEventsHandler := health.NewSystemEventsHandler(healthDeps)
-	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
+	scheduledTasksHandler := console.NewScheduledTasksHandler(consoleDeps)
 	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
 	modrinthHandler := mods.NewModrinthHandler(modsDeps)
 	sparkHandler := tabs.NewSparkHandler(tabsDeps)
@@ -1034,7 +1044,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// a fixed set of player commands behind players.manage. The point is that a
 	// moderator needs NEITHER rcon.exec (every command there is, including stop
 	// and save-off) NOR files.read (the whole server filesystem) to do the job.
-	playersHandler := handlers.NewPlayersHandler(appState)
+	playersHandler := console.NewPlayersHandler(consoleDeps)
 	api.HandleFunc("/servers/{id:[0-9]+}/players/lists", authHandler.AuthMiddleware(appState.Authz.RequireCap("players.read")(playersHandler.GetLists))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/players/online", authHandler.AuthMiddleware(appState.Authz.RequireCap("players.read")(playersHandler.GetOnline))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/players/action", authHandler.AuthMiddleware(appState.Authz.RequireCap("players.manage")(playersHandler.Action))).Methods("POST")

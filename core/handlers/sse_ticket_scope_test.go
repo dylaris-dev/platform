@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 )
@@ -138,5 +140,22 @@ func TestATabProxyTicketEndsWithItsSession(t *testing.T) {
 	mr.Set(revokedSessionKey("s2"), "1")
 	if _, err := h.ParseTabProxyTicket(tk); err == nil {
 		t.Fatal("the ticket outlived its session's sign-out")
+	}
+}
+
+// The ticket slides forward when a stream opens, not while it runs. A stream
+// that lived as long as the ticket reconnected with one that had just expired,
+// and the console went dead until a reload.
+func TestStreamsEndBeforeTheirTicket(t *testing.T) {
+	if httpx.SSEMaxStreamAge() >= sseTicketTTL {
+		t.Fatalf("sseMaxStreamAge %v must be shorter than sseTicketTTL %v, or the reconnect carries an expired ticket", httpx.SSEMaxStreamAge(), sseTicketTTL)
+	}
+	// Room for the reconnect itself: the browser waits the retry interval,
+	// then the request has to arrive.
+	if sseTicketTTL-httpx.SSEMaxStreamAge() < 30*time.Second {
+		t.Fatalf("only %v between stream end and ticket expiry", sseTicketTTL-httpx.SSEMaxStreamAge())
+	}
+	if httpx.SSERetryLine != "retry: 1000\n\n" {
+		t.Fatalf("httpx.SSERetryLine = %q", httpx.SSERetryLine)
 	}
 }

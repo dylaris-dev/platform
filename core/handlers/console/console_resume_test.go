@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"context"
@@ -86,7 +86,7 @@ func TestStreamConsoleResume(t *testing.T) {
 	if err := rdb.XTrimMaxLen(context.Background(), "dylaris:server:srv-uuid:logs", 7).Err(); err != nil {
 		t.Fatal(err)
 	}
-	h := NewConsoleHandler(&AppState{Store: consoleHistoryFakeStore{}, Redis: rdb})
+	h := NewConsoleHandler(Deps{Store: consoleHistoryFakeStore{}, Redis: rdb})
 
 	tests := []struct {
 		name, query, header string
@@ -135,7 +135,7 @@ func TestConsoleHistoryTrimmed(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
-	h := NewConsoleHandler(&AppState{Store: consoleHistoryFakeStore{}, Redis: rdb})
+	h := NewConsoleHandler(Deps{Store: consoleHistoryFakeStore{}, Redis: rdb})
 
 	seedConsole(t, rdb, 3)
 	if _, body := getConsoleHistoryRaw(t, h, ""); !strings.Contains(body, `"trimmed":false`) {
@@ -175,7 +175,7 @@ func TestStreamConsoleFlushesOncePerRead(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
 	seedConsole(t, rdb, 10)
-	h := NewConsoleHandler(&AppState{Store: consoleHistoryFakeStore{}, Redis: rdb})
+	h := NewConsoleHandler(Deps{Store: consoleHistoryFakeStore{}, Redis: rdb})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()

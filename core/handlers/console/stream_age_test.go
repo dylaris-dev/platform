@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func TestConsoleStreamEndsAndResumesAfterTheLastLine(t *testing.T) {
 	shortStreams(t)
 	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", ActiveSubServer: "main"}}
 	rdb := handlertest.RedisClient(t)
-	h := &ConsoleHandler{state: &AppState{Store: fs, Redis: rdb}}
+	h := &ConsoleHandler{d: Deps{Store: fs, Redis: rdb}}
 	key := consoleStreamKey(fs.server, "")
 	ctx := context.Background()
 	first, _ := rdb.XAdd(ctx, &redis.XAddArgs{Stream: key, Values: map[string]any{"line": "one"}}).Result()
@@ -57,23 +57,6 @@ func TestConsoleStreamEndsAndResumesAfterTheLastLine(t *testing.T) {
 	}
 }
 
-// The ticket slides forward when a stream opens, not while it runs. A stream
-// that lived as long as the ticket reconnected with one that had just expired,
-// and the console went dead until a reload.
-func TestStreamsEndBeforeTheirTicket(t *testing.T) {
-	if httpx.SSEMaxStreamAge() >= sseTicketTTL {
-		t.Fatalf("sseMaxStreamAge %v must be shorter than sseTicketTTL %v, or the reconnect carries an expired ticket", httpx.SSEMaxStreamAge(), sseTicketTTL)
-	}
-	// Room for the reconnect itself: the browser waits the retry interval,
-	// then the request has to arrive.
-	if sseTicketTTL-httpx.SSEMaxStreamAge() < 30*time.Second {
-		t.Fatalf("only %v between stream end and ticket expiry", sseTicketTTL-httpx.SSEMaxStreamAge())
-	}
-	if httpx.SSERetryLine != "retry: 1000\n\n" {
-		t.Fatalf("httpx.SSERetryLine = %q", httpx.SSERetryLine)
-	}
-}
-
 // Every stream opens with the retry line, so the rotation reconnects after a
 // second instead of the browser's default.
 func TestStreamsOpenWithTheRetryLine(t *testing.T) {
@@ -95,7 +78,7 @@ func TestStreamsOpenWithTheRetryLine(t *testing.T) {
 		r := httptest.NewRequest("GET", path, nil)
 		return mux.SetURLVars(r, map[string]string{"id": "1"})
 	}
-	console := &ConsoleHandler{state: &AppState{Store: fs, Redis: rdb}}
+	console := &ConsoleHandler{d: Deps{Store: fs, Redis: rdb}}
 	if body := run("console", func(rec *httptest.ResponseRecorder) { console.StreamConsole(rec, req("/api/servers/1/console/stream")) }); !strings.HasPrefix(body, httpx.SSERetryLine) {
 		t.Errorf("console stream = %q, want it to open with %q", body, httpx.SSERetryLine)
 	}

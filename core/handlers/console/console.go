@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"cmp"
@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,8 +21,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// sseEventID is a Redis stream ID, the only Last-Event-ID a console resume
+// accepts.
+var sseEventID = regexp.MustCompile(`^[0-9]{1,20}-[0-9]{1,20}$`)
+
 type ConsoleHandler struct {
-	state *AppState
+	d Deps
 }
 
 // consoleStreamKey resolves which log stream a console read should follow.
@@ -53,8 +58,8 @@ func consoleStreamKey(srv *models.Server, subServer string) string {
 	return fmt.Sprintf("dylaris:server:%s:logs:%s", srv.UUID, subServer)
 }
 
-func NewConsoleHandler(state *AppState) *ConsoleHandler {
-	return &ConsoleHandler{state: state}
+func NewConsoleHandler(d Deps) *ConsoleHandler {
+	return &ConsoleHandler{d: d}
 }
 
 // consoleHistoryMax is the most lines one history call returns. The stream
@@ -73,7 +78,7 @@ const consoleRetainedLines = 5000
 // lines exist beyond this page. On the last page "trimmed" says whether older
 // lines were dropped by retention rather than never written.
 func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil || h.state.Redis == nil {
+	if h.d.Store == nil || h.d.Redis == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -85,7 +90,7 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -121,7 +126,7 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		end, n = before, n+1
 	}
 	// XRevRangeN returns newest-first; we reverse to get chronological order
-	entries, err := h.state.Redis.XRevRangeN(r.Context(), streamKey, end, "-", n).Result()
+	entries, err := h.d.Redis.XRevRangeN(r.Context(), streamKey, end, "-", n).Result()
 	if err != nil {
 		// Stream may not exist yet (server never started) — return empty list
 		entries = nil
@@ -148,7 +153,7 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		// The oldest line here is the stream's oldest. Whether that is where the
 		// log began depends on whether the shipper has trimmed it yet; it trims
 		// to at least consoleRetainedLines, so a shorter stream never was.
-		n, err := h.state.Redis.XLen(r.Context(), streamKey).Result()
+		n, err := h.d.Redis.XLen(r.Context(), streamKey).Result()
 		if err == nil {
 			resp["trimmed"] = n >= consoleRetainedLines
 		}
@@ -167,7 +172,7 @@ func (h *ConsoleHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 // lines printed while disconnected are replayed from the retained stream. An
 // `event: gap` says the resume point was already trimmed.
 func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil || h.state.Redis == nil {
+	if h.d.Store == nil || h.d.Redis == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -179,7 +184,7 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -190,7 +195,7 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
-	release, ok := guard.AcquireLiveStream(w, r, h.state.Store, "console", guard.ConsoleStreamsPerUser)
+	release, ok := guard.AcquireLiveStream(w, r, h.d.Store, "console", guard.ConsoleStreamsPerUser)
 	if !ok {
 		return
 	}
@@ -213,13 +218,13 @@ func (h *ConsoleHandler) StreamConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	consoleRedis := h.state.ConsoleRedis
+	consoleRedis := h.d.ConsoleRedis
 	if consoleRedis == nil {
-		consoleRedis = h.state.Redis
+		consoleRedis = h.d.Redis
 	}
 	ctx, cancel := httpx.StreamContext(w, r)
 	defer cancel()
-	if lastID != "$" && consoleResumeLostLines(ctx, h.state.Redis, streamKey, lastID) {
+	if lastID != "$" && consoleResumeLostLines(ctx, h.d.Redis, streamKey, lastID) {
 		// No id: field, so the browser's Last-Event-ID stays on the last line.
 		fmt.Fprint(w, "event: gap\ndata: lines were trimmed before they could be resent\n\n")
 		flusher.Flush()
@@ -331,7 +336,7 @@ func compareStreamIDs(a, b string) int {
 // the server's Redis input queue. Success means the node has been handed the
 // command, not that the server has run it.
 func (h *ConsoleHandler) SendCommand(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil || h.state.Redis == nil {
+	if h.d.Store == nil || h.d.Redis == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -362,7 +367,7 @@ func (h *ConsoleHandler) SendCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -378,7 +383,7 @@ func (h *ConsoleHandler) SendCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	queueKey := fmt.Sprintf("dylaris:server:%s:input", srv.UUID)
-	pipe := h.state.Redis.TxPipeline()
+	pipe := h.d.Redis.TxPipeline()
 	pipe.RPush(r.Context(), queueKey, req.Command)
 	// A running server drains this within a second; a backlog this long means
 	// nothing is reading, and the newest commands are the ones to keep.

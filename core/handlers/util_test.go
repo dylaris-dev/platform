@@ -22,17 +22,3 @@ func TestFormatBytesHuman(t *testing.T) {
 		}
 	}
 }
-
-func TestSseEscape(t *testing.T) {
-	cases := []struct{ input, want string }{
-		{"line1\nline2", "line1 line2"},
-		{"line1\r\nline2", "line1 line2"},
-		{"line1\rline2", "line1 line2"},
-		{"no newlines", "no newlines"},
-	}
-	for _, c := range cases {
-		if got := sseEscape(c.input); got != c.want {
-			t.Errorf("sseEscape(%q) = %q, want %q", c.input, got, c.want)
-		}
-	}
-}

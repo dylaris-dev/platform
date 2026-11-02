@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"encoding/json"
@@ -47,7 +47,7 @@ func (f *playersListsStore) GetSetting(key string) (string, error) {
 func getListsAs(t *testing.T, demos string) playerListsResponse {
 	t.Helper()
 	srv := &models.Server{ID: 7, UUID: "srv-uuid", NodeID: 1, ActiveSubServer: "main"}
-	state := &AppState{Store: &playersListsStore{srv: srv, demos: demos}, StoreEnabled: true}
+	state := Deps{Store: &playersListsStore{srv: srv, demos: demos}, StoreEnabled: true}
 	h := NewPlayersHandler(state)
 	r := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/api/servers/7/players/lists", nil), map[string]string{"id": "7"})
 	rw := httptest.NewRecorder()
@@ -108,7 +108,7 @@ func TestPlayerActionsAreAudited(t *testing.T) {
 	for _, c := range cases {
 		fs := &playersAuditStore{}
 		r := httptest.NewRequest(http.MethodPost, "/api/servers/7/players/action", nil)
-		auditPlayerAction(&AppState{Store: fs}, r, 7, c.action, c.player, false)
+		auditPlayerAction(Deps{Store: fs}, r, 7, c.action, c.player, false)
 		if len(fs.audits) != 1 {
 			t.Fatalf("%s: %d audit rows, want 1", c.action, len(fs.audits))
 		}

@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"context"
@@ -30,7 +30,7 @@ func sendConsole(t *testing.T, h *ConsoleHandler, cmd string) int {
 func TestConsoleCommandsAreBounded(t *testing.T) {
 	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped"}}
 	rdb := handlertest.RedisClient(t)
-	h := &ConsoleHandler{state: &AppState{Store: fs, Redis: rdb}}
+	h := &ConsoleHandler{d: Deps{Store: fs, Redis: rdb}}
 	queue := "dylaris:server:srv-uuid:input"
 
 	if code := sendConsole(t, h, "stop"); code != http.StatusConflict {

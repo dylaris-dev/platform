@@ -1,4 +1,4 @@
-package handlers
+package console
 
 // Player management as its own surface, gated on players.read / players.manage.
 //
@@ -39,11 +39,11 @@ import (
 )
 
 type PlayersHandler struct {
-	state *AppState
+	d Deps
 }
 
-func NewPlayersHandler(state *AppState) *PlayersHandler {
-	return &PlayersHandler{state: state}
+func NewPlayersHandler(d Deps) *PlayersHandler {
+	return &PlayersHandler{d: d}
 }
 
 // playerListFiles maps a response field to the file MC keeps that list in,
@@ -87,7 +87,7 @@ var emptyJSONArray = json.RawMessage("[]")
 // straight out of the active sub-server's JSON files.
 func (h *PlayersHandler) GetLists(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -123,7 +123,7 @@ func (h *PlayersHandler) GetLists(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Known = knownPlayers(out.Known, maxKnownPlayers)
 
-	props, found, perr := nodeops.ReadNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+nodeops.ServerPropertiesName)
+	props, found, perr := nodeops.ReadNodeFileString(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+nodeops.ServerPropertiesName)
 	if perr != nil {
 		unavailable("properties", fmt.Errorf("could not be read from the node: %w", perr))
 	} else {
@@ -172,13 +172,13 @@ func knownPlayers(raw json.RawMessage, n int) json.RawMessage {
 // list is the same player identities. Owners, admins and real members hold
 // files.read or players.manage, neither of which the demo grants. Fails closed.
 func (h *PlayersHandler) demoStranger(r *http.Request, srv *models.Server) bool {
-	if !demo.IsServer(h.state.Store, h.state.StoreEnabled, srv.UUID) {
+	if !demo.IsServer(h.d.Store, h.d.StoreEnabled, srv.UUID) {
 		return false
 	}
-	if h.state.Authz == nil {
+	if h.d.Authz == nil {
 		return true
 	}
-	res, err := h.state.Authz.Resolve(authz.IdentityFromContext(r.Context()), srv.ID)
+	res, err := h.d.Authz.Resolve(authz.IdentityFromContext(r.Context()), srv.ID)
 	if err != nil {
 		return true
 	}
@@ -213,7 +213,7 @@ func whitelistFlags(props string) (enabled, enforced bool) {
 // unchanged. A file MC has not created yet is an empty list, not an error -
 // a server nobody has banned on has no banned-players.json.
 func (h *PlayersHandler) readPlayerList(nodeID int, serverUUID, subServer, filename string) (json.RawMessage, error) {
-	content, found, err := nodeops.ReadNodeFileString(h.state.GRPCRegistry, nodeID, serverUUID, subServer+"/"+filename)
+	content, found, err := nodeops.ReadNodeFileString(h.d.GRPCRegistry, nodeID, serverUUID, subServer+"/"+filename)
 	if err != nil {
 		return nil, fmt.Errorf("could not be read from the node: %w", err)
 	}
@@ -235,7 +235,7 @@ func (h *PlayersHandler) readPlayerList(nodeID int, serverUUID, subServer, filen
 // needs players.read rather than the right to run any command.
 func (h *PlayersHandler) GetOnline(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -244,8 +244,8 @@ func (h *PlayersHandler) GetOnline(w http.ResponseWriter, r *http.Request) {
 	// every open players tab, every poll, every read-only account. One answer
 	// now serves everyone asking within a few seconds.
 	cacheKey := fmt.Sprintf("dylaris:server:%s:players-online", srv.UUID)
-	if h.state.Redis != nil {
-		if cached, cerr := h.state.Redis.Get(r.Context(), cacheKey).Bytes(); cerr == nil {
+	if h.d.Redis != nil {
+		if cached, cerr := h.d.Redis.Get(r.Context(), cacheKey).Bytes(); cerr == nil {
 			var resp nodeops.RconResponse
 			if json.Unmarshal(cached, &resp) == nil {
 				nodeops.WriteRconResponse(w, resp)
@@ -253,10 +253,10 @@ func (h *PlayersHandler) GetOnline(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	resp := nodeops.ExecRcon(r.Context(), h.state.Store, h.state.GRPCRegistry, srv.ID, srv.UUID, srv.NodeID, nodeops.RconRequest{Command: "list"})
-	if resp.Success && h.state.Redis != nil {
+	resp := nodeops.ExecRcon(r.Context(), h.d.Store, h.d.GRPCRegistry, srv.ID, srv.UUID, srv.NodeID, nodeops.RconRequest{Command: "list"})
+	if resp.Success && h.d.Redis != nil {
 		if b, merr := json.Marshal(resp); merr == nil {
-			h.state.Redis.Set(r.Context(), cacheKey, b, playersOnlineCacheTTL)
+			h.d.Redis.Set(r.Context(), cacheKey, b, playersOnlineCacheTTL)
 		}
 	}
 	nodeops.WriteRconResponse(w, resp)
@@ -276,7 +276,7 @@ type playerActionRequest struct {
 // commands. The caller never supplies a command string.
 func (h *PlayersHandler) Action(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -291,13 +291,13 @@ func (h *PlayersHandler) Action(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, cerr.Error(), http.StatusBadRequest)
 		return
 	}
-	resp := nodeops.ExecRcon(r.Context(), h.state.Store, h.state.GRPCRegistry, srv.ID, srv.UUID, srv.NodeID, nodeops.RconRequest{Command: cmd})
+	resp := nodeops.ExecRcon(r.Context(), h.d.Store, h.d.GRPCRegistry, srv.ID, srv.UUID, srv.NodeID, nodeops.RconRequest{Command: cmd})
 	if resp.Success {
 		// The command reached the server, so it is audited either way; a
 		// refusal ("That player does not exist") is recorded as one rather
 		// than as a ban that happened.
 		refused, reason := classifyPlayerCommandOutput(resp.Output)
-		auditPlayerAction(h.state, r, srv.ID, req.Action, req.Player, refused)
+		auditPlayerAction(h.d, r, srv.ID, req.Action, req.Player, refused)
 		if refused {
 			resp.Success = false
 			resp.Error = reason
@@ -372,7 +372,7 @@ func stripMinecraftFormatting(s string) string {
 // path, which cannot say who was banned or that the whitelist went off. The
 // reason and whispered text stay out: free text typed by a moderator is not
 // what the trail is for.
-func auditPlayerAction(state *AppState, r *http.Request, serverID int, action, player string, refused bool) {
+func auditPlayerAction(d Deps, r *http.Request, serverID int, action, player string, refused bool) {
 	action = strings.TrimSpace(strings.ToLower(action))
 	meta := map[string]interface{}{"action": action}
 	if refused {
@@ -382,7 +382,7 @@ func auditPlayerAction(state *AppState, r *http.Request, serverID int, action, p
 		meta["player"] = p
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogServer(state.Store, r, serverID, ServerAuditEventPlayerAction, actorID, "", meta)
+	audit.LogServer(d.Store, r, serverID, ServerAuditEventPlayerAction, actorID, "", meta)
 }
 
 // ServerAuditEventPlayerAction is one players.manage action (kick, ban, op,

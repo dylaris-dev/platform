@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"net/http"
@@ -38,8 +38,8 @@ func TestScheduledTaskCreateTakesTheServersZone(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &schedZoneStore{}
-			h := NewScheduledTasksHandler(schedCapHandler(&fs.schedCapStore).state)
-			h.state.Store = fs
+			h := NewScheduledTasksHandler(schedCapHandler(&fs.schedCapStore).d)
+			h.d.Store = fs
 			rec := httptest.NewRecorder()
 			h.Create(rec, schedCapReq(http.MethodPost, "/api/servers/1/scheduled-tasks", "owner-1",
 				scheduledTaskRequest{Name: "t", TaskType: "restart", ScheduleCron: "0 4 * * *", Timezone: c.tz}))

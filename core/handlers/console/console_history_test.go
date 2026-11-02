@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"context"
@@ -65,7 +65,7 @@ func TestConsoleHistoryPaging(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
 	seedConsole(t, rdb, 1500)
-	h := NewConsoleHandler(&AppState{Store: consoleHistoryFakeStore{}, Redis: rdb})
+	h := NewConsoleHandler(Deps{Store: consoleHistoryFakeStore{}, Redis: rdb})
 
 	tests := []struct {
 		name                string
@@ -115,7 +115,7 @@ func TestConsoleHistoryRejectsBadParams(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
-	h := NewConsoleHandler(&AppState{Store: consoleHistoryFakeStore{}, Redis: rdb})
+	h := NewConsoleHandler(Deps{Store: consoleHistoryFakeStore{}, Redis: rdb})
 
 	for _, q := range []string{
 		"?before=abc", "?before=-", "?before=%2B", "?before=(5-0", "?before=5",

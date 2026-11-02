@@ -731,9 +731,6 @@ func (h *SettingsHandler) LoadPlacementSettings() PlacementSettings {
 
 // --- Server Settings ---
 
-// SettingMaxScheduledTasks caps the scheduled tasks one server may hold.
-const SettingMaxScheduledTasks = "srv.max_scheduled_tasks"
-
 // ServerSettings carries the per-server caps an operator types in.
 //
 // MaxSubServers follows the platform limit convention: nil is no cap, 0 is a
@@ -751,14 +748,9 @@ type ServerSettings struct {
 	MaxScheduledTasks *int64 `json:"maxScheduledTasks"`
 }
 
-// defaultMaxScheduledTasks is the product default: enough for a nightly restart
-// and a good number of announcements, few enough that no single server can take
-// over the executor's batch.
-var defaultMaxScheduledTasks = services.LimitPtr(25)
-
 var defaultServerSettings = ServerSettings{
 	MaxSubServers:     guard.DefaultMaxSubServers,
-	MaxScheduledTasks: defaultMaxScheduledTasks,
+	MaxScheduledTasks: services.DefaultMaxScheduledTasks,
 }
 
 // GetServerSettings GET /api/settings/servers - PANEL settings.read (RequireCap at the route).
@@ -790,7 +782,7 @@ func (h *SettingsHandler) SaveServerSettings(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
-	if err := h.state.Store.SetSetting(SettingMaxScheduledTasks, services.FormatLimitSetting(req.MaxScheduledTasks)); err != nil {
+	if err := h.state.Store.SetSetting(services.SettingMaxScheduledTasks, services.FormatLimitSetting(req.MaxScheduledTasks)); err != nil {
 		httpx.SendJSONError(w, "Failed to save setting", http.StatusInternalServerError)
 		return
 	}
@@ -804,7 +796,7 @@ func (h *SettingsHandler) LoadServerSettings() ServerSettings {
 	if val, err := h.state.Store.GetSetting(guard.SettingMaxSubServers); err == nil {
 		settings.MaxSubServers = services.ParseLimitSetting(val, guard.DefaultMaxSubServers)
 	}
-	settings.MaxScheduledTasks = scheduledTaskLimit(h.state)
+	settings.MaxScheduledTasks = services.ScheduledTaskLimit(h.state.Store)
 	return settings
 }
 

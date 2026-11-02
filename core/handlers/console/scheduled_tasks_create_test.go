@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"bytes"
@@ -57,7 +57,7 @@ func (f *schedCreateFakeStore) GetScheduledTask(int) (*models.ScheduledTask, err
 }
 
 func newSchedCreateHandler(fs *schedCreateFakeStore) *ScheduledTasksHandler {
-	return NewScheduledTasksHandler(&AppState{
+	return NewScheduledTasksHandler(Deps{
 		Store: fs,
 		// Creating a task now needs the capability the task USES, so these
 		// cases need a resolver. They are about the server lookup rather than

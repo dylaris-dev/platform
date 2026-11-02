@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"encoding/json"
@@ -20,11 +20,11 @@ import (
 // by the RequireCap chokepoint in routes.go (schedule.read/write/delete).
 
 type ScheduledTasksHandler struct {
-	state *AppState
+	d Deps
 }
 
-func NewScheduledTasksHandler(state *AppState) *ScheduledTasksHandler {
-	return &ScheduledTasksHandler{state: state}
+func NewScheduledTasksHandler(d Deps) *ScheduledTasksHandler {
+	return &ScheduledTasksHandler{d: d}
 }
 
 type scheduledTaskRequest struct {
@@ -82,11 +82,11 @@ func (h *ScheduledTasksHandler) refuseWithoutTaskCap(w http.ResponseWriter, r *h
 	if capID == "" {
 		return false
 	}
-	if h.state == nil || h.state.Authz == nil {
+	if h.d.Authz == nil {
 		httpx.SendJSONError(w, "Authorization check failed", http.StatusInternalServerError)
 		return true
 	}
-	res, err := h.state.Authz.Resolve(authz.IdentityFromContext(r.Context()), serverID)
+	res, err := h.d.Authz.Resolve(authz.IdentityFromContext(r.Context()), serverID)
 	if err != nil || !res.HasCap(capID) {
 		httpx.SendJSONError(w, "This task needs "+capID+", which you do not hold on this server",
 			http.StatusForbidden)
@@ -140,7 +140,7 @@ func validateTaskFields(name, taskType, payload string) string {
 // one server.
 func (h *ScheduledTasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	tasks, err := h.state.Store.ListScheduledTasksByServer(serverID)
+	tasks, err := h.d.Store.ListScheduledTasksByServer(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load tasks", http.StatusInternalServerError)
 		return
@@ -161,7 +161,7 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// for what is plainly a 404. Update and Delete already resolve the task
 	// first, so Create was the only entry point left without the check; the
 	// sibling handlers (tabs, backup jobs, members) all answer 404 here.
-	srv, err := h.state.Store.GetServerByID(serverID)
+	srv, err := h.d.Store.GetServerByID(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
@@ -223,18 +223,18 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		NextRun:      &next,
 		CreatedBy:    createdBy,
 	}
-	id, err := h.state.Store.CreateScheduledTask(t)
+	id, err := h.d.Store.CreateScheduledTask(t)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to create task", http.StatusInternalServerError)
 		return
 	}
-	created, _ := h.state.Store.GetScheduledTask(id)
+	created, _ := h.d.Store.GetScheduledTask(id)
 	if created == nil {
 		t.ID = id
 		created = t
 	}
 
-	h.state.Events.Publish(r.Context(), "scheduled_tasks.changed", nil)
+	h.d.Events.Publish(r.Context(), "scheduled_tasks.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -247,7 +247,7 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	taskID, _ := strconv.Atoi(mux.Vars(r)["taskId"])
-	existing, err := h.state.Store.GetScheduledTask(taskID)
+	existing, err := h.d.Store.GetScheduledTask(taskID)
 	if err != nil || existing == nil || existing.ServerID != serverID {
 		httpx.SendJSONError(w, "Task not found", http.StatusNotFound)
 		return
@@ -322,14 +322,14 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !existing.Enabled {
 		existing.NextRun = nil
 	}
-	if err := h.state.Store.UpdateScheduledTask(existing); err != nil {
+	if err := h.d.Store.UpdateScheduledTask(existing); err != nil {
 		httpx.SendJSONError(w, "Failed to save task", http.StatusInternalServerError)
 		return
 	}
 
-	h.state.Events.Publish(r.Context(), "scheduled_tasks.changed", nil)
+	h.d.Events.Publish(r.Context(), "scheduled_tasks.changed", nil)
 
-	updated, _ := h.state.Store.GetScheduledTask(taskID)
+	updated, _ := h.d.Store.GetScheduledTask(taskID)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"task":    updated,
@@ -341,17 +341,17 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *ScheduledTasksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	taskID, _ := strconv.Atoi(mux.Vars(r)["taskId"])
-	existing, err := h.state.Store.GetScheduledTask(taskID)
+	existing, err := h.d.Store.GetScheduledTask(taskID)
 	if err != nil || existing == nil || existing.ServerID != serverID {
 		httpx.SendJSONError(w, "Task not found", http.StatusNotFound)
 		return
 	}
-	if err := h.state.Store.DeleteScheduledTask(taskID); err != nil {
+	if err := h.d.Store.DeleteScheduledTask(taskID); err != nil {
 		httpx.SendJSONError(w, "Failed to delete", http.StatusInternalServerError)
 		return
 	}
 
-	h.state.Events.Publish(r.Context(), "scheduled_tasks.changed", nil)
+	h.d.Events.Publish(r.Context(), "scheduled_tasks.changed", nil)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -389,30 +389,15 @@ func (h *ScheduledTasksHandler) ValidateCron(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// scheduledTaskLimit is the operator's cap on tasks per server, read through
-// the shared parser so the platform limit convention holds: nil means no cap at
-// all, 0 means none. A settings read that fails answers with the product
-// default rather than with "no cap".
-func scheduledTaskLimit(state *AppState) *int64 {
-	if state == nil || state.Store == nil {
-		return defaultMaxScheduledTasks
-	}
-	val, err := state.Store.GetSetting(SettingMaxScheduledTasks)
-	if err != nil {
-		return defaultMaxScheduledTasks
-	}
-	return services.ParseLimitSetting(val, defaultMaxScheduledTasks)
-}
-
 // refuseIfScheduledTaskLimitReached answers the request when the server already
 // holds as many tasks as it may, and reports whether it did. Checked on create
 // only: lowering the cap disables nothing, the tasks over it keep running.
 func (h *ScheduledTasksHandler) refuseIfScheduledTaskLimitReached(w http.ResponseWriter, serverID int) bool {
-	limit := scheduledTaskLimit(h.state)
+	limit := services.ScheduledTaskLimit(h.d.Store)
 	if limit == nil {
 		return false
 	}
-	existing, err := h.state.Store.ListScheduledTasksByServer(serverID)
+	existing, err := h.d.Store.ListScheduledTasksByServer(serverID)
 	if err != nil {
 		// A cap nobody can evaluate must not quietly pass.
 		httpx.SendJSONError(w, "Could not count this server's scheduled tasks", http.StatusInternalServerError)

@@ -31,10 +31,6 @@ const sseTicketSep = ""
 // they kept using it.
 var sseTicketPaths = regexp.MustCompile(`^/api/(system/events|servers/[0-9]+/(console|stats)/stream)$`)
 
-// sseEventID is a Redis stream ID, the only Last-Event-ID a console resume
-// accepts.
-var sseEventID = regexp.MustCompile(`^[0-9]{1,20}-[0-9]{1,20}$`)
-
 // parseSSETicket splits a stored ticket value: username, fingerprint, and the
 // id of the session that minted it. A ticket minted before the fingerprint
 // existed has none, and is honoured once without being extended, so a stream

@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"context"
@@ -20,7 +20,7 @@ func TestOnlinePlayersAreServedFromTheShortCache(t *testing.T) {
 	fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid"}}
 	rdb := handlertest.RedisClient(t)
 	rdb.Set(context.Background(), "dylaris:server:srv-uuid:players-online", `{"success":true,"output":"There are 2 of a max of 20 players online: a, b"}`, 0)
-	h := &PlayersHandler{state: &AppState{Store: fs, Redis: rdb}}
+	h := &PlayersHandler{d: Deps{Store: fs, Redis: rdb}}
 	req := mux.SetURLVars(httptest.NewRequest("GET", "/api/servers/1/players/online", nil), map[string]string{"id": "1"})
 	rec := httptest.NewRecorder()
 	h.GetOnline(rec, req)

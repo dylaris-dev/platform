@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"errors"
@@ -49,7 +49,7 @@ type serverPowerFakeStore struct {
 }
 
 // The following satisfy authz.Store (beyond GetServerByID, already overridden
-// above) so h.state.Authz.Resolve does not panic on the nil embedded
+// above) so h.d.Authz.Resolve does not panic on the nil embedded
 // store.Store. None of these tests exercise panel roles or account grants, so
 // they report "not found" unless a test explicitly sets serverGrant/serverRole.
 func (f *serverPowerFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {

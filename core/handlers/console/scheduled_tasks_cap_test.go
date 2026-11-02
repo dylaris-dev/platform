@@ -1,4 +1,4 @@
-package handlers
+package console
 
 import (
 	"bytes"
@@ -83,7 +83,7 @@ func (f *schedCapStore) GetScheduledTask(int) (*models.ScheduledTask, error) { r
 func (f *schedCapStore) UpdateScheduledTask(*models.ScheduledTask) error     { return nil }
 
 func schedCapHandler(fs *schedCapStore) *ScheduledTasksHandler {
-	return NewScheduledTasksHandler(&AppState{
+	return NewScheduledTasksHandler(Deps{
 		Store:  fs,
 		Authz:  authz.NewResolver(fs),
 		Events: services.NewSystemEventsPublisher(nil),
@@ -268,7 +268,7 @@ func TestScheduledTaskCreateHonoursTheServerLimit(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &schedCapStore{existing: c.existing, settings: map[string]string{}}
 			if c.setting != "" {
-				fs.settings[SettingMaxScheduledTasks] = c.setting
+				fs.settings[services.SettingMaxScheduledTasks] = c.setting
 			}
 			rec := httptest.NewRecorder()
 			schedCapHandler(fs).Create(rec, schedCapReq(http.MethodPost, "/api/servers/1/scheduled-tasks", "owner-1",
