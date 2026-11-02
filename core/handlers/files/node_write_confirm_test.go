@@ -1,4 +1,4 @@
-package handlers
+package files
 
 import (
 	"bytes"
@@ -71,7 +71,7 @@ func (writeFakeStore) GetUserBilling(id string) (*store.UserBilling, error) {
 	return &store.UserBilling{UserID: id, Status: "active"}, nil
 }
 
-func writeState(t *testing.T, refuse bool) *AppState {
+func writeState(t *testing.T, refuse bool) Deps {
 	t.Helper()
 	reg := nodegrpc.NewRegistry()
 	node := &writeNode{refuse: refuse}
@@ -80,7 +80,7 @@ func writeState(t *testing.T, refuse bool) *AppState {
 	node.conn = conn
 	node.mu.Unlock()
 	fs := writeFakeStore{}
-	return &AppState{Store: fs, Authz: authz.NewResolver(fs), GRPCRegistry: reg}
+	return Deps{Store: fs, Authz: authz.NewResolver(fs), GRPCRegistry: reg}
 }
 
 func asOwner(r *http.Request) *http.Request {
@@ -94,7 +94,7 @@ func asOwner(r *http.Request) *http.Request {
 // user found out when the file was not there.
 func TestAWriteTheNodeRefusedIsNotReportedSaved(t *testing.T) {
 	for _, refuse := range []bool{false, true} {
-		h := &FileHandler{state: writeState(t, refuse)}
+		h := &FileHandler{d: writeState(t, refuse)}
 		r := httptest.NewRequest(http.MethodPost, "/api/files/save?server_uuid=srv-1",
 			strings.NewReader(`{"path":"server.properties","content":"motd=hi"}`))
 		w := httptest.NewRecorder()
@@ -110,7 +110,7 @@ func TestAWriteTheNodeRefusedIsNotReportedSaved(t *testing.T) {
 
 func TestAnUploadTheNodeRefusedIsNotReportedUploaded(t *testing.T) {
 	for _, refuse := range []bool{false, true} {
-		h := &FileHandler{state: writeState(t, refuse)}
+		h := &FileHandler{d: writeState(t, refuse)}
 		body := &bytes.Buffer{}
 		mw := multipart.NewWriter(body)
 		_ = mw.WriteField("server_uuid", "srv-1")

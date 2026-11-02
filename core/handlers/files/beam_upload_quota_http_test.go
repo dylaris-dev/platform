@@ -1,4 +1,4 @@
-package handlers
+package files
 
 import (
 	"bytes"
@@ -52,7 +52,7 @@ func TestUploadFileHandler_DailyQuotaRejects(t *testing.T) {
 	mr.Set(quota.DailyUploadBytesKey, "1000")
 	mr.Set(quota.DailyKey("u", time.Now()), "900")
 
-	h := &FileHandler{state: quotaHTTPState(rdb)}
+	h := &FileHandler{d: quotaHTTPState(rdb)}
 	rw := httptest.NewRecorder()
 	h.UploadFileHandler(rw, newUploadRequest(t, "s1", 200)) // 900 + 200 > 1000
 
@@ -69,7 +69,7 @@ func TestUploadFileHandler_SizeCapRejects(t *testing.T) {
 	rdb, mr := handlertest.Redis(t)
 	mr.Set(quota.MaxUploadBytesKey, "100")
 
-	h := &FileHandler{state: quotaHTTPState(rdb)}
+	h := &FileHandler{d: quotaHTTPState(rdb)}
 	rw := httptest.NewRecorder()
 	h.UploadFileHandler(rw, newUploadRequest(t, "s1", 200)) // single 200-byte file > 100 cap
 
@@ -86,7 +86,7 @@ func (f quotaHTTPFakeStore) GetServerByUUID(uuid string) (*models.Server, error)
 	return &models.Server{ID: 1, UUID: uuid, OwnerID: "someone-else"}, nil
 }
 
-func quotaHTTPState(rdb *redis.Client) *AppState {
+func quotaHTTPState(rdb *redis.Client) Deps {
 	st := quotaHTTPFakeStore{handlertest.NewSettingsStore()}
-	return &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}
+	return Deps{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}
 }

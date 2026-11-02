@@ -1,4 +1,4 @@
-package handlers
+package files
 
 import (
 	"context"
@@ -29,7 +29,7 @@ import (
 func TestCreateAndRenameCheckTheNameInsteadOfRewritingIt(t *testing.T) {
 	rdb, _ := handlertest.Redis(t)
 	st := suspendedUploadStore{quotaHTTPFakeStore{handlertest.NewSettingsStore()}}
-	h := &FileHandler{state: &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
+	h := &FileHandler{d: Deps{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
 
 	call := func(fn func(http.ResponseWriter, *http.Request), body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/api/files/x?server_uuid=s1", strings.NewReader(body))
@@ -139,7 +139,7 @@ func (renameGateStore) GetNodeByID(int) (*models.Node, error) {
 func TestARenameAnOldNodeWouldRewriteIsRefused(t *testing.T) {
 	st := writeState(t, false)
 	st.Store = renameGateStore{}
-	h := &FileHandler{state: st}
+	h := &FileHandler{d: st}
 	r := httptest.NewRequest(http.MethodPost, "/api/files/rename?server_uuid=srv-1",
 		strings.NewReader(`{"oldPath":"a.txt","newPath":"New World"}`))
 	w := httptest.NewRecorder()

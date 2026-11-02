@@ -1,4 +1,4 @@
-package handlers
+package files
 
 import (
 	"bytes"
@@ -54,7 +54,7 @@ func TestUploadWithNoRecognisedFilePartIsRefused(t *testing.T) {
 			req = req.WithContext(ctx)
 
 			rdb, _ := handlertest.Redis(t)
-			h := &FileHandler{state: quotaHTTPState(rdb)}
+			h := &FileHandler{d: quotaHTTPState(rdb)}
 			rec := httptest.NewRecorder()
 
 			h.UploadFileHandler(rec, req)

@@ -1,4 +1,4 @@
-package handlers
+package files
 
 import (
 	"context"
@@ -37,11 +37,11 @@ type FileInfo struct {
 // FileHandler is the handler for file-related API calls
 type FileHandler struct {
 	RootPath string
-	state    *AppState
+	d        Deps
 }
 
-func NewFileHandler(state *AppState) *FileHandler {
-	return &FileHandler{RootPath: "servers", state: state}
+func NewFileHandler(d Deps) *FileHandler {
+	return &FileHandler{RootPath: "servers", d: d}
 }
 
 // getTransferLimit returns the upload or download cap for the current user, on
@@ -53,7 +53,7 @@ func NewFileHandler(state *AppState) *FileHandler {
 // operator who set a user upload limit of zero granted 500 MB, and "no limit"
 // could not be expressed at all.
 //
-// The defaults live in ONE place now (defaultFileManagerSettings) instead of
+// The defaults live in ONE place now (services.DefaultFileManagerSettings) instead of
 // being repeated here: the two copies were already free to drift, and the second
 // one is invisible from the settings screen that appears to own them.
 func (h *FileHandler) getTransferLimit(r *http.Request, limitType string) *int64 {
@@ -62,18 +62,18 @@ func (h *FileHandler) getTransferLimit(r *http.Request, limitType string) *int64
 	var def *int64
 	if limitType == "upload" {
 		if isAdmin {
-			key, def = "fm.admin_upload_limit", defaultFileManagerSettings.AdminUploadLimit
+			key, def = "fm.admin_upload_limit", services.DefaultFileManagerSettings.AdminUploadLimit
 		} else {
-			key, def = "fm.user_upload_limit", defaultFileManagerSettings.UserUploadLimit
+			key, def = "fm.user_upload_limit", services.DefaultFileManagerSettings.UserUploadLimit
 		}
 	} else {
 		if isAdmin {
-			key, def = "fm.admin_download_limit", defaultFileManagerSettings.AdminDownloadLimit
+			key, def = "fm.admin_download_limit", services.DefaultFileManagerSettings.AdminDownloadLimit
 		} else {
-			key, def = "fm.user_download_limit", defaultFileManagerSettings.UserDownloadLimit
+			key, def = "fm.user_download_limit", services.DefaultFileManagerSettings.UserDownloadLimit
 		}
 	}
-	val, err := h.state.Store.GetSetting(key)
+	val, err := h.d.Store.GetSetting(key)
 	if err != nil {
 		return def
 	}
@@ -155,16 +155,16 @@ const fileOpBodyLimit = 64 << 10
 // apply. Save, create, rename and copy are new data a suspended tenant's server
 // takes on just as an upload is; delete stays open on purpose.
 func (h *FileHandler) refuseSuspendedWrite(w http.ResponseWriter, r *http.Request, serverUUID string) bool {
-	if h.state == nil || h.state.Store == nil {
+	if h.d.Store == nil {
 		return false
 	}
-	srv, err := h.state.Store.GetServerByUUID(serverUUID)
+	srv, err := h.d.Store.GetServerByUUID(serverUUID)
 	if err != nil {
 		return false
 	}
 	// A move archives the directory and deletes it on the source after
 	// cutover: a file written meanwhile was lost without a word.
-	return guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) || guard.RefuseIfMoving(w, r, srv)
+	return guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) || guard.RefuseIfMoving(w, r, srv)
 }
 
 // getServerUUIDRead is getServerUUID for read-only operations (list + view file
@@ -186,7 +186,7 @@ func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool, req
 	if uuid == "" {
 		return "", false, nil
 	}
-	if h.state == nil || h.state.Store == nil {
+	if h.d.Store == nil {
 		return uuid, false, nil
 	}
 	username, _ := r.Context().Value("username").(string)
@@ -195,7 +195,7 @@ func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool, req
 	// No admin short-circuit here: the resolver already opens everything to an
 	// admin except a server on somebody else's machine, and this route answering
 	// before it asked was how an admin read and wrote a customer's files anyway.
-	srv, err := h.state.Store.GetServerByUUID(uuid)
+	srv, err := h.d.Store.GetServerByUUID(uuid)
 	if err != nil {
 		return "", false, fmt.Errorf("server not found")
 	}
@@ -204,9 +204,9 @@ func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool, req
 	// requiredCap. files.read is excluded from the resolver's demo-read grant
 	// (see authz.demoReadDeny), so a demo stranger never passes here on reads -
 	// they fall into the demo-bypass branch below, which is redaction-aware.
-	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, srv.ID)
+	res, rerr := h.d.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, srv.ID)
 	if rerr != nil || !res.HasCap(requiredCap) {
-		if allowDemoRead && demo.IsServer(h.state.Store, h.state.StoreEnabled, uuid) {
+		if allowDemoRead && demo.IsServer(h.d.Store, h.d.StoreEnabled, uuid) {
 			return uuid, true, nil // read-only demo access; redaction downstream via viaDemoBypass
 		}
 		return "", false, fmt.Errorf("access denied")
@@ -265,7 +265,7 @@ func demoFileContent(path, content string) string {
 
 // getNodeIDForServer looks up which Node owns this server and returns its NodeID.
 func (h *FileHandler) getNodeIDForServer(serverUUID string) (int, error) {
-	srv, err := h.state.Store.GetServerByUUID(serverUUID)
+	srv, err := h.d.Store.GetServerByUUID(serverUUID)
 	if err != nil {
 		return 0, fmt.Errorf("server not found: %w", err)
 	}
@@ -274,10 +274,10 @@ func (h *FileHandler) getNodeIDForServer(serverUUID string) (int, error) {
 
 // sendGRPCMsg sends a pre-built NodeMessage via gRPC and waits for a response.
 func (h *FileHandler) sendGRPCMsg(nodeID int, msg *pb.NodeMessage, timeout time.Duration) (*pb.NodeMessage, error) {
-	if h.state.GRPCRegistry == nil {
+	if h.d.GRPCRegistry == nil {
 		return nil, fmt.Errorf("gRPC registry not initialized")
 	}
-	return h.state.GRPCRegistry.SendRequest(nodeID, msg, timeout)
+	return h.d.GRPCRegistry.SendRequest(nodeID, msg, timeout)
 }
 
 // GetFilesHandler handles requests to list files in a directory
@@ -371,12 +371,12 @@ func (h *FileHandler) GetFileContentHandler(w http.ResponseWriter, r *http.Reque
 		},
 	}
 
-	ch, err := h.state.GRPCRegistry.SendRequestStreaming(nodeID, msg)
+	ch, err := h.d.GRPCRegistry.SendRequestStreaming(nodeID, msg)
 	if err != nil {
 		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 		return
 	}
-	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
+	defer h.d.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
 	data, errResp, rerr := nodeops.CollectNodeFile(ch, nodeops.MaxOpenFileBytes)
 	if errResp != nil {
@@ -474,7 +474,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, ok := h.state.GRPCRegistry.GetConnection(nodeID)
+	conn, ok := h.d.GRPCRegistry.GetConnection(nodeID)
 	if !ok {
 		httpx.SendJSONError(w, fmt.Sprintf("Node %d not connected", nodeID), http.StatusBadGateway)
 		return
@@ -492,7 +492,7 @@ func (h *FileHandler) SaveFileHandler(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	resp, err := h.state.GRPCRegistry.SendRequest(nodeID, writeReqMsg, 30*time.Second)
+	resp, err := h.d.GRPCRegistry.SendRequest(nodeID, writeReqMsg, 30*time.Second)
 	if err != nil {
 		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 		return
@@ -683,14 +683,14 @@ func oldNodeWouldRewrite(name string) bool {
 }
 
 func (h *FileHandler) nodeRenamesFreely(ctx context.Context, nodeID int) bool {
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		return false
 	}
-	node, err := h.state.Store.GetNodeByID(nodeID)
+	node, err := h.d.Store.GetNodeByID(nodeID)
 	if err != nil || node == nil {
 		return false
 	}
-	return services.NodeRenamesFreely(ctx, h.state.Redis, node.Token)
+	return services.NodeRenamesFreely(ctx, h.d.Redis, node.Token)
 }
 
 // CopyFileHandler handles copying files and directories
@@ -843,12 +843,12 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 		},
 	}
 
-	ch, err := h.state.GRPCRegistry.SendRequestStreaming(nodeID, msg)
+	ch, err := h.d.GRPCRegistry.SendRequestStreaming(nodeID, msg)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 		return
 	}
-	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
+	defer h.d.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
 	// Stream chunks to HTTP response.
 	// First message is metadata TransferDone (TotalBytes=0) with filename — set headers.
@@ -964,12 +964,12 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 		},
 	}
 
-	ch, err := h.state.GRPCRegistry.SendRequestStreaming(nodeID, msg)
+	ch, err := h.d.GRPCRegistry.SendRequestStreaming(nodeID, msg)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
 		return
 	}
-	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
+	defer h.d.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
 	headerWritten := false
 	bodyStarted := false
@@ -1075,9 +1075,9 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Disk quota pre-check: reject upload if it would exceed the limit
-	if h.state.Redis != nil {
+	if h.d.Redis != nil {
 		diskKey := fmt.Sprintf("dylaris:server:%s:stats:disk", serverUUID)
-		if diskData, err := h.state.Redis.Get(context.Background(), diskKey).Result(); err == nil {
+		if diskData, err := h.d.Redis.Get(context.Background(), diskKey).Result(); err == nil {
 			var diskInfo struct {
 				Total int64 `json:"total"`
 				Limit int64 `json:"limit"`
@@ -1111,7 +1111,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	// ticket carries, so browser and beam uploads share one per-user/day bucket
 	// (shared dylaris-pkg/beam/quota). Fail-open, like the disk check above.
 	username, _ := r.Context().Value("username").(string)
-	sizeCap := quota.MaxUploadCap(r.Context(), h.state.Redis) // read once, not once per file
+	sizeCap := quota.MaxUploadCap(r.Context(), h.d.Redis) // read once, not once per file
 	var quotaUploadSize int64
 	for _, fh := range r.MultipartForm.File["files"] {
 		quotaUploadSize += fh.Size
@@ -1121,7 +1121,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if ok, used, limit := quota.CheckDailyQuota(r.Context(), h.state.Redis, username, quotaUploadSize); !ok {
+	if ok, used, limit := quota.CheckDailyQuota(r.Context(), h.d.Redis, username, quotaUploadSize); !ok {
 		httpx.SendJSONError(w, fmt.Sprintf("Daily upload quota reached — %s of %s used today, upload is %s",
 			formatBytesHuman(used), formatBytesHuman(*limit), formatBytesHuman(quotaUploadSize)),
 			http.StatusRequestEntityTooLarge)
@@ -1134,7 +1134,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	conn, ok := h.state.GRPCRegistry.GetConnection(nodeID)
+	conn, ok := h.d.GRPCRegistry.GetConnection(nodeID)
 	if !ok {
 		httpx.SendJSONError(w, fmt.Sprintf("Node %d not connected", nodeID), http.StatusBadGateway)
 		return
@@ -1174,7 +1174,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 			},
 		}
 
-		resp, err := h.state.GRPCRegistry.SendRequest(nodeID, writeReqMsg, 30*time.Second)
+		resp, err := h.d.GRPCRegistry.SendRequest(nodeID, writeReqMsg, 30*time.Second)
 		if err != nil {
 			file.Close()
 			httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
@@ -1251,7 +1251,7 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 	// Count the completed upload against the user's shared daily quota, by the
 	// bytes actually streamed. Runs only on full success; a mid-loop failure
 	// returns above and is not counted.
-	quota.RecordDailyUsage(r.Context(), h.state.Redis, username, uploadedBytes)
+	quota.RecordDailyUsage(r.Context(), h.d.Redis, username, uploadedBytes)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

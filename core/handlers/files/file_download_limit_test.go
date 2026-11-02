@@ -1,4 +1,4 @@
-package handlers
+package files
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func TestGetTransferLimit_ResolvesTheDownloadKeys(t *testing.T) {
 	fs.KV["fm.user_download_limit"] = strconv.Itoa(userDownload)
 	fs.KV["fm.admin_download_limit"] = strconv.Itoa(adminDownload)
 	fs.KV["fm.user_upload_limit"] = strconv.Itoa(userUpload)
-	h := &FileHandler{state: &AppState{Store: fs}}
+	h := &FileHandler{d: Deps{Store: fs}}
 
 	cases := []struct {
 		name      string
@@ -64,7 +64,7 @@ func TestGetTransferLimit_ResolvesTheDownloadKeys(t *testing.T) {
 func TestGetTransferLimit_DownloadFallsBackToTheDefault(t *testing.T) {
 	fs := handlertest.NewSettingsStore()
 	fs.KV["fm.user_download_limit"] = "not-a-number"
-	h := &FileHandler{state: &AppState{Store: fs}}
+	h := &FileHandler{d: Deps{Store: fs}}
 
 	if got := h.getTransferLimit(downloadLimitRequest(false), "download"); got == nil || *got != 1*1024*1024*1024 {
 		t.Fatalf("unparseable setting gave %v, want the 1 GiB user default", got)
@@ -143,7 +143,7 @@ func TestGetTransferLimit_ZeroIsNoneAndUnlimitedIsNoCap(t *testing.T) {
 	fs := handlertest.NewSettingsStore()
 	fs.KV["fm.user_upload_limit"] = "0"
 	fs.KV["fm.user_download_limit"] = "unlimited"
-	h := &FileHandler{state: &AppState{Store: fs}}
+	h := &FileHandler{d: Deps{Store: fs}}
 
 	got := h.getTransferLimit(downloadLimitRequest(false), "upload")
 	if got == nil || *got != 0 {

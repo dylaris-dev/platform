@@ -1,4 +1,4 @@
-package handlers
+package files
 
 import (
 	"context"
@@ -18,7 +18,7 @@ func TestSaveFileHandler_RejectsOversizedBody(t *testing.T) {
 	fs := handlertest.NewSettingsStore()
 	fs.KV["fm.admin_upload_limit"] = "100" // tiny ceiling so the test body is small
 
-	h := &FileHandler{state: &AppState{Store: fs}}
+	h := &FileHandler{d: Deps{Store: fs}}
 
 	body := `{"path":"server.properties","content":"` + strings.Repeat("x", 300) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/files/save", strings.NewReader(body))
@@ -40,7 +40,7 @@ func TestSaveFileHandler_IsCappedBelowTheUploadLimit(t *testing.T) {
 	for _, upload := range []string{"unlimited", "1073741824"} {
 		fs := handlertest.NewSettingsStore()
 		fs.KV["fm.user_upload_limit"] = upload
-		h := &FileHandler{state: &AppState{Store: fs}}
+		h := &FileHandler{d: Deps{Store: fs}}
 
 		req := httptest.NewRequest(http.MethodPost, "/api/files/save", strings.NewReader("{}"))
 		req.ContentLength = saveBodyLimit + 1

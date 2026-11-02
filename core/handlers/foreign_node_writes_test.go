@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"dylaris-core/authz"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
@@ -41,38 +40,6 @@ func TestNodeOwnedByOther(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := (&AppState{Store: c.st, FeatureFlags: services.NewFeatureFlags(c.st)}).NodeOwnedByOther(7, c.user); got != c.want {
 				t.Errorf("NodeOwnedByOther = %v, want %v", got, c.want)
-			}
-		})
-	}
-}
-
-// foreignState builds the state the way main does: the resolver asks the same
-// predicate the handlers ask.
-func foreignState(node *models.Node) *AppState {
-	st := &handlertest.ForeignStore{Node: node, Byon: "true"}
-	s := &AppState{Store: st, Authz: authz.NewResolver(st), FeatureFlags: services.NewFeatureFlags(st)}
-	s.Authz.SetForeignNode(s.NodeOwnedByOther)
-	return s
-}
-
-// TestFilesAndBeamAskTheResolverForAnAdmin: both answered an admin before the
-// resolver was consulted, which made the resolver fence decorative.
-func TestFilesAndBeamAskTheResolverForAnAdmin(t *testing.T) {
-	for _, c := range []struct {
-		name    string
-		node    *models.Node
-		allowed bool
-	}{
-		{"a customer's machine", handlertest.OwnedNode(), false},
-		{"a platform machine", handlertest.PlatformNode(), true},
-	} {
-		t.Run("files/"+c.name, func(t *testing.T) {
-			h := &FileHandler{state: foreignState(c.node)}
-			r := handlertest.AdminRequest("GET", nil, "")
-			r.URL.RawQuery = "server_uuid=srv-1"
-			uuid, err := h.getServerUUID(r, "files.write")
-			if (err == nil && uuid == "srv-1") != c.allowed {
-				t.Fatalf("err = %v, allowed = %v", err, c.allowed)
 			}
 		})
 	}

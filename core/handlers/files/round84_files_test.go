@@ -1,4 +1,4 @@
-package handlers
+package files
 
 import (
 	"bytes"
@@ -42,7 +42,7 @@ func (c *countingBody) Close() error { return nil }
 func TestAnUploadIsRefusedBeforeItsBodyIsRead(t *testing.T) {
 	rdb, _ := handlertest.Redis(t)
 	st := noServerStore{quotaHTTPFakeStore{handlertest.NewSettingsStore()}}
-	h := &FileHandler{state: &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
+	h := &FileHandler{d: Deps{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
 
 	req := newUploadRequest(t, "s1", 1<<20)
 	body := &countingBody{r: req.Body}
@@ -70,7 +70,7 @@ func TestAnUploadIsRefusedBeforeItsBodyIsRead(t *testing.T) {
 func TestEveryFileWriteRefusesASuspendedTenant(t *testing.T) {
 	rdb, _ := handlertest.Redis(t)
 	st := suspendedUploadStore{quotaHTTPFakeStore{handlertest.NewSettingsStore()}}
-	h := &FileHandler{state: &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
+	h := &FileHandler{d: Deps{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
 
 	for name, tc := range map[string]struct {
 		call func(http.ResponseWriter, *http.Request)
@@ -98,7 +98,7 @@ func TestEveryFileWriteRefusesASuspendedTenant(t *testing.T) {
 
 // The small file operations decoded their JSON bodies unbounded.
 func TestFileOperationBodiesAreBounded(t *testing.T) {
-	h := &FileHandler{state: &AppState{}}
+	h := &FileHandler{d: Deps{}}
 	long := strings.Repeat("a", fileOpBodyLimit+1)
 	huge := `{"path":"` + long + `","oldPath":"` + long + `","newPath":"b"}`
 	for name, call := range map[string]func(http.ResponseWriter, *http.Request){
@@ -136,7 +136,7 @@ func (s movingServerStore) GetServerByUUID(uuid string) (*models.Server, error) 
 func TestFileWritesWaitForAMove(t *testing.T) {
 	rdb, _ := handlertest.Redis(t)
 	st := movingServerStore{quotaHTTPFakeStore{handlertest.NewSettingsStore()}}
-	h := &FileHandler{state: &AppState{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
+	h := &FileHandler{d: Deps{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
 	req := httptest.NewRequest(http.MethodPost, "/api/files/x?server_uuid=s1", strings.NewReader(`{"path":"a.txt","content":"x"}`))
 	ctx := context.WithValue(req.Context(), "username", "u")
 	ctx = context.WithValue(ctx, "isAdmin", true)

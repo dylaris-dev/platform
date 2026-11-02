@@ -12,6 +12,7 @@ import (
 	"dylaris-core/handlers/beam"
 	"dylaris-core/handlers/billing"
 	"dylaris-core/handlers/console"
+	"dylaris-core/handlers/files"
 	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/gateway"
 	"dylaris-core/handlers/health"
@@ -743,12 +744,20 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		GRPCRegistry: appState.GRPCRegistry,
 		StoreEnabled: appState.StoreEnabled,
 	}
+	filesDeps := files.Deps{
+		Store:        appState.Store,
+		Redis:        appState.Redis,
+		Authz:        appState.Authz,
+		GRPCRegistry: appState.GRPCRegistry,
+		StoreEnabled: appState.StoreEnabled,
+		SuspendGrace: appState.SuspendGrace,
+	}
 
 	// Initialize handlers
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
 	systemHandler := health.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyHostSuffix)
-	fileHandler := handlers.NewFileHandler(appState)
+	fileHandler := files.NewFileHandler(filesDeps)
 	settingsHandler := handlers.NewSettingsHandler(appState)
 	authzHandler := handlers.NewAuthzHandler()
 	avatarHandler := handlers.NewAvatarHandler()

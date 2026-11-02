@@ -34,28 +34,6 @@ func NewSettingsHandler(state *AppState) *SettingsHandler {
 
 // --- File Manager Settings ---
 
-// FileManagerSettings holds the four browser transfer ceilings, on the platform
-// limit convention: nil is no limit, 0 is none (transfers refused), n is the cap
-// in bytes.
-//
-// They were plain int64 and the enforcement site guarded on `n > 0`, so a stored
-// 0 fell through to the built-in default - which made "nobody may upload" say
-// two gigabytes, and left no way to express "no limit" at all. Both ends of the
-// range were unreachable from the screen that edits them.
-type FileManagerSettings struct {
-	AdminUploadLimit   *int64 `json:"adminUploadLimit"`   // bytes
-	AdminDownloadLimit *int64 `json:"adminDownloadLimit"` // bytes
-	UserUploadLimit    *int64 `json:"userUploadLimit"`    // bytes
-	UserDownloadLimit  *int64 `json:"userDownloadLimit"`  // bytes
-}
-
-var defaultFileManagerSettings = FileManagerSettings{
-	AdminUploadLimit:   services.LimitPtr(2 * 1024 * 1024 * 1024), // 2 GB
-	AdminDownloadLimit: services.LimitPtr(5 * 1024 * 1024 * 1024), // 5 GB
-	UserUploadLimit:    services.LimitPtr(500 * 1024 * 1024),      // 500 MB
-	UserDownloadLimit:  services.LimitPtr(1 * 1024 * 1024 * 1024), // 1 GB
-}
-
 // GetFileManagerSettings GET /api/settings/filemanager - PANEL settings.read (RequireCap at the route).
 func (h *SettingsHandler) GetFileManagerSettings(w http.ResponseWriter, r *http.Request) {
 	settings := h.loadFileManagerSettings()
@@ -68,7 +46,7 @@ func (h *SettingsHandler) GetFileManagerSettings(w http.ResponseWriter, r *http.
 
 // SaveFileManagerSettings POST /api/settings/filemanager - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SaveFileManagerSettings(w http.ResponseWriter, r *http.Request) {
-	var req FileManagerSettings
+	var req services.FileManagerSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -94,8 +72,8 @@ func (h *SettingsHandler) SaveFileManagerSettings(w http.ResponseWriter, r *http
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-func (h *SettingsHandler) loadFileManagerSettings() FileManagerSettings {
-	settings := defaultFileManagerSettings
+func (h *SettingsHandler) loadFileManagerSettings() services.FileManagerSettings {
+	settings := services.DefaultFileManagerSettings
 
 	// ParseLimitSetting, not a hand-rolled Sscanf with `n > 0`. That guard is
 	// what threw away a stored 0 - the one value meaning "none" was the one value
