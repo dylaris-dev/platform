@@ -4,9 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 )
 
@@ -38,7 +37,7 @@ const (
 	noteAdminCC  = "eeeeeeee-0000-4000-8000-000000000005"
 )
 
-func internalNoteFixture() (*handlers.AppState, *models.Ticket, *internalNoteStore) {
+func internalNoteFixture() (Deps, *models.Ticket, *internalNoteStore) {
 	assignee := noteAssignee
 	fs := &internalNoteStore{
 		watchers: []models.TicketWatcher{
@@ -56,7 +55,7 @@ func internalNoteFixture() (*handlers.AppState, *models.Ticket, *internalNoteSto
 			noteAdminCC:  {ID: noteAdminCC, IsAdmin: true},
 		},
 	}
-	return withCoreStorage(&handlers.AppState{Store: fs}), &models.Ticket{ID: 7, UserID: noteUserCC, AssignedUserID: &assignee}, fs
+	return Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}}, &models.Ticket{ID: 7, UserID: noteUserCC, AssignedUserID: &assignee}, fs
 }
 
 // An internal note is staff-only. The customer must never be told one exists,

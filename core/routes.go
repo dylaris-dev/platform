@@ -622,6 +622,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		TabProxyHostSuffix: appState.TabProxyHostSuffix,
 		StoreEnabled:       appState.StoreEnabled,
 	}
+	ticketsDeps := tickets.Deps{
+		Store:               appState.Store,
+		Authz:               appState.Authz,
+		Events:              appState.Events,
+		CoreStorage:         appState.CoreStorage,
+		ExternalTicketDBURL: appState.ExternalTicketDBURL,
+	}
 	templatesDeps := templates.Deps{
 		Store:        appState.Store,
 		Authz:        appState.Authz,
@@ -687,16 +694,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	passwordResetHandler := handlers.NewPasswordResetHandler(appState)
 	securityQuestionsHandler := handlers.NewSecurityQuestionsHandler(appState)
 	maintenanceHandler := handlers.NewMaintenanceHandler(appState)
-	ticketCategoriesHandler := tickets.NewTicketCategoriesHandler(appState)
-	ticketsHandler := tickets.NewTicketsHandler(appState)
-	ticketSettingsHandler := tickets.NewTicketSettingsHandler(appState)
-	ticketAttachmentsHandler := tickets.NewTicketAttachmentsHandler(appState)
-	cannedResponsesHandler := tickets.NewCannedResponsesHandler(appState)
+	ticketCategoriesHandler := tickets.NewTicketCategoriesHandler(ticketsDeps)
+	ticketsHandler := tickets.NewTicketsHandler(ticketsDeps)
+	ticketSettingsHandler := tickets.NewTicketSettingsHandler(ticketsDeps)
+	ticketAttachmentsHandler := tickets.NewTicketAttachmentsHandler(ticketsDeps)
+	cannedResponsesHandler := tickets.NewCannedResponsesHandler(ticketsDeps)
 	notificationsHandler := handlers.NewNotificationsHandler(appState)
 	serverAuditHandler := audit.NewServerAuditHandler(appState.Store)
 	identityAuditHandler := audit.NewIdentityAuditHandler(appState.Store)
 	auditSettingsHandler := handlers.NewAuditSettingsHandler(appState)
-	ticketMigrationHandler := tickets.NewTicketMigrationHandler(appState)
+	ticketMigrationHandler := tickets.NewTicketMigrationHandler(ticketsDeps)
 	systemEventsHandler := handlers.NewSystemEventsHandler(appState)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
 	rconHandler := servers.NewRconHandler(appState)
@@ -734,7 +741,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	gatewayDNSHandler := gateway.NewGatewayDNSHandler(appState)
 	gatewayBandwidthHandler := gateway.NewGatewayBandwidthHandler(appState)
 	voiceStatsHandler := handlers.NewVoiceStatsHandler(appState)
-	ticketDeletionsHandler := tickets.NewTicketDeletionsHandler(appState)
+	ticketDeletionsHandler := tickets.NewTicketDeletionsHandler(ticketsDeps)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
 	// Set up router and API endpoints

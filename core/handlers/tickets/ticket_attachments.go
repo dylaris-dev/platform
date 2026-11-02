@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/guard"
@@ -30,13 +29,13 @@ import (
 )
 
 type TicketAttachmentsHandler struct {
-	state   *handlers.AppState
+	d       Deps
 	scanner AttachmentScanner
 }
 
-func NewTicketAttachmentsHandler(state *handlers.AppState) *TicketAttachmentsHandler {
+func NewTicketAttachmentsHandler(d Deps) *TicketAttachmentsHandler {
 	return &TicketAttachmentsHandler{
-		state:   state,
+		d:       d,
 		scanner: newAttachmentScanner(),
 	}
 }
@@ -290,18 +289,18 @@ func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms access.Effe
 // team - who cannot open the ticket - could still add files to it and delete
 // its attachments by walking the sequential ids.
 func (h *TicketAttachmentsHandler) seesTicket(t *models.Ticket, perms access.EffectivePermissions, userID string) bool {
-	return callerSeesTicket(h.state, t, perms, userID)
+	return callerSeesTicket(h.d, t, perms, userID)
 }
 
 // callerSeesTicket is canSeeTicket with the watcher flag and support team
 // looked up for the caller.
-func callerSeesTicket(state *handlers.AppState, t *models.Ticket, perms access.EffectivePermissions, userID string) bool {
-	isWatcher, _ := state.Store.IsTicketWatcher(t.ID, userID)
+func callerSeesTicket(d Deps, t *models.Ticket, perms access.EffectivePermissions, userID string) bool {
+	isWatcher, _ := d.Store.IsTicketWatcher(t.ID, userID)
 	myTeam := ""
-	if me, err := state.Store.GetUserByID(userID); err == nil && me != nil {
+	if me, err := d.Store.GetUserByID(userID); err == nil && me != nil {
 		myTeam = me.SupportTeam
 	}
-	return canSeeTicket(t, perms, userID, isWatcher, LoadTicketSettings(state), myTeam)
+	return canSeeTicket(t, perms, userID, isWatcher, LoadTicketSettings(d), myTeam)
 }
 
 func (h *TicketAttachmentsHandler) loadTicketAndGate(w http.ResponseWriter, r *http.Request) (*models.Ticket, access.EffectivePermissions, string, bool) {
@@ -310,20 +309,20 @@ func (h *TicketAttachmentsHandler) loadTicketAndGate(w http.ResponseWriter, r *h
 		httpx.SendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
 		return nil, access.EffectivePermissions{}, "", false
 	}
-	t, err := h.state.Store.GetTicket(id)
+	t, err := h.d.Store.GetTicket(id)
 	if err != nil || t == nil {
 		httpx.SendJSONError(w, "Ticket not found", http.StatusNotFound)
 		return nil, access.EffectivePermissions{}, "", false
 	}
 	userID, _ := r.Context().Value("userID").(string)
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
 	return t, perms, userID, true
 }
 
 // messageOnTicket reports whether a message belongs to the ticket an
 // attachment is uploaded to; an id from another ticket is dropped, not linked.
 func (h *TicketAttachmentsHandler) messageOnTicket(ticketID, messageID int) bool {
-	msgs, err := h.state.Store.ListTicketMessages(ticketID, true)
+	msgs, err := h.d.Store.ListTicketMessages(ticketID, true)
 	if err != nil {
 		return false
 	}
@@ -438,10 +437,10 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	isWatcher, _ := h.state.Store.IsTicketWatcher(t.ID, userID)
+	isWatcher, _ := h.d.Store.IsTicketWatcher(t.ID, userID)
 	watcherCanReply := false
 	if isWatcher {
-		watchers, _ := h.state.Store.ListTicketWatchers(t.ID)
+		watchers, _ := h.d.Store.ListTicketWatchers(t.ID)
 		for _, w := range watchers {
 			if w.UserID == userID {
 				watcherCanReply = w.CanReply
@@ -454,7 +453,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		return
 	}
 
-	settings := LoadTicketSettings(h.state)
+	settings := LoadTicketSettings(h.d)
 
 	// Bound the body BEFORE parsing it. ParseMultipartForm reads the WHOLE
 	// request first - spilling everything past its memory budget to a temp file -
@@ -510,7 +509,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		// A quota that cannot be read must not read as empty: discarding this
 		// error made `current` 0, so only the per-FILE limit still applied and
 		// the per-ticket total could be exceeded freely.
-		current, cerr := h.state.Store.SumAttachmentBytesByTicket(t.ID)
+		current, cerr := h.d.Store.SumAttachmentBytesByTicket(t.ID)
 		if cerr != nil {
 			httpx.SendJSONError(w, "Could not verify the ticket attachment quota", http.StatusInternalServerError)
 			return
@@ -522,7 +521,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	}
 	if settings.MaxUserSizeMB != nil {
 		maxUser := *settings.MaxUserSizeMB * 1024 * 1024
-		current, cerr := h.state.Store.SumAttachmentBytesByUser(userID)
+		current, cerr := h.d.Store.SumAttachmentBytesByUser(userID)
 		if cerr != nil {
 			httpx.SendJSONError(w, "Could not verify your attachment quota", http.StatusInternalServerError)
 			return
@@ -592,7 +591,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		body = tmp // stream the scanned temp file to storage
 	}
 
-	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixAttachments)
+	prov, err := h.d.CoreStorage.BuildProvider(corestorage.PrefixAttachments)
 	if err != nil {
 		guard.CoreStorageUnavailableResponse(w, err)
 		return
@@ -625,7 +624,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		StorageKey: storageKey,
 		UploadedBy: &uid,
 	}
-	insertedID, err := h.state.Store.AddTicketAttachment(a)
+	insertedID, err := h.d.Store.AddTicketAttachment(a)
 	if err != nil {
 		// Best-effort cleanup if the DB rejected after the file landed.
 		_ = prov.DeletePath(r.Context(), storageKey)
@@ -635,7 +634,7 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 	a.ID = insertedID
 
 	aid := userID
-	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
+	_ = h.d.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    t.ID,
 		EventType:   audit.TicketEventAttachmentAdded,
 		ActorUserID: &aid,
@@ -659,17 +658,17 @@ func (h *TicketAttachmentsHandler) ListAttachments(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	settings := LoadTicketSettings(h.state)
-	isWatcher, _ := h.state.Store.IsTicketWatcher(t.ID, userID)
+	settings := LoadTicketSettings(h.d)
+	isWatcher, _ := h.d.Store.IsTicketWatcher(t.ID, userID)
 	myTeam := ""
-	if me, err := h.state.Store.GetUserByID(userID); err == nil && me != nil {
+	if me, err := h.d.Store.GetUserByID(userID); err == nil && me != nil {
 		myTeam = me.SupportTeam
 	}
 	if !canSeeTicket(t, perms, userID, isWatcher, settings, myTeam) {
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	atts, err := h.state.Store.ListTicketAttachments(t.ID)
+	atts, err := h.d.Store.ListTicketAttachments(t.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load attachments", http.StatusInternalServerError)
 		return
@@ -692,10 +691,10 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	settings := LoadTicketSettings(h.state)
-	isWatcher, _ := h.state.Store.IsTicketWatcher(t.ID, userID)
+	settings := LoadTicketSettings(h.d)
+	isWatcher, _ := h.d.Store.IsTicketWatcher(t.ID, userID)
 	myTeam := ""
-	if me, err := h.state.Store.GetUserByID(userID); err == nil && me != nil {
+	if me, err := h.d.Store.GetUserByID(userID); err == nil && me != nil {
 		myTeam = me.SupportTeam
 	}
 	if !canSeeTicket(t, perms, userID, isWatcher, settings, myTeam) {
@@ -707,13 +706,13 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 		httpx.SendJSONError(w, "Invalid attachment id", http.StatusBadRequest)
 		return
 	}
-	a, err := h.state.Store.GetTicketAttachment(aid)
+	a, err := h.d.Store.GetTicketAttachment(aid)
 	if err != nil || a == nil || a.TicketID != t.ID {
 		httpx.SendJSONError(w, "Attachment not found", http.StatusNotFound)
 		return
 	}
 
-	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixAttachments)
+	prov, err := h.d.CoreStorage.BuildProvider(corestorage.PrefixAttachments)
 	if err != nil {
 		guard.CoreStorageUnavailableResponse(w, err)
 		return
@@ -754,7 +753,7 @@ func (h *TicketAttachmentsHandler) DeleteAttachment(w http.ResponseWriter, r *ht
 		return
 	}
 	aid, _ := strconv.Atoi(mux.Vars(r)["aid"])
-	a, err := h.state.Store.GetTicketAttachment(aid)
+	a, err := h.d.Store.GetTicketAttachment(aid)
 	if err != nil || a == nil || a.TicketID != t.ID {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
@@ -771,7 +770,7 @@ func (h *TicketAttachmentsHandler) DeleteAttachment(w http.ResponseWriter, r *ht
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	if err := h.state.Store.DeleteTicketAttachment(aid); err != nil {
+	if err := h.d.Store.DeleteTicketAttachment(aid); err != nil {
 		httpx.SendJSONError(w, "Delete failed", http.StatusInternalServerError)
 		return
 	}
@@ -779,12 +778,12 @@ func (h *TicketAttachmentsHandler) DeleteAttachment(w http.ResponseWriter, r *ht
 	// unavailable here must not fail the whole request - it's logged and
 	// skipped, exactly like TicketDeletionsHandler.DeleteTicket's cascade
 	// cleanup (ticket_deletions.go).
-	if prov, perr := h.state.CoreStorage.BuildProvider(corestorage.PrefixAttachments); perr != nil {
+	if prov, perr := h.d.CoreStorage.BuildProvider(corestorage.PrefixAttachments); perr != nil {
 		log.Printf("ticket-attachments: core storage unavailable, skipping blob cleanup for attachment %d (%s): %v", aid, a.StorageKey, perr)
 	} else {
 		_ = prov.DeletePath(r.Context(), a.StorageKey)
 	}
-	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
+	_ = h.d.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    t.ID,
 		EventType:   audit.TicketEventAttachmentRemoved,
 		ActorUserID: &userID,

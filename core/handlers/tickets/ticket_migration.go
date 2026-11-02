@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/reauth"
@@ -42,7 +41,7 @@ import (
 //   - A typed confirmation phrase matching the backup name
 //   - A 15-second cooldown between "initiate" and "execute" so a misclick can be cancelled
 type TicketMigrationHandler struct {
-	state *handlers.AppState
+	d Deps
 
 	// Outstanding restore tokens. Cleared when consumed or when expired.
 	tokensMu sync.Mutex
@@ -62,9 +61,9 @@ const (
 	restoreTTL      = 5 * time.Minute
 )
 
-func NewTicketMigrationHandler(state *handlers.AppState) *TicketMigrationHandler {
+func NewTicketMigrationHandler(d Deps) *TicketMigrationHandler {
 	return &TicketMigrationHandler{
-		state:  state,
+		d:      d,
 		tokens: make(map[string]*restoreToken),
 	}
 }
@@ -111,7 +110,7 @@ func (h *TicketMigrationHandler) GetStatus(w http.ResponseWriter, r *http.Reques
 	}
 	counts := map[string]int{}
 	for _, t := range store.TicketTablesInOrder() {
-		n, err := h.state.Store.CountTicketRows(t)
+		n, err := h.d.Store.CountTicketRows(t)
 		if err == nil {
 			counts[t] = n
 		}
@@ -119,7 +118,7 @@ func (h *TicketMigrationHandler) GetStatus(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":            true,
 		"mainCounts":         counts,
-		"externalConfigured": h.state.ExternalTicketDBURL != "",
+		"externalConfigured": h.d.ExternalTicketDBURL != "",
 	})
 }
 
@@ -152,14 +151,14 @@ func (h *TicketMigrationHandler) TestExternalConnection(w http.ResponseWriter, r
 	// failed" was the message for both - see services/conncheck.go.
 	if host, port, ok := services.HostPortFromPostgresDSN(url); ok {
 		if reach := services.Reachable(r.Context(), host, port); !reach.OK {
-			handlers.SendConnTestFailure(w, reach)
+			guard.SendConnTestFailure(w, reach)
 			return
 		}
 	}
 
 	db, err := sql.Open("postgres", url)
 	if err != nil {
-		handlers.SendConnTestFailure(w, services.Rejected("That DSN could not be parsed: "+err.Error()))
+		guard.SendConnTestFailure(w, services.Rejected("That DSN could not be parsed: "+err.Error()))
 		return
 	}
 	defer db.Close()
@@ -167,7 +166,7 @@ func (h *TicketMigrationHandler) TestExternalConnection(w http.ResponseWriter, r
 
 	var version string
 	if err := db.QueryRow("SELECT version()").Scan(&version); err != nil {
-		handlers.SendConnTestFailure(w, services.Rejected(services.DescribePostgresError(err)))
+		guard.SendConnTestFailure(w, services.Rejected(services.DescribePostgresError(err)))
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -196,7 +195,7 @@ func (h *TicketMigrationHandler) DryRunMigration(w http.ResponseWriter, r *http.
 	}
 	src := map[string]int{}
 	for _, t := range store.TicketTablesInOrder() {
-		n, _ := h.state.Store.CountTicketRows(t)
+		n, _ := h.d.Store.CountTicketRows(t)
 		src[t] = n
 	}
 	dst := map[string]int{}
@@ -254,7 +253,7 @@ func (h *TicketMigrationHandler) ExecuteMigration(w http.ResponseWriter, r *http
 	migrated := map[string]int{}
 	skipped := map[string]int{}
 	for _, t := range store.TicketTablesInOrder() {
-		rows, err := h.state.Store.DumpTicketTable(t)
+		rows, err := h.d.Store.DumpTicketTable(t)
 		if err != nil {
 			httpx.SendJSONError(w, "Dump failed for "+t+": "+err.Error(), http.StatusInternalServerError)
 			return
@@ -291,7 +290,7 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 	if !h.requireAdmin(w, r) {
 		return
 	}
-	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
+	prov, err := h.d.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
 		guard.CoreStorageUnavailableResponse(w, err)
 		return
@@ -301,7 +300,7 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 	counts := map[string]int{}
 	dump := map[string]interface{}{}
 	for _, t := range tables {
-		rows, err := h.state.Store.DumpTicketTable(t)
+		rows, err := h.d.Store.DumpTicketTable(t)
 		if err != nil {
 			httpx.SendJSONError(w, "Dump failed for "+t+": "+err.Error(), http.StatusInternalServerError)
 			return
@@ -363,7 +362,7 @@ func (h *TicketMigrationHandler) ListBackups(w http.ResponseWriter, r *http.Requ
 	if !h.requireAdmin(w, r) {
 		return
 	}
-	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
+	prov, err := h.d.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
 		guard.CoreStorageUnavailableResponse(w, err)
 		return
@@ -400,7 +399,7 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
+	prov, err := h.d.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
 		guard.CoreStorageUnavailableResponse(w, err)
 		return
@@ -443,7 +442,7 @@ func (h *TicketMigrationHandler) DeleteBackup(w http.ResponseWriter, r *http.Req
 		httpx.SendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
-	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
+	prov, err := h.d.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
 		guard.CoreStorageUnavailableResponse(w, err)
 		return
@@ -470,7 +469,7 @@ func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	userID, _ := r.Context().Value("userID").(string)
-	user, err := h.state.Store.GetUserByID(userID)
+	user, err := h.d.Store.GetUserByID(userID)
 	if err != nil || user == nil {
 		httpx.SendJSONError(w, "User not found", http.StatusUnauthorized)
 		return
@@ -489,7 +488,7 @@ func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
-	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
+	prov, err := h.d.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
 		guard.CoreStorageUnavailableResponse(w, err)
 		return
@@ -584,7 +583,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 
 	// 2FA gate — must be valid TOTP (NOT backup codes; those are for
 	// emergency login, not destructive admin actions).
-	user, err := h.state.Store.GetUserByID(userID)
+	user, err := h.d.Store.GetUserByID(userID)
 	if err != nil || user == nil || !user.Is2FAEnabled {
 		httpx.SendJSONError(w, "Account no longer has 2FA — aborting", http.StatusForbidden)
 		return
@@ -612,7 +611,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
+	prov, err := h.d.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
 		guard.CoreStorageUnavailableResponse(w, err)
 		return
@@ -643,12 +642,12 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 
 	// Wipe + reload inside a single transaction so a mid-restore crash
 	// rolls back to the previous state cleanly.
-	if err := wipeAndReload(h.state.Store, payload.Tables); err != nil {
+	if err := wipeAndReload(h.d.Store, payload.Tables); err != nil {
 		httpx.SendJSONError(w, "Restore failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	audit.LogIdentity(h.state.Store, r, "ticket_restore_executed", userID, "", map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, "ticket_restore_executed", userID, "", map[string]interface{}{
 		"backup": t.BackupName,
 	})
 

@@ -10,9 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 
 	"github.com/pquerna/otp/totp"
@@ -49,11 +48,10 @@ func newRestoreTest(t *testing.T) (*TicketMigrationHandler, string, string) {
 		t.Fatalf("generate totp: %v", err)
 	}
 	secret := key.Secret()
-	h := NewTicketMigrationHandler(withCoreStorage(&handlers.AppState{
-		Store: &restoreFakeStore{user: &models.User{
-			ID: restoreTestUser, Is2FAEnabled: true, TOTPSecret: secret,
-		}},
-	}))
+	st := &restoreFakeStore{user: &models.User{
+		ID: restoreTestUser, Is2FAEnabled: true, TOTPSecret: secret,
+	}}
+	h := NewTicketMigrationHandler(Deps{Store: st, CoreStorage: &corestorage.Manager{Store: st}})
 	const token = "0123456789abcdef0123456789abcdef0123456789abcdef"
 	now := time.Now()
 	h.tokens[token] = &restoreToken{

@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 
@@ -21,11 +20,11 @@ import (
 )
 
 type TicketsHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewTicketsHandler(state *handlers.AppState) *TicketsHandler {
-	return &TicketsHandler{state: state}
+func NewTicketsHandler(d Deps) *TicketsHandler {
+	return &TicketsHandler{d: d}
 }
 
 // ── Visibility + edit-permission helpers ─────────────────────────────
@@ -123,15 +122,15 @@ func canMutate(perms access.EffectivePermissions) bool {
 // both an unknown uuid and someone else's, so a false result must not report
 // which it was. The region is only meaningful when ok is true.
 func (h *TicketsHandler) mayAttachServer(userID, username, serverUUID string) (string, bool) {
-	if h.state == nil || h.state.Store == nil || h.state.Authz == nil {
+	if h.d.Store == nil || h.d.Authz == nil {
 		return "", false
 	}
-	srv, err := h.state.Store.GetServerByUUID(serverUUID)
+	srv, err := h.d.Store.GetServerByUUID(serverUUID)
 	if err != nil || srv == nil {
 		return "", false
 	}
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
-	res, rerr := h.state.Authz.Resolve(authz.Identity{
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
+	res, rerr := h.d.Authz.Resolve(authz.Identity{
 		UserID: userID, Username: username, IsAdmin: perms.IsAdmin,
 	}, srv.ID)
 	if rerr != nil {
@@ -207,7 +206,7 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "First message must be 1-10000 characters", http.StatusBadRequest)
 		return
 	}
-	cat, err := h.state.Store.GetTicketCategory(req.CategoryID)
+	cat, err := h.d.Store.GetTicketCategory(req.CategoryID)
 	if err != nil || cat == nil || !cat.Enabled {
 		httpx.SendJSONError(w, "Unknown or disabled category", http.StatusBadRequest)
 		return
@@ -289,7 +288,7 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		Priority:     priority,
 		AssignedTeam: cat.DefaultAssigneeTeam,
 	}
-	id, err := h.state.Store.CreateTicket(t)
+	id, err := h.d.Store.CreateTicket(t)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to create ticket", http.StatusInternalServerError)
 		return
@@ -301,7 +300,7 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		UserID:   userID,
 		Body:     body,
 	}
-	if _, err := h.state.Store.AddTicketMessage(msg); err != nil {
+	if _, err := h.d.Store.AddTicketMessage(msg); err != nil {
 		// Non-fatal by design: the ticket row exists, so failing the request
 		// would leave the user unable to tell whether anything was created.
 		// But it must not be SILENT - support then opens a ticket with no body
@@ -310,7 +309,7 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 		log.Printf("tickets: ticket %d created but its first message failed to save: %v", id, err)
 	}
 	actor := userID
-	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
+	_ = h.d.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    id,
 		EventType:   audit.TicketEventCreated,
 		ActorUserID: &actor,
@@ -328,9 +327,9 @@ func (h *TicketsHandler) CreateTicket(w http.ResponseWriter, r *http.Request) {
 	// so the only way to learn about a new ticket was to open the inbox and
 	// look. Measured on production: a customer opened a ticket and the admin's
 	// bell stayed at zero.
-	notifyTicketStaff(h.state, userID, id, title)
+	notifyTicketStaff(h.d, userID, id, title)
 
-	created, _ := h.state.Store.GetTicket(id)
+	created, _ := h.d.Store.GetTicket(id)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"ticket":  created,
@@ -355,7 +354,7 @@ func (h *TicketsHandler) ListMyTickets(w http.ResponseWriter, r *http.Request) {
 		Limit:    httpx.ParseIntDefault(q.Get("limit"), 50),
 		Offset:   httpx.ParseIntDefault(q.Get("offset"), 0),
 	}
-	tickets, err := h.state.Store.ListTickets(filter)
+	tickets, err := h.d.Store.ListTickets(filter)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load tickets", http.StatusInternalServerError)
 		return
@@ -376,8 +375,8 @@ func (h *TicketsHandler) ListMyTickets(w http.ResponseWriter, r *http.Request) {
 // status/priority/category/assigned querystring.
 func (h *TicketsHandler) ListInboxTickets(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
-	settings := LoadTicketSettings(h.state)
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
+	settings := LoadTicketSettings(h.d)
 	q := r.URL.Query()
 
 	// Base filter from visibility scope. We don't apply assigned_team
@@ -400,7 +399,7 @@ func (h *TicketsHandler) ListInboxTickets(w http.ResponseWriter, r *http.Request
 	case "mine":
 		filter.AssignedUserID = &userID
 	case "team":
-		me, _ := h.state.Store.GetUserByID(userID)
+		me, _ := h.d.Store.GetUserByID(userID)
 		if me != nil && me.SupportTeam != "" {
 			filter.AssignedTeam = me.SupportTeam
 		}
@@ -418,7 +417,7 @@ func (h *TicketsHandler) ListInboxTickets(w http.ResponseWriter, r *http.Request
 		// simply had nothing in it.
 	}
 
-	tickets, err := h.state.Store.ListTickets(filter)
+	tickets, err := h.d.Store.ListTickets(filter)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load tickets", http.StatusInternalServerError)
 		return
@@ -426,7 +425,7 @@ func (h *TicketsHandler) ListInboxTickets(w http.ResponseWriter, r *http.Request
 
 	// Cross-team enforcement when off: post-filter to caller's visibility.
 	if !perms.IsAdmin && !settings.CrossTeamVisibility && scope != "mine" {
-		me, _ := h.state.Store.GetUserByID(userID)
+		me, _ := h.d.Store.GetUserByID(userID)
 		myTeam := ""
 		if me != nil {
 			myTeam = me.SupportTeam
@@ -467,14 +466,14 @@ func (h *TicketsHandler) ListInboxTickets(w http.ResponseWriter, r *http.Request
 // matches; anything else is 403.
 func (h *TicketsHandler) GetTicket(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
-	settings := LoadTicketSettings(h.state)
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
+	settings := LoadTicketSettings(h.d)
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		httpx.SendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
 		return
 	}
-	t, err := h.state.Store.GetTicket(id)
+	t, err := h.d.Store.GetTicket(id)
 	if err == sql.ErrNoRows || t == nil {
 		httpx.SendJSONError(w, "Ticket not found", http.StatusNotFound)
 		return
@@ -484,9 +483,9 @@ func (h *TicketsHandler) GetTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isWatcher, _ := h.state.Store.IsTicketWatcher(id, userID)
+	isWatcher, _ := h.d.Store.IsTicketWatcher(id, userID)
 	myTeam := ""
-	if me, err := h.state.Store.GetUserByID(userID); err == nil && me != nil {
+	if me, err := h.d.Store.GetUserByID(userID); err == nil && me != nil {
 		myTeam = me.SupportTeam
 	}
 	if !canSeeTicket(t, perms, userID, isWatcher, settings, myTeam) {
@@ -495,11 +494,11 @@ func (h *TicketsHandler) GetTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	includeInternal := perms.IsAdmin || perms.IsSupport
-	messages, _ := h.state.Store.ListTicketMessages(id, includeInternal)
+	messages, _ := h.d.Store.ListTicketMessages(id, includeInternal)
 	if messages == nil {
 		messages = []models.TicketMessage{}
 	}
-	watchers, _ := h.state.Store.ListTicketWatchers(id)
+	watchers, _ := h.d.Store.ListTicketWatchers(id)
 	if watchers == nil {
 		watchers = []models.TicketWatcher{}
 	}
@@ -508,7 +507,7 @@ func (h *TicketsHandler) GetTicket(w http.ResponseWriter, r *http.Request) {
 	// metadata to the user otherwise.
 	var auditEvents []models.TicketAuditEvent
 	if includeInternal {
-		auditEvents, _ = h.state.Store.ListTicketAudit(id)
+		auditEvents, _ = h.d.Store.ListTicketAudit(id)
 		if auditEvents == nil {
 			auditEvents = []models.TicketAuditEvent{}
 		}
@@ -532,13 +531,13 @@ type replyRequest struct {
 // other participants.
 func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		httpx.SendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
 		return
 	}
-	t, err := h.state.Store.GetTicket(id)
+	t, err := h.d.Store.GetTicket(id)
 	if err != nil || t == nil {
 		httpx.SendJSONError(w, "Ticket not found", http.StatusNotFound)
 		return
@@ -546,14 +545,14 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 	// The ticket's own visibility first: tickets.write alone let a supporter
 	// limited to their team reply to, re-status, reassign and watch (and so
 	// read) any ticket by walking the ids.
-	if !callerSeesTicket(h.state, t, perms, userID) {
+	if !callerSeesTicket(h.d, t, perms, userID) {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
-	isWatcher, _ := h.state.Store.IsTicketWatcher(id, userID)
+	isWatcher, _ := h.d.Store.IsTicketWatcher(id, userID)
 	watcherCanReply := false
 	if isWatcher {
-		watchers, _ := h.state.Store.ListTicketWatchers(id)
+		watchers, _ := h.d.Store.ListTicketWatchers(id)
 		for _, w := range watchers {
 			if w.UserID == userID {
 				watcherCanReply = w.CanReply
@@ -588,12 +587,12 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 		Body:       body,
 		IsInternal: req.IsInternal,
 	}
-	mid, err := h.state.Store.AddTicketMessage(msg)
+	mid, err := h.d.Store.AddTicketMessage(msg)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to add reply", http.StatusInternalServerError)
 		return
 	}
-	_ = h.state.Store.TouchTicketUpdated(id)
+	_ = h.d.Store.TouchTicketUpdated(id)
 
 	// Status auto-bumps: user reply on a waiting_user ticket flips it back
 	// to in_progress (or open if it was newly created and nobody picked up).
@@ -609,7 +608,7 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 		var next string
 		next, reopened = replyStatusTransition(t.Status, t.UserID == userID, perms.CanManageTickets || perms.IsAdmin)
 		if next != "" {
-			h.state.Store.UpdateTicketStatus(id, next)
+			h.d.Store.UpdateTicketStatus(id, next)
 		}
 	}
 
@@ -618,22 +617,22 @@ func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 	// involved minus the actor.
 	link := "/tickets/" + strconv.Itoa(id)
 	if req.IsInternal {
-		handlers.EmitTicketNotification(h.state, internalNoteRecipients(h.state, t, id, userID),
-			handlers.NotifyTypeTicketReply,
+		emitTicketNotification(h.d.Store, internalNoteRecipients(h.d, t, id, userID),
+			NotifyTypeTicketReply,
 			"Internal note on #"+strconv.Itoa(id),
 			t.Title, link)
 	} else {
-		recipients, _ := h.state.Store.ListTicketParticipantsForNotify(id, userID)
+		recipients, _ := h.d.Store.ListTicketParticipantsForNotify(id, userID)
 		title := "New reply on #" + strconv.Itoa(id)
 		if reopened {
 			// A ticket coming back from resolved/closed may have nobody
 			// involved who still watches it, so this one reaches all of
 			// support - the same announcement a new ticket gets.
-			recipients = withTicketStaff(h.state, recipients, userID)
+			recipients = withTicketStaff(h.d, recipients, userID)
 			title = "Reopened: #" + strconv.Itoa(id)
 		}
-		handlers.EmitTicketNotification(h.state, recipients,
-			handlers.NotifyTypeTicketReply,
+		emitTicketNotification(h.d.Store, recipients,
+			NotifyTypeTicketReply,
 			title,
 			t.Title, link)
 	}
@@ -675,8 +674,8 @@ func replyStatusTransition(status string, byOwner, byStaff bool) (next string, r
 //
 // It is best-effort: a ticket that exists matters more than a notification
 // that does not, so a failed lookup is logged and the create still succeeds.
-func notifyTicketStaff(state *handlers.AppState, actorID string, ticketID int, title string) {
-	handlers.EmitTicketNotification(state, withTicketStaff(state, nil, actorID), handlers.NotifyTypeTicketOpened,
+func notifyTicketStaff(d Deps, actorID string, ticketID int, title string) {
+	emitTicketNotification(d.Store, withTicketStaff(d, nil, actorID), NotifyTypeTicketOpened,
 		"New ticket #"+strconv.Itoa(ticketID),
 		title, "/tickets/"+strconv.Itoa(ticketID))
 }
@@ -684,11 +683,11 @@ func notifyTicketStaff(state *handlers.AppState, actorID string, ticketID int, t
 // withTicketStaff returns recipients plus every admin and supporter, minus the
 // actor, deduplicated. A staff lookup that fails returns what came in: telling
 // the people already on the list beats telling nobody.
-func withTicketStaff(state *handlers.AppState, recipients []string, actorID string) []string {
-	if state == nil || state.Store == nil {
+func withTicketStaff(d Deps, recipients []string, actorID string) []string {
+	if d.Store == nil {
 		return recipients
 	}
-	staff, err := state.Store.ListTicketStaffIDs()
+	staff, err := d.Store.ListTicketStaffIDs()
 	if err != nil {
 		log.Printf("tickets: staff lookup failed, only the people already involved were notified: %v", err)
 		return recipients
@@ -722,8 +721,8 @@ func withTicketStaff(state *handlers.AppState, recipients []string, actorID stri
 // A watcher lookup failure returns what was collected so far rather than
 // nothing: the assignee still gets told. Failing the other way would make a
 // database blip silently swallow the notification for everyone.
-func internalNoteRecipients(state *handlers.AppState, t *models.Ticket, ticketID int, actorID string) []string {
-	if state == nil || t == nil {
+func internalNoteRecipients(d Deps, t *models.Ticket, ticketID int, actorID string) []string {
+	if t == nil {
 		return nil
 	}
 	seen := map[string]bool{actorID: true}
@@ -738,7 +737,7 @@ func internalNoteRecipients(state *handlers.AppState, t *models.Ticket, ticketID
 	if t.AssignedUserID != nil {
 		add(*t.AssignedUserID)
 	}
-	watchers, err := state.Store.ListTicketWatchers(ticketID)
+	watchers, err := d.Store.ListTicketWatchers(ticketID)
 	if err != nil {
 		return out
 	}
@@ -746,7 +745,7 @@ func internalNoteRecipients(state *handlers.AppState, t *models.Ticket, ticketID
 		if seen[w.UserID] {
 			continue
 		}
-		if p := access.LoadEffectivePermissions(state.Store, state.Authz, w.UserID); p.IsAdmin || p.IsSupport {
+		if p := access.LoadEffectivePermissions(d.Store, d.Authz, w.UserID); p.IsAdmin || p.IsSupport {
 			add(w.UserID)
 		}
 	}
@@ -765,13 +764,13 @@ func (h *TicketsHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		httpx.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
-	t, err := h.state.Store.GetTicket(id)
+	t, err := h.d.Store.GetTicket(id)
 	if err != nil || t == nil {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
@@ -779,7 +778,7 @@ func (h *TicketsHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	// The ticket's own visibility first: tickets.write alone let a supporter
 	// limited to their team reply to, re-status, reassign and watch (and so
 	// read) any ticket by walking the ids.
-	if !callerSeesTicket(h.state, t, perms, userID) {
+	if !callerSeesTicket(h.d, t, perms, userID) {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
@@ -807,7 +806,7 @@ func (h *TicketsHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	previous := t.Status
-	if err := h.state.Store.UpdateTicketStatus(id, newStatus); err != nil {
+	if err := h.d.Store.UpdateTicketStatus(id, newStatus); err != nil {
 		httpx.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
@@ -816,7 +815,7 @@ func (h *TicketsHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		eventType = audit.TicketEventReopened
 	}
 	actor := userID
-	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
+	_ = h.d.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    id,
 		EventType:   eventType,
 		ActorUserID: &actor,
@@ -839,13 +838,13 @@ func (h *TicketsHandler) UpdatePriority(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
 	if !canMutate(perms) {
 		httpx.SendJSONError(w, "Support or admin required", http.StatusForbidden)
 		return
 	}
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
-	t, err := h.state.Store.GetTicket(id)
+	t, err := h.d.Store.GetTicket(id)
 	if err != nil || t == nil {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
@@ -853,7 +852,7 @@ func (h *TicketsHandler) UpdatePriority(w http.ResponseWriter, r *http.Request) 
 	// The ticket's own visibility first: tickets.write alone let a supporter
 	// limited to their team reply to, re-status, reassign and watch (and so
 	// read) any ticket by walking the ids.
-	if !callerSeesTicket(h.state, t, perms, userID) {
+	if !callerSeesTicket(h.d, t, perms, userID) {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
@@ -872,12 +871,12 @@ func (h *TicketsHandler) UpdatePriority(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	previous := t.Priority
-	if err := h.state.Store.UpdateTicketPriority(id, priority); err != nil {
+	if err := h.d.Store.UpdateTicketPriority(id, priority); err != nil {
 		httpx.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
 	actor := userID
-	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
+	_ = h.d.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    id,
 		EventType:   audit.TicketEventPriorityChanged,
 		ActorUserID: &actor,
@@ -901,13 +900,13 @@ func (h *TicketsHandler) UpdateAssignment(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
 	if !canMutate(perms) {
 		httpx.SendJSONError(w, "Support or admin required", http.StatusForbidden)
 		return
 	}
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
-	t, err := h.state.Store.GetTicket(id)
+	t, err := h.d.Store.GetTicket(id)
 	if err != nil || t == nil {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
@@ -915,7 +914,7 @@ func (h *TicketsHandler) UpdateAssignment(w http.ResponseWriter, r *http.Request
 	// The ticket's own visibility first: tickets.write alone let a supporter
 	// limited to their team reply to, re-status, reassign and watch (and so
 	// read) any ticket by walking the ids.
-	if !callerSeesTicket(h.state, t, perms, userID) {
+	if !callerSeesTicket(h.d, t, perms, userID) {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
@@ -927,7 +926,7 @@ func (h *TicketsHandler) UpdateAssignment(w http.ResponseWriter, r *http.Request
 	team := strings.TrimSpace(req.AssignedTeam)
 	// Verify the target user (if any) exists + is admin/support.
 	if req.AssignedUserID != nil {
-		target, err := h.state.Store.GetUserByID(*req.AssignedUserID)
+		target, err := h.d.Store.GetUserByID(*req.AssignedUserID)
 		if err != nil || target == nil {
 			httpx.SendJSONError(w, "Assignee not found", http.StatusBadRequest)
 			return
@@ -937,7 +936,7 @@ func (h *TicketsHandler) UpdateAssignment(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	if err := h.state.Store.UpdateTicketAssignment(id, req.AssignedUserID, team); err != nil {
+	if err := h.d.Store.UpdateTicketAssignment(id, req.AssignedUserID, team); err != nil {
 		httpx.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
@@ -950,7 +949,7 @@ func (h *TicketsHandler) UpdateAssignment(w http.ResponseWriter, r *http.Request
 		meta["assigned_user_id"] = *req.AssignedUserID
 	}
 	actor := userID
-	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
+	_ = h.d.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    id,
 		EventType:   eventType,
 		ActorUserID: &actor,
@@ -960,8 +959,8 @@ func (h *TicketsHandler) UpdateAssignment(w http.ResponseWriter, r *http.Request
 	// Notify the new assignee (if any and not self-assign).
 	if req.AssignedUserID != nil && *req.AssignedUserID != userID {
 		link := "/tickets/" + strconv.Itoa(id)
-		handlers.EmitTicketNotification(h.state, []string{*req.AssignedUserID},
-			handlers.NotifyTypeTicketAssigned,
+		emitTicketNotification(h.d.Store, []string{*req.AssignedUserID},
+			NotifyTypeTicketAssigned,
 			"Ticket #"+strconv.Itoa(id)+" assigned to you",
 			t.Title, link)
 	}
@@ -983,10 +982,10 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
-	settings := LoadTicketSettings(h.state)
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
+	settings := LoadTicketSettings(h.d)
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
-	t, err := h.state.Store.GetTicket(id)
+	t, err := h.d.Store.GetTicket(id)
 	if err != nil || t == nil {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
@@ -994,7 +993,7 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 	// The ticket's own visibility first: tickets.write alone let a supporter
 	// limited to their team reply to, re-status, reassign and watch (and so
 	// read) any ticket by walking the ids.
-	if !callerSeesTicket(h.state, t, perms, userID) {
+	if !callerSeesTicket(h.d, t, perms, userID) {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
@@ -1012,7 +1011,7 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 	// Resolve by username if userId omitted — simplifies the UI.
 	target := req.UserID
 	if target == "" && req.Username != "" {
-		u, err := h.state.Store.GetUserByUsername(strings.TrimSpace(req.Username))
+		u, err := h.d.Store.GetUserByUsername(strings.TrimSpace(req.Username))
 		if err != nil || u == nil {
 			httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 			return
@@ -1027,7 +1026,7 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 	// not, so a wrong id reached the insert and came back as a foreign-key
 	// violation dressed up as "Failed to add watcher" with a 500. Same answer
 	// for both branches.
-	if u, uerr := h.state.Store.GetUserByID(target); uerr != nil || u == nil {
+	if u, uerr := h.d.Store.GetUserByID(target); uerr != nil || u == nil {
 		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
@@ -1040,7 +1039,7 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 		canReplyFlag = settings.WatchersDefaultCanReply
 	}
 	uid := userID
-	added, err := h.state.Store.AddTicketWatcher(&models.TicketWatcher{
+	added, err := h.d.Store.AddTicketWatcher(&models.TicketWatcher{
 		TicketID: id,
 		UserID:   target,
 		CanReply: canReplyFlag,
@@ -1051,7 +1050,7 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := userID
-	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
+	_ = h.d.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    id,
 		EventType:   audit.TicketEventWatcherAdded,
 		ActorUserID: &actor,
@@ -1067,8 +1066,8 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 	// of "Added to ticket" notices under a title of their choosing.
 	if added && target != userID {
 		link := "/tickets/" + strconv.Itoa(id)
-		handlers.EmitTicketNotification(h.state, []string{target},
-			handlers.NotifyTypeTicketWatcherAdd,
+		emitTicketNotification(h.d.Store, []string{target},
+			NotifyTypeTicketWatcherAdd,
 			"Added to ticket #"+strconv.Itoa(id),
 			t.Title, link)
 	}
@@ -1084,13 +1083,13 @@ func (h *TicketsHandler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	targetID, ok := httpx.ParseUserID(w, r, "userId")
 	if !ok {
 		return
 	}
-	t, err := h.state.Store.GetTicket(id)
+	t, err := h.d.Store.GetTicket(id)
 	if err != nil || t == nil {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
@@ -1107,7 +1106,7 @@ func (h *TicketsHandler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	removed, err := h.state.Store.RemoveTicketWatcher(id, targetID)
+	removed, err := h.d.Store.RemoveTicketWatcher(id, targetID)
 	if err != nil {
 		httpx.SendJSONError(w, "Remove failed", http.StatusInternalServerError)
 		return
@@ -1124,7 +1123,7 @@ func (h *TicketsHandler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := userID
-	_ = h.state.Store.InsertTicketAudit(&models.TicketAuditEvent{
+	_ = h.d.Store.InsertTicketAudit(&models.TicketAuditEvent{
 		TicketID:    id,
 		EventType:   audit.TicketEventWatcherRemoved,
 		ActorUserID: &actor,
@@ -1143,7 +1142,7 @@ func (h *TicketsHandler) ListMyServersViaTickets(w http.ResponseWriter, r *http.
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
 	if !perms.IsAdmin && !perms.IsSupport {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -1151,7 +1150,7 @@ func (h *TicketsHandler) ListMyServersViaTickets(w http.ResponseWriter, r *http.
 		})
 		return
 	}
-	servers, err := h.state.Store.ListServersViaActiveTickets(userID)
+	servers, err := h.d.Store.ListServersViaActiveTickets(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load", http.StatusInternalServerError)
 		return

@@ -7,9 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 )
 
@@ -34,7 +33,7 @@ const inboxAdmin = "aaaaaaaa-1111-4111-8111-111111111111"
 
 func inboxRequest(t *testing.T, fs *inboxScopeStore, scope string) []models.Ticket {
 	t.Helper()
-	h := &TicketsHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
+	h := &TicketsHandler{d: Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}}}
 	r := httptest.NewRequest(http.MethodGet, "/api/tickets/inbox?scope="+scope, nil)
 	r = r.WithContext(context.WithValue(r.Context(), "userID", inboxAdmin))
 	w := httptest.NewRecorder()

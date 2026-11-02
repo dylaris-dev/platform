@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 
@@ -15,11 +13,11 @@ import (
 )
 
 type TicketCategoriesHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewTicketCategoriesHandler(state *handlers.AppState) *TicketCategoriesHandler {
-	return &TicketCategoriesHandler{state: state}
+func NewTicketCategoriesHandler(d Deps) *TicketCategoriesHandler {
+	return &TicketCategoriesHandler{d: d}
 }
 
 // validTicketPriority is the closed set of accepted priorities. New values
@@ -32,7 +30,7 @@ func validTicketPriority(p string) bool {
 // ListCategories GET /api/ticket-categories — any auth.
 // Returns only enabled categories — used by the create-ticket form.
 func (h *TicketCategoriesHandler) ListCategories(w http.ResponseWriter, r *http.Request) {
-	out, err := h.state.Store.ListTicketCategories(false)
+	out, err := h.d.Store.ListTicketCategories(false)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load categories", http.StatusInternalServerError)
 		return
@@ -49,7 +47,7 @@ func (h *TicketCategoriesHandler) ListCategories(w http.ResponseWriter, r *http.
 // AdminListCategories GET /api/admin/ticket-categories - RequireCap("tickets.read") at the route.
 // Includes disabled categories — used by the admin management UI.
 func (h *TicketCategoriesHandler) AdminListCategories(w http.ResponseWriter, r *http.Request) {
-	out, err := h.state.Store.ListTicketCategories(true)
+	out, err := h.d.Store.ListTicketCategories(true)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load categories", http.StatusInternalServerError)
 		return
@@ -122,12 +120,12 @@ func (h *TicketCategoriesHandler) CreateCategory(w http.ResponseWriter, r *http.
 		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	id, err := h.state.Store.CreateTicketCategory(c)
+	id, err := h.d.Store.CreateTicketCategory(c)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to create (name may already exist)", http.StatusConflict)
 		return
 	}
-	created, _ := h.state.Store.GetTicketCategory(id)
+	created, _ := h.d.Store.GetTicketCategory(id)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"category": created,
@@ -141,7 +139,7 @@ func (h *TicketCategoriesHandler) UpdateCategory(w http.ResponseWriter, r *http.
 		httpx.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
-	existing, err := h.state.Store.GetTicketCategory(id)
+	existing, err := h.d.Store.GetTicketCategory(id)
 	if err != nil || existing == nil {
 		httpx.SendJSONError(w, "Category not found", http.StatusNotFound)
 		return
@@ -156,7 +154,7 @@ func (h *TicketCategoriesHandler) UpdateCategory(w http.ResponseWriter, r *http.
 		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.UpdateTicketCategory(updated); err != nil {
+	if err := h.d.Store.UpdateTicketCategory(updated); err != nil {
 		httpx.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
@@ -180,7 +178,7 @@ func (h *TicketCategoriesHandler) DeleteCategory(w http.ResponseWriter, r *http.
 	// NULL and the ticket stops being filterable by a category that no longer
 	// exists. Refusing used to be the protection, and it made a typo made in the
 	// first five minutes of an install permanent.
-	if err := h.state.Store.DeleteTicketCategory(id); err != nil {
+	if err := h.d.Store.DeleteTicketCategory(id); err != nil {
 		httpx.SendJSONError(w, "Could not delete the category", http.StatusInternalServerError)
 		return
 	}

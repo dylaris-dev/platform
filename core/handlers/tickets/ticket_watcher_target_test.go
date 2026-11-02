@@ -8,9 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -59,7 +58,7 @@ func TestAddWatcherRejectsAnUnknownUser(t *testing.T) {
 		},
 		ticket: &models.Ticket{ID: 4, UserID: adminID},
 	}
-	h := &TicketsHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
+	h := &TicketsHandler{d: Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}}}
 
 	tests := []struct {
 		name     string

@@ -4,10 +4,9 @@ import (
 	"database/sql"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/authz"
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 )
 
@@ -92,7 +91,7 @@ func TestMayAttachServer(t *testing.T) {
 			granteeID: {"overview.read"},
 		},
 	}
-	h := &TicketsHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}
+	h := &TicketsHandler{d: Deps{Store: fs, Authz: authz.NewResolver(fs), CoreStorage: &corestorage.Manager{Store: fs}}}
 
 	cases := []struct {
 		name     string

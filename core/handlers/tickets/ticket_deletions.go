@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/corestorage"
 
 	"dylaris-core/handlers/httpx"
@@ -22,11 +21,11 @@ import (
 // platform-wide tickets feature toggle (mounted in main.go) and the
 // per-feature tickets.deletion_enabled setting (checked inline).
 type TicketDeletionsHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewTicketDeletionsHandler(state *handlers.AppState) *TicketDeletionsHandler {
-	return &TicketDeletionsHandler{state: state}
+func NewTicketDeletionsHandler(d Deps) *TicketDeletionsHandler {
+	return &TicketDeletionsHandler{d: d}
 }
 
 // DeleteTicket DELETE /api/tickets/{id} — admin only, gated by
@@ -42,7 +41,7 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 		httpx.SendJSONError(w, "Admin only", http.StatusForbidden)
 		return
 	}
-	settings := LoadTicketSettings(h.state)
+	settings := LoadTicketSettings(h.d)
 	if !settings.DeletionEnabled {
 		// 403 not 503 — the feature exists, the admin has paused it for now.
 		w.Header().Set("Content-Type", "application/json")
@@ -61,7 +60,7 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	}
 
 	// Snapshot ticket subject + owner BEFORE delete.
-	t, err := h.state.Store.GetTicket(id)
+	t, err := h.d.Store.GetTicket(id)
 	if err == sql.ErrNoRows || t == nil {
 		httpx.SendJSONError(w, "Ticket not found", http.StatusNotFound)
 		return
@@ -76,13 +75,13 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	if t.Username != "" {
 		ownerUsername = t.Username
 	}
-	if owner, err := h.state.Store.GetUserByID(t.UserID); err == nil && owner != nil && owner.Username != "" {
+	if owner, err := h.d.Store.GetUserByID(t.UserID); err == nil && owner != nil && owner.Username != "" {
 		ownerUsername = owner.Username
 	}
 
 	// Category snapshot.
 	var categoryName *string
-	if cat, err := h.state.Store.GetTicketCategory(t.CategoryID); err == nil && cat != nil && cat.Name != "" {
+	if cat, err := h.d.Store.GetTicketCategory(t.CategoryID); err == nil && cat != nil && cat.Name != "" {
 		n := cat.Name
 		categoryName = &n
 	} else if t.CategoryName != "" {
@@ -93,13 +92,13 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	// Actor snapshot.
 	actorID, _ := r.Context().Value("userID").(string)
 	actorName := actorID
-	if actor, err := h.state.Store.GetUserByID(actorID); err == nil && actor != nil && actor.Username != "" {
+	if actor, err := h.d.Store.GetUserByID(actorID); err == nil && actor != nil && actor.Username != "" {
 		actorName = actor.Username
 	}
 
 	// Attachment storage keys — captured BEFORE delete so we can clean up
 	// the file blobs after the rows are gone.
-	storageKeys, _ := h.state.Store.ListAttachmentStorageKeysByTicket(id)
+	storageKeys, _ := h.d.Store.ListAttachmentStorageKeysByTicket(id)
 
 	// Build audit row.
 	ownerID := t.UserID
@@ -119,11 +118,11 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 
 	// Stamp the audit row first so a half-deleted ticket still has a record.
 	// The audit row is the contract; the cascade is the side-effect.
-	if err := h.state.Store.InsertTicketDeletion(rec); err != nil {
+	if err := h.d.Store.InsertTicketDeletion(rec); err != nil {
 		httpx.SendJSONError(w, "Failed to audit deletion: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := h.state.Store.DeleteTicket(id); err != nil {
+	if err := h.d.Store.DeleteTicket(id); err != nil {
 		// Audit row is already in; surface the error but don't try to roll
 		// back the audit — a stamped delete that didn't complete is itself
 		// useful information.
@@ -138,7 +137,7 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	// actually written to. Storage being unconfigured/broken here must not
 	// fail the whole request either - it's logged and skipped, not surfaced
 	// as an HTTP error the ticket-delete response never gets to send anyway.
-	if prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixAttachments); err != nil {
+	if prov, err := h.d.CoreStorage.BuildProvider(corestorage.PrefixAttachments); err != nil {
 		log.Printf("ticket-deletion: core storage unavailable, skipping attachment blob cleanup for ticket %d: %v", id, err)
 	} else {
 		for _, k := range storageKeys {
@@ -151,7 +150,7 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	// No ids: this stream reaches every signed-in session, and which ticket
 	// went and who removed it is not theirs to know. Nothing reads them; a
 	// list that cares refetches.
-	h.state.Events.Publish(r.Context(), "tickets.deleted", nil)
+	h.d.Events.Publish(r.Context(), "tickets.deleted", nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
@@ -175,7 +174,7 @@ func (h *TicketDeletionsHandler) ListDeletions(w http.ResponseWriter, r *http.Re
 	}
 	deletedBy := q.Get("deletedBy")
 
-	rows, total, err := h.state.Store.ListTicketDeletions(limit, offset, deletedBy)
+	rows, total, err := h.d.Store.ListTicketDeletions(limit, offset, deletedBy)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error: "+err.Error(), http.StatusInternalServerError)
 		return

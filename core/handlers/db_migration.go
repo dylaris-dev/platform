@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers/audit"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
@@ -123,7 +124,7 @@ func (h *DBMigrationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 	// hostname that does not resolve and a password that was refused, which are
 	// fixed in different places by different people - see services/conncheck.go.
 	if reach := services.Reachable(r.Context(), params.Host, params.Port); !reach.OK {
-		SendConnTestFailure(w, reach)
+		guard.SendConnTestFailure(w, reach)
 		return
 	}
 
@@ -131,14 +132,14 @@ func (h *DBMigrationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 	defer cancel()
 	db, err := params.Open(ctx, 6*time.Second)
 	if err != nil {
-		SendConnTestFailure(w, services.Rejected(services.DescribePostgresError(err)))
+		guard.SendConnTestFailure(w, services.Rejected(services.DescribePostgresError(err)))
 		return
 	}
 	defer db.Close()
 
 	var version string
 	if err := db.QueryRowContext(ctx, "SELECT version()").Scan(&version); err != nil {
-		SendConnTestFailure(w, services.Rejected("Connected and authenticated, but the first query failed: "+
+		guard.SendConnTestFailure(w, services.Rejected("Connected and authenticated, but the first query failed: "+
 			services.DescribePostgresError(err)))
 		return
 	}

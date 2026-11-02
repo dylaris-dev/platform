@@ -13,7 +13,7 @@ import (
 func TestTicketMutationsCheckVisibility(t *testing.T) {
 	for _, fn := range []string{"AddReply", "UpdateStatus", "UpdatePriority", "UpdateAssignment", "AddWatcher"} {
 		body := handlertest.FuncBody(t, "tickets/tickets.go", fn)
-		see := strings.Index(body, "if !callerSeesTicket(h.state, t, perms, userID) {")
+		see := strings.Index(body, "if !callerSeesTicket(h.d, t, perms, userID) {")
 		decode := strings.Index(body, "json.NewDecoder(r.Body)")
 		if see < 0 || (decode >= 0 && see > decode) {
 			t.Errorf("%s acts on a ticket without checking the caller can see it", fn)

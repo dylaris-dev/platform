@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services/corestorage"
 
@@ -180,7 +179,7 @@ func newTicketBackupHandler(t *testing.T, fs *ticketBackupFakeStore) (*TicketMig
 	fs.settings[keyCoreStoragePath] = dir
 	fs.settings[keyCoreStoragePathConfirm] = "true"
 	h := &TicketMigrationHandler{
-		state:  withCoreStorage(&handlers.AppState{Store: fs}),
+		d:      Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}},
 		tokens: make(map[string]*restoreToken),
 	}
 	return h, filepath.Join(dir, corestorage.PrefixBackups)
@@ -411,7 +410,7 @@ func newTicketBackupS3FailFastHandler(t *testing.T) *TicketMigrationHandler {
 		keyCoreStorageS3AccessKey: "key1",
 		keyCoreStorageS3SecretKey: "secret1",
 	}}
-	return &TicketMigrationHandler{state: withCoreStorage(&handlers.AppState{Store: fs}), tokens: make(map[string]*restoreToken)}
+	return &TicketMigrationHandler{d: Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}}, tokens: make(map[string]*restoreToken)}
 }
 
 // TestListBackups_ProviderErrorSurfaces pins that a provider failure comes
@@ -452,7 +451,7 @@ func TestDownloadBackup_RedirectsWhenProviderSignsURL(t *testing.T) {
 		keyCoreStorageS3AccessKey: "AKIAEXAMPLE",
 		keyCoreStorageS3SecretKey: "s3cr3t",
 	}}
-	h := &TicketMigrationHandler{state: withCoreStorage(&handlers.AppState{Store: fs}), tokens: make(map[string]*restoreToken)}
+	h := &TicketMigrationHandler{d: Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}}, tokens: make(map[string]*restoreToken)}
 
 	req := adminReq(httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-x.json/download", nil))
 	req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})

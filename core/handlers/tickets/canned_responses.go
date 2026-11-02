@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 
 	"dylaris-core/handlers/httpx"
@@ -16,18 +15,18 @@ import (
 )
 
 type CannedResponsesHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewCannedResponsesHandler(state *handlers.AppState) *CannedResponsesHandler {
-	return &CannedResponsesHandler{state: state}
+func NewCannedResponsesHandler(d Deps) *CannedResponsesHandler {
+	return &CannedResponsesHandler{d: d}
 }
 
 // ListForSupport GET /api/ticket-canned-responses
 // Available to support+admin. Filter optional ?categoryId= to limit.
 func (h *CannedResponsesHandler) ListForSupport(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
-	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
+	perms := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, userID)
 	if !perms.IsAdmin && !perms.IsSupport {
 		httpx.SendJSONError(w, "Support or admin required", http.StatusForbidden)
 		return
@@ -38,7 +37,7 @@ func (h *CannedResponsesHandler) ListForSupport(w http.ResponseWriter, r *http.R
 			categoryID = &n
 		}
 	}
-	list, err := h.state.Store.ListCannedResponses(categoryID)
+	list, err := h.d.Store.ListCannedResponses(categoryID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load", http.StatusInternalServerError)
 		return
@@ -54,7 +53,7 @@ func (h *CannedResponsesHandler) ListForSupport(w http.ResponseWriter, r *http.R
 
 // AdminList GET /api/admin/ticket-canned-responses - RequireCap("tickets.read") at the route, full list.
 func (h *CannedResponsesHandler) AdminList(w http.ResponseWriter, r *http.Request) {
-	list, _ := h.state.Store.ListCannedResponses(nil)
+	list, _ := h.d.Store.ListCannedResponses(nil)
 	if list == nil {
 		list = []models.CannedResponse{}
 	}
@@ -105,12 +104,12 @@ func (h *CannedResponsesHandler) Create(w http.ResponseWriter, r *http.Request) 
 	}
 	v := actorID
 	c.CreatedBy = &v
-	id, err := h.state.Store.CreateCannedResponse(c)
+	id, err := h.d.Store.CreateCannedResponse(c)
 	if err != nil {
 		httpx.SendJSONError(w, "Create failed (name may already exist)", http.StatusConflict)
 		return
 	}
-	created, _ := h.state.Store.GetCannedResponse(id)
+	created, _ := h.d.Store.GetCannedResponse(id)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"response": created,
@@ -124,7 +123,7 @@ func (h *CannedResponsesHandler) Update(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
-	existing, _ := h.state.Store.GetCannedResponse(id)
+	existing, _ := h.d.Store.GetCannedResponse(id)
 	if existing == nil {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
@@ -140,7 +139,7 @@ func (h *CannedResponsesHandler) Update(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	updated.ID = existing.ID
-	if err := h.state.Store.UpdateCannedResponse(updated); err != nil {
+	if err := h.d.Store.UpdateCannedResponse(updated); err != nil {
 		httpx.SendJSONError(w, "Update failed", http.StatusInternalServerError)
 		return
 	}
@@ -157,7 +156,7 @@ func (h *CannedResponsesHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.DeleteCannedResponse(id); err != nil {
+	if err := h.d.Store.DeleteCannedResponse(id); err != nil {
 		httpx.SendJSONError(w, "Delete failed", http.StatusInternalServerError)
 		return
 	}

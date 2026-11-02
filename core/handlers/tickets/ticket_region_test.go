@@ -8,10 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/authz"
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 )
 
 // ticketRegionStore adds the write side of ticket creation to the fake that
@@ -53,7 +52,7 @@ func newTicketRegionHandler(t *testing.T) (*TicketsHandler, *ticketRegionStore) 
 		ticketAttachFakeStore: base,
 		category:              &models.TicketCategory{ID: 1, Name: "General", Enabled: true, DefaultPriority: "normal"},
 	}
-	return &TicketsHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}, fs
+	return &TicketsHandler{d: Deps{Store: fs, Authz: authz.NewResolver(fs), CoreStorage: &corestorage.Manager{Store: fs}}}, fs
 }
 
 func postTicket(t *testing.T, h *TicketsHandler, body map[string]interface{}) *httptest.ResponseRecorder {

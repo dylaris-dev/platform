@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
@@ -64,66 +62,66 @@ var defaultTicketSettings = TicketSettings{
 	DeletionEnabled:            false,
 }
 
-func LoadTicketSettings(state *handlers.AppState) TicketSettings {
+func LoadTicketSettings(d Deps) TicketSettings {
 	s := defaultTicketSettings
-	if v, _ := state.Store.GetSetting("tickets.cross_team_visibility"); v != "" {
+	if v, _ := d.Store.GetSetting("tickets.cross_team_visibility"); v != "" {
 		s.CrossTeamVisibility = v == "true"
 	}
-	if v, _ := state.Store.GetSetting("tickets.watchers_default_can_reply"); v != "" {
+	if v, _ := d.Store.GetSetting("tickets.watchers_default_can_reply"); v != "" {
 		s.WatchersDefaultCanReply = v == "true"
 	}
-	if v, _ := state.Store.GetSetting("tickets.allow_users_to_add_watchers"); v != "" {
+	if v, _ := d.Store.GetSetting("tickets.allow_users_to_add_watchers"); v != "" {
 		s.AllowUsersToAddWatchers = v == "true"
 	}
-	if v, _ := state.Store.GetSetting("tickets.audit_retention_days"); v != "" {
+	if v, _ := d.Store.GetSetting("tickets.audit_retention_days"); v != "" {
 		var n int
 		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 0 && n <= 3650 {
 			s.AuditRetentionDays = n
 		}
 	}
-	if v, err := state.Store.GetSetting("tickets.max_file_size_mb"); err == nil {
+	if v, err := d.Store.GetSetting("tickets.max_file_size_mb"); err == nil {
 		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxFileSizeMB); q == nil || *q <= 1024 {
 			s.MaxFileSizeMB = q
 		}
 	}
-	if v, err := state.Store.GetSetting("tickets.max_ticket_size_mb"); err == nil {
+	if v, err := d.Store.GetSetting("tickets.max_ticket_size_mb"); err == nil {
 		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxTicketSizeMB); q == nil || *q <= 10240 {
 			s.MaxTicketSizeMB = q
 		}
 	}
-	if v, err := state.Store.GetSetting("tickets.max_user_size_mb"); err == nil {
+	if v, err := d.Store.GetSetting("tickets.max_user_size_mb"); err == nil {
 		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxUserSizeMB); q == nil || *q <= 102400 {
 			s.MaxUserSizeMB = q
 		}
 	}
-	if v, _ := state.Store.GetSetting("tickets.auto_close_enabled"); v != "" {
+	if v, _ := d.Store.GetSetting("tickets.auto_close_enabled"); v != "" {
 		s.AutoCloseEnabled = v == "true"
 	}
-	if v, _ := state.Store.GetSetting("tickets.auto_close_days_after_resolved"); v != "" {
+	if v, _ := d.Store.GetSetting("tickets.auto_close_days_after_resolved"); v != "" {
 		var n int
 		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n >= 1 && n <= 365 {
 			s.AutoCloseDaysAfterResolved = n
 		}
 	}
-	if v, _ := state.Store.GetSetting("tickets.deletion_enabled"); v != "" {
+	if v, _ := d.Store.GetSetting("tickets.deletion_enabled"); v != "" {
 		s.DeletionEnabled = v == "true"
 	}
 	return s
 }
 
 type TicketSettingsHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewTicketSettingsHandler(state *handlers.AppState) *TicketSettingsHandler {
-	return &TicketSettingsHandler{state: state}
+func NewTicketSettingsHandler(d Deps) *TicketSettingsHandler {
+	return &TicketSettingsHandler{d: d}
 }
 
 // GetSettings GET /api/admin/settings/tickets - RequireCap("tickets.read") at the route.
 func (h *TicketSettingsHandler) GetSettings(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
-		"settings": LoadTicketSettings(h.state),
+		"settings": LoadTicketSettings(h.d),
 	})
 }
 
@@ -177,7 +175,7 @@ func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Requ
 		{"tickets.deletion_enabled", fmt.Sprintf("%t", s.DeletionEnabled)},
 	}
 	for _, kv := range pairs {
-		if err := h.state.Store.SetSettingBy(kv.k, kv.v, actorID); err != nil {
+		if err := h.d.Store.SetSettingBy(kv.k, kv.v, actorID); err != nil {
 			httpx.SendJSONError(w, "Failed to save: "+kv.k, http.StatusInternalServerError)
 			return
 		}

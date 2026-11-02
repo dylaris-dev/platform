@@ -2,12 +2,11 @@ package tickets
 
 import (
 	"context"
+	"dylaris-core/services/corestorage"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"dylaris-core/handlers"
 )
 
 // Every handler in ticket_migration.go must refuse a non-admin.
@@ -24,7 +23,7 @@ import (
 // the gate touches it and panics, so "no panic and a 403" is the assertion:
 // the gate fired before anything else ran.
 func TestEveryTicketMigrationHandlerRefusesANonAdmin(t *testing.T) {
-	h := NewTicketMigrationHandler(withCoreStorage(&handlers.AppState{}))
+	h := NewTicketMigrationHandler(Deps{CoreStorage: &corestorage.Manager{}})
 
 	handlers := map[string]http.HandlerFunc{
 		"GetStatus":              h.GetStatus,
@@ -68,7 +67,7 @@ func TestEveryTicketMigrationHandlerRefusesANonAdmin(t *testing.T) {
 // And the gate must not be the only thing standing there: an admin still gets
 // through it. Proven by the panic a nil Store causes once the handler proceeds.
 func TestTheAdminGateStillLetsAnAdminThrough(t *testing.T) {
-	h := NewTicketMigrationHandler(withCoreStorage(&handlers.AppState{}))
+	h := NewTicketMigrationHandler(Deps{CoreStorage: &corestorage.Manager{}})
 	r := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/migration/status", nil)
 	r = r.WithContext(context.WithValue(r.Context(), "isAdmin", true))
 	w := httptest.NewRecorder()
