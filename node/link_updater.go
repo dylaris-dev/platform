@@ -325,6 +325,11 @@ type linkUpdater struct {
 	// triedKey is the warp key a key swap was last started for, so a key the
 	// clone could not boot with is not tried again every minute.
 	triedKey string
+	// afterStart runs once a clone is up, before startClone returns: the
+	// network policy round that lets every game server accept the clone's new
+	// address. Without it the clone could be handed players by the edges while
+	// every server still refused it, until the next 15 s round.
+	afterStart func(context.Context)
 }
 
 // linkKeySwapReady is whether this node would move its Link onto a new warp
@@ -378,7 +383,7 @@ func StartLinkUpdater(ctx context.Context, dm *DockerManager) {
 		log.Printf("link update: DISABLED: %v", err)
 		return
 	}
-	u := &linkUpdater{cli: dm.cli, hour: h, minute: m}
+	u := &linkUpdater{cli: dm.cli, hour: h, minute: m, afterStart: dm.reconcileNetPolicyNow}
 	if ref := selfContainerRef(); ref != "" {
 		if self, err := dm.cli.ContainerInspect(ctx, ref); err == nil && self.Config != nil {
 			u.project = self.Config.Labels["com.docker.compose.project"]
@@ -566,6 +571,9 @@ func (u *linkUpdater) startClone(ctx context.Context, target *linkCtr, info cont
 		log.Printf("link update: ABORTED, start %s: %v; %s keeps serving", name, err, target.Name)
 		u.remove(ctx, &linkCtr{ID: created.ID, Name: name}, true)
 		return false
+	}
+	if u.afterStart != nil {
+		u.afterStart(ctx)
 	}
 	return true
 }

@@ -16,14 +16,13 @@ Newest release first. The format is fixed and checked in CI - see the
 - A new key can expire after 30, 90 or 365 days. `core` `panel`
 
 ### Breaking
-- `MC_RUN_AS=0` (servers as root) now also needs `MC_ALLOW_ROOT=true` on the node. Without it servers run as uid 1000
-  and the node hands their files over on the next start. `node`
+- Nothing.
 
 ### Security
 - Game servers no longer see the log-shipper's Redis login: the server process gets an environment without it and
-  the shipper hides its own. The node also deletes oversized values on those keys and gives them a TTL. `node` `log-shipper`
+  the shipper hides its own. The node also deletes oversized values on those keys. `node` `log-shipper`
 - External and BYON nodes separate servers once they hold servers of more than one owner: other owners' servers and
-  the LAN behind the machine are unreachable, the same owner's still talk. `NETPOLICY=off` on the node opts out. `node` `core`
+  the LAN behind the machine are unreachable, the same owner's still talk. `NETPOLICY=off` on the node removes the rules. `node` `core`
 - The cloud metadata address is blocked on the host and in every server before its code runs, and servers no longer
   reach the host behind their network, Postgres or the platform's ports over UDP. `node` `log-shipper`
 - The operator's list of capabilities allowed on user keys now also covers power actions of keys minted earlier, and

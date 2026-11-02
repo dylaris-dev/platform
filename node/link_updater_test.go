@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -572,5 +573,22 @@ func TestLinkUpdaterSwapKeepsTheDailyUpdateAndReportsReadiness(t *testing.T) {
 	expect("swap first", "create l-next LINK_BOOT_KEY=new", "start l-next")
 	if u.lastRun != "" {
 		t.Errorf("the swap used up the daily update (lastRun %q)", u.lastRun)
+	}
+}
+
+// F1: a start-first clone gets a new address that every game server refuses
+// until a policy round names it. The round runs right after the clone starts,
+// inside startClone, so it has finished before the clone is judged ready and
+// the old Link drains.
+func TestLinkUpdaterAppliesThePolicyBeforeTheCloneServes(t *testing.T) {
+	u, _, expect := newLinkUpdaterTest(t, map[string]*fakeCtr{
+		"old-id": {name: "byon-link-1", image: "sha256:old", running: true, labels: testLinkLabels, log: edgeA + edgeB},
+	})
+	rounds := 0
+	u.afterStart = func(context.Context) { rounds++ }
+	u.tick(t.Context(), updateAt)
+	expect("update", "pull docker.io/reg/gateway-link:latest", "create byon-link-1-next CORE_URL=x", "start byon-link-1-next")
+	if rounds != 1 {
+		t.Fatalf("policy rounds after the clone started = %d, want 1", rounds)
 	}
 }

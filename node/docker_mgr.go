@@ -75,6 +75,9 @@ type DockerManager struct {
 	netPolicyRDB   *redis.Client
 	netPolicyToken string
 	hostRules      hostRulesState
+	// netPolicyRoundMu runs rounds one at a time, so a caller that asks for a
+	// round (a Link clone) knows its own has finished.
+	netPolicyRoundMu sync.Mutex
 
 	// Whether a Link on this host currently holds no Docker address, so the
 	// warning in linkAddrs is written once per transition rather than every

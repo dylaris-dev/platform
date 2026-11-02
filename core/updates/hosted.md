@@ -19,14 +19,13 @@ Newest release first. The format is fixed and checked in CI - see the
 - A new key can expire after 30, 90 or 365 days.
 
 ### Breaking
-- On your own node, `MC_RUN_AS=0` (servers as root) now also needs `MC_ALLOW_ROOT=true`; without it servers run as
-  uid 1000. `node`
+- Nothing.
 
 ### Security
 - On your own node, game servers no longer see the console service's Redis login, and the cloud metadata address is
   blocked for them before their code runs. `node`
 - If servers of more than one owner share your node, each owner's servers are separated from the others' and from
-  your LAN. Set `NETPOLICY=off` on the node to opt out. `node`
+  your LAN. `NETPOLICY=off` on the node removes the rules. `node`
 - No API key can hold a permission that manages keys, roles or members, and keys stop working once their account is
   removed for inactivity. Using a key counts as activity.
 

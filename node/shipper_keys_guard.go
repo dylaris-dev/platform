@@ -18,7 +18,7 @@ import (
 // and the keys had no TTL, so maxmemory eviction could never take them back.
 // The log-shipper no longer hands the credential to the server process; this
 // is the second layer, for whatever still writes there: every pass, any of
-// these keys over its cap is deleted, and one without a TTL is given one.
+// these keys over its cap is deleted, and a small one without a TTL is given one.
 //
 // Keys only, no SCAN (the node's ACL has none): the console streams of
 // sub-servers are found through the sub-server directories, so a stream under
@@ -33,14 +33,13 @@ const (
 	shipperSmallCap = 64 << 10
 )
 
+// ttl 0 means size cap only. The console streams get no TTL on purpose: a
+// stopped server's console history stays as long as it always did (there is no
+// retention setting for it), and their size is what is bounded.
 type guardedKey struct {
 	key string
 	cap int64
 	ttl time.Duration
-	// refresh re-arms the TTL every pass instead of only setting a missing
-	// one: a stream keeps no TTL of its own across XADDs, so a once-set TTL
-	// would wipe a long-running server's console mid-run.
-	refresh bool
 }
 
 // shipperGuardedKeys lists one server's keys: the six its credential may write
@@ -48,14 +47,14 @@ type guardedKey struct {
 func shipperGuardedKeys(uuid string, subServers []string) []guardedKey {
 	p := "dylaris:server:" + uuid + ":"
 	ks := []guardedKey{
-		{p + "logs", shipperStreamCap, 14 * 24 * time.Hour, true},
-		{p + "java-heap", shipperSmallCap, time.Hour, false},
-		{p + "input", shipperSmallCap, 24 * time.Hour, false},
-		{p + "log_filter_rcon", shipperSmallCap, time.Hour, false},
-		{p + "stop-requested", shipperSmallCap, time.Hour, false},
+		{p + "logs", shipperStreamCap, 0},
+		{p + "java-heap", shipperSmallCap, time.Hour},
+		{p + "input", shipperSmallCap, 24 * time.Hour},
+		{p + "log_filter_rcon", shipperSmallCap, time.Hour},
+		{p + "stop-requested", shipperSmallCap, time.Hour},
 	}
 	for _, s := range subServers {
-		ks = append(ks, guardedKey{p + "logs:" + s, shipperStreamCap, 14 * 24 * time.Hour, true})
+		ks = append(ks, guardedKey{p + "logs:" + s, shipperStreamCap, 0})
 	}
 	return ks
 }
@@ -73,8 +72,7 @@ func guardKey(ctx context.Context, rdb *redis.Client, k guardedKey) bool {
 		}
 		return false
 	}
-	if k.refresh {
-		rdb.Expire(ctx, k.key, k.ttl)
+	if k.ttl == 0 {
 		return false
 	}
 	// -1 is "no TTL". A key that has one keeps it: the shipper and Core set

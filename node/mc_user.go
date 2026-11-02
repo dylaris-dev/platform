@@ -7,7 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 // The Minecraft container runs as uid 1000, not as root.
@@ -42,28 +41,15 @@ import (
 // the node should not silently prevent.
 const defaultMCUser = 1000
 
-// 0 additionally needs MC_ALLOW_ROOT=true. A server run as root owns /data, so
-// even with every capability dropped it can rewrite the node's own files there
-// (.node_config.json, the node-local backups); on a machine shared by several
-// owners that is one tenant able to tamper with what the node later runs.
-// Asking for it twice makes it a decision rather than a leftover.
 func mcUser() int {
 	if v := strings.TrimSpace(os.Getenv("MC_RUN_AS")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			if n == 0 && !strings.EqualFold(strings.TrimSpace(os.Getenv("MC_ALLOW_ROOT")), "true") {
-				mcRootRefusedOnce.Do(func() {
-					log.Printf("mc-user: MC_RUN_AS=0 is refused without MC_ALLOW_ROOT=true; servers run as %d", defaultMCUser)
-				})
-				return defaultMCUser
-			}
 			return n
 		}
 		log.Printf("mc-user: MC_RUN_AS %q is not a uid; using %d", v, defaultMCUser)
 	}
 	return defaultMCUser
 }
-
-var mcRootRefusedOnce sync.Once
 
 // mcUserSpec is what Docker's User field wants, or "" to leave the image's own
 // USER in force. Both are set on purpose: the image carries USER 1000 so a

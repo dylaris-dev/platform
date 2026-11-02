@@ -13,17 +13,14 @@ import (
 func TestMCUser(t *testing.T) {
 	cases := []struct {
 		name, env string
-		allowRoot string
 		wantUID   int
 		wantSpec  string
 	}{
 		{name: "unset", env: "", wantUID: 1000, wantSpec: "1000:1000"},
 		{name: "another uid", env: "1500", wantUID: 1500, wantSpec: "1500:1500"},
 		// 0 is a deliberate opt-out, not a mistake: an operator with data owned
-		// by root who would rather keep it than have every world rewritten. It
-		// has to be asked for twice: a root server can rewrite the node's files.
-		{name: "explicit root opt-out", env: "0", allowRoot: "true", wantUID: 0, wantSpec: ""},
-		{name: "root without the second switch", env: "0", wantUID: 1000, wantSpec: "1000:1000"},
+		// by root who would rather keep it than have every world rewritten.
+		{name: "explicit root opt-out", env: "0", wantUID: 0, wantSpec: ""},
 		// Garbage falls back to the safe default rather than to root. A typo in
 		// an env var must not be the thing that hands a tenant uid 0.
 		{name: "not a number", env: "dylaris", wantUID: 1000, wantSpec: "1000:1000"},
@@ -32,7 +29,6 @@ func TestMCUser(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("MC_RUN_AS", tc.env)
-			t.Setenv("MC_ALLOW_ROOT", tc.allowRoot)
 			if got := mcUser(); got != tc.wantUID {
 				t.Errorf("mcUser() = %d, want %d", got, tc.wantUID)
 			}

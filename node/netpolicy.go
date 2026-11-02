@@ -371,11 +371,17 @@ func (dm *DockerManager) applyNetPolicy(ctx context.Context, containerName strin
 // applyRuleset runs the helper with script in the network namespace netMode
 // names: "container:<name>" for one server, "host" for the host's own rules.
 func (dm *DockerManager) applyRuleset(ctx context.Context, netMode, script string) error {
-	if dm.netPolicyImage == "" {
+	return dm.applyRulesetWith(ctx, dm.netPolicyImage, netMode, script)
+}
+
+// applyRulesetWith is applyRuleset with the helper image named, for the
+// NETPOLICY=off cleanup, which runs on a node that otherwise applies nothing.
+func (dm *DockerManager) applyRulesetWith(ctx context.Context, image, netMode, script string) error {
+	if image == "" {
 		return fmt.Errorf("no helper image resolved")
 	}
 	cfg := &container.Config{
-		Image: dm.netPolicyImage,
+		Image: image,
 		// The ruleset travels in the command, not on stdin: attaching a stream to
 		// a one-shot container is a second failure mode for no gain.
 		Cmd:        []string{"sh", "-c", "printf '%s' \"$0\" | nft -f -", script},

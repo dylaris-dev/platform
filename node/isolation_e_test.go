@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,11 +201,39 @@ func TestTheShipperKeyGuard(t *testing.T) {
 		t.Fatalf("a key without TTL got %s, want %s", ttl, in.ttl)
 	}
 
+	// Console history keeps no TTL: there is no retention for it, only a cap.
 	logs := byName["logs"]
 	mr.XAdd(logs.key, "*", []string{"line", "hello"})
-	mr.SetTTL(logs.key, time.Minute)
 	guardKey(ctx, rdb, logs)
-	if ttl := mr.TTL(logs.key); ttl != logs.ttl {
-		t.Fatalf("the console stream TTL was not re-armed: %s", ttl)
+	if ttl := mr.TTL(logs.key); ttl != 0 || !mr.Exists(logs.key) {
+		t.Fatalf("the console stream got a TTL (%s) or was removed", ttl)
+	}
+}
+
+// Rollback: NETPOLICY=off removes the per-server table and the host table
+// instead of leaving them until each server restarts.
+func TestNetPolicyOffRemovesTheRules(t *testing.T) {
+	if got := dropTableScript(netPolicyTable); got != "table inet dylaris\ndelete table inet dylaris\n" {
+		t.Fatalf("drop script = %q", got)
+	}
+	d := &installerDocker{}
+	dm := d.manager(t, "")
+	dm.removeNetPolicy(context.Background(), "node-image")
+	found := false
+	for _, c := range d.creates {
+		hc, _ := c["HostConfig"].(map[string]any)
+		cmd, _ := json.Marshal(c["Cmd"])
+		if hc["NetworkMode"] == "host" && strings.Contains(string(cmd), "delete table inet dylaris_host") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the host table was not removed: %v", d.creates)
+	}
+}
+
+func TestLinkAddrsKeyIgnoresOrder(t *testing.T) {
+	if linkAddrsKey([]string{"10.0.0.2", "10.0.0.1"}) != linkAddrsKey([]string{"10.0.0.1", "10.0.0.2", "10.0.0.1"}) {
+		t.Fatal("the same Link addresses compare as a change")
 	}
 }

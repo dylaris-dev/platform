@@ -377,7 +377,9 @@ func main() {
 	dockerMgr.external = nodeExternal
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("NETPOLICY"))) {
 	case "off":
-		log.Printf("netpolicy: switched off (NETPOLICY=off); no rules are applied to this node's servers")
+		// Off is a rollback, so it removes what an earlier run applied.
+		log.Printf("netpolicy: switched off (NETPOLICY=off); removing the rules of this node's servers")
+		go dockerMgr.removeNetPolicy(ctx, dockerMgr.resolveSelfImage(selfContainerRef()))
 	case "on":
 		dockerMgr.netPolicyForce = true
 		fallthrough

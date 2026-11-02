@@ -152,6 +152,8 @@ func (dm *DockerManager) applyPlanned(ctx context.Context, plan netPlan, c MCCon
 
 // reconcileNetPolicy brings every local game server to its wanted ruleset once.
 func (dm *DockerManager) reconcileNetPolicy(ctx context.Context, rdb *redis.Client, nodeToken string) {
+	dm.netPolicyRoundMu.Lock()
+	defer dm.netPolicyRoundMu.Unlock()
 	dm.ensureHostRules(ctx)
 	plan := dm.planNetPolicy(ctx, rdb, nodeToken)
 
@@ -184,6 +186,7 @@ func startNetPolicyReconciler(ctx context.Context, dm *DockerManager, rdb *redis
 		return
 	}
 	dm.netPolicyRDB, dm.netPolicyToken = rdb, nodeToken
+	go dm.watchLinkAddrs(ctx)
 	log.Printf("netpolicy: applying per-server rules every %s (helper image %s)",
 		netPolicyInterval, dm.netPolicyImage)
 	go func() {
@@ -427,4 +430,83 @@ func (dm *DockerManager) ensureHostRules(ctx context.Context) {
 		log.Printf("netpolicy: the host-level block of %s is NOT in place: %v", metadataAddr, err)
 	}
 	dm.hostRules.record(now, err)
+}
+
+// reconcileNetPolicyNow runs one full round synchronously, on a node whose
+// reconciler runs. Serialised with the loop's rounds by netPolicyRoundMu so the
+// caller knows its round, not a concurrent one, has finished.
+func (dm *DockerManager) reconcileNetPolicyNow(ctx context.Context) {
+	if dm == nil || dm.netPolicyRDB == nil {
+		return
+	}
+	dm.reconcileNetPolicy(ctx, dm.netPolicyRDB, dm.netPolicyToken)
+}
+
+// linkWatchInterval is how often the set of Link addresses is compared. A Link
+// that came back with a new address (a crash restart, a recreate by hand, a
+// start-first update) is refused by every server until a round names it, so a
+// change triggers one at once instead of waiting out netPolicyInterval.
+const linkWatchInterval = 2 * time.Second
+
+// linkAddrsKey is the comparable form of linkAddrs.
+func linkAddrsKey(addrs []string) string {
+	return strings.Join(dedupeSorted(addrs), ",")
+}
+
+func (dm *DockerManager) watchLinkAddrs(ctx context.Context) {
+	t := time.NewTicker(linkWatchInterval)
+	defer t.Stop()
+	last := linkAddrsKey(dm.linkAddrs())
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		if now := linkAddrsKey(dm.linkAddrs()); now != last {
+			last = now
+			log.Printf("netpolicy: the Link addresses changed (%s); applying rules now", now)
+			dm.kickNetPolicy()
+		}
+	}
+}
+
+// removeNetPolicy is NETPOLICY=off actively undoing what an earlier run put in
+// place: the per-server tables in every running server, the host table, and
+// the start gate of every server directory, so nothing keeps waiting for rules
+// that no longer come. A container's rules otherwise lived on until its next
+// restart, which made switching the policy off no rollback at all.
+func (dm *DockerManager) removeNetPolicy(ctx context.Context, image string) {
+	if image == "" {
+		log.Printf("netpolicy: off, but no helper image resolved; rules applied earlier stay until each server restarts")
+		return
+	}
+	running, err := dm.ListRunningMCContainers()
+	if err != nil {
+		log.Printf("netpolicy: off, cannot list servers to remove their rules: %v", err)
+	}
+	removed := 0
+	for _, c := range running {
+		actx, cancel := context.WithTimeout(ctx, netPolicyApplyTimeout)
+		err := dm.applyRulesetWith(actx, image, "container:"+c.ContainerName, dropTableScript(netPolicyTable))
+		cancel()
+		dm.openNetGate(c.UUID)
+		if err != nil {
+			log.Printf("netpolicy: off, cannot remove the rules of %s: %v", c.ContainerName, err)
+			continue
+		}
+		removed++
+	}
+	actx, cancel := context.WithTimeout(ctx, netPolicyApplyTimeout)
+	if err := dm.applyRulesetWith(actx, image, "host", dropTableScript(hostRulesTable)); err != nil {
+		log.Printf("netpolicy: off, cannot remove the host table %s: %v", hostRulesTable, err)
+	}
+	cancel()
+	log.Printf("netpolicy: off; removed the rules of %d running server(s) and the host table", removed)
+}
+
+// dropTableScript removes an inet table whether or not it exists (the same
+// create-then-delete idiom as the rulesets).
+func dropTableScript(table string) string {
+	return "table inet " + table + "\ndelete table inet " + table + "\n"
 }

@@ -589,9 +589,8 @@ which ones and that they belong on the hub service instead (see the
 | `BEAM_LAN_PORT` | `25523` | No | Port for that LAN fast-path listener. Change it together with the `ports:` publication in the compose file, and never publish the plain overlay port `25521` instead. |
 | `MIGRATION_PORT` | `25522` | No | Auto-move pull endpoint: the source node serves the staged archive to the target node, authenticated by a per-node-secret-derived HMAC token. |
 | `BEAM_JWT_SECRET` | *(empty: tickets are verified by the per-node proof only)* | No | Optional fallback key. A Beam ticket is verified first by a proof derived from this node's own secret; this fleet key is only tried when that fails, for a ticket minted before Core could load the node's secret. When set it must equal Core's `BEAM_JWT_SECRET` and the gateway beam-relay's (never Core's `JWT_SECRET`). BYON nodes leave it unset. |
-| `MC_RUN_AS` | `1000` | No | uid/gid the Minecraft containers run as (the `dylaris` user in the images). Set it to keep server data that is already owned by another uid; `0` restores the old root behaviour and also needs `MC_ALLOW_ROOT=true` (a root server can rewrite the node's own files in its directory). A non-numeric value is logged and ignored. |
-| `MC_ALLOW_ROOT` | `false` | No | Must be `true` for `MC_RUN_AS=0` to take effect. |
-| `NETPOLICY` | auto | No | Per-server network rules. Auto: platform nodes separate every server (node, Link and its own proxy only, no host/LAN/metadata egress); external and BYON nodes do the same once Core reports servers of more than one owner on the machine, letting servers of the same owner reach each other, and otherwise only block the cloud metadata address. `on` separates an external node regardless, `off` applies no rules (existing rules stay until a server restarts). |
+| `MC_RUN_AS` | `1000` | No | uid/gid the Minecraft containers run as (the `dylaris` user in the images). Set it to keep server data that is already owned by another uid; `0` restores the old root behaviour (a root server can rewrite the node's own files in its directory, so avoid it on a machine shared by several owners). A non-numeric value is logged and ignored. |
+| `NETPOLICY` | auto | No | Per-server network rules. Auto: platform nodes separate every server (node, Link and its own proxy only, no host/LAN/metadata egress); external and BYON nodes do the same once Core reports servers of more than one owner on the machine, letting servers of the same owner reach each other, and otherwise only block the cloud metadata address. `on` separates an external node regardless, `off` removes the rules again (see [Network rules: rollback](#network-rules-rollback)). |
 | `DYLARIS_CPUSET_CPUS` | *(empty)* | No | Default `cpuset-cpus` CPU pinning applied to all MC containers on this node. |
 | `STORAGE_PATHS` | `./dylaris_data/servers` | No | Comma-separated list of storage roots (multi-disk). **Each path must belong to exactly one node** - see below. |
 | `MODPACK_MIRROR_HOSTS` | *(empty)* | No | Comma-separated extra hosts the Node may download Core-minted pack-build `.mrpack` files from (e.g. the Core public domain / S3 mirror). Merged into the built-in `.mrpack` allowlist (cdn.modrinth.com, github.com, ...). |
@@ -898,6 +897,15 @@ docker compose exec timescaledb sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB
 The single quotes matter: the variables are expanded inside the container, where they are set, not on the host. Restoring the dump needs a superuser on the target database, because it contains TimescaleDB extension objects.
 
 Server files live on the Node host under the `dylaris_data` volume; back that up alongside the database.
+
+### Network rules: rollback
+
+The node writes per-server rules (table `inet dylaris` in each game container) and one host table (`inet dylaris_host`, the cloud metadata block). To take them away on one node:
+
+1. Set `NETPOLICY=off` on that node and restart it. On start it removes `inet dylaris` from every running game server and `inet dylaris_host` from the host, and opens every server's start gate; servers keep running.
+2. On an external or BYON node that Core separates by owner, also delete the flag, or a later `NETPOLICY=auto` picks it up again: `DEL dylaris:node:<node token>:netpolicy_tenancy` in Redis. A Core older than 2026.11.02.2 never writes or clears it, so rolling Core back alone leaves it set.
+
+Back to normal: remove `NETPOLICY` (or set `auto`) and restart the node; the next round, within 15 seconds, applies the rules again.
 
 ### Backup schedules
 
