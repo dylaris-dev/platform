@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"dylaris-core/handlers/access"
-	"dylaris-core/models"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -11,9 +10,6 @@ import (
 
 	"dylaris-core/handlers/httpx"
 )
-
-// effectiveCpuset: see models.EffectiveCpuset.
-var effectiveCpuset = models.EffectiveCpuset
 
 // CPUPinningHandler serves node CPU topology for the pinning UI.
 type CPUPinningHandler struct {

@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 
 	"dylaris-pkg/validate"
@@ -358,7 +357,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// The update reinstalls the server like a setup does, so it needs the same
 	// answer setup gets: with Real player IP on, a target the node cannot
 	// configure to expect the header would refuse every player.
-	if _, refused := handlers.ProxyProtocolInstallGate(w, h.state, srv, loader, req.Minecraft); refused {
+	if _, refused := proxyProtocolInstallGate(w, h.state, srv, loader, req.Minecraft); refused {
 		return
 	}
 
@@ -435,7 +434,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 			"ram":           srv.Memory,
 			"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 			"cpuLimit":      srv.CPULimit,
-			"cpusetCpus":    handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+			"cpusetCpus":    models.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 			"timezone":      srv.Timezone,
 			"extraJvmFlags": strings.TrimSpace(defaultJvmFlags + " " + srv.ExtraJvmFlags),
 		},

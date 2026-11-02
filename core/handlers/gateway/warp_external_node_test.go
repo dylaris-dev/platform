@@ -132,7 +132,7 @@ func TestMintExternalNodeKey_MintsAnOwnerlessKeyAndItsPlatformToken(t *testing.T
 	if got["node_id"] != k.NodeID || got["enroll_token"] != tok.plaintext || got["grpc_tls_fingerprint"] != "ab:cd" {
 		t.Errorf("answer = %v, want the key's node id, the token and the fingerprint", got)
 	}
-	if w, _ := got["warp_key"].(string); w == "" || handlers.HashAPIKey(w) != k.KeyHash {
+	if w, _ := got["warp_key"].(string); w == "" || services.HashAPIKey(w) != k.KeyHash {
 		t.Errorf("warp_key does not match the stored hash")
 	}
 }

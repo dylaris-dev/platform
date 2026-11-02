@@ -79,7 +79,7 @@ func newTestWarpHandlerWithPeer(t *testing.T, keyID int, pubkey, region, leaderI
 		region:        store.WarpRegion{Region: region, Subnet: "10.0.99.0/24", Enabled: true},
 		leader:        store.WarpLeader{LeaderID: leaderID, Region: region, Endpoint: "vpn.example.com:51820", Enabled: true},
 		key:           store.WarpAPIKey{ID: keyID, Policy: "general", MaxConns: 5, OnNewConn: "block"},
-		hash:          handlers.HashAPIKey(fmt.Sprintf("PLAINTEXT-FOR-KEY-%d", keyID)),
+		hash:          services.HashAPIKey(fmt.Sprintf("PLAINTEXT-FOR-KEY-%d", keyID)),
 	}
 	svc := services.NewWarpService(fs, rdb, "test-secret")
 	state := &handlers.AppState{Store: fs, Redis: rdb}
@@ -113,7 +113,7 @@ func newTestWarpHandlerWithForeignPeer(t *testing.T, authKeyID, foreignKeyID int
 		region:        store.WarpRegion{Region: region, Subnet: "10.0.99.0/24", Enabled: true},
 		leader:        store.WarpLeader{LeaderID: leaderID, Region: region, Endpoint: "vpn.example.com:51820", Enabled: true},
 		key:           store.WarpAPIKey{ID: authKeyID, Policy: "general", MaxConns: 5, OnNewConn: "block"},
-		hash:          handlers.HashAPIKey(fmt.Sprintf("PLAINTEXT-FOR-KEY-%d", authKeyID)),
+		hash:          services.HashAPIKey(fmt.Sprintf("PLAINTEXT-FOR-KEY-%d", authKeyID)),
 	}
 	svc := services.NewWarpService(fs, rdb, "test-secret")
 	state := &handlers.AppState{Store: fs, Redis: rdb}

@@ -53,7 +53,7 @@ func (h *WarpHandler) WarpAPIKeyMiddleware(next http.HandlerFunc) http.HandlerFu
 			return
 		}
 		plaintext := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
-		key, err := h.state.Store.GetWarpAPIKeyByHash(handlers.HashAPIKey(plaintext))
+		key, err := h.state.Store.GetWarpAPIKeyByHash(services.HashAPIKey(plaintext))
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.SendJSONError(w, "Invalid warp key", http.StatusUnauthorized)
 			return
@@ -300,7 +300,7 @@ func (h *WarpHandler) MintAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, err := h.state.Store.CreateWarpAPIKey(store.WarpAPIKey{
-		Name: req.Name, KeyHash: handlers.HashAPIKey(plaintext), Policy: req.Policy,
+		Name: req.Name, KeyHash: services.HashAPIKey(plaintext), Policy: req.Policy,
 		MaxConns: req.MaxConns, OnNewConn: req.OnNewConn, FixedWGIP: req.FixedWGIP,
 		NodeID: req.NodeID, Region: req.Region,
 	})
@@ -391,7 +391,7 @@ func (h *WarpHandler) MintExternalNodeKey(w http.ResponseWriter, r *http.Request
 
 	id, err := h.state.Store.CreateWarpAPIKey(store.WarpAPIKey{
 		Name:      name,
-		KeyHash:   handlers.HashAPIKey(plaintext),
+		KeyHash:   services.HashAPIKey(plaintext),
 		Policy:    "general",
 		MaxConns:  1,
 		OnNewConn: "kill_old",
@@ -578,7 +578,7 @@ func (h *WarpHandler) RollExternalNodeKey(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return
 	}
-	if err := h.state.Store.RollWarpAPIKeyHash(key.NodeID, handlers.HashAPIKey(plaintext)); err != nil {
+	if err := h.state.Store.RollWarpAPIKeyHash(key.NodeID, services.HashAPIKey(plaintext)); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.SendJSONError(w, "External node key not found", http.StatusNotFound)
 			return
@@ -703,7 +703,7 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	// enrolls; they are filled because the table requires them.
 	kit := store.WarpAPIKey{
 		Name:      name,
-		KeyHash:   handlers.HashAPIKey(plaintext),
+		KeyHash:   services.HashAPIKey(plaintext),
 		Policy:    "general",
 		MaxConns:  1,
 		OnNewConn: "kill_old",
@@ -1079,7 +1079,7 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
 		return "", false
 	}
-	if err := h.state.Store.RollWarpAPIKeyHash(id, handlers.HashAPIKey(plaintext)); err != nil {
+	if err := h.state.Store.RollWarpAPIKeyHash(id, services.HashAPIKey(plaintext)); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.SendJSONError(w, notFound, http.StatusNotFound)
 			return "", false
@@ -1408,7 +1408,7 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 	// cleanly instead of hitting the connection limit. Same as a link kit.
 	if _, err := h.state.Store.CreateWarpAPIKey(store.WarpAPIKey{
 		Name:      name,
-		KeyHash:   handlers.HashAPIKey(plaintext),
+		KeyHash:   services.HashAPIKey(plaintext),
 		Policy:    "general",
 		MaxConns:  1,
 		OnNewConn: "kill_old",

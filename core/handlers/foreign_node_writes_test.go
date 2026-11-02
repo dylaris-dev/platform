@@ -1,12 +1,8 @@
 package handlers
 
 import (
-	"bytes"
 	"database/sql"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"runtime/debug"
 	"testing"
 
 	"dylaris-core/authz"
@@ -57,48 +53,6 @@ func foreignState(node *models.Node) *AppState {
 	s := &AppState{Store: st, Authz: authz.NewResolver(st), FeatureFlags: services.NewFeatureFlags(st)}
 	s.Authz.SetForeignNode(s.NodeOwnedByOther)
 	return s
-}
-
-// TestWritesOnACustomersMachineAreNotFound covers every route the review named.
-// Past the guard, each platform twin stops at the next thing its fake lacks
-// (a nil orchestrator, Redis, or node registry), and never at 404.
-func TestWritesOnACustomersMachineAreNotFound(t *testing.T) {
-	id := map[string]string{"id": "7"}
-	routes := []struct {
-		name string
-		call func(t *testing.T, s *AppState, w http.ResponseWriter)
-	}{
-		{"set overcommit", func(t *testing.T, s *AppState, w http.ResponseWriter) {
-			r := handlertest.AdminRequest("PUT", id, `{"cpuOvercommitRatio":1,"ramOvercommitRatio":1}`)
-			r.URL.Path = "/api/nodes/7/placement"
-			(&PlacementHandler{state: s}).SetNodePlacement(w, r)
-		}},
-	}
-	for _, rt := range routes {
-		t.Run(rt.name+"/a customer's machine", func(t *testing.T) {
-			rw := httptest.NewRecorder()
-			rt.call(t, foreignState(handlertest.OwnedNode()), rw)
-			if rw.Code != http.StatusNotFound {
-				t.Fatalf("status = %d, want 404 (%s)", rw.Code, rw.Body.String())
-			}
-		})
-		t.Run(rt.name+"/a platform machine", func(t *testing.T) {
-			rw := httptest.NewRecorder()
-			func() {
-				// A platform twin may run into a nil dependency the fake does not
-				// provide; getting that far is the proof it passed the guard.
-				defer func() {
-					if p := recover(); p != nil && bytes.Contains(debug.Stack(), []byte("NodeOwnedByOther")) {
-						t.Fatalf("the guard itself panicked on a platform machine: %v", p)
-					}
-				}()
-				rt.call(t, foreignState(handlertest.PlatformNode()), rw)
-			}()
-			if rw.Code == http.StatusNotFound {
-				t.Fatalf("a platform machine was refused: %s", rw.Body.String())
-			}
-		})
-	}
 }
 
 // TestFilesAndBeamAskTheResolverForAnAdmin: both answered an admin before the

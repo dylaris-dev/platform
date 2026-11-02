@@ -5,7 +5,6 @@ import (
 	"log"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/nodeops"
 
 	"dylaris-core/models"
@@ -34,7 +33,7 @@ func (h *ServerHandler) proxyProtocolDefault(ctx context.Context, srv *models.Se
 	}
 	in.RoutingMode, _ = h.state.Store.GetSetting("routing_mode")
 	in.PlatformEnabled = h.state.FeatureFlags != nil && h.state.FeatureFlags.IsProxyProtocolEnabled(ctx)
-	in.NodeWritesConfig = nodeops.NodeReleaseAtLeast(ctx, h.state.Redis, node.Token, handlers.ProxyProtocolDefaultSince)
+	in.NodeWritesConfig = nodeops.NodeReleaseAtLeast(ctx, h.state.Redis, node.Token, proxyProtocolDefaultSince)
 
 	installs, ierr := h.state.Store.ListSubServerInstalls(srv.ID)
 	routes, rerr := services.ReadRoutesFromRedis(ctx, h.state.Redis)

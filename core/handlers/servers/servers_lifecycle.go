@@ -69,7 +69,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p := req.Docker.RAMPaddingMB; p != nil && !models.ValidRAMPaddingMB(*p) {
-		httpx.SendJSONError(w, handlers.RamPaddingRefused, http.StatusBadRequest)
+		httpx.SendJSONError(w, ramPaddingRefused, http.StatusBadRequest)
 		return
 	}
 
@@ -94,20 +94,20 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	// online node. Placing without them used to be refused with "Node not
 	// found", which left a region-neutral panel no way to create a server.
 	if nodeIDInt == 0 {
-		pickReq := handlers.PickNodeRequest{
+		pickReq := PickNodeRequest{
 			Region:       req.Region,
 			Tags:         req.Tags,
 			Tag:          req.Tag,
 			RAMMB:        req.Docker.RAM,
 			RAMPaddingMB: req.Docker.RAMPaddingMB,
 			CPUCores:     req.Docker.CPULimit,
-			DiskGB:       handlers.DiskMBToGBCeil(req.Docker.DiskLimit),
+			DiskGB:       diskMBToGBCeil(req.Docker.DiskLimit),
 		}
 		// BYON: scope auto-placement to nodes the caller's party owns, so the
 		// scheduler never picks a foreign node. No-op when BYON is off. See
 		// applyPlacementScope for why an admin is scoped too.
-		handlers.ApplyPlacementScope(h.state, r, &pickReq)
-		pick := handlers.NewPlacementHandler(h.state).PickNodeFor(r.Context(), pickReq)
+		applyPlacementScope(h.state, r, &pickReq)
+		pick := NewPlacementHandler(h.state).pickNode(r.Context(), pickReq)
 		if !pick.Success || pick.Picked == nil {
 			httpx.SendJSONError(w, "No node available: "+pick.Reason, http.StatusServiceUnavailable)
 			return
@@ -250,7 +250,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 				"ram":          req.Docker.RAM,
 				"ramPaddingMB": services.EffectiveRAMPaddingMB(h.state.Store, req.Docker.RAMPaddingMB, node.RAMPaddingMB),
 				"cpuLimit":     req.Docker.CPULimit,
-				"cpusetCpus":   handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"cpusetCpus":   models.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"timezone":     srv.Timezone,
 				"diskLimit":    req.Docker.DiskLimit,
 				"command":      "",
@@ -589,12 +589,12 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	// The software, not the type: a proxy template arrives as upload-zip and
 	// must pass the same gate as an online proxy install. A plain upload's
 	// software is never a proxy (validateUploadSoftware).
-	if installing := recordedInstallerType(req.Installer.Type, req.Installer.Software); handlers.ProxyInstallers[installing] {
+	if installing := recordedInstallerType(req.Installer.Type, req.Installer.Software); proxyInstallers[installing] {
 		token := ""
 		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil {
 			token = node.Token
 		}
-		if code, msg := handlers.ProxyInstallRefusal(r.Context(), h.state, srv.ServerType, token, installing); code != 0 {
+		if code, msg := proxyInstallRefusal(r.Context(), h.state, srv.ServerType, token, installing); code != 0 {
 			httpx.SendJSONError(w, msg, code)
 			return
 		}
@@ -604,7 +604,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// While real player IP is on, what gets installed must expect it too.
-	proxyKeep, proxyRefused := handlers.ProxyProtocolInstallGate(w, h.state, srv, req.Installer.Type, req.Installer.Version)
+	proxyKeep, proxyRefused := proxyProtocolInstallGate(w, h.state, srv, req.Installer.Type, req.Installer.Version)
 	if proxyRefused {
 		return
 	}
@@ -613,15 +613,15 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	// names a slug and a build, and every URL the node receives comes from
 	// Technic now. A node that predates the installer is refused rather than
 	// sent a job it would fail after the container already exists.
-	var technic *handlers.TechnicResolution
+	var technic *TechnicResolution
 	if req.Installer.Type == "technic" {
-		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil && nodeops.NodeReleaseOlderThan(r.Context(), h.state.Redis, node.Token, handlers.TechnicSince) {
+		if node, err := h.state.Store.GetNodeByID(srv.NodeID); err == nil && nodeops.NodeReleaseOlderThan(r.Context(), h.state.Redis, node.Token, technicSince) {
 			httpx.SendJSONError(w, "This node runs an older release that cannot install Technic packs. Update the node, then try again.", http.StatusConflict)
 			return
 		}
-		res, err := handlers.NewTechnicHandler(h.state).ResolveTechnic(r.Context(), strings.TrimSpace(req.Installer.TechnicSlug), strings.TrimSpace(req.Installer.TechnicBuild))
+		res, err := NewTechnicHandler(h.state).resolveTechnic(r.Context(), strings.TrimSpace(req.Installer.TechnicSlug), strings.TrimSpace(req.Installer.TechnicBuild))
 		if err != nil {
-			handlers.SendTechnicError(w, err)
+			sendTechnicError(w, err)
 			return
 		}
 		technic = res
@@ -819,7 +819,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 				"ram":           srv.Memory,
 				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 				"cpuLimit":      srv.CPULimit,
-				"cpusetCpus":    handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"cpusetCpus":    models.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"timezone":      srv.Timezone,
 				"extraJvmFlags": combinedJvmFlags,
 			},
@@ -1085,7 +1085,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	// While real player IP is on, the reinstalled software must expect it too.
-	proxyKeep, proxyRefused := handlers.ProxyProtocolInstallGate(w, h.state, srv, installerType, buildNumber)
+	proxyKeep, proxyRefused := proxyProtocolInstallGate(w, h.state, srv, installerType, buildNumber)
 	if proxyRefused {
 		return
 	}
@@ -1159,7 +1159,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 				"ram":           srv.Memory,
 				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 				"cpuLimit":      srv.CPULimit,
-				"cpusetCpus":    handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"cpusetCpus":    models.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"timezone":      srv.Timezone,
 				"extraJvmFlags": combinedJvmFlags,
 			},
@@ -1427,7 +1427,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 					"ram":           srv.Memory,
 					"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 					"cpuLimit":      srv.CPULimit,
-					"cpusetCpus":    handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+					"cpusetCpus":    models.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 					"timezone":      srv.Timezone,
 					"extraJvmFlags": combinedJvmFlags,
 				},
@@ -1962,7 +1962,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if req.RAMPaddingMB != nil && !models.ValidRAMPaddingMB(*req.RAMPaddingMB) {
-		httpx.SendJSONError(w, handlers.RamPaddingRefused, 400)
+		httpx.SendJSONError(w, ramPaddingRefused, 400)
 		return
 	}
 	paddingRequested := req.RAMPaddingMB != nil || req.ResetRAMPadding
@@ -2155,7 +2155,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 			dockerPayload := map[string]interface{}{
 				"ram":        req.RAM,
 				"cpuLimit":   req.CPULimit,
-				"cpusetCpus": handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"cpusetCpus": models.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"timezone":   srv.Timezone,
 				"diskLimit":  req.DiskLimit,
 				"image":      srv.GameImage,
@@ -2903,7 +2903,7 @@ func (h *ServerHandler) UpdateServerRuntime(w http.ResponseWriter, r *http.Reque
 				"ram":           srv.Memory,
 				"ramPaddingMB":  services.EffectiveRAMPaddingMB(h.state.Store, srv.RAMPaddingMB, node.RAMPaddingMB),
 				"cpuLimit":      srv.CPULimit,
-				"cpusetCpus":    handlers.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
+				"cpusetCpus":    models.EffectiveCpuset(srv.CPUPinningMode, srv.Cpuset, node.CpusetCpus),
 				"timezone":      srv.Timezone,
 				"extraJvmFlags": combinedJvmFlags,
 			},

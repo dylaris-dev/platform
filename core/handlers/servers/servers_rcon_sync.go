@@ -3,8 +3,6 @@ package servers
 import (
 	"log"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 )
 
@@ -32,10 +30,10 @@ func (h *ServerHandler) syncRconToSubServer(srv *models.Server, subServer string
 		log.Printf("rcon sync for server %d: reading the stored config failed: %v", srv.ID, err)
 		return false
 	}
-	if !handlers.RconNeedsStamping(subServer, enabled, password) {
+	if !rconNeedsStamping(subServer, enabled, password) {
 		return true
 	}
-	if err := handlers.NewRconHandler(h.state).ApplyProps(srv.NodeID, srv.UUID, subServer, enabled, port, password); err != nil {
+	if err := NewRconHandler(h.state).applyProps(srv.NodeID, srv.UUID, subServer, enabled, port, password); err != nil {
 		log.Printf("rcon sync for server %d (%s): writing server.properties failed: %v", srv.ID, subServer, err)
 		return false
 	}

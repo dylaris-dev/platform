@@ -416,7 +416,7 @@ func TestAPIKeyMiddleware_Chain(t *testing.T) {
 			if c.key != nil {
 				c.key.UserID = "owner-1"
 				plaintext := strings.TrimPrefix(strings.TrimSpace(strings.TrimPrefix(c.authHeader, "Bearer ")), "dyl_")
-				fs.keysByHash[HashAPIKey(plaintext)] = c.key
+				fs.keysByHash[services.HashAPIKey(plaintext)] = c.key
 			}
 			h := newAPIKeysAuthHandler(fs)
 			wrapped := h.APIKeyServerRoute(c.requiredPerm)(sentinelInner)
@@ -478,7 +478,7 @@ func TestAPIKeyMiddleware_PerKeyRateLimitExceeded(t *testing.T) {
 		Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}, Servers: []string{"target-server-uuid"}},
 	}
 	fs := &apiKeysAuthFakeStore{
-		keysByHash: map[string]*models.APIKey{HashAPIKey("ratelimited"): key},
+		keysByHash: map[string]*models.APIKey{services.HashAPIKey("ratelimited"): key},
 		users:      map[string]*models.User{"owner-1": {ID: "owner-1", Username: "owner"}},
 		servers:    map[string]*models.Server{"target-server-uuid": {ID: 1, UUID: "target-server-uuid", OwnerID: "owner-1"}},
 	}
@@ -865,12 +865,12 @@ func TestAPIKeysCreate_AdminBypassesScopingAndDefaultsRate(t *testing.T) {
 	// KeyHash carries `json:"-"` (never serialized - the response only ever
 	// carries the one-time plaintext), so pin the hash relationship against
 	// what was actually persisted via CreateAPIKey, not the JSON response:
-	// the stored KeyHash must be exactly HashAPIKey of the plaintext with the
+	// the stored KeyHash must be exactly services.HashAPIKey of the plaintext with the
 	// dyl_ prefix stripped, since that is what apiKeyMiddleware re-derives
 	// from the caller's Authorization header on every subsequent use.
 	rawPlaintext := strings.TrimPrefix(resp.Plaintext, "dyl_")
-	if call.KeyHash != HashAPIKey(rawPlaintext) {
-		t.Fatalf("persisted KeyHash %q does not match HashAPIKey(rawPlaintext) %q", call.KeyHash, HashAPIKey(rawPlaintext))
+	if call.KeyHash != services.HashAPIKey(rawPlaintext) {
+		t.Fatalf("persisted KeyHash %q does not match services.HashAPIKey(rawPlaintext) %q", call.KeyHash, services.HashAPIKey(rawPlaintext))
 	}
 }
 
@@ -938,7 +938,7 @@ func TestAPIKeyMiddleware_OwnerAccessIsRecheckedAtUse(t *testing.T) {
 		if grant != nil && owner != nil {
 			fs.grants[grantKey(1, owner.ID)] = grant
 		}
-		fs.keysByHash[HashAPIKey("thekey")] = &models.APIKey{
+		fs.keysByHash[services.HashAPIKey("thekey")] = &models.APIKey{
 			ID: 1, UserID: "friend-1", RatePerMin: 1000,
 			Scope: models.APIKeyScope{Permissions: []string{"rcon.exec"}, Servers: []string{serverUUID}},
 		}

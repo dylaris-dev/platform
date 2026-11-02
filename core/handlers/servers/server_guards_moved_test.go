@@ -123,6 +123,11 @@ func TestServerWritesOnACustomersMachineAreNotFound(t *testing.T) {
 			s.Redis, _ = handlertest.Redis(t) // asked before the server is loaded
 			(&ServerHandler{state: s}).CancelMigration(w, handlertest.AdminRequest("POST", id, ""))
 		}},
+		{"set overcommit", func(t *testing.T, s *handlers.AppState, w http.ResponseWriter) {
+			r := handlertest.AdminRequest("PUT", id, `{"cpuOvercommitRatio":1,"ramOvercommitRatio":1}`)
+			r.URL.Path = "/api/nodes/7/placement"
+			(&PlacementHandler{state: s}).SetNodePlacement(w, r)
+		}},
 	}
 	for _, rt := range routes {
 		t.Run(rt.name+"/a customer's machine", func(t *testing.T) {
@@ -258,7 +263,7 @@ func TestRevokingANarrowGrantUnderAProxyIsTheOwnersCall(t *testing.T) {
 	for _, c := range cases {
 		t.Run("RemoveMember/"+c.name, func(t *testing.T) {
 			fs := &revokeStore{proxyGrant: c.proxyGrant, staleRealm: c.staleRealm}
-			h := handlers.NewMemberHandler(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
+			h := NewMemberHandler(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
 			r := httptest.NewRequest(http.MethodDelete, "/api/servers/5/members/target", nil)
 			r = mux.SetURLVars(r, map[string]string{"id": "5", "userId": "11111111-1111-1111-1111-111111111111"})
 			r = r.WithContext(context.WithValue(context.WithValue(r.Context(), "userID", c.caller), "isAdmin", false))

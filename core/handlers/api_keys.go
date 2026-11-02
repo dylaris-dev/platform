@@ -19,6 +19,7 @@ import (
 	"dylaris-core/handlers/reauth"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/services/demo"
 
 	"github.com/gorilla/mux"
@@ -210,7 +211,7 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	k := &models.APIKey{
 		UserID:  userID,
 		Name:    req.Name,
-		KeyHash: HashAPIKey(plaintext),
+		KeyHash: services.HashAPIKey(plaintext),
 		Scope: models.APIKeyScope{
 			Servers:     req.Servers,
 			Permissions: req.Permissions,
@@ -455,7 +456,7 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 				httpx.SendJSONError(w, "Too many requests", http.StatusTooManyRequests)
 				return
 			}
-			key, err := h.state.Store.GetAPIKeyByHash(HashAPIKey(plaintext))
+			key, err := h.state.Store.GetAPIKeyByHash(services.HashAPIKey(plaintext))
 			if err != nil {
 				h.ipLimiter.Allow(ip, keyFailuresPerMin)
 				httpx.SendJSONError(w, "Invalid key", http.StatusUnauthorized)

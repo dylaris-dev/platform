@@ -12,6 +12,7 @@ import (
 
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
 	"dylaris-pkg/validate"
 
@@ -345,7 +346,7 @@ func (h *ConsoleHandler) SendCommand(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Command string `json:"command"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, consoleCommandMaxBody)
+	r.Body = http.MaxBytesReader(w, r.Body, nodeops.CommandMaxBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -393,9 +394,8 @@ func (h *ConsoleHandler) SendCommand(w http.ResponseWriter, r *http.Request) {
 const (
 	// consoleCommandMaxLen matches what the container's input forwarder keeps:
 	// it cuts every line at 1 KB, so a longer one was never run as sent.
-	consoleCommandMaxLen  = 1024
-	consoleCommandMaxBody = 16 << 10
-	consoleInputBacklog   = 100
+	consoleCommandMaxLen = 1024
+	consoleInputBacklog  = 100
 )
 
 // consoleCommandProblem refuses a command the server would not receive as

@@ -13,6 +13,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
+	"dylaris-core/handlers/servers"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -155,13 +156,12 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
 		return
 	}
-	rh := handlers.NewRconHandler(h.state)
-	mod, rel, content, err := rh.FindVoiceConfig(srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	mod, rel, content, err := servers.FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	switch {
-	case errors.Is(err, handlers.ErrVoiceModMissing):
+	case errors.Is(err, servers.ErrVoiceModMissing):
 		httpx.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
 		return
-	case errors.Is(err, handlers.ErrVoiceModAmbiguous):
+	case errors.Is(err, servers.ErrVoiceModAmbiguous):
 		httpx.SendJSONErrorCode(w, "Both Simple Voice Chat and Plasmo Voice are installed. Remove one, then try again.", "voice_mod_ambiguous", http.StatusConflict)
 		return
 	case err != nil:
@@ -194,12 +194,12 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	merged := handlers.SvcVoiceEnable(content, got.Host, got.Port)
+	merged := servers.SvcVoiceEnable(content, got.Host, got.Port)
 	if mod == "plasmo" {
-		merged = handlers.PlasmoVoiceEnable(content, got.Host, got.Port)
+		merged = servers.PlasmoVoiceEnable(content, got.Host, got.Port)
 	}
 	if merged != content {
-		if err := rh.WriteNodeFileString(srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
+		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
 			log.Printf("voice: server %d: write %s: %v", srv.ID, rel, err)
 			h.rollbackVoice(ctx, srv, prior, false)
 			httpx.SendJSONError(w, "The node could not write the voice chat config. Try again.", http.StatusBadGateway)
@@ -296,15 +296,14 @@ func RevokeServerVoice(ctx context.Context, st *handlers.AppState, srv *models.S
 // writeBackVoiceConfig strips the voice address from the mod config on the
 // node. Failures are logged: voice already stopped with the row.
 func writeBackVoiceConfig(st *handlers.AppState, srv *models.Server) {
-	rh := handlers.NewRconHandler(st)
-	mod, rel, content, err := rh.FindVoiceConfig(srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	mod, rel, content, err := servers.FindVoiceConfig(st.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	if err != nil {
 		log.Printf("voice: server %d: config write-back skipped: %v", srv.ID, err)
 		return
 	}
-	back := handlers.SvcVoiceDisable(content)
+	back := servers.SvcVoiceDisable(content)
 	if mod == "plasmo" {
-		back = handlers.PlasmoVoiceDisable(content)
+		back = servers.PlasmoVoiceDisable(content)
 	}
 	if back != content {
 		// Asked again right before the write: on a slow node this runs long
@@ -314,7 +313,7 @@ func writeBackVoiceConfig(st *handlers.AppState, srv *models.Server) {
 			log.Printf("voice: server %d: config write-back skipped, voice is on again (or unreadable: %v)", srv.ID, err)
 			return
 		}
-		if err := rh.WriteNodeFileString(srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, back); err != nil {
+		if err := nodeops.WriteNodeFileString(st.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, back); err != nil {
 			log.Printf("voice: server %d: config write-back of %s failed: %v", srv.ID, rel, err)
 		}
 	}

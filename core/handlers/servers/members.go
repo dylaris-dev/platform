@@ -1,0 +1,563 @@
+package servers
+
+import (
+	"encoding/json"
+	"net/http"
+	"sort"
+	"strconv"
+	"strings"
+
+	"dylaris-core/authz"
+	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/audit"
+	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
+	"dylaris-core/models"
+	"dylaris-core/store"
+
+	"github.com/gorilla/mux"
+)
+
+// invitePermissionKeys is the vocabulary this endpoint accepts, in the order it
+// reads best in an error message. It is the same set callerMayDelegate knows,
+// plus "inherit" and the read-only keys the invite blob can carry - a key that
+// is not here confers nothing wherever it ends up, so accepting it silently
+// only lets a caller believe they granted something.
+var invitePermissionKeys = []string{
+	"overview", "console", "files", "config", "setup",
+	"power", "players", "members", "network", "backups", "inherit",
+}
+
+// unknownPermissionKeys returns the keys that are not in the vocabulary, sorted
+// so the message is the same every time.
+func unknownPermissionKeys(perms map[string]bool) []string {
+	known := make(map[string]bool, len(invitePermissionKeys))
+	for _, k := range invitePermissionKeys {
+		known[k] = true
+	}
+	var bad []string
+	for k := range perms {
+		if !known[k] {
+			bad = append(bad, k)
+		}
+	}
+	sort.Strings(bad)
+	return bad
+}
+
+type MemberHandler struct {
+	state *handlers.AppState
+}
+
+func NewMemberHandler(state *handlers.AppState) *MemberHandler {
+	return &MemberHandler{state: state}
+}
+
+// capPermissions caps a requested permission set to what the CALLER may
+// delegate onward. Owner and admin are uncapped; everyone else may grant a key
+// only if they themselves hold every capability that key confers.
+//
+// It used to read the server_invites row for (serverID, callerID) and cap
+// against that row's legacy booleans. Two things went wrong with that:
+//
+//   - An ACCOUNT-WIDE grantee has no such row by construction (their grant is
+//     the row with server_id IS NULL), so the lookup returned sql.ErrNoRows and
+//     the function returned the requested permissions UNCAPPED. They passed
+//     RequireCap("members.write") because the resolver folds account-wide
+//     grants in - and then delegated the full set on any server in that owner's
+//     realm, whatever their own grant allowed. CreateInvite runs the map
+//     through store.MapLegacyInviteCaps, so those keys become real capability
+//     grants, not a display field.
+//   - Every error path returned the permissions uncapped as well, so a database
+//     blip widened a delegation instead of refusing it.
+//
+// Asking the resolver fixes both at once and covers every grant source there
+// is - per-server row, proxy-inherited, account-wide, server role - rather than
+// the one table this happened to read. Same lesson as the SFTP grant lookup:
+// the resolver is the authority, a grant table is not.
+// mayReplaceMemberAccess is true for the owner, an operator on the platform's
+// own machine, and a member who may also remove members.
+func (h *MemberHandler) mayReplaceMemberAccess(r *http.Request, serverID int) bool {
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
+	username, _ := r.Context().Value("username").(string)
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil || srv == nil {
+		return false
+	}
+	if srv.OwnerID == userID || (isAdmin && !h.state.NodeOwnedByOther(srv.NodeID, userID)) {
+		return true
+	}
+	if h.state.Authz == nil {
+		return false
+	}
+	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	return rerr == nil && res.HasCap("members.delete")
+}
+
+func (h *MemberHandler) capPermissions(r *http.Request, serverID int, perms map[string]bool) map[string]bool {
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	userID, _ := r.Context().Value("userID").(string)
+	username, _ := r.Context().Value("username").(string)
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil || srv == nil {
+		return denyAllPermissions(perms)
+	}
+	// Owner short-circuit keyed on the immutable owner UUID, never the mutable
+	// username (a rename frees the old name, which a squatter could reclaim),
+	// matching the resolver's rule (see authz/resolver.go). The route itself is
+	// already gated by RequireCap("members.write"); this only caps HOW MUCH an
+	// invited non-owner may delegate onward.
+	// An admin on a customer's machine got here through that customer's invite,
+	// so the invite, not the admin flag, caps what they may hand on.
+	if srv.OwnerID == userID || (isAdmin && !h.state.NodeOwnedByOther(srv.NodeID, userID)) {
+		return perms
+	}
+	if h.state.Authz == nil {
+		return denyAllPermissions(perms)
+	}
+	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	if rerr != nil {
+		return denyAllPermissions(perms)
+	}
+
+	capped := make(map[string]bool, len(perms))
+	for k, v := range perms {
+		capped[k] = v && callerMayDelegate(res, k)
+	}
+	return capped
+}
+
+// denyAllPermissions keeps every requested key present but false. Dropping the
+// keys instead would let a caller's map decide what CreateInvite writes; an
+// explicit false is the same shape with none of the permission.
+func denyAllPermissions(perms map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(perms))
+	for k := range perms {
+		out[k] = false
+	}
+	return out
+}
+
+// callerMayDelegate reports whether the caller holds everything one legacy
+// invite key confers.
+//
+// The key's meaning comes from store.MapLegacyInviteCaps - the very function
+// CreateInvite uses to turn these booleans into capability grants - so the two
+// sides cannot drift apart about what "files" or "power" means.
+//
+// "inherit" is capped to false for anyone but the owner and an admin. It is not
+// in that mapping because it confers no capability of its own: it makes a grant
+// flow down to child servers, which widens the blast radius across the server
+// TREE rather than within one server. That is the owner's call about their own
+// topology, not something a delegated inviter should hand on. (The previous
+// code let a member with inherit pass it along; this narrows that.)
+func callerMayDelegate(res *authz.Resolution, key string) bool {
+	if key == "inherit" {
+		return false
+	}
+	var tp models.TabPermissions
+	switch key {
+	case "console":
+		tp.Console = true
+	case "files":
+		tp.Files = true
+	case "config":
+		tp.Config = true
+	case "setup":
+		tp.Setup = true
+	case "power":
+		tp.Power = true
+	case "members":
+		tp.Members = true
+	case "overview":
+		tp.Overview = true
+	case "network":
+		tp.Network = true
+	case "players":
+		tp.Players = true
+	case "backups":
+		tp.Backups = true
+	default:
+		// An unrecognised key confers nothing: MapLegacyInviteCaps ignores it,
+		// so it cannot grant capabilities however it is stored.
+		return true
+	}
+	for _, c := range store.MapLegacyInviteCaps(tp) {
+		if !res.HasCap(c) {
+			return false
+		}
+	}
+	return true
+}
+
+// refuseBadPermissionMap answers the request when the permissions blob cannot
+// be used as an authorization decision, and reports whether it did.
+//
+// Shared by the invite and the edit, because they are the same decision and
+// they drifted: the invite was hardened after a live finding and the PATCH
+// beside it was left accepting both mistakes. Measured on production,
+// PATCH {"perms": {...}} - one typo'd field name - answered 200 and stripped
+// every permission the member had, and PATCH with {"sudo": true} was accepted
+// where the POST refuses it by name.
+//
+// No default. There used to be one and it granted everything except member
+// management, so the way to hand somebody full control of a server was to say
+// nothing about permissions at all - the one shape a careless caller is most
+// likely to send. An authorization endpoint has to be told what it is
+// authorizing.
+func refuseBadPermissionMap(w http.ResponseWriter, perms map[string]bool) bool {
+	if perms == nil {
+		httpx.SendJSONError(w, "permissions is required and says what this member may do: "+
+			strings.Join(invitePermissionKeys, ", ")+". Send {} for no permissions beyond seeing the server.",
+			http.StatusBadRequest)
+		return true
+	}
+	if bad := unknownPermissionKeys(perms); len(bad) > 0 {
+		httpx.SendJSONError(w, "Unknown permission(s): "+strings.Join(bad, ", ")+". Valid keys are "+
+			strings.Join(invitePermissionKeys, ", "), http.StatusBadRequest)
+		return true
+	}
+	return false
+}
+
+// GetMembers GET /api/servers/{id}/members - the member invites on one server.
+func (h *MemberHandler) GetMembers(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		return
+	}
+
+	invites, err := h.state.Store.ListInvitesByServer(serverID)
+	if err != nil {
+		httpx.SendJSONError(w, "Failed to load members", http.StatusInternalServerError)
+		return
+	}
+
+	if invites == nil {
+		invites = []models.ServerInvite{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"members": invites,
+	})
+}
+
+// InviteMember POST /api/servers/{id}/members - invites a user onto the server
+// with a permission set. Server auditing is switched on first if it was off,
+// so the invite itself is the first thing the audit trail records. An existing
+// member is 409.
+func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Username    string          `json:"username"`
+		Permissions map[string]bool `json:"permissions"`
+	}
+	// Unknown fields are an ERROR here, not something to ignore. This endpoint
+	// decides what somebody may do to a server, and the two mistakes it used to
+	// answer with "success" are the same mistake: a body it did not understand,
+	// and a body with no permissions at all. Measured on production by sending
+	// {"username": ..., "preset": "viewer"} - the word "viewer" was dropped on
+	// the floor and the guest could write files and stop the server.
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		httpx.SendJSONError(w, "Invalid JSON: this endpoint takes only username and permissions ("+
+			strings.Join(invitePermissionKeys, ", ")+")", http.StatusBadRequest)
+		return
+	}
+
+	if req.Username == "" {
+		httpx.SendJSONError(w, "Username required", http.StatusBadRequest)
+		return
+	}
+
+	if refuseBadPermissionMap(w, req.Permissions) {
+		return
+	}
+	if refuseDelegationWhenOff(w, r, h.state.Store) {
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+
+	targetUser, err := h.state.Store.GetUserByUsername(req.Username)
+	if err != nil {
+		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	if targetUser.ID == srv.OwnerID {
+		httpx.SendJSONError(w, "Cannot invite the server owner", http.StatusBadRequest)
+		return
+	}
+
+	inviterID := ""
+	if id, ok := r.Context().Value("userID").(string); ok {
+		inviterID = id
+	}
+	// Not yourself: a member who reaches members.write through an account-wide
+	// grant, a role or a proxy could give themselves a direct row here, and it
+	// outlived the owner revoking whatever they came in through. /api/grants
+	// refuses a grant to yourself for the same reason.
+	if targetUser.ID == inviterID {
+		httpx.SendJSONError(w, "Cannot invite yourself", http.StatusBadRequest)
+		return
+	}
+
+	// Cap to what the inviter themselves holds.
+	req.Permissions = h.capPermissions(r, serverID, req.Permissions)
+
+	if err := h.state.Store.CreateInvite(serverID, targetUser.ID, inviterID, req.Permissions); err != nil {
+		httpx.SendJSONError(w, "Failed to create invite (user may already be invited)", http.StatusConflict)
+		return
+	}
+	handlers.StampBeamAccess(r.Context(), h.state, serverID)
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	// First member invite flips audit_enabled on. Cheap no-op when
+	// already on. The audit row for the invite is written right after.
+	audit.EnableServerAuditIfNeeded(h.state.Store, serverID)
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventMemberInvited, inviterID, targetUser.ID, map[string]interface{}{
+		"username":    targetUser.Username,
+		"permissions": req.Permissions,
+	})
+
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// UpdateMemberPermissions PATCH /api/servers/{id}/members/{userId} - replaces
+// one member's permission set and records the change in the server audit
+// trail.
+func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		return
+	}
+	targetUserID, ok := httpx.ParseUserID(w, r, "userId")
+	if !ok {
+		return
+	}
+
+	var req struct {
+		Permissions map[string]bool `json:"permissions"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		httpx.SendJSONError(w, "Invalid JSON: this endpoint takes only permissions ("+
+			strings.Join(invitePermissionKeys, ", ")+")", http.StatusBadRequest)
+		return
+	}
+	if refuseBadPermissionMap(w, req.Permissions) {
+		return
+	}
+
+	// Not your own: replacing your own set dropped the denies the owner put on
+	// your grant (the store kept only the grant side), so a member with
+	// members.write and members.delete got their role back in full. /api/grants
+	// refuses a grant to yourself for the same reason.
+	if caller, _ := r.Context().Value("userID").(string); caller == targetUserID {
+		httpx.SendJSONError(w, "You cannot change your own access", http.StatusForbidden)
+		return
+	}
+	if refuseDelegationWhenOff(w, r, h.state.Store) {
+		return
+	}
+
+	// Replacing a member's set can take their access away as surely as
+	// removing them, which needs members.delete - the same rule /api/grants
+	// applies to overwriting a grant. This is the older route to the same row.
+	if !h.mayReplaceMemberAccess(r, serverID) {
+		httpx.SendJSONError(w, "Changing an existing member's access needs the right to remove members", http.StatusForbidden)
+		return
+	}
+
+	// Cap to what the inviter themselves holds.
+	req.Permissions = h.capPermissions(r, serverID, req.Permissions)
+
+	if err := h.state.Store.UpdateInvitePermissions(serverID, targetUserID, req.Permissions); err != nil {
+		httpx.SendJSONError(w, "Failed to update permissions", http.StatusInternalServerError)
+		return
+	}
+	handlers.StampBeamAccess(r.Context(), h.state, serverID)
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	actorID, _ := r.Context().Value("userID").(string)
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventMemberPermsChanged, actorID, targetUserID, map[string]interface{}{
+		"permissions": req.Permissions,
+	})
+
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// RemoveMember DELETE /api/servers/{id}/members/{userId} - revokes a member's
+// access and records it in the server audit trail.
+func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		return
+	}
+	targetUserID, ok := httpx.ParseUserID(w, r, "userId")
+	if !ok {
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil || srv == nil {
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	caller, _ := r.Context().Value("userID").(string)
+	adminHere := reqctx.IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, caller)
+	if !adminHere && caller != srv.OwnerID && access.RevokeUncoversInheritance(h.state.Store, srv, targetUserID) {
+		httpx.SendJSONError(w, "Removing this member would give them the wider access they inherit from the proxy; only the owner can do that", http.StatusForbidden)
+		return
+	}
+
+	if err := h.state.Store.DeleteInvite(serverID, targetUserID); err != nil {
+		httpx.SendJSONError(w, "Failed to remove member", http.StatusInternalServerError)
+		return
+	}
+	handlers.StampBeamAccess(r.Context(), h.state, serverID)
+	h.state.Events.Publish(r.Context(), "servers.changed", nil)
+
+	actorID, _ := r.Context().Value("userID").(string)
+	audit.LogServer(h.state.Store, r, serverID, audit.ServerAuditEventMemberRemoved, actorID, targetUserID, nil)
+
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// GetInheritedMembers GET /api/servers/{id}/members/inherited
+// Returns users who have access via proxy inheritance (read-only view).
+func (h *MemberHandler) GetInheritedMembers(w http.ResponseWriter, r *http.Request) {
+	if h.state.Store == nil {
+		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	vars := mux.Vars(r)
+	serverID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		httpx.SendJSONError(w, "Invalid server ID", http.StatusBadRequest)
+		return
+	}
+
+	srv, err := h.state.Store.GetServerByID(serverID)
+	if err != nil {
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+
+	// Only child servers (those with a proxy_id) can have inherited members
+	if srv.ProxyID == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"members": []interface{}{},
+		})
+		return
+	}
+
+	// Inheritance only crosses servers of one owner, as the resolver applies it.
+	// A child linked to another owner's proxy (links from before that was
+	// refused, or an admin owner change that kept proxy_id) listed the other
+	// owner's members to anyone with members.read on the child.
+	proxy, err := h.state.Store.GetServerByID(*srv.ProxyID)
+	if err != nil {
+		httpx.SendJSONError(w, "Failed to load inherited members", http.StatusInternalServerError)
+		return
+	}
+	if proxy == nil || proxy.OwnerID != srv.OwnerID {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"members": []interface{}{},
+		})
+		return
+	}
+
+	// Get all invites on the proxy that have inherit=true
+	proxyInvites, err := h.state.Store.ListInvitesByServer(*srv.ProxyID)
+	if err != nil {
+		httpx.SendJSONError(w, "Failed to load inherited members", http.StatusInternalServerError)
+		return
+	}
+
+	var inherited []interface{}
+	for _, inv := range proxyInvites {
+		if inv.Permissions.Inherit {
+			// Exclude the server owner (they already have full access)
+			if inv.UserID == srv.OwnerID {
+				continue
+			}
+			// Exclude users who have a direct invite on this server
+			_, directErr := h.state.Store.GetInvite(serverID, inv.UserID)
+			if directErr == nil {
+				continue
+			}
+			inherited = append(inherited, map[string]interface{}{
+				"userId":      inv.UserID,
+				"username":    inv.Username,
+				"permissions": inv.Permissions,
+				"proxyId":     *srv.ProxyID,
+			})
+		}
+	}
+
+	if inherited == nil {
+		inherited = []interface{}{}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"members": inherited,
+	})
+}
+
+// refuseDelegationWhenOff answers 403 when permissions_mode is off and the
+// caller is not a panel admin. Off means nobody delegates access to a server;
+// /api/grants enforced that and this older route to the same rows did not.
+func refuseDelegationWhenOff(w http.ResponseWriter, r *http.Request, st store.Store) bool {
+	if authz.IdentityFromContext(r.Context()).IsAdmin || handlers.PermissionsMode(st) != authz.ModeOff {
+		return false
+	}
+	httpx.SendJSONError(w, "Delegation is disabled", http.StatusForbidden)
+	return true
+}

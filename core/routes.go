@@ -591,10 +591,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		appState.WarpPeers = warpService
 	}
 
-	placementHandler := handlers.NewPlacementHandler(appState)
+	placementHandler := servers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)
 	statsHandler := stats.NewStatsHandler(appState)
-	memberHandler := handlers.NewMemberHandler(appState)
+	memberHandler := servers.NewMemberHandler(appState)
 	versionHandler := handlers.NewVersionHandler(appState)
 	beamHandler := beam.NewBeamHandler(appState, cfg.BeamJWTSecret, cfg.ClusterSecret)
 	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
@@ -620,10 +620,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	ticketMigrationHandler := tickets.NewTicketMigrationHandler(appState)
 	systemEventsHandler := handlers.NewSystemEventsHandler(appState)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
-	rconHandler := handlers.NewRconHandler(appState)
+	rconHandler := servers.NewRconHandler(appState)
 	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
 	modrinthHandler := mods.NewModrinthHandler(appState)
-	technicHandler := handlers.NewTechnicHandler(appState)
+	technicHandler := servers.NewTechnicHandler(appState)
 	serverModsHandler := servers.NewServerModsHandler(appState)
 	sparkHandler := handlers.NewSparkHandler(appState)
 	serverTabsHandler := tabs.NewServerTabsHandler(appState)

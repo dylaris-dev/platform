@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 )
 
 func (f *apiKeysAuthFakeStore) GetBackupJob(id int) (*models.BackupJob, error) {
@@ -32,7 +33,7 @@ func (f *apiKeysAuthFakeStore) ListServersForUser(userID string, isAdmin bool) (
 func externalFixture(perms []string, scopedServers []string, owner *models.User, servers map[string]*models.Server) *apiKeysAuthFakeStore {
 	return &apiKeysAuthFakeStore{
 		keysByHash: map[string]*models.APIKey{
-			HashAPIKey("thekey"): {
+			services.HashAPIKey("thekey"): {
 				ID: 1, RatePerMin: 1000, UserID: owner.ID,
 				Scope: models.APIKeyScope{Permissions: perms, Servers: scopedServers},
 			},

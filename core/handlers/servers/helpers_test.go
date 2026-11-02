@@ -30,12 +30,12 @@ func foreignState(node *models.Node) *handlers.AppState {
 	return s
 }
 
-func newPlacementHandler(t *testing.T, nodes []models.Node) *handlers.PlacementHandler {
+func newPlacementHandler(t *testing.T, nodes []models.Node) *PlacementHandler {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	fs := &placementFakeStore{nodes: nodes, settings: map[string]string{"routing_mode": "gateway"}}
-	return handlers.NewPlacementHandler(&handlers.AppState{Store: fs, Redis: rdb})
+	return NewPlacementHandler(&handlers.AppState{Store: fs, Redis: rdb})
 }
 
 func ownedNode(id int, name string, owner *string) models.Node {

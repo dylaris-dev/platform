@@ -31,6 +31,7 @@ import (
 	"dylaris-core/authz"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
 	"dylaris-core/services/demo"
 
@@ -39,11 +40,10 @@ import (
 
 type PlayersHandler struct {
 	state *AppState
-	rcon  *RconHandler
 }
 
 func NewPlayersHandler(state *AppState) *PlayersHandler {
-	return &PlayersHandler{state: state, rcon: NewRconHandler(state)}
+	return &PlayersHandler{state: state}
 }
 
 // playerListFiles maps a response field to the file MC keeps that list in,
@@ -123,7 +123,7 @@ func (h *PlayersHandler) GetLists(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Known = knownPlayers(out.Known, maxKnownPlayers)
 
-	props, found, perr := h.rcon.readNodeFileString(srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+serverPropertiesName)
+	props, found, perr := nodeops.ReadNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+nodeops.ServerPropertiesName)
 	if perr != nil {
 		unavailable("properties", fmt.Errorf("could not be read from the node: %w", perr))
 	} else {
@@ -213,7 +213,7 @@ func whitelistFlags(props string) (enabled, enforced bool) {
 // unchanged. A file MC has not created yet is an empty list, not an error -
 // a server nobody has banned on has no banned-players.json.
 func (h *PlayersHandler) readPlayerList(nodeID int, serverUUID, subServer, filename string) (json.RawMessage, error) {
-	content, found, err := h.rcon.readNodeFileString(nodeID, serverUUID, subServer+"/"+filename)
+	content, found, err := nodeops.ReadNodeFileString(h.state.GRPCRegistry, nodeID, serverUUID, subServer+"/"+filename)
 	if err != nil {
 		return nil, fmt.Errorf("could not be read from the node: %w", err)
 	}
@@ -246,20 +246,20 @@ func (h *PlayersHandler) GetOnline(w http.ResponseWriter, r *http.Request) {
 	cacheKey := fmt.Sprintf("dylaris:server:%s:players-online", srv.UUID)
 	if h.state.Redis != nil {
 		if cached, cerr := h.state.Redis.Get(r.Context(), cacheKey).Bytes(); cerr == nil {
-			var resp rconResponse
+			var resp nodeops.RconResponse
 			if json.Unmarshal(cached, &resp) == nil {
-				writeRconResponse(w, resp)
+				nodeops.WriteRconResponse(w, resp)
 				return
 			}
 		}
 	}
-	resp := h.rcon.execAgainstServer(r.Context(), srv.ID, srv.UUID, srv.NodeID, rconRequest{Command: "list"})
+	resp := nodeops.ExecRcon(r.Context(), h.state.Store, h.state.GRPCRegistry, srv.ID, srv.UUID, srv.NodeID, nodeops.RconRequest{Command: "list"})
 	if resp.Success && h.state.Redis != nil {
 		if b, merr := json.Marshal(resp); merr == nil {
 			h.state.Redis.Set(r.Context(), cacheKey, b, playersOnlineCacheTTL)
 		}
 	}
-	writeRconResponse(w, resp)
+	nodeops.WriteRconResponse(w, resp)
 }
 
 // playersOnlineCacheTTL is how long one roster answers every caller.
@@ -291,7 +291,7 @@ func (h *PlayersHandler) Action(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, cerr.Error(), http.StatusBadRequest)
 		return
 	}
-	resp := h.rcon.execAgainstServer(r.Context(), srv.ID, srv.UUID, srv.NodeID, rconRequest{Command: cmd})
+	resp := nodeops.ExecRcon(r.Context(), h.state.Store, h.state.GRPCRegistry, srv.ID, srv.UUID, srv.NodeID, nodeops.RconRequest{Command: cmd})
 	if resp.Success {
 		// The command reached the server, so it is audited either way; a
 		// refusal ("That player does not exist") is recorded as one rather
@@ -301,10 +301,10 @@ func (h *PlayersHandler) Action(w http.ResponseWriter, r *http.Request) {
 		if refused {
 			resp.Success = false
 			resp.Error = reason
-			resp.status = http.StatusUnprocessableEntity
+			resp.Status = http.StatusUnprocessableEntity
 		}
 	}
-	writeRconResponse(w, resp)
+	nodeops.WriteRconResponse(w, resp)
 }
 
 // playerCommandFailurePrefixes are vanilla's refusals, lowercased, from the

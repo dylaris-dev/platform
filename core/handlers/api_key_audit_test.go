@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/handlers/audit"
 	"dylaris-core/models"
+	"dylaris-core/services"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/mux"
@@ -58,7 +59,7 @@ func keyAuditFixture(perms []string) (*apiKeysAuthFakeStore, *APIKeysHandler) {
 		"uuid-a": {ID: 10, UUID: "uuid-a", OwnerID: "owner-1"},
 		"uuid-b": {ID: 20, UUID: "uuid-b", OwnerID: "someone-else"},
 	})
-	fs.keysByHash[HashAPIKey("thekey")].Name = "deploy-bot"
+	fs.keysByHash[services.HashAPIKey("thekey")].Name = "deploy-bot"
 	return fs, newAPIKeysAuthHandler(fs)
 }
 
@@ -147,7 +148,7 @@ func TestRefusedKeyRequestsAreRecordedBundled(t *testing.T) {
 	})
 	t.Run("in scope but the owner lost the server: identity log", func(t *testing.T) {
 		fs, h := keyAuditFixture([]string{"console.send"})
-		fs.keysByHash[HashAPIKey("thekey")].Scope.Servers = []string{"uuid-b"} // owner holds nothing there
+		fs.keysByHash[services.HashAPIKey("thekey")].Scope.Servers = []string{"uuid-b"} // owner holds nothing there
 		if code := serve(h.APIKeyServerRoute("console.send")(reachedInner), "POST", "uuid-b"); code != http.StatusForbidden {
 			t.Fatalf("status %d, want 403", code)
 		}
@@ -161,7 +162,7 @@ func TestRefusedKeyRequestsAreRecordedBundled(t *testing.T) {
 	t.Run("revoked key", func(t *testing.T) {
 		fs, h := keyAuditFixture([]string{"console.send"})
 		now := time.Now()
-		fs.keysByHash[HashAPIKey("thekey")].RevokedAt = &now
+		fs.keysByHash[services.HashAPIKey("thekey")].RevokedAt = &now
 		if code := serve(h.APIKeyServerRoute("console.send")(reachedInner), "POST", "uuid-a"); code != http.StatusUnauthorized {
 			t.Fatalf("status %d, want 401", code)
 		}
@@ -262,7 +263,7 @@ func TestKeyOwnerDeletionState(t *testing.T) {
 // G-8: valid requests are no longer charged to the per-IP limit, failures are.
 func TestIPLimitCountsOnlyFailedKeys(t *testing.T) {
 	fs, h := keyAuditFixture([]string{"console.read"})
-	fs.keysByHash[HashAPIKey("thekey")].RatePerMin = 600
+	fs.keysByHash[services.HashAPIKey("thekey")].RatePerMin = 600
 	route := h.APIKeyServerRoute("console.read")(reachedInner)
 	for i := 0; i < keyFailuresPerMin+10; i++ {
 		if code := serve(route, "GET", "uuid-a"); code != http.StatusOK {

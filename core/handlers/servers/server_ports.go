@@ -14,7 +14,6 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/nodeops"
@@ -258,7 +257,6 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 	// The voice preset needs the mod's config before a port is taken, so a
 	// missing mod costs nothing.
 	var voiceMod, voiceRel, voiceContent string
-	rh := handlers.NewRconHandler(h.state)
 	address := h.extraPortsAddress(node)
 	if req.Preset != "" {
 		if address == "" {
@@ -269,12 +267,12 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 			httpx.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
 			return
 		}
-		voiceMod, voiceRel, voiceContent, err = rh.FindVoiceConfig(srv.NodeID, srv.UUID, srv.ActiveSubServer)
+		voiceMod, voiceRel, voiceContent, err = FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 		switch {
-		case errors.Is(err, handlers.ErrVoiceModMissing):
+		case errors.Is(err, ErrVoiceModMissing):
 			httpx.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
 			return
-		case errors.Is(err, handlers.ErrVoiceModAmbiguous):
+		case errors.Is(err, ErrVoiceModAmbiguous):
 			httpx.SendJSONErrorCode(w, "Both Simple Voice Chat and Plasmo Voice are installed. Remove one, then try again.", "voice_mod_ambiguous", http.StatusConflict)
 			return
 		case err != nil:
@@ -303,12 +301,12 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 	}
 
 	if req.Preset != "" {
-		merged := handlers.SvcVoiceEnable(voiceContent, address, got.HostPort)
+		merged := SvcVoiceEnable(voiceContent, address, got.HostPort)
 		if voiceMod == "plasmo" {
-			merged = handlers.PlasmoVoiceEnable(voiceContent, address, got.HostPort)
+			merged = PlasmoVoiceEnable(voiceContent, address, got.HostPort)
 		}
 		if merged != voiceContent {
-			if err := rh.WriteNodeFileString(srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+voiceRel, merged); err != nil {
+			if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+voiceRel, merged); err != nil {
 				log.Printf("ports: server %d: write %s: %v", srv.ID, voiceRel, err)
 				if derr := h.state.Store.DeleteServerPort(got.ID); derr != nil {
 					log.Printf("ports: server %d: roll back port %d: %v", srv.ID, got.ID, derr)
@@ -481,13 +479,12 @@ func (h *ServerHandler) changePortPreset(w http.ResponseWriter, r *http.Request,
 		httpx.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
 		return false
 	}
-	rh := handlers.NewRconHandler(h.state)
-	mod, rel, content, err := rh.FindVoiceConfig(srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	mod, rel, content, err := FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	switch {
-	case errors.Is(err, handlers.ErrVoiceModMissing):
+	case errors.Is(err, ErrVoiceModMissing):
 		httpx.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
 		return false
-	case errors.Is(err, handlers.ErrVoiceModAmbiguous):
+	case errors.Is(err, ErrVoiceModAmbiguous):
 		httpx.SendJSONErrorCode(w, "Both Simple Voice Chat and Plasmo Voice are installed. Remove one, then try again.", "voice_mod_ambiguous", http.StatusConflict)
 		return false
 	case err != nil:
@@ -495,12 +492,12 @@ func (h *ServerHandler) changePortPreset(w http.ResponseWriter, r *http.Request,
 		httpx.SendJSONError(w, "Could not read the server's files on its node. Try again.", http.StatusBadGateway)
 		return false
 	}
-	merged := handlers.SvcVoiceEnable(content, address, p.HostPort)
+	merged := SvcVoiceEnable(content, address, p.HostPort)
 	if mod == "plasmo" {
-		merged = handlers.PlasmoVoiceEnable(content, address, p.HostPort)
+		merged = PlasmoVoiceEnable(content, address, p.HostPort)
 	}
 	if merged != content {
-		if err := rh.WriteNodeFileString(srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
+		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
 			log.Printf("ports: server %d: write %s: %v", srv.ID, rel, err)
 			httpx.SendJSONError(w, "The node could not write the voice chat config. Try again.", http.StatusBadGateway)
 			return false
@@ -567,18 +564,17 @@ func (h *ServerHandler) writeBackVoice(srv *models.Server) {
 	if srv.ActiveSubServer == "" {
 		return
 	}
-	rh := handlers.NewRconHandler(h.state)
-	mod, rel, content, err := rh.FindVoiceConfig(srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	mod, rel, content, err := FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	if err != nil {
 		log.Printf("ports: server %d: voice config write-back skipped: %v", srv.ID, err)
 		return
 	}
-	back := handlers.SvcVoiceDisable(content)
+	back := SvcVoiceDisable(content)
 	if mod == "plasmo" {
-		back = handlers.PlasmoVoiceDisable(content)
+		back = PlasmoVoiceDisable(content)
 	}
 	if back != content {
-		if err := rh.WriteNodeFileString(srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, back); err != nil {
+		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, back); err != nil {
 			log.Printf("ports: server %d: voice config write-back of %s failed: %v", srv.ID, rel, err)
 		}
 	}
@@ -628,18 +624,17 @@ func (h *ServerHandler) syncPortsToStart(srv *models.Server, subName string) {
 		if p.Preset == "" || subName == "" || address == "" {
 			continue
 		}
-		rh := handlers.NewRconHandler(h.state)
-		mod, rel, content, err := rh.FindVoiceConfig(srv.NodeID, srv.UUID, subName)
+		mod, rel, content, err := FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, subName)
 		if err != nil {
 			log.Printf("ports: server %d: voice config: %v", srv.ID, err)
 			continue
 		}
-		merged := handlers.SvcVoiceEnable(content, address, p.HostPort)
+		merged := SvcVoiceEnable(content, address, p.HostPort)
 		if mod == "plasmo" {
-			merged = handlers.PlasmoVoiceEnable(content, address, p.HostPort)
+			merged = PlasmoVoiceEnable(content, address, p.HostPort)
 		}
 		if merged != content {
-			if err := rh.WriteNodeFileString(srv.NodeID, srv.UUID, subName+"/"+rel, merged); err != nil {
+			if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, subName+"/"+rel, merged); err != nil {
 				log.Printf("ports: server %d: voice config write: %v", srv.ID, err)
 			}
 		}

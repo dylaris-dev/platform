@@ -139,32 +139,6 @@ func OverlayServiceAddrs(grpcPort string) (coreAddr, redisAddr string) {
 	return overlayServiceAddrs(grpcPort)
 }
 
-func SvcVoiceEnable(existing, host string, publicPort int) string {
-	return svcVoiceEnable(existing, host, publicPort)
-}
-
-func SvcVoiceDisable(existing string) string { return svcVoiceDisable(existing) }
-
-func PlasmoVoiceEnable(existing, host string, publicPort int) string {
-	return plasmoVoiceEnable(existing, host, publicPort)
-}
-
-func PlasmoVoiceDisable(existing string) string { return plasmoVoiceDisable(existing) }
-
-func (h *RconHandler) FindVoiceConfig(nodeID int, serverUUID, subServer string) (mod, relPath, content string, err error) {
-	return h.findVoiceConfig(nodeID, serverUUID, subServer)
-}
-
-func (h *RconHandler) WriteNodeFileString(nodeID int, serverUUID, relPath, content string) error {
-	return h.writeNodeFileString(nodeID, serverUUID, relPath, content)
-}
-
-// The voice-mod errors are compared with ==, so these are the same values.
-var (
-	ErrVoiceModMissing   = errVoiceModMissing
-	ErrVoiceModAmbiguous = errVoiceModAmbiguous
-)
-
 var (
 	DefaultMaxCustomDomains     = defaultMaxCustomDomains
 	DefaultBlockedRoutePrefixes = defaultBlockedRoutePrefixes
@@ -293,14 +267,6 @@ func SetAccountMailSender(fn func(services.MailStore, string, string, string, ma
 	return func() { sendAccountMail = prev }
 }
 
-func ApplyPlacementScope(state *AppState, r *http.Request, req *PickNodeRequest) {
-	applyPlacementScope(state, r, req)
-}
-
-func DiskMBToGBCeil(mb int64) int { return diskMBToGBCeil(mb) }
-
-var EffectiveCpuset = effectiveCpuset
-
 func ExactMinecraftVersion(software, mcVersion, version, loader string) string {
 	return exactMinecraftVersion(software, mcVersion, version, loader)
 }
@@ -317,26 +283,6 @@ func ProxyBackendUUIDs(state *AppState, proxyID int) []string {
 	return proxyBackendUUIDs(state, proxyID)
 }
 
-func ProxyInstallRefusal(ctx context.Context, st *AppState, serverType, nodeToken, installerType string) (int, string) {
-	return proxyInstallRefusal(ctx, st, serverType, nodeToken, installerType)
-}
-
-var ProxyInstallers = proxyInstallers
-
-const ProxyProtocolDefaultSince = proxyProtocolDefaultSince
-
-func ProxyProtocolInstallGate(w http.ResponseWriter, st *AppState, srv *models.Server, installerType, version string) (keep, refused bool) {
-	return proxyProtocolInstallGate(w, st, srv, installerType, version)
-}
-
-var RamPaddingRefused = ramPaddingRefused
-
-func RconNeedsStamping(subServer string, enabled bool, password string) bool {
-	return rconNeedsStamping(subServer, enabled, password)
-}
-
-func SendTechnicError(w http.ResponseWriter, err error) { sendTechnicError(w, err) }
-
 func StampBeamAccess(ctx context.Context, state *AppState, serverID int) {
 	stampBeamAccess(ctx, state, serverID)
 }
@@ -345,33 +291,11 @@ func StampBeamAccessForOwner(ctx context.Context, state *AppState, ownerUserID s
 	stampBeamAccessForOwner(ctx, state, ownerUserID)
 }
 
-const TechnicSince = technicSince
-
 const UpstreamCooldownDefault = upstreamCooldownDefault
-
-// PickNodeFor runs the placement decision for a server create; the HTTP
-// PickNode handler is a different, request-shaped entry point.
-func (h *PlacementHandler) PickNodeFor(ctx context.Context, req PickNodeRequest) PickNodeResponse {
-	return h.pickNode(ctx, req)
-}
-
-func (h *TechnicHandler) ResolveTechnic(ctx context.Context, slug, build string) (*TechnicResolution, error) {
-	return h.resolveTechnic(ctx, slug, build)
-}
-
-// ApplyProps writes the RCON keys into a sub-server's server.properties through
-// the handler's applyProps seam.
-func (h *RconHandler) ApplyProps(nodeID int, serverUUID, activeSubServer string, enabled bool, port int, password string) error {
-	return h.applyProps(nodeID, serverUUID, activeSubServer, enabled, port, password)
-}
 
 var DefaultPlacementSettings = defaultPlacementSettings
 
 func NeoForgeMajor(v string) (string, bool) { return neoForgeMajor(v) }
-
-func (h *PlacementHandler) ScoreNode(ctx context.Context, n *models.Node, req PickNodeRequest, hb *services.NodeHeartbeat) NodeCandidate {
-	return h.scoreNode(ctx, n, req, hb)
-}
 
 // ReauthCodeVerifier is the second-factor check re-authentication hands to
 // reauth.RequireAdminReauth / RequireReauth, for the subpackages.

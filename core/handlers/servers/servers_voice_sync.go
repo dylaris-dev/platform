@@ -6,8 +6,7 @@ import (
 	"log"
 	"time"
 
-	"dylaris-core/handlers"
-
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -35,9 +34,8 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 		return true
 	}
 
-	rh := handlers.NewRconHandler(h.state)
-	mod, rel, content, err := rh.FindVoiceConfig(srv.NodeID, srv.UUID, subServer)
-	if errors.Is(err, handlers.ErrVoiceModMissing) {
+	mod, rel, content, err := FindVoiceConfig(h.state.GRPCRegistry, srv.NodeID, srv.UUID, subServer)
+	if errors.Is(err, ErrVoiceModMissing) {
 		// The sub-server about to run has no voice mod (removed, or a switch
 		// to one without it): the port would be held for nothing, forever.
 		// Released like a disable; turning voice on again takes a new one.
@@ -51,12 +49,12 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 	var merged string
 	switch mod {
 	case "plasmo":
-		merged = handlers.PlasmoVoiceEnable(content, vp.Host, vp.Port)
+		merged = PlasmoVoiceEnable(content, vp.Host, vp.Port)
 	default:
-		merged = handlers.SvcVoiceEnable(content, vp.Host, vp.Port)
+		merged = SvcVoiceEnable(content, vp.Host, vp.Port)
 	}
 	if merged != content {
-		if err := rh.WriteNodeFileString(srv.NodeID, srv.UUID, subServer+"/"+rel, merged); err != nil {
+		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, subServer+"/"+rel, merged); err != nil {
 			log.Printf("voice sync for server %d (%s): writing %s failed: %v", srv.ID, subServer, rel, err)
 			return false
 		}

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 )
 
 // The route shape used to be inferred from whether the path happened to carry a
@@ -27,7 +28,7 @@ func TestAPIKeyOwnerRoute_HonorsAnOwnerCapability(t *testing.T) {
 		Scope: models.APIKeyScope{Permissions: []string{"modpack.read"}},
 	}
 	fs := &apiKeysAuthFakeStore{
-		keysByHash: map[string]*models.APIKey{HashAPIKey("ownercap"): key},
+		keysByHash: map[string]*models.APIKey{services.HashAPIKey("ownercap"): key},
 		users:      map[string]*models.User{"owner-1": {ID: "owner-1", Username: "owner"}},
 	}
 	h := newAPIKeysAuthHandler(fs)
@@ -57,7 +58,7 @@ func TestAPIKeyOwnerRoute_RechecksThatTheOwnerStillExists(t *testing.T) {
 		Scope: models.APIKeyScope{Permissions: []string{"modpack.read"}},
 	}
 	fs := &apiKeysAuthFakeStore{
-		keysByHash: map[string]*models.APIKey{HashAPIKey("ghostkey"): key},
+		keysByHash: map[string]*models.APIKey{services.HashAPIKey("ghostkey"): key},
 		users:      map[string]*models.User{}, // the owner's account is gone
 	}
 	h := newAPIKeysAuthHandler(fs)
@@ -91,7 +92,7 @@ func TestAPIKeyMiddleware_InjectsTheKeyForHandlerScoping(t *testing.T) {
 		Scope: models.APIKeyScope{Permissions: []string{"modpack.read"}, Servers: []string{"srv-a", "srv-b"}},
 	}
 	fs := &apiKeysAuthFakeStore{
-		keysByHash: map[string]*models.APIKey{HashAPIKey("ctxkey"): key},
+		keysByHash: map[string]*models.APIKey{services.HashAPIKey("ctxkey"): key},
 		users:      map[string]*models.User{"owner-7": {ID: "owner-7", Username: "owner"}},
 	}
 	h := newAPIKeysAuthHandler(fs)

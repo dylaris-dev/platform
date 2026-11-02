@@ -260,7 +260,7 @@ func TestSetNodePlacement_RAMPaddingNullVsAbsent(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPut, "/api/nodes/7/placement",
 				strings.NewReader(`{"cpuOvercommitRatio":1,"ramOvercommitRatio":1`+c.extra+`}`))
 			rec := httptest.NewRecorder()
-			handlers.NewPlacementHandler(&handlers.AppState{Store: f}).SetNodePlacement(rec, r)
+			NewPlacementHandler(&handlers.AppState{Store: f}).SetNodePlacement(rec, r)
 			if rec.Code != c.wantCode {
 				t.Fatalf("status %d, want %d: %s", rec.Code, c.wantCode, rec.Body.String())
 			}
@@ -307,17 +307,17 @@ func TestScoreNode_CountsTheCandidatesPadding(t *testing.T) {
 	node := ownedNode(1, "n1", nil)
 	node.TotalRAMMB = 4096
 
-	if c := h.ScoreNode(context.Background(), &node, handlers.PickNodeRequest{RAMMB: 3584}, nil); !c.Available {
+	if c := h.scoreNode(context.Background(), &node, PickNodeRequest{RAMMB: 3584}, nil); !c.Available {
 		t.Fatalf("3584 + global 512 on 4096 should fit: %s", c.Reason)
 	}
-	if c := h.ScoreNode(context.Background(), &node, handlers.PickNodeRequest{RAMMB: 3585}, nil); c.Available {
+	if c := h.scoreNode(context.Background(), &node, PickNodeRequest{RAMMB: 3585}, nil); c.Available {
 		t.Fatal("3585 + global 512 on 4096 fit; the padding is not counted")
 	}
 	node.RAMPaddingMB = intp(1024)
-	if c := h.ScoreNode(context.Background(), &node, handlers.PickNodeRequest{RAMMB: 3584}, nil); c.Available {
+	if c := h.scoreNode(context.Background(), &node, PickNodeRequest{RAMMB: 3584}, nil); c.Available {
 		t.Fatal("3584 + node padding 1024 on 4096 fit")
 	}
-	if c := h.ScoreNode(context.Background(), &node, handlers.PickNodeRequest{RAMMB: 3584, RAMPaddingMB: intp(0)}, nil); !c.Available {
+	if c := h.scoreNode(context.Background(), &node, PickNodeRequest{RAMMB: 3584, RAMPaddingMB: intp(0)}, nil); !c.Available {
 		t.Fatalf("a server override of 0 should win over the node's 1024: %s", c.Reason)
 	}
 }

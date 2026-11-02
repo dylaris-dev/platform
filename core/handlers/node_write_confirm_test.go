@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
+	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -132,8 +133,7 @@ func TestAnUploadTheNodeRefusedIsNotReportedUploaded(t *testing.T) {
 
 func TestAPropertiesWriteTheNodeRefusedIsAnError(t *testing.T) {
 	for _, refuse := range []bool{false, true} {
-		h := &RconHandler{state: writeState(t, refuse)}
-		err := h.writeNodeFileString(7, "srv-1", "server.properties", "motd=hi")
+		err := nodeops.WriteNodeFileString(writeState(t, refuse).GRPCRegistry, 7, "srv-1", "server.properties", "motd=hi")
 		if (err != nil) != refuse {
 			t.Fatalf("refuse=%v: err %v", refuse, err)
 		}

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/store"
 
 	"github.com/redis/go-redis/v9"
@@ -68,7 +67,7 @@ func newProxyDefaultTest(t *testing.T) (*ServerHandler, *proxyDefaultStore, *red
 	h.state.FeatureFlags = services.NewFeatureFlags(ps)
 	h.state.Gateway = services.NewRedisGateway(rdb, ps, "test-cluster-secret")
 	ctx := context.Background()
-	rdb.Set(ctx, "dylaris:discovery:node-lib", `{"releaseVersion":"`+handlers.ProxyProtocolDefaultSince+`"}`, 0)
+	rdb.Set(ctx, "dylaris:discovery:node-lib", `{"releaseVersion":"`+proxyProtocolDefaultSince+`"}`, 0)
 	rdb.Set(ctx, "online_link:"+services.DeriveLinkToken("node-lib", "test-cluster-secret"), `{"caps":["client-addr"]}`, 0)
 	return h, ps, rdb
 }

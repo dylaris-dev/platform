@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"dylaris-core/models"
+	"dylaris-core/services"
 )
 
 // The operator gate: whether NON-ADMINS may hold API keys at all, and which
@@ -126,7 +127,7 @@ func TestAPIKeyMiddleware_OperatorGateAppliesAtUse(t *testing.T) {
 	newFixture := func(ownerIsAdmin bool) *apiKeysAuthFakeStore {
 		return &apiKeysAuthFakeStore{
 			keysByHash: map[string]*models.APIKey{
-				HashAPIKey("mintedearlier"): {
+				services.HashAPIKey("mintedearlier"): {
 					ID: 1, RatePerMin: 1000, UserID: "owner-1",
 					Scope: models.APIKeyScope{Permissions: []string{"modpack.read"}},
 				},
