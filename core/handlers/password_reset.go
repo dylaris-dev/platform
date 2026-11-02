@@ -14,6 +14,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/mailer"
 	"dylaris-core/services"
+	"dylaris-core/services/beamaccess"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -257,7 +258,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	// sessions ended with the password; the API keys did not, so a key minted
 	// by whoever had the account kept working.
 	revoked := services.RevokeAllAPIKeys(h.state.Store, user.ID, "password reset")
-	stampBeamAccessForUser(r.Context(), h.state, user.ID)
+	beamaccess.StampForUser(r.Context(), h.state.Store, h.state.Redis, user.ID)
 	sshRevoked := services.RevokeAllSSHKeys(h.state.Store, user.ID, "password reset")
 	audit.LogIdentity(h.state.Store, r, audit.AuditEventPasswordResetCompleted, "", user.ID, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 

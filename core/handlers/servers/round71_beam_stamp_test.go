@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/beamaccess"
 
 	beamauth "dylaris-pkg/beam/auth"
 
@@ -63,7 +64,7 @@ func proxyStampState(t *testing.T) (*handlers.AppState, *miniredis.Miniredis) {
 // end beam sessions there too, not only on the proxy.
 func TestStampingAProxyStampsItsBackends(t *testing.T) {
 	st, mr := proxyStampState(t)
-	handlers.StampBeamAccess(context.Background(), st, 1)
+	beamaccess.Stamp(context.Background(), st.Store, st.Redis, 1)
 	for uuid, want := range map[string]bool{"proxy": true, "backend": true, "unlinked": false} {
 		if got := mr.Exists(beamauth.AccessEpochKey(uuid)); got != want {
 			t.Errorf("%s stamped = %v, want %v", uuid, got, want)

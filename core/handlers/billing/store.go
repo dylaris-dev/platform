@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/storeclient"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
@@ -531,13 +532,13 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 			// number the store meant: this tenant gets no addresses on our
 			// domains, which is what a 0 in this table already says.
 			if routes == nil {
-				if err := h.state.Store.DeleteGatewayRouteLimit(handlers.UserRouteScope(req.UUID)); err != nil {
+				if err := h.state.Store.DeleteGatewayRouteLimit(storeclient.UserRouteScope(req.UUID)); err != nil {
 					httpx.SendJSONError(w, "Activated but failed to clear the route pool", http.StatusInternalServerError)
 					return
 				}
 			} else {
 				n := int(*routes)
-				if err := h.state.Store.SetGatewayRouteLimit(handlers.UserRouteScope(req.UUID), &n); err != nil {
+				if err := h.state.Store.SetGatewayRouteLimit(storeclient.UserRouteScope(req.UUID), &n); err != nil {
 					httpx.SendJSONError(w, "Activated but failed to apply the route pool", http.StatusInternalServerError)
 					return
 				}
@@ -609,7 +610,7 @@ func (h *StoreHandler) fetchLinkStatus(ctx context.Context, uuid string) (bool, 
 // report WHAT is wrong with the storefront integration instead of the panel
 // silently rendering "not linked".
 func (h *StoreHandler) probeLinkStatus(ctx context.Context, uuid string) (bool, string, error) {
-	return h.state.ProbeStoreLink(ctx, uuid)
+	return storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}.ProbeLink(ctx, uuid)
 }
 
 // BackupDefaults GET /api/store/backup-defaults - store-key. What ONE purchased

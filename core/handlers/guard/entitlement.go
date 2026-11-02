@@ -1,4 +1,4 @@
-package handlers
+package guard
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
+	"dylaris-core/services/storeclient"
+	"dylaris-core/store"
 )
 
 // The hole this closes: services.EffectiveEntitlement existed, GET
@@ -46,7 +48,16 @@ const (
 	DenySuspended = "billing_suspended"
 )
 
-// requireEntitlement resolves what the tenant may use and refuses with a reason
+// Entitlement is what the gate reads: more than three dependencies, so a
+// value built at the call site rather than a long argument list.
+type Entitlement struct {
+	Store        store.Store
+	Flags        *services.FeatureFlags
+	StoreEnabled bool
+	Storefront   storeclient.Client
+}
+
+// RequireEntitlement resolves what the tenant may use and refuses with a reason
 // the panel can act on. kind is EntitlementByon or EntitlementRouteOnly.
 //
 // Takes the request rather than a bare context because the answer depends on WHO
@@ -56,17 +67,17 @@ const (
 //
 // Returns true when the request may proceed. On false it has already written the
 // response.
-func (s *AppState) requireEntitlement(r *http.Request, w http.ResponseWriter, userID, kind string) bool {
+func RequireEntitlement(r *http.Request, w http.ResponseWriter, s Entitlement, userID, kind string) bool {
 	ctx := r.Context()
 	// The product off: there is no entitlement plane for it, and its endpoints
 	// are already unreachable. Nothing to decide. Per kind, since route-only has
 	// its own switch.
-	if s.FeatureFlags == nil {
+	if s.Flags == nil {
 		return true
 	}
-	on := s.FeatureFlags.IsBYONEnabled(ctx)
+	on := s.Flags.IsBYONEnabled(ctx)
 	if kind == services.EntitlementRouteOnly {
-		on = s.FeatureFlags.IsRouteOnlyEnabled(ctx)
+		on = s.Flags.IsRouteOnlyEnabled(ctx)
 	}
 	if !on {
 		return true
@@ -94,7 +105,7 @@ func (s *AppState) requireEntitlement(r *http.Request, w http.ResponseWriter, us
 // denialFor picks the message. Suspension is named first because it is the only
 // one where the tenant DID buy the thing and an unhelpful "buy a plan" would be
 // actively wrong.
-func (s *AppState) denialFor(ctx context.Context, ent services.Entitlement, userID string) entitlementDenial {
+func (s Entitlement) denialFor(ctx context.Context, ent services.Entitlement, userID string) entitlementDenial {
 	if ent.Source == services.EntitlementSourceSuspended {
 		return entitlementDenial{
 			Code:    DenySuspended,
@@ -121,8 +132,8 @@ func (s *AppState) denialFor(ctx context.Context, ent services.Entitlement, user
 // tenant is told to buy a plan rather than to fix a join that may be fine: the
 // generic message is right in both cases, while "you are not connected" would be
 // a confident lie produced by our own network error.
-func (s *AppState) storeLinkedBestEffort(ctx context.Context, userID string) bool {
-	linked, _, err := s.probeStoreLink(ctx, userID)
+func (s Entitlement) storeLinkedBestEffort(ctx context.Context, userID string) bool {
+	linked, _, err := s.Storefront.ProbeLink(ctx, userID)
 	if err != nil {
 		log.Printf("entitlement: link-status lookup failed for %s, assuming linked: %v", userID, err)
 		return true

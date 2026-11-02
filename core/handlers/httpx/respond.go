@@ -117,3 +117,15 @@ func SendCooldown(w http.ResponseWriter, upstream string, left time.Duration) {
 	w.Header().Set("Retry-After", strconv.Itoa(secs))
 	SendJSONError(w, upstream+" is rate limiting requests, try again in "+strconv.Itoa(secs)+" seconds", http.StatusServiceUnavailable)
 }
+
+// UsagePeriod resolves the billing month from an optional ?period=YYYY-MM query,
+// defaulting to the current UTC month (the aggregator's key).
+func UsagePeriod(r *http.Request) time.Time {
+	if p := r.URL.Query().Get("period"); p != "" {
+		if t, err := time.Parse("2006-01", p); err == nil {
+			return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
+		}
+	}
+	now := time.Now().UTC()
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+}

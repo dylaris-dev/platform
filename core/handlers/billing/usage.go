@@ -66,7 +66,7 @@ func (h *UsageHandler) GetMyUsage(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	u, err := h.state.Store.GetTrafficUsage(userID, handlers.UsagePeriod(r))
+	u, err := h.state.Store.GetTrafficUsage(userID, httpx.UsagePeriod(r))
 	if err != nil {
 		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)
 		return
@@ -103,7 +103,7 @@ func (h *UsageHandler) entitlementStateFor(userID string) map[string]interface{}
 // GetAllUsage GET /api/admin/usage - RequireCap("plans.read") at the route.
 // Every tenant's usage for the period, busiest first.
 func (h *UsageHandler) GetAllUsage(w http.ResponseWriter, r *http.Request) {
-	period := handlers.UsagePeriod(r)
+	period := httpx.UsagePeriod(r)
 	list, err := h.state.Store.ListTrafficUsage(period)
 	if err != nil {
 		httpx.SendJSONError(w, "Lookup failed", http.StatusInternalServerError)

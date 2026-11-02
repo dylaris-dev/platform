@@ -1,9 +1,9 @@
 package servers
 
 import (
+	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 	"testing"
-
-	"dylaris-core/handlers"
 )
 
 func TestNeoForgeMajor(t *testing.T) {
@@ -25,7 +25,7 @@ func TestNeoForgeMajor(t *testing.T) {
 		{"garbage", "", false},
 	}
 	for _, tt := range tests {
-		got, ok := handlers.NeoForgeMajor(tt.build)
+		got, ok := modcompat.NeoForgeMajor(tt.build)
 		if got != tt.want || ok != tt.ok {
 			t.Errorf("neoForgeMajor(%q) = %q, %v; want %q, %v", tt.build, got, ok, tt.want, tt.ok)
 		}
@@ -54,7 +54,7 @@ func TestNeoForgeMinecraft(t *testing.T) {
 		{"garbage", ""},
 		{"99999999999.1.2", ""},
 	} {
-		if got := handlers.NeoForgeMinecraft(tt.loader); got != tt.want {
+		if got := services.NeoForgeMinecraft(tt.loader); got != tt.want {
 			t.Errorf("neoForgeMinecraft(%q) = %q, want %q", tt.loader, got, tt.want)
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"dylaris-core/database"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
+	"dylaris-core/services/storeclient"
 	"dylaris-pkg/errlog"
 )
 
@@ -270,7 +271,8 @@ func (h *HealthHandler) storefrontComponent(ctx context.Context) healthComponent
 
 	cctx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
 	defer cancel()
-	if _, _, err := h.state.probeStoreLink(cctx, healthProbeUUID); err != nil {
+	sc := storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}
+	if _, _, err := sc.ProbeLink(cctx, healthProbeUUID); err != nil {
 		comp.Status = "down"
 		comp.Cause = "storefront_unreachable"
 		comp.Detail = "Cannot talk to " + h.state.StoreURL
@@ -289,7 +291,7 @@ func (h *HealthHandler) storefrontComponent(ctx context.Context) healthComponent
 	// The all-zero UUID belongs to nobody and the store answers it with a
 	// perfectly valid "not linked", so this tests the CHANNEL and touches no
 	// account.
-	if _, err := h.state.storeAccountSummary(cctx, healthProbeUUID); err != nil {
+	if _, err := sc.AccountSummary(cctx, healthProbeUUID); err != nil {
 		comp.Status = "down"
 		comp.Cause = "storefront_unreachable"
 		comp.Detail = "Account details are not reachable at " + h.state.StoreURL
@@ -303,8 +305,8 @@ func (h *HealthHandler) storefrontComponent(ctx context.Context) healthComponent
 	// refused on the first line. That omission is also what makes the answer
 	// readable: a missing proxy route answers 404 and so does the store for a
 	// UUID nobody owns, while only the store answers 401. See
-	// probeBillingConsentRoute.
-	if err := h.state.probeBillingConsentRoute(cctx); err != nil {
+	// storeclient.Client.ProbeBillingConsentRoute.
+	if err := sc.ProbeBillingConsentRoute(cctx, healthProbeUUID); err != nil {
 		comp.Status = "down"
 		comp.Cause = "storefront_unreachable"
 		comp.Detail = "Metered-billing consent is not reachable at " + h.state.StoreURL

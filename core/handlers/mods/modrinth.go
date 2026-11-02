@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/modcompat"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/validate"
@@ -37,7 +38,7 @@ type ModrinthHandler struct {
 	http  *http.Client
 	// cool is Modrinth's 429: the limit is per IP and Core is one IP for
 	// every customer, so one busy panel must not turn into a ban for all.
-	cool handlers.UpstreamCooldown
+	cool modcompat.UpstreamCooldown
 }
 
 func NewModrinthHandler(state *handlers.AppState) *ModrinthHandler {

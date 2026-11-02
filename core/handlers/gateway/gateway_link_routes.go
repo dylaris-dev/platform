@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/guard"
+	"dylaris-core/services/storeclient"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -73,7 +73,7 @@ func validateLocalTarget(host string) error {
 // fell through to a scope nobody had set - which is unlimited. Now zero means
 // none wherever it is, and absence is spelled by the row not existing.
 func (h *GatewayHandler) effectiveRouteLimit(userID string) *int64 {
-	for _, scope := range []string{handlers.AdminRouteScope(userID), handlers.UserRouteScope(userID), "user_default", "global"} {
+	for _, scope := range []string{storeclient.AdminRouteScope(userID), storeclient.UserRouteScope(userID), "user_default", "global"} {
 		l, err := h.state.Store.GetGatewayRouteLimit(scope)
 		if err != nil || l == nil {
 			continue // no row here: ask the next scope
@@ -189,7 +189,7 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	}
 	// The same gate minting a kit passes. Only the panel checked it before, so a
 	// suspended tenant could still claim addresses through the API.
-	if !h.state.RequireEntitlement(r, w, userID, services.EntitlementRouteOnly) {
+	if !guard.RequireEntitlement(r, w, guard.Entitlement{Store: h.state.Store, Flags: h.state.FeatureFlags, StoreEnabled: h.state.StoreEnabled, Storefront: storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}}, userID, services.EntitlementRouteOnly) {
 		return
 	}
 

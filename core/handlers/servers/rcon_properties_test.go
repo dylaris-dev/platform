@@ -1,6 +1,9 @@
 package servers
 
-import "testing"
+import (
+	"dylaris-core/services/voicecfg"
+	"testing"
+)
 
 func TestMergeServerProperties(t *testing.T) {
 	tests := []struct {
@@ -60,9 +63,9 @@ func TestMergeServerProperties(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := mergeServerProperties(tt.existing, tt.kv)
+			got := voicecfg.MergeServerProperties(tt.existing, tt.kv)
 			if got != tt.want {
-				t.Errorf("mergeServerProperties()\n got: %q\nwant: %q", got, tt.want)
+				t.Errorf("voicecfg.MergeServerProperties()\n got: %q\nwant: %q", got, tt.want)
 			}
 		})
 	}

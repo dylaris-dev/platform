@@ -23,7 +23,9 @@ import (
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/beamaccess"
 	"dylaris-core/services/demo"
+	"dylaris-core/services/placement"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -94,7 +96,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	// online node. Placing without them used to be refused with "Node not
 	// found", which left a region-neutral panel no way to create a server.
 	if nodeIDInt == 0 {
-		pickReq := PickNodeRequest{
+		pickReq := placement.PickNodeRequest{
 			Region:       req.Region,
 			Tags:         req.Tags,
 			Tag:          req.Tag,
@@ -424,7 +426,7 @@ func recordedInstallerType(typ, software string) string {
 // loader as the build, as a version update does. The node installs NeoForge
 // from the loader alone, so the version it is sent changes nothing there.
 func applyExactMinecraftVersion(mcVersion, version *string, software, loader string) {
-	*mcVersion = handlers.ExactMinecraftVersion(software, *mcVersion, *version, loader)
+	*mcVersion = services.ExactMinecraftVersion(software, *mcVersion, *version, loader)
 	if software == "neoforge" && strings.TrimSpace(loader) != "" {
 		*version = loader
 	}
@@ -1057,7 +1059,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		if rec, err := h.state.Store.GetSubServerInstall(serverID, srv.ActiveSubServer); err == nil && rec != nil && rec.InstallerType == "neoforge" {
 			loader = rec.Loader
 		}
-		if loader == "" && srv.InstallerType == "neoforge" && handlers.NeoForgeMinecraft(srv.BuildNumber) != "" {
+		if loader == "" && srv.InstallerType == "neoforge" && services.NeoForgeMinecraft(srv.BuildNumber) != "" {
 			loader = srv.BuildNumber
 		}
 	}
@@ -2742,13 +2744,13 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	// what they inherited from it. Listed now, stamped once that has happened.
 	var backends []string
 	if srv.ServerType == "proxy" && h.state.Redis != nil {
-		backends = handlers.ProxyBackendUUIDs(h.state, serverID)
+		backends = beamaccess.ProxyBackendUUIDs(h.state.Store, serverID)
 	}
 	if err := h.state.Store.DeleteServer(serverID); err != nil {
 		httpx.SendJSONError(w, "Delete failed", 500)
 		return
 	}
-	handlers.StampBeamUUIDs(r.Context(), h.state, backends)
+	beamaccess.StampUUIDs(r.Context(), h.state.Redis, backends)
 
 	// Shared with the two node-delete paths, which used to do none of this: the
 	// same cleanup has to run whether one server goes or every server on a

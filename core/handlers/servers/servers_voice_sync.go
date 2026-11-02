@@ -9,6 +9,7 @@ import (
 	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/voicecfg"
 	"dylaris-core/store"
 )
 
@@ -49,9 +50,9 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 	var merged string
 	switch mod {
 	case "plasmo":
-		merged = PlasmoVoiceEnable(content, vp.Host, vp.Port)
+		merged = voicecfg.PlasmoEnable(content, vp.Host, vp.Port)
 	default:
-		merged = SvcVoiceEnable(content, vp.Host, vp.Port)
+		merged = voicecfg.SvcEnable(content, vp.Host, vp.Port)
 	}
 	if merged != content {
 		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, subServer+"/"+rel, merged); err != nil {

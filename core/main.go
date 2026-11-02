@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
 	// The core image has no zoneinfo, and time zones are now user input
 	// (account, server, scheduled task) that LoadLocation must resolve.
 	_ "time/tzdata"
@@ -39,6 +40,7 @@ import (
 	"dylaris-core/pkg/leader"
 	"dylaris-core/pkg/netguard"
 	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
@@ -636,7 +638,7 @@ func main() {
 	modpackUpdateChecker := services.NewModpackUpdateChecker(pgStore, appState.FeatureFlags)
 	modpackUpdateChecker.SetLeader(coreLeader)
 	modpackUpdateChecker.Start(bgCtx)
-	modrinthWatchChecker := &services.ModrinthWatchChecker{Store: pgStore, Cache: appState.AvailabilityCache(), Leader: coreLeader}
+	modrinthWatchChecker := &services.ModrinthWatchChecker{Store: pgStore, Cache: modcompat.AvailabilityCache(appState.Cache), Leader: coreLeader}
 	modrinthWatchChecker.Start(bgCtx)
 
 	// Fallback cleanup if TimescaleDB retention policy is not active.

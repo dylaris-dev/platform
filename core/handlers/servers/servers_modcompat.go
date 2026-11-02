@@ -8,13 +8,12 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
-
 	"github.com/gorilla/mux"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 )
 
 // ServerCompat GET /api/servers/{id}/mods/compat
@@ -41,8 +40,8 @@ func (h *ServerModsHandler) ServerCompat(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	mode, specific := handlers.CompatQuery(r)
-	targets, err := handlers.ResolveTargets(r.Context(), srv.MinecraftVersion, mode, specific)
+	mode, specific := modcompat.Query(r)
+	targets, err := modcompat.ResolveTargets(r.Context(), srv.MinecraftVersion, mode, specific)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not read the Minecraft version list from Modrinth: "+err.Error(), http.StatusBadGateway)
 		return
@@ -54,7 +53,7 @@ func (h *ServerModsHandler) ServerCompat(w http.ResponseWriter, r *http.Request)
 		Current: srv.MinecraftVersion,
 		Mode:    mode,
 		Targets: targets,
-		Cache:   h.state.AvailabilityCache(),
+		Cache:   modcompat.AvailabilityCache(h.state.Cache),
 	})
 	if err != nil {
 		httpx.SendJSONError(w, "Availability check failed: "+err.Error(), http.StatusBadGateway)

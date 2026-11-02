@@ -8,6 +8,7 @@ import (
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/reauth"
+	"dylaris-core/services/beamaccess"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -102,13 +103,13 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 	// so a ticket minted as the old role does not outlive it.
 	var reach []string
 	if req.Role != previousRole {
-		reach = handlers.BeamReachOf(h.state, id)
+		reach = beamaccess.ReachOf(h.state.Store, h.state.Redis, id)
 	}
 	if err := h.state.Store.SetUserRole(id, req.Role); err != nil {
 		httpx.SendJSONError(w, "Failed to update role", 500)
 		return
 	}
-	handlers.StampBeamUUIDs(r.Context(), h.state, reach)
+	beamaccess.StampUUIDs(r.Context(), h.state.Redis, reach)
 
 	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserRoleChanged, actorID, id, map[string]interface{}{
 		"from": previousRole,

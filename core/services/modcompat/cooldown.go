@@ -1,4 +1,4 @@
-package handlers
+package modcompat
 
 import (
 	"net/http"
@@ -7,25 +7,25 @@ import (
 	"time"
 )
 
-// upstreamCooldown stops calling a third-party API after it answered 429,
+// UpstreamCooldown stops calling a third-party API after it answered 429,
 // until the time it asked for. Modrinth and Technic both limit per IP, and Core
 // is one IP for every panel user: hammering on through a 429 is how a limit
 // becomes a block.
 //
 // ponytail: per replica, in memory. Two replicas can each spend one request
 // finding out; a shared Redis key if that ever matters.
-type upstreamCooldown struct {
+type UpstreamCooldown struct {
 	mu    sync.Mutex
 	until time.Time
 }
 
 const (
-	upstreamCooldownDefault = 30 * time.Second
-	upstreamCooldownMax     = 5 * time.Minute
+	UpstreamCooldownDefault = 30 * time.Second
+	UpstreamCooldownMax     = 5 * time.Minute
 )
 
-// blocked reports how long calls are still held back.
-func (c *upstreamCooldown) blocked(now time.Time) (time.Duration, bool) {
+// Blocked reports how long calls are still held back.
+func (c *UpstreamCooldown) Blocked(now time.Time) (time.Duration, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if now.Before(c.until) {
@@ -34,18 +34,18 @@ func (c *upstreamCooldown) blocked(now time.Time) (time.Duration, bool) {
 	return 0, false
 }
 
-// trip starts a cooldown from a 429 response: Retry-After, else Modrinth's
+// Trip starts a cooldown from a 429 response: Retry-After, else Modrinth's
 // X-Ratelimit-Reset (seconds until the window resets), else a default.
-func (c *upstreamCooldown) trip(h http.Header, now time.Time) time.Duration {
-	d := upstreamCooldownDefault
+func (c *UpstreamCooldown) Trip(h http.Header, now time.Time) time.Duration {
+	d := UpstreamCooldownDefault
 	for _, name := range []string{"Retry-After", "X-Ratelimit-Reset"} {
 		if s, err := strconv.Atoi(h.Get(name)); err == nil && s > 0 {
 			d = time.Duration(s) * time.Second
 			break
 		}
 	}
-	if d > upstreamCooldownMax {
-		d = upstreamCooldownMax
+	if d > UpstreamCooldownMax {
+		d = UpstreamCooldownMax
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -7,12 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"dylaris-core/handlers/httpx"
-	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 )
 
 // VersionEntry represents a single version with its major group and build string.
@@ -281,7 +280,7 @@ func (n *NeoForgeProvider) FetchVersions() ([]VersionEntry, error) {
 	all := meta.Versioning.Versions.Version
 	for i := len(all) - 1; i >= 0; i-- {
 		v := all[i]
-		major, ok := neoForgeMajor(v)
+		major, ok := modcompat.NeoForgeMajor(v)
 		if !ok {
 			continue
 		}
@@ -291,40 +290,6 @@ func (n *NeoForgeProvider) FetchVersions() ([]VersionEntry, error) {
 		})
 	}
 	return entries, nil
-}
-
-// neoForgeMajor maps a NeoForge build to the Minecraft version it targets, and
-// says no to builds the picker must not offer.
-//
-// "21.1.106" targets MC 1.21.x, so the first number maps to "1.{N}". Since MC
-// 26.x the scheme follows Minecraft itself: "26.3.0.89" targets 26.3, which the
-// old "1."+first rule called "1.26". Pre-releases (-beta, -alpha..., +snapshot)
-// are left out like PaperMC's, and so are the 0.x April-fools builds
-// ("0.25w14craftmine.3-beta"), which made a Minecraft "1.0" appear.
-func neoForgeMajor(v string) (string, bool) {
-	if strings.ContainsAny(v, "-+") {
-		return "", false
-	}
-	parts := splitDot(v)
-	if len(parts) < 2 {
-		return "", false
-	}
-	first, err := strconv.Atoi(parts[0])
-	if err != nil || first == 0 {
-		return "", false
-	}
-	if first >= 26 {
-		return parts[0] + "." + parts[1], true
-	}
-	return "1." + parts[0], true
-}
-
-// neoForgeMinecraft and exactMinecraftVersion live in services so a backup
-// import there records the same exact version a setup here does.
-func neoForgeMinecraft(loader string) string { return services.NeoForgeMinecraft(loader) }
-
-func exactMinecraftVersion(software, mcVersion, version, loader string) string {
-	return services.ExactMinecraftVersion(software, mcVersion, version, loader)
 }
 
 // ==========================================

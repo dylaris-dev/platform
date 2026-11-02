@@ -11,6 +11,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/placement"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -34,7 +35,7 @@ func TestPickNodePlatformOnlyKeepsAdminPlacementOffTenantHardware(t *testing.T) 
 	h := newPlacementHandler(t, nodes)
 
 	t.Run("without the flag every node is a candidate", func(t *testing.T) {
-		got := h.pickNode(context.Background(), PickNodeRequest{RAMMB: 1024})
+		got := h.pickNode(context.Background(), placement.PickNodeRequest{RAMMB: 1024})
 		if !got.Success || got.Picked == nil {
 			t.Fatalf("no pick: %s", got.Reason)
 		}
@@ -44,7 +45,7 @@ func TestPickNodePlatformOnlyKeepsAdminPlacementOffTenantHardware(t *testing.T) 
 	})
 
 	t.Run("with the flag the tenant node is not considered at all", func(t *testing.T) {
-		got := h.pickNode(context.Background(), PickNodeRequest{RAMMB: 1024, PlatformOnly: true})
+		got := h.pickNode(context.Background(), placement.PickNodeRequest{RAMMB: 1024, PlatformOnly: true})
 		if !got.Success || got.Picked == nil {
 			t.Fatalf("no pick: %s", got.Reason)
 		}
@@ -66,7 +67,7 @@ func TestPickNodePlatformOnlyKeepsAdminPlacementOffTenantHardware(t *testing.T) 
 			ownedNode(1, "a-box", &tenant),
 			ownedNode(2, "b-box", &other),
 		})
-		got := h.pickNode(context.Background(), PickNodeRequest{RAMMB: 1024, PlatformOnly: true})
+		got := h.pickNode(context.Background(), placement.PickNodeRequest{RAMMB: 1024, PlatformOnly: true})
 		if got.Success || got.Picked != nil {
 			t.Fatalf("picked %+v, want no eligible node", got.Picked)
 		}
@@ -81,7 +82,7 @@ func TestPickNodePlatformOnlyKeepsAdminPlacementOffTenantHardware(t *testing.T) 
 	// The tenant path must be untouched: their own scope still finds their own
 	// machine, and the two flags are not the same switch.
 	t.Run("a tenant still reaches their own node", func(t *testing.T) {
-		got := h.pickNode(context.Background(), PickNodeRequest{RAMMB: 1024, OwnerScope: &tenant})
+		got := h.pickNode(context.Background(), placement.PickNodeRequest{RAMMB: 1024, OwnerScope: &tenant})
 		if !got.Success || got.Picked == nil || got.Picked.NodeID != 1 {
 			t.Fatalf("picked %+v, want the tenant's own node", got.Picked)
 		}
@@ -109,7 +110,7 @@ func TestApplyPlacementScopeNamesTheCallerParty(t *testing.T) {
 
 	t.Run("an admin auto-placing is fenced to platform nodes", func(t *testing.T) {
 		st := &handlers.AppState{Store: byonOn, FeatureFlags: services.NewFeatureFlags(byonOn)}
-		var req PickNodeRequest
+		var req placement.PickNodeRequest
 		applyPlacementScope(st, request("admin-1", true), &req)
 		if !req.PlatformOnly {
 			t.Error("PlatformOnly is false for an admin; a customer's machine is a candidate again")
@@ -121,7 +122,7 @@ func TestApplyPlacementScopeNamesTheCallerParty(t *testing.T) {
 
 	t.Run("a tenant is scoped to their own nodes", func(t *testing.T) {
 		st := &handlers.AppState{Store: byonOn, FeatureFlags: services.NewFeatureFlags(byonOn)}
-		var req PickNodeRequest
+		var req placement.PickNodeRequest
 		applyPlacementScope(st, request("tenant-a", false), &req)
 		if req.OwnerScope == nil || *req.OwnerScope != "tenant-a" {
 			t.Errorf("OwnerScope = %v, want tenant-a", req.OwnerScope)
@@ -136,7 +137,7 @@ func TestApplyPlacementScopeNamesTheCallerParty(t *testing.T) {
 	t.Run("BYON off scopes nothing", func(t *testing.T) {
 		st := &handlers.AppState{Store: byonOff, FeatureFlags: services.NewFeatureFlags(byonOff)}
 		for _, admin := range []bool{true, false} {
-			var req PickNodeRequest
+			var req placement.PickNodeRequest
 			applyPlacementScope(st, request("someone", admin), &req)
 			if req.PlatformOnly || req.OwnerScope != nil {
 				t.Errorf("admin=%v: scoped with BYON off (%v, %v)", admin, req.PlatformOnly, req.OwnerScope)
@@ -176,7 +177,7 @@ func TestPickNodeEndpointPreviewsTheSameNodeCreateWouldUse(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("status = %d (body %s)", rw.Code, rw.Body.String())
 	}
-	var got PickNodeResponse
+	var got placement.PickNodeResponse
 	if err := json.Unmarshal(rw.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -186,6 +187,22 @@ func TestPickNodeEndpointPreviewsTheSameNodeCreateWouldUse(t *testing.T) {
 	for _, c := range got.Candidates {
 		if c.NodeID == 1 {
 			t.Error("the preview offered a customer's node that the create would not use")
+		}
+	}
+}
+
+// The scheduler moved to services/placement and no longer reads the routing
+// mode itself: the handler hands it in. An external node has no path without
+// the gateway, so the hand-off is what keeps a new server off it.
+func TestPickNodeSkipsExternalNodesUnlessTheGatewayRoutes(t *testing.T) {
+	ext := ownedNode(1, "home-box", nil)
+	ext.Tags = "external"
+	for mode, want := range map[string]bool{"gateway": true, "both": true, "ip_port": false, "": false} {
+		h := newPlacementHandler(t, []models.Node{ext})
+		h.state.Store.(*placementFakeStore).settings["routing_mode"] = mode
+		got := h.pickNode(context.Background(), placement.PickNodeRequest{RAMMB: 1024})
+		if got.Success != want {
+			t.Errorf("routing_mode %q: picked = %v, want %v (%s)", mode, got.Success, want, got.Reason)
 		}
 	}
 }

@@ -12,7 +12,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
-	"dylaris-core/handlers/servers"
+	"dylaris-core/services/voicecfg"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -216,7 +216,7 @@ func TestVoiceEnableHappyPath(t *testing.T) {
 			t.Fatalf("%s not written; keys %v", k, e.mr.Keys())
 		}
 	}
-	if want := servers.SvcVoiceEnable(handlertest.VoiceFixture(t, "svc_before.properties"), "a.eu.dylaris.com", 26000); e.written() != want {
+	if want := voicecfg.SvcEnable(handlertest.VoiceFixture(t, "svc_before.properties"), "a.eu.dylaris.com", 26000); e.written() != want {
 		t.Fatalf("config written:\n%s\nwant:\n%s", e.written(), want)
 	}
 }
@@ -258,7 +258,7 @@ func TestVoiceDisableAllowedWhileFlagOff(t *testing.T) {
 	if e.fs.row != nil || len(e.voiceKeys()) != 0 {
 		t.Fatalf("not disabled: row %+v keys %v", e.fs.row, e.voiceKeys())
 	}
-	if want := servers.SvcVoiceDisable(e.node.File); e.written() != want {
+	if want := voicecfg.SvcDisable(e.node.File); e.written() != want {
 		t.Fatalf("config written back:\n%s\nwant:\n%s", e.written(), want)
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/store"
 )
 
@@ -25,7 +25,7 @@ func TestCreateLinkRoute_RefusedWhenSuspended(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
 	}
-	if got := decodeCode(t, rec); got != handlers.DenySuspended {
-		t.Errorf("code = %q, want %q", got, handlers.DenySuspended)
+	if got := decodeCode(t, rec); got != guard.DenySuspended {
+		t.Errorf("code = %q, want %q", got, guard.DenySuspended)
 	}
 }

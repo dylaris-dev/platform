@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
+	"dylaris-core/services/beamaccess"
 	"dylaris-pkg/validate"
 
 	"github.com/gorilla/mux"
@@ -111,7 +111,7 @@ func (h *ServerHandler) LinkServerToProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// A move from one proxy to another ends what was inherited from the first.
-	handlers.StampBeamAccess(r.Context(), h.state, serverID)
+	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
 
 	// The proxy can only reach this server once the node has been told to allow
 	// it, so republish now rather than at the next tick. Linking is the moment
@@ -262,8 +262,8 @@ func (h *ServerHandler) UnlinkServerFromProxy(w http.ResponseWriter, r *http.Req
 		httpx.SendJSONError(w, "Failed to unlink server", 500)
 		return
 	}
-	// Ends access inherited from the proxy; see stampBeamAccess.
-	handlers.StampBeamAccess(r.Context(), h.state, serverID)
+	// Ends access inherited from the proxy; see beamaccess.Stamp.
+	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
 
 	// Withdraw the proxy's allow rule now, for the same reason linking installs
 	// it now - and this direction matters more: until it is withdrawn the proxy

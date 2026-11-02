@@ -6,13 +6,13 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/nodeops"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/services/beamaccess"
 
 	"github.com/gorilla/mux"
 )
@@ -125,7 +125,7 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 		return
 	}
 	// The previous owner and everyone their grants let in lose the server here.
-	handlers.StampBeamAccess(r.Context(), h.state, serverID)
+	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
 	// On both accounts, so the trail of the one that LOST the server shows it.
 	actorID, _ := r.Context().Value("userID").(string)
 	meta := map[string]interface{}{

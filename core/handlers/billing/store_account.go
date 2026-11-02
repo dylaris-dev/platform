@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
+	"dylaris-core/services/storeclient"
 )
 
 // The store account, read and changed from the panel.
@@ -53,7 +54,7 @@ func (h *StoreHandler) AccountSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	summary, err := h.state.StoreAccountSummary(r.Context(), userID)
+	summary, err := storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}.AccountSummary(r.Context(), userID)
 	if err != nil {
 		log.Printf("store: account summary for %s: %v", userID, err)
 		w.Header().Set("Content-Type", "application/json")
@@ -114,7 +115,7 @@ func (h *StoreHandler) SetBillingConsent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	status, message, err := h.state.StoreSetBillingConsent(r.Context(), userID, req.Traffic, req.Backup)
+	status, message, err := storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}.SetBillingConsent(r.Context(), userID, req.Traffic, req.Backup)
 	if err != nil {
 		log.Printf("store: billing consent for %s: %v", userID, err)
 		httpx.SendJSONError(w, "The store could not be reached, so nothing was changed.", http.StatusBadGateway)

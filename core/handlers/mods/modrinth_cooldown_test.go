@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 )
 
 // A 429 from Modrinth is not passed through as a 429 page, is not cached, and
@@ -65,7 +66,7 @@ func TestModrinthProxyBacksOffOn429(t *testing.T) {
 		t.Errorf("cached answer during cooldown = %d, want 200", rec.Code)
 	}
 	limited.Store(false)
-	h.cool = handlers.UpstreamCooldown{}
+	h.cool = modcompat.UpstreamCooldown{}
 	if rec := get("/other"); rec.Code != 200 {
 		t.Errorf("after the cooldown = %d; the 429 must not have been cached", rec.Code)
 	}

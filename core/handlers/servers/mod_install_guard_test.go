@@ -54,7 +54,7 @@ func TestModVersionFits(t *testing.T) {
 		{"long list keeps the newest", "forge", "1.21.1", []string{"forge"}, []string{"1.20", "1.20.1", "1.20.2", "1.20.4", "1.20.6"}, false, "1.20.2, 1.20.4, 1.20.6 (and 2 older)"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			ok, reason := handlers.ModVersionFits(tt.loader, tt.mc, tt.vLoaders, tt.vMCs)
+			ok, reason := services.ModVersionFits(tt.loader, tt.mc, tt.vLoaders, tt.vMCs)
 			if ok != tt.want {
 				t.Fatalf("fits = %v (%q), want %v", ok, reason, tt.want)
 			}
@@ -80,7 +80,7 @@ func TestModFitKnown(t *testing.T) {
 		{"velocity", "", true},
 		{"Paper", "1.21.4", true},
 	} {
-		if got := handlers.ModFitKnown(tt.loader, tt.mc); got != tt.want {
+		if got := services.ModFitKnown(tt.loader, tt.mc); got != tt.want {
 			t.Errorf("modFitKnown(%q, %q) = %v, want %v", tt.loader, tt.mc, got, tt.want)
 		}
 	}

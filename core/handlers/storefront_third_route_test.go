@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/services/storeclient"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -38,8 +39,8 @@ func TestTheThirdStorefrontRouteIsProbedWithoutWriting(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		st := &AppState{StoreURL: srv.URL, StoreSharedKey: "the-real-key"}
-		if err := st.probeBillingConsentRoute(context.Background()); err != nil {
+		st := storeclient.Client{URL: srv.URL, SharedKey: "the-real-key"}
+		if err := st.ProbeBillingConsentRoute(context.Background(), healthProbeUUID); err != nil {
 			t.Fatalf("a routed store was reported down: %v", err)
 		}
 		if gotMethod != http.MethodPost || gotPath != "/api/store/billing-consent" {
@@ -70,8 +71,8 @@ func TestTheThirdStorefrontRouteIsProbedWithoutWriting(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		st := &AppState{StoreURL: srv.URL, StoreSharedKey: "the-real-key"}
-		err := st.probeBillingConsentRoute(context.Background())
+		st := storeclient.Client{URL: srv.URL, SharedKey: "the-real-key"}
+		err := st.ProbeBillingConsentRoute(context.Background(), healthProbeUUID)
 		if err == nil {
 			t.Fatal("an unrouted storefront was reported healthy - the exact state that shipped")
 		}
@@ -81,8 +82,8 @@ func TestTheThirdStorefrontRouteIsProbedWithoutWriting(t *testing.T) {
 	})
 
 	t.Run("an unreachable storefront is reported", func(t *testing.T) {
-		st := &AppState{StoreURL: "http://127.0.0.1:1", StoreSharedKey: "k"}
-		if err := st.probeBillingConsentRoute(context.Background()); err == nil {
+		st := storeclient.Client{URL: "http://127.0.0.1:1", SharedKey: "k"}
+		if err := st.ProbeBillingConsentRoute(context.Background(), healthProbeUUID); err == nil {
 			t.Fatal("a storefront that cannot be dialled was reported healthy")
 		}
 	})

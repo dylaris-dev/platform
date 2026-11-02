@@ -1,10 +1,15 @@
-package handlers
+// Package beamaccess keeps beam access current: the access-epoch stamps that
+// retire outstanding tickets, and the relay a client is sent to.
+package beamaccess
 
 import (
 	"context"
 	"log"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
+	"dylaris-core/store"
 	beamauth "dylaris-pkg/beam/auth"
 )
 
@@ -25,29 +30,29 @@ import (
 // untrue. A failure is logged and the old behaviour - a window until the
 // ticket expires - is what remains.
 
-// stampBeamAccess marks one server, by its numeric id.
-func stampBeamAccess(ctx context.Context, state *AppState, serverID int) {
-	if state == nil || state.Redis == nil {
+// Stamp marks one server, by its numeric id.
+func Stamp(ctx context.Context, st store.Store, rdb *redis.Client, serverID int) {
+	if rdb == nil {
 		return
 	}
-	srv, err := state.Store.GetServerByID(serverID)
+	srv, err := st.GetServerByID(serverID)
 	if err != nil || srv == nil {
 		log.Printf("beam access stamp: could not resolve server %d: %v", serverID, err)
 		return
 	}
-	stampBeamAccessUUID(ctx, state, srv.UUID)
+	stampUUID(ctx, rdb, srv.UUID)
 	// A grant with inherit on a proxy reaches every same-owner server linked to
 	// it (authz resolver), so a change to it changes access to those too. Only
 	// the proxy was stamped, and a member removed from it kept an open session
 	// on its backends for up to a day.
 	if srv.ServerType == "proxy" {
-		stampBeamUUIDs(ctx, state, proxyBackendUUIDs(state, srv.ID))
+		StampUUIDs(ctx, rdb, ProxyBackendUUIDs(st, srv.ID))
 	}
 }
 
-// proxyBackendUUIDs lists the servers linked to a proxy.
-func proxyBackendUUIDs(state *AppState, proxyID int) []string {
-	all, err := state.Store.ListAllServers()
+// ProxyBackendUUIDs lists the servers linked to a proxy.
+func ProxyBackendUUIDs(st store.Store, proxyID int) []string {
+	all, err := st.ListAllServers()
 	if err != nil {
 		log.Printf("beam access stamp: could not list the backends of proxy %d: %v", proxyID, err)
 		return nil
@@ -61,45 +66,45 @@ func proxyBackendUUIDs(state *AppState, proxyID int) []string {
 	return out
 }
 
-// stampBeamAccessForOwner marks every server an account owns. Used where the
+// StampForOwner marks every server an account owns. Used where the
 // change is account-wide rather than about one server: an account-scoped grant,
 // and suspension.
-func stampBeamAccessForOwner(ctx context.Context, state *AppState, ownerUserID string) {
-	if state == nil || state.Redis == nil || ownerUserID == "" {
+func StampForOwner(ctx context.Context, st store.Store, rdb *redis.Client, ownerUserID string) {
+	if rdb == nil || ownerUserID == "" {
 		return
 	}
-	servers, err := state.Store.ListServersByOwner(ownerUserID)
+	servers, err := st.ListServersByOwner(ownerUserID)
 	if err != nil {
 		log.Printf("beam access stamp: could not list servers of %s: %v", ownerUserID, err)
 		return
 	}
 	for _, s := range servers {
-		stampBeamAccessUUID(ctx, state, s.UUID)
+		stampUUID(ctx, rdb, s.UUID)
 	}
 }
 
-// stampBeamAccessForUser marks every server an account can reach - all of
+// StampForUser marks every server an account can reach - all of
 // them for an administrator. Used where the change is about the PERSON: a
 // password or second factor reset after the account left its owner's hands,
 // the account's deletion, a change of its role. Those paths stamped nothing,
 // so a ticket minted before them still opened sessions until it expired.
-func stampBeamAccessForUser(ctx context.Context, state *AppState, userID string) {
-	stampBeamUUIDs(ctx, state, beamReachOf(state, userID))
+func StampForUser(ctx context.Context, st store.Store, rdb *redis.Client, userID string) {
+	StampUUIDs(ctx, rdb, ReachOf(st, rdb, userID))
 }
 
-// beamReachOf lists the servers an account can reach now. Taken BEFORE a
+// ReachOf lists the servers an account can reach now. Taken BEFORE a
 // change that shrinks it, and stamped after the change is committed, so no
 // ticket minted in between survives.
-func beamReachOf(state *AppState, userID string) []string {
-	if state == nil || state.Redis == nil || state.Store == nil || userID == "" {
+func ReachOf(st store.Store, rdb *redis.Client, userID string) []string {
+	if rdb == nil || st == nil || userID == "" {
 		return nil
 	}
-	u, err := state.Store.GetUserByID(userID)
+	u, err := st.GetUserByID(userID)
 	if err != nil || u == nil {
 		log.Printf("beam access stamp: could not resolve user %s: %v", userID, err)
 		return nil
 	}
-	servers, err := state.Store.ListServersForUser(userID, u.IsAdmin)
+	servers, err := st.ListServersForUser(userID, u.IsAdmin)
 	if err != nil {
 		log.Printf("beam access stamp: could not list servers of %s: %v", userID, err)
 		return nil
@@ -111,13 +116,14 @@ func beamReachOf(state *AppState, userID string) []string {
 	return out
 }
 
-func stampBeamUUIDs(ctx context.Context, state *AppState, uuids []string) {
+// StampUUIDs marks each server named.
+func StampUUIDs(ctx context.Context, rdb *redis.Client, uuids []string) {
 	for _, u := range uuids {
-		stampBeamAccessUUID(ctx, state, u)
+		stampUUID(ctx, rdb, u)
 	}
 }
 
-func stampBeamAccessUUID(ctx context.Context, state *AppState, uuid string) {
+func stampUUID(ctx context.Context, rdb *redis.Client, uuid string) {
 	if uuid == "" {
 		return
 	}
@@ -125,7 +131,7 @@ func stampBeamAccessUUID(ctx context.Context, state *AppState, uuid string) {
 	// hold a handler open on a slow Redis.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
-	if err := beamauth.BumpAccessEpoch(ctx, state.Redis, uuid); err != nil {
+	if err := beamauth.BumpAccessEpoch(ctx, rdb, uuid); err != nil {
 		log.Printf("beam access stamp: %s: %v", uuid, err)
 	}
 }

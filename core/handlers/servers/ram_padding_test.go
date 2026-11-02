@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/placement"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -307,17 +308,17 @@ func TestScoreNode_CountsTheCandidatesPadding(t *testing.T) {
 	node := ownedNode(1, "n1", nil)
 	node.TotalRAMMB = 4096
 
-	if c := h.scoreNode(context.Background(), &node, PickNodeRequest{RAMMB: 3584}, nil); !c.Available {
+	if c := placement.ScoreNode(context.Background(), h.state.Store, h.state.Redis, &node, placement.PickNodeRequest{RAMMB: 3584}, nil); !c.Available {
 		t.Fatalf("3584 + global 512 on 4096 should fit: %s", c.Reason)
 	}
-	if c := h.scoreNode(context.Background(), &node, PickNodeRequest{RAMMB: 3585}, nil); c.Available {
+	if c := placement.ScoreNode(context.Background(), h.state.Store, h.state.Redis, &node, placement.PickNodeRequest{RAMMB: 3585}, nil); c.Available {
 		t.Fatal("3585 + global 512 on 4096 fit; the padding is not counted")
 	}
 	node.RAMPaddingMB = intp(1024)
-	if c := h.scoreNode(context.Background(), &node, PickNodeRequest{RAMMB: 3584}, nil); c.Available {
+	if c := placement.ScoreNode(context.Background(), h.state.Store, h.state.Redis, &node, placement.PickNodeRequest{RAMMB: 3584}, nil); c.Available {
 		t.Fatal("3584 + node padding 1024 on 4096 fit")
 	}
-	if c := h.scoreNode(context.Background(), &node, PickNodeRequest{RAMMB: 3584, RAMPaddingMB: intp(0)}, nil); !c.Available {
+	if c := placement.ScoreNode(context.Background(), h.state.Store, h.state.Redis, &node, placement.PickNodeRequest{RAMMB: 3584, RAMPaddingMB: intp(0)}, nil); !c.Available {
 		t.Fatalf("a server override of 0 should win over the node's 1024: %s", c.Reason)
 	}
 }

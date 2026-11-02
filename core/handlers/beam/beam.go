@@ -30,6 +30,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/beamaccess"
 	"dylaris-core/services/demo"
 	"dylaris-core/services/redisacl"
 )
@@ -339,12 +340,12 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// Presence-driven gate: the node's LAN IPs are handed out regardless of relay
 	// presence (a co-located client can take the fast path); the public IP is added
 	// only when no relay is registered, since with a relay it would deanonymize the
-	// node. resolveRelay reads the same settings GetBeamConfig uses.
+	// node. beamaccess.ResolveRelay reads the same settings GetBeamConfig uses.
 	getSetting := func(key string) string {
 		val, _ := h.state.Store.GetSetting(key)
 		return val
 	}
-	relayAddr, _ := handlers.ResolveRelay(r.Context(), h.state.Redis, getSetting("beam.relay_address"), getSetting("beam.public_host"), nodeRegion)
+	relayAddr, _ := beamaccess.ResolveRelay(r.Context(), h.state.Redis, getSetting("beam.relay_address"), getSetting("beam.public_host"), nodeRegion)
 	// "No relay registered" is also every relay restart: heartbeats live 30s, so
 	// a member asking during a relay deploy got the node's public address, the
 	// one the server list hides from them. The same rule decides here, so an
@@ -468,7 +469,7 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 	publicHost := getSetting("beam.public_host")
 	// No server context here, so no region to prefer: this endpoint answers
 	// "which relay can I reach at all", and the ticket path applies the region.
-	relayAddress, _ := handlers.ResolveRelay(r.Context(), h.state.Redis, manualOverride, publicHost, "")
+	relayAddress, _ := beamaccess.ResolveRelay(r.Context(), h.state.Redis, manualOverride, publicHost, "")
 	enabled := getSetting("beam.enabled")
 	if enabled == "" {
 		enabled = "true"

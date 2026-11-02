@@ -20,6 +20,7 @@ import (
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/voicecfg"
 	"dylaris-core/store"
 )
 
@@ -301,9 +302,9 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 	}
 
 	if req.Preset != "" {
-		merged := SvcVoiceEnable(voiceContent, address, got.HostPort)
+		merged := voicecfg.SvcEnable(voiceContent, address, got.HostPort)
 		if voiceMod == "plasmo" {
-			merged = PlasmoVoiceEnable(voiceContent, address, got.HostPort)
+			merged = voicecfg.PlasmoEnable(voiceContent, address, got.HostPort)
 		}
 		if merged != voiceContent {
 			if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+voiceRel, merged); err != nil {
@@ -492,9 +493,9 @@ func (h *ServerHandler) changePortPreset(w http.ResponseWriter, r *http.Request,
 		httpx.SendJSONError(w, "Could not read the server's files on its node. Try again.", http.StatusBadGateway)
 		return false
 	}
-	merged := SvcVoiceEnable(content, address, p.HostPort)
+	merged := voicecfg.SvcEnable(content, address, p.HostPort)
 	if mod == "plasmo" {
-		merged = PlasmoVoiceEnable(content, address, p.HostPort)
+		merged = voicecfg.PlasmoEnable(content, address, p.HostPort)
 	}
 	if merged != content {
 		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
@@ -569,9 +570,9 @@ func (h *ServerHandler) writeBackVoice(srv *models.Server) {
 		log.Printf("ports: server %d: voice config write-back skipped: %v", srv.ID, err)
 		return
 	}
-	back := SvcVoiceDisable(content)
+	back := voicecfg.SvcDisable(content)
 	if mod == "plasmo" {
-		back = PlasmoVoiceDisable(content)
+		back = voicecfg.PlasmoDisable(content)
 	}
 	if back != content {
 		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, back); err != nil {
@@ -629,9 +630,9 @@ func (h *ServerHandler) syncPortsToStart(srv *models.Server, subName string) {
 			log.Printf("ports: server %d: voice config: %v", srv.ID, err)
 			continue
 		}
-		merged := SvcVoiceEnable(content, address, p.HostPort)
+		merged := voicecfg.SvcEnable(content, address, p.HostPort)
 		if mod == "plasmo" {
-			merged = PlasmoVoiceEnable(content, address, p.HostPort)
+			merged = voicecfg.PlasmoEnable(content, address, p.HostPort)
 		}
 		if merged != content {
 			if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, subName+"/"+rel, merged); err != nil {

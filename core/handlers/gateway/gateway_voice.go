@@ -14,6 +14,7 @@ import (
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
 	"dylaris-core/handlers/servers"
+	"dylaris-core/services/voicecfg"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -194,9 +195,9 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	merged := servers.SvcVoiceEnable(content, got.Host, got.Port)
+	merged := voicecfg.SvcEnable(content, got.Host, got.Port)
 	if mod == "plasmo" {
-		merged = servers.PlasmoVoiceEnable(content, got.Host, got.Port)
+		merged = voicecfg.PlasmoEnable(content, got.Host, got.Port)
 	}
 	if merged != content {
 		if err := nodeops.WriteNodeFileString(h.state.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
@@ -301,9 +302,9 @@ func writeBackVoiceConfig(st *handlers.AppState, srv *models.Server) {
 		log.Printf("voice: server %d: config write-back skipped: %v", srv.ID, err)
 		return
 	}
-	back := servers.SvcVoiceDisable(content)
+	back := voicecfg.SvcDisable(content)
 	if mod == "plasmo" {
-		back = servers.PlasmoVoiceDisable(content)
+		back = voicecfg.PlasmoDisable(content)
 	}
 	if back != content {
 		// Asked again right before the write: on a slow node this runs long

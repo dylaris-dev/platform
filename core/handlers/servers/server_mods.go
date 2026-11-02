@@ -15,6 +15,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
+	"dylaris-core/services/modcompat"
 
 	"dylaris-pkg/validate"
 
@@ -213,7 +214,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	// jar on a NeoForge server, or a 26.3 build on 1.21.1, installs fine and
 	// then fails at boot. An imported server that has declared neither keeps
 	// the unchecked install.
-	if handlers.ModFitKnown(srv.InstallerType, srv.MinecraftVersion) {
+	if services.ModFitKnown(srv.InstallerType, srv.MinecraftVersion) {
 		ctx, cancel := context.WithTimeout(r.Context(), modPlanWait)
 		v, err := fetchInstallVersion(ctx, req.VersionID)
 		cancel()
@@ -224,7 +225,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 			}
 			var upstream *services.ModrinthHTTPError
 			if errors.As(err, &upstream) && upstream.Status == http.StatusTooManyRequests {
-				httpx.SendCooldown(w, "Modrinth", handlers.UpstreamCooldownDefault)
+				httpx.SendCooldown(w, "Modrinth", modcompat.UpstreamCooldownDefault)
 				return
 			}
 			log.Printf("install mod: fetching version %s from Modrinth: %v", req.VersionID, err)
@@ -235,7 +236,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "versionId does not belong to projectId", http.StatusBadRequest)
 			return
 		}
-		if ok, reason := handlers.ModVersionFits(srv.InstallerType, srv.MinecraftVersion, v.Loaders, v.GameVersions); !ok {
+		if ok, reason := services.ModVersionFits(srv.InstallerType, srv.MinecraftVersion, v.Loaders, v.GameVersions); !ok {
 			httpx.SendJSONError(w, reason, http.StatusConflict)
 			return
 		}

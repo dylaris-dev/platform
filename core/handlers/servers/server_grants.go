@@ -9,6 +9,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/services/beamaccess"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
@@ -178,9 +179,9 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	// A nil ServerID is an ACCOUNT-wide grant, which the resolver honours on
 	// every server of that owner - so every one of them is stamped.
 	if req.ServerID != nil {
-		handlers.StampBeamAccess(r.Context(), h.state, *req.ServerID)
+		beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, *req.ServerID)
 	} else {
-		handlers.StampBeamAccessForOwner(r.Context(), h.state, ownerUserID)
+		beamaccess.StampForOwner(r.Context(), h.state.Store, h.state.Redis, ownerUserID)
 	}
 	// The invitee's sidebar lists servers by grant, and their panel refetches
 	// that list only on this event; without it they saw the server only after
@@ -292,9 +293,9 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if req.ServerID != nil {
-		handlers.StampBeamAccess(r.Context(), h.state, *req.ServerID)
+		beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, *req.ServerID)
 	} else {
-		handlers.StampBeamAccessForOwner(r.Context(), h.state, ownerUserID)
+		beamaccess.StampForOwner(r.Context(), h.state.Store, h.state.Redis, ownerUserID)
 	}
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 	// Revocation is audited for the same reason the grant is, and matters more

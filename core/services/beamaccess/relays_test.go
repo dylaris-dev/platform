@@ -1,4 +1,4 @@
-package handlers
+package beamaccess
 
 import (
 	"context"
@@ -98,7 +98,7 @@ func TestResolveRelayPrefersTheRelaysOwnHost(t *testing.T) {
 			BeamID: "eu-1", Region: "eu-central",
 			PublicHost: "beam.eu.example.com", ClientPort: "25550",
 		})
-		addr, src := resolveRelay(ctx, rdb, "", "fleet-wide.example.com", "eu-central")
+		addr, src := ResolveRelay(ctx, rdb, "", "fleet-wide.example.com", "eu-central")
 		if addr != "beam.eu.example.com:25550" {
 			t.Errorf("addr = %q, want the relay's own host", addr)
 		}
@@ -109,7 +109,7 @@ func TestResolveRelayPrefersTheRelaysOwnHost(t *testing.T) {
 
 	t.Run("pre-region relay falls back to the setting", func(t *testing.T) {
 		rdb := seedRelays(t, BeamRelayInfo{BeamID: "old-1", IP: "10.0.0.9", ClientPort: "25550"})
-		addr, _ := resolveRelay(ctx, rdb, "", "fleet-wide.example.com", "")
+		addr, _ := ResolveRelay(ctx, rdb, "", "fleet-wide.example.com", "")
 		if addr != "fleet-wide.example.com:25550" {
 			t.Errorf("addr = %q, want the fleet-wide setting - an old relay must keep working", addr)
 		}
@@ -120,7 +120,7 @@ func TestResolveRelayPrefersTheRelaysOwnHost(t *testing.T) {
 			BeamID: "eu-1", Region: "eu-central",
 			PublicHost: "beam.eu.example.com", ClientPort: "25550",
 		})
-		addr, src := resolveRelay(ctx, rdb, "incident.example.com:1234", "fleet-wide.example.com", "eu-central")
+		addr, src := ResolveRelay(ctx, rdb, "incident.example.com:1234", "fleet-wide.example.com", "eu-central")
 		if addr != "incident.example.com:1234" || src != "manual" {
 			t.Errorf("addr = %q src = %q, want the manual override", addr, src)
 		}

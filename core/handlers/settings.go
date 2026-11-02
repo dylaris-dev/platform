@@ -19,6 +19,7 @@ import (
 	"dylaris-core/handlers/validate"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/beamaccess"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -850,9 +851,9 @@ type BeamSettings struct {
 	// Absent (nil) keeps the legacy behaviour for a client that does not know
 	// this field; present is authoritative, including an explicit "" meaning
 	// "go back to discovery".
-	ManualOverride   *string         `json:"manualOverride"`
-	PublicHost       string          `json:"publicHost"`       // Externally reachable hostname for discovered relays (e.g. beam.dylaris.com)
-	DiscoveredRelays []BeamRelayInfo `json:"discoveredRelays"` // Currently registered relays (read-only)
+	ManualOverride   *string                    `json:"manualOverride"`
+	PublicHost       string                     `json:"publicHost"`       // Externally reachable hostname for discovered relays (e.g. beam.dylaris.com)
+	DiscoveredRelays []beamaccess.BeamRelayInfo `json:"discoveredRelays"` // Currently registered relays (read-only)
 	// BwLimit is the legacy single-value Node throttle (bytes/sec, 0 =
 	// unlimited). It stays the source of truth for the actual Node-side
 	// rate.Limiter so older deploys keep working. The four-direction
@@ -923,7 +924,7 @@ func (h *SettingsHandler) GetBeamSettings(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	settings.DiscoveredRelays = DiscoverBeamRelays(r.Context(), h.state.Redis)
+	settings.DiscoveredRelays = beamaccess.DiscoverBeamRelays(r.Context(), h.state.Redis)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": settings,
@@ -1050,7 +1051,7 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 
 	manualOverride := getSetting("beam.relay_address")
 	publicHost := getSetting("beam.public_host")
-	effective, _ := resolveRelay(context.Background(), h.state.Redis, manualOverride, publicHost, "")
+	effective, _ := beamaccess.ResolveRelay(context.Background(), h.state.Redis, manualOverride, publicHost, "")
 
 	settings := BeamSettings{
 		RelayAddress:   effective,

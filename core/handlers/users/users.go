@@ -18,7 +18,9 @@ import (
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/beamaccess"
 	"dylaris-core/services/redisacl"
+	"dylaris-core/services/storeclient"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -309,7 +311,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	//
 	// The Beam stamp goes first of all: once the grants are gone there is no
 	// list of what this account could reach left to stamp.
-	handlers.StampBeamAccessForUser(r.Context(), h.state, id)
+	beamaccess.StampForUser(r.Context(), h.state.Store, h.state.Redis, id)
 	// Read now, removed once the row is gone: the packs cascade with it.
 	packDirs := h.state.PackDirsOfUser(id)
 	templates := h.state.TemplatesOfUser(id)
@@ -431,7 +433,7 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 	// owner's hands any more. The password change ended the sessions; the API
 	// keys are the other way in, and they used to keep working.
 	revoked := services.RevokeAllAPIKeys(h.state.Store, id, "admin password reset")
-	handlers.StampBeamAccessForUser(r.Context(), h.state, id)
+	beamaccess.StampForUser(r.Context(), h.state.Store, h.state.Redis, id)
 	sshRevoked := services.RevokeAllSSHKeys(h.state.Store, id, "admin password reset")
 	actorID, _ := r.Context().Value("userID").(string)
 	audit.LogIdentity(h.state.Store, r, audit.AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
@@ -449,7 +451,7 @@ func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	id := vars["id"]
 	// The operator's own layer. "default" here means the purchase (user:<id>)
 	// and the platform scopes below it answer.
-	scope := handlers.AdminRouteScope(id)
+	scope := storeclient.AdminRouteScope(id)
 
 	limit, err := h.state.Store.GetGatewayRouteLimit(scope)
 	if err != nil || limit == nil {
@@ -485,7 +487,7 @@ func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id := vars["id"]
-	scope := handlers.AdminRouteScope(id)
+	scope := storeclient.AdminRouteScope(id)
 	// A route limit is a quota. Nobody but an admin sets their own, and staff
 	// set it only on accounts they may manage.
 	if !reqctx.IsAdmin(r) {

@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"dylaris-core/handlers/reauth"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -19,14 +17,6 @@ import (
 // live in their own packages so that a change there does not recompile all of
 // handlers. Thin wrappers rather than renames: the unexported names stay what
 // the rest of this package calls.
-
-func CompatQuery(r *http.Request) (mode, specific string) { return compatQuery(r) }
-
-func ResolveTargets(ctx context.Context, current, mode, specific string) ([]string, error) {
-	return resolveTargets(ctx, current, mode, specific)
-}
-
-func (s *AppState) AvailabilityCache() services.AvailabilityCache { return s.availabilityCache() }
 
 func (s *AppState) BuildModpackStorageProvider() (modpack.ModpackStorageProvider, error) {
 	return s.buildModpackStorageProvider()
@@ -75,37 +65,11 @@ func CoreStorageConfigFromConnection(conn *models.StorageConnection) CoreStorage
 	return coreStorageConfigFromConnection(conn)
 }
 
-func UserRouteScope(userID string) string { return userRouteScope(userID) }
-
-func UsagePeriod(r *http.Request) time.Time { return usagePeriod(r) }
-
-func (s *AppState) ProbeStoreLink(ctx context.Context, uuid string) (bool, string, error) {
-	return s.probeStoreLink(ctx, uuid)
-}
-
-func (s *AppState) StoreAccountSummary(ctx context.Context, uuid string) (map[string]interface{}, error) {
-	return s.storeAccountSummary(ctx, uuid)
-}
-
-func (s *AppState) StoreSetBillingConsent(ctx context.Context, uuid string, traffic, backup *bool) (int, string, error) {
-	return s.storeSetBillingConsent(ctx, uuid, traffic, backup)
-}
-
-func ResolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, publicHost, preferredRegion string) (string, string) {
-	return resolveRelay(ctx, rdb, manualOverride, publicHost, preferredRegion)
-}
-
 // --- gateway -----------------------------------------------------------------
 
 func (s *AppState) GatewayEnabled() bool { return s.gatewayEnabled() }
 
 func GatewayDisabledResponse(w http.ResponseWriter) { gatewayDisabledResponse(w) }
-
-func (s *AppState) RequireEntitlement(r *http.Request, w http.ResponseWriter, userID, kind string) bool {
-	return s.requireEntitlement(r, w, userID, kind)
-}
-
-func AdminRouteScope(userID string) string { return adminRouteScope(userID) }
 
 // --- nodes -------------------------------------------------------------------
 
@@ -114,13 +78,6 @@ func PurgeBackupArchivesForServers(state *AppState, serverIDs []int) {
 }
 
 // --- mods --------------------------------------------------------------------
-
-// UpstreamCooldown is the per-upstream back-off a proxy handler embeds.
-type UpstreamCooldown = upstreamCooldown
-
-func (c *upstreamCooldown) Blocked(now time.Time) (time.Duration, bool) { return c.blocked(now) }
-
-func (c *upstreamCooldown) Trip(h http.Header, now time.Time) time.Duration { return c.trip(h, now) }
 
 const KeyModpackStorageConnectionID = keyModpackStorageConnectionID
 
@@ -206,16 +163,6 @@ func NotifyPasswordChanged(state *AppState, email, username string) {
 	notifyPasswordChanged(state, email, username)
 }
 
-func StampBeamAccessForUser(ctx context.Context, state *AppState, userID string) {
-	stampBeamAccessForUser(ctx, state, userID)
-}
-
-func StampBeamUUIDs(ctx context.Context, state *AppState, uuids []string) {
-	stampBeamUUIDs(ctx, state, uuids)
-}
-
-func BeamReachOf(state *AppState, userID string) []string { return beamReachOf(state, userID) }
-
 // SetAccountMailSender replaces the account notice sender for a test and
 // returns the restore func. Production never calls it.
 func SetAccountMailSender(fn func(services.MailStore, string, string, string, map[string]string) error) (restore func()) {
@@ -224,35 +171,7 @@ func SetAccountMailSender(fn func(services.MailStore, string, string, string, ma
 	return func() { sendAccountMail = prev }
 }
 
-func ExactMinecraftVersion(software, mcVersion, version, loader string) string {
-	return exactMinecraftVersion(software, mcVersion, version, loader)
-}
-
-func ModFitKnown(serverLoader, serverMC string) bool { return modFitKnown(serverLoader, serverMC) }
-
-func ModVersionFits(serverLoader, serverMC string, versionLoaders, versionGameVersions []string) (bool, string) {
-	return modVersionFits(serverLoader, serverMC, versionLoaders, versionGameVersions)
-}
-
-func NeoForgeMinecraft(loader string) string { return neoForgeMinecraft(loader) }
-
-func ProxyBackendUUIDs(state *AppState, proxyID int) []string {
-	return proxyBackendUUIDs(state, proxyID)
-}
-
-func StampBeamAccess(ctx context.Context, state *AppState, serverID int) {
-	stampBeamAccess(ctx, state, serverID)
-}
-
-func StampBeamAccessForOwner(ctx context.Context, state *AppState, ownerUserID string) {
-	stampBeamAccessForOwner(ctx, state, ownerUserID)
-}
-
-const UpstreamCooldownDefault = upstreamCooldownDefault
-
 var DefaultPlacementSettings = defaultPlacementSettings
-
-func NeoForgeMajor(v string) (string, bool) { return neoForgeMajor(v) }
 
 // ReauthCodeVerifier is the second-factor check re-authentication hands to
 // reauth.RequireAdminReauth / RequireReauth, for the subpackages.

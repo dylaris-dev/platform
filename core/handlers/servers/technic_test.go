@@ -18,6 +18,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 )
 
 // technicUpstream fakes api.technicpack.net and one Solder server. Solder is
@@ -81,8 +82,8 @@ func newTechnicUpstream(t *testing.T) *technicUpstream {
 
 func newTestTechnicHandler(t *testing.T, u *technicUpstream) *TechnicHandler {
 	t.Helper()
-	technicCooldown = handlers.UpstreamCooldown{}
-	t.Cleanup(func() { technicCooldown = handlers.UpstreamCooldown{} })
+	technicCooldown = modcompat.UpstreamCooldown{}
+	t.Cleanup(func() { technicCooldown = modcompat.UpstreamCooldown{} })
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	h := NewTechnicHandler(&handlers.AppState{Cache: services.NewCache(rdb)})

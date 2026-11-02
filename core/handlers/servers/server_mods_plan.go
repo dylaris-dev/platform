@@ -10,10 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 
 	"github.com/gorilla/mux"
 )
@@ -48,7 +47,7 @@ func (h *ServerModsHandler) Plan(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "versionId required", http.StatusBadRequest)
 		return
 	}
-	if !handlers.ModFitKnown(srv.InstallerType, srv.MinecraftVersion) {
+	if !services.ModFitKnown(srv.InstallerType, srv.MinecraftVersion) {
 		httpx.SendJSONError(w, "Declare the server's loader and Minecraft version first", http.StatusConflict)
 		return
 	}
@@ -79,7 +78,7 @@ func (h *ServerModsHandler) Plan(w http.ResponseWriter, r *http.Request) {
 		case services.ModrinthNotFound(err):
 			httpx.SendJSONError(w, "Modrinth has no version "+req.VersionID, http.StatusBadRequest)
 		case errors.As(err, &upstream) && upstream.Status == http.StatusTooManyRequests:
-			httpx.SendCooldown(w, "Modrinth", handlers.UpstreamCooldownDefault)
+			httpx.SendCooldown(w, "Modrinth", modcompat.UpstreamCooldownDefault)
 		default:
 			log.Printf("mod plan: server %d version %s: %v", serverID, req.VersionID, err)
 			httpx.SendJSONError(w, "Could not reach Modrinth to work out the dependencies. Try again in a moment.", http.StatusBadGateway)

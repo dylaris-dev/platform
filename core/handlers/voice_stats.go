@@ -75,7 +75,7 @@ func (h *VoiceStatsHandler) GetOverview(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Redis is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	period := usagePeriod(r)
+	period := httpx.UsagePeriod(r)
 	ports, err := h.state.Store.ListVoicePorts()
 	if err != nil {
 		log.Printf("[voice] overview: list ports: %v", err)

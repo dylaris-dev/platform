@@ -1,4 +1,4 @@
-package handlers
+package beamaccess
 
 import (
 	"context"
@@ -57,13 +57,13 @@ func DiscoverBeamRelays(ctx context.Context, rdb *redis.Client) []BeamRelayInfo 
 	return out
 }
 
-// resolveRelay returns the effective public address for Beam Desktop
+// ResolveRelay returns the effective public address for Beam Desktop
 // clients. Discovery supplies which relay is alive and its port; the
 // externally reachable host comes from publicHost (DB setting
 // beam.public_host) — the relay's own registered IP is an internal
 // overlay address a desktop client can't reach. Manual override (DB
 // setting beam.relay_address) still wins outright for incident routing.
-func resolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, publicHost, preferredRegion string) (string, string) {
+func ResolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, publicHost, preferredRegion string) (string, string) {
 	if strings.TrimSpace(manualOverride) != "" {
 		return manualOverride, "manual"
 	}

@@ -19,6 +19,7 @@ import (
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/beamaccess"
 
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
@@ -498,7 +499,7 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 	// be holding the account, and their session would otherwise outlive it.
 	endSessionsAfter(h.state, target, "2FA reset by an operator")
 	revoked := services.RevokeAllAPIKeys(h.state.Store, id, "admin 2FA reset")
-	stampBeamAccessForUser(r.Context(), h.state, id)
+	beamaccess.StampForUser(r.Context(), h.state.Store, h.state.Redis, id)
 	sshRevoked := services.RevokeAllSSHKeys(h.state.Store, id, "admin 2FA reset")
 	audit.LogIdentity(h.state.Store, r, audit.AuditEvent2FAAdminReset, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 

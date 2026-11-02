@@ -1,4 +1,8 @@
-package handlers
+// Package modcompat holds the handler-facing half of mod compatibility: the
+// compat query and target list, the availability cache hand-off, NeoForge
+// build mapping, and the upstream 429 cooldown. The version math itself is in
+// services (modcompat.go, mod_fit.go, mc_version.go).
+package modcompat
 
 import (
 	"context"
@@ -19,19 +23,19 @@ import (
 // on: a pack build carries the side its author declared, a server has to ask
 // Modrinth what sides its mods serve.
 
-// availabilityCache hands the compat service the same metadata cache the
+// AvailabilityCache hands the compat service the same metadata cache the
 // Modrinth proxy uses, so an operator who moved that cache off the control
 // plane moved this one with it. A nil cache is read as "nothing cached" rather
 // than as a failure.
-func (s *AppState) availabilityCache() services.AvailabilityCache {
-	if s == nil || s.Cache == nil {
+func AvailabilityCache(c *services.Cache) services.AvailabilityCache {
+	if c == nil {
 		return nil
 	}
-	return s.Cache
+	return c
 }
 
-// compatQuery reads the shared mode/mc query parameters.
-func compatQuery(r *http.Request) (mode, specific string) {
+// Query reads the shared mode/mc query parameters.
+func Query(r *http.Request) (mode, specific string) {
 	mode = strings.TrimSpace(r.URL.Query().Get("mode"))
 	if mode == "" {
 		mode = services.CompatModeAllNewer
@@ -39,9 +43,9 @@ func compatQuery(r *http.Request) (mode, specific string) {
 	return mode, strings.TrimSpace(r.URL.Query().Get("mc"))
 }
 
-// resolveTargets turns the request's mode into a concrete target list using
+// ResolveTargets turns the request's mode into a concrete target list using
 // Modrinth's own release ordering.
-func resolveTargets(ctx context.Context, current, mode, specific string) ([]string, error) {
+func ResolveTargets(ctx context.Context, current, mode, specific string) ([]string, error) {
 	tags, err := services.FetchGameVersions(ctx)
 	if err != nil {
 		return nil, err

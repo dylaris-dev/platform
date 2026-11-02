@@ -14,6 +14,8 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/guard"
+	"dylaris-core/services/storeclient"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -55,7 +57,7 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// itself at zero, which is exactly the value an account that bought nothing
 	// carries; without this a fresh registration could mint enroll tokens
 	// forever. See entitlement_gate.go.
-	if !h.state.RequireEntitlement(r, w, userID, services.EntitlementByon) {
+	if !guard.RequireEntitlement(r, w, guard.Entitlement{Store: h.state.Store, Flags: h.state.FeatureFlags, StoreEnabled: h.state.StoreEnabled, Storefront: storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}}, userID, services.EntitlementByon) {
 		return
 	}
 	var req struct {

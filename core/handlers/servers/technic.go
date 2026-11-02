@@ -18,6 +18,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 )
 
 // Technic Platform. Core reads pack metadata here, briefly cached, and decides
@@ -48,7 +49,7 @@ var (
 
 	// One cooldown for every handler instance: the setup path and the proxy
 	// routes share Technic's per-IP limit.
-	technicCooldown handlers.UpstreamCooldown
+	technicCooldown modcompat.UpstreamCooldown
 )
 
 // technicUserError is a refusal the panel shows as it is (422).

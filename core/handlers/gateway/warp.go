@@ -17,6 +17,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/guard"
 
 	"dylaris-pkg/validate"
 
@@ -24,6 +25,7 @@ import (
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
+	"dylaris-core/services/storeclient"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -659,7 +661,7 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	}
 	// A link kit is the route-only product. See entitlement_gate.go for why the
 	// cap below cannot carry this on its own.
-	if !h.state.RequireEntitlement(r, w, userID, services.EntitlementRouteOnly) {
+	if !guard.RequireEntitlement(r, w, guard.Entitlement{Store: h.state.Store, Flags: h.state.FeatureFlags, StoreEnabled: h.state.StoreEnabled, Storefront: storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}}, userID, services.EntitlementRouteOnly) {
 		return
 	}
 	// Enforce the tenant's link cap. nil is no cap; 0 is a real cap that nothing
@@ -1353,7 +1355,7 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A warp key attaches a machine of their own, which is the BYON product.
-	if !h.state.RequireEntitlement(r, w, userID, services.EntitlementByon) {
+	if !guard.RequireEntitlement(r, w, guard.Entitlement{Store: h.state.Store, Flags: h.state.FeatureFlags, StoreEnabled: h.state.StoreEnabled, Storefront: storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}}, userID, services.EntitlementByon) {
 		return
 	}
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/guard"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -100,23 +101,23 @@ func TestMintToken_RefusedWithoutEntitlement(t *testing.T) {
 			// never went near the store.
 			name:     "a fresh account has no billing row",
 			billing:  nil,
-			wantCode: handlers.DenyNoEntitlement,
+			wantCode: guard.DenyNoEntitlement,
 		},
 		{
 			// What a cancellation pushes. Reads as unlimited to a bare cap check.
 			name:     "an explicit zero is not unlimited",
 			billing:  &store.UserBilling{Status: "active", MaxNodes: ptrI64(0)},
-			wantCode: handlers.DenyNoEntitlement,
+			wantCode: guard.DenyNoEntitlement,
 		},
 		{
 			name:     "route-only does not buy a node",
 			billing:  &store.UserBilling{Status: "active", MaxLinks: ptrI64(1)},
-			wantCode: handlers.DenyNoEntitlement,
+			wantCode: guard.DenyNoEntitlement,
 		},
 		{
 			name:     "suspended is named as suspended, not as unpurchased",
 			billing:  &store.UserBilling{Status: "suspended", MaxNodes: ptrI64(1)},
-			wantCode: handlers.DenySuspended,
+			wantCode: guard.DenySuspended,
 		},
 	}
 	for _, tc := range cases {

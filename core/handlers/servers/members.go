@@ -14,6 +14,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/services/beamaccess"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -336,7 +337,7 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Failed to create invite (user may already be invited)", http.StatusConflict)
 		return
 	}
-	handlers.StampBeamAccess(r.Context(), h.state, serverID)
+	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	// First member invite flips audit_enabled on. Cheap no-op when
@@ -411,7 +412,7 @@ func (h *MemberHandler) UpdateMemberPermissions(w http.ResponseWriter, r *http.R
 		httpx.SendJSONError(w, "Failed to update permissions", http.StatusInternalServerError)
 		return
 	}
-	handlers.StampBeamAccess(r.Context(), h.state, serverID)
+	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	actorID, _ := r.Context().Value("userID").(string)
@@ -457,7 +458,7 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Failed to remove member", http.StatusInternalServerError)
 		return
 	}
-	handlers.StampBeamAccess(r.Context(), h.state, serverID)
+	beamaccess.Stamp(r.Context(), h.state.Store, h.state.Redis, serverID)
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 
 	actorID, _ := r.Context().Value("userID").(string)

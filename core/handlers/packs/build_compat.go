@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"strconv"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 )
 
 // BuildCompat GET /api/packs/{id}/builds/{buildId}/compat
@@ -48,7 +48,7 @@ func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	mode, specific := handlers.CompatQuery(r)
+	mode, specific := modcompat.Query(r)
 	loader := r.URL.Query().Get("loader")
 	if loader == "" {
 		loader = build.Loader
@@ -57,7 +57,7 @@ func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unsupported target loader", 400)
 		return
 	}
-	targets, err := handlers.ResolveTargets(r.Context(), build.Minecraft, mode, specific)
+	targets, err := modcompat.ResolveTargets(r.Context(), build.Minecraft, mode, specific)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not read the Minecraft version list from Modrinth: "+err.Error(), http.StatusBadGateway)
 		return
@@ -71,7 +71,7 @@ func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
 		Current: build.Minecraft,
 		Mode:    mode,
 		Targets: targets,
-		Cache:   h.state.AvailabilityCache(),
+		Cache:   modcompat.AvailabilityCache(h.state.Cache),
 	})
 	if err != nil {
 		httpx.SendJSONError(w, "Availability check failed: "+err.Error(), http.StatusBadGateway)

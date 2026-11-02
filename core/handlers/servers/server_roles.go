@@ -9,6 +9,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/services/beamaccess"
 
 	"github.com/gorilla/mux"
 
@@ -186,7 +187,7 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 	audit.LogIdentity(h.state.Store, r, audit.AuditEventServerRoleUpdated, owner, "", meta)
 	// A role's capabilities are every holder's: changing them changes who may
 	// reach the files of every server in this realm.
-	handlers.StampBeamAccessForOwner(r.Context(), h.state, owner)
+	beamaccess.StampForOwner(r.Context(), h.state.Store, h.state.Redis, owner)
 	// A role losing overview.read hides servers from its holders' sidebars.
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -229,7 +230,7 @@ func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Req
 		meta["capabilities"] = access.NormalizeCaps(before.Capabilities)
 	}
 	audit.LogIdentity(h.state.Store, r, audit.AuditEventServerRoleDeleted, owner, "", meta)
-	handlers.StampBeamAccessForOwner(r.Context(), h.state, owner)
+	beamaccess.StampForOwner(r.Context(), h.state.Store, h.state.Redis, owner)
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

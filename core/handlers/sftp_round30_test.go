@@ -11,6 +11,7 @@ import (
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/services/beamaccess"
 	"dylaris-core/store"
 
 	beamauth "dylaris-pkg/beam/auth"
@@ -79,7 +80,7 @@ func TestStampingAnAdminCoversEveryServer(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
-	stampBeamAccessForUser(context.Background(), &AppState{Store: &beamStampUserStore{resetRevokeStore: &resetRevokeStore{}, admin: true}, Redis: rdb}, "u1")
+	beamaccess.StampForUser(context.Background(), &beamStampUserStore{resetRevokeStore: &resetRevokeStore{}, admin: true}, rdb, "u1")
 	if !mr.Exists(beamauth.AccessEpochKey("someone-elses")) {
 		t.Fatal("an administrator's reach was not stamped")
 	}
