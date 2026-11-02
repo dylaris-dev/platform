@@ -15,6 +15,7 @@ import (
 type Deps struct {
 	Store            store.Store
 	Redis            *redis.Client
+	PubSub           *services.PubSubHub
 	Authz            *authz.Resolver
 	FeatureFlags     *services.FeatureFlags
 	CoreStorage      *corestorage.Manager

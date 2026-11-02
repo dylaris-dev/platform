@@ -24,6 +24,10 @@ func InitDB(cfg config.Config) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("DB Open Error: %w", err)
 	}
+	db.SetMaxOpenConns(cfg.DBMaxOpenConns)
+	db.SetMaxIdleConns(cfg.DBMaxIdleConns)
+	db.SetConnMaxLifetime(cfg.DBConnMaxLifetime)
+	db.SetConnMaxIdleTime(cfg.DBConnMaxIdleTime)
 
 	// Wait for Postgres to accept connections instead of crashing out —
 	// covers the Core booting before the DB in a compose / stack deploy.

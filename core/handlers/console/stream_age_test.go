@@ -15,6 +15,7 @@ import (
 	"dylaris-core/handlers/health"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
+	"dylaris-core/services"
 )
 
 func shortStreams(t *testing.T) {
@@ -82,7 +83,7 @@ func TestStreamsOpenWithTheRetryLine(t *testing.T) {
 	if body := run("console", func(rec *httptest.ResponseRecorder) { console.StreamConsole(rec, req("/api/servers/1/console/stream")) }); !strings.HasPrefix(body, httpx.SSERetryLine) {
 		t.Errorf("console stream = %q, want it to open with %q", body, httpx.SSERetryLine)
 	}
-	events := health.NewSystemEventsHandler(health.Deps{Store: fs, Redis: rdb})
+	events := health.NewSystemEventsHandler(health.Deps{Store: fs, Redis: rdb, PubSub: services.NewPubSubHub(rdb)})
 	if body := run("events", func(rec *httptest.ResponseRecorder) { events.StreamEvents(rec, req("/api/system/events")) }); !strings.Contains(body, httpx.SSERetryLine) {
 		t.Errorf("system events stream = %q, want %q", body, httpx.SSERetryLine)
 	}

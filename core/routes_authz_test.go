@@ -103,6 +103,7 @@ func (f *authzFakeStore) GetAccountGrant(ownerUserID, userID string) (*store.Ser
 // pass-through) instead of panicking on the nil embedded store.Store.
 func (f *authzFakeStore) CountAdmins() (int, error) { return 1, nil }
 func (f *authzFakeStore) CountUsers() (int, error)  { return 1, nil }
+func (f *authzFakeStore) HasUsers() (bool, error)   { return true, nil }
 
 func skey(serverID int, userID string) string {
 	return strconv.Itoa(serverID) + "|" + userID

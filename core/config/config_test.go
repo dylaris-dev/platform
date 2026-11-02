@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeDBType(t *testing.T) {
@@ -346,5 +347,25 @@ func TestLoadConfig_RefusesEmptyRedisPassword(t *testing.T) {
 	t.Setenv("REDIS_ALLOW_NO_PASSWORD", "true")
 	if _, err := LoadConfig(); err != nil {
 		t.Fatalf("REDIS_ALLOW_NO_PASSWORD=true still refused: %v", err)
+	}
+}
+
+func TestEnvIntDefaultKeepsDefaultOnBadValue(t *testing.T) {
+	cases := map[string]int{"": 25, "abc": 25, "-1": 25, "0": 0, " 40 ": 40}
+	for raw, want := range cases {
+		t.Setenv("DB_MAX_OPEN_CONNS", raw)
+		if got := envIntDefault("DB_MAX_OPEN_CONNS", 25); got != want {
+			t.Errorf("envIntDefault(%q) = %d, want %d", raw, got, want)
+		}
+	}
+}
+
+func TestEnvDurationDefaultKeepsDefaultOnBadValue(t *testing.T) {
+	cases := map[string]time.Duration{"": time.Minute, "soon": time.Minute, "-1s": time.Minute, "0": 0, "10m": 10 * time.Minute}
+	for raw, want := range cases {
+		t.Setenv("DB_CONN_MAX_IDLE_TIME", raw)
+		if got := envDurationDefault("DB_CONN_MAX_IDLE_TIME", time.Minute); got != want {
+			t.Errorf("envDurationDefault(%q) = %s, want %s", raw, got, want)
+		}
 	}
 }

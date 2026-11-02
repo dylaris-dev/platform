@@ -14,6 +14,7 @@ import (
 type Deps struct {
 	Store        store.Store
 	Redis        *redis.Client
+	PubSub       *services.PubSubHub
 	Events       *services.SystemEventsPublisher
 	FeatureFlags *services.FeatureFlags
 	Metrics      *metrics.Manager

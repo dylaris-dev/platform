@@ -93,6 +93,15 @@ type Config struct {
 	// by the hourly sweep (fine for small/medium setups, no extension required).
 	// Normalized to exactly "timescaledb" or "postgres".
 	DBType string
+	// Pool sizing for Core's main database handle. Without it database/sql
+	// keeps only 2 idle connections, so any burst above that opens and closes
+	// a fresh Postgres session per query (measured: ~50 new sessions/s and
+	// Core capped near 80 req/s). Every Core replica holds up to DBMaxOpenConns,
+	// so replicas x DBMaxOpenConns must stay below Postgres max_connections.
+	DBMaxOpenConns    int
+	DBMaxIdleConns    int
+	DBConnMaxLifetime time.Duration
+	DBConnMaxIdleTime time.Duration
 
 	// NO metrics database variable. Where the long-term statistics are written
 	// is a PANEL setting (Settings, Features), stored in the settings table -
@@ -290,6 +299,11 @@ func LoadConfig() (Config, error) {
 		// run on plain PostgreSQL with no TimescaleDB extension.
 		DBType: NormalizeDBType(getEnv("DB_TYPE", "timescaledb")),
 
+		DBMaxOpenConns:    envIntDefault("DB_MAX_OPEN_CONNS", 25),
+		DBMaxIdleConns:    envIntDefault("DB_MAX_IDLE_CONNS", 25),
+		DBConnMaxLifetime: envDurationDefault("DB_CONN_MAX_LIFETIME", 30*time.Minute),
+		DBConnMaxIdleTime: envDurationDefault("DB_CONN_MAX_IDLE_TIME", 5*time.Minute),
+
 		RedisAddr: getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisUser: getEnv("REDIS_USER", ""),
 		RedisPass: getSecret("REDIS_PASSWORD", ""),
@@ -373,6 +387,36 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// envIntDefault reads a non-negative integer env var. Unset, empty or invalid
+// keeps def (logged when invalid): a typo must not silently become 0, which
+// database/sql reads as "unlimited" for open conns and "none" for idle ones.
+func envIntDefault(key string, def int) int {
+	raw := strings.TrimSpace(getEnv(key, ""))
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 0 {
+		log.Printf("config: %s=%q is not a non-negative integer; keeping the default %d", key, raw, def)
+		return def
+	}
+	return v
+}
+
+// envDurationDefault is envIntDefault for time.ParseDuration values.
+func envDurationDefault(key string, def time.Duration) time.Duration {
+	raw := strings.TrimSpace(getEnv(key, ""))
+	if raw == "" {
+		return def
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		log.Printf("config: %s=%q is not a valid duration; keeping the default %s", key, raw, def)
+		return def
+	}
+	return d
 }
 
 // ParseBoolEnvDefault reads a boolean env var, falling back to def when it is

@@ -231,4 +231,8 @@ type AppState struct {
 	// keyspace. The updates view needs it to tell its own row apart from a
 	// sibling Core's.
 	CoreID string
+
+	// PubSub is the one Redis Pub/Sub connection every SSE stream of this
+	// Core shares. See services.PubSubHub.
+	PubSub *services.PubSubHub
 }

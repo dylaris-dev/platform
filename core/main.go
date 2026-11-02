@@ -366,6 +366,7 @@ func main() {
 
 	appState.Redis = redisClient
 	appState.ConsoleRedis = database.NewConsoleRedis(redisClient)
+	appState.PubSub = services.NewPubSubHub(redisClient)
 	appState.Queue = services.NewQueueService(redisClient)
 	// The background services report their failures here as well as to the log,
 	// so the panel's Errors screen can show them. Core is the component running

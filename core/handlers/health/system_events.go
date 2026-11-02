@@ -187,10 +187,9 @@ func (h *SystemEventsHandler) StreamEvents(w http.ResponseWriter, r *http.Reques
 
 	ctx, cancel := httpx.StreamContext(w, r)
 	defer cancel()
-	pubsub := h.d.Redis.Subscribe(ctx, services.SystemEventsChannel)
-	defer pubsub.Close()
+	ch, unsubscribe := h.d.PubSub.Subscribe(services.SystemEventsChannel)
+	defer unsubscribe()
 
-	ch := pubsub.Channel()
 	visible := map[int]cachedVisibility{}
 
 	keepalive := time.NewTicker(15 * time.Second)
@@ -200,14 +199,11 @@ func (h *SystemEventsHandler) StreamEvents(w http.ResponseWriter, r *http.Reques
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-ch:
-			if !ok {
-				return
-			}
-			if !h.mayReceiveCached(r, msg.Payload, visible) {
+		case payload := <-ch:
+			if !h.mayReceiveCached(r, payload, visible) {
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", msg.Payload)
+			fmt.Fprintf(w, "data: %s\n\n", payload)
 			flusher.Flush()
 		case <-keepalive.C:
 			fmt.Fprintf(w, ": keepalive\n\n")

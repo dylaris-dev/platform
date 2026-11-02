@@ -1089,6 +1089,9 @@ type Store interface {
 	// --- Setup wizard ---
 	// CountUsers is declared above in the Users block; only CountAdmins is new.
 	CountAdmins() (int, error)
+	// HasUsers reports whether any user row exists. It is the per-request
+	// setup gate, so it must stop at the first row instead of counting.
+	HasUsers() (bool, error)
 	// CreateFirstAdmin atomically inserts the first admin via a guarded CTE
 	// (guard: no admin exists yet). Returns ErrSetupAlreadyComplete when an
 	// admin already exists, so the handler can map outcomes to HTTP status
