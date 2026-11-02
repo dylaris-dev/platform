@@ -5,8 +5,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/authz"
-	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services/demo"
 	"dylaris-core/store"
@@ -14,7 +12,8 @@ import (
 
 // What a STAFF member - a panel capability, not admin - may no longer do.
 // Found by the round-38 audit; the platform has no staff today, so each of
-// these is closed before the first one is hired.
+// these is closed before the first one is hired. The plans half moved to
+// handlers/settings with the plans handler.
 
 type demoStaffStore struct {
 	store.Store
@@ -34,17 +33,6 @@ func (f *demoStaffStore) GetPanelRole(int) (*store.PanelRole, error) {
 	return &store.PanelRole{Capabilities: f.roleC}, nil
 }
 func (f *demoStaffStore) SetSetting(string, string) error { return nil }
-
-type termsStore struct {
-	store.Store
-	target *models.User
-}
-
-func (f *termsStore) GetUserByID(string) (*models.User, error) { return f.target, nil }
-func (f *termsStore) GetUserPanelAuthz(string) (*int, store.CapOverrides, error) {
-	return nil, store.CapOverrides{Grant: []string{"plans.write"}}, nil
-}
-func (f *termsStore) GetPanelRole(int) (*store.PanelRole, error) { return nil, nil }
 
 type demoLoginStore struct {
 	demoStaffStore
@@ -66,36 +54,5 @@ func TestADemoLoginRefusesAnAccountThatGainedStaffRights(t *testing.T) {
 	(&AuthHandler{state: &AppState{Store: st, StoreEnabled: true}, jwtKey: []byte("k")}).DemoLogin(rw, httptest.NewRequest("POST", "/x", nil))
 	if rw.Code != http.StatusNotFound {
 		t.Fatalf("a demo session was issued for a staff account: status %d", rw.Code)
-	}
-}
-
-// plans.write is not an admin capability. Its holder granted themselves BYON
-// and unlimited limits, or lifted their own suspension, on four routes where
-// only the billing status asked whose account it was.
-func TestPlansWriteCannotBeSpentOnTheCallersOwnAccount(t *testing.T) {
-	calls := map[string]func(s *AppState, w http.ResponseWriter, r *http.Request){
-		"limit overrides": func(s *AppState, w http.ResponseWriter, r *http.Request) {
-			(&PlansHandler{state: s}).SetUserLimitOverrides(w, r)
-		},
-	}
-	for name, call := range calls {
-		t.Run(name+"/own account", func(t *testing.T) {
-			st := &termsStore{target: &models.User{ID: handlertest.StaffID}}
-			s := &AppState{Store: st, Authz: authz.NewResolver(st)}
-			rw := httptest.NewRecorder()
-			call(s, rw, handlertest.StaffRequest("POST", map[string]string{"id": handlertest.StaffID}, `{"kind":"byon","days":30}`))
-			if rw.Code != http.StatusForbidden {
-				t.Fatalf("status %d on the caller's own account", rw.Code)
-			}
-		})
-		t.Run(name+"/an admin", func(t *testing.T) {
-			st := &termsStore{target: &models.User{ID: handlertest.VisAdmin, IsAdmin: true}}
-			s := &AppState{Store: st, Authz: authz.NewResolver(st)}
-			rw := httptest.NewRecorder()
-			call(s, rw, handlertest.StaffRequest("POST", map[string]string{"id": handlertest.VisAdmin}, `{"kind":"byon","days":30}`))
-			if rw.Code != http.StatusForbidden {
-				t.Fatalf("status %d on an admin's account", rw.Code)
-			}
-		})
 	}
 }

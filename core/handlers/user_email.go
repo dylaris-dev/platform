@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reauth"
+	"dylaris-core/handlers/settings"
 	"dylaris-core/mailer"
 	"dylaris-core/services"
 )
@@ -190,7 +191,7 @@ func NotifyPasswordChanged(state *AppState, email, username string) {
 // requires verification: without it the account is usable immediately and an
 // unexpected "confirm your account" mail would be noise.
 func sendChangedEmailVerification(state *AppState, userID, email, username, source string) bool {
-	if email == "" || !LoadAuthPolicy(state).EmailVerifyRequired {
+	if email == "" || !settings.LoadAuthPolicy(state.Store).EmailVerifyRequired {
 		return false
 	}
 	token, err := randomToken(32)

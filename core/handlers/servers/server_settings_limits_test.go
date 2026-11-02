@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/settings"
 
 	"dylaris-core/store"
 )
@@ -27,7 +27,7 @@ func saveServerSettings(t *testing.T, fs *serverSettingsFakeStore, body string) 
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/settings/servers", bytes.NewReader([]byte(body)))
-	handlers.NewSettingsHandler(rootState(Deps{Store: fs})).SaveServerSettings(rec, req)
+	settings.NewSettingsHandler(settings.Deps{Store: fs}).SaveServerSettings(rec, req)
 	return rec.Code
 }
 
@@ -36,7 +36,7 @@ func saveServerSettings(t *testing.T, fs *serverSettingsFakeStore, body string) 
 // and a save of one field must not lose the other.
 func TestServerSettingsCarryTheScheduledTaskLimit(t *testing.T) {
 	fs := &serverSettingsFakeStore{settings: map[string]string{}}
-	h := handlers.NewSettingsHandler(rootState(Deps{Store: fs}))
+	h := settings.NewSettingsHandler(settings.Deps{Store: fs})
 
 	got := h.LoadServerSettings()
 	if got.MaxScheduledTasks == nil || *got.MaxScheduledTasks != 25 {
@@ -66,7 +66,7 @@ func TestServerSettingsCarryTheScheduledTaskLimit(t *testing.T) {
 	}
 
 	var resp struct {
-		Settings handlers.ServerSettings `json:"settings"`
+		Settings settings.ServerSettings `json:"settings"`
 	}
 	rec := httptest.NewRecorder()
 	h.GetServerSettings(rec, httptest.NewRequest(http.MethodGet, "/api/settings/servers", nil))

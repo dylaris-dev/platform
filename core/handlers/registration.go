@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/settings"
 	"dylaris-core/mailer"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -49,7 +50,7 @@ type registerRequest struct {
 // the register page render the picker step inline instead of forcing the user
 // through a second visit.
 func (h *RegistrationHandler) RegistrationStatus(w http.ResponseWriter, r *http.Request) {
-	p := LoadAuthPolicy(h.state)
+	p := settings.LoadAuthPolicy(h.state.Store)
 	out := map[string]interface{}{
 		"success":             true,
 		"registrationEnabled": p.RegistrationEnabled,
@@ -77,7 +78,7 @@ func (h *RegistrationHandler) RegistrationStatus(w http.ResponseWriter, r *http.
 // account enumeration — the legitimate user will discover the conflict via
 // their existing account or via the verification email never arriving.
 func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
-	policy := LoadAuthPolicy(h.state)
+	policy := settings.LoadAuthPolicy(h.state.Store)
 	if !policy.RegistrationEnabled {
 		httpx.SendJSONError(w, "Registration is disabled", http.StatusForbidden)
 		return
@@ -302,7 +303,7 @@ type resendVerificationRequest struct {
 // is already verified. The legitimate user gets the email; an attacker
 // gets the same response either way.
 func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.Request) {
-	policy := LoadAuthPolicy(h.state)
+	policy := settings.LoadAuthPolicy(h.state.Store)
 	if !policy.EmailVerifyRequired {
 		// If verification isn't required, the endpoint is meaningless. Be
 		// explicit so the UI can hide the button accordingly.

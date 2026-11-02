@@ -22,6 +22,7 @@ import (
 	"dylaris-core/handlers/packs"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/handlers/servers"
+	"dylaris-core/handlers/settings"
 	"dylaris-core/handlers/stats"
 	"dylaris-core/handlers/storageapi"
 	"dylaris-core/handlers/tabs"
@@ -79,7 +80,7 @@ func tabTickets(ah *handlers.AuthHandler) tabs.Tickets {
 // handler, which main wires into the host dispatch that takes tab-content
 // requests off the wire before this router sees them.
 type routeExtras struct {
-	settingsHandler *handlers.SettingsHandler
+	settingsHandler *settings.SettingsHandler
 	warpService     *services.WarpService
 	proxyHandler    *tabs.ProxyHandler
 	packsHandler    *packs.PacksHandler
@@ -752,16 +753,27 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		StoreEnabled: appState.StoreEnabled,
 		SuspendGrace: appState.SuspendGrace,
 	}
+	settingsDeps := settings.Deps{
+		Store:            appState.Store,
+		Redis:            appState.Redis,
+		Events:           appState.Events,
+		FeatureFlags:     appState.FeatureFlags,
+		Cache:            appState.Cache,
+		Authz:            appState.Authz,
+		CoreStorage:      appState.CoreStorage,
+		RoutingMigration: appState.RoutingMigration,
+		FrontendURL:      appState.FrontendURL,
+	}
 
 	// Initialize handlers
-	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
-	moduleHandler := handlers.NewModuleHandler(appState)
+	panelRolesHandler := settings.NewPanelRolesHandler(settingsDeps)
+	moduleHandler := settings.NewModuleHandler(settingsDeps)
 	systemHandler := health.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyHostSuffix)
 	fileHandler := files.NewFileHandler(filesDeps)
-	settingsHandler := handlers.NewSettingsHandler(appState)
+	settingsHandler := settings.NewSettingsHandler(settingsDeps)
 	authzHandler := handlers.NewAuthzHandler()
 	avatarHandler := handlers.NewAvatarHandler()
-	permissionsModeHandler := handlers.NewPermissionsModeHandler(appState)
+	permissionsModeHandler := settings.NewPermissionsModeHandler(settingsDeps)
 	coreStorageHandler := storageapi.NewCoreStorageHandler(storageapiDeps)
 	storageConnectionHandler := storageapi.NewStorageConnectionHandler(storageapiDeps)
 
@@ -799,7 +811,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		WarpPeers:   appState.WarpPeers,
 		ReauthCodes: handlers.ReauthCodeVerifier(appState),
 		PasswordMinLength: func() int {
-			return handlers.LoadAuthPolicy(appState).PasswordMinLength
+			return settings.LoadAuthPolicy(appState.Store).PasswordMinLength
 		},
 		NotifyPasswordChanged: func(email, username string) {
 			handlers.NotifyPasswordChanged(appState, email, username)
@@ -829,16 +841,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	versionHandler := health.NewVersionHandler(healthDeps)
 	beamHandler := beam.NewBeamHandler(beamDeps, cfg.BeamJWTSecret, cfg.ClusterSecret)
 	updatesHandler := health.NewUpdatesHandler(healthDeps, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
-	timezoneHandler := handlers.NewTimezoneHandler(appState)
+	timezoneHandler := settings.NewTimezoneHandler(settingsDeps)
 	backupHandler := backup.NewBackupHandler(backupDeps)
 	platformBackupHandler := backup.NewPlatformBackupHandler(backupDeps)
 	storageConnectionsHandler := storageapi.NewStorageConnectionsHandler(storageapiDeps)
-	regionsHandler := handlers.NewRegionsHandler(appState)
-	authSettingsHandler := handlers.NewAuthSettingsHandler(appState)
+	regionsHandler := settings.NewRegionsHandler(settingsDeps)
+	authSettingsHandler := settings.NewAuthSettingsHandler(settingsDeps)
 	registrationHandler := handlers.NewRegistrationHandler(appState)
 	passwordResetHandler := handlers.NewPasswordResetHandler(appState)
 	securityQuestionsHandler := handlers.NewSecurityQuestionsHandler(appState)
-	maintenanceHandler := handlers.NewMaintenanceHandler(appState)
+	maintenanceHandler := settings.NewMaintenanceHandler(settingsDeps)
 	ticketCategoriesHandler := tickets.NewTicketCategoriesHandler(ticketsDeps)
 	ticketsHandler := tickets.NewTicketsHandler(ticketsDeps)
 	ticketSettingsHandler := tickets.NewTicketSettingsHandler(ticketsDeps)
@@ -847,7 +859,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	notificationsHandler := health.NewNotificationsHandler(healthDeps)
 	serverAuditHandler := audit.NewServerAuditHandler(appState.Store)
 	identityAuditHandler := audit.NewIdentityAuditHandler(appState.Store)
-	auditSettingsHandler := handlers.NewAuditSettingsHandler(appState)
+	auditSettingsHandler := settings.NewAuditSettingsHandler(settingsDeps)
 	ticketMigrationHandler := tickets.NewTicketMigrationHandler(ticketsDeps)
 	systemEventsHandler := health.NewSystemEventsHandler(healthDeps)
 	scheduledTasksHandler := console.NewScheduledTasksHandler(consoleDeps)
@@ -896,14 +908,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	usernameHistoryHandler := users.NewUsernameHistoryHandler(usersDeps)
 	accountPolicyHandler := users.NewAccountPolicyHandler(usersDeps)
 	modpackSettingsHandler := mods.NewModpackSettingsHandler(modsDeps)
-	modCacheSettingsHandler := handlers.NewModCacheSettingsHandler(appState)
+	modCacheSettingsHandler := settings.NewModCacheSettingsHandler(settingsDeps)
 	systemFeaturesHandler := health.NewSystemFeaturesHandler(healthDeps)
-	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
+	featureSettingsHandler := settings.NewFeatureSettingsHandler(settingsDeps)
 	tabProxySettingsHandler := tabs.NewTabProxySettingsHandler(tabsDeps)
 	usageHandler := billing.NewUsageHandler(billingDeps)
 	billingHandler := billing.NewBillingHandler(billingDeps)
 	entitlementHandler := billing.NewEntitlementHandler(billingDeps)
-	plansHandler := handlers.NewPlansHandler(appState)
+	plansHandler := settings.NewPlansHandler(settingsDeps)
 	healthHandler := health.NewHealthHandler(healthDeps)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
 	storageMigrationHandler := storageapi.NewStorageMigrationHandler(storageapiDeps)
@@ -952,7 +964,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// maintenance is active. Runs before per-route AuthMiddleware, so it
 	// resolves admin status from the token itself - admins always pass and
 	// can toggle maintenance back off.
-	api.Use(handlers.MaintenanceMuxMiddleware(appState, authHandler.IsAdminToken))
+	api.Use(settings.MaintenanceMuxMiddleware(appState.Store, authHandler.IsAdminToken))
 
 	// --- PUBLIC PACK MIRROR ---
 	// A node installing a panel-built pack downloads the rendered .mrpack from
@@ -2096,7 +2108,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- Outgoing mail templates ---
 	// settings.write on the READ routes as well, on purpose: a template body is
 	// the exact wording of a password-reset mail.
-	mailTemplatesHandler := handlers.NewMailTemplatesHandler(appState)
+	mailTemplatesHandler := settings.NewMailTemplatesHandler(settingsDeps)
 	api.HandleFunc("/admin/mail/templates", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(mailTemplatesHandler.List))).Methods("GET")
 	api.HandleFunc("/admin/mail/templates/{key}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(mailTemplatesHandler.Get))).Methods("GET")
 	api.HandleFunc("/admin/mail/templates/{key}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(mailTemplatesHandler.Save))).Methods("PUT")

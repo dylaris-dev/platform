@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/settings"
 
 	"dylaris-core/authz"
 	"dylaris-core/pkg/crypto"
@@ -96,7 +96,7 @@ func TestBeamSettingsShowOnlyEnabledWithoutSettingsRead(t *testing.T) {
 				"beam.public_host":      "beam.example.test",
 				"beam.max_upload_bytes": "1024",
 			}), grant: c.grant}
-			h := handlers.NewSettingsHandler(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
+			h := settings.NewSettingsHandler(settings.Deps{Store: fs, Authz: authz.NewResolver(fs)})
 
 			r := httptest.NewRequest("GET", "/api/settings/beam", nil)
 			ctx := context.WithValue(r.Context(), "username", "u")

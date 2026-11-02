@@ -32,8 +32,8 @@ func foreignState(node *models.Node) Deps {
 	return s
 }
 
-// rootState is the root-package state for the settings and API-key handlers
-// these tests drive alongside the server ones (they move in R4/R6).
+// rootState is the root-package state for the API-key handler
+// these tests drive alongside the server ones (it moves in R6).
 func rootState(d Deps) *handlers.AppState {
 	d = testDeps(d)
 	return &handlers.AppState{Store: d.Store, Redis: d.Redis, Events: d.Events, Authz: d.Authz, GRPCRegistry: d.GRPCRegistry, CoreStorage: d.CoreStorage}

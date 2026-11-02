@@ -3,7 +3,7 @@ package servers
 import (
 	"testing"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/settings"
 )
 
 type imgSettings map[string]string
@@ -53,7 +53,7 @@ func TestARuntimeChangeToAForeignImageIsRefused(t *testing.T) {
 // Saving the placement page wrote back the 0 it showed, switching the node's
 // process cap off without anyone choosing to.
 func TestThePlacementPageDefaultsToTheNodesProcessCap(t *testing.T) {
-	if handlers.DefaultPlacementSettings.PidsLimit != 4096 {
-		t.Fatalf("default pids limit = %d, want the node's 4096", handlers.DefaultPlacementSettings.PidsLimit)
+	if settings.DefaultPlacementSettings.PidsLimit != 4096 {
+		t.Fatalf("default pids limit = %d, want the node's 4096", settings.DefaultPlacementSettings.PidsLimit)
 	}
 }

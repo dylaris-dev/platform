@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/settings"
 	"dylaris-core/services/placement"
 
 	"dylaris-core/models"
@@ -174,7 +174,7 @@ func savePlacement(t *testing.T, f *paddingSettingsStore, extra string) *httptes
 	t.Helper()
 	body := `{"cpuOvercommitDefault":2,"ramOvercommitDefault":1` + extra + `}`
 	rec := httptest.NewRecorder()
-	handlers.NewSettingsHandler(rootState(Deps{Store: f})).SavePlacementSettings(rec, httptest.NewRequest(http.MethodPost, "/api/settings/placement", strings.NewReader(body)))
+	settings.NewSettingsHandler(settings.Deps{Store: f}).SavePlacementSettings(rec, httptest.NewRequest(http.MethodPost, "/api/settings/placement", strings.NewReader(body)))
 	return rec
 }
 
@@ -211,7 +211,7 @@ func TestSavePlacementSettings_RAMPadding(t *testing.T) {
 func TestLoadPlacementSettings_RAMPaddingDefaults(t *testing.T) {
 	for raw, want := range map[string]int{"": 512, "garbage": 512, "1024": 1024, "0": 0} {
 		f := &paddingSettingsStore{settings: map[string]string{models.RAMPaddingSetting: raw}}
-		if got := handlers.NewSettingsHandler(rootState(Deps{Store: f})).LoadPlacementSettings().RAMPaddingMB; got != want {
+		if got := settings.NewSettingsHandler(settings.Deps{Store: f}).LoadPlacementSettings().RAMPaddingMB; got != want {
 			t.Errorf("stored %q: ramPaddingMb %d, want %d", raw, got, want)
 		}
 	}

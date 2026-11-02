@@ -18,6 +18,7 @@ import (
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/handlers/settings"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/corestorage"
@@ -336,7 +337,7 @@ func testDeps(d Deps) Deps {
 	}
 	s := &handlers.AppState{Store: d.Store, Redis: d.Redis, Authz: d.Authz, Events: d.Events}
 	d.ReauthCodes = handlers.ReauthCodeVerifier(s)
-	d.PasswordMinLength = func() int { return handlers.LoadAuthPolicy(s).PasswordMinLength }
+	d.PasswordMinLength = func() int { return settings.LoadAuthPolicy(s.Store).PasswordMinLength }
 	d.NotifyPasswordChanged = func(email, username string) { handlers.NotifyPasswordChanged(s, email, username) }
 	return d
 }

@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reauth"
+	"dylaris-core/handlers/settings"
 )
 
 type SecurityQuestionsHandler struct {
@@ -64,7 +65,7 @@ type securityQARequest struct {
 // Returns the question strings only. Frontend uses this on /register and
 // /reset-password to render the pickers.
 func (h *SecurityQuestionsHandler) GetPool(w http.ResponseWriter, r *http.Request) {
-	policy := LoadAuthPolicy(h.state)
+	policy := settings.LoadAuthPolicy(h.state.Store)
 	if !policy.SecurityQuestionsEnabled {
 		// Feature off — return empty pool so the frontend can simply skip
 		// the picker without a hard error.
@@ -124,7 +125,7 @@ func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http
 		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
-	policy := LoadAuthPolicy(h.state)
+	policy := settings.LoadAuthPolicy(h.state.Store)
 	if !policy.SecurityQuestionsEnabled {
 		httpx.SendJSONError(w, "Security questions are disabled by the administrator", http.StatusForbidden)
 		return

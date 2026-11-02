@@ -18,6 +18,7 @@ import (
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
+	"dylaris-core/handlers/settings"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/demo"
@@ -656,7 +657,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	// the UI can offer a "resend verification email" button instead of a
 	// generic auth error. Admins still get to log in even when unverified —
 	// otherwise a misconfigured SMTP would lock everyone out.
-	policy := LoadAuthPolicy(h.state)
+	policy := settings.LoadAuthPolicy(h.state.Store)
 	if policy.EmailVerifyRequired && !user.IsAdmin && user.EmailVerifiedAt == nil {
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -852,7 +853,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			if newEmail == "" {
 				// Removing the address would lock the account out at its next
 				// sign-in with nowhere to send the confirmation it then needs.
-				if LoadAuthPolicy(h.state).EmailVerifyRequired && !isAdmin {
+				if settings.LoadAuthPolicy(h.state.Store).EmailVerifyRequired && !isAdmin {
 					httpx.SendJSONError(w, "An email address is required on this platform", http.StatusBadRequest)
 					return
 				}
@@ -927,7 +928,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	if req.NewPassword != nil && *req.NewPassword != "" {
 		// Enforce the same length policy the register + reset paths apply; this
 		// self-service field previously accepted any non-empty password.
-		if min := LoadAuthPolicy(h.state).PasswordMinLength; len(*req.NewPassword) < min {
+		if min := settings.LoadAuthPolicy(h.state.Store).PasswordMinLength; len(*req.NewPassword) < min {
 			httpx.SendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), http.StatusBadRequest)
 			return
 		}
@@ -969,7 +970,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	// at its next sign-in by any typo, with the link on its way to a mailbox
 	// nobody reads and only an admin able to help.
 	pendingSet := false
-	if emailChanged && newEmail != "" && LoadAuthPolicy(h.state).EmailVerifyRequired {
+	if emailChanged && newEmail != "" && settings.LoadAuthPolicy(h.state.Store).EmailVerifyRequired {
 		token, terr := randomToken(32)
 		if terr != nil {
 			httpx.SendJSONError(w, "Update failed", 500)

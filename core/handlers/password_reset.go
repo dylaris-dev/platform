@@ -12,6 +12,7 @@ import (
 
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/settings"
 	"dylaris-core/mailer"
 	"dylaris-core/services"
 	"dylaris-core/services/beamaccess"
@@ -64,7 +65,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	policy := LoadAuthPolicy(h.state)
+	policy := settings.LoadAuthPolicy(h.state.Store)
 	token, err := randomToken(32)
 	if err != nil {
 		// Token gen really shouldn't fail — log it for ops, return silent success.
@@ -171,7 +172,7 @@ func (h *PasswordResetHandler) ValidateResetToken(w http.ResponseWriter, r *http
 	// demands answers at reset AND the user actually has questions set up.
 	// Users without questions get a free pass: reset works without a
 	// verification step (otherwise the policy locks them out forever).
-	policy := LoadAuthPolicy(h.state)
+	policy := settings.LoadAuthPolicy(h.state.Store)
 	if policy.SecurityQuestionsEnabled && policy.SecurityQuestionsRequiredAtReset {
 		qs, _ := h.state.Store.GetUserSecurityQuestions(user.ID)
 		if len(qs) > 0 {
@@ -202,7 +203,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Invalid token", http.StatusBadRequest)
 		return
 	}
-	policy := LoadAuthPolicy(h.state)
+	policy := settings.LoadAuthPolicy(h.state.Store)
 	if len(req.Password) < policy.PasswordMinLength {
 		httpx.SendJSONError(w, fmt.Sprintf("Password must be at least %d characters", policy.PasswordMinLength), http.StatusBadRequest)
 		return

@@ -30,6 +30,7 @@ import (
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/gateway"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/settings"
 	"dylaris-core/handlers/storageapi"
 	"dylaris-core/handlers/tabs"
 	"dylaris-core/metrics"
@@ -368,7 +369,7 @@ func main() {
 	// caches stay on the default rather than being switched off, because a cache
 	// that is silently absent only shows up as a slower panel.
 	appState.Cache = services.NewCache(redisClient)
-	if err := appState.ApplyCacheSettings(context.Background()); err != nil {
+	if err := settings.ApplyCacheSettings(context.Background(), appState.Cache, appState.Store); err != nil {
 		log.Printf("mod metadata cache: the configured endpoint is not answering yet, so nothing is cached until it does (it is NOT falling back to the panel Redis): %v", err)
 	}
 
@@ -847,7 +848,7 @@ func main() {
 	// leaders read and poll, so a freshly (re)started leader gets the admin value
 	// rather than only its compiled-in fail-closed default. Always write (even
 	// the default) so a stale value from a previous install cannot linger.
-	if err := redisClient.Set(context.Background(), handlers.WarpFirewallRedisKey, extras.settingsHandler.LoadWarpSpokeAllowedPorts(), 0).Err(); err != nil {
+	if err := redisClient.Set(context.Background(), settings.WarpFirewallRedisKey, extras.settingsHandler.LoadWarpSpokeAllowedPorts(), 0).Err(); err != nil {
 		log.Printf("WARNING: failed to publish warp-firewall allowlist to Redis at boot; leaders may still be running a stale/compiled-in default until the next successful save: %v", err)
 	}
 
