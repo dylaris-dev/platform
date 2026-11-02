@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
@@ -24,22 +23,22 @@ import (
 func TestStaffCannotTakeOverAStrongerAccountViaUserRoutes(t *testing.T) {
 	routes := []struct {
 		name string
-		call func(st *handlers.AppState, r *http.Request, w http.ResponseWriter)
+		call func(st Deps, r *http.Request, w http.ResponseWriter)
 		body string
 	}{
-		{"reset password", func(st *handlers.AppState, r *http.Request, w http.ResponseWriter) {
+		{"reset password", func(st Deps, r *http.Request, w http.ResponseWriter) {
 			NewUserHandler(st).ResetUserPassword(w, r)
 		}, `{"password":"a-long-enough-password"}`},
-		{"rename", func(st *handlers.AppState, r *http.Request, w http.ResponseWriter) {
+		{"rename", func(st Deps, r *http.Request, w http.ResponseWriter) {
 			NewUsernameHistoryHandler(st).AdminRename(w, r)
 		}, `{"username":"renamed"}`},
-		{"change role", func(st *handlers.AppState, r *http.Request, w http.ResponseWriter) {
+		{"change role", func(st Deps, r *http.Request, w http.ResponseWriter) {
 			NewUserHandler(st).SetUserRoleHandler(w, r)
 		}, `{"role":"user"}`},
-		{"change permission flags", func(st *handlers.AppState, r *http.Request, w http.ResponseWriter) {
+		{"change permission flags", func(st Deps, r *http.Request, w http.ResponseWriter) {
 			NewUserHandler(st).SetUserPermissionsHandler(w, r)
 		}, `{}`},
-		{"delete", func(st *handlers.AppState, r *http.Request, w http.ResponseWriter) {
+		{"delete", func(st Deps, r *http.Request, w http.ResponseWriter) {
 			NewUserHandler(st).DeleteUser(w, r)
 		}, ``},
 	}
@@ -88,13 +87,13 @@ func TestStaffCannotTakeOverAStrongerAccountViaUserRoutes(t *testing.T) {
 func TestAdminUserActionsRefuseWithoutTheirPassword(t *testing.T) {
 	routes := []struct {
 		name string
-		call func(st *handlers.AppState, r *http.Request, w http.ResponseWriter)
+		call func(st Deps, r *http.Request, w http.ResponseWriter)
 		body string
 	}{
-		{"reset password", func(st *handlers.AppState, r *http.Request, w http.ResponseWriter) {
+		{"reset password", func(st Deps, r *http.Request, w http.ResponseWriter) {
 			NewUserHandler(st).ResetUserPassword(w, r)
 		}, `{"password":"a-long-enough-password"}`},
-		{"change role", func(st *handlers.AppState, r *http.Request, w http.ResponseWriter) {
+		{"change role", func(st Deps, r *http.Request, w http.ResponseWriter) {
 			NewUserHandler(st).SetUserRoleHandler(w, r)
 		}, `{"role":"support"}`},
 	}
@@ -138,7 +137,7 @@ func TestOnlyAnAdminMakesAnAdmin(t *testing.T) {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(`{"username":"sneaky","password":"correct-horse-battery","isAdmin":true}`))
 		r = r.WithContext(context.WithValue(r.Context(), "isAdmin", false))
-		NewUserHandler(withCoreStorage(&handlers.AppState{Store: fake})).CreateUser(rec, r)
+		NewUserHandler(testDeps(Deps{Store: fake})).CreateUser(rec, r)
 		if rec.Code != http.StatusForbidden || fake.created != nil {
 			t.Fatalf("status = %d, created = %v", rec.Code, fake.created)
 		}
@@ -188,7 +187,7 @@ func TestTheAccountGuardAfterReview(t *testing.T) {
 	})
 	t.Run("a target whose role cannot be read is not powerless", func(t *testing.T) {
 		fs := newGuardFakeStore()
-		st := withCoreStorage(&handlers.AppState{Store: &faultyRoleStore{guardFakeStore: fs, failFor: guardStronger}, Authz: authz.NewResolver(fs)})
+		st := testDeps(Deps{Store: &faultyRoleStore{guardFakeStore: fs, failFor: guardStronger}, Authz: authz.NewResolver(fs)})
 		target, _ := fs.GetUserByID(guardStronger)
 		if access.MayManageAccount(st.Store, st.Authz, guardRequest("GET", guardStaff, false, guardStronger, ""), target) {
 			t.Error("a role lookup error made a stronger account manageable")
@@ -224,7 +223,7 @@ func TestTheAccountGuardAfterReview(t *testing.T) {
 		fake := &emailTakenCreateStore{}
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(`{"username":"puppet","password":"correct-horse-battery","email":"admin@example.com"}`))
-		NewUserHandler(withCoreStorage(&handlers.AppState{Store: fake})).CreateUser(rec, r.WithContext(context.WithValue(r.Context(), "isAdmin", true)))
+		NewUserHandler(testDeps(Deps{Store: fake})).CreateUser(rec, r.WithContext(context.WithValue(r.Context(), "isAdmin", true)))
 		if rec.Code != http.StatusConflict || fake.created != nil {
 			t.Fatalf("status = %d, created = %v", rec.Code, fake.created)
 		}
@@ -245,7 +244,7 @@ func TestStaffCannotSetTheirOwnTeamOrRenameThemselves(t *testing.T) {
 		t.Fatalf("own permissions: status %d, touched %v; want 403 and nothing written", rec.Code, fs.touched)
 	}
 
-	rh := &UsernameHistoryHandler{state: guardState(fs)}
+	rh := &UsernameHistoryHandler{d: guardState(fs)}
 	rec = httptest.NewRecorder()
 	rh.AdminRename(rec, guardRequest("PATCH", guardStaff, false, guardStaff, `{"username":"staff2"}`))
 	if rec.Code != http.StatusForbidden || len(fs.touched) != 0 {
@@ -282,7 +281,7 @@ func TestAnAdminPasswordResetRevokesTheAccountsAPIKeys(t *testing.T) {
 	base := newGuardFakeStore()
 	base.users[guardAdmin].Password = handlertest.ReauthHash
 	fs := &keyedGuardStore{guardFakeStore: base, keys: []models.APIKey{{ID: 7}, {ID: 8}}}
-	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}))
+	h := NewUserHandler(testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)}))
 	rec := httptest.NewRecorder()
 	h.ResetUserPassword(rec, guardRequest("PUT", guardAdmin, true, guardMember,
 		`{"password":"a-brand-new-password","reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))

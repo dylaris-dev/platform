@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/reauth"
@@ -27,7 +26,7 @@ type setRoleRequest struct {
 // Valid roles: "user", "support", "admin". Admins cannot demote themselves
 // — prevents the last-admin-locks-themselves-out scenario.
 func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -44,7 +43,7 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 		httpx.SendJSONError(w, "Invalid role (must be user, support, or admin)", 400)
 		return
 	}
-	target, err := h.state.Store.GetUserByID(id)
+	target, err := h.d.Store.GetUserByID(id)
 	if err != nil || target == nil {
 		httpx.SendJSONError(w, "User not found", 404)
 		return
@@ -68,7 +67,7 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 	// would lock themselves out of /admin/* immediately.
 	actorID, _ := r.Context().Value("userID").(string)
 	if actorID == id && req.Role != "admin" {
-		users, _ := h.state.Store.ListUsers()
+		users, _ := h.d.Store.ListUsers()
 		adminCount := 0
 		for _, u := range users {
 			if u.IsAdmin && u.ID != id {
@@ -81,7 +80,7 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
+	if !access.MayManageAccount(h.d.Store, h.d.Authz, r, target) {
 		httpx.SendJSONError(w, "You cannot change the role of an account with more rights than yours", http.StatusForbidden)
 		return
 	}
@@ -94,7 +93,7 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 	// Only a REAL change asks: the panel re-sends the current role on every
 	// save, which is the same reason the promotion guard above compares against
 	// previousRole.
-	if req.Role != previousRole && !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), req.AdminReauthRequest) {
+	if req.Role != previousRole && !reauth.RequireAdminReauth(w, r, h.d.Store, h.d.ReauthCodes, req.AdminReauthRequest) {
 		return
 	}
 
@@ -103,15 +102,15 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 	// so a ticket minted as the old role does not outlive it.
 	var reach []string
 	if req.Role != previousRole {
-		reach = beamaccess.ReachOf(h.state.Store, h.state.Redis, id)
+		reach = beamaccess.ReachOf(h.d.Store, h.d.Redis, id)
 	}
-	if err := h.state.Store.SetUserRole(id, req.Role); err != nil {
+	if err := h.d.Store.SetUserRole(id, req.Role); err != nil {
 		httpx.SendJSONError(w, "Failed to update role", 500)
 		return
 	}
-	beamaccess.StampUUIDs(r.Context(), h.state.Redis, reach)
+	beamaccess.StampUUIDs(r.Context(), h.d.Redis, reach)
 
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserRoleChanged, actorID, id, map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventUserRoleChanged, actorID, id, map[string]interface{}{
 		"from": previousRole,
 		"to":   req.Role,
 	})
@@ -133,7 +132,7 @@ type setPermissionsRequest struct {
 // Sets per-user capability flags. Admin overrides still apply at the
 // EffectivePermissions level — these flags only ever matter for non-admins.
 func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -159,11 +158,11 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 	// conservative direction is the one that grants nothing, and an operator
 	// editing the OTHER flags must not be blocked because one read hiccuped -
 	// this endpoint used to need no read at all.
-	target, terr := h.state.Store.GetUserByID(id)
+	target, terr := h.d.Store.GetUserByID(id)
 	if terr != nil || target == nil || !(target.IsAdmin || target.Role == "admin") {
 		req.CanDeleteServers = false
 	}
-	if !reqctx.IsAdmin(r) && (terr != nil || target == nil || !access.MayManageAccount(h.state.Store, h.state.Authz, r, target)) {
+	if !reqctx.IsAdmin(r) && (terr != nil || target == nil || !access.MayManageAccount(h.d.Store, h.d.Authz, r, target)) {
 		httpx.SendJSONError(w, "You cannot change the permissions of an account with more rights than yours", http.StatusForbidden)
 		return
 	}
@@ -179,7 +178,7 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 	// read that team's tickets as them. Staff place someone only in their own.
 	if !reqctx.IsAdmin(r) && req.SupportTeam != "" && req.SupportTeam != target.SupportTeam {
 		actorID, _ := r.Context().Value("userID").(string)
-		me, err := h.state.Store.GetUserByID(actorID)
+		me, err := h.d.Store.GetUserByID(actorID)
 		if err != nil || me == nil || me.SupportTeam != req.SupportTeam {
 			httpx.SendJSONError(w, "You can only place someone in your own support team", http.StatusForbidden)
 			return
@@ -190,7 +189,7 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 	// change from off to on hands it out: the panel re-sends the current value.
 	if req.CanChangeResources && !reqctx.IsAdmin(r) && !target.CanChangeResources {
 		actorID, _ := r.Context().Value("userID").(string)
-		if !access.LoadEffectivePermissions(h.state.Store, h.state.Authz, actorID).CanChangeResources {
+		if !access.LoadEffectivePermissions(h.d.Store, h.d.Authz, actorID).CanChangeResources {
 			httpx.SendJSONError(w, "You cannot grant resource changes you do not hold", http.StatusForbidden)
 			return
 		}
@@ -205,17 +204,17 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 		target.CanDeleteServers != req.CanDeleteServers ||
 		target.CanChangeResources != req.CanChangeResources ||
 		target.SupportTeam != req.SupportTeam
-	if changed && !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), req.AdminReauthRequest) {
+	if changed && !reauth.RequireAdminReauth(w, r, h.d.Store, h.d.ReauthCodes, req.AdminReauthRequest) {
 		return
 	}
 
-	if err := h.state.Store.SetUserPermissionFlags(id, req.CanDeleteServers, req.CanChangeResources, req.SupportTeam); err != nil {
+	if err := h.d.Store.SetUserPermissionFlags(id, req.CanDeleteServers, req.CanChangeResources, req.SupportTeam); err != nil {
 		httpx.SendJSONError(w, "Failed to update permissions", 500)
 		return
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserPermissionsChanged, actorID, id, map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventUserPermissionsChanged, actorID, id, map[string]interface{}{
 		"can_delete_servers":   req.CanDeleteServers,
 		"can_change_resources": req.CanChangeResources,
 		"support_team":         req.SupportTeam,
@@ -243,7 +242,7 @@ type setPanelRoleRequest struct {
 // cap must be a real PANEL-scope capability, and a non-null panelRoleId must
 // reference an existing role. The legacy role/is_admin path is untouched.
 func (h *UserHandler) SetUserPanelRoleHandler(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -267,7 +266,7 @@ func (h *UserHandler) SetUserPanelRoleHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if req.PanelRoleID != nil {
-		role, err := h.state.Store.GetPanelRole(*req.PanelRoleID)
+		role, err := h.d.Store.GetPanelRole(*req.PanelRoleID)
 		if err != nil || role == nil {
 			httpx.SendJSONError(w, "Panel role not found", 404)
 			return
@@ -279,22 +278,22 @@ func (h *UserHandler) SetUserPanelRoleHandler(w http.ResponseWriter, r *http.Req
 	// re-sent by an unrelated save: this endpoint is called to CHANGE the
 	// assignment, and the read it would take to tell a no-op apart is not worth
 	// a branch on the one action that hands out panel power.
-	if !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), req.AdminReauthRequest) {
+	if !reauth.RequireAdminReauth(w, r, h.d.Store, h.d.ReauthCodes, req.AdminReauthRequest) {
 		return
 	}
 
-	if err := h.state.Store.SetUserPanelRole(id, req.PanelRoleID); err != nil {
+	if err := h.d.Store.SetUserPanelRole(id, req.PanelRoleID); err != nil {
 		httpx.SendJSONError(w, "Failed to set panel role", 500)
 		return
 	}
 	ov := store.CapOverrides{Grant: req.GrantCaps, Deny: req.DenyCaps}
-	if err := h.state.Store.SetUserPanelCapOverrides(id, ov); err != nil {
+	if err := h.d.Store.SetUserPanelCapOverrides(id, ov); err != nil {
 		httpx.SendJSONError(w, "Failed to set overrides", 500)
 		return
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserPanelRoleChanged, actorID, id, map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventUserPanelRoleChanged, actorID, id, map[string]interface{}{
 		"panel_role_id": req.PanelRoleID,
 		"grant_caps":    req.GrantCaps,
 		"deny_caps":     req.DenyCaps,
@@ -308,7 +307,7 @@ func (h *UserHandler) SetUserPanelRoleHandler(w http.ResponseWriter, r *http.Req
 // with the PUT. Gated at the route with RequireCap("panelroles.read"); admin
 // short-circuits. Lets the RolesTab pre-fill the assignment editor.
 func (h *UserHandler) GetUserPanelRoleHandler(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -316,7 +315,7 @@ func (h *UserHandler) GetUserPanelRoleHandler(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	roleID, ov, err := h.state.Store.GetUserPanelAuthz(id)
+	roleID, ov, err := h.d.Store.GetUserPanelAuthz(id)
 	if err != nil {
 		httpx.SendJSONError(w, "User not found", 404)
 		return

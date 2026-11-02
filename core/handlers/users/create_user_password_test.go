@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
 
 	"golang.org/x/crypto/bcrypt"
@@ -59,7 +58,7 @@ func (f *createUserFakeStore) CreateUser(u *models.User) error {
 // of the two bugs.
 func TestCreateUserTakesThePasswordFromTheWire(t *testing.T) {
 	fake := &createUserFakeStore{}
-	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fake}))
+	h := NewUserHandler(testDeps(Deps{Store: fake}))
 
 	const plaintext = "correct-horse-battery"
 	body := `{"username":"alice","password":"` + plaintext + `","isAdmin":false}`
@@ -93,7 +92,7 @@ func TestCreateUserTakesThePasswordFromTheWire(t *testing.T) {
 // A timestamp in the body is replaced, not trusted.
 func TestCreateUserStoresTheAccountVerified(t *testing.T) {
 	fake := &createUserFakeStore{}
-	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fake}))
+	h := NewUserHandler(testDeps(Deps{Store: fake}))
 
 	body := `{"username":"alice","password":"correct-horse-battery","emailVerifiedAt":"2001-01-01T00:00:00Z"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(body))
@@ -116,7 +115,7 @@ func TestCreateUserStoresTheAccountVerified(t *testing.T) {
 // all is still refused rather than persisted with an empty hash.
 func TestCreateUserStillRefusesAnEmptyPassword(t *testing.T) {
 	fake := &createUserFakeStore{}
-	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fake}))
+	h := NewUserHandler(testDeps(Deps{Store: fake}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(`{"username":"alice"}`))
 	rec := httptest.NewRecorder()
@@ -127,5 +126,22 @@ func TestCreateUserStillRefusesAnEmptyPassword(t *testing.T) {
 	}
 	if fake.created != nil {
 		t.Error("an account with no password was created")
+	}
+}
+
+// The password policy reaches this package as a function now (routes.go wires
+// it to the auth.* settings). A create below the policy's minimum is refused
+// before anything reaches the store.
+func TestCreateUserEnforcesThePasswordPolicy(t *testing.T) {
+	fake := &createUserFakeStore{}
+	h := NewUserHandler(testDeps(Deps{Store: fake}))
+
+	// 11 characters, one short of the default minimum of 12.
+	req := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(`{"username":"alice","password":"elevenchars"}`))
+	rec := httptest.NewRecorder()
+	h.CreateUser(rec, req)
+
+	if rec.Code != http.StatusBadRequest || fake.created != nil {
+		t.Fatalf("status = %d, created = %v; a password under the policy minimum was accepted", rec.Code, fake.created != nil)
 	}
 }

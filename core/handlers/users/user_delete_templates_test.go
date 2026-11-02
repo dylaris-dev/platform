@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 
@@ -48,7 +47,7 @@ func TestDeleteUserRemovesTheirTemplateFiles(t *testing.T) {
 		},
 		tpl: models.Template{ID: 7, OwnerID: victimID, Name: "base", Kind: "server", Visibility: "personal"},
 	}
-	state := withCoreStorage(&handlers.AppState{Store: fs})
+	state := testDeps(Deps{Store: fs})
 	ctx := context.Background()
 	if err := state.CoreStorage.TemplateWrite(ctx, &fs.tpl, "server.properties", strings.NewReader("motd=x"), 6); err != nil {
 		t.Fatal(err)

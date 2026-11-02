@@ -109,8 +109,8 @@ func newGuardFakeStore() *guardFakeStore {
 	}
 }
 
-func guardState(fs *guardFakeStore) *handlers.AppState {
-	return withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
+func guardState(fs *guardFakeStore) Deps {
+	return testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)})
 }
 
 func guardRequest(method, actor string, isAdmin bool, target, body string) *http.Request {
@@ -241,7 +241,7 @@ func (f *emailFakeStore) MarkEmailVerified(string) error { return nil }
 
 func emailReq(t *testing.T, st *emailFakeStore, body string) (*httptest.ResponseRecorder, map[string]interface{}) {
 	t.Helper()
-	h := handlers.NewUserEmailHandler(withCoreStorage(&handlers.AppState{Store: st}))
+	h := handlers.NewUserEmailHandler(&handlers.AppState{Store: st, CoreStorage: &corestorage.Manager{Store: st}})
 	r := httptest.NewRequest(http.MethodPatch, "/api/admin/users/"+emailTestUserID+"/email", bytes.NewReader([]byte(withReauthJSON(body))))
 	r = mux.SetURLVars(r, map[string]string{"id": emailTestUserID})
 	ctx := context.WithValue(r.Context(), "userID", "admin-1")
@@ -326,10 +326,17 @@ func withReauthJSON(body string) string {
 	return string(out)
 }
 
-// withCoreStorage gives a test state the core storage it implicitly was before
-// S12 (the AppState methods ran over its own Store, Redis, Events, ...): a
-// Manager over the very same objects.
-func withCoreStorage(s *handlers.AppState) *handlers.AppState {
-	s.CoreStorage = &corestorage.Manager{Store: s.Store, Redis: s.Redis, Events: s.Events, ClusterSecret: s.ClusterSecret, Registry: s.GRPCRegistry}
-	return s
+// testDeps is routes.go's usersDeps for tests (package main is not
+// importable): a core storage Manager over the same objects, and the three
+// root functions - reauth codes, password policy, password-change notice -
+// over a state holding the same store and redis.
+func testDeps(d Deps) Deps {
+	if d.CoreStorage == nil {
+		d.CoreStorage = &corestorage.Manager{Store: d.Store, Redis: d.Redis, Events: d.Events}
+	}
+	s := &handlers.AppState{Store: d.Store, Redis: d.Redis, Authz: d.Authz, Events: d.Events}
+	d.ReauthCodes = handlers.ReauthCodeVerifier(s)
+	d.PasswordMinLength = func() int { return handlers.LoadAuthPolicy(s).PasswordMinLength }
+	d.NotifyPasswordChanged = func(email, username string) { handlers.NotifyPasswordChanged(s, email, username) }
+	return d
 }

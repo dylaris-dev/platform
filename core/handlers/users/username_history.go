@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -14,11 +13,11 @@ import (
 )
 
 type UsernameHistoryHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewUsernameHistoryHandler(state *handlers.AppState) *UsernameHistoryHandler {
-	return &UsernameHistoryHandler{state: state}
+func NewUsernameHistoryHandler(d Deps) *UsernameHistoryHandler {
+	return &UsernameHistoryHandler{d: d}
 }
 
 // Me GET /api/me/username-history - the calling user's own past usernames.
@@ -28,7 +27,7 @@ func (h *UsernameHistoryHandler) Me(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	rows, err := h.state.Store.ListUsernameHistory(userID)
+	rows, err := h.d.Store.ListUsernameHistory(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load history", http.StatusInternalServerError)
 		return
@@ -43,7 +42,7 @@ func (h *UsernameHistoryHandler) Admin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.state.Store.ListUsernameHistory(targetID)
+	rows, err := h.d.Store.ListUsernameHistory(targetID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load history", http.StatusInternalServerError)
 		return
@@ -84,12 +83,12 @@ func (h *UsernameHistoryHandler) AdminRename(w http.ResponseWriter, r *http.Requ
 	}
 	// Uniqueness check
 	// Case-INSENSITIVE; the unique index on LOWER(username) is the real guard.
-	target, terr := h.state.Store.GetUserByID(targetID)
+	target, terr := h.d.Store.GetUserByID(targetID)
 	if terr != nil || target == nil {
 		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
-	if !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
+	if !access.MayManageAccount(h.d.Store, h.d.Authz, r, target) {
 		httpx.SendJSONError(w, "You cannot rename an account with more rights than yours", http.StatusForbidden)
 		return
 	}
@@ -99,14 +98,14 @@ func (h *UsernameHistoryHandler) AdminRename(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Change your own username from your profile", http.StatusForbidden)
 		return
 	}
-	if taken, _ := h.state.Store.UsernameTaken(req.Username, targetID); taken {
+	if taken, _ := h.d.Store.UsernameTaken(req.Username, targetID); taken {
 		httpx.SendJSONError(w, "Username already taken", http.StatusConflict)
 		return
 	}
-	if err := h.state.Store.RenameUser(targetID, req.Username, adminID); err != nil {
+	if err := h.d.Store.RenameUser(targetID, req.Username, adminID); err != nil {
 		httpx.SendJSONError(w, "Rename failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": targetID})
+	h.d.Events.Publish(r.Context(), "users.changed", map[string]interface{}{"userId": targetID})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

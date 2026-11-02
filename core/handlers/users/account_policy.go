@@ -4,16 +4,15 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 )
 
 type AccountPolicyHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewAccountPolicyHandler(state *handlers.AppState) *AccountPolicyHandler {
-	return &AccountPolicyHandler{state: state}
+func NewAccountPolicyHandler(d Deps) *AccountPolicyHandler {
+	return &AccountPolicyHandler{d: d}
 }
 
 type accountPolicy struct {
@@ -23,7 +22,7 @@ type accountPolicy struct {
 
 // Get GET /api/admin/settings/users - PANEL settings.read (RequireCap at the route).
 func (h *AccountPolicyHandler) Get(w http.ResponseWriter, r *http.Request) {
-	allow, days, _ := h.state.Store.GetUserAccountPolicy()
+	allow, days, _ := h.d.Store.GetUserAccountPolicy()
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"policy":  accountPolicy{AllowNameChange: allow, NameChangeCooldownDays: days},
@@ -41,10 +40,10 @@ func (h *AccountPolicyHandler) Set(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Cooldown must be 0-3650 days", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetUserAccountPolicy(req.AllowNameChange, req.NameChangeCooldownDays); err != nil {
+	if err := h.d.Store.SetUserAccountPolicy(req.AllowNameChange, req.NameChangeCooldownDays); err != nil {
 		httpx.SendJSONError(w, "Save failed", http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "users.policy.changed", nil)
+	h.d.Events.Publish(r.Context(), "users.policy.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

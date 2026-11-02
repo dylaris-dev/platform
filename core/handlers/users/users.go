@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
@@ -28,21 +27,21 @@ import (
 )
 
 type UserHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewUserHandler(state *handlers.AppState) *UserHandler {
-	return &UserHandler{state: state}
+func NewUserHandler(d Deps) *UserHandler {
+	return &UserHandler{d: d}
 }
 
 // GetAllUsers GET /api/users - every account.
 func (h *UserHandler) GetAllUsers(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
 
-	users, err := h.state.Store.ListUsers()
+	users, err := h.d.Store.ListUsers()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to fetch users", 500)
 		return
@@ -98,7 +97,7 @@ func createsPrivilegedAccount(req createUserRequest) bool {
 // region assignment that fails is logged but does not fail the creation, so
 // the account still exists afterwards.
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -123,7 +122,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// so an admin could create `NewComer` beside an existing `newcomer`. The
 	// unique index on LOWER(username) is the real guard now; this is the
 	// message that says which name the collision is with.
-	if taken, _ := h.state.Store.UsernameTaken(req.Username, ""); taken {
+	if taken, _ := h.d.Store.UsernameTaken(req.Username, ""); taken {
 		httpx.SendJSONError(w, "Username is taken", 409)
 		return
 	}
@@ -142,7 +141,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// There is no unique index on users.email, and a second account on an
 	// existing address makes that address's password reset pick either row.
 	if email := req.User.Email; email != "" {
-		if existing, eerr := h.state.Store.GetUserByEmail(email); eerr == nil && existing != nil {
+		if existing, eerr := h.d.Store.GetUserByEmail(email); eerr == nil && existing != nil {
 			httpx.SendJSONError(w, "Email is already in use", http.StatusConflict)
 			return
 		}
@@ -153,7 +152,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Enforce the same password-length policy the register + reset paths apply.
-	if min := handlers.LoadAuthPolicy(h.state).PasswordMinLength; len(req.Password) < min {
+	if min := h.d.PasswordMinLength(); len(req.Password) < min {
 		httpx.SendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
 		return
 	}
@@ -162,7 +161,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// it holds nothing until somebody grants it something, and every route that
 	// grants is gated the same way. Gating routine user creation as well would
 	// train operators to type their password without reading the dialog.
-	if createsPrivilegedAccount(req) && !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), req.AdminReauthRequest) {
+	if createsPrivilegedAccount(req) && !reauth.RequireAdminReauth(w, r, h.d.Store, h.d.ReauthCodes, req.AdminReauthRequest) {
 		return
 	}
 
@@ -181,14 +180,14 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	verifiedAt := time.Now()
 	req.User.EmailVerifiedAt = &verifiedAt
 
-	if err := h.state.Store.CreateUser(&req.User); err != nil {
+	if err := h.d.Store.CreateUser(&req.User); err != nil {
 		log.Printf("CreateUser failed for username=%q: %v", req.Username, err)
 		httpx.SendJSONError(w, "Could not create user", 409)
 		return
 	}
 
 	creatorID, _ := r.Context().Value("userID").(string)
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserCreated, creatorID, req.User.ID, map[string]interface{}{"admin": req.User.IsAdmin})
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventUserCreated, creatorID, req.User.ID, map[string]interface{}{"admin": req.User.IsAdmin})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -202,7 +201,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 // to active state. Useful when an admin wants to save an account before
 // the user logs in themselves. Idempotent on already-active users.
 func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -210,16 +209,16 @@ func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if target, terr := h.state.Store.GetUserByID(id); terr != nil || target == nil || !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
+	if target, terr := h.d.Store.GetUserByID(id); terr != nil || target == nil || !access.MayManageAccount(h.d.Store, h.d.Authz, r, target) {
 		httpx.SendJSONError(w, "You cannot change an account with more rights than yours", http.StatusForbidden)
 		return
 	}
-	if err := h.state.Store.CancelUserDeletion(id); err != nil {
+	if err := h.d.Store.CancelUserDeletion(id); err != nil {
 		httpx.SendJSONError(w, "Failed to cancel deletion", 500)
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventDeletionCancelledByAdmin, actorID, id, nil)
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventDeletionCancelledByAdmin, actorID, id, nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -227,7 +226,7 @@ func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request)
 // error is kept rather than collapsed: "we could not count them" and "there are
 // none" call for opposite decisions at the one place this is asked.
 func (h *UserHandler) otherAdminExists(excludeID string) (bool, error) {
-	users, err := h.state.Store.ListUsers()
+	users, err := h.d.Store.ListUsers()
 	if err != nil {
 		return false, err
 	}
@@ -243,7 +242,7 @@ func (h *UserHandler) otherAdminExists(excludeID string) (bool, error) {
 // referenced elsewhere, for instance by server invites they issued, answers
 // 409 with that reason rather than a bare 500.
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "Database not connected", 503)
 		return
 	}
@@ -254,13 +253,13 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	currentUser := r.Context().Value("username").(string)
-	userToDelete, err := h.state.Store.GetUserByID(id)
+	userToDelete, err := h.d.Store.GetUserByID(id)
 
 	if err == nil && userToDelete.Username == currentUser {
 		httpx.SendJSONError(w, "You cannot delete yourself", 403)
 		return
 	}
-	if !reqctx.IsAdmin(r) && (err != nil || userToDelete == nil || !access.MayManageAccount(h.state.Store, h.state.Authz, r, userToDelete)) {
+	if !reqctx.IsAdmin(r) && (err != nil || userToDelete == nil || !access.MayManageAccount(h.d.Store, h.d.Authz, r, userToDelete)) {
 		httpx.SendJSONError(w, "You cannot delete an account with more rights than yours", 403)
 		return
 	}
@@ -290,7 +289,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&reauthReq)
 	}
-	if !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), reauthReq) {
+	if !reauth.RequireAdminReauth(w, r, h.d.Store, h.d.ReauthCodes, reauthReq) {
 		return
 	}
 
@@ -311,12 +310,12 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	//
 	// The Beam stamp goes first of all: once the grants are gone there is no
 	// list of what this account could reach left to stamp.
-	beamaccess.StampForUser(r.Context(), h.state.Store, h.state.Redis, id)
+	beamaccess.StampForUser(r.Context(), h.d.Store, h.d.Redis, id)
 	// Read now, removed once the row is gone: the packs cascade with it.
-	packDirs := h.state.CoreStorage.PackDirsOfUser(id)
-	templates := h.state.CoreStorage.TemplatesOfUser(id)
-	if err := services.TeardownTenantInfrastructure(r.Context(), h.state.Store, h.state.Gateway,
-		h.state.Redis, redisacl.NewProvisioner(h.state.Redis), h.state.WarpPeers, id); err != nil {
+	packDirs := h.d.CoreStorage.PackDirsOfUser(id)
+	templates := h.d.CoreStorage.TemplatesOfUser(id)
+	if err := services.TeardownTenantInfrastructure(r.Context(), h.d.Store, h.d.Gateway,
+		h.d.Redis, redisacl.NewProvisioner(h.d.Redis), h.d.WarpPeers, id); err != nil {
 		log.Printf("delete user %s: teardown: %v", id, err)
 		// A precondition the operator can fix is not a server error, and the
 		// sentence naming what is in the way is the whole value of the refusal.
@@ -329,7 +328,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.state.Store.DeleteUser(id); err != nil {
+	if err := h.d.Store.DeleteUser(id); err != nil {
 		// These two are not faults, they are the current state of the data, so
 		// they answer 409 and say what to do about it. Postgres already produces
 		// a precise reason ("still referenced from table servers"); collapsing it
@@ -345,8 +344,8 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	h.state.CoreStorage.DropPackDirs(packDirs)
-	h.state.CoreStorage.DropTemplateFiles(r.Context(), templates)
+	h.d.CoreStorage.DropPackDirs(packDirs)
+	h.d.CoreStorage.DropTemplateFiles(r.Context(), templates)
 
 	// The only record that this account ever existed.
 	//
@@ -376,7 +375,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		deleted["username"] = userToDelete.Username
 		deleted["email"] = userToDelete.Email
 	}
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventUserHardDeleted, actorID, "", deleted)
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventUserHardDeleted, actorID, "", deleted)
 
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -398,16 +397,16 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Password is required", 400)
 		return
 	}
-	target, terr := h.state.Store.GetUserByID(id)
+	target, terr := h.d.Store.GetUserByID(id)
 	if terr != nil || target == nil {
 		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
-	if !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
+	if !access.MayManageAccount(h.d.Store, h.d.Authz, r, target) {
 		httpx.SendJSONError(w, "You cannot change the password of an account with more rights than yours", http.StatusForbidden)
 		return
 	}
-	if min := handlers.LoadAuthPolicy(h.state).PasswordMinLength; len(req.Password) < min {
+	if min := h.d.PasswordMinLength(); len(req.Password) < min {
 		httpx.SendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), 400)
 		return
 	}
@@ -415,7 +414,7 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 	// Setting somebody else's password is taking their account over, so the
 	// question is not what this session may do but whether the administrator is
 	// the one asking. Last, after every cheap check and before the hash.
-	if !reauth.RequireAdminReauth(w, r, h.state.Store, handlers.ReauthCodeVerifier(h.state), req.AdminReauthRequest) {
+	if !reauth.RequireAdminReauth(w, r, h.d.Store, h.d.ReauthCodes, req.AdminReauthRequest) {
 		return
 	}
 
@@ -425,21 +424,21 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.state.Store.UpdateUserPassword(id, string(hashed)); err != nil {
+	if err := h.d.Store.UpdateUserPassword(id, string(hashed)); err != nil {
 		httpx.SendJSONError(w, "Failed to update password", 500)
 		return
 	}
 	// An operator sets someone's password because the account is not in its
 	// owner's hands any more. The password change ended the sessions; the API
 	// keys are the other way in, and they used to keep working.
-	revoked := services.RevokeAllAPIKeys(h.state.Store, id, "admin password reset")
-	beamaccess.StampForUser(r.Context(), h.state.Store, h.state.Redis, id)
-	sshRevoked := services.RevokeAllSSHKeys(h.state.Store, id, "admin password reset")
+	revoked := services.RevokeAllAPIKeys(h.d.Store, id, "admin password reset")
+	beamaccess.StampForUser(r.Context(), h.d.Store, h.d.Redis, id)
+	sshRevoked := services.RevokeAllSSHKeys(h.d.Store, id, "admin password reset")
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventPasswordSetByAdmin, actorID, id, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 	// The owner hears about it: an operator account setting passwords is also
 	// what a compromised operator account looks like.
-	handlers.NotifyPasswordChanged(h.state, target.Email, target.Username)
+	h.d.NotifyPasswordChanged(target.Email, target.Username)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Password updated"})
 }
@@ -453,7 +452,7 @@ func (h *UserHandler) GetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	// and the platform scopes below it answer.
 	scope := storeclient.AdminRouteScope(id)
 
-	limit, err := h.state.Store.GetGatewayRouteLimit(scope)
+	limit, err := h.d.Store.GetGatewayRouteLimit(scope)
 	if err != nil || limit == nil {
 		// No row at all: this user defers to the platform default.
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -492,8 +491,8 @@ func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	// set it only on accounts they may manage.
 	if !reqctx.IsAdmin(r) {
 		actorID, _ := r.Context().Value("userID").(string)
-		target, terr := h.state.Store.GetUserByID(id)
-		if actorID == id || terr != nil || target == nil || !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
+		target, terr := h.d.Store.GetUserByID(id)
+		if actorID == id || terr != nil || target == nil || !access.MayManageAccount(h.d.Store, h.d.Authz, r, target) {
 			httpx.SendJSONError(w, "You cannot change this account's route limit", http.StatusForbidden)
 			return
 		}
@@ -512,20 +511,20 @@ func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	switch req.Mode {
 	case "default":
 		// No row: defer to user_default, then global.
-		h.state.Store.DeleteGatewayRouteLimit(scope)
+		h.d.Store.DeleteGatewayRouteLimit(scope)
 	case "unlimited":
 		// A row with a NULL cap. Deliberately NOT the same as "default": this
 		// says "no cap, for this user", and keeps saying it if an operator later
 		// tightens the platform default.
-		h.state.Store.SetGatewayRouteLimit(scope, nil)
+		h.d.Store.SetGatewayRouteLimit(scope, nil)
 	case "custom":
 		if req.MaxRoutes < 1 {
 			httpx.SendJSONError(w, "Custom limit must be at least 1 (use mode \"disabled\" for none)", 400)
 			return
 		}
-		h.state.Store.SetGatewayRouteLimit(scope, &req.MaxRoutes)
+		h.d.Store.SetGatewayRouteLimit(scope, &req.MaxRoutes)
 	case "disabled":
-		h.state.Store.SetGatewayRouteLimit(scope, &zero)
+		h.d.Store.SetGatewayRouteLimit(scope, &zero)
 	default:
 		httpx.SendJSONError(w, "Invalid mode (use: default, unlimited, custom, disabled)", 400)
 		return

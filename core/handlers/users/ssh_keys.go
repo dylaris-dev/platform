@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/reauth"
 
@@ -33,10 +32,10 @@ const (
 // SSHKeysHandler serves /me/ssh-keys: the public keys the caller signs in to
 // SFTP with. Always the caller's own; there is no route that names another
 // account.
-type SSHKeysHandler struct{ state *handlers.AppState }
+type SSHKeysHandler struct{ d Deps }
 
-func NewSSHKeysHandler(state *handlers.AppState) *SSHKeysHandler {
-	return &SSHKeysHandler{state: state}
+func NewSSHKeysHandler(d Deps) *SSHKeysHandler {
+	return &SSHKeysHandler{d: d}
 }
 
 // List GET /me/ssh-keys
@@ -46,7 +45,7 @@ func (h *SSHKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	keys, err := h.state.Store.ListSSHKeysByUser(userID)
+	keys, err := h.d.Store.ListSSHKeysByUser(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load SSH keys", http.StatusInternalServerError)
 		return
@@ -85,11 +84,11 @@ func (h *SSHKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if rerr := reauth.RequireReauth(h.state.Store, handlers.ReauthCodeVerifier(h.state), userID, req.Password, req.Code); rerr != nil {
+	if rerr := reauth.RequireReauth(h.d.Store, h.d.ReauthCodes, userID, req.Password, req.Code); rerr != nil {
 		reauth.WriteReauthError(w, rerr)
 		return
 	}
-	added, err := h.state.Store.AddSSHKey(&models.SSHKey{UserID: userID, Name: req.Name, PublicKey: line, Fingerprint: fp}, maxSSHKeysPerUser)
+	added, err := h.d.Store.AddSSHKey(&models.SSHKey{UserID: userID, Name: req.Name, PublicKey: line, Fingerprint: fp}, maxSSHKeysPerUser)
 	switch {
 	case errors.Is(err, store.ErrSSHKeyExists):
 		httpx.SendJSONError(w, "This key is already on your account", http.StatusConflict)
@@ -102,7 +101,7 @@ func (h *SSHKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "An account can hold up to "+strconv.Itoa(maxSSHKeysPerUser)+" SSH keys. Remove one first.", http.StatusConflict)
 		return
 	}
-	audit.LogIdentity(h.state.Store, r, AuditEventSSHKeyAdded, userID, userID, map[string]interface{}{"name": req.Name, "fingerprint": fp})
+	audit.LogIdentity(h.d.Store, r, AuditEventSSHKeyAdded, userID, userID, map[string]interface{}{"name": req.Name, "fingerprint": fp})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "fingerprint": fp,
 		"note": "SFTP accepts the key within a minute."})
 }
@@ -119,7 +118,7 @@ func (h *SSHKeysHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid key ID", http.StatusBadRequest)
 		return
 	}
-	found, err := h.state.Store.DeleteSSHKey(userID, id)
+	found, err := h.d.Store.DeleteSSHKey(userID, id)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to remove the SSH key", http.StatusInternalServerError)
 		return
@@ -128,7 +127,7 @@ func (h *SSHKeysHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Key not found", http.StatusNotFound)
 		return
 	}
-	audit.LogIdentity(h.state.Store, r, AuditEventSSHKeyRemoved, userID, userID, map[string]interface{}{"id": id})
+	audit.LogIdentity(h.d.Store, r, AuditEventSSHKeyRemoved, userID, userID, map[string]interface{}{"id": id})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 

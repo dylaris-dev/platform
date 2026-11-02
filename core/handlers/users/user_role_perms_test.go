@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 
 	"github.com/gorilla/mux"
@@ -156,7 +155,7 @@ func TestSetUserRoleHandler_SelfDemotionGuard(t *testing.T) {
 				users:      tc.users,
 				targetUser: &models.User{ID: tc.targetID, Role: "admin", Password: handlertest.ReauthHash},
 			}
-			h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+			h := NewUserHandler(testDeps(Deps{Store: fs}))
 			rec := httptest.NewRecorder()
 
 			h.SetUserRoleHandler(rec, setRoleReq(tc.targetID, testTargetID, true, withReauth(map[string]interface{}{"role": tc.reqRole})))
@@ -180,7 +179,7 @@ func TestSetUserRoleHandler_SelfDemotionGuard(t *testing.T) {
 
 func TestSetUserRoleHandler_InvalidRole(t *testing.T) {
 	fs := &userRoleFakeStore{targetUser: &models.User{ID: testTargetID}}
-	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewUserHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 
 	h.SetUserRoleHandler(rec, setRoleReq(testTargetID, testOtherUserID, true, map[string]interface{}{"role": "superadmin"}))
@@ -195,7 +194,7 @@ func TestSetUserRoleHandler_InvalidRole(t *testing.T) {
 
 func TestSetUserRoleHandler_TargetNotFound(t *testing.T) {
 	fs := &userRoleFakeStore{getUserErr: errors.New("no rows")}
-	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewUserHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 
 	h.SetUserRoleHandler(rec, setRoleReq(testTargetID, testOtherUserID, true, map[string]interface{}{"role": "admin"}))
@@ -225,7 +224,7 @@ func setPermsReq(targetID string, isAdmin bool, body map[string]interface{}) *ht
 // field-shuffle regresses loudly instead of silently swapping flags.
 func TestSetUserPermissionsHandler_Success(t *testing.T) {
 	fs := &userRoleFakeStore{targetUser: &models.User{ID: testTargetID, Password: handlertest.ReauthHash}}
-	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewUserHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 	body := withReauth(map[string]interface{}{"canDeleteServers": true, "canChangeResources": true, "supportTeam": "billing"})
 
@@ -265,7 +264,7 @@ func setPanelRoleReq(targetID, actorID string, isAdmin bool, body map[string]int
 func TestSetUserPanelRoleHandler_RejectsNonPanelOverride(t *testing.T) {
 	// files.read is a SERVER-scope cap; a panel override must reject it.
 	fs := &userRoleFakeStore{}
-	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewUserHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 
 	h.SetUserPanelRoleHandler(rec, setPanelRoleReq(testTargetID, testOtherUserID, true, map[string]interface{}{
@@ -282,7 +281,7 @@ func TestSetUserPanelRoleHandler_RejectsNonPanelOverride(t *testing.T) {
 
 func TestSetUserPanelRoleHandler_RoleNotFound(t *testing.T) {
 	fs := &userRoleFakeStore{panelRoleErr: errors.New("no rows")}
-	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewUserHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 
 	h.SetUserPanelRoleHandler(rec, setPanelRoleReq(testTargetID, testOtherUserID, true, map[string]interface{}{
@@ -302,7 +301,7 @@ func TestSetUserPanelRoleHandler_Success(t *testing.T) {
 		panelRole:  &store.PanelRole{ID: 3, Name: "support"},
 		targetUser: &models.User{ID: testOtherUserID, Password: handlertest.ReauthHash},
 	}
-	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewUserHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 
 	h.SetUserPanelRoleHandler(rec, setPanelRoleReq(testTargetID, testOtherUserID, true, withReauth(map[string]interface{}{
@@ -336,7 +335,7 @@ func TestGetUserPanelRoleHandler_Success(t *testing.T) {
 		panelAuthzRoleID: &rid,
 		panelAuthzOv:     store.CapOverrides{Grant: []string{"nodes.read"}, Deny: []string{"users.delete"}},
 	}
-	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewUserHandler(testDeps(Deps{Store: fs}))
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/api/admin/users/"+testTargetID+"/panel-role", nil)
 	r = mux.SetURLVars(r, map[string]string{"id": testTargetID})

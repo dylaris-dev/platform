@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
@@ -126,7 +125,7 @@ func TestDeleteUserRefusesTheLastAdmin(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := &lastAdminFakeStore{target: tt.target, users: tt.users, listErr: tt.listErr}
-			h := &UserHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
+			h := &UserHandler{d: testDeps(Deps{Store: fs})}
 			rw := httptest.NewRecorder()
 
 			h.DeleteUser(rw, lastAdminRequest())

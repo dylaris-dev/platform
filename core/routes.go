@@ -660,7 +660,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	serverHandler := servers.NewServerHandler(appState)
 	portsAdminHandler := servers.NewPortsAdminHandler(appState)
 	nodeHandler := nodes.NewNodeHandler(appState)
-	userHandler := users.NewUserHandler(appState)
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
 	serverRolesHandler := servers.NewServerRolesHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
@@ -694,6 +693,26 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	if pgStore != nil {
 		appState.WarpPeers = warpService
 	}
+
+	// Built after WarpPeers above: the account delete drops the tenant's
+	// overlay peers through it, and Deps copies the field.
+	usersDeps := users.Deps{
+		Store:       appState.Store,
+		Redis:       appState.Redis,
+		Authz:       appState.Authz,
+		Events:      appState.Events,
+		CoreStorage: appState.CoreStorage,
+		Gateway:     appState.Gateway,
+		WarpPeers:   appState.WarpPeers,
+		ReauthCodes: handlers.ReauthCodeVerifier(appState),
+		PasswordMinLength: func() int {
+			return handlers.LoadAuthPolicy(appState).PasswordMinLength
+		},
+		NotifyPasswordChanged: func(email, username string) {
+			handlers.NotifyPasswordChanged(appState, email, username)
+		},
+	}
+	userHandler := users.NewUserHandler(usersDeps)
 
 	placementHandler := servers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)
@@ -739,8 +758,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	services.SetPackPATLoader(modrinthPATHandler)
 	appState.InstallMrpackURL = packsHandler.InstallMrpackURL
 	templatesHandler := templates.NewTemplatesHandler(templatesDeps)
-	usernameHistoryHandler := users.NewUsernameHistoryHandler(appState)
-	accountPolicyHandler := users.NewAccountPolicyHandler(appState)
+	usernameHistoryHandler := users.NewUsernameHistoryHandler(usersDeps)
+	accountPolicyHandler := users.NewAccountPolicyHandler(usersDeps)
 	modpackSettingsHandler := mods.NewModpackSettingsHandler(modsDeps)
 	modCacheSettingsHandler := handlers.NewModCacheSettingsHandler(appState)
 	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
@@ -920,7 +939,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// The keys the caller signs in to SFTP with. Own account only, like the
 	// API keys above; adding one re-asks password and code, so it is throttled
 	// and body-capped for the same reason.
-	sshKeysHandler := users.NewSSHKeysHandler(appState)
+	sshKeysHandler := users.NewSSHKeysHandler(usersDeps)
 	api.HandleFunc("/me/ssh-keys", authHandler.AuthMiddleware(sshKeysHandler.List)).Methods("GET")
 	api.HandleFunc("/me/ssh-keys", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.AuthMiddleware(sshKeysHandler.Create)))).Methods("POST")
 	api.HandleFunc("/me/ssh-keys/{id:[0-9]+}", authHandler.AuthMiddleware(sshKeysHandler.Delete)).Methods("DELETE")

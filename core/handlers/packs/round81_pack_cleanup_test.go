@@ -263,7 +263,11 @@ func deleteUserPackObjects(t *testing.T, fail bool) {
 	h, fs, root := newPackCleanup(t)
 	d := seedBuild(t, h, root, &fs.builds[0])
 	us := &userDeletePackStore{userDeleteWarpStore: &userDeleteWarpStore{}, pc: fs, failDelete: fail}
-	st := &handlers.AppState{Store: us, ClusterSecret: h.d.ClusterSecret, CoreStorage: &corestorage.Manager{Store: us, ClusterSecret: h.d.ClusterSecret}}
+	st := users.Deps{
+		Store:       us,
+		CoreStorage: &corestorage.Manager{Store: us, ClusterSecret: h.d.ClusterSecret},
+		ReauthCodes: handlers.ReauthCodeVerifier(&handlers.AppState{Store: us}),
+	}
 	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+cleanupOwner, bytes.NewBufferString(`{"reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 	ctx := context.WithValue(r.Context(), "userID", "admin-id")
 	ctx = context.WithValue(ctx, "username", "admin")

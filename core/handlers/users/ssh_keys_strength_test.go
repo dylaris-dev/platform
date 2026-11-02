@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -39,7 +38,7 @@ func TestOnlyStrongSSHKeysAreTaken(t *testing.T) {
 // asks for the password (and code) again, like minting an API key.
 func TestAddingAnSSHKeyNeedsThePasswordAgain(t *testing.T) {
 	fs := &sshKeyAddStore{}
-	h := NewSSHKeysHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewSSHKeysHandler(testDeps(Deps{Store: fs}))
 	body := `{"name":"laptop","publicKey":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl","password":"wrong"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/me/ssh-keys", strings.NewReader(body))
 	req = req.WithContext(context.WithValue(req.Context(), "userID", "u1"))

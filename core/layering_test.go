@@ -34,7 +34,6 @@ var layeringAllowed = map[string]bool{
 	"handlers/nodes -> handlers":      true,
 	"handlers/servers -> handlers":    true,
 	"handlers/storageapi -> handlers": true,
-	"handlers/users -> handlers":      true,
 
 	"handlers/gateway -> handlers/servers":   true,
 	"handlers/templates -> handlers/servers": true,
