@@ -10,26 +10,21 @@ import (
 // the platform is in Fresh-Install mode (0 users), every gated request gets
 // 503 setup_required + X-Setup-Required: 1. In Lost-Admin mode (>=1 user,
 // 0 admins) non-admin routes still work — the auth middleware handles the
-// admin-only routes. In Complete mode this is a 0-cost pass-through after
-// the CountAdmins check (~0.1ms).
+// admin-only routes. Both modes that pass need only "is there any user", so
+// that is the one question asked: an EXISTS that stops at the first row. It
+// used to be COUNT(*) of admins, then of users - two scans on every request.
 //
-// We deliberately do NOT cache CountAdmins. The value of "setup completes on
-// Core A, Core B unlocks on the very next request" is worth the SELECT cost.
+// We deliberately do NOT cache it. The value of "setup completes on Core A,
+// Core B unlocks on the very next request" is worth one indexed-cheap SELECT.
 func (s *AppState) RequireSetupComplete(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/setup/") {
 			next(w, r)
 			return
 		}
-		adminCount, _ := s.Store.CountAdmins()
-		if adminCount > 0 {
-			next(w, r)
-			return
-		}
-		userCount, _ := s.Store.CountUsers()
-		if userCount > 0 {
-			// Lost-Admin: non-admin routes work, admin routes get 403
-			// from AuthMiddleware as usual.
+		// Complete, or Lost-Admin (non-admin routes work, admin routes get
+		// 403 from AuthMiddleware as usual). An error locks, as before.
+		if hasUsers, _ := s.Store.HasUsers(); hasUsers {
 			next(w, r)
 			return
 		}

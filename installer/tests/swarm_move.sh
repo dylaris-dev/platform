@@ -54,7 +54,8 @@ cat >$O/docker-stack.yml <<'Y'
 services:
   core:
     image: alpine
-    command: ["sh", "-c", "echo 'SETUP CODE: ABCD-EFGH-1234 JWT_SECRET=supersecretvalue123'; sleep 600"]
+    # To stderr, as Core logs it: service logs keeps stderr apart from stdout.
+    command: ["sh", "-c", "echo 'SETUP CODE: ABCD-EFGH-1234 JWT_SECRET=supersecretvalue123' >&2; sleep 600"]
     volumes: [core_data:/data]
     networks: [dylaris_net]
   node:
@@ -70,6 +71,7 @@ Y
 (cd $O && docker stack deploy -c docker-stack.yml dylaris 2>&1 | tail -3)
 check "stack deploys over the freed network name" "stack_running"
 sleep 8
+check "setup code read from swarm service logs (stderr)" "[[ \$(read_setup_code) == ABCD-EFGH-1234 ]]"
 
 out=$(cmd_update 2>&1); rc=$?
 check "update works on a swarm install (rc=$rc)" "[[ $rc == 0 ]] && grep -q Updated <<<\"\$out\""

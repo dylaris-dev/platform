@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.02.3
+
+### Features
+- Core keeps a sized Postgres connection pool instead of opening a new session for most queries, which capped a
+  replica near 80 requests per second. Tune it with `DB_MAX_OPEN_CONNS` and three siblings (see the README). `core`
+- All live panel streams of one Core share a single Valkey connection; every open panel tab used to hold two. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The installer now reads the setup code on a Swarm install, so it can create the first administrator; it used to
+  fail with "invalid setup code" and send you to /setup. The published installer carries the fix.
+- The setup check on every API request asks whether any user exists instead of counting admins and users. `core`
+
 ## 2026.11.02.2
 
 ### Features

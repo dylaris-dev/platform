@@ -3049,6 +3049,14 @@ func (s *PostgresStore) CountAdmins() (int, error) {
 	return n, err
 }
 
+// HasUsers backs RequireSetupComplete, which runs on every API request: EXISTS
+// stops at the first visible row, where COUNT(*) walked the whole table.
+func (s *PostgresStore) HasUsers() (bool, error) {
+	var ok bool
+	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM users)`).Scan(&ok)
+	return ok, err
+}
+
 // CreateFirstAdmin atomically inserts the first admin via a guarded CTE so
 // N Cores can race without producing duplicate admins. The guard fires only
 // when no admin exists yet (covers both Fresh-Install and Lost-Admin modes).

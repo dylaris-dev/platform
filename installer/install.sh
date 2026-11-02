@@ -778,12 +778,15 @@ wait_core() {
 
 # Core prints a one-time setup code on its first start, and /setup (and the
 # API call below) asks for it. Read from the log, the only place it exists.
+# Core logs to stderr, and `docker service logs` (unlike compose logs) keeps the
+# container's stderr on its own stderr: 2>/dev/null here dropped the code on
+# every swarm install. Bounded at 30 s because swarm log delivery can lag.
 SETUP_CODE=""
 read_setup_code() {
   local i c=""
-  for i in 1 2 3 4 5; do
+  for i in $(seq 1 15); do
     if [[ -f $OUT_DIR/docker-stack.yml ]]; then
-      c=$("${DOCKER[@]}" service logs --raw "${PROJECT}_core" 2>/dev/null | grep -o 'SETUP CODE: [A-Z0-9-]*' | tail -1) || true
+      c=$("${DOCKER[@]}" service logs --raw "${PROJECT}_core" 2>&1 | grep -o 'SETUP CODE: [A-Z0-9-]*' | tail -1) || true
     else
       c=$(compose logs --no-log-prefix core 2>/dev/null | grep -o 'SETUP CODE: [A-Z0-9-]*' | tail -1) || true
     fi
@@ -859,7 +862,7 @@ summary_done() {
     if [[ -n $SETUP_CODE ]]; then
       say "  Setup code: ${B}$SETUP_CODE${N} (/setup asks for it once)"
     else
-      if [[ ${A[topology]} == swarm ]]; then say "  Setup code: printed by Core on its first start; find it with: docker service logs ${PROJECT}_core | grep 'SETUP CODE'"
+      if [[ ${A[topology]} == swarm ]]; then say "  Setup code: printed by Core on its first start; find it with: docker service logs ${PROJECT}_core 2>&1 | grep 'SETUP CODE'"
       else say "  Setup code: printed by Core on its first start; find it with: docker compose -f $OUT_DIR/docker-compose.yml logs core | grep 'SETUP CODE'"; fi
     fi
   fi

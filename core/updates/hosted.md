@@ -11,6 +11,20 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.02.3
+
+### Features
+- The panel answers faster under load, and an open panel tab uses fewer server resources.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.02.2
 
 ### Features

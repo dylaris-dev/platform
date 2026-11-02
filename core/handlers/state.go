@@ -273,6 +273,18 @@ type AppState struct {
 	// GET /api/system/features reports to every user at boot. See
 	// modpack_storage_state.go for why that call must not run per request.
 	modpackStorage modpackStorageState
+
+	// pubsub is the one Redis Pub/Sub connection every SSE stream of this
+	// Core shares; built from Redis on first use. See services.PubSubHub.
+	pubsubOnce sync.Once
+	pubsub     *services.PubSubHub
+}
+
+// SubscribeLive subscribes a live stream to a Redis channel through this
+// Core's shared Pub/Sub connection. Call the returned function when done.
+func (s *AppState) SubscribeLive(channel string) (<-chan string, func()) {
+	s.pubsubOnce.Do(func() { s.pubsub = services.NewPubSubHub(s.Redis) })
+	return s.pubsub.Subscribe(channel)
 }
 
 // AdminSecretConfigured reports whether the break-glass ADMIN_SECRET is set.

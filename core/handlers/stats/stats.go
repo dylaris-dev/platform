@@ -112,10 +112,8 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	// Subscribe to live updates
-	pubsub := h.state.Redis.Subscribe(ctx, liveKey)
-	defer pubsub.Close()
-
-	ch := pubsub.Channel()
+	ch, unsubscribe := h.state.SubscribeLive(liveKey)
+	defer unsubscribe()
 
 	keepalive := time.NewTicker(15 * time.Second)
 	defer keepalive.Stop()
@@ -124,11 +122,8 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-ch:
-			if !ok {
-				return
-			}
-			fmt.Fprintf(w, "data: %s\n\n", msg.Payload)
+		case payload := <-ch:
+			fmt.Fprintf(w, "data: %s\n\n", payload)
 			flusher.Flush()
 		case <-keepalive.C:
 			fmt.Fprintf(w, ": keepalive\n\n")

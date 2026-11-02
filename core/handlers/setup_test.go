@@ -56,6 +56,7 @@ func (f *setupFakeStore) SetUserTOTPBackupCodes(id, backupCodesJSON string) erro
 
 func (f *setupFakeStore) CountUsers() (int, error)  { return f.userCount, f.countErr }
 func (f *setupFakeStore) CountAdmins() (int, error) { return f.adminCount, f.countErr }
+func (f *setupFakeStore) HasUsers() (bool, error)   { return f.userCount > 0, f.countErr }
 
 func (f *setupFakeStore) CreateFirstAdmin(username, passwordHash, totpSecret string) (*models.User, error) {
 	if f.createErr != nil {

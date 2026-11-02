@@ -522,6 +522,10 @@ secrets:
 | `DB_PORT` | `5432` | No | Postgres port. |
 | `DB_SSLMODE` | `disable` | No | Postgres TLS mode (`disable`/`require`/`verify-full`). Set `require`/`verify-full` for a remote DB. |
 | `DB_TYPE` | `timescaledb` | No | Time-series backend for `server_stats`: `timescaledb` (hypertable + native retention, best for larger fleets) or `postgres` (plain table, retention via the hourly sweep — fine for small/medium setups, no extension needed). |
+| `DB_MAX_OPEN_CONNS` | `25` | No | Max open Postgres connections per Core replica. Every replica holds up to this many, so keep `replicas x DB_MAX_OPEN_CONNS` (plus other clients) below Postgres `max_connections` (default 100). `0` = unlimited (not recommended). |
+| `DB_MAX_IDLE_CONNS` | `25` | No | Idle connections kept open per replica. Keep it equal to `DB_MAX_OPEN_CONNS`: a low value makes Core open a new Postgres session for most queries under load. |
+| `DB_CONN_MAX_LIFETIME` | `30m` | No | Recycle a connection after this long (Go duration). `0` = never. |
+| `DB_CONN_MAX_IDLE_TIME` | `5m` | No | Close a connection idle for this long, so a quiet Core gives sessions back. `0` = never. |
 | `API_PORT` | `25500` | No | Core REST API port. |
 | `DYLARIS_GRPC_PORT` | `25501` | No | Core gRPC mesh port (Core ↔ Node). |
 | `GRPC_TLS_ENABLED` | `true` | No | Server-authenticated TLS + fingerprint pinning on the Core ↔ Node gRPC control channel. **On by default**; set `false` to opt out into plaintext (only sane on an encrypted overlay). Must hold the SAME value on every Core AND every Node - a TLS listener refuses a plaintext dial, so a split disables the whole management plane. An unparseable value keeps the default rather than silently opting out. |
