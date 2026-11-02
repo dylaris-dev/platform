@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/corestorage"
 )
 
@@ -28,7 +27,7 @@ func TestCoreStorage_SaveConfig_SecretOnlyRotationWritesTheNewSecret(t *testing.
 	fs.kv[corestorage.KeyS3Bucket] = "bucket1"
 	fs.kv[corestorage.KeyS3AccessKey] = "key1"
 	fs.kv[corestorage.KeyS3SecretKey] = "OLD-SECRET"
-	h := NewCoreStorageHandler(withCoreStorage(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")}))
+	h := NewCoreStorageHandler(testDeps(Deps{Store: fs, Redis: multiCoreRedis(t, "core-a")}))
 
 	rw := httptest.NewRecorder()
 	h.SaveConfig(rw, httptest.NewRequest(http.MethodPost, "/api/settings/core-storage",

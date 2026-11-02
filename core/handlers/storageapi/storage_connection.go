@@ -3,18 +3,16 @@ package storageapi
 import (
 	"encoding/json"
 	"net/http"
-
-	"dylaris-core/handlers"
 )
 
 // StorageConnectionHandler serves the current connection state of the two core
 // storage backends.
 type StorageConnectionHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewStorageConnectionHandler(state *handlers.AppState) *StorageConnectionHandler {
-	return &StorageConnectionHandler{state: state}
+func NewStorageConnectionHandler(d Deps) *StorageConnectionHandler {
+	return &StorageConnectionHandler{d: d}
 }
 
 // GetConnection GET /api/storage/connection
@@ -33,5 +31,5 @@ func (h *StorageConnectionHandler) GetConnection(w http.ResponseWriter, r *http.
 	// text/plain. GetStatus in health.go omits it and is a standing wart; this
 	// does not copy it.
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(h.state.StorageStatus.Snapshot())
+	json.NewEncoder(w).Encode(h.d.StorageStatus.Snapshot())
 }

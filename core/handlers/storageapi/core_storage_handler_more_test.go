@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services/corestorage"
 )
@@ -21,7 +20,7 @@ func TestCoreStorage_SaveConfig_SwitchToPathClearsStoredS3Secret(t *testing.T) {
 	seedCoreStorageS3(fs)
 	// A Redis with one heartbeat: saving a host-path backend now consults the
 	// online-Core count, and refuses when it cannot be taken at all.
-	h := NewCoreStorageHandler(withCoreStorage(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")}))
+	h := NewCoreStorageHandler(testDeps(Deps{Store: fs, Redis: multiCoreRedis(t, "core-a")}))
 
 	dir := handlertest.ConnectionProbeDir(t)
 	body, _ := json.Marshal(corestorage.Config{Backend: "path", Path: dir, PathConfirmed: true})
@@ -40,7 +39,7 @@ func TestCoreStorage_SaveConfig_SwitchToPathClearsStoredS3Secret(t *testing.T) {
 // must be trimmed before persisting, not silently break auth later.
 func TestCoreStorage_SaveConfig_TrimsS3FieldWhitespace(t *testing.T) {
 	fs := handlertest.NewSettingsStore()
-	h := NewCoreStorageHandler(withCoreStorage(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")}))
+	h := NewCoreStorageHandler(testDeps(Deps{Store: fs, Redis: multiCoreRedis(t, "core-a")}))
 
 	body, _ := json.Marshal(corestorage.Config{
 		Backend: "s3", S3Endpoint: "  https://s3.example.com  ", S3Bucket: "  bucket1 ",

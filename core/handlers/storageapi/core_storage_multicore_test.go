@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -118,7 +116,7 @@ func sharedLocalFactory(root string) storagereach.ProviderFactory {
 func TestSaveConfig_RefusesHostPathOnMultipleCores(t *testing.T) {
 	st := multiCoreState(t, map[string]string{})
 	rdb := multiCoreRedis(t, "core-a", "core-b")
-	state := &handlers.AppState{
+	state := Deps{
 		Store: st,
 		Redis: rdb,
 		CoreStorage: &corestorage.Manager{Store: st, Redis: rdb, Reach: storagereach.NewService(storagereach.ServiceDeps{
@@ -126,7 +124,7 @@ func TestSaveConfig_RefusesHostPathOnMultipleCores(t *testing.T) {
 		})},
 	}
 	state.CoreStorage.SetReachRoundDeadline(150 * time.Millisecond)
-	h := &CoreStorageHandler{state: state}
+	h := &CoreStorageHandler{d: state}
 
 	body := `{"backend":"path","path":"/mnt/shared","pathConfirmed":true}`
 	rec := httptest.NewRecorder()
@@ -150,7 +148,7 @@ func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 	st := multiCoreState(t, map[string]string{})
 	rdb := multiCoreRedis(t, "core-a", "core-b")
 	factory := sharedLocalFactory(t.TempDir())
-	state := &handlers.AppState{
+	state := Deps{
 		Store: st,
 		Redis: rdb,
 		CoreStorage: &corestorage.Manager{
@@ -193,7 +191,7 @@ func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 	}
 	state.CoreStorage.SetReachRoundDeadline(30 * time.Second)
 	state.CoreStorage.SetReachRoundPoll(50 * time.Millisecond)
-	h := &CoreStorageHandler{state: state}
+	h := &CoreStorageHandler{d: state}
 
 	done := make(chan error, 1)
 	go func() {
@@ -236,7 +234,7 @@ func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 // let a multi-Core save through just because it cannot check it.
 func TestSaveConfig_RefusesWhenTheVerifierIsNotRunning(t *testing.T) {
 	st := multiCoreState(t, map[string]string{})
-	h := &CoreStorageHandler{state: withCoreStorage(&handlers.AppState{Store: st, Redis: multiCoreRedis(t, "core-a", "core-b")})}
+	h := &CoreStorageHandler{d: testDeps(Deps{Store: st, Redis: multiCoreRedis(t, "core-a", "core-b")})}
 
 	body := `{"backend":"s3","s3Bucket":"b","s3AccessKey":"AKIA","s3SecretKey":"secret"}`
 	rec := httptest.NewRecorder()
@@ -298,7 +296,7 @@ func TestGetConfig_ReportsOnlineCores(t *testing.T) {
 			if tc.redisDown {
 				rdb = downRedis(t)
 			}
-			h := &CoreStorageHandler{state: withCoreStorage(&handlers.AppState{Store: multiCoreState(t, tc.values), Redis: rdb})}
+			h := &CoreStorageHandler{d: testDeps(Deps{Store: multiCoreState(t, tc.values), Redis: rdb})}
 
 			rec := httptest.NewRecorder()
 			h.GetConfig(rec, httptest.NewRequest(http.MethodGet, "/api/settings/core-storage", nil))
@@ -323,7 +321,7 @@ func TestGetConfig_ReportsOnlineCores(t *testing.T) {
 // TestGetConfig_LeaksNoInstanceIdentities: the ids are hostnames and the count
 // is all the form needs, so they must not ride along in the response.
 func TestGetConfig_LeaksNoInstanceIdentities(t *testing.T) {
-	h := &CoreStorageHandler{state: withCoreStorage(&handlers.AppState{
+	h := &CoreStorageHandler{d: testDeps(Deps{
 		Store: multiCoreState(t, map[string]string{}),
 		Redis: multiCoreRedis(t, "core-prod-fra-01", "core-prod-fra-02"),
 	})}

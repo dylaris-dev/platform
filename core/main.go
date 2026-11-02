@@ -384,14 +384,6 @@ func main() {
 		DBType:   cfg.DBType,
 	})
 
-	// In-panel blob storage migration (ticket-attachments, ticket-backups,
-	// modpacks, server-backups rows). The resolver owns the
-	// Core file storage config, the modpack settings and the backup_storages
-	// rows, so it is wired from appState after appState.Store etc. are set.
-	appState.StorageMigration = services.NewStorageMigrationService(
-		redisClient, pgStore, storageapi.NewStorageDataSetResolver(appState),
-	)
-
 	// Per-server CPU pinning: reads node topology from Redis + computes auto cpusets.
 	appState.CPUPinning = services.NewCPUPinningService(redisClient, pgStore)
 
@@ -439,6 +431,15 @@ func main() {
 	// every code path can call h.state.Events.Publish unconditionally.
 	appState.Events = services.NewSystemEventsPublisher(redisClient)
 	appState.CoreStorage.Events = appState.Events
+
+	// In-panel blob storage migration (ticket-attachments, ticket-backups,
+	// modpacks, server-backups rows). The resolver owns the Core file storage
+	// config, the modpack settings and the backup_storages rows. It copies the
+	// CoreStorage pointer, so it is built after the Manager above (it used to
+	// hold appState and read the field per call).
+	appState.StorageMigration = services.NewStorageMigrationService(
+		redisClient, pgStore, storageapi.NewStorageDataSetResolver(appState.Store, appState.CoreStorage, appState.GRPCRegistry),
+	)
 
 	// Storage connection state onto the system-events channel. Wired AFTER the
 	// publisher above, because it captures it. Start before Attach so the

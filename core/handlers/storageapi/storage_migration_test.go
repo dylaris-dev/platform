@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services/corestorage"
 
@@ -176,7 +175,7 @@ func TestStorageDataSetResolver_ListMarksEveryDataSetMigratable(t *testing.T) {
 		{ID: 1, Name: "Hetzner S3", Provider: "s3"},
 		{ID: 2, Name: "On the node", Provider: "node-local"},
 	}
-	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
+	res := newResolver(testDeps(Deps{Store: fs}))
 
 	sets, err := res.List(context.Background())
 	if err != nil {
@@ -252,7 +251,7 @@ func TestStorageDataSetResolver_SharedCoreStorageNamespacesCannotSwitchTheConfig
 		t.Run(id, func(t *testing.T) {
 			fs := newStorageMigrationFakeStore()
 			configuredPathStorage(t, fs)
-			res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
+			res := newResolver(testDeps(Deps{Store: fs}))
 
 			_, _, err := res.ResolveTarget(context.Background(), id, tgt)
 			if err == nil {
@@ -287,8 +286,8 @@ func TestStorageDataSetResolver_CombinedCoreStorageIsConfigSwitchable(t *testing
 	// which needs to count instances. A nil Redis would read as "cannot verify"
 	// and refuse the switch. A single-Core deployment is exactly when a
 	// host-path target is legitimate.
-	st := withCoreStorage(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
-	res := NewStorageDataSetResolver(st)
+	st := testDeps(Deps{Store: fs, Redis: multiCoreRedis(t, "core-a")})
+	res := newResolver(st)
 
 	ds, label, err := res.ResolveTarget(context.Background(), CoreStorageDataSetID, services.StorageTargetConfig{
 		Backend: "path", Path: tgtRoot, PathConfirmed: true,
@@ -324,7 +323,7 @@ func TestStorageDataSetResolver_ResolveTargetRefusesTheSourceLocation(t *testing
 	fs.kv[corestorage.KeyBackend] = "path"
 	fs.kv[corestorage.KeyPath] = root
 	fs.kv[corestorage.KeyPathConfirm] = "true"
-	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
+	res := newResolver(testDeps(Deps{Store: fs}))
 
 	_, _, err := res.ResolveTarget(context.Background(), CoreStorageDataSetID, services.StorageTargetConfig{
 		Backend: "path", Path: root, PathConfirmed: true,
@@ -348,7 +347,7 @@ func TestStorageDataSetResolver_ResolveTargetRefusesBeforeCreatingTheTargetDir(t
 	// modpacks-on-Core-storage as the source, so the target carries a real
 	// sub-prefix directory that MkdirAll would have to create.
 	fs.kv["modpack_storage_provider"] = "core-storage"
-	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
+	res := newResolver(testDeps(Deps{Store: fs}))
 
 	sub := filepath.Join(root, corestorage.PrefixModpacks)
 	if _, err := os.Stat(sub); !os.IsNotExist(err) {
@@ -389,7 +388,7 @@ func TestStorageDataSetResolver_ResolveTargetRefusesAParentOfTheModpackRoot(t *t
 	fs.kv["modpack_storage_provider"] = "local"
 	pathsJSON, _ := json.Marshal([]string{modpackRoot})
 	fs.kv["modpack_storage_paths"] = string(pathsJSON)
-	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
+	res := newResolver(testDeps(Deps{Store: fs}))
 
 	_, _, err := res.ResolveTarget(context.Background(), "modpacks", services.StorageTargetConfig{
 		Backend: "path", Path: parent, PathConfirmed: true,
@@ -407,7 +406,7 @@ func TestStorageDataSetResolver_ResolveTargetBuildsAnUnsavedTarget(t *testing.T)
 	fs.kv["modpack_storage_provider"] = "local"
 	pathsJSON, _ := json.Marshal([]string{srcRoot})
 	fs.kv["modpack_storage_paths"] = string(pathsJSON)
-	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
+	res := newResolver(testDeps(Deps{Store: fs}))
 
 	ds, label, err := res.ResolveTarget(context.Background(), "modpacks", services.StorageTargetConfig{
 		Backend: "path", Path: tgtRoot, PathConfirmed: true,
@@ -430,7 +429,7 @@ func TestStorageDataSetResolver_ResolveTargetBuildsAnUnsavedTarget(t *testing.T)
 func TestStorageDataSetResolver_ResolveTargetRejectsAnInvalidConfig(t *testing.T) {
 	fs := newStorageMigrationFakeStore()
 	configuredPathStorage(t, fs)
-	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
+	res := newResolver(testDeps(Deps{Store: fs}))
 
 	if _, _, err := res.ResolveTarget(context.Background(), CoreStorageDataSetID, services.StorageTargetConfig{
 		Backend: "s3", S3Bucket: "b", // no credentials
@@ -467,7 +466,7 @@ func TestStorageDataSetResolver_ModpackConfiguredPathsParsesTheStoredJSON(t *tes
 			if c.set {
 				fs.kv["modpack_storage_paths"] = c.raw
 			}
-			got := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs})).modpackConfiguredPaths()
+			got := newResolver(testDeps(Deps{Store: fs})).modpackConfiguredPaths()
 			if len(got) != len(c.want) {
 				t.Fatalf("modpackConfiguredPaths = %#v, want %#v", got, c.want)
 			}
@@ -484,7 +483,7 @@ func TestStorageDataSetResolver_ResolveTargetRejectsARowBackedDataSet(t *testing
 	fs := newStorageMigrationFakeStore()
 	configuredPathStorage(t, fs)
 	fs.storages = []models.BackupStorage{{ID: 1, Name: "Hetzner S3", Provider: "s3"}}
-	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
+	res := newResolver(testDeps(Deps{Store: fs}))
 
 	if _, _, err := res.ResolveTarget(context.Background(), "server-backups:1", services.StorageTargetConfig{
 		Backend: "path", Path: t.TempDir(), PathConfirmed: true,
@@ -499,8 +498,8 @@ func TestStorageDataSetResolver_SwitchConfigPersistsTheTarget(t *testing.T) {
 	// A single online Core so checkSharedStorageReachable's short-circuit
 	// applies; this test is about the persisted target shape, not the
 	// reachability round.
-	st := withCoreStorage(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")})
-	res := NewStorageDataSetResolver(st)
+	st := testDeps(Deps{Store: fs, Redis: multiCoreRedis(t, "core-a")})
+	res := newResolver(st)
 
 	err := res.SwitchConfig(context.Background(), CoreStorageDataSetID, services.StorageTargetConfig{
 		Backend: "s3", S3Endpoint: "https://new.example.com", S3Bucket: "dylaris-new",
@@ -528,7 +527,7 @@ func TestStorageMigrationHandler_StartNeverEchoesOrAuditsTheTargetSecret(t *test
 	const secret = "SENTINEL-HTTP-SECRET"
 	fs := newStorageMigrationFakeStore()
 	configuredPathStorage(t, fs)
-	h := NewStorageMigrationHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageMigrationHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"kind": "migrate", "dataSet": "ticket-attachments",
@@ -566,8 +565,8 @@ func TestStorageMigrationHandler_AResolverFailureNeverEchoesTheTargetSecret(t *t
 	fs.kv[corestorage.KeyBackend] = "path"
 	fs.kv[corestorage.KeyPath] = root
 	fs.kv[corestorage.KeyPathConfirm] = "true"
-	state := withCoreStorage(&handlers.AppState{Store: fs})
-	state.StorageMigration = services.NewStorageMigrationService(nil, nil, NewStorageDataSetResolver(state))
+	state := testDeps(Deps{Store: fs})
+	state.StorageMigration = services.NewStorageMigrationService(nil, nil, newResolver(state))
 	h := NewStorageMigrationHandler(state)
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -629,7 +628,7 @@ func TestStorageMigrationHandler_StartRejectsDeleteUnderSampleWith400(t *testing
 	// hold even with no migration service wired, so it is a pure input check.
 	fs := newStorageMigrationFakeStore()
 	configuredPathStorage(t, fs)
-	h := NewStorageMigrationHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageMigrationHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"kind": "migrate", "dataSet": "modpacks", "targetDataSet": ModpacksCoreStorageDataSetID,
@@ -649,7 +648,7 @@ func TestStorageMigrationHandler_StartRejectsDeleteUnderSampleWith400(t *testing
 func TestStorageMigrationHandler_StartRejectsAnUnknownKind(t *testing.T) {
 	fs := newStorageMigrationFakeStore()
 	configuredPathStorage(t, fs)
-	h := NewStorageMigrationHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageMigrationHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(map[string]interface{}{"kind": "wipe", "dataSet": "modpacks"})
 	rw := httptest.NewRecorder()
@@ -660,7 +659,7 @@ func TestStorageMigrationHandler_StartRejectsAnUnknownKind(t *testing.T) {
 }
 
 func TestStorageMigrationHandler_GetJobWithoutTheServiceIs503(t *testing.T) {
-	h := NewStorageMigrationHandler(withCoreStorage(&handlers.AppState{Store: newStorageMigrationFakeStore()}))
+	h := NewStorageMigrationHandler(testDeps(Deps{Store: newStorageMigrationFakeStore()}))
 	rw := httptest.NewRecorder()
 	h.GetJob(rw, httptest.NewRequest(http.MethodGet, "/api/admin/storage/migration", nil))
 	if rw.Code != http.StatusServiceUnavailable {
@@ -674,7 +673,7 @@ func TestStorageMigrationHandler_Overview(t *testing.T) {
 	fs.manifests = []models.StorageManifest{
 		{ID: 7, DataSet: "modpacks", Algo: "sha256", CapturedAt: time.Now(), ObjectCount: 12, TotalBytes: 900},
 	}
-	h := NewStorageMigrationHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageMigrationHandler(testDeps(Deps{Store: fs}))
 
 	rw := httptest.NewRecorder()
 	h.Overview(rw, httptest.NewRequest(http.MethodGet, "/api/admin/storage/overview", nil))
@@ -717,7 +716,7 @@ func TestStorageMigrationHandler_ExportManifestStreamsCSV(t *testing.T) {
 		{ManifestID: 4, Key: "a.mrpack", Size: 3, Checksum: "aa"},
 		{ManifestID: 4, Key: "b,with,commas.mrpack", Size: 5, Checksum: "bb"},
 	}
-	h := NewStorageMigrationHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageMigrationHandler(testDeps(Deps{Store: fs}))
 
 	req := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/api/admin/storage/manifests/4/export", nil), map[string]string{"id": "4"})
 	rw := httptest.NewRecorder()
@@ -743,7 +742,7 @@ func TestStorageMigrationHandler_ExportManifestStreamsCSV(t *testing.T) {
 }
 
 func TestStorageMigrationHandler_ExportManifestUnknownIDIs404(t *testing.T) {
-	h := NewStorageMigrationHandler(withCoreStorage(&handlers.AppState{Store: newStorageMigrationFakeStore()}))
+	h := NewStorageMigrationHandler(testDeps(Deps{Store: newStorageMigrationFakeStore()}))
 	req := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/api/admin/storage/manifests/99/export", nil), map[string]string{"id": "99"})
 	rw := httptest.NewRecorder()
 	h.ExportManifest(rw, req)
@@ -755,7 +754,7 @@ func TestStorageMigrationHandler_ExportManifestUnknownIDIs404(t *testing.T) {
 func TestStorageMigrationHandler_DeleteManifest(t *testing.T) {
 	fs := newStorageMigrationFakeStore()
 	fs.manifests = []models.StorageManifest{{ID: 4, DataSet: "modpacks"}}
-	h := NewStorageMigrationHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageMigrationHandler(testDeps(Deps{Store: fs}))
 
 	req := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/api/admin/storage/manifests/4", nil), map[string]string{"id": "4"})
 	rw := httptest.NewRecorder()
@@ -775,7 +774,7 @@ func TestStorageMigrationHandler_DeleteManifestUnknownIDIs404(t *testing.T) {
 	fs := newStorageMigrationFakeStore()
 	audited := 0
 	fs.onAudit = func(*models.AuditEventIdentity) { audited++ }
-	h := NewStorageMigrationHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageMigrationHandler(testDeps(Deps{Store: fs}))
 
 	req := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/api/admin/storage/manifests/99", nil), map[string]string{"id": "99"})
 	rw := httptest.NewRecorder()
@@ -798,7 +797,7 @@ func TestStorageMigrationHandler_ListManifests(t *testing.T) {
 		{ID: 1, DataSet: "modpacks"},
 		{ID: 2, DataSet: "ticket-attachments"},
 	}
-	h := NewStorageMigrationHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageMigrationHandler(testDeps(Deps{Store: fs}))
 
 	rw := httptest.NewRecorder()
 	h.ListManifests(rw, httptest.NewRequest(http.MethodGet, "/api/admin/storage/manifests?dataSet=ticket-attachments", nil))
@@ -984,7 +983,7 @@ func TestStorageDataSetResolver_EnsureDistinctDataSetLocations(t *testing.T) {
 			if c.setup != nil {
 				c.setup(fs)
 			}
-			res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
+			res := newResolver(testDeps(Deps{Store: fs}))
 
 			err := res.EnsureDistinctDataSetLocations(context.Background(), c.sourceID, c.targetID)
 			if c.wantErr != nil {
@@ -1028,7 +1027,7 @@ func TestStorageDataSetResolver_LocationCheckIsLocationCompleteNotAStringCompare
 	fs.kv["modpack_storage_provider"] = "local"
 	paths, _ := json.Marshal([]string{alias})
 	fs.kv["modpack_storage_paths"] = string(paths)
-	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
+	res := newResolver(testDeps(Deps{Store: fs}))
 
 	err := res.EnsureDistinctDataSetLocations(context.Background(), "modpacks", ModpacksCoreStorageDataSetID)
 	if !errors.Is(err, corestorage.ErrTargetSameLocation) {
@@ -1120,7 +1119,7 @@ func TestModpackBackendLabel_SanitizesAHostileEndpoint(t *testing.T) {
 	fs.kv["modpack_storage_provider"] = "s3"
 	fs.kv["modpack_storage_s3_endpoint"] = "https://AKIAEXAMPLE:" + secret + "@minio.internal"
 	fs.kv["modpack_storage_s3_bucket"] = "modpacks"
-	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
+	res := newResolver(testDeps(Deps{Store: fs}))
 
 	if label := res.modpackBackendLabel(); strings.Contains(label, secret) {
 		t.Fatalf("modpack backend label %q leaked the credential", label)

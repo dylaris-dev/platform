@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/corestorage"
 
 	"dylaris-core/models"
@@ -81,7 +80,7 @@ func TestUpdateConnection_RefusesARebindOnTheWire(t *testing.T) {
 		AccessKey: "AKIAREAL",
 		SecretSet: true,
 	}}
-	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageConnectionsHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(storageConnectionRequest{
 		Name: "nas", Provider: "s3",

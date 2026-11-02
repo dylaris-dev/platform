@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/corestorage"
 
 	"dylaris-core/models"
@@ -65,7 +64,7 @@ func storedConnection(cfg corestorage.ConnectionConfig, accessKey string) *model
 func TestDraftTest_RefusesToPointTheStoredSecretElsewhere(t *testing.T) {
 	stored := corestorage.ConnectionConfig{Endpoint: "https://fsn1.example.com", Bucket: "backups"}
 	fs := &connFakeStore{existing: storedConnection(stored, "AKIA")}
-	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageConnectionsHandler(testDeps(Deps{Store: fs}))
 
 	attacker := corestorage.ConnectionConfig{Endpoint: "https://collector.attacker.example", Bucket: "backups"}
 	rw := httptest.NewRecorder()
@@ -85,7 +84,7 @@ func TestDraftTest_RefusesToPointTheStoredSecretElsewhere(t *testing.T) {
 func TestDraftTest_RefusesAChangedAccessKeyWithoutASecret(t *testing.T) {
 	cfg := corestorage.ConnectionConfig{Endpoint: "https://fsn1.example.com", Bucket: "backups"}
 	fs := &connFakeStore{existing: storedConnection(cfg, "AKIA-OLD")}
-	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageConnectionsHandler(testDeps(Deps{Store: fs}))
 
 	rw := httptest.NewRecorder()
 	h.TestDraftConnection(rw, httptest.NewRequest(http.MethodPost, "/api/storage-connections/test",
@@ -101,7 +100,7 @@ func TestDraftTest_RefusesAChangedAccessKeyWithoutASecret(t *testing.T) {
 // about the actual mistake.
 func TestDraftTest_NewConnectionMustCarryItsOwnSecret(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageConnectionsHandler(testDeps(Deps{Store: fs}))
 
 	cfg := corestorage.ConnectionConfig{Endpoint: "https://fsn1.example.com", Bucket: "b"}
 	rw := httptest.NewRecorder()
@@ -120,7 +119,7 @@ func TestDraftTest_NewConnectionMustCarryItsOwnSecret(t *testing.T) {
 // gets. A credential-bearing URL is the case that check exists for.
 func TestDraftTest_RejectsACredentialBearingEndpoint(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageConnectionsHandler(testDeps(Deps{Store: fs}))
 
 	cfg := corestorage.ConnectionConfig{Endpoint: "https://user:pass@fsn1.example.com", Bucket: "b"}
 	rw := httptest.NewRecorder()
@@ -134,7 +133,7 @@ func TestDraftTest_RejectsACredentialBearingEndpoint(t *testing.T) {
 
 func TestDraftTest_RejectsAnUnsupportedProvider(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageConnectionsHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(map[string]any{"provider": "ftp"})
 	rw := httptest.NewRecorder()
@@ -156,7 +155,7 @@ func TestDraftTest_RejectsAnUnsupportedProvider(t *testing.T) {
 func TestDraftTest_AllowsTheStoredSecretWhereItAlreadyPoints(t *testing.T) {
 	cfg := corestorage.ConnectionConfig{Endpoint: "https://fsn1.example.com"}
 	fs := &connFakeStore{existing: storedConnection(cfg, "AKIA")}
-	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewStorageConnectionsHandler(testDeps(Deps{Store: fs}))
 
 	rw := httptest.NewRecorder()
 	h.TestDraftConnection(rw, httptest.NewRequest(http.MethodPost, "/api/storage-connections/test",

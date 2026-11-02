@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -57,7 +55,7 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 	cases := []struct {
 		name     string
 		storeErr error
-		call     func(h *handlers.AppState, rw http.ResponseWriter, req *http.Request)
+		call     func(h Deps, rw http.ResponseWriter, req *http.Request)
 		method   string
 		path     string
 		body     []byte
@@ -66,7 +64,7 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 		{
 			name:     "storage connection create, duplicate name",
 			storeErr: store.ErrNameTaken,
-			call: func(s *handlers.AppState, rw http.ResponseWriter, r *http.Request) {
+			call: func(s Deps, rw http.ResponseWriter, r *http.Request) {
 				NewStorageConnectionsHandler(s).CreateConnection(rw, r)
 			},
 			method: http.MethodPost, path: "/api/storage-connections", body: connectionBody(),
@@ -75,7 +73,7 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 		{
 			name:     "storage connection rename, duplicate name",
 			storeErr: store.ErrNameTaken,
-			call: func(s *handlers.AppState, rw http.ResponseWriter, r *http.Request) {
+			call: func(s Deps, rw http.ResponseWriter, r *http.Request) {
 				NewStorageConnectionsHandler(s).UpdateConnection(rw, r)
 			},
 			method: http.MethodPatch, path: "/api/storage-connections/5", body: connectionBody(),
@@ -84,7 +82,7 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 		{
 			name:     "storage connection patch, ghost id",
 			storeErr: sql.ErrNoRows,
-			call: func(s *handlers.AppState, rw http.ResponseWriter, r *http.Request) {
+			call: func(s Deps, rw http.ResponseWriter, r *http.Request) {
 				NewStorageConnectionsHandler(s).UpdateConnection(rw, r)
 			},
 			method: http.MethodPatch, path: "/api/storage-connections/9999", body: connectionBody(),
@@ -94,7 +92,7 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			state := withCoreStorage(&handlers.AppState{Store: &nameConflictStore{err: tc.storeErr}})
+			state := testDeps(Deps{Store: &nameConflictStore{err: tc.storeErr}})
 			req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(tc.body))
 			req = mux.SetURLVars(req, map[string]string{"id": "5"})
 			rw := httptest.NewRecorder()

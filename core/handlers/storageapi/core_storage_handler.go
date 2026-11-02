@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/validate"
@@ -25,11 +23,11 @@ var pathOnContainerRootFS = validate.PathIsOnContainerRootFS
 
 // CoreStorageHandler serves the shared Core file storage config CRUD + probe.
 type CoreStorageHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewCoreStorageHandler(state *handlers.AppState) *CoreStorageHandler {
-	return &CoreStorageHandler{state: state}
+func NewCoreStorageHandler(d Deps) *CoreStorageHandler {
+	return &CoreStorageHandler{d: d}
 }
 
 // GetConfig GET /api/settings/core-storage - PANEL settings.read (RequireCap
@@ -41,12 +39,12 @@ func NewCoreStorageHandler(state *handlers.AppState) *CoreStorageHandler {
 // online, which the panel's round-progress counter uses as its expected
 // total once a save starts.
 func (h *CoreStorageHandler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := h.state.CoreStorage.LoadConfig()
+	cfg := h.d.CoreStorage.LoadConfig()
 	cfg.S3SecretKey = "" // write-only; never emitted
 
 	// The instance ids are NOT emitted, only the count. They are hostnames, and
 	// the count alone is everything the form has to render.
-	online, err := h.state.CoreStorage.CountOnlineCores(r.Context())
+	online, err := h.d.CoreStorage.CountOnlineCores(r.Context())
 	if err != nil {
 		// A hint the UI could not compute is not fatal to the response: the
 		// counter just starts from 0 until a save round supplies a live total.
@@ -78,14 +76,14 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 		req.Backend = "s3"
 	}
 
-	existing := h.state.CoreStorage.LoadConfig()
+	existing := h.d.CoreStorage.LoadConfig()
 	effective := corestorage.MergeCandidate(req, existing)
 
 	if effective.ConnectionID != 0 {
 		// The connection supplies the credentials, so validate the RESOLVED
 		// connection rather than the inline s3 fields (which the operator may
 		// deliberately leave blank).
-		conn, err := h.state.Store.GetStorageConnection(effective.ConnectionID)
+		conn, err := h.d.Store.GetStorageConnection(effective.ConnectionID)
 		if err != nil {
 			httpx.SendJSONError(w, "Selected storage connection not found", http.StatusBadRequest)
 			return
@@ -100,7 +98,7 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 		// branch below. connCfg, not effective: effective's inline s3 fields
 		// are typically blank for a connection-backed save, and the round
 		// needs the connection's real credentials to actually probe with.
-		if err := h.state.CoreStorage.CheckSharedReachable(r.Context(), connCfg); err != nil {
+		if err := h.d.CoreStorage.CheckSharedReachable(r.Context(), connCfg); err != nil {
 			h.sendReachRefusal(w, err)
 			return
 		}
@@ -112,7 +110,7 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 		// After validation, before any write: a refused save must never leave
 		// a half-applied config behind. The round PROVES shared access rather
 		// than inferring it from a Core count, so it also covers s3.
-		if err := h.state.CoreStorage.CheckSharedReachable(r.Context(), effective); err != nil {
+		if err := h.d.CoreStorage.CheckSharedReachable(r.Context(), effective); err != nil {
 			h.sendReachRefusal(w, err)
 			return
 		}
@@ -122,7 +120,7 @@ func (h *CoreStorageHandler) SaveConfig(w http.ResponseWriter, r *http.Request) 
 	// STORED secret whenever the request omitted the backend, so passing the
 	// merged value would turn a secret-only rotation into a no-op that still
 	// answers 200.
-	if err := h.state.CoreStorage.PersistConfig(effective, req.S3SecretKey); err != nil {
+	if err := h.d.CoreStorage.PersistConfig(effective, req.S3SecretKey); err != nil {
 		// The wrapped error carries the raw store error; the response names
 		// only the settings key, since settings.write is a delegatable panel
 		// capability and DB error text is not for it.
@@ -174,7 +172,7 @@ func (h *CoreStorageHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	candidate = corestorage.NormalizeCandidate(candidate)
-	effective := corestorage.MergeCandidate(candidate, h.state.CoreStorage.LoadConfig())
+	effective := corestorage.MergeCandidate(candidate, h.d.CoreStorage.LoadConfig())
 
 	if err := corestorage.Validate(effective); err != nil {
 		respond(false, err.Error())
@@ -253,12 +251,12 @@ func (h *CoreStorageHandler) sendReachRefusal(w http.ResponseWriter, err error) 
 // have already recorded in Redis.
 func (h *CoreStorageHandler) StorageReachStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	faults, err := storagereach.Faults(ctx, h.state.Redis)
+	faults, err := storagereach.Faults(ctx, h.d.Redis)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not read storage health", http.StatusServiceUnavailable)
 		return
 	}
-	online, err := services.OnlineCoreIDs(ctx, h.state.Redis)
+	online, err := services.OnlineCoreIDs(ctx, h.d.Redis)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not read the online Core set", http.StatusServiceUnavailable)
 		return

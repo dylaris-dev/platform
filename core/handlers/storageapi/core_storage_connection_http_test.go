@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services/corestorage"
 
@@ -51,7 +50,7 @@ func TestSaveConfig_ConnectionValidatesConnectionNotInline(t *testing.T) {
 	// A single online Core so checkSharedStorageReachable's short-circuit
 	// applies; this test is about the merge/validation behaviour, not the
 	// reachability round.
-	h := NewCoreStorageHandler(withCoreStorage(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")}))
+	h := NewCoreStorageHandler(testDeps(Deps{Store: fs, Redis: multiCoreRedis(t, "core-a")}))
 
 	// backend s3 + a connection, but the inline s3 fields are all blank.
 	body, _ := json.Marshal(corestorage.Config{Backend: "s3", ConnectionID: 5})
@@ -71,7 +70,7 @@ func TestSaveConfig_ConnectionValidatesConnectionNotInline(t *testing.T) {
 // merge.
 func TestSaveConfig_BlankBackendWithConnectionStillSaves(t *testing.T) {
 	fs := newCoreStorageConnFakeStore(validConnection(), nil)
-	h := NewCoreStorageHandler(withCoreStorage(&handlers.AppState{Store: fs, Redis: multiCoreRedis(t, "core-a")}))
+	h := NewCoreStorageHandler(testDeps(Deps{Store: fs, Redis: multiCoreRedis(t, "core-a")}))
 
 	body, _ := json.Marshal(corestorage.Config{ConnectionID: 5}) // no Backend
 	rw := httptest.NewRecorder()
@@ -87,7 +86,7 @@ func TestSaveConfig_BlankBackendWithConnectionStillSaves(t *testing.T) {
 
 func TestSaveConfig_MissingConnectionRejected(t *testing.T) {
 	fs := newCoreStorageConnFakeStore(nil, errors.New("no such row"))
-	h := NewCoreStorageHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewCoreStorageHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(corestorage.Config{Backend: "s3", ConnectionID: 9})
 	rw := httptest.NewRecorder()
@@ -105,7 +104,7 @@ func TestSaveConfig_ConnectionWithoutSecretRejected(t *testing.T) {
 	conn := validConnection()
 	conn.SecretAccessKey = "" // e.g. secret was never set, or decrypt failed
 	fs := newCoreStorageConnFakeStore(conn, nil)
-	h := NewCoreStorageHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewCoreStorageHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(corestorage.Config{Backend: "s3", ConnectionID: 5})
 	rw := httptest.NewRecorder()

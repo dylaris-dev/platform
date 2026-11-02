@@ -19,7 +19,9 @@ import (
 // off" pointer a feature silently off.
 //
 // The rule: in main(), no appState field is assigned after buildAPIRouter is
-// called; inside buildAPIRouter, no field is assigned after its first read.
+// called; in both functions, no field is assigned after its first read. main
+// hands fields to services before the router too (the storage migration
+// resolver copies CoreStorage), and a read before the assignment is a nil.
 func TestNoAppStateFieldIsSetAfterItIsCopied(t *testing.T) {
 	fset := token.NewFileSet()
 	for _, c := range []struct{ file, fn string }{{"main.go", "main"}, {"routes.go", "buildAPIRouter"}} {
@@ -74,7 +76,6 @@ func TestNoAppStateFieldIsSetAfterItIsCopied(t *testing.T) {
 				if w.pos > routerBuilt {
 					t.Errorf("%s: appState.%s is assigned after buildAPIRouter copied the state into Deps", fset.Position(w.pos), w.field)
 				}
-				continue
 			}
 			if p, seen := firstRead[w.field]; seen && w.pos > p {
 				t.Errorf("%s: appState.%s is assigned after %s already read it", fset.Position(w.pos), w.field, fset.Position(p))

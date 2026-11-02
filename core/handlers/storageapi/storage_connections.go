@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/corestorage"
 
 	"dylaris-core/handlers/httpx"
@@ -25,11 +24,11 @@ import (
 // StorageConnectionHandler in storage_connection.go is a different thing (the
 // core-storage backend health snapshot), so the two must not be conflated.
 type StorageConnectionsHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewStorageConnectionsHandler(state *handlers.AppState) *StorageConnectionsHandler {
-	return &StorageConnectionsHandler{state: state}
+func NewStorageConnectionsHandler(d Deps) *StorageConnectionsHandler {
+	return &StorageConnectionsHandler{d: d}
 }
 
 // storageConnectionRequest is the write DTO. The secret arrives here (a plain
@@ -118,7 +117,7 @@ func storageConnectionSecretRebound(req storageConnectionRequest, existing *mode
 // response: SecretAccessKey is json:"-" and the store does not decrypt on the
 // list path, so only the SecretSet flag reports that one is stored.
 func (h *StorageConnectionsHandler) ListConnections(w http.ResponseWriter, r *http.Request) {
-	conns, err := h.state.Store.ListStorageConnections()
+	conns, err := h.d.Store.ListStorageConnections()
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -156,7 +155,7 @@ func (h *StorageConnectionsHandler) CreateConnection(w http.ResponseWriter, r *h
 		AccessKey:       req.AccessKey,
 		SecretAccessKey: req.SecretAccessKey,
 	}
-	id, err := h.state.Store.CreateStorageConnection(&conn)
+	id, err := h.d.Store.CreateStorageConnection(&conn)
 	if err != nil {
 		if errors.Is(err, store.ErrNameTaken) {
 			httpx.SendJSONError(w, "A storage connection with that name already exists", 409)
@@ -191,7 +190,7 @@ func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *h
 		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
-	existing, gerr := h.state.Store.GetStorageConnection(id)
+	existing, gerr := h.d.Store.GetStorageConnection(id)
 	if gerr != nil {
 		if errors.Is(gerr, sql.ErrNoRows) {
 			httpx.SendJSONError(w, "Storage connection not found", 404)
@@ -211,7 +210,7 @@ func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *h
 		Config:    req.Config,
 		AccessKey: req.AccessKey,
 	}
-	if err := h.state.Store.UpdateStorageConnection(&conn); err != nil {
+	if err := h.d.Store.UpdateStorageConnection(&conn); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNameTaken):
 			httpx.SendJSONError(w, "A storage connection with that name already exists", 409)
@@ -223,14 +222,14 @@ func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *h
 		return
 	}
 	if req.SecretAccessKey != "" {
-		if err := h.state.Store.SetStorageConnectionSecret(id, req.SecretAccessKey); err != nil {
+		if err := h.d.Store.SetStorageConnectionSecret(id, req.SecretAccessKey); err != nil {
 			httpx.SendJSONError(w, err.Error(), 500)
 			return
 		}
 	}
 	// A modpack setting can point at this connection, and the cached "is modpack
 	// storage configured" answer is what the panel gates the create button on.
-	h.state.CoreStorage.InvalidateModpack()
+	h.d.CoreStorage.InvalidateModpack()
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -251,26 +250,26 @@ func (h *StorageConnectionsHandler) DeleteConnection(w http.ResponseWriter, r *h
 		httpx.SendJSONError(w, inUse, http.StatusConflict)
 		return
 	}
-	if err := h.state.Store.DeleteStorageConnection(id); err != nil {
+	if err := h.d.Store.DeleteStorageConnection(id); err != nil {
 		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
 	// A modpack setting can point at this connection, and the cached "is modpack
 	// storage configured" answer is what the panel gates the create button on.
-	h.state.CoreStorage.InvalidateModpack()
+	h.d.CoreStorage.InvalidateModpack()
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 // templatesUse names why templates still need connection id, or "" when none do.
 func (h *StorageConnectionsHandler) templatesUse(id int) (string, error) {
-	n, err := h.state.Store.CountTemplatesOnStorageConnection(id)
+	n, err := h.d.Store.CountTemplatesOnStorageConnection(id)
 	if err != nil {
 		return "", err
 	}
 	if n > 0 {
 		return fmt.Sprintf("%d template(s) store their files on this connection. Delete those templates first.", n), nil
 	}
-	v, err := h.state.Store.GetSetting(services.TemplatesStorageConnectionKey)
+	v, err := h.d.Store.GetSetting(services.TemplatesStorageConnectionKey)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
@@ -291,7 +290,7 @@ func (h *StorageConnectionsHandler) TestConnection(w http.ResponseWriter, r *htt
 		httpx.SendJSONError(w, "Invalid ID", 400)
 		return
 	}
-	conn, err := h.state.Store.GetStorageConnection(id)
+	conn, err := h.d.Store.GetStorageConnection(id)
 	if err != nil {
 		httpx.SendJSONError(w, "Connection not found", 404)
 		return
@@ -391,7 +390,7 @@ func (h *StorageConnectionsHandler) TestDraftConnection(w http.ResponseWriter, r
 			httpx.SendJSONError(w, errStorageConnectionTestNeedsSecret.Error(), http.StatusBadRequest)
 			return
 		}
-		existing, err := h.state.Store.GetStorageConnection(req.ID)
+		existing, err := h.d.Store.GetStorageConnection(req.ID)
 		if err != nil {
 			httpx.SendJSONError(w, "Connection not found", http.StatusNotFound)
 			return

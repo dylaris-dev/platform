@@ -696,6 +696,15 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		GRPCTLSFingerprint: appState.GRPCTLSFingerprint,
 		LongTermRead:       longTermRead(appState.Metrics),
 	}
+	storageapiDeps := storageapi.Deps{
+		Store:            appState.Store,
+		Redis:            appState.Redis,
+		Events:           appState.Events,
+		GRPCRegistry:     appState.GRPCRegistry,
+		CoreStorage:      appState.CoreStorage,
+		StorageMigration: appState.StorageMigration,
+		StorageStatus:    appState.StorageStatus,
+	}
 	templatesDeps := templates.Deps{
 		Store:        appState.Store,
 		Authz:        appState.Authz,
@@ -717,8 +726,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	authzHandler := handlers.NewAuthzHandler()
 	avatarHandler := handlers.NewAvatarHandler()
 	permissionsModeHandler := handlers.NewPermissionsModeHandler(appState)
-	coreStorageHandler := storageapi.NewCoreStorageHandler(appState)
-	storageConnectionHandler := storageapi.NewStorageConnectionHandler(appState)
+	coreStorageHandler := storageapi.NewCoreStorageHandler(storageapiDeps)
+	storageConnectionHandler := storageapi.NewStorageConnectionHandler(storageapiDeps)
 
 	// Warp: external/home node WireGuard bridge (multi-hub registry).
 	// NewWarpService needs EnrollPeerTx, which the store.Store interface
@@ -789,7 +798,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	timezoneHandler := handlers.NewTimezoneHandler(appState)
 	backupHandler := backup.NewBackupHandler(backupDeps)
 	platformBackupHandler := backup.NewPlatformBackupHandler(backupDeps)
-	storageConnectionsHandler := storageapi.NewStorageConnectionsHandler(appState)
+	storageConnectionsHandler := storageapi.NewStorageConnectionsHandler(storageapiDeps)
 	regionsHandler := handlers.NewRegionsHandler(appState)
 	authSettingsHandler := handlers.NewAuthSettingsHandler(appState)
 	registrationHandler := handlers.NewRegistrationHandler(appState)
@@ -836,7 +845,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	plansHandler := handlers.NewPlansHandler(appState)
 	healthHandler := handlers.NewHealthHandler(appState)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
-	storageMigrationHandler := storageapi.NewStorageMigrationHandler(appState)
+	storageMigrationHandler := storageapi.NewStorageMigrationHandler(storageapiDeps)
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
 	nodeEnrollHandler := nodes.NewNodeEnrollHandler(nodesDeps)
 	nodeAdmissionHandler := nodes.NewNodeAdmissionHandler(nodesDeps)
