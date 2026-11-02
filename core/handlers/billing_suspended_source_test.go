@@ -32,7 +32,14 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 		"DeleteServer":    "deleting frees resources and is how a cut-off tenant leaves; blocking it would trap them",
 		"DeleteSubServer": "same as DeleteServer, one directory down",
 		"startBackupRun":  "the SCHEDULE keeps protecting a suspended tenant's data for the retention window; its on-demand caller TriggerJob carries the guard",
+		// reaches the node only through startBackupRun (see indirectDispatch)
+		"startBackupRunForPlatform": "the operator's platform-wide backup run, not the tenant's; like the schedule it protects data rather than serving the tenant",
 	}
+	// Helpers that dispatch on the queue for their caller. Calling one IS
+	// sending a command, so the caller needs the guard: without this,
+	// TriggerJob could drop its guard and this test would not notice, because
+	// the SendCommand it causes sits in the exempt startBackupRun.
+	indirectDispatch := map[string]bool{"startBackupRun": true}
 
 	// Every package under handlers/, at any depth, and services/: a dispatch
 	// that moved into a subpackage or behind a service is still a dispatch.
@@ -62,6 +69,9 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 					if strings.HasPrefix(fun.Sel.Name, "Send") && isQueueReceiver(fun.X) {
 						sends = true
 					}
+					if indirectDispatch[fun.Sel.Name] {
+						sends = true
+					}
 					// the guard is reached through whatever package holds it
 					// (handlers.RefuseIfSuspended today); the set of names is
 					// what stays explicit
@@ -71,6 +81,9 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 				case *ast.Ident:
 					if suspensionGuards[fun.Name] {
 						guards = true
+					}
+					if indirectDispatch[fun.Name] {
+						sends = true
 					}
 				}
 				return true
@@ -107,7 +120,7 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 	// Floors, measured: a move that hides some dispatch sites from this walk
 	// (but not all) would otherwise still pass. A change that really adds or
 	// removes a dispatching function updates the numbers in the same commit.
-	const wantChecked, wantGuarded = 16, 13
+	const wantChecked, wantGuarded = 18, 14
 	if checked != wantChecked || guarded != wantGuarded {
 		t.Errorf("saw %d dispatching functions, %d guarded; the pin expects %d and %d. "+
 			"If dispatch moved somewhere this walk does not reach, the guard has to move with it; "+
