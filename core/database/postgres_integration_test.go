@@ -71,6 +71,11 @@ func testDBConfig(t *testing.T) config.Config {
 		// Plain Postgres, not TimescaleDB: server_stats is then created as an
 		// ordinary table, so no extension is needed in the test image.
 		DBType: "postgres",
+		// InitDB applies the pool settings as given; a zero MaxIdle keeps no
+		// idle connection, so every query would open a new session and the
+		// package would run past the CI timeout.
+		DBMaxOpenConns: 10,
+		DBMaxIdleConns: 10,
 	}
 }
 
