@@ -11,6 +11,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"dylaris-core/services/corestorage"
 	"dylaris-core/storage"
 )
 
@@ -134,11 +135,11 @@ func TestRedisComponent_DistinguishesAuthFromUnreachable(t *testing.T) {
 // only thing that can move the status code is Redis.
 func newRedisHealthz(t *testing.T, client *redis.Client) *HealthHandler {
 	t.Helper()
+	fs := &healthzFakeStore{coreStorageFakeStore{values: map[string]string{}}}
 	return &HealthHandler{state: &AppState{
-		Store:       &healthzFakeStore{coreStorageFakeStore{values: map[string]string{}}},
+		Store:       fs,
 		Redis:       client,
-		StorageGate: storage.NewGate(),
-		StorageS3:   storage.NewS3Resilience(),
+		CoreStorage: &corestorage.Manager{Store: fs, Redis: client, Gate: storage.NewGate(), S3: storage.NewS3Resilience()},
 	}}
 }
 

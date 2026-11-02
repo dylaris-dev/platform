@@ -42,7 +42,7 @@ func recipientsOf(sent []models.Notification) []string {
 // stayed at zero.
 func TestOpeningATicketTellsSupport(t *testing.T) {
 	fs := &staffNotifyStore{staff: []string{"admin-1", "support-1", "author"}}
-	state := &handlers.AppState{Store: fs}
+	state := withCoreStorage(&handlers.AppState{Store: fs})
 
 	notifyTicketStaff(state, "author", 7, "Invoice is missing")
 
@@ -65,7 +65,7 @@ func TestOpeningATicketTellsSupport(t *testing.T) {
 // admin on a small platform that is the whole recipient list.
 func TestOpeningATicketNotifiesNobodyWhenTheAuthorIsTheOnlyStaff(t *testing.T) {
 	fs := &staffNotifyStore{staff: []string{"admin-1"}}
-	notifyTicketStaff(&handlers.AppState{Store: fs}, "admin-1", 8, "Note to self")
+	notifyTicketStaff(withCoreStorage(&handlers.AppState{Store: fs}), "admin-1", 8, "Note to self")
 	if len(fs.sent) != 0 {
 		t.Fatalf("sent %d notification(s) to %v; want none", len(fs.sent), recipientsOf(fs.sent))
 	}
@@ -75,7 +75,7 @@ func TestOpeningATicketNotifiesNobodyWhenTheAuthorIsTheOnlyStaff(t *testing.T) {
 // telling fewer people beats telling nobody.
 func TestAFailedStaffLookupStillNotifiesTheParticipants(t *testing.T) {
 	fs := &staffNotifyStore{staffErr: errors.New("db down")}
-	got := withTicketStaff(&handlers.AppState{Store: fs}, []string{"customer-1"}, "actor")
+	got := withTicketStaff(withCoreStorage(&handlers.AppState{Store: fs}), []string{"customer-1"}, "actor")
 	if len(got) != 1 || got[0] != "customer-1" {
 		t.Fatalf("recipients = %v, want the participants that were already known", got)
 	}
@@ -85,7 +85,7 @@ func TestAFailedStaffLookupStillNotifiesTheParticipants(t *testing.T) {
 // one event, and must still drop the actor.
 func TestStaffAreMergedWithoutDuplicatesOrTheActor(t *testing.T) {
 	fs := &staffNotifyStore{staff: []string{"support-1", "admin-1", "actor"}}
-	got := withTicketStaff(&handlers.AppState{Store: fs}, []string{"customer-1", "support-1", "actor", ""}, "actor")
+	got := withTicketStaff(withCoreStorage(&handlers.AppState{Store: fs}), []string{"customer-1", "support-1", "actor", ""}, "actor")
 	sort.Strings(got)
 	want := []string{"admin-1", "customer-1", "support-1"}
 	if len(got) != len(want) {

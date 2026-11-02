@@ -8,6 +8,7 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 )
 
@@ -88,7 +89,8 @@ func TestRequireCoreStorageConfigured(t *testing.T) {
 
 	t.Run("blocks when unconfigured", func(t *testing.T) {
 		called = false
-		st := &AppState{Store: &gateFakeStore{kv: map[string]string{}}}
+		fs := &gateFakeStore{kv: map[string]string{}}
+		st := withCoreStorage(&AppState{Store: fs})
 		rw := httptest.NewRecorder()
 		st.RequireCoreStorageConfigured(inner)(rw, httptest.NewRequest(http.MethodPost, "/x", nil))
 		if called {
@@ -101,11 +103,12 @@ func TestRequireCoreStorageConfigured(t *testing.T) {
 
 	t.Run("passes when configured (path)", func(t *testing.T) {
 		called = false
-		st := &AppState{Store: &gateFakeStore{kv: map[string]string{
-			keyCoreStorageBackend:     "path",
-			keyCoreStoragePath:        "/mnt/shared",
-			keyCoreStoragePathConfirm: "true",
-		}}}
+		fs := &gateFakeStore{kv: map[string]string{
+			corestorage.KeyBackend:     "path",
+			corestorage.KeyPath:        "/mnt/shared",
+			corestorage.KeyPathConfirm: "true",
+		}}
+		st := withCoreStorage(&AppState{Store: fs})
 		rw := httptest.NewRecorder()
 		st.RequireCoreStorageConfigured(inner)(rw, httptest.NewRequest(http.MethodPost, "/x", nil))
 		if !called {
@@ -120,6 +123,7 @@ func TestFeatureSettings_RefusesTicketsWhenStorageUnconfigured(t *testing.T) {
 			Store:  &gateFakeStore{kv: map[string]string{}},
 			Events: services.NewSystemEventsPublisher(nil),
 		}
+		st.CoreStorage = &corestorage.Manager{Store: st.Store, Events: st.Events}
 		st.FeatureFlags = services.NewFeatureFlags(st.Store)
 		return NewFeatureSettingsHandler(st)
 	}

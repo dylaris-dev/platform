@@ -138,7 +138,7 @@ func TestOnlyAnAdminMakesAnAdmin(t *testing.T) {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(`{"username":"sneaky","password":"correct-horse-battery","isAdmin":true}`))
 		r = r.WithContext(context.WithValue(r.Context(), "isAdmin", false))
-		NewUserHandler(&handlers.AppState{Store: fake}).CreateUser(rec, r)
+		NewUserHandler(withCoreStorage(&handlers.AppState{Store: fake})).CreateUser(rec, r)
 		if rec.Code != http.StatusForbidden || fake.created != nil {
 			t.Fatalf("status = %d, created = %v", rec.Code, fake.created)
 		}
@@ -188,7 +188,7 @@ func TestTheAccountGuardAfterReview(t *testing.T) {
 	})
 	t.Run("a target whose role cannot be read is not powerless", func(t *testing.T) {
 		fs := newGuardFakeStore()
-		st := &handlers.AppState{Store: &faultyRoleStore{guardFakeStore: fs, failFor: guardStronger}, Authz: authz.NewResolver(fs)}
+		st := withCoreStorage(&handlers.AppState{Store: &faultyRoleStore{guardFakeStore: fs, failFor: guardStronger}, Authz: authz.NewResolver(fs)})
 		target, _ := fs.GetUserByID(guardStronger)
 		if access.MayManageAccount(st.Store, st.Authz, guardRequest("GET", guardStaff, false, guardStronger, ""), target) {
 			t.Error("a role lookup error made a stronger account manageable")
@@ -224,7 +224,7 @@ func TestTheAccountGuardAfterReview(t *testing.T) {
 		fake := &emailTakenCreateStore{}
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(`{"username":"puppet","password":"correct-horse-battery","email":"admin@example.com"}`))
-		NewUserHandler(&handlers.AppState{Store: fake}).CreateUser(rec, r.WithContext(context.WithValue(r.Context(), "isAdmin", true)))
+		NewUserHandler(withCoreStorage(&handlers.AppState{Store: fake})).CreateUser(rec, r.WithContext(context.WithValue(r.Context(), "isAdmin", true)))
 		if rec.Code != http.StatusConflict || fake.created != nil {
 			t.Fatalf("status = %d, created = %v", rec.Code, fake.created)
 		}
@@ -282,7 +282,7 @@ func TestAnAdminPasswordResetRevokesTheAccountsAPIKeys(t *testing.T) {
 	base := newGuardFakeStore()
 	base.users[guardAdmin].Password = handlertest.ReauthHash
 	fs := &keyedGuardStore{guardFakeStore: base, keys: []models.APIKey{{ID: 7}, {ID: 8}}}
-	h := NewUserHandler(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
+	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}))
 	rec := httptest.NewRecorder()
 	h.ResetUserPassword(rec, guardRequest("PUT", guardAdmin, true, guardMember,
 		`{"password":"a-brand-new-password","reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))

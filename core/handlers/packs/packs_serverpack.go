@@ -47,7 +47,7 @@ const (
 // paths) still runs BEFORE its entry is written, so a rejected entry aborts the
 // stream without its bytes ever reaching the client.
 func (h *PacksHandler) renderServerPack(ctx context.Context, content []models.BuildContentEntry, dst io.Writer) error {
-	prov, err := h.state.BuildModpackStorageProvider()
+	prov, err := h.state.CoreStorage.BuildModpackProvider()
 	if err != nil {
 		return err
 	}

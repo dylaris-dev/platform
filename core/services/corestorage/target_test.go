@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"context"
@@ -32,13 +32,13 @@ func (f *coreStorageTargetFakeStore) GetSetting(k string) (string, error) { retu
 func (f *coreStorageTargetFakeStore) SetSetting(k, v string) error        { f.kv[k] = v; return nil }
 
 func TestCoreStorageConfigFromTarget_MapsEveryFieldAndTrims(t *testing.T) {
-	got := coreStorageConfigFromTarget(services.StorageTargetConfig{
+	got := ConfigFromTarget(services.StorageTargetConfig{
 		Backend: " s3 ", Path: " /mnt/new ", PathConfirmed: true,
 		S3Endpoint: " https://new.example.com ", S3Bucket: " dylaris-new ",
 		S3Region: "eu-central-1", S3AccessKey: " AKIA ", S3SecretKey: " sec ",
 		S3PathStyle: true, S3Prefix: "prod",
 	})
-	want := CoreStorageConfig{
+	want := Config{
 		Backend: "s3", Path: "/mnt/new", PathConfirmed: true,
 		S3Endpoint: "https://new.example.com", S3Bucket: "dylaris-new",
 		S3Region: "eu-central-1", S3AccessKey: "AKIA", S3SecretKey: "sec",
@@ -48,25 +48,25 @@ func TestCoreStorageConfigFromTarget_MapsEveryFieldAndTrims(t *testing.T) {
 	want.S3SecretSet = false
 	got.S3SecretSet = false
 	if got != want {
-		t.Fatalf("coreStorageConfigFromTarget = %+v, want %+v", got, want)
+		t.Fatalf("ConfigFromTarget = %+v, want %+v", got, want)
 	}
 }
 
 func TestBuildTargetStorageProvider_RejectsAnInvalidConfigBeforeAnythingElse(t *testing.T) {
 	cases := []struct {
 		name string
-		cfg  CoreStorageConfig
+		cfg  Config
 	}{
-		{"s3 without a bucket", CoreStorageConfig{Backend: "s3", S3AccessKey: "k", S3SecretKey: "s"}},
-		{"s3 without credentials", CoreStorageConfig{Backend: "s3", S3Bucket: "b"}},
-		{"path that is relative", CoreStorageConfig{Backend: "path", Path: "relative/dir", PathConfirmed: true}},
-		{"path that is not confirmed", CoreStorageConfig{Backend: "path", Path: "/mnt/new"}},
-		{"unknown backend", CoreStorageConfig{Backend: "webdav", Path: "/mnt/new"}},
+		{"s3 without a bucket", Config{Backend: "s3", S3AccessKey: "k", S3SecretKey: "s"}},
+		{"s3 without credentials", Config{Backend: "s3", S3Bucket: "b"}},
+		{"path that is relative", Config{Backend: "path", Path: "relative/dir", PathConfirmed: true}},
+		{"path that is not confirmed", Config{Backend: "path", Path: "/mnt/new"}},
+		{"unknown backend", Config{Backend: "webdav", Path: "/mnt/new"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := buildTargetStorageProvider(c.cfg, "library"); err == nil {
-				t.Fatal("buildTargetStorageProvider err = nil, want the config rejected before a provider is built")
+			if _, err := BuildTargetProvider(c.cfg, "library"); err == nil {
+				t.Fatal("BuildTargetProvider err = nil, want the config rejected before a provider is built")
 			}
 		})
 	}
@@ -77,16 +77,16 @@ func TestBuildTargetStorageProvider_BuildsAWorkingUnsavedPathProvider(t *testing
 	// still yields a usable provider, exactly as TestConnection already does.
 	//
 	// handlertest.ConnectionProbeDir is used
-	// instead of a raw t.TempDir(): buildTargetStorageProvider runs
-	// validateCoreStorageConfig first, which enforces a deliberately
+	// instead of a raw t.TempDir(): BuildTargetProvider runs
+	// Validate first, which enforces a deliberately
 	// Linux-only absolute-path check ("/...") that a real Windows temp dir
 	// (e.g. "C:\Users\...") fails, for the exact reason documented on that
 	// helper.
 	root := handlertest.ConnectionProbeDir(t)
-	prov, err := buildTargetStorageProvider(
-		CoreStorageConfig{Backend: "path", Path: root, PathConfirmed: true}, "library")
+	prov, err := BuildTargetProvider(
+		Config{Backend: "path", Path: root, PathConfirmed: true}, "library")
 	if err != nil {
-		t.Fatalf("buildTargetStorageProvider: %v", err)
+		t.Fatalf("BuildTargetProvider: %v", err)
 	}
 	if err := prov.WriteFile(context.Background(), "a.jar", strings.NewReader("hello")); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -119,7 +119,7 @@ func TestEffectiveS3Prefix(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := effectiveS3Prefix(CoreStorageConfig{Backend: "s3", S3Prefix: c.prefix}, c.sub)
+			got := effectiveS3Prefix(Config{Backend: "s3", S3Prefix: c.prefix}, c.sub)
 			if got != c.want {
 				t.Fatalf("effectiveS3Prefix = %q, want %q", got, c.want)
 			}
@@ -128,19 +128,19 @@ func TestEffectiveS3Prefix(t *testing.T) {
 }
 
 func TestEnsureDistinctCoreStorageLocation_S3(t *testing.T) {
-	src := CoreStorageConfig{
+	src := Config{
 		Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "dylaris",
 		S3Prefix: "prod", S3AccessKey: "k", S3SecretKey: "s",
 	}
 	cases := []struct {
 		name    string
-		tgt     CoreStorageConfig
+		tgt     Config
 		wantErr bool
 	}{
 		{"identical endpoint + bucket + prefix", src, true},
 		{
 			"same triple written with stray slashes",
-			CoreStorageConfig{Backend: "s3", S3Endpoint: "https://s3.example.com/", S3Bucket: "dylaris", S3Prefix: "/prod/", S3AccessKey: "k", S3SecretKey: "s"},
+			Config{Backend: "s3", S3Endpoint: "https://s3.example.com/", S3Bucket: "dylaris", S3Prefix: "/prod/", S3AccessKey: "k", S3SecretKey: "s"},
 			true,
 		},
 		{
@@ -149,42 +149,42 @@ func TestEnsureDistinctCoreStorageLocation_S3(t *testing.T) {
 			// all on the bucket judged this a different location, which is the
 			// under-refusal direction: it accepts a target that is the source.
 			"same triple written with a double trailing slash and an untrimmed bucket",
-			CoreStorageConfig{Backend: "s3", S3Endpoint: "https://s3.example.com//", S3Bucket: "/dylaris/", S3Prefix: "prod", S3AccessKey: "k", S3SecretKey: "s"},
+			Config{Backend: "s3", S3Endpoint: "https://s3.example.com//", S3Bucket: "/dylaris/", S3Prefix: "prod", S3AccessKey: "k", S3SecretKey: "s"},
 			true,
 		},
 		{
 			// Different credentials pointing at the SAME bucket and prefix is
 			// still the same location. Credentials are not identity.
 			"same triple, different credentials",
-			CoreStorageConfig{Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "dylaris", S3Prefix: "prod", S3AccessKey: "other", S3SecretKey: "other"},
+			Config{Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "dylaris", S3Prefix: "prod", S3AccessKey: "other", S3SecretKey: "other"},
 			true,
 		},
 		{
 			"same bucket, different prefix is a legitimate target",
-			CoreStorageConfig{Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "dylaris", S3Prefix: "archive", S3AccessKey: "k", S3SecretKey: "s"},
+			Config{Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "dylaris", S3Prefix: "archive", S3AccessKey: "k", S3SecretKey: "s"},
 			false,
 		},
 		{
 			"different bucket",
-			CoreStorageConfig{Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "dylaris-new", S3Prefix: "prod", S3AccessKey: "k", S3SecretKey: "s"},
+			Config{Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "dylaris-new", S3Prefix: "prod", S3AccessKey: "k", S3SecretKey: "s"},
 			false,
 		},
 		{
 			"different endpoint",
-			CoreStorageConfig{Backend: "s3", S3Endpoint: "https://new.example.com", S3Bucket: "dylaris", S3Prefix: "prod", S3AccessKey: "k", S3SecretKey: "s"},
+			Config{Backend: "s3", S3Endpoint: "https://new.example.com", S3Bucket: "dylaris", S3Prefix: "prod", S3AccessKey: "k", S3SecretKey: "s"},
 			false,
 		},
 		{
 			"a path target is never the same location as an s3 source",
-			CoreStorageConfig{Backend: "path", Path: "/mnt/new", PathConfirmed: true},
+			Config{Backend: "path", Path: "/mnt/new", PathConfirmed: true},
 			false,
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := ensureDistinctCoreStorageLocation(src, c.tgt, "library", "library")
+			err := EnsureDistinctLocation(src, c.tgt, "library", "library")
 			if (err != nil) != c.wantErr {
-				t.Fatalf("ensureDistinctCoreStorageLocation err = %v, wantErr %v", err, c.wantErr)
+				t.Fatalf("EnsureDistinctLocation err = %v, wantErr %v", err, c.wantErr)
 			}
 			if c.wantErr && !errors.Is(err, ErrTargetSameLocation) {
 				t.Errorf("err = %v, want it to wrap ErrTargetSameLocation", err)
@@ -195,8 +195,8 @@ func TestEnsureDistinctCoreStorageLocation_S3(t *testing.T) {
 
 func TestEnsureDistinctCoreStorageLocation_PathIdenticalString(t *testing.T) {
 	root := t.TempDir()
-	cfg := CoreStorageConfig{Backend: "path", Path: root, PathConfirmed: true}
-	if err := ensureDistinctCoreStorageLocation(cfg, cfg, "library", "library"); !errors.Is(err, ErrTargetSameLocation) {
+	cfg := Config{Backend: "path", Path: root, PathConfirmed: true}
+	if err := EnsureDistinctLocation(cfg, cfg, "library", "library"); !errors.Is(err, ErrTargetSameLocation) {
 		t.Fatalf("err = %v, want ErrTargetSameLocation", err)
 	}
 }
@@ -223,9 +223,9 @@ func TestEnsureDistinctCoreStorageLocation_PathViaSymlinkIsStillTheSameLocation(
 		}
 	}
 
-	src := CoreStorageConfig{Backend: "path", Path: realDir, PathConfirmed: true}
-	tgt := CoreStorageConfig{Backend: "path", Path: linkDir, PathConfirmed: true}
-	err := ensureDistinctCoreStorageLocation(src, tgt, "library", "library")
+	src := Config{Backend: "path", Path: realDir, PathConfirmed: true}
+	tgt := Config{Backend: "path", Path: linkDir, PathConfirmed: true}
+	err := EnsureDistinctLocation(src, tgt, "library", "library")
 	if !errors.Is(err, ErrTargetSameLocation) {
 		t.Fatalf("err = %v, want ErrTargetSameLocation: %q and %q are the same directory through a symlink, and a string compare would have accepted this target", err, realDir, linkDir)
 	}
@@ -248,9 +248,9 @@ func makeDirJunction(link, target string) error {
 }
 
 func TestEnsureDistinctCoreStorageLocation_DifferentPathsAreAccepted(t *testing.T) {
-	src := CoreStorageConfig{Backend: "path", Path: t.TempDir(), PathConfirmed: true}
-	tgt := CoreStorageConfig{Backend: "path", Path: t.TempDir(), PathConfirmed: true}
-	if err := ensureDistinctCoreStorageLocation(src, tgt, "library", "library"); err != nil {
+	src := Config{Backend: "path", Path: t.TempDir(), PathConfirmed: true}
+	tgt := Config{Backend: "path", Path: t.TempDir(), PathConfirmed: true}
+	if err := EnsureDistinctLocation(src, tgt, "library", "library"); err != nil {
 		t.Fatalf("err = %v, want two distinct temp dirs accepted", err)
 	}
 }
@@ -259,9 +259,9 @@ func TestEnsureDistinctCoreStorageLocation_AMissingTargetDirIsNotTheSameLocation
 	// A target that does not exist yet cannot alias the source. It must be
 	// accepted rather than error out, otherwise a first migration onto a fresh
 	// mount is impossible.
-	src := CoreStorageConfig{Backend: "path", Path: t.TempDir(), PathConfirmed: true}
-	tgt := CoreStorageConfig{Backend: "path", Path: filepath.Join(t.TempDir(), "does-not-exist-yet"), PathConfirmed: true}
-	if err := ensureDistinctCoreStorageLocation(src, tgt, "library", "library"); err != nil {
+	src := Config{Backend: "path", Path: t.TempDir(), PathConfirmed: true}
+	tgt := Config{Backend: "path", Path: filepath.Join(t.TempDir(), "does-not-exist-yet"), PathConfirmed: true}
+	if err := EnsureDistinctLocation(src, tgt, "library", "library"); err != nil {
 		t.Fatalf("err = %v, want a not-yet-created target accepted", err)
 	}
 }
@@ -277,9 +277,9 @@ func TestEnsureDistinctCoreStorageLocation_AMissingSourceRootIsNotTheSameLocatio
 	if err := os.MkdirAll(filepath.Join(tgtRoot, "library"), 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	src := CoreStorageConfig{Backend: "path", Path: srcRoot, PathConfirmed: true}
-	tgt := CoreStorageConfig{Backend: "path", Path: tgtRoot, PathConfirmed: true}
-	if err := ensureDistinctCoreStorageLocation(src, tgt, "library", "library"); err != nil {
+	src := Config{Backend: "path", Path: srcRoot, PathConfirmed: true}
+	tgt := Config{Backend: "path", Path: tgtRoot, PathConfirmed: true}
+	if err := EnsureDistinctLocation(src, tgt, "library", "library"); err != nil {
 		t.Fatalf("err = %v, want a source that has never been written to accepted", err)
 	}
 }
@@ -299,23 +299,23 @@ func TestSameCoreStorageLocation_AHardStatErrorPropagates(t *testing.T) {
 
 	cases := []struct {
 		name string
-		src  CoreStorageConfig
-		tgt  CoreStorageConfig
+		src  Config
+		tgt  Config
 	}{
 		{
 			"the source root cannot be stat'ed",
-			CoreStorageConfig{Backend: "path", Path: badPath, PathConfirmed: true},
-			CoreStorageConfig{Backend: "path", Path: good, PathConfirmed: true},
+			Config{Backend: "path", Path: badPath, PathConfirmed: true},
+			Config{Backend: "path", Path: good, PathConfirmed: true},
 		},
 		{
 			"the target root cannot be stat'ed",
-			CoreStorageConfig{Backend: "path", Path: good, PathConfirmed: true},
-			CoreStorageConfig{Backend: "path", Path: badPath, PathConfirmed: true},
+			Config{Backend: "path", Path: good, PathConfirmed: true},
+			Config{Backend: "path", Path: badPath, PathConfirmed: true},
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			same, err := sameCoreStorageLocation(c.src, c.tgt, "library", "library")
+			same, err := SameLocation(c.src, c.tgt, "library", "library")
 			if err == nil {
 				t.Fatalf("err = nil (same = %v), want a hard error: an unreadable root is unknown, not distinct", same)
 			}
@@ -325,9 +325,9 @@ func TestSameCoreStorageLocation_AHardStatErrorPropagates(t *testing.T) {
 			// The job must refuse to start, but NOT by claiming the target is
 			// the source: that would send an operator hunting for an aliasing
 			// problem that does not exist.
-			jobErr := ensureDistinctCoreStorageLocation(c.src, c.tgt, "library", "library")
+			jobErr := EnsureDistinctLocation(c.src, c.tgt, "library", "library")
 			if jobErr == nil {
-				t.Fatal("ensureDistinctCoreStorageLocation err = nil, want the stat error to reach the caller")
+				t.Fatal("EnsureDistinctLocation err = nil, want the stat error to reach the caller")
 			}
 			if errors.Is(jobErr, ErrTargetSameLocation) {
 				t.Errorf("err = %v, want a stat error rather than ErrTargetSameLocation", jobErr)
@@ -338,26 +338,26 @@ func TestSameCoreStorageLocation_AHardStatErrorPropagates(t *testing.T) {
 
 func TestPersistCoreStorageConfig_WritesEveryKeyAndRespectsTheSecretRule(t *testing.T) {
 	fs := newCoreStorageTargetFakeStore()
-	fs.kv[keyCoreStorageS3SecretKey] = "OLD-SECRET"
-	st := &AppState{Store: fs}
+	fs.kv[KeyS3SecretKey] = "OLD-SECRET"
+	st := &Manager{Store: fs}
 
-	cfg := CoreStorageConfig{
+	cfg := Config{
 		Backend: "s3", S3Endpoint: "https://new.example.com", S3Bucket: "dylaris-new",
 		S3Region: "eu-central-1", S3AccessKey: "AKIA-NEW", S3SecretKey: "NEW-SECRET",
 		S3PathStyle: true, S3Prefix: "prod",
 	}
-	if err := st.persistCoreStorageConfig(cfg, "NEW-SECRET"); err != nil {
-		t.Fatalf("persistCoreStorageConfig: %v", err)
+	if err := st.PersistConfig(cfg, "NEW-SECRET"); err != nil {
+		t.Fatalf("PersistConfig: %v", err)
 	}
 	for k, want := range map[string]string{
-		keyCoreStorageBackend:     "s3",
-		keyCoreStorageS3Endpoint:  "https://new.example.com",
-		keyCoreStorageS3Bucket:    "dylaris-new",
-		keyCoreStorageS3Region:    "eu-central-1",
-		keyCoreStorageS3AccessKey: "AKIA-NEW",
-		keyCoreStorageS3SecretKey: "NEW-SECRET",
-		keyCoreStorageS3Prefix:    "prod",
-		keyCoreStorageS3PathStyle: "true",
+		KeyBackend:     "s3",
+		KeyS3Endpoint:  "https://new.example.com",
+		KeyS3Bucket:    "dylaris-new",
+		KeyS3Region:    "eu-central-1",
+		KeyS3AccessKey: "AKIA-NEW",
+		KeyS3SecretKey: "NEW-SECRET",
+		KeyS3Prefix:    "prod",
+		KeyS3PathStyle: "true",
 	} {
 		if fs.kv[k] != want {
 			t.Errorf("setting %s = %q, want %q", k, fs.kv[k], want)
@@ -367,38 +367,38 @@ func TestPersistCoreStorageConfig_WritesEveryKeyAndRespectsTheSecretRule(t *test
 	// An empty secret must leave the stored one alone on an s3 config - even
 	// though cfg still carries a non-empty S3SecretKey, which is exactly the
 	// shape a merged config has. The VALUE argument decides, not the struct.
-	fs.kv[keyCoreStorageS3SecretKey] = "KEEP-ME"
-	if err := st.persistCoreStorageConfig(cfg, ""); err != nil {
-		t.Fatalf("persistCoreStorageConfig: %v", err)
+	fs.kv[KeyS3SecretKey] = "KEEP-ME"
+	if err := st.PersistConfig(cfg, ""); err != nil {
+		t.Fatalf("PersistConfig: %v", err)
 	}
-	if fs.kv[keyCoreStorageS3SecretKey] != "KEEP-ME" {
-		t.Errorf("stored secret = %q, want it untouched when no new secret is supplied", fs.kv[keyCoreStorageS3SecretKey])
+	if fs.kv[KeyS3SecretKey] != "KEEP-ME" {
+		t.Errorf("stored secret = %q, want it untouched when no new secret is supplied", fs.kv[KeyS3SecretKey])
 	}
 
 	// Switching away from s3 clears the orphaned secret, matching SaveConfig.
-	if err := st.persistCoreStorageConfig(CoreStorageConfig{Backend: "path", Path: "/mnt/new", PathConfirmed: true}, ""); err != nil {
-		t.Fatalf("persistCoreStorageConfig: %v", err)
+	if err := st.PersistConfig(Config{Backend: "path", Path: "/mnt/new", PathConfirmed: true}, ""); err != nil {
+		t.Fatalf("PersistConfig: %v", err)
 	}
-	if fs.kv[keyCoreStorageS3SecretKey] != "" {
-		t.Errorf("stored secret = %q, want it cleared when the backend is no longer s3", fs.kv[keyCoreStorageS3SecretKey])
+	if fs.kv[KeyS3SecretKey] != "" {
+		t.Errorf("stored secret = %q, want it cleared when the backend is no longer s3", fs.kv[KeyS3SecretKey])
 	}
 }
 
 func TestPersistCoreStorageConfig_RoundTripsThroughLoadCoreStorageConfig(t *testing.T) {
-	// The written keys must be exactly the ones LoadCoreStorageConfig reads,
+	// The written keys must be exactly the ones LoadConfig reads,
 	// so a switching_config phase leaves a config the rest of Core can use.
 	fs := newCoreStorageTargetFakeStore()
-	st := &AppState{Store: fs}
-	cfg := CoreStorageConfig{
+	st := &Manager{Store: fs}
+	cfg := Config{
 		Backend: "s3", S3Endpoint: "https://new.example.com", S3Bucket: "dylaris-new",
 		S3Region: "eu-central-1", S3AccessKey: "AKIA-NEW", S3SecretKey: "NEW-SECRET",
 		S3PathStyle: true, S3Prefix: "prod",
 	}
-	if err := st.persistCoreStorageConfig(cfg, "NEW-SECRET"); err != nil {
-		t.Fatalf("persistCoreStorageConfig: %v", err)
+	if err := st.PersistConfig(cfg, "NEW-SECRET"); err != nil {
+		t.Fatalf("PersistConfig: %v", err)
 	}
-	got := st.LoadCoreStorageConfig()
-	if err := validateCoreStorageConfig(got); err != nil {
+	got := st.LoadConfig()
+	if err := Validate(got); err != nil {
 		t.Fatalf("the persisted config does not validate: %v", err)
 	}
 	if got.S3Bucket != cfg.S3Bucket || got.S3Prefix != cfg.S3Prefix || got.S3AccessKey != cfg.S3AccessKey {

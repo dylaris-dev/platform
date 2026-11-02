@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -98,6 +99,7 @@ func newNodeEnrollState(fs *nodeEnrollFakeStore, byonEnabled, grpcTLSEnabled boo
 		FeatureFlags:       services.NewFeatureFlags(fs),
 		GRPCTLSEnabled:     grpcTLSEnabled,
 		GRPCTLSFingerprint: grpcFingerprint,
+		CoreStorage:        &corestorage.Manager{Store: fs},
 	}
 }
 

@@ -135,7 +135,7 @@ func (f *grantFakeStore) InsertAuditIdentity(ev *models.AuditEventIdentity) erro
 }
 
 func grantState(fs *grantFakeStore) *handlers.AppState {
-	return &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}
+	return withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
 }
 
 func grantReq(method string, actorID string, isAdmin bool, body interface{}) *http.Request {

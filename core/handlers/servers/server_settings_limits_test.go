@@ -27,7 +27,7 @@ func saveServerSettings(t *testing.T, fs *serverSettingsFakeStore, body string) 
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/settings/servers", bytes.NewReader([]byte(body)))
-	handlers.NewSettingsHandler(&handlers.AppState{Store: fs}).SaveServerSettings(rec, req)
+	handlers.NewSettingsHandler(withCoreStorage(&handlers.AppState{Store: fs})).SaveServerSettings(rec, req)
 	return rec.Code
 }
 
@@ -36,7 +36,7 @@ func saveServerSettings(t *testing.T, fs *serverSettingsFakeStore, body string) 
 // and a save of one field must not lose the other.
 func TestServerSettingsCarryTheScheduledTaskLimit(t *testing.T) {
 	fs := &serverSettingsFakeStore{settings: map[string]string{}}
-	h := handlers.NewSettingsHandler(&handlers.AppState{Store: fs})
+	h := handlers.NewSettingsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	got := h.LoadServerSettings()
 	if got.MaxScheduledTasks == nil || *got.MaxScheduledTasks != 25 {

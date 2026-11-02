@@ -12,12 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"github.com/gorilla/mux"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 )
@@ -237,7 +236,7 @@ func (h *PlatformBackupHandler) restorer(ctx context.Context, req restoreRequest
 			if area != "modpacks" {
 				return nil, fmt.Errorf("unknown Core storage area %q", area)
 			}
-			prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixModpacks)
+			prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixModpacks)
 			if err != nil {
 				return nil, err
 			}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 
 	"github.com/gorilla/mux"
 
@@ -49,7 +50,7 @@ func TestModpackMirrorServesSignedPacksOnly(t *testing.T) {
 		"modpack_storage_paths":    string(paths),
 	}}
 	const secret = "cluster-secret-under-test"
-	h := &PacksHandler{state: &handlers.AppState{Store: fs, FeatureFlags: services.NewFeatureFlags(fs), ClusterSecret: secret}}
+	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: fs, FeatureFlags: services.NewFeatureFlags(fs), ClusterSecret: secret})}
 
 	r := mux.NewRouter()
 	r.HandleFunc("/mirror/{rest:.*}", h.ModpackMirror).Methods("GET")
@@ -59,7 +60,7 @@ func TestModpackMirrorServesSignedPacksOnly(t *testing.T) {
 		return rec
 	}
 	sign := func(key string, now time.Time, secret string) string {
-		return handlers.SignedModpackMirrorURL("/mirror/", secret, key, now)
+		return corestorage.SignedModpackMirrorURL("/mirror/", secret, key, now)
 	}
 
 	if rec := get(sign(pack, time.Now(), secret)); rec.Code != http.StatusOK || rec.Body.String() != "BUILT-PACK" {
@@ -69,7 +70,7 @@ func TestModpackMirrorServesSignedPacksOnly(t *testing.T) {
 	signed := sign(pack, time.Now(), secret)
 	cases := []struct{ name, path string }{
 		{"unsigned, the old URL shape", "/mirror/" + pack},
-		{"expired", sign(pack, time.Now().Add(-handlers.ModpackMirrorTTL-time.Minute), secret)},
+		{"expired", sign(pack, time.Now().Add(-corestorage.ModpackMirrorTTL-time.Minute), secret)},
 		{"signed by another secret", sign(pack, time.Now(), "some-other-secret")},
 		{"signature of another key", strings.Replace(signed, "abc123", "abc124", 1)},
 		{"tampered expiry", strings.Replace(signed, "exp=", "exp=9", 1)},
@@ -97,7 +98,7 @@ func TestModpackMirrorServesSignedPacksOnly(t *testing.T) {
 // The install URL stays on Core's public host with the key as its path, which
 // is all an older node checks before downloading.
 func TestSignedMirrorURLKeepsHostAndPath(t *testing.T) {
-	u := handlers.SignedModpackMirrorURL("https://core.example.com/mirror/", "s", "modpacks/abc/pack.mrpack", time.Now())
+	u := corestorage.SignedModpackMirrorURL("https://core.example.com/mirror/", "s", "modpacks/abc/pack.mrpack", time.Now())
 	if !strings.HasPrefix(u, "https://core.example.com/mirror/modpacks/abc/pack.mrpack?exp=") || !strings.Contains(u, "&sig=") {
 		t.Fatalf("signed URL = %q", u)
 	}
@@ -108,7 +109,7 @@ func TestSignedMirrorURLKeepsHostAndPath(t *testing.T) {
 // Core's signed mirror URL instead.
 func TestInstallMrpackURLPrefersModrinth(t *testing.T) {
 	fs := &serverPackFakeStore{settings: map[string]string{"core_public_url": "https://core.example.com/"}}
-	h := &PacksHandler{state: &handlers.AppState{Store: fs, ClusterSecret: "s"}}
+	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: fs, ClusterSecret: "s"})}
 	pack := &models.Pack{ID: 1, ModrinthProjectID: "proj"}
 	const cdn = "https://cdn.modrinth.com/data/proj/versions/v1/p.mrpack"
 

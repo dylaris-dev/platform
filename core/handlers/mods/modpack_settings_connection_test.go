@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/services/corestorage"
 )
 
 // TestModpackSettings_ConnectionIDRoundTrips: the modpack settings PUT persists
@@ -24,8 +24,8 @@ func TestModpackSettings_ConnectionIDRoundTrips(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("Set status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.KV[handlers.KeyModpackStorageConnectionID] != "7" {
-		t.Fatalf("connection id not persisted, got %q", fs.KV[handlers.KeyModpackStorageConnectionID])
+	if fs.KV[corestorage.KeyModpackConnectionID] != "7" {
+		t.Fatalf("connection id not persisted, got %q", fs.KV[corestorage.KeyModpackConnectionID])
 	}
 
 	// GET echoes it back.
@@ -48,7 +48,7 @@ func TestModpackSettings_ConnectionIDRoundTrips(t *testing.T) {
 	if rw.Code != http.StatusOK {
 		t.Fatalf("clear Set status = %d, want 200 (%s)", rw.Code, rw.Body.String())
 	}
-	if fs.KV[handlers.KeyModpackStorageConnectionID] != "" {
-		t.Errorf("connection id 0 did not clear the setting, got %q", fs.KV[handlers.KeyModpackStorageConnectionID])
+	if fs.KV[corestorage.KeyModpackConnectionID] != "" {
+		t.Errorf("connection id 0 did not clear the setting, got %q", fs.KV[corestorage.KeyModpackConnectionID])
 	}
 }

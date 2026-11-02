@@ -307,7 +307,7 @@ func keepJars(ctx context.Context, state *handlers.AppState, t *models.Template,
 	if len(refs) == 0 {
 		return nil
 	}
-	files, err := state.TemplateList(ctx, t)
+	files, err := state.CoreStorage.TemplateList(ctx, t)
 	if err != nil {
 		return err
 	}
@@ -318,7 +318,7 @@ func keepJars(ctx context.Context, state *handlers.AppState, t *models.Template,
 	for i := range refs {
 		refs[i].TemplateID = t.ID
 		if stored[refs[i].Path] {
-			if err := state.TemplateDelete(ctx, t, refs[i].Path); err != nil {
+			if err := state.CoreStorage.TemplateDelete(ctx, t, refs[i].Path); err != nil {
 				return err
 			}
 		}
@@ -394,7 +394,7 @@ func writeZipEntry(ctx context.Context, state *handlers.AppState, t *models.Temp
 		}
 		src = tmp
 	}
-	if err := state.TemplateWrite(ctx, t, rel, src, int64(f.UncompressedSize64)); err != nil {
+	if err := state.CoreStorage.TemplateWrite(ctx, t, rel, src, int64(f.UncompressedSize64)); err != nil {
 		return "", entryErr(cr, f.Name, err)
 	}
 	return "", nil
@@ -415,7 +415,7 @@ func entryErr(cr *capReader, name string, err error) error {
 // which double-counts a path written twice.
 // ponytail: walks the whole tree per write; keep a delta if templates get large file counts.
 func refreshSize(ctx context.Context, state *handlers.AppState, t *models.Template) error {
-	size, err := state.TemplateSize(ctx, t)
+	size, err := state.CoreStorage.TemplateSize(ctx, t)
 	if err != nil {
 		return err
 	}
@@ -429,7 +429,7 @@ func refreshSize(ctx context.Context, state *handlers.AppState, t *models.Templa
 // sizeWith is the template's total once the files in add (path -> size) are written.
 // ponytail: check-then-write, parallel writes to one template can pass the limit together.
 func sizeWith(ctx context.Context, state *handlers.AppState, t *models.Template, add map[string]int64) (int64, error) {
-	files, err := state.TemplateList(ctx, t)
+	files, err := state.CoreStorage.TemplateList(ctx, t)
 	if err != nil {
 		return 0, err
 	}
@@ -621,7 +621,7 @@ func (h *TemplatesHandler) Files(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	files, err := h.state.TemplateList(r.Context(), t)
+	files, err := h.state.CoreStorage.TemplateList(r.Context(), t)
 	if err != nil {
 		log.Printf("templates: list files of %d: %v", t.ID, err)
 		httpx.SendJSONError(w, "Could not list the template files", http.StatusInternalServerError)
@@ -677,7 +677,7 @@ func (h *TemplatesHandler) GetText(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rc, err := h.state.TemplateRead(r.Context(), t, rel)
+	rc, err := h.state.CoreStorage.TemplateRead(r.Context(), t, rel)
 	if err != nil {
 		if storage.IsNotExist(err) {
 			// A reference has no bytes here; say so rather than "not found".
@@ -745,7 +745,7 @@ func (h *TemplatesHandler) PutText(w http.ResponseWriter, r *http.Request) {
 	if !h.fits(w, r, t, s, map[string]int64{rel: int64(len(data))}) {
 		return
 	}
-	if err := h.state.TemplateWrite(r.Context(), t, rel, bytes.NewReader(data), int64(len(data))); err != nil {
+	if err := h.state.CoreStorage.TemplateWrite(r.Context(), t, rel, bytes.NewReader(data), int64(len(data))); err != nil {
 		log.Printf("templates: write %d/%s: %v", t.ID, rel, err)
 		httpx.SendJSONError(w, "Could not save the file", http.StatusInternalServerError)
 		return
@@ -1005,7 +1005,7 @@ func (h *TemplatesHandler) AddFiles(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Could not read the upload", http.StatusInternalServerError)
 			return
 		}
-		err = h.state.TemplateWrite(r.Context(), t, a.rel, f, a.f.size)
+		err = h.state.CoreStorage.TemplateWrite(r.Context(), t, a.rel, f, a.f.size)
 		f.Close()
 		if err != nil {
 			log.Printf("templates: write %d/%s: %v", t.ID, a.rel, err)
@@ -1039,7 +1039,7 @@ func (h *TemplatesHandler) DeleteFile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.state.TemplateDelete(r.Context(), t, rel); err != nil {
+	if err := h.state.CoreStorage.TemplateDelete(r.Context(), t, rel); err != nil {
 		log.Printf("templates: delete %d/%s: %v", t.ID, rel, err)
 		httpx.SendJSONError(w, "Could not delete the file", http.StatusInternalServerError)
 		return

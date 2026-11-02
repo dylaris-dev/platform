@@ -29,10 +29,10 @@ import (
 // visState builds handler state around the shared fake, with BYON switched on
 // so ownership is in force. server and serverErr are what GetServerByUUID answers.
 func visState(node *models.Node, server *models.Server, serverErr error) *handlers.AppState {
-	return &handlers.AppState{
+	return withCoreStorage(&handlers.AppState{
 		Store:        &orphanAssignFakeStore{node: node, server: server, err: serverErr},
 		FeatureFlags: tenancyFeatureFlags(true),
-	}
+	})
 }
 
 // TestDiskToolsDoNotOpenACustomersMachineToAnAdmin covers the five disk routes.

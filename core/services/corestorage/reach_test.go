@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 // declaring a second heartbeat-seeding helper for the same package.
 
 func TestCoreStorageToReachConfig_PathBackend(t *testing.T) {
-	got := CoreStorageToReachConfig(CoreStorageConfig{Backend: "path", Path: "/mnt/shared"})
+	got := ToReachConfig(Config{Backend: "path", Path: "/mnt/shared"})
 	if got.Backend != "path" || got.Path != "/mnt/shared" {
 		t.Fatalf("config = %+v, want the path backend carried over", got)
 	}
@@ -31,7 +31,7 @@ func TestCoreStorageToReachConfig_PathBackend(t *testing.T) {
 func TestCoreStorageToReachConfig_S3CarriesTheCredential(t *testing.T) {
 	// The participant builds a real client from this, so the secret has to
 	// travel. If it stops travelling, every peer reports unreachable.
-	got := CoreStorageToReachConfig(CoreStorageConfig{
+	got := ToReachConfig(Config{
 		Backend: "s3", S3Endpoint: "https://s3.example", S3Bucket: "b",
 		S3Region: "eu", S3AccessKey: "AK", S3SecretKey: "SK", S3Prefix: "p", S3PathStyle: true,
 	})
@@ -47,11 +47,11 @@ func TestCheckSharedStorageReachable_SingleCoreSkipsTheRound(t *testing.T) {
 	// One Core cannot fail a sharing check, and running a probe on every
 	// single-instance save would be pure latency.
 	rdb := multiCoreRedis(t, "core-a")
-	s := &AppState{Redis: rdb, Store: &coreStorageFakeStore{values: map[string]string{}}}
+	s := &Manager{Redis: rdb, Store: &coreStorageFakeStore{values: map[string]string{}}}
 
-	if err := s.checkSharedStorageReachable(context.Background(),
-		CoreStorageConfig{Backend: "path", Path: "/mnt/shared"}); err != nil {
-		t.Fatalf("checkSharedStorageReachable on a single Core = %v, want nil", err)
+	if err := s.CheckSharedReachable(context.Background(),
+		Config{Backend: "path", Path: "/mnt/shared"}); err != nil {
+		t.Fatalf("CheckSharedReachable on a single Core = %v, want nil", err)
 	}
 }
 
@@ -64,11 +64,11 @@ func TestCheckSharedStorageReachable_SingleCoreSkipsTheRound(t *testing.T) {
 // removed (see the len(online) <= 1 check above), only its test coverage.
 func TestCheckSharedStorageReachable_ZeroOnlineCoresIsTreatedAsOne(t *testing.T) {
 	rdb := multiCoreRedis(t) // no heartbeats seeded: the online count is 0
-	s := &AppState{Redis: rdb, Store: &coreStorageFakeStore{values: map[string]string{}}}
+	s := &Manager{Redis: rdb, Store: &coreStorageFakeStore{values: map[string]string{}}}
 
-	if err := s.checkSharedStorageReachable(context.Background(),
-		CoreStorageConfig{Backend: "path", Path: "/mnt/shared"}); err != nil {
-		t.Fatalf("checkSharedStorageReachable with zero online Cores = %v, want nil (short-circuit)", err)
+	if err := s.CheckSharedReachable(context.Background(),
+		Config{Backend: "path", Path: "/mnt/shared"}); err != nil {
+		t.Fatalf("CheckSharedReachable with zero online Cores = %v, want nil (short-circuit)", err)
 	}
 }
 
@@ -78,48 +78,48 @@ func TestCheckSharedStorageReachable_RefusesWhenAPeerNeverReports(t *testing.T) 
 	// succeeds; core-b never runs one, which is what proves the round - not
 	// the count - is what decides the outcome.
 	rdb := multiCoreRedis(t, "core-a", "core-b")
-	s := &AppState{
+	s := &Manager{
 		Redis: rdb,
 		Store: &coreStorageFakeStore{values: map[string]string{}},
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+		Reach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a", NewProvider: sharedLocalFactory(t.TempDir()),
 		}),
 	}
 	s.reachRoundDeadline = 150 * time.Millisecond
 
-	err := s.checkSharedStorageReachable(context.Background(),
-		CoreStorageConfig{Backend: "path", Path: t.TempDir()})
+	err := s.CheckSharedReachable(context.Background(),
+		Config{Backend: "path", Path: t.TempDir()})
 
 	if err == nil {
 		t.Fatal("the save was allowed although core-b never proved access")
 	}
-	var refusal *sharedStorageRefusal
+	var refusal *SharedStorageRefusal
 	if !errors.As(err, &refusal) {
-		t.Fatalf("err = %T, want *sharedStorageRefusal", err)
+		t.Fatalf("err = %T, want *SharedStorageRefusal", err)
 	}
-	if refusal.status != http.StatusConflict {
-		t.Errorf("status = %d, want 409", refusal.status)
+	if refusal.Status != http.StatusConflict {
+		t.Errorf("status = %d, want 409", refusal.Status)
 	}
-	if refusal.result == nil {
+	if refusal.Result == nil {
 		t.Fatal("the refusal carries no RoundResult; the panel cannot name the failing Core")
 	}
 	found := false
-	for _, r := range refusal.result.Results {
+	for _, r := range refusal.Result.Results {
 		if r.CoreID == "core-b" && r.Status == storagereach.StatusNoResponse {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("results = %+v, want core-b as no-response", refusal.result.Results)
+		t.Errorf("results = %+v, want core-b as no-response", refusal.Result.Results)
 	}
 }
 
 func TestCheckSharedStorageReachable_RedisFailureRefuses(t *testing.T) {
 	// "Could not verify" must never read as "verified". This mirrors the
 	// behaviour the count-based guard already had.
-	s := &AppState{Store: &coreStorageFakeStore{values: map[string]string{}}} // no Redis
-	err := s.checkSharedStorageReachable(context.Background(),
-		CoreStorageConfig{Backend: "path", Path: "/mnt/shared"})
+	s := &Manager{Store: &coreStorageFakeStore{values: map[string]string{}}} // no Redis
+	err := s.CheckSharedReachable(context.Background(),
+		Config{Backend: "path", Path: "/mnt/shared"})
 	if err == nil {
 		t.Fatal("a save was allowed while the online-Core set could not be read")
 	}
@@ -145,27 +145,27 @@ func TestCheckSharedStorageReachable_PerKeyRedisFailureRefuses(t *testing.T) {
 		}
 		return false
 	})
-	s := &AppState{
+	s := &Manager{
 		Redis: rdb,
 		Store: &coreStorageFakeStore{values: map[string]string{}},
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+		Reach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a", NewProvider: sharedLocalFactory(t.TempDir()),
 		}),
 		reachRoundDeadline: 150 * time.Millisecond,
 	}
 
-	err := s.checkSharedStorageReachable(context.Background(),
-		CoreStorageConfig{Backend: "path", Path: t.TempDir()})
+	err := s.CheckSharedReachable(context.Background(),
+		Config{Backend: "path", Path: t.TempDir()})
 
 	if err == nil {
 		t.Fatal("the save was allowed while the online-Core set could not be read: an empty list with a nil error skipped the round entirely and would have persisted an unverified backend")
 	}
-	var refusal *sharedStorageRefusal
+	var refusal *SharedStorageRefusal
 	if !errors.As(err, &refusal) {
-		t.Fatalf("err = %T, want *sharedStorageRefusal", err)
+		t.Fatalf("err = %T, want *SharedStorageRefusal", err)
 	}
-	if refusal.status != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", refusal.status)
+	if refusal.Status != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", refusal.Status)
 	}
 }
 
@@ -176,7 +176,7 @@ func TestCheckSharedStorageReachable_PerKeyRedisFailureRefuses(t *testing.T) {
 // provider for the healthy path refuses to build.
 func TestNewReachProvider_IgnoresTheLiveHostPathGate(t *testing.T) {
 	candidate := t.TempDir()
-	s := &AppState{StorageGate: unhealthyGate(t), StorageS3: storage.NewS3Resilience()}
+	s := &Manager{Gate: unhealthyGate(t), S3: storage.NewS3Resilience()}
 
 	prov, err := s.NewReachProvider(storagereach.Config{Backend: "path", Path: candidate})
 	if err != nil {
@@ -201,7 +201,7 @@ func TestNewReachProvider_IgnoresTheLiveHostPathGate(t *testing.T) {
 // backoff before handing that refusal back.
 func TestNewReachProvider_DoesNotTouchTheLiveS3State(t *testing.T) {
 	t.Setenv("AWS_MAX_ATTEMPTS", "1")
-	s := &AppState{StorageGate: storage.NewGate(), StorageS3: storage.NewS3Resilience()}
+	s := &Manager{Gate: storage.NewGate(), S3: storage.NewS3Resilience()}
 
 	prov, err := s.NewReachProvider(storagereach.Config{
 		Backend: "s3", S3Endpoint: "http://127.0.0.1:1", S3Bucket: "candidate",
@@ -219,7 +219,7 @@ func TestNewReachProvider_DoesNotTouchTheLiveS3State(t *testing.T) {
 		t.Fatal("the candidate write against a refused endpoint succeeded; the test setup is broken")
 	}
 
-	if reconnecting, _, lastErr := s.StorageS3.State(); reconnecting {
+	if reconnecting, _, lastErr := s.S3.State(); reconnecting {
 		t.Fatalf("a CANDIDATE config's failure put the LIVE s3 backend into reconnecting (lastErr = %v); the live backend was never tested and may be perfectly healthy", lastErr)
 	}
 }
@@ -236,10 +236,10 @@ func TestNewReachProvider_DoesNotTouchTheLiveS3State(t *testing.T) {
 func TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProbeWedges(t *testing.T) {
 	rdb := multiCoreRedis(t, "core-a", "core-b")
 	prov := newBlockingProvider()
-	s := &AppState{
+	s := &Manager{
 		Redis: rdb,
 		Store: &coreStorageFakeStore{values: map[string]string{}},
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+		Reach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a",
 			NewProvider: func(storagereach.Config) (storage.StorageProvider, error) { return prov, nil },
 		}),
@@ -248,8 +248,8 @@ func TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProbeWedges(t *testin
 
 	done := make(chan error, 1)
 	go func() {
-		done <- s.checkSharedStorageReachable(context.Background(),
-			CoreStorageConfig{Backend: "path", Path: "/mnt/shared"})
+		done <- s.CheckSharedReachable(context.Background(),
+			Config{Backend: "path", Path: "/mnt/shared"})
 	}()
 
 	select {
@@ -258,7 +258,7 @@ func TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProbeWedges(t *testin
 			t.Fatal("the save was allowed although this Core's own probe never came back")
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("checkSharedStorageReachable never returned against a wedged backend: the round holds the config-round lock forever and every later save answers 409")
+		t.Fatal("CheckSharedReachable never returned against a wedged backend: the round holds the config-round lock forever and every later save answers 409")
 	}
 
 	if _, err := rdb.Get(context.Background(), reachRoundLockKey).Result(); err != redis.Nil {
@@ -277,7 +277,7 @@ func TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProbeWedges(t *testin
 // cannot exercise: there NewProvider itself returns instantly and only a
 // provider METHOD blocks, which the round's watchdog already covered before
 // Fix 1. Here the factory call never returns at all, modelling
-// newStorageProviderForConfig's ungated os.MkdirAll (NewReachProvider always
+// NewProviderForConfig's ungated os.MkdirAll (NewReachProvider always
 // builds a candidate provider with a nil gate) hanging on a dead mount before
 // any provider exists to call a method on.
 type blockingProviderFactory struct {
@@ -304,10 +304,10 @@ func (f *blockingProviderFactory) build(storagereach.Config) (storage.StoragePro
 func TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProviderBuildWedges(t *testing.T) {
 	rdb := multiCoreRedis(t, "core-a", "core-b")
 	factory := newBlockingProviderFactory()
-	s := &AppState{
+	s := &Manager{
 		Redis: rdb,
 		Store: &coreStorageFakeStore{values: map[string]string{}},
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+		Reach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a", NewProvider: factory.build,
 		}),
 		reachRoundDeadline: 150 * time.Millisecond,
@@ -315,8 +315,8 @@ func TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProviderBuildWedges(t
 
 	done := make(chan error, 1)
 	go func() {
-		done <- s.checkSharedStorageReachable(context.Background(),
-			CoreStorageConfig{Backend: "path", Path: "/mnt/shared"})
+		done <- s.CheckSharedReachable(context.Background(),
+			Config{Backend: "path", Path: "/mnt/shared"})
 	}()
 
 	select {
@@ -331,7 +331,7 @@ func TestCheckSharedStorageReachable_ReleasesTheLockWhenTheProviderBuildWedges(t
 			t.Fatal("the save was allowed although this Core's own provider never finished building")
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("checkSharedStorageReachable never returned against a provider build that never returns: the round holds the config-round lock forever and every later save answers 409")
+		t.Fatal("CheckSharedReachable never returned against a provider build that never returns: the round holds the config-round lock forever and every later save answers 409")
 	}
 
 	if _, err := rdb.Get(context.Background(), reachRoundLockKey).Result(); err != redis.Nil {
@@ -360,26 +360,26 @@ func TestCheckSharedStorageReachable_RefusesWhileAnotherRoundIsLocked(t *testing
 	if err := rdb.SetNX(context.Background(), reachRoundLockKey, "1", time.Minute).Err(); err != nil {
 		t.Fatalf("seed lock: %v", err)
 	}
-	s := &AppState{
+	s := &Manager{
 		Redis: rdb,
 		Store: &coreStorageFakeStore{values: map[string]string{}},
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+		Reach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a", NewProvider: sharedLocalFactory(t.TempDir()),
 		}),
 	}
 
-	err := s.checkSharedStorageReachable(context.Background(),
-		CoreStorageConfig{Backend: "path", Path: t.TempDir()})
+	err := s.CheckSharedReachable(context.Background(),
+		Config{Backend: "path", Path: t.TempDir()})
 
 	if err == nil {
 		t.Fatal("the save proceeded while another round was already locked")
 	}
-	var refusal *sharedStorageRefusal
+	var refusal *SharedStorageRefusal
 	if !errors.As(err, &refusal) {
-		t.Fatalf("err = %T, want *sharedStorageRefusal", err)
+		t.Fatalf("err = %T, want *SharedStorageRefusal", err)
 	}
-	if refusal.status != http.StatusConflict {
-		t.Errorf("status = %d, want 409", refusal.status)
+	if refusal.Status != http.StatusConflict {
+		t.Errorf("status = %d, want 409", refusal.Status)
 	}
 }
 
@@ -389,16 +389,16 @@ func TestCheckSharedStorageReachable_RefusesWhileAnotherRoundIsLocked(t *testing
 // refuse forever.
 func TestCheckSharedStorageReachable_ReleasesTheLockAfterARound(t *testing.T) {
 	rdb := multiCoreRedis(t, "core-a", "core-b")
-	s := &AppState{
+	s := &Manager{
 		Redis: rdb,
 		Store: &coreStorageFakeStore{values: map[string]string{}},
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+		Reach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a", NewProvider: sharedLocalFactory(t.TempDir()),
 		}),
 		reachRoundDeadline: 150 * time.Millisecond,
 	}
 
-	_ = s.checkSharedStorageReachable(context.Background(), CoreStorageConfig{Backend: "path", Path: t.TempDir()})
+	_ = s.CheckSharedReachable(context.Background(), Config{Backend: "path", Path: t.TempDir()})
 
 	if _, err := rdb.Get(context.Background(), reachRoundLockKey).Result(); err != redis.Nil {
 		t.Errorf("the config-round lock was not released after the round finished (err = %v)", err)
@@ -507,10 +507,10 @@ func (p *blockingProvider) DeletePath(context.Context, string) error {
 func TestCheckSharedStorageReachable_SecondConcurrentCallIsRefusedNotQueued(t *testing.T) {
 	rdb := multiCoreRedis(t, "core-a", "core-b")
 	prov := newBlockingProvider()
-	s := &AppState{
+	s := &Manager{
 		Redis: rdb,
 		Store: &coreStorageFakeStore{values: map[string]string{}},
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+		Reach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a",
 			NewProvider: func(storagereach.Config) (storage.StorageProvider, error) { return prov, nil },
 		}),
@@ -519,8 +519,8 @@ func TestCheckSharedStorageReachable_SecondConcurrentCallIsRefusedNotQueued(t *t
 
 	firstDone := make(chan error, 1)
 	go func() {
-		firstDone <- s.checkSharedStorageReachable(context.Background(),
-			CoreStorageConfig{Backend: "path", Path: "/mnt/shared"})
+		firstDone <- s.CheckSharedReachable(context.Background(),
+			Config{Backend: "path", Path: "/mnt/shared"})
 	}()
 
 	select {
@@ -532,8 +532,8 @@ func TestCheckSharedStorageReachable_SecondConcurrentCallIsRefusedNotQueued(t *t
 	secondStart := time.Now()
 	secondDone := make(chan error, 1)
 	go func() {
-		secondDone <- s.checkSharedStorageReachable(context.Background(),
-			CoreStorageConfig{Backend: "path", Path: "/mnt/shared"})
+		secondDone <- s.CheckSharedReachable(context.Background(),
+			Config{Backend: "path", Path: "/mnt/shared"})
 	}()
 
 	select {
@@ -541,12 +541,12 @@ func TestCheckSharedStorageReachable_SecondConcurrentCallIsRefusedNotQueued(t *t
 		if elapsed := time.Since(secondStart); elapsed > time.Second {
 			t.Fatalf("the second call took %s to return; it queued behind the first instead of refusing immediately", elapsed)
 		}
-		var refusal *sharedStorageRefusal
+		var refusal *SharedStorageRefusal
 		if !errors.As(err, &refusal) {
-			t.Fatalf("second call err = %T, want *sharedStorageRefusal", err)
+			t.Fatalf("second call err = %T, want *SharedStorageRefusal", err)
 		}
-		if refusal.status != http.StatusConflict {
-			t.Errorf("second call status = %d, want 409", refusal.status)
+		if refusal.Status != http.StatusConflict {
+			t.Errorf("second call status = %d, want 409", refusal.Status)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the second call never returned: it queued behind the first instead of being refused")
@@ -620,11 +620,11 @@ func TestCheckSharedStorageReachable_SSEProgressNeverCarriesDetail(t *testing.T)
 	}
 	ch := sub.Channel()
 
-	s := &AppState{
+	s := &Manager{
 		Redis:  rdb,
 		Store:  &coreStorageFakeStore{values: map[string]string{}},
 		Events: services.NewSystemEventsPublisher(rdb),
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+		Reach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a",
 			NewProvider: func(storagereach.Config) (storage.StorageProvider, error) {
 				return nil, errors.New(rawDetail)
@@ -633,7 +633,7 @@ func TestCheckSharedStorageReachable_SSEProgressNeverCarriesDetail(t *testing.T)
 		reachRoundDeadline: 150 * time.Millisecond,
 	}
 
-	if err := s.checkSharedStorageReachable(ctx, CoreStorageConfig{Backend: "path", Path: "/mnt/shared"}); err == nil {
+	if err := s.CheckSharedReachable(ctx, Config{Backend: "path", Path: "/mnt/shared"}); err == nil {
 		t.Fatal("the round was expected to fail (core-a's own provider never builds)")
 	}
 

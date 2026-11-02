@@ -19,7 +19,7 @@ func newFeatureSettingsFixture(t *testing.T, seed map[string]string) (*FeatureSe
 	for k, v := range seed {
 		fake.kv[k] = v
 	}
-	st := &AppState{StoreEnabled: true, Store: fake}
+	st := withCoreStorage(&AppState{StoreEnabled: true, Store: fake})
 	st.FeatureFlags = services.NewFeatureFlags(fake)
 	st.Events = services.NewSystemEventsPublisher(nil)
 	return NewFeatureSettingsHandler(st), fake
@@ -192,7 +192,7 @@ func TestRequireUserCanCreateModpacks_FlagIsACeiling(t *testing.T) {
 					ID: "u1", CanCreateModpacks: c.userCan, CanCreateModpacksManual: c.userManual,
 				},
 			}
-			st := &AppState{Store: fake}
+			st := withCoreStorage(&AppState{Store: fake})
 			st.FeatureFlags = services.NewFeatureFlags(st.Store)
 
 			called := false

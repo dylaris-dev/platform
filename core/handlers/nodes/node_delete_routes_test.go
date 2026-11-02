@@ -115,7 +115,7 @@ func nodeDeleteFixture(t *testing.T, node *models.Node) (*NodeHandler, *nodeDele
 		t.Fatal(err)
 	}
 
-	return NewNodeHandler(&handlers.AppState{Store: fs, Redis: rdb, Gateway: gw}), fs, gw, rdb
+	return NewNodeHandler(withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb, Gateway: gw})), fs, gw, rdb
 }
 
 func assertNodeRoutesGone(t *testing.T, rdb *redis.Client, gw *nodeDeleteGateway) {

@@ -94,7 +94,7 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			state := &handlers.AppState{Store: &nameConflictStore{err: tc.storeErr}}
+			state := withCoreStorage(&handlers.AppState{Store: &nameConflictStore{err: tc.storeErr}})
 			req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(tc.body))
 			req = mux.SetURLVars(req, map[string]string{"id": "5"})
 			rw := httptest.NewRecorder()

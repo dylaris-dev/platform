@@ -52,7 +52,7 @@ func (f *runtimeFakeStore) GetServerAuditState(int) (bool, bool, int, error) {
 
 func runtimeRequest(t *testing.T, fs store.Store, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	h := &ServerHandler{state: &handlers.AppState{Store: fs, Events: services.NewSystemEventsPublisher(nil)}}
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Events: services.NewSystemEventsPublisher(nil)})}
 	req := httptest.NewRequest(http.MethodPatch, "/api/servers/7/runtime", strings.NewReader(body))
 	ctx := context.WithValue(req.Context(), "userID", "alice")
 	ctx = context.WithValue(ctx, "isAdmin", true)

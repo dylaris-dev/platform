@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/services/storagereach"
 )
 
@@ -23,7 +24,7 @@ import (
 func TestRequireCoreStorageReachable_GatesListBackups(t *testing.T) {
 	svc := storagereach.NewService(storagereach.ServiceDeps{CoreID: "core-a"})
 	svc.Status().Set(storagereach.StatusUnreachable, "/mnt/nfs/dylaris-shared: no such file or directory")
-	s := &handlers.AppState{StorageReach: svc}
+	s := &handlers.AppState{CoreStorage: &corestorage.Manager{Reach: svc}}
 	h := NewTicketMigrationHandler(s)
 
 	gated := s.RequireCoreStorageReachable(h.ListBackups)

@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -165,7 +163,7 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 		if servers, lerr = h.state.Store.ListServersByNode(node.ID); lerr != nil {
 			log.Printf("DeleteMyNode: listing the servers of node %d failed, their addresses and Redis keys cannot be cleaned up: %v", node.ID, lerr)
 		}
-		handlers.PurgeBackupArchivesForServers(h.state, services.ServerIDs(servers))
+		h.state.CoreStorage.PurgeBackupArchivesForServers(services.ServerIDs(servers))
 		if err := h.state.Store.DeleteServersByNode(node.ID); err != nil {
 			httpx.SendJSONError(w, "Failed to delete the servers on this machine", 500)
 			return

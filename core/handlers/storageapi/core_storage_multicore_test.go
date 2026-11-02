@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 	"dylaris-core/store"
@@ -120,11 +121,11 @@ func TestSaveConfig_RefusesHostPathOnMultipleCores(t *testing.T) {
 	state := &handlers.AppState{
 		Store: st,
 		Redis: rdb,
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+		CoreStorage: &corestorage.Manager{Store: st, Redis: rdb, Reach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a", NewProvider: sharedLocalFactory(t.TempDir()),
-		}),
+		})},
 	}
-	state.SetReachRoundDeadline(150 * time.Millisecond)
+	state.CoreStorage.SetReachRoundDeadline(150 * time.Millisecond)
 	h := &CoreStorageHandler{state: state}
 
 	body := `{"backend":"path","path":"/mnt/shared","pathConfirmed":true}`
@@ -150,13 +151,17 @@ func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 	rdb := multiCoreRedis(t, "core-a", "core-b")
 	factory := sharedLocalFactory(t.TempDir())
 	state := &handlers.AppState{
-		Store:       st,
-		Redis:       rdb,
-		StorageGate: storage.NewGate(),
-		StorageS3:   storage.NewS3Resilience(),
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
-			Redis: rdb, CoreID: "core-a", NewProvider: factory,
-		}),
+		Store: st,
+		Redis: rdb,
+		CoreStorage: &corestorage.Manager{
+			Store: st,
+			Redis: rdb,
+			Gate:  storage.NewGate(),
+			S3:    storage.NewS3Resilience(),
+			Reach: storagereach.NewService(storagereach.ServiceDeps{
+				Redis: rdb, CoreID: "core-a", NewProvider: factory,
+			}),
+		},
 		// The poll cadence is what matters here, not the deadline. It is how
 		// often the coordinator retries its OWN storage listing (and, published
 		// as PollEveryMillis, how often core-b retries its probe), so together
@@ -186,8 +191,8 @@ func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 		// package already records. A deadline a passing test never reaches cannot
 		// cause a false failure.
 	}
-	state.SetReachRoundDeadline(30 * time.Second)
-	state.SetReachRoundPoll(50 * time.Millisecond)
+	state.CoreStorage.SetReachRoundDeadline(30 * time.Second)
+	state.CoreStorage.SetReachRoundPoll(50 * time.Millisecond)
 	h := &CoreStorageHandler{state: state}
 
 	done := make(chan error, 1)
@@ -220,8 +225,8 @@ func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if st.values[handlers.KeyCoreStorageBackend] != "s3" {
-		t.Errorf("backend persisted as %q, want %q", st.values[handlers.KeyCoreStorageBackend], "s3")
+	if st.values[corestorage.KeyBackend] != "s3" {
+		t.Errorf("backend persisted as %q, want %q", st.values[corestorage.KeyBackend], "s3")
 	}
 }
 
@@ -231,7 +236,7 @@ func TestSaveConfig_AllowsS3OnMultipleCores(t *testing.T) {
 // let a multi-Core save through just because it cannot check it.
 func TestSaveConfig_RefusesWhenTheVerifierIsNotRunning(t *testing.T) {
 	st := multiCoreState(t, map[string]string{})
-	h := &CoreStorageHandler{state: &handlers.AppState{Store: st, Redis: multiCoreRedis(t, "core-a", "core-b")}}
+	h := &CoreStorageHandler{state: withCoreStorage(&handlers.AppState{Store: st, Redis: multiCoreRedis(t, "core-a", "core-b")})}
 
 	body := `{"backend":"s3","s3Bucket":"b","s3AccessKey":"AKIA","s3SecretKey":"secret"}`
 	rec := httptest.NewRecorder()
@@ -268,13 +273,13 @@ func TestGetConfig_ReportsOnlineCores(t *testing.T) {
 		},
 		{
 			name:            "a saved host path on two Cores",
-			values:          map[string]string{handlers.KeyCoreStorageBackend: "path", handlers.KeyCoreStoragePath: "/mnt/shared"},
+			values:          map[string]string{corestorage.KeyBackend: "path", corestorage.KeyPath: "/mnt/shared"},
 			cores:           []string{"core-a", "core-b"},
 			wantOnlineCores: 2,
 		},
 		{
 			name:            "a saved s3 config on two Cores",
-			values:          map[string]string{handlers.KeyCoreStorageBackend: "s3", handlers.KeyCoreStorageS3Bucket: "b"},
+			values:          map[string]string{corestorage.KeyBackend: "s3", corestorage.KeyS3Bucket: "b"},
 			cores:           []string{"core-a", "core-b"},
 			wantOnlineCores: 2,
 		},
@@ -293,7 +298,7 @@ func TestGetConfig_ReportsOnlineCores(t *testing.T) {
 			if tc.redisDown {
 				rdb = downRedis(t)
 			}
-			h := &CoreStorageHandler{state: &handlers.AppState{Store: multiCoreState(t, tc.values), Redis: rdb}}
+			h := &CoreStorageHandler{state: withCoreStorage(&handlers.AppState{Store: multiCoreState(t, tc.values), Redis: rdb})}
 
 			rec := httptest.NewRecorder()
 			h.GetConfig(rec, httptest.NewRequest(http.MethodGet, "/api/settings/core-storage", nil))
@@ -318,10 +323,10 @@ func TestGetConfig_ReportsOnlineCores(t *testing.T) {
 // TestGetConfig_LeaksNoInstanceIdentities: the ids are hostnames and the count
 // is all the form needs, so they must not ride along in the response.
 func TestGetConfig_LeaksNoInstanceIdentities(t *testing.T) {
-	h := &CoreStorageHandler{state: &handlers.AppState{
+	h := &CoreStorageHandler{state: withCoreStorage(&handlers.AppState{
 		Store: multiCoreState(t, map[string]string{}),
 		Redis: multiCoreRedis(t, "core-prod-fra-01", "core-prod-fra-02"),
-	}}
+	})}
 
 	rec := httptest.NewRecorder()
 	h.GetConfig(rec, httptest.NewRequest(http.MethodGet, "/api/settings/core-storage", nil))

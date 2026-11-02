@@ -36,6 +36,7 @@ func TestReplaceWithModrinthStoresAReferenceOnly(t *testing.T) {
 	h := localModpackHandler(t, dir)
 	st := &replaceStore{serverPackFakeStore: h.state.Store.(*serverPackFakeStore)}
 	h.state.Store = st
+	h.state.CoreStorage.Store = h.state.Store
 	storeZip(t, dir, "packs/u/mods/sodium/old.zip", "mods/sodium.jar", []byte("uploaded copy"))
 
 	old := http.DefaultTransport

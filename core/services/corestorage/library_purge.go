@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"context"
@@ -22,7 +22,7 @@ const libraryPurgedKey = "library_purged_at"
 // the next start tries again. Without a Core storage config there is nothing to
 // delete yet, and the marker is left unset for the same reason: a config saved
 // later may point at a storage that still holds the files.
-func (s *AppState) PurgeLibraryStorage(ctx context.Context) {
+func (s *Manager) PurgeLibraryStorage(ctx context.Context) {
 	if s.Store == nil {
 		return
 	}
@@ -31,10 +31,10 @@ func (s *AppState) PurgeLibraryStorage(ctx context.Context) {
 		log.Printf("library purge: reading %s failed, retrying on the next start: %v", libraryPurgedKey, err)
 		return
 	}
-	if done != "" || !s.CoreStorageConfigured() {
+	if done != "" || !s.Configured() {
 		return
 	}
-	n, err := purgeLibraryPrefix(ctx, s.buildCoreStorageProvider)
+	n, err := purgeLibraryPrefix(ctx, s.BuildProvider)
 	if err != nil {
 		log.Printf("library purge: failed, retrying on the next start: %v", err)
 		return
@@ -56,12 +56,12 @@ func purgeLibraryPrefix(ctx context.Context, build func(subPrefix string) (stora
 	if err != nil {
 		return 0, fmt.Errorf("build Core storage provider: %w", err)
 	}
-	files, err := storage.WalkProvider(ctx, root, CoreStoragePrefixLibrary)
+	files, err := storage.WalkProvider(ctx, root, PrefixLibrary)
 	if err != nil {
-		return 0, fmt.Errorf("list %s/: %w", CoreStoragePrefixLibrary, err)
+		return 0, fmt.Errorf("list %s/: %w", PrefixLibrary, err)
 	}
-	if err := root.DeletePath(ctx, CoreStoragePrefixLibrary); err != nil {
-		return 0, fmt.Errorf("delete %s/: %w", CoreStoragePrefixLibrary, err)
+	if err := root.DeletePath(ctx, PrefixLibrary); err != nil {
+		return 0, fmt.Errorf("delete %s/: %w", PrefixLibrary, err)
 	}
 	return len(files), nil
 }

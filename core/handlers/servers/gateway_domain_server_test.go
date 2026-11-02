@@ -112,7 +112,7 @@ func TestCnameLabelValidation(t *testing.T) {
 // gateway_domain_test.go's, built on gatewayDomainFakeStore; the snapshot host
 // check only reads settings, so a settings fake is all it needs here.
 func newServerSnapshotHandler(settings map[string]string) *ServerHandler {
-	return &ServerHandler{state: &handlers.AppState{Store: &snapshotSettingsStore{settings: settings}}}
+	return &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: &snapshotSettingsStore{settings: settings}})}
 }
 
 type snapshotSettingsStore struct {

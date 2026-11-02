@@ -56,7 +56,7 @@ func internalNoteFixture() (*handlers.AppState, *models.Ticket, *internalNoteSto
 			noteAdminCC:  {ID: noteAdminCC, IsAdmin: true},
 		},
 	}
-	return &handlers.AppState{Store: fs}, &models.Ticket{ID: 7, UserID: noteUserCC, AssignedUserID: &assignee}, fs
+	return withCoreStorage(&handlers.AppState{Store: fs}), &models.Ticket{ID: 7, UserID: noteUserCC, AssignedUserID: &assignee}, fs
 }
 
 // An internal note is staff-only. The customer must never be told one exists,

@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"context"
@@ -12,33 +12,33 @@ import (
 	backupstorage "dylaris-core/storage/backup"
 )
 
-// --- mergeCoreStorageCandidate (pure logic backing both SaveConfig and
+// --- MergeCandidate (pure logic backing both SaveConfig and
 // TestConnection's "blank secret keeps the stored one" rule) ---
 
 func TestMergeCoreStorageCandidate(t *testing.T) {
-	existing := CoreStorageConfig{
+	existing := Config{
 		Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "old", S3AccessKey: "k",
 		S3SecretKey: "stored-secret",
 	}
 
 	cases := []struct {
 		name      string
-		candidate CoreStorageConfig
-		want      CoreStorageConfig
+		candidate Config
+		want      Config
 	}{
 		{
 			name:      "empty candidate backend reuses the stored config entirely",
-			candidate: CoreStorageConfig{},
+			candidate: Config{},
 			want:      existing,
 		},
 		{
 			// Fix 1: identity fields (endpoint/bucket/accessKey) all match the
 			// stored config, so a blank secret is safe to backfill.
 			name: "blank secret + unchanged endpoint/bucket/accessKey reuses the stored secret",
-			candidate: CoreStorageConfig{
+			candidate: Config{
 				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "old", S3AccessKey: "k",
 			},
-			want: CoreStorageConfig{
+			want: Config{
 				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "old", S3AccessKey: "k",
 				S3SecretKey: "stored-secret",
 			},
@@ -48,38 +48,38 @@ func TestMergeCoreStorageCandidate(t *testing.T) {
 			// with the old secret - that is a credential-rebinding gap, and it
 			// also produces a broken config with no error.
 			name: "blank secret + changed bucket does not backfill",
-			candidate: CoreStorageConfig{
+			candidate: Config{
 				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "new", S3AccessKey: "k",
 			},
-			want: CoreStorageConfig{
+			want: Config{
 				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "new", S3AccessKey: "k",
 			},
 		},
 		{
 			name: "blank secret + changed access key does not backfill",
-			candidate: CoreStorageConfig{
+			candidate: Config{
 				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "old", S3AccessKey: "k2",
 			},
-			want: CoreStorageConfig{
+			want: Config{
 				Backend: "s3", S3Endpoint: "https://s3.example.com", S3Bucket: "old", S3AccessKey: "k2",
 			},
 		},
 		{
 			name: "blank secret + changed endpoint does not backfill",
-			candidate: CoreStorageConfig{
+			candidate: Config{
 				Backend: "s3", S3Endpoint: "https://attacker.example.com", S3Bucket: "old", S3AccessKey: "k",
 			},
-			want: CoreStorageConfig{
+			want: Config{
 				Backend: "s3", S3Endpoint: "https://attacker.example.com", S3Bucket: "old", S3AccessKey: "k",
 			},
 		},
 		{
 			name: "candidate with its own secret is not overridden",
-			candidate: CoreStorageConfig{
+			candidate: Config{
 				Backend: "s3", S3Endpoint: "https://attacker.example.com", S3Bucket: "new", S3AccessKey: "k2",
 				S3SecretKey: "new-secret",
 			},
-			want: CoreStorageConfig{
+			want: Config{
 				Backend: "s3", S3Endpoint: "https://attacker.example.com", S3Bucket: "new", S3AccessKey: "k2",
 				S3SecretKey: "new-secret",
 			},
@@ -87,25 +87,25 @@ func TestMergeCoreStorageCandidate(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := mergeCoreStorageCandidate(c.candidate, existing)
+			got := MergeCandidate(c.candidate, existing)
 			if got != c.want {
-				t.Errorf("mergeCoreStorageCandidate() = %+v, want %+v", got, c.want)
+				t.Errorf("MergeCandidate() = %+v, want %+v", got, c.want)
 			}
 		})
 	}
 }
 
 func TestNormalizeCoreStorageCandidate(t *testing.T) {
-	got := normalizeCoreStorageCandidate(CoreStorageConfig{
+	got := NormalizeCandidate(Config{
 		Backend: " s3 ", Path: " /mnt/x ", S3Endpoint: " https://e ", S3Bucket: " b ",
 		S3AccessKey: " k ", S3SecretKey: " s ",
 	})
-	want := CoreStorageConfig{
+	want := Config{
 		Backend: "s3", Path: "/mnt/x", S3Endpoint: "https://e", S3Bucket: "b",
 		S3AccessKey: "k", S3SecretKey: "s",
 	}
 	if got != want {
-		t.Errorf("normalizeCoreStorageCandidate() = %+v, want %+v", got, want)
+		t.Errorf("NormalizeCandidate() = %+v, want %+v", got, want)
 	}
 }
 
@@ -114,9 +114,9 @@ func TestNormalizeCoreStorageCandidate(t *testing.T) {
 // s3AccessKey) are unchanged from the stored config. Otherwise the request
 // must be rejected instead of silently pairing the real secret with a new
 // identity. Covered for both SaveConfig (persists) and TestConnection
-// (probes) since mergeCoreStorageCandidate backs both. ---
+// (probes) since MergeCandidate backs both. ---
 
-// --- probeStorageProvider (write+read+delete probe logic), exercised
+// --- ProbeProvider (write+read+delete probe logic), exercised
 // against a hand-written fake so the mismatch/error cleanup paths are
 // deterministic and do not depend on a real filesystem or network backend. ---
 
@@ -178,7 +178,7 @@ func (f *fakeProbeProvider) DeletePath(context.Context, string) error {
 
 func TestProbeStorageProvider_Success(t *testing.T) {
 	fp := &fakeProbeProvider{readBack: coreStorageProbePayload}
-	ok, msg := probeStorageProvider(context.Background(), fp)
+	ok, msg := ProbeProvider(context.Background(), fp)
 	if !ok {
 		t.Fatalf("ok = false, want true (%s)", msg)
 	}
@@ -195,7 +195,7 @@ func TestProbeStorageProvider_Success(t *testing.T) {
 // handed.
 func TestProbeStorageProvider_WriteFailureCleansUpProbe(t *testing.T) {
 	fp := &fakeProbeProvider{writeErr: errors.New("disk full")}
-	ok, msg := probeStorageProvider(context.Background(), fp)
+	ok, msg := ProbeProvider(context.Background(), fp)
 	if ok {
 		t.Fatalf("ok = true, want false on write failure (%s)", msg)
 	}
@@ -206,7 +206,7 @@ func TestProbeStorageProvider_WriteFailureCleansUpProbe(t *testing.T) {
 
 func TestProbeStorageProvider_MismatchStillDeletesProbe(t *testing.T) {
 	fp := &fakeProbeProvider{readBack: "not-what-was-written"}
-	ok, msg := probeStorageProvider(context.Background(), fp)
+	ok, msg := ProbeProvider(context.Background(), fp)
 	if ok {
 		t.Fatalf("ok = true, want false on mismatch (%s)", msg)
 	}
@@ -217,7 +217,7 @@ func TestProbeStorageProvider_MismatchStillDeletesProbe(t *testing.T) {
 
 func TestProbeStorageProvider_ReadErrorStillDeletesProbe(t *testing.T) {
 	fp := &fakeProbeProvider{getErr: errors.New("boom")}
-	ok, msg := probeStorageProvider(context.Background(), fp)
+	ok, msg := ProbeProvider(context.Background(), fp)
 	if ok {
 		t.Fatalf("ok = true, want false on read error (%s)", msg)
 	}
@@ -228,7 +228,7 @@ func TestProbeStorageProvider_ReadErrorStillDeletesProbe(t *testing.T) {
 
 func TestProbeStorageProvider_DeleteFailureAfterMatchReportsFailure(t *testing.T) {
 	fp := &fakeProbeProvider{readBack: coreStorageProbePayload, deleteErr: errors.New("locked")}
-	ok, msg := probeStorageProvider(context.Background(), fp)
+	ok, msg := ProbeProvider(context.Background(), fp)
 	if ok {
 		t.Fatalf("ok = true, want false when cleanup delete fails (%s)", msg)
 	}

@@ -47,7 +47,7 @@ func newPackPatchHandler() (*PacksHandler, *packPatchFakeStore) {
 		InternalSlug: "my-pack",
 		Summary:      "a summary",
 	}}
-	return NewPacksHandler(&handlers.AppState{Store: fs}), fs
+	return NewPacksHandler(withCoreStorage(&handlers.AppState{Store: fs})), fs
 }
 
 func packPatchRequest(path, body string) *http.Request {

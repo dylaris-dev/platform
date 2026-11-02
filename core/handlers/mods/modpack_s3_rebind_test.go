@@ -76,7 +76,7 @@ func TestModpackSettingsSet_RefusesARebindOnTheWire(t *testing.T) {
 	fs.KV["modpack_storage_s3_bucket"] = "packs"
 	fs.KV["modpack_storage_s3_access_key"] = "AKIAREAL"
 	fs.KV["modpack_storage_s3_secret_key"] = "the-real-secret"
-	h := NewModpackSettingsHandler(&handlers.AppState{Store: fs})
+	h := NewModpackSettingsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	body, _ := json.Marshal(modpackSettings{
 		Provider:    "s3",

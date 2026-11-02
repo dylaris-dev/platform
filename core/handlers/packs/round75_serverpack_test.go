@@ -30,7 +30,7 @@ func serverPackFixture(t *testing.T) (*PacksHandler, *draftRenderStore, modpack.
 	dir := t.TempDir()
 	base := localModpackHandler(t, dir)
 	st := &draftRenderStore{serverPackFakeStore: base.state.Store.(*serverPackFakeStore)}
-	h := &PacksHandler{state: &handlers.AppState{Store: st, ClusterSecret: "cluster-secret-under-test"}}
+	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: st, ClusterSecret: "cluster-secret-under-test"})}
 	storeZip(t, dir, "uploads/test.zip", "mods/test.jar", []byte("jar-bytes"))
 	st.content = []models.BuildContentEntry{uploadEntry("uploads/test.zip")}
 	pack := &models.Pack{ID: 1, OwnerID: "u", InternalName: "P", InternalSlug: "p"}
@@ -308,7 +308,7 @@ func TestServerPackKeyIgnoresTheRowOrder(t *testing.T) {
 // Every old public share link answers 410 Gone with a message, whatever the
 // token, and never a pack.
 func TestRemovedShareRouteAnswersGone(t *testing.T) {
-	h := &PacksHandler{state: &handlers.AppState{}}
+	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{})}
 	r := mux.NewRouter()
 	r.HandleFunc("/api/share/{token}", h.ServeRemovedShare).Methods("GET")
 	for _, token := range []string{"tok", "a-real-looking-token-0123456789"} {

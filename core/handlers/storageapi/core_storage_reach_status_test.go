@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 )
@@ -22,7 +23,7 @@ func TestStorageReachStatusHandler_ReturnsFaults(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RecordFault: %v", err)
 	}
-	h := NewCoreStorageHandler(&handlers.AppState{Redis: rdb, Store: &coreStorageFakeStore{values: map[string]string{}}})
+	h := NewCoreStorageHandler(withCoreStorage(&handlers.AppState{Redis: rdb, Store: &coreStorageFakeStore{values: map[string]string{}}}))
 
 	rec := httptest.NewRecorder()
 	h.StorageReachStatus(rec, httptest.NewRequest("GET", "/api/settings/storage-reach", nil))
@@ -99,8 +100,10 @@ func TestStorageReachStatusHandler_DoesNotSelfCheckOrStartARound(t *testing.T) {
 	onlineCoresBefore := counters.onlineCores.Load()
 	newProviderBefore := counters.newProvider.Load()
 
+	fs := &coreStorageFakeStore{values: map[string]string{}}
 	h := NewCoreStorageHandler(&handlers.AppState{
-		Redis: rdb, Store: &coreStorageFakeStore{values: map[string]string{}}, StorageReach: svc,
+		Redis: rdb, Store: fs,
+		CoreStorage: &corestorage.Manager{Store: fs, Redis: rdb, Reach: svc},
 	})
 	for i := 0; i < 5; i++ {
 		rec := httptest.NewRecorder()

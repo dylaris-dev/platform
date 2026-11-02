@@ -59,12 +59,12 @@ func TestDeleteServer_TakesItsAddressWithIt(t *testing.T) {
 
 	gw := &nodeDeleteGateway{}
 	fs := &deleteDispatchFakeStore{nodeMissing: true}
-	h := &ServerHandler{state: &handlers.AppState{
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{
 		Store:   fs,
 		Redis:   rdb,
 		Gateway: gw,
 		Events:  services.NewSystemEventsPublisher(nil),
-	}}
+	})}
 	rec := httptest.NewRecorder()
 
 	h.DeleteServer(rec, deleteServerRequest())

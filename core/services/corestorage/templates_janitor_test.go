@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"context"
@@ -14,7 +14,7 @@ type noCallStore struct{ store.Store }
 
 func TestRetentionAndAccountDeleteNeverTouchTenantStorage(t *testing.T) {
 	tenant := 4
-	s := &AppState{Store: noCallStore{}}
+	s := &Manager{Store: noCallStore{}}
 	tpl := models.Template{ID: 7, OwnerID: "u1", BackupStorageID: &tenant}
 
 	if err := s.RetentionDropTemplateFiles(context.Background(), &tpl); err == nil {

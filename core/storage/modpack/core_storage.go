@@ -15,7 +15,7 @@ import (
 
 // CoreStorageSubPrefix is the namespace modpack objects occupy inside the ONE
 // configured Core file storage. It duplicates the canonical
-// handlers.CoreStoragePrefixModpacks because this package must not import
+// corestorage.PrefixModpacks because this package must not import
 // handlers (handlers already imports this package). The two are held together
 // by handlers.TestCoreStorageSubPrefixesMatch.
 const CoreStorageSubPrefix = "modpacks"

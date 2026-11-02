@@ -78,7 +78,7 @@ func TestPlanEndpoint(t *testing.T) {
 					Incompatible: []services.DepProblem{},
 				}, nil
 			}
-			h := NewServerModsHandler(&handlers.AppState{Store: &planFakeStore{srv: tt.srv, mods: mods}})
+			h := NewServerModsHandler(withCoreStorage(&handlers.AppState{Store: &planFakeStore{srv: tt.srv, mods: mods}}))
 			r := httptest.NewRequest("POST", "/api/servers/7/mods/plan", strings.NewReader(`{"versionId":" v1 "}`))
 			r = mux.SetURLVars(r, map[string]string{"id": "7"})
 			w := httptest.NewRecorder()

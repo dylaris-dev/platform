@@ -60,6 +60,7 @@ func TestBuildPatchPreservesMetadata(t *testing.T) {
 	fs.builds[0].Changelog = "Original notes"
 	capture := &authoringCaptureStore{packCleanupStore: fs}
 	h.state.Store = capture
+	h.state.CoreStorage.Store = h.state.Store
 	w := httptest.NewRecorder()
 	h.UpdateBuild(w, packReq("PATCH", map[string]string{"id": "1", "buildId": "10"}, `{"changelog":"Updated notes"}`))
 	if w.Code != 200 {
@@ -104,6 +105,7 @@ func TestUploadPreservesConfigAndScriptPaths(t *testing.T) {
 			h, fs, dir := newPackCleanup(t)
 			capture := &authoringCaptureStore{packCleanupStore: fs}
 			h.state.Store = capture
+			h.state.CoreStorage.Store = h.state.Store
 			var body bytes.Buffer
 			mw := multipart.NewWriter(&body)
 			part, err := mw.CreateFormFile("file", tt.name)
@@ -161,7 +163,7 @@ func TestGetPackReturnsEffectivePermissions(t *testing.T) {
 		"manager": member(services.ModrinthPermAll), "uploader": member(services.ModrinthPermUploadVersion), "viewer": member(0),
 		"lapsed": lapsed(time.Hour),
 	}}
-	h := NewPacksHandler(&handlers.AppState{Store: fs})
+	h := NewPacksHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 	for _, tt := range []struct {
 		user                                    string
 		edit, delete, page, deletePack, invalid bool
@@ -213,6 +215,7 @@ func TestDeletingContentRequiresTheDeleteVersionRight(t *testing.T) {
 			base.pack.ModrinthProjectID = "proj"
 			fs := &deleteContentRightsStore{packCleanupStore: base, membership: member(tt.perms)}
 			h.state.Store = fs
+			h.state.CoreStorage.Store = h.state.Store
 			r := packReq("DELETE", map[string]string{"id": "1", "buildId": "10", "modversionId": "7"}, "")
 			r = r.WithContext(context.WithValue(r.Context(), "userID", "teammate"))
 			w := httptest.NewRecorder()
@@ -248,6 +251,7 @@ func TestCustomUploadCatalogIsScopedToTheBuild(t *testing.T) {
 	h, base, dir := newPackCleanup(t)
 	fs := &authoringCaptureStore{packCleanupStore: base}
 	h.state.Store = fs
+	h.state.CoreStorage.Store = h.state.Store
 	firstBytes := []byte("// original build")
 	if w := uploadAuthoringConfig(t, h, 1, 10, models.ContentTypeConfig, firstBytes); w.Code != 200 {
 		t.Fatalf("first upload: %d %s", w.Code, w.Body.String())
@@ -291,6 +295,7 @@ func TestRawUploadRejectsAnExistingTargetBeforeStorage(t *testing.T) {
 	h, base, _ := newPackCleanup(t)
 	fs := &authoringCaptureStore{packCleanupStore: base, existing: []models.BuildContentEntry{{Modversion: models.Modversion{TargetPath: "kubejs/server_scripts/same.js"}}}}
 	h.state.Store = fs
+	h.state.CoreStorage.Store = h.state.Store
 	if w := uploadAuthoringConfig(t, h, 1, 10, models.ContentTypeConfig, []byte("// duplicate")); w.Code != 409 {
 		t.Fatalf("duplicate upload: %d %s", w.Code, w.Body.String())
 	}

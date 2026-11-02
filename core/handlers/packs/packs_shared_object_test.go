@@ -128,7 +128,7 @@ func TestASharedContentObjectIsNotDeleted(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := &sharedObjectStore{counts: map[string]int{key: tt.count}, err: tt.countErr}
 			prov := &recordingProvider{}
-			h := &PacksHandler{state: &handlers.AppState{Store: fs}}
+			h := &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 
 			h.deleteIfUnreferenced(context.Background(), prov, key)
 
@@ -144,7 +144,7 @@ func TestASharedContentObjectIsNotDeleted(t *testing.T) {
 func TestAnEmptyStorageKeyIsNeverDeleted(t *testing.T) {
 	fs := &sharedObjectStore{counts: map[string]int{}}
 	prov := &recordingProvider{}
-	h := &PacksHandler{state: &handlers.AppState{Store: fs}}
+	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 
 	h.deleteIfUnreferenced(context.Background(), prov, "")
 

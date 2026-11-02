@@ -13,6 +13,7 @@ import (
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 )
 
 // Copies of handlers test fixtures the node tests use. Test files cannot be
@@ -22,7 +23,7 @@ import (
 // predicate the handlers ask.
 func foreignState(node *models.Node) *handlers.AppState {
 	st := &handlertest.ForeignStore{Node: node, Byon: "true"}
-	s := &handlers.AppState{Store: st, Authz: authz.NewResolver(st), FeatureFlags: services.NewFeatureFlags(st)}
+	s := withCoreStorage(&handlers.AppState{Store: st, Authz: authz.NewResolver(st), FeatureFlags: services.NewFeatureFlags(st)})
 	s.Authz.SetForeignNode(s.NodeOwnedByOther)
 	return s
 }
@@ -35,7 +36,7 @@ func TestForceDeleteFailsClosedOnACustomersMachine(t *testing.T) {
 	t.Run("force delete a customer's machine", func(t *testing.T) {
 		st := &orphanAssignFakeStore{node: handlertest.OwnedNode()}
 		flags := &handlertest.ForeignStore{SettingErr: fault}
-		h := &NodeHandler{state: &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(flags)}}
+		h := &NodeHandler{state: withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(flags)})}
 		rec := httptest.NewRecorder()
 		h.ForceDeleteNode(rec, handlertest.VisAdminRequest("DELETE", "/x", map[string]string{"id": "7"}))
 		if rec.Code != http.StatusConflict {
@@ -105,3 +106,11 @@ type tenancyFlagStore struct {
 }
 
 func (f tenancyFlagStore) GetSetting(string) (string, error) { return f.val, nil }
+
+// withCoreStorage gives a test state the core storage it implicitly was before
+// S12 (the AppState methods ran over its own Store, Redis, Events, ...): a
+// Manager over the very same objects.
+func withCoreStorage(s *handlers.AppState) *handlers.AppState {
+	s.CoreStorage = &corestorage.Manager{Store: s.Store, Redis: s.Redis, Events: s.Events, ClusterSecret: s.ClusterSecret, Registry: s.GRPCRegistry}
+	return s
+}

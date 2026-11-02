@@ -59,7 +59,7 @@ func TestRequireTemplatesAudience(t *testing.T) {
 	}
 	for _, tc := range tests {
 		st := &templatesFlagStore{settings: map[string]string{services.TemplatesSettingKey: tc.audience}}
-		state := &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}
+		state := withCoreStorage(&AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)})
 		h := state.RequireTemplatesAudience(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
 		req := httptest.NewRequest("GET", "/api/templates", nil)
 		req = req.WithContext(context.WithValue(req.Context(), "isAdmin", tc.admin))
@@ -78,7 +78,7 @@ func TestTemplatesFeatureSettingsPut(t *testing.T) {
 		settings: map[string]string{},
 		module:   models.Module{ID: 9, Name: "Templates", AccessRole: "admin"},
 	}
-	state := &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}
+	state := withCoreStorage(&AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)})
 	put := func(body string) int {
 		rec := httptest.NewRecorder()
 		NewFeatureSettingsHandler(state).Set(rec, httptest.NewRequest("PUT", "/api/admin/settings/features", strings.NewReader(body)))

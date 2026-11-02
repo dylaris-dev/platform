@@ -28,10 +28,10 @@ func (f *regionNeutralListStore) GetSetting(string) (string, error) { return "",
 // get an empty list for every server they did not own, even though the
 // store's own access query had already returned them.
 func TestTheServerListIsNotFilteredByRegion(t *testing.T) {
-	h := &ServerHandler{state: &handlers.AppState{Store: &regionNeutralListStore{servers: []models.Server{
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: &regionNeutralListStore{servers: []models.Server{
 		{ID: 1, UUID: "eu-srv", Region: "eu", OwnerID: "someone-else"},
 		{ID: 2, UUID: "us-srv", Region: "us", OwnerID: "someone-else"},
-	}}}}
+	}}})}
 	r := httptest.NewRequest(http.MethodGet, "/api/servers", nil)
 	ctx := context.WithValue(r.Context(), "userID", "staff-1")
 	ctx = context.WithValue(ctx, "isAdmin", false)

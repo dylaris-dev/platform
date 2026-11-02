@@ -12,7 +12,7 @@ import (
 
 func TestProxyInstallRefusal(t *testing.T) {
 	mr := miniredis.RunT(t)
-	st := &handlers.AppState{Redis: redis.NewClient(&redis.Options{Addr: mr.Addr()})}
+	st := withCoreStorage(&handlers.AppState{Redis: redis.NewClient(&redis.Options{Addr: mr.Addr()})})
 	mr.Set("dylaris:discovery:old-node", `{"releaseVersion":"2026.10.16.2"}`)
 	mr.Set("dylaris:discovery:new-node", `{"releaseVersion":"`+proxyInstallSince+`"}`)
 	mr.Set("dylaris:discovery:dev-node", `{"releaseVersion":""}`)

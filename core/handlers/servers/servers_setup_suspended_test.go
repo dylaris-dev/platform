@@ -33,7 +33,7 @@ func TestSetupServerRefusedWhileTheOwnerIsSuspended(t *testing.T) {
 		server:  &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerID: "u1", OwnerName: "alice", NodeID: 7},
 		billing: &store.UserBilling{UserID: "u1", Status: "suspended"},
 	}
-	h := &ServerHandler{state: &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}}
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}
 
 	body, _ := json.Marshal(map[string]any{
 		"subServerName": "main",

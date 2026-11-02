@@ -20,10 +20,10 @@ import (
 // core_storage_gate_test.go does for FeatureSettingsHandler, since Set()
 // unconditionally invalidates flags and publishes events on success.
 func newModpackSettingsTestHandler(fs *handlertest.SettingsStore) *ModpackSettingsHandler {
-	st := &handlers.AppState{
+	st := withCoreStorage(&handlers.AppState{
 		Store:  fs,
 		Events: services.NewSystemEventsPublisher(nil),
-	}
+	})
 	st.FeatureFlags = services.NewFeatureFlags(st.Store)
 	return NewModpackSettingsHandler(st)
 }

@@ -18,6 +18,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/services/corestorage"
 
 	"dylaris-core/models"
 	"dylaris-core/storage"
@@ -160,7 +161,7 @@ func newAttachmentUploadHandler(t *testing.T, settings map[string]string, scanne
 		settings: merged,
 		ticket:   &models.Ticket{ID: 1, UserID: testTicketOwner},
 	}
-	st := &handlers.AppState{Store: fs}
+	st := withCoreStorage(&handlers.AppState{Store: fs})
 	h := &TicketAttachmentsHandler{
 		state:   st,
 		scanner: scanner,
@@ -385,7 +386,7 @@ func TestUploadAttachment_ByteIntegrity(t *testing.T) {
 	}
 	storageKey := fs.attachments[0].StorageKey
 
-	prov := &storage.LocalProvider{BasePath: filepath.Join(dir, handlers.CoreStoragePrefixAttachments)}
+	prov := &storage.LocalProvider{BasePath: filepath.Join(dir, corestorage.PrefixAttachments)}
 	rc, err := prov.GetFile(context.Background(), storageKey)
 	if err != nil {
 		t.Fatalf("GetFile(%q): %v", storageKey, err)
@@ -732,6 +733,7 @@ func TestASupporterOnAnotherTeamCannotTouchTheTicketsAttachments(t *testing.T) {
 		fs.ticket.AssignedTeam = tc.team
 		fs.attachments = []*models.TicketAttachment{{ID: 7, TicketID: 1, StorageKey: "tickets/1/x-a.txt"}}
 		h.state.Store = supportFakeStore{fs}
+		h.state.CoreStorage.Store = h.state.Store
 
 		as := func(r *http.Request) *http.Request {
 			return r.WithContext(context.WithValue(r.Context(), "userID", "supporter"))

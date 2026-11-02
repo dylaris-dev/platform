@@ -772,7 +772,7 @@ func gatewayVerdict(onlineEdges, totalEdges, onlineLinks, totalLinks int, routes
 // can therefore be up to one probe interval stale.
 //
 // It is NOT free of I/O altogether, and an earlier version of this comment
-// claiming it "reads atomics only" was wrong: LoadCoreStorageConfig below
+// claiming it "reads atomics only" was wrong: CoreStorage.LoadConfig below
 // issues several settings reads, and Store.GetSetting takes no context, so a
 // wedged Postgres blocks this component for as long as the driver allows. That
 // is the same hole nodesComponent has and the handler comment above names.
@@ -795,7 +795,7 @@ func gatewayVerdict(onlineEdges, totalEdges, onlineLinks, totalLinks int, routes
 // every authenticated user.
 func (h *HealthHandler) storageComponent() healthComponent {
 	comp := healthComponent{Key: "storage", Name: "Core storage"}
-	cfg, err := h.state.effectiveCoreStorageConfig()
+	cfg, err := h.state.CoreStorage.EffectiveConfig()
 	if err != nil {
 		// A selected storage connection that no longer resolves: the backend is
 		// intended but unusable. Report it rather than describing the stale
@@ -809,7 +809,7 @@ func (h *HealthHandler) storageComponent() healthComponent {
 
 	switch cfg.Backend {
 	case "s3":
-		reconnecting, since, lastErr := h.state.StorageS3.State()
+		reconnecting, since, lastErr := h.state.CoreStorage.S3.State()
 		if !reconnecting {
 			comp.Status = "up"
 			comp.Detail = "S3 backend, no connection failure reported"
@@ -824,7 +824,7 @@ func (h *HealthHandler) storageComponent() healthComponent {
 		return comp
 
 	case "path", "local":
-		healthy, cause := h.state.StorageGate.Healthy()
+		healthy, cause := h.state.CoreStorage.Gate.Healthy()
 		if healthy {
 			comp.Status = "up"
 			comp.Detail = "Host path, no connection failure observed"
@@ -919,10 +919,10 @@ func (h *HealthHandler) Healthz(w http.ResponseWriter, r *http.Request) {
 	// when the backend is not a host path, and the s3 state is reset when it is
 	// not s3, so at most one of these can be false at a time.
 	storageOK := true
-	if healthy, _ := h.state.StorageGate.Healthy(); !healthy {
+	if healthy, _ := h.state.CoreStorage.Gate.Healthy(); !healthy {
 		storageOK = false
 	}
-	if reconnecting, _, _ := h.state.StorageS3.State(); reconnecting {
+	if reconnecting, _, _ := h.state.CoreStorage.S3.State(); reconnecting {
 		storageOK = false
 	}
 

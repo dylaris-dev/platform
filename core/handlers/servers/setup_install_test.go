@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/services/corestorage"
 
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
@@ -62,10 +63,10 @@ func newInstallTest(t *testing.T) (*ServerHandler, *installFakeStore, *redis.Cli
 			NodeID: 7, ActiveSubServer: "main", InstallerType: "paper", BuildNumber: "1.21.1", MinecraftVersion: "1.21.1"},
 		node: &models.Node{ID: 7, Token: "node-lib", Name: "n1", Status: "online"},
 		settings: map[string]string{
-			handlers.KeyCoreStorageBackend:     "path",
-			handlers.KeyCoreStoragePath:        dir,
-			handlers.KeyCoreStoragePathConfirm: "true",
-			"core_public_url":                  "https://panel.example.com",
+			corestorage.KeyBackend:     "path",
+			corestorage.KeyPath:        dir,
+			corestorage.KeyPathConfirm: "true",
+			"core_public_url":          "https://panel.example.com",
 		},
 	}}
 	rdb := handlertest.RedisClient(t)
@@ -75,6 +76,7 @@ func newInstallTest(t *testing.T) (*ServerHandler, *installFakeStore, *redis.Cli
 		Queue:         services.NewQueueService(rdb),
 		FeatureFlags:  services.NewFeatureFlags(fs),
 		ClusterSecret: "test-cluster-secret",
+		CoreStorage:   &corestorage.Manager{Store: fs, Redis: rdb, ClusterSecret: "test-cluster-secret"},
 	}}
 	return h, fs, rdb
 }

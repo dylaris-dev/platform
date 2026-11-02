@@ -72,6 +72,7 @@ func TestImportModrinthVersionBuildsAFrozenImportedBuild(t *testing.T) {
 	base.pack.ModrinthProjectID = "proj"
 	fs := &importStore{packCleanupStore: base, targets: map[string]string{}}
 	h.state.Store = fs
+	h.state.CoreStorage.Store = h.state.Store
 	h.SetPATLoader(&publishBindingPAT{})
 
 	pack := zipOf(t, map[string]string{
@@ -139,6 +140,7 @@ func TestImportModrinthVersionRefusesAVersionOfAnotherProject(t *testing.T) {
 	h, base, _ := newPackCleanup(t)
 	base.pack.ModrinthProjectID = "proj"
 	h.state.Store = &importStore{packCleanupStore: base, targets: map[string]string{}}
+	h.state.CoreStorage.Store = h.state.Store
 	h.SetPATLoader(&publishBindingPAT{})
 	old := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = old })

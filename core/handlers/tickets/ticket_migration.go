@@ -18,7 +18,9 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/reauth"
+	"dylaris-core/services/corestorage"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -289,9 +291,9 @@ func (h *TicketMigrationHandler) CreateBackup(w http.ResponseWriter, r *http.Req
 	if !h.requireAdmin(w, r) {
 		return
 	}
-	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
+	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
-		handlers.CoreStorageUnavailableResponse(w, err)
+		guard.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -361,9 +363,9 @@ func (h *TicketMigrationHandler) ListBackups(w http.ResponseWriter, r *http.Requ
 	if !h.requireAdmin(w, r) {
 		return
 	}
-	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
+	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
-		handlers.CoreStorageUnavailableResponse(w, err)
+		guard.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 	files, err := prov.ListFiles(r.Context(), "/")
@@ -398,9 +400,9 @@ func (h *TicketMigrationHandler) DownloadBackup(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
+	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
-		handlers.CoreStorageUnavailableResponse(w, err)
+		guard.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -441,9 +443,9 @@ func (h *TicketMigrationHandler) DeleteBackup(w http.ResponseWriter, r *http.Req
 		httpx.SendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
-	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
+	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
-		handlers.CoreStorageUnavailableResponse(w, err)
+		guard.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 	if err := prov.DeletePath(r.Context(), name); err != nil {
@@ -487,9 +489,9 @@ func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Invalid backup name", http.StatusBadRequest)
 		return
 	}
-	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
+	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
-		handlers.CoreStorageUnavailableResponse(w, err)
+		guard.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 	if rc, err := prov.GetFile(r.Context(), name); err != nil {
@@ -610,9 +612,9 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixBackups)
+	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixBackups)
 	if err != nil {
-		handlers.CoreStorageUnavailableResponse(w, err)
+		guard.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 

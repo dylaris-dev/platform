@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"dylaris-core/services/corestorage"
 	"dylaris-core/services/storagereach"
 )
 
 func TestRequireCoreStorageReachable_PassesWhenHealthy(t *testing.T) {
-	s := &AppState{StorageReach: storagereach.NewService(storagereach.ServiceDeps{CoreID: "core-a"})}
+	s := &AppState{CoreStorage: &corestorage.Manager{Reach: storagereach.NewService(storagereach.ServiceDeps{CoreID: "core-a"})}}
 	called := false
 	h := s.RequireCoreStorageReachable(func(http.ResponseWriter, *http.Request) { called = true })
 
@@ -30,7 +31,7 @@ func TestRequireCoreStorageReachable_PassesWhenTheVerifierIsAbsent(t *testing.T)
 	// Tooling and tests build an AppState without the verifier. That must
 	// behave exactly as it did before this feature existed, not deny
 	// everything.
-	s := &AppState{}
+	s := &AppState{CoreStorage: &corestorage.Manager{}}
 	called := false
 	h := s.RequireCoreStorageReachable(func(http.ResponseWriter, *http.Request) { called = true })
 
@@ -48,7 +49,7 @@ func TestRequireCoreStorageReachable_503sWithTheTaxonomyReason(t *testing.T) {
 	// string must never reach the response body (see the assertion below).
 	const rawDetail = "/mnt/nfs/dylaris-data: permission denied"
 	svc.Status().Set(storagereach.StatusNotShared, rawDetail)
-	s := &AppState{StorageReach: svc}
+	s := &AppState{CoreStorage: &corestorage.Manager{Reach: svc}}
 
 	called := false
 	h := s.RequireCoreStorageReachable(func(http.ResponseWriter, *http.Request) { called = true })

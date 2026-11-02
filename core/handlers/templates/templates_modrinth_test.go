@@ -371,7 +371,7 @@ func TestLastWriteAtAPathWins(t *testing.T) {
 		h, st := newTestHandler(t, nil)
 		stubModrinth(t, map[string]string{"sodium": "v-so"}, nil)
 		tpl := seedTemplate(t, st, ownerID, "personal")
-		if err := h.state.TemplateWrite(context.Background(), tpl, "mods/sodium.jar", strings.NewReader("old copy"), 8); err != nil {
+		if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, "mods/sodium.jar", strings.NewReader("old copy"), 8); err != nil {
 			t.Fatal(err)
 		}
 		rec := httptest.NewRecorder()

@@ -138,7 +138,7 @@ func s3Body(name string, extra map[string]any) []byte {
 // select as a target for everybody's backups.
 func TestCreateOwnStorageIgnoresAnOwnerInTheBody(t *testing.T) {
 	st := &ownStorageFakeStore{byID: map[int]*models.BackupStorage{}}
-	h := &BackupHandler{state: &handlers.AppState{Store: st}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 
 	rec := httptest.NewRecorder()
 	req := asUser(httptest.NewRequest(http.MethodPost, "/api/me/backup-storages",
@@ -165,7 +165,7 @@ func TestCreateOwnStorageRefusesPlatformProviders(t *testing.T) {
 	for _, provider := range []string{"local", "shared", "node-local", "core-storage", "connection", ""} {
 		t.Run(provider, func(t *testing.T) {
 			st := &ownStorageFakeStore{byID: map[int]*models.BackupStorage{}}
-			h := &BackupHandler{state: &handlers.AppState{Store: st}}
+			h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 			body, _ := json.Marshal(map[string]any{
 				"name": "x", "provider": provider,
 				"config": json.RawMessage(`{"basePath":"/var/lib/dylaris"}`),
@@ -193,7 +193,7 @@ func TestOwnStorageRoutesRefuseSomebodyElsesRow(t *testing.T) {
 		7: {ID: 7, Name: "theirs", Provider: "s3", OwnerID: &other},
 		8: {ID: 8, Name: "the platform's", Provider: "s3"}, // OwnerID nil
 	}}
-	h := &BackupHandler{state: &handlers.AppState{Store: st}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 
 	for _, id := range []string{"7", "8", "999"} {
 		t.Run("delete "+id, func(t *testing.T) {
@@ -230,7 +230,7 @@ func TestUpdateOwnStorageIgnoresIdentityInTheBody(t *testing.T) {
 			Config: json.RawMessage(`{"endpoint":"https://s3.example.com","bucket":"b","accessKeyId":"AK","secretAccessKey":"sk"}`)},
 		7: {ID: 7, Name: "theirs", Provider: "s3", OwnerID: &other},
 	}}
-	h := &BackupHandler{state: &handlers.AppState{Store: st}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 
 	rec := httptest.NewRecorder()
 	req := mux.SetURLVars(
@@ -262,7 +262,7 @@ func TestListOwnStoragesIsScopedToTheCaller(t *testing.T) {
 		4: {ID: 4, Name: "mine", Provider: "s3", OwnerID: &me},
 		7: {ID: 7, Name: "theirs", Provider: "s3", OwnerID: &other},
 	}}
-	h := &BackupHandler{state: &handlers.AppState{Store: st}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 
 	rec := httptest.NewRecorder()
 	h.ListOwnStorages(rec, asUser(httptest.NewRequest(http.MethodGet, "/x", nil), "u1"))
@@ -314,7 +314,7 @@ func TestTheAdminTestOfATenantBucketDialsThroughTheGuard(t *testing.T) {
 	cfg, _ := json.Marshal(map[string]interface{}{"endpoint": srv.URL, "bucket": "b",
 		"region": "us-east-1", "forcePathStyle": true, "accessKeyId": "k", "secretAccessKey": "s"})
 	fs := &presignedOnlyStore{storage: &models.BackupStorage{ID: 3, Provider: "s3", OwnerID: &owner, Config: cfg}}
-	h := &BackupHandler{state: &handlers.AppState{Store: fs}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 
 	r := mux.SetURLVars(httptest.NewRequest(http.MethodPost, "/api/backup-storages/3/test", nil), map[string]string{"id": "3"})
 	w := httptest.NewRecorder()
@@ -359,8 +359,8 @@ func TestATenantTestDoesNotNameTheInternalAddress(t *testing.T) {
 	owner := "alice"
 	cfg, _ := json.Marshal(map[string]interface{}{"endpoint": srv.URL, "bucket": "b",
 		"region": "us-east-1", "forcePathStyle": true, "accessKeyId": "k", "secretAccessKey": "s"})
-	h := &BackupHandler{state: &handlers.AppState{Store: &presignedOnlyStore{
-		storage: &models.BackupStorage{ID: 3, Provider: "s3", OwnerID: &owner, Config: cfg}}}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: &presignedOnlyStore{
+		storage: &models.BackupStorage{ID: 3, Provider: "s3", OwnerID: &owner, Config: cfg}}})}
 
 	r := mux.SetURLVars(httptest.NewRequest(http.MethodPost, "/api/me/backup-storages/3/test", nil), map[string]string{"id": "3"})
 	//lint:ignore SA1029 the handlers read a plain string key; the tests match them.
@@ -396,7 +396,7 @@ func TestOwnStorageDefaultFlagDrivesTheBackupsPreference(t *testing.T) {
 			5: {ID: 5, Name: "mine", Provider: "s3", OwnerID: &owner,
 				Config: json.RawMessage(`{"endpoint":"https://s3.example.com","bucket":"b","accessKeyId":"AK","secretAccessKey":"sk"}`)},
 		}, prefBackups: tc.pref, prefTemplates: &tpl}
-		h := &BackupHandler{state: &handlers.AppState{Store: st}}
+		h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 		req := mux.SetURLVars(asUser(httptest.NewRequest(http.MethodPatch, "/x",
 			bytes.NewReader(s3Body("mine", map[string]any{"isDefault": tc.isDefault}))), owner), map[string]string{"id": "5"})
 		rec := httptest.NewRecorder()
@@ -410,7 +410,7 @@ func TestOwnStorageDefaultFlagDrivesTheBackupsPreference(t *testing.T) {
 	}
 
 	st := &ownStorageFakeStore{byID: map[int]*models.BackupStorage{}}
-	h := &BackupHandler{state: &handlers.AppState{Store: st}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 	rec := httptest.NewRecorder()
 	h.CreateOwnStorage(rec, asUser(httptest.NewRequest(http.MethodPost, "/x",
 		bytes.NewReader(s3Body("new", map[string]any{"isDefault": true}))), owner))
@@ -437,7 +437,7 @@ func TestOwnStoragePatchWithoutIsDefaultKeepsFlagAndPref(t *testing.T) {
 			5: {ID: 5, Name: "mine", Provider: "s3", OwnerID: &owner, IsDefault: tc.isDefault,
 				Config: json.RawMessage(`{"endpoint":"https://s3.example.com","bucket":"b","accessKeyId":"AK","secretAccessKey":"sk"}`)},
 		}, prefBackups: tc.pref}
-		h := &BackupHandler{state: &handlers.AppState{Store: st}}
+		h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 		req := mux.SetURLVars(asUser(httptest.NewRequest(http.MethodPatch, "/x",
 			bytes.NewReader(s3Body("renamed", nil))), owner), map[string]string{"id": "5"})
 		rec := httptest.NewRecorder()
@@ -467,7 +467,7 @@ func sameInt(a, b *int) bool {
 // message: the raw database error names internal addresses.
 func TestOwnStoragePrefSyncFailureIsGeneric(t *testing.T) {
 	st := &ownStorageFakeStore{byID: map[int]*models.BackupStorage{}, failPrefWrite: true}
-	h := &BackupHandler{state: &handlers.AppState{Store: st}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 	rec := httptest.NewRecorder()
 	h.CreateOwnStorage(rec, asUser(httptest.NewRequest(http.MethodPost, "/x",
 		bytes.NewReader(s3Body("new", map[string]any{"isDefault": true}))), "u1"))

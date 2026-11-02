@@ -52,7 +52,7 @@ func TestVersionUpdateRefusesWhatItWouldBreak(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			h := NewServerModsHandler(&handlers.AppState{Store: &versionGuardStore{srv: c.srv, mods: c.mods}})
+			h := NewServerModsHandler(withCoreStorage(&handlers.AppState{Store: &versionGuardStore{srv: c.srv, mods: c.mods}}))
 			req := httptest.NewRequest(http.MethodPost, "/api/servers/1/version-update", strings.NewReader(c.body))
 			req = mux.SetURLVars(req, map[string]string{"id": "1"})
 			rec := httptest.NewRecorder()

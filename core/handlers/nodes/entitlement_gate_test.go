@@ -60,7 +60,7 @@ func newEntGateState(billing *store.UserBilling, storeEnabled bool) *handlers.Ap
 		settings: map[string]string{"feature_byon_enabled": "true"},
 		billing:  billing,
 	}
-	return &handlers.AppState{
+	return withCoreStorage(&handlers.AppState{
 		Store:        fs,
 		FeatureFlags: services.NewFeatureFlags(fs),
 		StoreEnabled: storeEnabled,
@@ -68,7 +68,7 @@ func newEntGateState(billing *store.UserBilling, storeEnabled bool) *handlers.Ap
 		// into a "you are not connected" claim we cannot support. See
 		// storeLinkedBestEffort.
 		StoreURL: "",
-	}
+	})
 }
 
 func mintEnrollToken(state *handlers.AppState, userID string) *httptest.ResponseRecorder {

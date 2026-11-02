@@ -20,6 +20,7 @@ func TestModrinthAddKeepsExistingDependencies(t *testing.T) {
 	base.builds[0].Loader = "forge"
 	fs := &authoringCaptureStore{packCleanupStore: base, existing: []models.BuildContentEntry{{Modversion: models.Modversion{ModrinthProjectID: "dependency"}, Side: models.SideBoth}}}
 	h.state.Store = fs
+	h.state.CoreStorage.Store = h.state.Store
 	old := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = old })
 	calls := 0
@@ -50,6 +51,7 @@ func TestModrinthAddClientOnlyProjectKeepsDependenciesOnBothSides(t *testing.T) 
 	base.builds[0].Loader = "fabric"
 	fs := &authoringCaptureStore{packCleanupStore: base}
 	h.state.Store = fs
+	h.state.CoreStorage.Store = h.state.Store
 	old := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = old })
 	http.DefaultTransport = modrinthAddTransport(func(r *http.Request) (*http.Response, error) {

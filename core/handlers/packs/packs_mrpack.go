@@ -14,11 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/storage/modpack"
 
 	"github.com/gorilla/mux"
@@ -282,7 +281,7 @@ func (h *PacksHandler) renderMrpack(ctx context.Context, pack *models.Pack, buil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	prov, _ := h.state.BuildModpackStorageProvider()
+	prov, _ := h.state.CoreStorage.BuildModpackProvider()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	if err := h.writeMrpackZip(ctx, zw, pack, build, content, prov); err != nil {
@@ -318,7 +317,7 @@ func (h *PacksHandler) renderMrpack(ctx context.Context, pack *models.Pack, buil
 // build is unaffected because its key is stored on the build row, and an
 // unpublished one is re-rendered under the new path, orphaning the old object.
 func (h *PacksHandler) mrpackStorageKey(pack *models.Pack, build *models.PackBuild) string {
-	return h.state.MrpackStorageKey(pack, build)
+	return h.state.CoreStorage.MrpackStorageKey(pack, build)
 }
 
 // persistMrpackForBuild renders + (for beta/release) persists the mrpack to
@@ -331,7 +330,7 @@ func (h *PacksHandler) persistMrpackForBuild(ctx context.Context, pack *models.P
 	if build.Channel == models.ChannelDraft {
 		return data, nil
 	}
-	prov, err := h.state.BuildModpackStorageProvider()
+	prov, err := h.state.CoreStorage.BuildModpackProvider()
 	if err != nil {
 		return nil, fmt.Errorf("modpack storage misconfigured: %w", err)
 	}
@@ -386,11 +385,11 @@ func (h *PacksHandler) InstallMrpackURL(ctx context.Context, pack *models.Pack, 
 	if err != nil {
 		return "", err
 	}
-	base, err := handlers.ModpackMirrorBase(h.state.Store.GetSetting)
+	base, err := corestorage.ModpackMirrorBase(h.state.Store.GetSetting)
 	if err != nil {
 		return "", err
 	}
-	return handlers.SignedModpackMirrorURL(base, h.state.ClusterSecret, key, time.Now()), nil
+	return corestorage.SignedModpackMirrorURL(base, h.state.ClusterSecret, key, time.Now()), nil
 }
 
 // fetchPublishedVersion is a var so a test can stand in for Modrinth.
@@ -423,7 +422,7 @@ func (h *PacksHandler) storeDraftMrpack(ctx context.Context, pack *models.Pack, 
 	if err != nil {
 		return "", err
 	}
-	prov, err := h.state.BuildModpackStorageProvider()
+	prov, err := h.state.CoreStorage.BuildModpackProvider()
 	if err != nil {
 		return "", err
 	}

@@ -539,7 +539,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 
 	// Before the rows: their backup archives are named by run rows that cascade
 	// away with the servers.
-	handlers.PurgeBackupArchivesForServers(h.state, services.ServerIDs(servers))
+	h.state.CoreStorage.PurgeBackupArchivesForServers(services.ServerIDs(servers))
 
 	// Delete all servers on this node first (FK constraint)
 	if err := h.state.Store.DeleteServersByNode(id); err != nil {

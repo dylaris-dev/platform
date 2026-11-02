@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -43,6 +44,7 @@ func listNodesFor(t *testing.T, rdb *redis.Client, nodes []models.Node) map[stri
 		FeatureFlags:  services.NewFeatureFlags(fs),
 		Redis:         rdb,
 		ClusterSecret: "cs",
+		CoreStorage:   &corestorage.Manager{Store: fs, Redis: rdb, ClusterSecret: "cs"},
 	}
 	h := NewNodeHandler(state)
 	r := httptest.NewRequest(http.MethodGet, "/api/nodes", nil)

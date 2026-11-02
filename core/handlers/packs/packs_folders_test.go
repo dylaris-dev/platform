@@ -67,6 +67,7 @@ func TestPackFolderPermissionsAndPaths(t *testing.T) {
 				s.content = []models.BuildContentEntry{e}
 			}
 			h.state.Store = s
+			h.state.CoreStorage.Store = h.state.Store
 			r := packContentRequest(t, tc.user, "1", tc.build)
 			r.Method = tc.method
 			r.Body = io.NopCloser(strings.NewReader(`{"path":"` + tc.path + `"}`))

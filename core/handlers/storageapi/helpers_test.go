@@ -6,17 +6,18 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 )
 
 // Copies of handlers test fixtures the storage tests use; each keeps its name.
 
 func seedCoreStorageS3(fs *handlertest.SettingsStore) {
-	fs.KV[handlers.KeyCoreStorageBackend] = "s3"
-	fs.KV[handlers.KeyCoreStorageS3Endpoint] = "https://s3.example.com"
-	fs.KV[handlers.KeyCoreStorageS3Bucket] = "bucket1"
-	fs.KV[handlers.KeyCoreStorageS3AccessKey] = "key1"
-	fs.KV[handlers.KeyCoreStorageS3SecretKey] = "stored-secret"
+	fs.KV[corestorage.KeyBackend] = "s3"
+	fs.KV[corestorage.KeyS3Endpoint] = "https://s3.example.com"
+	fs.KV[corestorage.KeyS3Bucket] = "bucket1"
+	fs.KV[corestorage.KeyS3AccessKey] = "key1"
+	fs.KV[corestorage.KeyS3SecretKey] = "stored-secret"
 }
 
 // resolveFakeStore serves settings + one storage connection. Embeds store.Store
@@ -89,4 +90,12 @@ type storageReachDepsCounters struct {
 	configFor   atomic.Int64
 	onlineCores atomic.Int64
 	newProvider atomic.Int64
+}
+
+// withCoreStorage gives a test state the core storage it implicitly was before
+// S12 (the AppState methods ran over its own Store, Redis, Events, ...): a
+// Manager over the very same objects.
+func withCoreStorage(s *handlers.AppState) *handlers.AppState {
+	s.CoreStorage = &corestorage.Manager{Store: s.Store, Redis: s.Redis, Events: s.Events, ClusterSecret: s.ClusterSecret, Registry: s.GRPCRegistry}
+	return s
 }

@@ -46,7 +46,7 @@ func createServerReq(body map[string]any, userID string, isAdmin bool) *http.Req
 // is missing, rather than the field that is wrong. Sscanf left the id at 0 and
 // the lookup did the rest.
 func TestCreateServerRejectsANodeUUIDByName(t *testing.T) {
-	h := &ServerHandler{state: &handlers.AppState{Store: &createInputStore{user: &models.User{ID: "u1"}}}}
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: &createInputStore{user: &models.User{ID: "u1"}}})}
 	rec := httptest.NewRecorder()
 	h.CreateServer(rec, createServerReq(map[string]any{
 		"uuid":   "3f1f0e8a-6c1e-4d8a-9c4a-0b1d2e3f4a5b",
@@ -107,7 +107,7 @@ func (f *autoPlaceStore) GetNodeByID(int) (*models.Node, error) { return nil, er
 // for a region could not create a server at all.
 func TestCreateServerWithoutNodeOrFiltersAutoPlaces(t *testing.T) {
 	fs := &autoPlaceStore{createInputStore: createInputStore{user: &models.User{ID: "u1"}}}
-	h := &ServerHandler{state: &handlers.AppState{Store: fs}}
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 	rec := httptest.NewRecorder()
 	h.CreateServer(rec, createServerReq(map[string]any{
 		"uuid":   "3f1f0e8a-6c1e-4d8a-9c4a-0b1d2e3f4a5b",

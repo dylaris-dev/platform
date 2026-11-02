@@ -33,7 +33,7 @@ func (f *modConfigsFlagStore) SetSetting(key, value string) error {
 // only, and a value the setting cannot hold must not be stored.
 func TestModConfigsFlagIsResolvedPerCaller(t *testing.T) {
 	st := &modConfigsFlagStore{settings: map[string]string{}}
-	state := &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}
+	state := withCoreStorage(&AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)})
 	offered := func(admin bool) bool {
 		req := httptest.NewRequest("GET", "/api/system/features", nil)
 		req = req.WithContext(context.WithValue(req.Context(), "isAdmin", admin))

@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"encoding/json"
@@ -11,20 +11,20 @@ import (
 	"dylaris-core/storage/modpack"
 )
 
-// keyCoreStorageConnectionID names the setting that, when set to a storage
+// KeyConnectionID names the setting that, when set to a storage
 // connection id, makes Core file storage build from that named connection
 // instead of the inline core_storage_s3_* keys. Empty or "0" means "use the
 // inline config" - the fallback the spec keeps open.
-const keyCoreStorageConnectionID = "core_storage_connection_id"
+const KeyConnectionID = "core_storage_connection_id"
 
-// keyModpackStorageConnectionID names the setting that, when set to a storage
+// KeyModpackConnectionID names the setting that, when set to a storage
 // connection id, makes modpack storage build from that named connection instead
 // of the inline modpack_storage_s3_* keys. Empty or "0" = use the inline config.
-const keyModpackStorageConnectionID = "modpack_storage_connection_id"
+const KeyModpackConnectionID = "modpack_storage_connection_id"
 
-// storageConnIDSetting formats a connection id for persistence: 0 stores "" (no
+// ConnIDSetting formats a connection id for persistence: 0 stores "" (no
 // connection selected) so an empty setting reads back as "none".
-func storageConnIDSetting(id int) string {
+func ConnIDSetting(id int) string {
 	if id == 0 {
 		return ""
 	}
@@ -37,7 +37,7 @@ func storageConnIDSetting(id int) string {
 // reference (non-numeric id, or a connection that no longer loads) is an ERROR,
 // not a silent fallback: the operator chose a connection, so quietly building
 // from possibly-stale inline config would hide the misconfiguration.
-func (s *AppState) selectedStorageConnection(idSetting string) (*models.StorageConnection, bool, error) {
+func (s *Manager) selectedStorageConnection(idSetting string) (*models.StorageConnection, bool, error) {
 	if s.Store == nil {
 		return nil, false, nil
 	}
@@ -57,16 +57,16 @@ func (s *AppState) selectedStorageConnection(idSetting string) (*models.StorageC
 	return conn, true, nil
 }
 
-// coreStorageConfigFromConnection maps a resolved connection (its secret already
-// decrypted into SecretAccessKey by the store) onto a CoreStorageConfig. The
+// ConfigFromConnection maps a resolved connection (its secret already
+// decrypted into SecretAccessKey by the store) onto a Config. The
 // backend is always s3; the access key and secret come from their own columns,
 // the rest from the connection's config JSONB.
-func coreStorageConfigFromConnection(conn *models.StorageConnection) CoreStorageConfig {
-	var c storageConnectionConfig
+func ConfigFromConnection(conn *models.StorageConnection) Config {
+	var c ConnectionConfig
 	if len(conn.Config) > 0 {
 		_ = json.Unmarshal(conn.Config, &c)
 	}
-	return CoreStorageConfig{
+	return Config{
 		Backend:     "s3",
 		S3Endpoint:  c.Endpoint,
 		S3Region:    c.Region,
@@ -79,23 +79,23 @@ func coreStorageConfigFromConnection(conn *models.StorageConnection) CoreStorage
 	}
 }
 
-// effectiveCoreStorageConfig returns the config Core file storage is actually
+// EffectiveConfig returns the config Core file storage is actually
 // built from. A selected storage connection overrides the inline config
 // entirely; otherwise the inline config is returned unchanged. This is the
 // single place the "connection overrides inline" rule lives, so the provider
 // builder, the gate sync and the configured-check all agree.
-func (s *AppState) effectiveCoreStorageConfig() (CoreStorageConfig, error) {
-	conn, ok, err := s.selectedStorageConnection(keyCoreStorageConnectionID)
+func (s *Manager) EffectiveConfig() (Config, error) {
+	conn, ok, err := s.selectedStorageConnection(KeyConnectionID)
 	if err != nil {
-		return CoreStorageConfig{}, err
+		return Config{}, err
 	}
 	if ok {
-		return coreStorageConfigFromConnection(conn), nil
+		return ConfigFromConnection(conn), nil
 	}
-	return s.LoadCoreStorageConfig(), nil
+	return s.LoadConfig(), nil
 }
 
-// buildModpackStorageProvider builds the modpack storage provider, resolving a
+// BuildModpackProvider builds the modpack storage provider, resolving a
 // selected storage connection first. When modpack_storage_connection_id is set,
 // the connection is built as an s3 storage.StorageProvider (which supports
 // path-style and prefix, unlike modpack's native NewS3) and adapted to the
@@ -103,24 +103,24 @@ func (s *AppState) effectiveCoreStorageConfig() (CoreStorageConfig, error) {
 // "core-storage" modpack backend already uses. Otherwise it delegates to the
 // inline modpack_storage_* settings unchanged, so an install with no connection
 // selected behaves exactly as before.
-func (s *AppState) buildModpackStorageProvider() (modpack.ModpackStorageProvider, error) {
-	conn, ok, err := s.selectedStorageConnection(keyModpackStorageConnectionID)
+func (s *Manager) BuildModpackProvider() (modpack.ModpackStorageProvider, error) {
+	conn, ok, err := s.selectedStorageConnection(KeyModpackConnectionID)
 	if err != nil {
 		return nil, err
 	}
 	if ok {
-		prov, err := storageConnectionProvider(conn)
+		prov, err := ConnectionProvider(conn)
 		if err != nil {
 			return nil, err
 		}
 		return modpack.NewCoreStorageProvider(prov), nil
 	}
-	return modpack.NewProviderFromSettings(s.Store.GetSetting, s.buildCoreStorageProvider)
+	return modpack.NewProviderFromSettings(s.Store.GetSetting, s.BuildProvider)
 }
 
-// storageConnectionConfig is the non-secret portion of a connection's config
+// ConnectionConfig is the non-secret portion of a connection's config
 // JSONB. The access key and the secret live in their own columns, never here.
-type storageConnectionConfig struct {
+type ConnectionConfig struct {
 	Endpoint       string `json:"endpoint"`
 	Region         string `json:"region"`
 	Bucket         string `json:"bucket"`
@@ -128,14 +128,14 @@ type storageConnectionConfig struct {
 	Prefix         string `json:"prefix"`
 }
 
-// storageConnectionProvider builds a storage.StorageProvider from a resolved
+// ConnectionProvider builds a storage.StorageProvider from a resolved
 // connection (its secret already decrypted into SecretAccessKey). The access key
 // and secret come from their own columns; the rest from the config JSONB.
-func storageConnectionProvider(conn *models.StorageConnection) (storage.StorageProvider, error) {
+func ConnectionProvider(conn *models.StorageConnection) (storage.StorageProvider, error) {
 	if conn.Provider != "s3" {
 		return nil, fmt.Errorf("unsupported provider %q", conn.Provider)
 	}
-	var cfg storageConnectionConfig
+	var cfg ConnectionConfig
 	if len(conn.Config) > 0 {
 		if err := json.Unmarshal(conn.Config, &cfg); err != nil {
 			return nil, fmt.Errorf("invalid config: %w", err)
@@ -147,7 +147,7 @@ func storageConnectionProvider(conn *models.StorageConnection) (storage.StorageP
 		storage.OptS3Bucket:    cfg.Bucket,
 		storage.OptS3AccessKey: conn.AccessKey,
 		storage.OptS3SecretKey: conn.SecretAccessKey,
-		storage.OptS3PathStyle: boolStr(cfg.ForcePathStyle),
+		storage.OptS3PathStyle: strconv.FormatBool(cfg.ForcePathStyle),
 		storage.OptS3Prefix:    cfg.Prefix,
 	})
 }

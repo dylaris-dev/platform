@@ -9,6 +9,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 )
@@ -31,13 +32,11 @@ func switchResolverFor(t *testing.T, st *multiCoreFakeStore, coreIDs ...string) 
 	t.Helper()
 	rdb := multiCoreRedis(t, coreIDs...)
 	return &StorageDataSetResolver{state: &handlers.AppState{
-		Store:       st,
-		Redis:       rdb,
-		StorageGate: storage.NewGate(),
-		StorageS3:   storage.NewS3Resilience(),
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+		Store: st,
+		Redis: rdb,
+		CoreStorage: &corestorage.Manager{Store: st, Redis: rdb, Gate: storage.NewGate(), S3: storage.NewS3Resilience(), Reach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a", NewProvider: sharedLocalFactory(t.TempDir()),
-		}),
+		})},
 	}}
 }
 
@@ -56,7 +55,7 @@ func s3Target() services.StorageTargetConfig {
 func TestSwitchConfig_RefusesHostPathOnMultipleCores(t *testing.T) {
 	st := multiCoreState(t, map[string]string{})
 	r := switchResolverFor(t, st, "core-a", "core-b")
-	r.state.SetReachRoundDeadline(150 * time.Millisecond)
+	r.state.CoreStorage.SetReachRoundDeadline(150 * time.Millisecond)
 
 	err := r.SwitchConfig(context.Background(), CoreStorageDataSetID, hostPathTarget())
 
@@ -77,8 +76,8 @@ func TestSwitchConfig_AllowsHostPathOnASingleCore(t *testing.T) {
 	if err := r.SwitchConfig(context.Background(), CoreStorageDataSetID, hostPathTarget()); err != nil {
 		t.Fatalf("SwitchConfig to a host path with one Core online = %v, want nil", err)
 	}
-	if st.values[handlers.KeyCoreStorageBackend] != "path" {
-		t.Errorf("backend persisted as %q, want %q", st.values[handlers.KeyCoreStorageBackend], "path")
+	if st.values[corestorage.KeyBackend] != "path" {
+		t.Errorf("backend persisted as %q, want %q", st.values[corestorage.KeyBackend], "path")
 	}
 }
 
@@ -92,13 +91,11 @@ func TestSwitchConfig_AllowsS3OnMultipleCores(t *testing.T) {
 	rdb := multiCoreRedis(t, "core-a", "core-b")
 	factory := sharedLocalFactory(t.TempDir())
 	r := &StorageDataSetResolver{state: &handlers.AppState{
-		Store:       st,
-		Redis:       rdb,
-		StorageGate: storage.NewGate(),
-		StorageS3:   storage.NewS3Resilience(),
-		StorageReach: storagereach.NewService(storagereach.ServiceDeps{
+		Store: st,
+		Redis: rdb,
+		CoreStorage: &corestorage.Manager{Store: st, Redis: rdb, Gate: storage.NewGate(), S3: storage.NewS3Resilience(), Reach: storagereach.NewService(storagereach.ServiceDeps{
 			Redis: rdb, CoreID: "core-a", NewProvider: factory,
-		}),
+		})},
 	}}
 
 	done := make(chan error, 1)
@@ -127,8 +124,8 @@ func TestSwitchConfig_AllowsS3OnMultipleCores(t *testing.T) {
 	if perr := <-done; perr != nil {
 		t.Fatalf("core-b participant: %v", perr)
 	}
-	if st.values[handlers.KeyCoreStorageBackend] != "s3" {
-		t.Errorf("backend persisted as %q, want %q", st.values[handlers.KeyCoreStorageBackend], "s3")
+	if st.values[corestorage.KeyBackend] != "s3" {
+		t.Errorf("backend persisted as %q, want %q", st.values[corestorage.KeyBackend], "s3")
 	}
 }
 
@@ -141,8 +138,7 @@ func TestSwitchConfig_RefusesHostPathWhenTheCountCannotBeTaken(t *testing.T) {
 	r := &StorageDataSetResolver{state: &handlers.AppState{
 		Store:       st,
 		Redis:       downRedis(t),
-		StorageGate: storage.NewGate(),
-		StorageS3:   storage.NewS3Resilience(),
+		CoreStorage: &corestorage.Manager{Store: st, Gate: storage.NewGate(), S3: storage.NewS3Resilience()},
 	}}
 
 	if err := r.SwitchConfig(context.Background(), CoreStorageDataSetID, hostPathTarget()); err == nil {

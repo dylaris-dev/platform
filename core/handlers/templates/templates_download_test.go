@@ -41,7 +41,7 @@ func TestDownloadName(t *testing.T) {
 func TestDownloadStreamsAZip(t *testing.T) {
 	h, st := newTestHandler(t, nil)
 	tpl := seedTemplate(t, st, ownerID, "personal")
-	if err := h.state.TemplateWrite(context.Background(), tpl, "a/b.txt", strings.NewReader("hello"), 5); err != nil {
+	if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, "a/b.txt", strings.NewReader("hello"), 5); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
@@ -82,7 +82,7 @@ func TestSuspendedOwnerKeepsReadDownloadDeleteButCannotWrite(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			h, st := newTestHandler(t, nil)
 			tpl := seedTemplate(t, st, ownerID, "personal")
-			if err := h.state.TemplateWrite(context.Background(), tpl, "keep.txt", strings.NewReader("x"), 1); err != nil {
+			if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, "keep.txt", strings.NewReader("x"), 1); err != nil {
 				t.Fatal(err)
 			}
 			b := c.b
@@ -210,11 +210,11 @@ func TestTemplateItemsCarryTheWriteRefusal(t *testing.T) {
 func TestDownloadCarriesTheModrinthManifest(t *testing.T) {
 	h, st := newTestHandler(t, nil)
 	tpl := seedTemplate(t, st, ownerID, "personal")
-	if err := h.state.TemplateWrite(context.Background(), tpl, "config/a.yml", strings.NewReader("x: 1"), 4); err != nil {
+	if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, "config/a.yml", strings.NewReader("x: 1"), 4); err != nil {
 		t.Fatal(err)
 	}
 	// A stored file of the same name is replaced by the generated one.
-	if err := h.state.TemplateWrite(context.Background(), tpl, modrinthManifestName, strings.NewReader("stale"), 5); err != nil {
+	if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, modrinthManifestName, strings.NewReader("stale"), 5); err != nil {
 		t.Fatal(err)
 	}
 	ref := &models.TemplateModrinthRef{TemplateID: tpl.ID, Path: "plugins/LuckPerms.jar", ProjectID: "lp", VersionID: "v1",

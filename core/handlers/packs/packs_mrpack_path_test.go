@@ -18,7 +18,7 @@ import (
 // mods[].url. A path built from that id left just the internal slug between an
 // anonymous caller and the full .mrpack of every other pack on the account.
 func TestMrpackStorageKeyRevealsNoPublishedComponent(t *testing.T) {
-	h := &PacksHandler{state: &handlers.AppState{ClusterSecret: "cluster-secret-under-test"}}
+	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{ClusterSecret: "cluster-secret-under-test"})}
 	pack := &models.Pack{OwnerID: "aaaaaaaa-1111-4111-8111-111111111111", InternalSlug: "skyfactory"}
 	build := &models.PackBuild{VersionString: "1.2.3"}
 
@@ -38,7 +38,7 @@ func TestMrpackStorageKeyRevealsNoPublishedComponent(t *testing.T) {
 // Stable per (owner, pack, build): a draft install re-renders on every request
 // and must overwrite its object rather than leave a new one behind each time.
 func TestMrpackStorageKeyIsStableAndDistinct(t *testing.T) {
-	h := &PacksHandler{state: &handlers.AppState{ClusterSecret: "cluster-secret-under-test"}}
+	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{ClusterSecret: "cluster-secret-under-test"})}
 	pack := &models.Pack{OwnerID: "aaaaaaaa-1111-4111-8111-111111111111", InternalSlug: "skyfactory"}
 	build := &models.PackBuild{VersionString: "1.2.3"}
 
@@ -69,8 +69,8 @@ func TestMrpackStorageKeyIsPerDeployment(t *testing.T) {
 	pack := &models.Pack{OwnerID: "aaaaaaaa-1111-4111-8111-111111111111", InternalSlug: "skyfactory"}
 	build := &models.PackBuild{VersionString: "1.2.3"}
 
-	a := (&PacksHandler{state: &handlers.AppState{ClusterSecret: "secret-a"}}).mrpackStorageKey(pack, build)
-	b := (&PacksHandler{state: &handlers.AppState{ClusterSecret: "secret-b"}}).mrpackStorageKey(pack, build)
+	a := (&PacksHandler{state: withCoreStorage(&handlers.AppState{ClusterSecret: "secret-a"})}).mrpackStorageKey(pack, build)
+	b := (&PacksHandler{state: withCoreStorage(&handlers.AppState{ClusterSecret: "secret-b"})}).mrpackStorageKey(pack, build)
 	if a == b {
 		t.Error("the path does not depend on CLUSTER_SECRET, so anyone can compute it")
 	}

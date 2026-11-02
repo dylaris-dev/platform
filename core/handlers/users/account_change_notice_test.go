@@ -30,7 +30,7 @@ func TestTheOwnerHearsAboutAnOperatorsChange(t *testing.T) {
 		base.users[guardAdmin].Password = handlertest.ReauthHash
 		base.users[guardMember].Email = "member@example.test"
 		fs := &keyedGuardStore{guardFakeStore: base}
-		h := NewUserHandler(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
+		h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}))
 		rec := httptest.NewRecorder()
 		h.ResetUserPassword(rec, guardRequest("PUT", guardAdmin, true, guardMember,
 			`{"password":"a-brand-new-password","reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))

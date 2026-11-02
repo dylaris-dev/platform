@@ -9,9 +9,9 @@ import (
 	"strconv"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 
 	"dylaris-core/handlers/httpx"
-	"dylaris-core/handlers/validate"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage"
@@ -54,11 +54,11 @@ func validateStorageConnectionEndpoint(raw json.RawMessage) error {
 	if len(raw) == 0 {
 		return nil
 	}
-	var cfg handlers.StorageConnectionConfig
+	var cfg corestorage.ConnectionConfig
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return fmt.Errorf("invalid config JSON")
 	}
-	return validate.ValidateS3Endpoint("storage connection", cfg.Endpoint)
+	return corestorage.ValidateS3Endpoint("storage connection", cfg.Endpoint)
 }
 
 func validStorageConnectionProvider(p string) bool {
@@ -70,7 +70,7 @@ func validStorageConnectionProvider(p string) bool {
 // mergeBackupStorageSecret compare; the endpoint and bucket live in the config
 // JSONB here, the access key in its own column.
 func storageConnectionIdentity(raw json.RawMessage, accessKey string) (endpoint, bucket, key string) {
-	var cfg handlers.StorageConnectionConfig
+	var cfg corestorage.ConnectionConfig
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &cfg)
 	}
@@ -230,7 +230,7 @@ func (h *StorageConnectionsHandler) UpdateConnection(w http.ResponseWriter, r *h
 	}
 	// A modpack setting can point at this connection, and the cached "is modpack
 	// storage configured" answer is what the panel gates the create button on.
-	h.state.InvalidateModpackStorage()
+	h.state.CoreStorage.InvalidateModpack()
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -257,7 +257,7 @@ func (h *StorageConnectionsHandler) DeleteConnection(w http.ResponseWriter, r *h
 	}
 	// A modpack setting can point at this connection, and the cached "is modpack
 	// storage configured" answer is what the panel gates the create button on.
-	h.state.InvalidateModpackStorage()
+	h.state.CoreStorage.InvalidateModpack()
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -296,7 +296,7 @@ func (h *StorageConnectionsHandler) TestConnection(w http.ResponseWriter, r *htt
 		httpx.SendJSONError(w, "Connection not found", 404)
 		return
 	}
-	prov, err := handlers.StorageConnectionProvider(conn)
+	prov, err := corestorage.ConnectionProvider(conn)
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true, "ok": false, "stage": services.StageRejected, "message": err.Error(),
@@ -323,7 +323,7 @@ func writeStorageProbeVerdict(w http.ResponseWriter, r *http.Request, conn *mode
 			return
 		}
 	}
-	ok, message := handlers.ProbeStorageProvider(r.Context(), prov)
+	ok, message := corestorage.ProbeProvider(r.Context(), prov)
 	if !ok {
 		check := services.ClassifyStorageFailure(message)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -407,7 +407,7 @@ func (h *StorageConnectionsHandler) TestDraftConnection(w http.ResponseWriter, r
 		conn.SecretAccessKey = existing.SecretAccessKey
 	}
 
-	prov, err := handlers.StorageConnectionProvider(conn)
+	prov, err := corestorage.ConnectionProvider(conn)
 	if err != nil {
 		// 200 with a verdict, like the saved-connection probe: the request
 		// worked, the configuration did not.

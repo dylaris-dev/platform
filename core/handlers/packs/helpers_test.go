@@ -1,8 +1,10 @@
 package packs
 
 import (
+	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 )
 
@@ -36,3 +38,11 @@ func (f *userDeleteWarpStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error
 func (f *userDeleteWarpStore) DeleteUser(string) error                              { return nil }
 func (f *userDeleteWarpStore) InsertAuditIdentity(*models.AuditEventIdentity) error { return nil }
 func (f *userDeleteWarpStore) CountAdmins() (int, error)                            { return 5, nil }
+
+// withCoreStorage gives a test state the core storage it implicitly was before
+// S12 (the AppState methods ran over its own Store, Redis, Events, ...): a
+// Manager over the very same objects.
+func withCoreStorage(s *handlers.AppState) *handlers.AppState {
+	s.CoreStorage = &corestorage.Manager{Store: s.Store, Redis: s.Redis, Events: s.Events, ClusterSecret: s.ClusterSecret, Registry: s.GRPCRegistry}
+	return s
+}

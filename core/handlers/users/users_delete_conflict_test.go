@@ -111,7 +111,7 @@ func TestDeleteUserReportsWhyItCannotDeleteAnOwner(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &deleteUserFakeStore{deleteErr: c.err}
-			h := &UserHandler{state: &handlers.AppState{Store: fs}}
+			h := &UserHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 			rw := httptest.NewRecorder()
 
 			h.DeleteUser(rw, deleteUserRequest())
@@ -129,7 +129,7 @@ func TestDeleteUserReportsWhyItCannotDeleteAnOwner(t *testing.T) {
 // The ordinary case must not have picked up a conflict branch by accident.
 func TestDeleteUserSucceeds(t *testing.T) {
 	fs := &deleteUserFakeStore{}
-	h := &UserHandler{state: &handlers.AppState{Store: fs}}
+	h := &UserHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 	rw := httptest.NewRecorder()
 
 	h.DeleteUser(rw, deleteUserRequest())
@@ -148,7 +148,7 @@ func TestDeleteUserSucceeds(t *testing.T) {
 // went to the Core log, where the person clicking delete cannot read it.
 func TestDeleteUserStillOwningServersIs409WithTheCount(t *testing.T) {
 	fs := &deleteUserFakeStore{ownedServers: 2}
-	h := &UserHandler{state: &handlers.AppState{Store: fs}}
+	h := &UserHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 
 	rr := httptest.NewRecorder()
 	h.DeleteUser(rr, deleteUserRequest())
@@ -177,7 +177,7 @@ func TestDeleteUserStillOwningServersIs409WithTheCount(t *testing.T) {
 // saying "some account was removed at this time".
 func TestDeleteUserIsOnTheRecord(t *testing.T) {
 	fs := &deleteUserFakeStore{}
-	h := &UserHandler{state: &handlers.AppState{Store: fs}}
+	h := &UserHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 
 	rr := httptest.NewRecorder()
 	h.DeleteUser(rr, deleteUserRequest())
@@ -218,7 +218,7 @@ func TestDeleteUserIsOnTheRecord(t *testing.T) {
 // A refused delete must not claim one happened.
 func TestARefusedDeleteWritesNoRow(t *testing.T) {
 	fs := &deleteUserFakeStore{ownedServers: 1}
-	h := &UserHandler{state: &handlers.AppState{Store: fs}}
+	h := &UserHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 
 	rr := httptest.NewRecorder()
 	h.DeleteUser(rr, deleteUserRequest())
@@ -237,7 +237,7 @@ func TestARefusedDeleteWritesNoRow(t *testing.T) {
 // them. Without the re-proof nothing is torn down and nothing is deleted.
 func TestDeleteUserNeedsTheAdministratorToReauthenticate(t *testing.T) {
 	fake := &deleteUserFakeStore{}
-	h := NewUserHandler(&handlers.AppState{Store: fake})
+	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fake}))
 	req := httptest.NewRequest(http.MethodDelete, "/api/users/11111111-1111-1111-1111-111111111111", nil)
 	ctx := context.WithValue(req.Context(), "username", "admin")
 	ctx = context.WithValue(ctx, "userID", "admin-id")

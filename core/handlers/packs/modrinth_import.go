@@ -277,7 +277,7 @@ func (h *PacksHandler) ImportModrinthVersion(w http.ResponseWriter, r *http.Requ
 		}
 		names[b.VersionString] = true
 	}
-	prov, err := h.state.BuildModpackStorageProvider()
+	prov, err := h.state.CoreStorage.BuildModpackProvider()
 	if err != nil || prov == nil {
 		httpx.SendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
 		return

@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/validate"
+	"dylaris-core/services/corestorage"
 )
 
 type ModpackSettingsHandler struct {
@@ -118,7 +119,7 @@ func (h *ModpackSettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out.UpdateCheckIntervalHours = interval
-	out.ConnectionID, _ = strconv.Atoi(get(handlers.KeyModpackStorageConnectionID)) // "" or bad -> 0 = none
+	out.ConnectionID, _ = strconv.Atoi(get(corestorage.KeyModpackConnectionID)) // "" or bad -> 0 = none
 	out.CorePublicURL = get("core_public_url")
 	out.DetectedCorePublicURL = requestOrigin(r)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -201,7 +202,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// modpackBackendLabel reads it straight out of the settings table. Gating
 	// this on req.Provider == "s3" would leave a save with provider "local" as
 	// an open path for the same credential.
-	if err := validate.ValidateS3Endpoint("modpacks", req.S3Endpoint); err != nil {
+	if err := corestorage.ValidateS3Endpoint("modpacks", req.S3Endpoint); err != nil {
 		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -257,7 +258,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		{"modpack_storage_s3_region", req.S3Region},
 		{"modpack_storage_s3_access_key", req.S3AccessKey},
 		{"modpack_update_check_interval_hours", strconv.Itoa(uch)},
-		{handlers.KeyModpackStorageConnectionID, handlers.StorageConnIDSetting(req.ConnectionID)},
+		{corestorage.KeyModpackConnectionID, corestorage.ConnIDSetting(req.ConnectionID)},
 		{"core_public_url", req.CorePublicURL},
 	}
 	for _, kv := range writes {
@@ -278,7 +279,7 @@ func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// every panel to re-render its gating over a value that did not change.
 	// The cached "is storage configured" answer is now stale; the panel reads it
 	// from /api/system/features and refreshes on exactly this event.
-	h.state.InvalidateModpackStorage()
+	h.state.CoreStorage.InvalidateModpack()
 	h.state.Events.Publish(r.Context(), "modpack_settings.changed", nil)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

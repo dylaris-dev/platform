@@ -79,7 +79,7 @@ func TestListGivesIdentifiedModsTheirProjectTitle(t *testing.T) {
 			t.Cleanup(func() { fetchModProjects = prev })
 
 			fs := &projectMetaFakeStore{mods: rows, stored: map[int]string{}}
-			h := &ServerModsHandler{state: &handlers.AppState{Store: fs}}
+			h := &ServerModsHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 			req := mux.SetURLVars(httptest.NewRequest("GET", "/api/servers/7/mods", nil), map[string]string{"id": "7"})
 			rec := httptest.NewRecorder()
 			h.List(rec, req)
@@ -127,7 +127,7 @@ func TestListDoesNotWaitOnASlowModrinth(t *testing.T) {
 	t.Cleanup(func() { fetchModProjects, modMetaWait = prevFetch, prevWait })
 
 	fs := &projectMetaFakeStore{mods: []models.ServerMod{{ID: 1, ModrinthProjectID: "p1", Title: "v1"}}, stored: map[int]string{}}
-	h := &ServerModsHandler{state: &handlers.AppState{Store: fs}}
+	h := &ServerModsHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 	req := mux.SetURLVars(httptest.NewRequest("GET", "/api/servers/7/mods", nil), map[string]string{"id": "7"})
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})

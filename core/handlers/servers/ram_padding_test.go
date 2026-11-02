@@ -25,7 +25,7 @@ func intp(n int) *int { return &n }
 func sentDocker(t *testing.T, fake *resourcesFakeStore, body map[string]any) map[string]interface{} {
 	t.Helper()
 	rdb := resourcesRedis(t)
-	h := &ServerHandler{state: &handlers.AppState{Store: fake, Queue: services.NewQueueService(rdb)}}
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fake, Queue: services.NewQueueService(rdb)})}
 	rec := httptest.NewRecorder()
 	h.UpdateServerResources(rec, resourcesReq(t, body))
 	if rec.Code != http.StatusOK {
@@ -118,7 +118,7 @@ func TestUpdateServerResources_InvalidRAMPaddingWritesNothing(t *testing.T) {
 	for name, body := range bodies {
 		t.Run(name, func(t *testing.T) {
 			fake := &resourcesFakeStore{server: resourcesServer("online")}
-			h := &ServerHandler{state: &handlers.AppState{Store: fake}}
+			h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: fake})}
 			r := resourcesReq(t, nil)
 			r.Body = io.NopCloser(strings.NewReader(body))
 			rec := httptest.NewRecorder()
@@ -143,7 +143,7 @@ func (nonAdminResourcesStore) GetUserByID(id string) (*models.User, error) {
 // same flag as RAM.
 func TestUpdateServerResources_RAMPaddingNeedsTheResourcesFlag(t *testing.T) {
 	fake := &resourcesFakeStore{server: resourcesServer("online")}
-	h := &ServerHandler{state: &handlers.AppState{Store: nonAdminResourcesStore{fake}}}
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: nonAdminResourcesStore{fake}})}
 	r := resourcesReq(t, map[string]any{"ram": 4096, "cpuLimit": 2.0, "diskLimit": 10240, "ramPaddingMb": 4096})
 	r = r.WithContext(context.WithValue(context.WithValue(r.Context(), "isAdmin", false), "userID", "user-1"))
 	rec := httptest.NewRecorder()
@@ -174,7 +174,7 @@ func savePlacement(t *testing.T, f *paddingSettingsStore, extra string) *httptes
 	t.Helper()
 	body := `{"cpuOvercommitDefault":2,"ramOvercommitDefault":1` + extra + `}`
 	rec := httptest.NewRecorder()
-	handlers.NewSettingsHandler(&handlers.AppState{Store: f}).SavePlacementSettings(rec, httptest.NewRequest(http.MethodPost, "/api/settings/placement", strings.NewReader(body)))
+	handlers.NewSettingsHandler(withCoreStorage(&handlers.AppState{Store: f})).SavePlacementSettings(rec, httptest.NewRequest(http.MethodPost, "/api/settings/placement", strings.NewReader(body)))
 	return rec
 }
 
@@ -211,7 +211,7 @@ func TestSavePlacementSettings_RAMPadding(t *testing.T) {
 func TestLoadPlacementSettings_RAMPaddingDefaults(t *testing.T) {
 	for raw, want := range map[string]int{"": 512, "garbage": 512, "1024": 1024, "0": 0} {
 		f := &paddingSettingsStore{settings: map[string]string{models.RAMPaddingSetting: raw}}
-		if got := handlers.NewSettingsHandler(&handlers.AppState{Store: f}).LoadPlacementSettings().RAMPaddingMB; got != want {
+		if got := handlers.NewSettingsHandler(withCoreStorage(&handlers.AppState{Store: f})).LoadPlacementSettings().RAMPaddingMB; got != want {
 			t.Errorf("stored %q: ramPaddingMb %d, want %d", raw, got, want)
 		}
 	}
@@ -261,7 +261,7 @@ func TestSetNodePlacement_RAMPaddingNullVsAbsent(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPut, "/api/nodes/7/placement",
 				strings.NewReader(`{"cpuOvercommitRatio":1,"ramOvercommitRatio":1`+c.extra+`}`))
 			rec := httptest.NewRecorder()
-			NewPlacementHandler(&handlers.AppState{Store: f}).SetNodePlacement(rec, r)
+			NewPlacementHandler(withCoreStorage(&handlers.AppState{Store: f})).SetNodePlacement(rec, r)
 			if rec.Code != c.wantCode {
 				t.Fatalf("status %d, want %d: %s", rec.Code, c.wantCode, rec.Body.String())
 			}

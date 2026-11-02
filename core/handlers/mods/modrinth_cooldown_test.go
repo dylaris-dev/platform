@@ -35,7 +35,7 @@ func TestModrinthProxyBacksOffOn429(t *testing.T) {
 	}))
 	defer up.Close()
 	mr := miniredis.RunT(t)
-	h := NewModrinthHandler(&handlers.AppState{Cache: services.NewCache(redis.NewClient(&redis.Options{Addr: mr.Addr()}))})
+	h := NewModrinthHandler(withCoreStorage(&handlers.AppState{Cache: services.NewCache(redis.NewClient(&redis.Options{Addr: mr.Addr()}))}))
 	ctx := context.Background()
 
 	get := func(path string) *httptest.ResponseRecorder {

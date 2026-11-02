@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -137,7 +138,7 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 	// actually written to. Storage being unconfigured/broken here must not
 	// fail the whole request either - it's logged and skipped, not surfaced
 	// as an HTTP error the ticket-delete response never gets to send anyway.
-	if prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixAttachments); err != nil {
+	if prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixAttachments); err != nil {
 		log.Printf("ticket-deletion: core storage unavailable, skipping attachment blob cleanup for ticket %d: %v", id, err)
 	} else {
 		for _, k := range storageKeys {

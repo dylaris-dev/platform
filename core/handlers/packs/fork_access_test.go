@@ -76,6 +76,7 @@ func TestForkBuildValidatesSourceAndEmptyTargetBeforeWriting(t *testing.T) {
 			base.packs[1].ModrinthProjectID = "proj"
 			s := &forkAccessStore{packScopeFakeStore: base}
 			h.state.Store = s
+			h.state.CoreStorage.Store = h.state.Store
 			request := packContentRequest(t, tc.user, "1", tc.build)
 			request.Method = http.MethodPost
 			request.Body = io.NopCloser(strings.NewReader(tc.body))

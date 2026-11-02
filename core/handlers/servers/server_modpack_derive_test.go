@@ -199,7 +199,7 @@ func TestModpackContentsLazyScan(t *testing.T) {
 			fs := &modpackScanFakeStore{status: tc.status, installer: tc.installer, scan: modpackScanPending, managed: tc.managed}
 			calls := &modpackScanCalls{}
 			h := &ServerModsHandler{
-				state:    &handlers.AppState{Store: fs, Redis: handlertest.RedisClient(t)},
+				state:    withCoreStorage(&handlers.AppState{Store: fs, Redis: handlertest.RedisClient(t)}),
 				scanDeps: fakeScanDeps(calls, tc.files, tc.known, tc.lookupErr),
 			}
 			contents, isModpack := getModpackContents(t, h)
@@ -232,7 +232,7 @@ func TestModpackContentsFailedScanCoolsDown(t *testing.T) {
 	fs := &modpackScanFakeStore{status: "stopped", installer: "technic", scan: modpackScanPending}
 	calls := &modpackScanCalls{}
 	h := &ServerModsHandler{
-		state:    &handlers.AppState{Store: fs, Redis: handlertest.RedisClient(t)},
+		state:    withCoreStorage(&handlers.AppState{Store: fs, Redis: handlertest.RedisClient(t)}),
 		scanDeps: fakeScanDeps(calls, []string{"a.jar"}, nil, errors.New("modrinth down")),
 	}
 	getModpackContents(t, h)

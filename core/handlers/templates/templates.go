@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -33,7 +34,7 @@ const maxTemplateNameLen = 64
 
 // viewer resolves who is asking; see AppState.TemplateViewer.
 func (h *TemplatesHandler) viewer(r *http.Request, t *models.Template) (services.TemplateViewer, error) {
-	return h.state.TemplateViewer(r, t)
+	return access.TemplateViewer(r, h.state.Authz, h.state.Store, t)
 }
 
 func (h *TemplatesHandler) settings(r *http.Request) services.TemplateSettings {
@@ -347,14 +348,14 @@ func (h *TemplatesHandler) mayCreate(w http.ResponseWriter, s services.TemplateS
 	}
 	// Before any row exists: a row whose files can never be written would count
 	// against the limit and be stuck.
-	if err := h.state.TemplateStorageReady(v.UserID, s.StorageConnectionID, own); err != nil {
+	if err := h.state.CoreStorage.TemplateStorageReady(v.UserID, s.StorageConnectionID, own); err != nil {
 		log.Printf("templates: storage not usable: %v", err)
 		msg := "Template storage is not available right now. Try again later or ask an admin to check Settings > Storage."
 		switch {
 		case own != nil:
 			// The detail stays in the log: it can name the endpoint.
 			msg = "Your own template storage is not usable. Check it under Account > Storage, or switch templates back to platform storage there."
-		case s.StorageConnectionID == 0 && !h.state.CoreStorageConfigured():
+		case s.StorageConnectionID == 0 && !h.state.CoreStorage.Configured():
 			msg = "Templates need Core file storage. An admin can set it up under Settings > Storage."
 		}
 		httpx.SendJSONError(w, msg, http.StatusServiceUnavailable)
@@ -500,14 +501,14 @@ const ownFilesMayRemain = "The template was removed. Files may remain in your ow
 // template undeletable, and its row would block removing that storage forever.
 // Nothing of ours sweeps a tenant bucket, so what is left there is theirs.
 func (h *TemplatesHandler) deleteFiles(ctx context.Context, t *models.Template) (rowMayGo, filesLeft bool) {
-	err := h.state.TemplateDelete(ctx, t, "")
+	err := h.state.CoreStorage.TemplateDelete(ctx, t, "")
 	switch {
 	case err == nil:
 		return true, false
 	case t.BackupStorageID != nil:
 		log.Printf("templates: delete files of %d on own storage %d, removing the row anyway: %v", t.ID, *t.BackupStorageID, err)
 		return true, true
-	case h.state.TemplateStorageNeverConfigured(t):
+	case h.state.CoreStorage.TemplateStorageNeverConfigured(t):
 		// Never-configured storage holds no files; this is what lets rows
 		// created before the storage check be cleaned up.
 		return true, false

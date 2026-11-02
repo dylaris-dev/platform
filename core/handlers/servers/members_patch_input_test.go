@@ -96,7 +96,7 @@ func TestUpdateMemberPermissionsRefusesWhatTheInviteRefuses(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &patchPermsStore{}
-			h := NewMemberHandler(&handlers.AppState{Store: fs})
+			h := NewMemberHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 			rec := httptest.NewRecorder()
 
 			h.UpdateMemberPermissions(rec, patchReq(c.body))
@@ -127,7 +127,7 @@ func TestUpdateMemberPermissionsRefusesWhatTheInviteRefuses(t *testing.T) {
 // member's access here.
 func TestUpdateMemberPermissionsNeedsTheRightToRemove(t *testing.T) {
 	fs := &patchPermsStore{}
-	h := NewMemberHandler(&handlers.AppState{Store: fs})
+	h := NewMemberHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 	r := patchReq(`{"permissions":{}}`)
 	ctx := context.WithValue(r.Context(), "userID", "member-1")
 	ctx = context.WithValue(ctx, "username", "member")

@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"archive/zip"
@@ -142,7 +142,7 @@ func TestTemplateStoreTenantStorage(t *testing.T) {
 		3: {ID: 3, Provider: "s3", Config: cfg},
 		4: {ID: 4, Provider: "local", OwnerID: &owner, Config: json.RawMessage(`{"path":"/tmp"}`)},
 	}}
-	s := &AppState{Store: st}
+	s := &Manager{Store: st}
 	tests := []struct {
 		name    string
 		id      int

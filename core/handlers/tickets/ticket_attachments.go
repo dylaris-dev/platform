@@ -20,6 +20,8 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/handlers/guard"
+	"dylaris-core/services/corestorage"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -590,9 +592,9 @@ func (h *TicketAttachmentsHandler) UploadAttachment(w http.ResponseWriter, r *ht
 		body = tmp // stream the scanned temp file to storage
 	}
 
-	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixAttachments)
+	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixAttachments)
 	if err != nil {
-		handlers.CoreStorageUnavailableResponse(w, err)
+		guard.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -711,9 +713,9 @@ func (h *TicketAttachmentsHandler) DownloadAttachment(w http.ResponseWriter, r *
 		return
 	}
 
-	prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixAttachments)
+	prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixAttachments)
 	if err != nil {
-		handlers.CoreStorageUnavailableResponse(w, err)
+		guard.CoreStorageUnavailableResponse(w, err)
 		return
 	}
 
@@ -777,7 +779,7 @@ func (h *TicketAttachmentsHandler) DeleteAttachment(w http.ResponseWriter, r *ht
 	// unavailable here must not fail the whole request - it's logged and
 	// skipped, exactly like TicketDeletionsHandler.DeleteTicket's cascade
 	// cleanup (ticket_deletions.go).
-	if prov, perr := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixAttachments); perr != nil {
+	if prov, perr := h.state.CoreStorage.BuildProvider(corestorage.PrefixAttachments); perr != nil {
 		log.Printf("ticket-attachments: core storage unavailable, skipping blob cleanup for attachment %d (%s): %v", aid, a.StorageKey, perr)
 	} else {
 		_ = prov.DeletePath(r.Context(), a.StorageKey)

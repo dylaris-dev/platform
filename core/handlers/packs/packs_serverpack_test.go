@@ -58,12 +58,11 @@ func (f *serverPackFakeStore) GetSetting(key string) (string, error) {
 func localModpackHandler(t *testing.T, dir string) *PacksHandler {
 	t.Helper()
 	paths, _ := json.Marshal([]string{dir})
-	return &PacksHandler{state: &handlers.AppState{
-		Store: &serverPackFakeStore{settings: map[string]string{
-			"modpack_storage_provider": "local",
-			"modpack_storage_paths":    string(paths),
-		}},
+	fs := &serverPackFakeStore{settings: map[string]string{
+		"modpack_storage_provider": "local",
+		"modpack_storage_paths":    string(paths),
 	}}
+	return &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 }
 
 // storeZip writes a zip holding one file at entryName into the local modpack

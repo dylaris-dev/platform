@@ -71,7 +71,7 @@ func capRequest(userID string, isAdmin bool) *http.Request {
 func capHandler(fs *capFakeStore) *MemberHandler {
 	// The resolver and the handler read the same fake, exactly as they read the
 	// same store in production.
-	return &MemberHandler{state: &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}}
+	return &MemberHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}
 }
 
 // An ACCOUNT-WIDE grantee has no per-server invite row - their grant is the row

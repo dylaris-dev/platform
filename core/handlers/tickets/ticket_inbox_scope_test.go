@@ -34,7 +34,7 @@ const inboxAdmin = "aaaaaaaa-1111-4111-8111-111111111111"
 
 func inboxRequest(t *testing.T, fs *inboxScopeStore, scope string) []models.Ticket {
 	t.Helper()
-	h := &TicketsHandler{state: &handlers.AppState{Store: fs}}
+	h := &TicketsHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 	r := httptest.NewRequest(http.MethodGet, "/api/tickets/inbox?scope="+scope, nil)
 	r = r.WithContext(context.WithValue(r.Context(), "userID", inboxAdmin))
 	w := httptest.NewRecorder()

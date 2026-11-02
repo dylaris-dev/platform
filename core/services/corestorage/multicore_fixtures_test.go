@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"encoding/json"

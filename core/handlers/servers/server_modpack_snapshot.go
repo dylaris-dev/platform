@@ -9,10 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 )
 
 // mrpackSnapshotMaxBytes caps the .mrpack we pull just to read its manifest.
@@ -152,7 +151,7 @@ func (h *ServerHandler) isSnapshotFetchHostAllowed(rawURL string) bool {
 	if host == "cdn.modrinth.com" {
 		return true
 	}
-	if base, err := handlers.ModpackMirrorBase(h.state.Store.GetSetting); err == nil {
+	if base, err := corestorage.ModpackMirrorBase(h.state.Store.GetSetting); err == nil {
 		if mu, err := url.Parse(base); err == nil && strings.EqualFold(mu.Hostname(), host) {
 			return true
 		}

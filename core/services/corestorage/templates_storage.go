@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"archive/zip"
@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"strconv"
 	"strings"
 
-	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage"
@@ -36,7 +34,7 @@ func templateRootKey(ownerID string, id int) (string, error) {
 // or not at all. Missing, foreign or non-s3 is an error and never falls back to
 // Core storage: the bytes are not there, and writing them there would bill us
 // for data the tenant chose to keep themselves.
-func (s *AppState) TemplateStore(t *models.Template) (storage.StorageProvider, string, error) {
+func (s *Manager) TemplateStore(t *models.Template) (storage.StorageProvider, string, error) {
 	root, err := templateRootKey(t.OwnerID, t.ID)
 	if err != nil {
 		return nil, "", err
@@ -49,14 +47,14 @@ func (s *AppState) TemplateStore(t *models.Template) (storage.StorageProvider, s
 		if bs == nil || bs.Provider != "s3" || bs.OwnerID == nil || *bs.OwnerID != t.OwnerID {
 			return nil, "", fmt.Errorf("template %d: storage %d is missing or not the owner's", t.ID, *t.BackupStorageID)
 		}
-		prov, err := storage.NewTenantS3Provider(context.Background(), bs.Config, CoreStoragePrefixTemplates)
+		prov, err := storage.NewTenantS3Provider(context.Background(), bs.Config, PrefixTemplates)
 		if err != nil {
 			return nil, "", fmt.Errorf("template %d: storage %q: %w", t.ID, bs.Name, err)
 		}
 		return prov, root, nil
 	}
 	if t.StorageConnectionID == 0 {
-		prov, err := s.buildCoreStorageProvider(CoreStoragePrefixTemplates)
+		prov, err := s.BuildProvider(PrefixTemplates)
 		if err != nil {
 			return nil, "", fmt.Errorf("template %d: core storage: %w", t.ID, err)
 		}
@@ -66,11 +64,11 @@ func (s *AppState) TemplateStore(t *models.Template) (storage.StorageProvider, s
 	if err != nil {
 		return nil, "", fmt.Errorf("template %d: storage connection %d could not be loaded: %w", t.ID, t.StorageConnectionID, err)
 	}
-	cfg := coreStorageConfigFromConnection(conn)
-	if err := validateCoreStorageConfig(cfg); err != nil {
+	cfg := ConfigFromConnection(conn)
+	if err := Validate(cfg); err != nil {
 		return nil, "", fmt.Errorf("template %d: storage connection %q is not usable: %w", t.ID, conn.Name, err)
 	}
-	prov, err := newStorageProviderForConfig(cfg, CoreStoragePrefixTemplates, s.StorageGate, s.StorageS3)
+	prov, err := NewProviderForConfig(cfg, PrefixTemplates, s.Gate, s.S3)
 	if err != nil {
 		return nil, "", fmt.Errorf("template %d: storage connection %q: %w", t.ID, conn.Name, err)
 	}
@@ -81,7 +79,7 @@ func (s *AppState) TemplateStore(t *models.Template) (storage.StorageProvider, s
 // the owner's storage backupStorageID or else on storage connection connID
 // (0 = Core file storage), could have its files written. It builds the same
 // provider TemplateStore would, so the answer is the real one.
-func (s *AppState) TemplateStorageReady(ownerID string, connID int, backupStorageID *int) error {
+func (s *Manager) TemplateStorageReady(ownerID string, connID int, backupStorageID *int) error {
 	_, _, err := s.TemplateStore(&models.Template{OwnerID: ownerID, ID: 1, StorageConnectionID: connID, BackupStorageID: backupStorageID})
 	return err
 }
@@ -91,17 +89,17 @@ func (s *AppState) TemplateStorageReady(ownerID string, connID int, backupStorag
 // then, so the row may be deleted without touching storage. A transient error
 // (settings read failure, unreachable mount, broken connection) is NOT this:
 // files may exist and the row must stay.
-func (s *AppState) TemplateStorageNeverConfigured(t *models.Template) bool {
+func (s *Manager) TemplateStorageNeverConfigured(t *models.Template) bool {
 	if t.BackupStorageID != nil || t.StorageConnectionID != 0 {
 		return false
 	}
-	cfg, err := s.effectiveCoreStorageConfig()
+	cfg, err := s.EffectiveConfig()
 	return err == nil && cfg.Backend == ""
 }
 
 // TemplateList returns every file; FileInfo.Name is the path relative to the
 // template root.
-func (s *AppState) TemplateList(ctx context.Context, t *models.Template) ([]storage.FileInfo, error) {
+func (s *Manager) TemplateList(ctx context.Context, t *models.Template) ([]storage.FileInfo, error) {
 	prov, root, err := s.TemplateStore(t)
 	if err != nil {
 		return nil, err
@@ -111,7 +109,7 @@ func (s *AppState) TemplateList(ctx context.Context, t *models.Template) ([]stor
 
 // TemplateWrite stores one file. size is accepted for call-site symmetry; the
 // provider streams until EOF.
-func (s *AppState) TemplateWrite(ctx context.Context, t *models.Template, rel string, r io.Reader, _ int64) error {
+func (s *Manager) TemplateWrite(ctx context.Context, t *models.Template, rel string, r io.Reader, _ int64) error {
 	prov, root, err := s.TemplateStore(t)
 	if err != nil {
 		return err
@@ -119,7 +117,7 @@ func (s *AppState) TemplateWrite(ctx context.Context, t *models.Template, rel st
 	return templateWrite(ctx, prov, root, rel, r)
 }
 
-func (s *AppState) TemplateRead(ctx context.Context, t *models.Template, rel string) (io.ReadCloser, error) {
+func (s *Manager) TemplateRead(ctx context.Context, t *models.Template, rel string) (io.ReadCloser, error) {
 	prov, root, err := s.TemplateStore(t)
 	if err != nil {
 		return nil, err
@@ -128,7 +126,7 @@ func (s *AppState) TemplateRead(ctx context.Context, t *models.Template, rel str
 }
 
 // TemplateDelete removes one file or folder; rel == "" removes the whole template.
-func (s *AppState) TemplateDelete(ctx context.Context, t *models.Template, rel string) error {
+func (s *Manager) TemplateDelete(ctx context.Context, t *models.Template, rel string) error {
 	prov, root, err := s.TemplateStore(t)
 	if err != nil {
 		return err
@@ -136,7 +134,7 @@ func (s *AppState) TemplateDelete(ctx context.Context, t *models.Template, rel s
 	return templateDelete(ctx, prov, root, rel)
 }
 
-func (s *AppState) TemplateSize(ctx context.Context, t *models.Template) (int64, error) {
+func (s *Manager) TemplateSize(ctx context.Context, t *models.Template) (int64, error) {
 	prov, root, err := s.TemplateStore(t)
 	if err != nil {
 		return 0, err
@@ -144,13 +142,13 @@ func (s *AppState) TemplateSize(ctx context.Context, t *models.Template) (int64,
 	return templateSize(ctx, prov, root)
 }
 
-func (s *AppState) TemplateZip(ctx context.Context, t *models.Template, w io.Writer) error {
+func (s *Manager) TemplateZip(ctx context.Context, t *models.Template, w io.Writer) error {
 	return s.TemplateZipWith(ctx, t, w, nil)
 }
 
 // TemplateZipWith is TemplateZip plus extra entries written at the zip root.
 // An extra entry replaces a stored file of the same name.
-func (s *AppState) TemplateZipWith(ctx context.Context, t *models.Template, w io.Writer, extra map[string][]byte) error {
+func (s *Manager) TemplateZipWith(ctx context.Context, t *models.Template, w io.Writer, extra map[string][]byte) error {
 	prov, root, err := s.TemplateStore(t)
 	if err != nil {
 		return err
@@ -250,7 +248,7 @@ func templateZip(ctx context.Context, prov storage.StorageProvider, root string,
 
 // TemplatesOfUser reads the account's templates before the user row goes:
 // the rows cascade with it, and afterwards nothing says where their files were.
-func (s *AppState) TemplatesOfUser(userID string) []models.Template {
+func (s *Manager) TemplatesOfUser(userID string) []models.Template {
 	ids, err := s.Store.ListTemplateIDsByOwner(userID)
 	if err != nil {
 		log.Printf("templates: ids of %s: %v", userID, err)
@@ -272,7 +270,7 @@ func (s *AppState) TemplatesOfUser(userID string) []models.Template {
 // Failures are logged: the account is already deleted and must stay so.
 // Templates on the tenant's own storage are skipped: that bucket is never ours
 // to delete from, and its storage row cascaded with the account anyway.
-func (s *AppState) DropTemplateFiles(ctx context.Context, ts []models.Template) {
+func (s *Manager) DropTemplateFiles(ctx context.Context, ts []models.Template) {
 	for i := range ts {
 		if ts[i].BackupStorageID != nil {
 			continue
@@ -281,26 +279,4 @@ func (s *AppState) DropTemplateFiles(ctx context.Context, ts []models.Template) 
 			log.Printf("templates: drop files of %d: %v", ts[i].ID, err)
 		}
 	}
-}
-
-// TemplateViewer resolves who is asking about a template, for the access rules
-// in services (TemplateCanSee and siblings). t may be nil (list, create); the
-// share level is only looked up for a concrete template.
-func (s *AppState) TemplateViewer(r *http.Request, t *models.Template) (services.TemplateViewer, error) {
-	id := authz.IdentityFromContext(r.Context())
-	v := services.TemplateViewer{UserID: id.UserID, IsAdmin: id.IsAdmin}
-	if s.Authz != nil {
-		if res, err := s.Authz.Resolve(id, 0); err == nil {
-			v.HasAdminRead = res.HasCap("templates.admin.read")
-			v.HasCreate = res.HasCap("templates.create")
-		}
-	}
-	if t != nil && v.UserID != "" && t.OwnerID != v.UserID {
-		level, err := s.Store.TemplateShareLevel(t.ID, v.UserID)
-		if err != nil {
-			return v, err
-		}
-		v.ShareLevel = level
-	}
-	return v, nil
 }

@@ -26,7 +26,7 @@ type Deps struct {
 	// `storage` already imports this package (storage/s3provider.go uses
 	// backup.Object / backup.NewS3), so importing `storage` from here would
 	// be a cycle. handlers/backup.go supplies the closure, which wraps
-	// buildCoreStorageProvider in storage.NewCoreStorageBackupAdapter.
+	// corestorage.Manager.BuildProvider in storage.NewCoreStorageBackupAdapter.
 	//
 	// Nil for callers that never touch the "core-storage" provider.
 	CoreStorage func(subPrefix string) (Storage, error)
@@ -55,7 +55,7 @@ type ConnectionConfig struct {
 
 // CoreStorageSubPrefix is the namespace server backups occupy inside the ONE
 // configured Core file storage. It duplicates the canonical
-// handlers.CoreStoragePrefixServerBackups because this package must not
+// corestorage.PrefixServerBackups because this package must not
 // import handlers (handlers already imports this package). The two are held
 // together by handlers.TestCoreStorageSubPrefixesMatch.
 const CoreStorageSubPrefix = "server-backups"

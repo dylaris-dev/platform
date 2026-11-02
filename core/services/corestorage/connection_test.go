@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"encoding/json"
@@ -30,9 +30,9 @@ func (f *resolveFakeStore) GetStorageConnection(id int) (*models.StorageConnecti
 
 func TestSelectedStorageConnection_NoneSelected(t *testing.T) {
 	for _, raw := range []string{"", "0", "  "} {
-		fs := &resolveFakeStore{settings: map[string]string{keyCoreStorageConnectionID: raw}}
-		s := &AppState{Store: fs}
-		conn, ok, err := s.selectedStorageConnection(keyCoreStorageConnectionID)
+		fs := &resolveFakeStore{settings: map[string]string{KeyConnectionID: raw}}
+		s := &Manager{Store: fs}
+		conn, ok, err := s.selectedStorageConnection(KeyConnectionID)
 		if err != nil || ok || conn != nil {
 			t.Errorf("selected(%q) = (%v, %v, %v), want (nil, false, nil)", raw, conn, ok, err)
 		}
@@ -41,11 +41,11 @@ func TestSelectedStorageConnection_NoneSelected(t *testing.T) {
 
 func TestSelectedStorageConnection_Loads(t *testing.T) {
 	fs := &resolveFakeStore{
-		settings: map[string]string{keyCoreStorageConnectionID: "3"},
+		settings: map[string]string{KeyConnectionID: "3"},
 		conn:     &models.StorageConnection{ID: 3, Name: "nas", Provider: "s3"},
 	}
-	s := &AppState{Store: fs}
-	conn, ok, err := s.selectedStorageConnection(keyCoreStorageConnectionID)
+	s := &Manager{Store: fs}
+	conn, ok, err := s.selectedStorageConnection(KeyConnectionID)
 	if err != nil || !ok || conn == nil || conn.ID != 3 {
 		t.Fatalf("selected = (%v, %v, %v), want the id-3 connection", conn, ok, err)
 	}
@@ -55,20 +55,20 @@ func TestSelectedStorageConnection_Loads(t *testing.T) {
 }
 
 func TestSelectedStorageConnection_BadIDErrors(t *testing.T) {
-	fs := &resolveFakeStore{settings: map[string]string{keyCoreStorageConnectionID: "not-a-number"}}
-	s := &AppState{Store: fs}
-	if _, ok, err := s.selectedStorageConnection(keyCoreStorageConnectionID); err == nil || ok {
+	fs := &resolveFakeStore{settings: map[string]string{KeyConnectionID: "not-a-number"}}
+	s := &Manager{Store: fs}
+	if _, ok, err := s.selectedStorageConnection(KeyConnectionID); err == nil || ok {
 		t.Fatalf("selected(bad id) = (ok=%v, err=%v), want an error and ok=false", ok, err)
 	}
 }
 
 func TestSelectedStorageConnection_LoadErrorSurfaces(t *testing.T) {
 	fs := &resolveFakeStore{
-		settings: map[string]string{keyCoreStorageConnectionID: "9"},
+		settings: map[string]string{KeyConnectionID: "9"},
 		connErr:  errors.New("no such row"),
 	}
-	s := &AppState{Store: fs}
-	if _, ok, err := s.selectedStorageConnection(keyCoreStorageConnectionID); err == nil || ok {
+	s := &Manager{Store: fs}
+	if _, ok, err := s.selectedStorageConnection(KeyConnectionID); err == nil || ok {
 		t.Fatalf("selected(missing conn) = (ok=%v, err=%v), want an error (not a silent inline fallback)", ok, err)
 	}
 }
@@ -77,28 +77,28 @@ func TestSelectedStorageConnection_LoadErrorSurfaces(t *testing.T) {
 // selected connection's credentials must win over the inline core_storage_s3_*
 // settings entirely.
 func TestEffectiveCoreStorageConfig_ConnectionOverridesInline(t *testing.T) {
-	connCfg, _ := json.Marshal(storageConnectionConfig{
+	connCfg, _ := json.Marshal(ConnectionConfig{
 		Endpoint: "https://conn.example", Region: "eu-central", Bucket: "conn-bucket",
 		ForcePathStyle: true, Prefix: "px",
 	})
 	fs := &resolveFakeStore{
 		settings: map[string]string{
-			keyCoreStorageConnectionID: "3",
+			KeyConnectionID: "3",
 			// Inline config is DIFFERENT, to prove it is not used.
-			keyCoreStorageBackend:     "s3",
-			keyCoreStorageS3Bucket:    "inline-bucket",
-			keyCoreStorageS3AccessKey: "INLINE_AK",
-			keyCoreStorageS3SecretKey: "inline-secret",
+			KeyBackend:     "s3",
+			KeyS3Bucket:    "inline-bucket",
+			KeyS3AccessKey: "INLINE_AK",
+			KeyS3SecretKey: "inline-secret",
 		},
 		conn: &models.StorageConnection{
 			ID: 3, Name: "nas", Provider: "s3",
 			Config: connCfg, AccessKey: "CONN_AK", SecretAccessKey: "conn-secret",
 		},
 	}
-	s := &AppState{Store: fs}
-	cfg, err := s.effectiveCoreStorageConfig()
+	s := &Manager{Store: fs}
+	cfg, err := s.EffectiveConfig()
 	if err != nil {
-		t.Fatalf("effectiveCoreStorageConfig: %v", err)
+		t.Fatalf("EffectiveConfig: %v", err)
 	}
 	if cfg.Backend != "s3" || cfg.S3Bucket != "conn-bucket" || cfg.S3AccessKey != "CONN_AK" || cfg.S3SecretKey != "conn-secret" {
 		t.Fatalf("effective config did not come from the connection: %+v", cfg)
@@ -115,18 +115,18 @@ func TestEffectiveCoreStorageConfig_ConnectionOverridesInline(t *testing.T) {
 // connection selected, a provider is built from it (not from the inline modpack
 // settings).
 func TestBuildModpackStorageProvider_UsesSelectedConnection(t *testing.T) {
-	connCfg, _ := json.Marshal(storageConnectionConfig{Bucket: "mp-bucket", Region: "eu"})
+	connCfg, _ := json.Marshal(ConnectionConfig{Bucket: "mp-bucket", Region: "eu"})
 	fs := &resolveFakeStore{
-		settings: map[string]string{keyModpackStorageConnectionID: "5"},
+		settings: map[string]string{KeyModpackConnectionID: "5"},
 		conn: &models.StorageConnection{
 			ID: 5, Name: "nas", Provider: "s3",
 			Config: connCfg, AccessKey: "AK", SecretAccessKey: "SK",
 		},
 	}
-	s := &AppState{Store: fs}
-	prov, err := s.buildModpackStorageProvider()
+	s := &Manager{Store: fs}
+	prov, err := s.BuildModpackProvider()
 	if err != nil {
-		t.Fatalf("buildModpackStorageProvider: %v", err)
+		t.Fatalf("BuildModpackProvider: %v", err)
 	}
 	if prov == nil {
 		t.Fatal("provider is nil; a selected connection must yield a provider")
@@ -138,10 +138,10 @@ func TestBuildModpackStorageProvider_UsesSelectedConnection(t *testing.T) {
 // so the factory's (nil, nil) "not configured" result is returned unchanged.
 func TestBuildModpackStorageProvider_DelegatesWhenNoConnection(t *testing.T) {
 	fs := &resolveFakeStore{settings: map[string]string{}} // no connection, no modpack settings
-	s := &AppState{Store: fs}
-	prov, err := s.buildModpackStorageProvider()
+	s := &Manager{Store: fs}
+	prov, err := s.BuildModpackProvider()
 	if err != nil {
-		t.Fatalf("buildModpackStorageProvider: %v", err)
+		t.Fatalf("BuildModpackProvider: %v", err)
 	}
 	if prov != nil {
 		t.Fatalf("want nil (unconfigured inline), got a provider - delegation path is wrong")
@@ -149,26 +149,26 @@ func TestBuildModpackStorageProvider_DelegatesWhenNoConnection(t *testing.T) {
 }
 
 func TestBuildModpackStorageProvider_BadIDErrors(t *testing.T) {
-	fs := &resolveFakeStore{settings: map[string]string{keyModpackStorageConnectionID: "nope"}}
-	s := &AppState{Store: fs}
-	if _, err := s.buildModpackStorageProvider(); err == nil {
-		t.Fatal("buildModpackStorageProvider(bad id) err = nil, want an error")
+	fs := &resolveFakeStore{settings: map[string]string{KeyModpackConnectionID: "nope"}}
+	s := &Manager{Store: fs}
+	if _, err := s.BuildModpackProvider(); err == nil {
+		t.Fatal("BuildModpackProvider(bad id) err = nil, want an error")
 	}
 }
 
 func TestEffectiveCoreStorageConfig_FallsBackToInline(t *testing.T) {
 	fs := &resolveFakeStore{
 		settings: map[string]string{
-			keyCoreStorageConnectionID: "", // nothing selected
-			keyCoreStorageBackend:      "s3",
-			keyCoreStorageS3Bucket:     "inline-bucket",
-			keyCoreStorageS3SecretKey:  "inline-secret",
+			KeyConnectionID: "", // nothing selected
+			KeyBackend:      "s3",
+			KeyS3Bucket:     "inline-bucket",
+			KeyS3SecretKey:  "inline-secret",
 		},
 	}
-	s := &AppState{Store: fs}
-	cfg, err := s.effectiveCoreStorageConfig()
+	s := &Manager{Store: fs}
+	cfg, err := s.EffectiveConfig()
 	if err != nil {
-		t.Fatalf("effectiveCoreStorageConfig: %v", err)
+		t.Fatalf("EffectiveConfig: %v", err)
 	}
 	if cfg.S3Bucket != "inline-bucket" || cfg.S3SecretKey != "inline-secret" {
 		t.Fatalf("no-connection case did not fall back to the inline config: %+v", cfg)

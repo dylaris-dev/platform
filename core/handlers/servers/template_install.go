@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
@@ -145,7 +146,7 @@ func (h *ServerHandler) visibleTemplate(w http.ResponseWriter, r *http.Request, 
 		httpx.SendJSONError(w, "Template not found", http.StatusNotFound)
 		return nil, false
 	}
-	v, err := h.state.TemplateViewer(r, t)
+	v, err := access.TemplateViewer(r, h.state.Authz, h.state.Store, t)
 	if err != nil {
 		log.Printf("template install: viewer for %d: %v", id, err)
 		httpx.SendJSONError(w, "Could not load the template", http.StatusInternalServerError)
@@ -177,7 +178,7 @@ func pushTemplateZip(ctx context.Context, state *handlers.AppState, nodeID int, 
 	}
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
-	if err := state.TemplateZip(ctx, t, tmp); err != nil {
+	if err := state.CoreStorage.TemplateZip(ctx, t, tmp); err != nil {
 		return fmt.Errorf("building the archive: %w", err)
 	}
 	size, err := tmp.Seek(0, io.SeekCurrent)

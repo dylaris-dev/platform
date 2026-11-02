@@ -53,7 +53,7 @@ func orphanReq(method, target string) *http.Request {
 // handler reaches the registry guard and answers 503, so a wrong status here
 // still fails the test rather than accidentally passing.
 func TestOrphanEndpoints_UnknownNodeIs404(t *testing.T) {
-	h := &NodeHandler{state: &handlers.AppState{Store: &orphanNodeFakeStore{err: errors.New("sql: no rows in result set")}}}
+	h := &NodeHandler{state: withCoreStorage(&handlers.AppState{Store: &orphanNodeFakeStore{err: errors.New("sql: no rows in result set")}})}
 
 	cases := []struct {
 		name   string
@@ -80,7 +80,7 @@ func TestOrphanEndpoints_UnknownNodeIs404(t *testing.T) {
 // blanket refusal. With the registry nil the next stop is the 503, which is
 // exactly the proof that the node check let it through.
 func TestOrphanEndpoints_KnownNodePassesTheCheck(t *testing.T) {
-	h := &NodeHandler{state: &handlers.AppState{Store: &orphanNodeFakeStore{node: &models.Node{ID: 2}}}}
+	h := &NodeHandler{state: withCoreStorage(&handlers.AppState{Store: &orphanNodeFakeStore{node: &models.Node{ID: 2}}})}
 
 	rw := httptest.NewRecorder()
 	h.InspectOrphan(rw, orphanReq(http.MethodGet, "/api/disk/orphans/999999/some-orphan/inspect"))

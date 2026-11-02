@@ -75,7 +75,7 @@ func backupReq(method, path, body, userID string, vars map[string]string) *http.
 }
 
 func backupHandlerFor(st store.Store) *BackupHandler {
-	return &BackupHandler{state: &handlers.AppState{Store: st, Authz: authz.NewResolver(st)}}
+	return &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st, Authz: authz.NewResolver(st)})}
 }
 
 // A stranger asked to restore a run and was told "cannot restore a run that did

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 
 	"dylaris-core/models"
 )
@@ -28,7 +29,7 @@ import (
 // secret rather than sending it, so the secret itself does not leak; what leaks
 // is the ability to use it.
 
-func draftBody(t *testing.T, id int, cfg handlers.StorageConnectionConfig, accessKey, secret string) *bytes.Reader {
+func draftBody(t *testing.T, id int, cfg corestorage.ConnectionConfig, accessKey, secret string) *bytes.Reader {
 	t.Helper()
 	raw, err := json.Marshal(cfg)
 	if err != nil {
@@ -47,7 +48,7 @@ func draftBody(t *testing.T, id int, cfg handlers.StorageConnectionConfig, acces
 	return bytes.NewReader(body)
 }
 
-func storedConnection(cfg handlers.StorageConnectionConfig, accessKey string) *models.StorageConnection {
+func storedConnection(cfg corestorage.ConnectionConfig, accessKey string) *models.StorageConnection {
 	raw, _ := json.Marshal(cfg)
 	return &models.StorageConnection{
 		ID:              7,
@@ -62,11 +63,11 @@ func storedConnection(cfg handlers.StorageConnectionConfig, accessKey string) *m
 // The whole reason the guard exists. Same connection id, a different endpoint,
 // no secret supplied: the stored credential must not travel there.
 func TestDraftTest_RefusesToPointTheStoredSecretElsewhere(t *testing.T) {
-	stored := handlers.StorageConnectionConfig{Endpoint: "https://fsn1.example.com", Bucket: "backups"}
+	stored := corestorage.ConnectionConfig{Endpoint: "https://fsn1.example.com", Bucket: "backups"}
 	fs := &connFakeStore{existing: storedConnection(stored, "AKIA")}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
-	attacker := handlers.StorageConnectionConfig{Endpoint: "https://collector.attacker.example", Bucket: "backups"}
+	attacker := corestorage.ConnectionConfig{Endpoint: "https://collector.attacker.example", Bucket: "backups"}
 	rw := httptest.NewRecorder()
 	h.TestDraftConnection(rw, httptest.NewRequest(http.MethodPost, "/api/storage-connections/test",
 		draftBody(t, 7, attacker, "AKIA", "")))
@@ -82,9 +83,9 @@ func TestDraftTest_RefusesToPointTheStoredSecretElsewhere(t *testing.T) {
 // A changed access key is the same rebind by another route: it would pair a new
 // key with the old secret.
 func TestDraftTest_RefusesAChangedAccessKeyWithoutASecret(t *testing.T) {
-	cfg := handlers.StorageConnectionConfig{Endpoint: "https://fsn1.example.com", Bucket: "backups"}
+	cfg := corestorage.ConnectionConfig{Endpoint: "https://fsn1.example.com", Bucket: "backups"}
 	fs := &connFakeStore{existing: storedConnection(cfg, "AKIA-OLD")}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	rw := httptest.NewRecorder()
 	h.TestDraftConnection(rw, httptest.NewRequest(http.MethodPost, "/api/storage-connections/test",
@@ -100,9 +101,9 @@ func TestDraftTest_RefusesAChangedAccessKeyWithoutASecret(t *testing.T) {
 // about the actual mistake.
 func TestDraftTest_NewConnectionMustCarryItsOwnSecret(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
-	cfg := handlers.StorageConnectionConfig{Endpoint: "https://fsn1.example.com", Bucket: "b"}
+	cfg := corestorage.ConnectionConfig{Endpoint: "https://fsn1.example.com", Bucket: "b"}
 	rw := httptest.NewRecorder()
 	h.TestDraftConnection(rw, httptest.NewRequest(http.MethodPost, "/api/storage-connections/test",
 		draftBody(t, 0, cfg, "AKIA", "")))
@@ -119,9 +120,9 @@ func TestDraftTest_NewConnectionMustCarryItsOwnSecret(t *testing.T) {
 // gets. A credential-bearing URL is the case that check exists for.
 func TestDraftTest_RejectsACredentialBearingEndpoint(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
-	cfg := handlers.StorageConnectionConfig{Endpoint: "https://user:pass@fsn1.example.com", Bucket: "b"}
+	cfg := corestorage.ConnectionConfig{Endpoint: "https://user:pass@fsn1.example.com", Bucket: "b"}
 	rw := httptest.NewRecorder()
 	h.TestDraftConnection(rw, httptest.NewRequest(http.MethodPost, "/api/storage-connections/test",
 		draftBody(t, 0, cfg, "AKIA", "sk")))
@@ -133,7 +134,7 @@ func TestDraftTest_RejectsACredentialBearingEndpoint(t *testing.T) {
 
 func TestDraftTest_RejectsAnUnsupportedProvider(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	body, _ := json.Marshal(map[string]any{"provider": "ftp"})
 	rw := httptest.NewRecorder()
@@ -153,9 +154,9 @@ func TestDraftTest_RejectsAnUnsupportedProvider(t *testing.T) {
 // got past the guard to reach it. A reachable endpoint is not needed to prove
 // that, and dialling one would put a network timeout in a unit test.
 func TestDraftTest_AllowsTheStoredSecretWhereItAlreadyPoints(t *testing.T) {
-	cfg := handlers.StorageConnectionConfig{Endpoint: "https://fsn1.example.com"}
+	cfg := corestorage.ConnectionConfig{Endpoint: "https://fsn1.example.com"}
 	fs := &connFakeStore{existing: storedConnection(cfg, "AKIA")}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	rw := httptest.NewRecorder()
 	h.TestDraftConnection(rw, httptest.NewRequest(http.MethodPost, "/api/storage-connections/test",

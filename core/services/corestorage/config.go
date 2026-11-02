@@ -1,58 +1,55 @@
-package handlers
+package corestorage
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
 	"dylaris-core/storage"
 )
 
 // Setting keys for the single shared "Core file storage" config.
 const (
-	keyCoreStorageBackend     = "core_storage_backend"
-	keyCoreStoragePath        = "core_storage_path"
-	keyCoreStoragePathConfirm = "core_storage_path_confirmed"
-	keyCoreStorageS3Endpoint  = "core_storage_s3_endpoint"
-	keyCoreStorageS3Bucket    = "core_storage_s3_bucket"
-	keyCoreStorageS3Region    = "core_storage_s3_region"
-	keyCoreStorageS3AccessKey = "core_storage_s3_access_key"
-	keyCoreStorageS3SecretKey = "core_storage_s3_secret_key"
-	keyCoreStorageS3PathStyle = "core_storage_s3_path_style"
-	keyCoreStorageS3Prefix    = "core_storage_s3_prefix"
+	KeyBackend     = "core_storage_backend"
+	KeyPath        = "core_storage_path"
+	KeyPathConfirm = "core_storage_path_confirmed"
+	KeyS3Endpoint  = "core_storage_s3_endpoint"
+	KeyS3Bucket    = "core_storage_s3_bucket"
+	KeyS3Region    = "core_storage_s3_region"
+	KeyS3AccessKey = "core_storage_s3_access_key"
+	KeyS3SecretKey = "core_storage_s3_secret_key"
+	KeyS3PathStyle = "core_storage_s3_path_style"
+	KeyS3Prefix    = "core_storage_s3_prefix"
 )
 
 // Sub-prefixes carve one shared provider into per-subsystem namespaces.
 // server-backups and modpacks are OPT-IN namespaces: they are only used when
 // an operator explicitly points that subsystem at the "core-storage" backend.
-// CoreStoragePrefixServerBackups is duplicated as storage/backup.CoreStorageSubPrefix
-// and CoreStoragePrefixModpacks is duplicated as storage/modpack.CoreStorageSubPrefix
+// PrefixServerBackups is duplicated as storage/backup.CoreStorageSubPrefix
+// and PrefixModpacks is duplicated as storage/modpack.CoreStorageSubPrefix
 // (neither package may import this one); TestCoreStorageSubPrefixesMatch locks
 // both pairs together.
 //
-// CoreStoragePrefixLibrary belongs to the removed Library. It stays so the
+// PrefixLibrary belongs to the removed Library. It stays so the
 // one-time purge (PurgeLibraryStorage) can find what is left there, and so
 // nothing new is ever given that namespace.
 const (
-	CoreStoragePrefixLibrary       = "library"
-	CoreStoragePrefixAttachments   = "ticket-attachments"
-	CoreStoragePrefixBackups       = "ticket-backups"
-	CoreStoragePrefixServerBackups = "server-backups"
-	CoreStoragePrefixModpacks      = "modpacks"
-	CoreStoragePrefixTemplates     = "templates"
+	PrefixLibrary       = "library"
+	PrefixAttachments   = "ticket-attachments"
+	PrefixBackups       = "ticket-backups"
+	PrefixServerBackups = "server-backups"
+	PrefixModpacks      = "modpacks"
+	PrefixTemplates     = "templates"
 )
 
 // storageSlotWaitDeadline bounds how long a host-path provider build waits for
@@ -66,10 +63,10 @@ const (
 // without waiting the real 15s. Production never reassigns it.
 var storageSlotWaitDeadline = 15 * time.Second
 
-// CoreStorageConfig is the wire + persisted shape of the shared config. The S3
+// Config is the wire + persisted shape of the shared config. The S3
 // secret is write-only: never emitted on read; S3SecretSet tells the UI whether
 // one is already stored.
-type CoreStorageConfig struct {
+type Config struct {
 	Backend       string `json:"backend"` // "path" | "s3"
 	Path          string `json:"path"`
 	PathConfirmed bool   `json:"pathConfirmed"`
@@ -83,14 +80,14 @@ type CoreStorageConfig struct {
 	S3SecretSet   bool   `json:"s3SecretSet"`
 	// ConnectionID references a saved storage connection. When non-zero, the
 	// provider is built from that named connection instead of the inline
-	// s3 fields above (see effectiveCoreStorageConfig). 0 = use the inline
+	// s3 fields above (see EffectiveConfig). 0 = use the inline
 	// config. Echoed back to the panel so the form can show the selection.
 	ConnectionID int `json:"connectionId"`
 }
 
-// validateCoreStorageConfig enforces the rules the panel also mirrors: path
+// Validate enforces the rules the panel also mirrors: path
 // must be absolute AND operator-confirmed; s3 must have bucket + credentials.
-func validateCoreStorageConfig(c CoreStorageConfig) error {
+func Validate(c Config) error {
 	switch c.Backend {
 	case "path", "local":
 		if c.Path == "" {
@@ -116,7 +113,7 @@ func validateCoreStorageConfig(c CoreStorageConfig) error {
 		if c.S3AccessKey == "" || c.S3SecretKey == "" {
 			return fmt.Errorf("core storage: s3 access key + secret are required")
 		}
-		if err := validate.ValidateS3Endpoint("core storage", c.S3Endpoint); err != nil {
+		if err := ValidateS3Endpoint("core storage", c.S3Endpoint); err != nil {
 			return err
 		}
 		return nil
@@ -125,10 +122,10 @@ func validateCoreStorageConfig(c CoreStorageConfig) error {
 	}
 }
 
-// LoadCoreStorageConfig reads the persisted config. S3SecretKey is loaded so
+// LoadConfig reads the persisted config. S3SecretKey is loaded so
 // callers that build a provider have it, but handlers must blank it before
 // returning to a client. S3SecretSet reflects whether a secret exists.
-func (s *AppState) LoadCoreStorageConfig() CoreStorageConfig {
+func (s *Manager) LoadConfig() Config {
 	get := func(k string) string {
 		if s.Store == nil {
 			return ""
@@ -136,34 +133,34 @@ func (s *AppState) LoadCoreStorageConfig() CoreStorageConfig {
 		v, _ := s.Store.GetSetting(k)
 		return v
 	}
-	secret := get(keyCoreStorageS3SecretKey)
-	connID, _ := strconv.Atoi(get(keyCoreStorageConnectionID)) // "" or bad -> 0 = none
-	return CoreStorageConfig{
-		Backend:       get(keyCoreStorageBackend),
-		Path:          get(keyCoreStoragePath),
-		PathConfirmed: get(keyCoreStoragePathConfirm) == "true",
-		S3Endpoint:    get(keyCoreStorageS3Endpoint),
-		S3Bucket:      get(keyCoreStorageS3Bucket),
-		S3Region:      get(keyCoreStorageS3Region),
-		S3AccessKey:   get(keyCoreStorageS3AccessKey),
+	secret := get(KeyS3SecretKey)
+	connID, _ := strconv.Atoi(get(KeyConnectionID)) // "" or bad -> 0 = none
+	return Config{
+		Backend:       get(KeyBackend),
+		Path:          get(KeyPath),
+		PathConfirmed: get(KeyPathConfirm) == "true",
+		S3Endpoint:    get(KeyS3Endpoint),
+		S3Bucket:      get(KeyS3Bucket),
+		S3Region:      get(KeyS3Region),
+		S3AccessKey:   get(KeyS3AccessKey),
 		S3SecretKey:   secret,
-		S3PathStyle:   get(keyCoreStorageS3PathStyle) == "true",
-		S3Prefix:      get(keyCoreStorageS3Prefix),
+		S3PathStyle:   get(KeyS3PathStyle) == "true",
+		S3Prefix:      get(KeyS3Prefix),
 		S3SecretSet:   secret != "",
 		ConnectionID:  connID,
 	}
 }
 
-// CoreStorageConfigured reports whether a valid shared config exists. It uses
+// Configured reports whether a valid shared config exists. It uses
 // the effective config so a selected storage connection counts as configured
 // (and a selected-but-broken connection counts as NOT configured, since
-// effectiveCoreStorageConfig errors on it).
-func (s *AppState) CoreStorageConfigured() bool {
-	cfg, err := s.effectiveCoreStorageConfig()
-	return err == nil && validateCoreStorageConfig(cfg) == nil
+// EffectiveConfig errors on it).
+func (s *Manager) Configured() bool {
+	cfg, err := s.EffectiveConfig()
+	return err == nil && Validate(cfg) == nil
 }
 
-// SyncStorageGate points the two storage connection mechanisms at whichever
+// SyncGate points the two storage connection mechanisms at whichever
 // backend is currently configured: the watchdog watches the host path, or is
 // stopped, and the s3 state is dropped when the backend is not s3.
 //
@@ -173,26 +170,26 @@ func (s *AppState) CoreStorageConfigured() bool {
 // switch to a host path would report an outage forever, since the only thing
 // that can clear it is a successful s3 call that will never happen.
 //
-// It is called at boot and from persistCoreStorageConfig, which is the single
+// It is called at boot and from PersistConfig, which is the single
 // writer of these settings keys and therefore the only thing that can change
 // the answer. Watch, Stop and Reset are all idempotent, so calling this on a
 // config write that changed something else costs nothing.
-func (s *AppState) SyncStorageGate() {
-	cfg, err := s.effectiveCoreStorageConfig()
+func (s *Manager) SyncGate() {
+	cfg, err := s.EffectiveConfig()
 	if err != nil {
 		// A selected-but-broken connection is still an s3 intent: stop the path
 		// watchdog (we are not on a host path) and leave the s3 state alone. The
 		// per-request provider build surfaces the real error to callers.
-		s.StorageGate.Stop()
+		s.Gate.Stop()
 		return
 	}
 	if (cfg.Backend == "path" || cfg.Backend == "local") && cfg.Path != "" {
-		s.StorageGate.Watch(cfg.Path)
+		s.Gate.Watch(cfg.Path)
 	} else {
-		s.StorageGate.Stop()
+		s.Gate.Stop()
 	}
 	if cfg.Backend != "s3" {
-		s.StorageS3.Reset()
+		s.S3.Reset()
 	}
 }
 
@@ -201,7 +198,7 @@ func (s *AppState) SyncStorageGate() {
 // still appear in stored configs.
 //
 // It is NOT the only place they are matched, and an earlier version of this
-// comment saying so was wrong: validateCoreStorageConfig, SyncStorageGate,
+// comment saying so was wrong: Validate, SyncGate,
 // TestConnection's ephemeral-path branch and health.go's storageComponent each
 // switch on the literals directly. Anyone adding a third spelling has to visit
 // all of them - this helper alone will not carry it.
@@ -222,10 +219,10 @@ func isHostPathBackend(backend string) bool {
 // Informational only: it backs the "onlineCores" figure GetConfig returns for
 // the panel's live X/N round-progress counter. It used to also gate the
 // host-path backend by count, but that guess is gone now that
-// checkSharedStorageReachable PROVES reachability with a real cross-Core
+// CheckSharedReachable PROVES reachability with a real cross-Core
 // round instead - a genuinely shared host path across many Cores is no longer
 // refused (or warned about) before it is even tried.
-func (s *AppState) CountOnlineCores(ctx context.Context) (int, error) {
+func (s *Manager) CountOnlineCores(ctx context.Context) (int, error) {
 	ids, err := services.OnlineCoreIDs(ctx, s.Redis)
 	if err != nil {
 		return 0, err
@@ -247,18 +244,18 @@ func (s *AppState) CountOnlineCores(ctx context.Context) (int, error) {
 // writes, and the state it is clearing is about the transport rather than
 // about permissions. A backend that answers a list but refuses a write is
 // reachable, which is exactly what the reconnecting state asks about.
-func (s *AppState) ProbeS3Connection(ctx context.Context) error {
-	cfg, err := s.effectiveCoreStorageConfig()
+func (s *Manager) ProbeS3Connection(ctx context.Context) error {
+	cfg, err := s.EffectiveConfig()
 	if err != nil {
 		return fmt.Errorf("%w: %v", storage.ErrS3ProbeUnavailable, err)
 	}
 	if cfg.Backend != "s3" {
 		return storage.ErrS3ProbeUnavailable
 	}
-	if err := validateCoreStorageConfig(cfg); err != nil {
+	if err := Validate(cfg); err != nil {
 		return fmt.Errorf("%w: %v", storage.ErrS3ProbeUnavailable, err)
 	}
-	prov, err := newStorageProviderForConfig(cfg, "_probe", nil, nil)
+	prov, err := NewProviderForConfig(cfg, "_probe", nil, nil)
 	if err != nil {
 		// A client that cannot be built says the config is wrong, not that the
 		// connection failed. Reporting it as a verdict would clear a real
@@ -269,7 +266,7 @@ func (s *AppState) ProbeS3Connection(ctx context.Context) error {
 	return err
 }
 
-// buildCoreStorageProvider returns a provider SCOPED to subPrefix, built
+// BuildProvider returns a provider SCOPED to subPrefix, built
 // strictly from the persisted Core file storage config. There is no
 // legacy-directory fallback: the owner has confirmed there are no pre-
 // existing DYLARIS installs anywhere, so every install starts with no local
@@ -280,15 +277,15 @@ func (s *AppState) ProbeS3Connection(ctx context.Context) error {
 // (e.g. a bad S3 endpoint rejected at client-construction time) is logged
 // here, once, so that failure is never silent - callers only ever surface a
 // generic "not configured" style response to the client either way.
-func (s *AppState) buildCoreStorageProvider(subPrefix string) (storage.StorageProvider, error) {
-	cfg, err := s.effectiveCoreStorageConfig()
+func (s *Manager) BuildProvider(subPrefix string) (storage.StorageProvider, error) {
+	cfg, err := s.EffectiveConfig()
 	if err != nil {
 		return nil, err
 	}
-	if err := validateCoreStorageConfig(cfg); err != nil {
+	if err := Validate(cfg); err != nil {
 		return nil, err
 	}
-	prov, err := newStorageProviderForConfig(cfg, subPrefix, s.StorageGate, s.StorageS3)
+	prov, err := NewProviderForConfig(cfg, subPrefix, s.Gate, s.S3)
 	if err != nil {
 		// An unreachable host path is not logged here. It is a per-REQUEST
 		// build, so a wedged mount would write one line per request for as
@@ -303,54 +300,14 @@ func (s *AppState) buildCoreStorageProvider(subPrefix string) (storage.StoragePr
 	return prov, nil
 }
 
-// coreStorageUnavailableResponse writes a 503 telling the caller Core file
-// storage must be configured (or is broken) before this endpoint can work.
-// Every handler that resolves a provider per-request via
-// buildCoreStorageProvider calls this on failure instead of proceeding with
-// a nil provider.
-//
-// Deliberately NOT featureDisabledResponse/FeatureCoreStorage's exact shape
-// (no X-Feature-Disabled header, a different "error" value): that response is
-// reserved for RequireCoreStorageConfigured, the router-level gate wrapping
-// EXACTLY the 4 WRITE routes, which fires before the request body is even
-// parsed. This is the per-request backstop reached from inside a handler
-// body - including READ handlers, which the gate never wraps - so keeping
-// the two responses distinguishable preserves that route-coverage invariant
-// instead of muddying it.
-//
-// err splits the two ways a per-request build fails, because they call for
-// opposite actions from the operator. "Not configured" means go and configure
-// it. UNREACHABLE means the config is fine and Core cannot see the storage
-// right now, so there is nothing to fix in the settings form. Reporting the
-// second as the first sends the operator to rewrite a working config; a plain
-// 500 tells them nothing; and a 404 would be an outright lie, claiming the
-// file is gone when the truth is that Core cannot see the mount. Both keep the
-// shape this response already had, so the distinction from featureDisabledResponse
-// described above is unaffected.
-func coreStorageUnavailableResponse(w http.ResponseWriter, err error) {
-	code := "core_storage_unavailable"
-	msg := "Core file storage is not configured. Configure it under Settings -> Core file storage."
-	if errors.Is(err, storage.ErrBackendUnreachable) {
-		code = "core_storage_unreachable"
-		msg = "Core file storage is UNREACHABLE: the configured path is not answering. The configuration itself is unchanged; check that the mount is still up on the Core host."
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusServiceUnavailable)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": false,
-		"error":   code,
-		"message": msg,
-	})
-}
-
-// newStorageProviderForConfig builds a StorageProvider strictly from cfg
+// NewProviderForConfig builds a StorageProvider strictly from cfg
 // (assumed already validated), scoped to subPrefix. Used both by
-// buildCoreStorageProvider (which loads the persisted config first) and by
+// BuildProvider (which loads the persisted config first) and by
 // TestConnection (which validates a candidate config that may not be saved
 // yet), so provider construction lives in exactly one place either way.
 //
 // gate is the watchdog for the LIVE configured host path, and it is passed in
-// rather than read from AppState because not every caller is building against
+// rather than read from Manager because not every caller is building against
 // that path: the migration target and the connection test both hand this
 // function a candidate config the gate knows nothing about. Those pass nil,
 // which disables gating for that build. The gate never applies to s3.
@@ -361,7 +318,7 @@ func coreStorageUnavailableResponse(w http.ResponseWriter, err error) {
 // admin just typed wrong would be indefensible. The migration target passes nil
 // because, like the gate, the live instance knows nothing about a candidate
 // config. s3res never applies to a host path.
-func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string, gate *storage.Gate, s3res *storage.S3Resilience) (storage.StorageProvider, error) {
+func NewProviderForConfig(cfg Config, subPrefix string, gate *storage.Gate, s3res *storage.S3Resilience) (storage.StorageProvider, error) {
 	if cfg.Backend == "s3" {
 		prefix := subPrefix
 		if cfg.S3Prefix != "" {
@@ -373,7 +330,7 @@ func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string, gate *
 			storage.OptS3Region:    cfg.S3Region,
 			storage.OptS3AccessKey: cfg.S3AccessKey,
 			storage.OptS3SecretKey: cfg.S3SecretKey,
-			storage.OptS3PathStyle: boolStr(cfg.S3PathStyle),
+			storage.OptS3PathStyle: strconv.FormatBool(cfg.S3PathStyle),
 			storage.OptS3Prefix:    prefix,
 		})
 		if err != nil {
@@ -410,7 +367,7 @@ func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string, gate *
 	// pinning a goroutine that shutdown cannot drain.
 	//
 	// Threading the real request context through would react to a client
-	// disconnect immediately, but buildCoreStorageProvider is a
+	// disconnect immediately, but BuildProvider is a
 	// func(subPrefix)-shaped closure at ~39 call sites and the modpack factory;
 	// the bound removes the unbounded-hang without that churn.
 	acquireCtx, cancelAcquire := context.WithTimeout(context.Background(), storageSlotWaitDeadline)
@@ -430,12 +387,12 @@ func newStorageProviderForConfig(cfg CoreStorageConfig, subPrefix string, gate *
 
 // --- Admin HTTP surface: config CRUD + test-connection ---
 
-// normalizeCoreStorageCandidate trims whitespace from every free-text field
+// NormalizeCandidate trims whitespace from every free-text field
 // of a submitted candidate, so a clipboard-pasted value (path, or any s3
 // field) with leading/trailing whitespace doesn't silently persist as-is and
 // break the backend or auth later. SaveConfig and TestConnection both route
 // their candidate through this single helper so they cannot drift again.
-func normalizeCoreStorageCandidate(c CoreStorageConfig) CoreStorageConfig {
+func NormalizeCandidate(c Config) Config {
 	c.Backend = strings.TrimSpace(c.Backend)
 	c.Path = strings.TrimSpace(c.Path)
 	c.S3Endpoint = strings.TrimSpace(c.S3Endpoint)
@@ -445,16 +402,16 @@ func normalizeCoreStorageCandidate(c CoreStorageConfig) CoreStorageConfig {
 	return c
 }
 
-// mergeCoreStorageCandidate resolves the effective config to act on: an
+// MergeCandidate resolves the effective config to act on: an
 // empty request-body backend means "nothing submitted", so the caller falls
 // back to the stored config entirely.
 //
 // Otherwise, a blank secret in the candidate reuses the stored secret ONLY
 // when the identity-defining fields (S3Endpoint, S3Bucket, S3AccessKey) all
 // match the stored config; the caller is expected to have already run the
-// candidate through normalizeCoreStorageCandidate so this comparison isn't
+// candidate through NormalizeCandidate so this comparison isn't
 // fooled by whitespace. If any identity field differs, the secret is left
-// blank so validateCoreStorageConfig rejects the request and the admin must
+// blank so Validate rejects the request and the admin must
 // re-enter the secret. This matters for two reasons:
 //   - Security: settings.write is a delegatable panel capability, not
 //     owner-only, and GET always blanks the stored secret. Without this
@@ -468,7 +425,7 @@ func normalizeCoreStorageCandidate(c CoreStorageConfig) CoreStorageConfig {
 //     blank (because GET hides it) would otherwise silently persist a NEW
 //     access key paired with the OLD secret, producing a broken config with
 //     no error.
-func mergeCoreStorageCandidate(candidate, existing CoreStorageConfig) CoreStorageConfig {
+func MergeCandidate(candidate, existing Config) Config {
 	if candidate.Backend == "" {
 		return existing
 	}
@@ -485,12 +442,12 @@ func mergeCoreStorageCandidate(candidate, existing CoreStorageConfig) CoreStorag
 // writes and expects back verbatim.
 const coreStorageProbePayload = "dylaris-probe"
 
-// probeStorageProvider writes, reads back and deletes a uniquely-named probe
+// ProbeProvider writes, reads back and deletes a uniquely-named probe
 // object to verify the backend is reachable and read/write-consistent. The
 // probe key is deleted on every path, including a write error, a read error,
 // or a read-back/content mismatch, so a broken candidate config never leaves
 // a stray object behind.
-func probeStorageProvider(ctx context.Context, prov storage.StorageProvider) (ok bool, message string) {
+func ProbeProvider(ctx context.Context, prov storage.StorageProvider) (ok bool, message string) {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 	key := "probe-" + hex.EncodeToString(b) + ".txt"

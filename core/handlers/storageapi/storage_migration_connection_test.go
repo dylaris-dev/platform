@@ -6,6 +6,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/services/corestorage"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -15,9 +16,9 @@ import (
 // a connection is built from the connection's credentials (decrypted in the
 // store), with ConnectionID preserved so a switch persists the reference.
 func TestTargetCoreStorageConfig_ResolvesConnection(t *testing.T) {
-	connCfg, _ := json.Marshal(handlers.StorageConnectionConfig{Endpoint: "https://e", Region: "eu", Bucket: "cb", ForcePathStyle: true, Prefix: "px"})
+	connCfg, _ := json.Marshal(corestorage.ConnectionConfig{Endpoint: "https://e", Region: "eu", Bucket: "cb", ForcePathStyle: true, Prefix: "px"})
 	fs := &resolveFakeStore{conn: &models.StorageConnection{ID: 5, Provider: "s3", Config: connCfg, AccessKey: "AK", SecretAccessKey: "SK"}}
-	res := NewStorageDataSetResolver(&handlers.AppState{Store: fs})
+	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	cfg, err := res.targetCoreStorageConfig(services.StorageTargetConfig{ConnectionID: 5})
 	if err != nil {
@@ -32,7 +33,7 @@ func TestTargetCoreStorageConfig_ResolvesConnection(t *testing.T) {
 }
 
 func TestTargetCoreStorageConfig_InlinePassThrough(t *testing.T) {
-	res := NewStorageDataSetResolver(&handlers.AppState{Store: &resolveFakeStore{}})
+	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: &resolveFakeStore{}}))
 	cfg, err := res.targetCoreStorageConfig(services.StorageTargetConfig{Backend: "s3", S3Bucket: "inline", S3AccessKey: "k", S3SecretKey: "s"})
 	if err != nil {
 		t.Fatalf("targetCoreStorageConfig: %v", err)
@@ -44,7 +45,7 @@ func TestTargetCoreStorageConfig_InlinePassThrough(t *testing.T) {
 
 func TestTargetCoreStorageConfig_MissingConnectionErrors(t *testing.T) {
 	fs := &resolveFakeStore{connErr: errTestNoConn}
-	res := NewStorageDataSetResolver(&handlers.AppState{Store: fs})
+	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
 	if _, err := res.targetCoreStorageConfig(services.StorageTargetConfig{ConnectionID: 9}); err == nil {
 		t.Fatal("targetCoreStorageConfig(missing conn) err = nil, want an error")
 	}
@@ -60,14 +61,14 @@ func (testConnErr) Error() string { return "no such connection" }
 // connection target persists modpack_storage_connection_id.
 func TestSwitchModpackConfig_PersistsConnectionID(t *testing.T) {
 	fs := handlertest.NewSettingsStore()
-	res := NewStorageDataSetResolver(&handlers.AppState{Store: fs})
+	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
 
-	cfg := handlers.CoreStorageConfig{Backend: "s3", ConnectionID: 5, S3Bucket: "b", S3AccessKey: "k", S3SecretKey: "s"}
+	cfg := corestorage.Config{Backend: "s3", ConnectionID: 5, S3Bucket: "b", S3AccessKey: "k", S3SecretKey: "s"}
 	if err := res.switchModpackConfig(cfg); err != nil {
 		t.Fatalf("switchModpackConfig: %v", err)
 	}
-	if fs.KV[handlers.KeyModpackStorageConnectionID] != "5" {
-		t.Errorf("modpack connection id not persisted, got %q", fs.KV[handlers.KeyModpackStorageConnectionID])
+	if fs.KV[corestorage.KeyModpackConnectionID] != "5" {
+		t.Errorf("modpack connection id not persisted, got %q", fs.KV[corestorage.KeyModpackConnectionID])
 	}
 }
 
@@ -75,14 +76,14 @@ func TestSwitchModpackConfig_PersistsConnectionID(t *testing.T) {
 // inline target clears a previously-selected connection (the flagged bug).
 func TestSwitchModpackConfig_InlineClearsStaleConnectionID(t *testing.T) {
 	fs := handlertest.NewSettingsStore()
-	fs.KV[handlers.KeyModpackStorageConnectionID] = "9" // a previously-selected connection
-	res := NewStorageDataSetResolver(&handlers.AppState{Store: fs})
+	fs.KV[corestorage.KeyModpackConnectionID] = "9" // a previously-selected connection
+	res := NewStorageDataSetResolver(withCoreStorage(&handlers.AppState{Store: fs}))
 
-	cfg := handlers.CoreStorageConfig{Backend: "s3", ConnectionID: 0, S3Bucket: "b", S3AccessKey: "k", S3SecretKey: "s"}
+	cfg := corestorage.Config{Backend: "s3", ConnectionID: 0, S3Bucket: "b", S3AccessKey: "k", S3SecretKey: "s"}
 	if err := res.switchModpackConfig(cfg); err != nil {
 		t.Fatalf("switchModpackConfig: %v", err)
 	}
-	if fs.KV[handlers.KeyModpackStorageConnectionID] != "" {
-		t.Errorf("inline switch left a stale connection id: %q", fs.KV[handlers.KeyModpackStorageConnectionID])
+	if fs.KV[corestorage.KeyModpackConnectionID] != "" {
+		t.Errorf("inline switch left a stale connection id: %q", fs.KV[corestorage.KeyModpackConnectionID])
 	}
 }

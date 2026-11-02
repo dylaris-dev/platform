@@ -57,7 +57,7 @@ func TestAMoveWaitsForAPowerTransition(t *testing.T) {
 func TestACopyWaitsForAPowerTransition(t *testing.T) {
 	for _, status := range []string{"starting", "restarting", "stopping", "online", "installing"} {
 		fs := &serverPowerFakeStore{server: &models.Server{ID: 1, UUID: "srv-uuid", Status: status, OwnerID: "u1", NodeID: 7, ActiveSubServer: "main"}}
-		h := &ServerModsHandler{state: &handlers.AppState{Store: fs}}
+		h := &ServerModsHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 		r := httptest.NewRequest("POST", "/api/servers/1/copy-sub-server", bytes.NewBufferString(`{"targetName":"copy"}`))
 		r = mux.SetURLVars(r.WithContext(context.WithValue(r.Context(), "isAdmin", false)), map[string]string{"id": "1"})
 		rec := httptest.NewRecorder()

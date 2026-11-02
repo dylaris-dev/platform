@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 )
 
@@ -54,6 +55,7 @@ func newCoreStorageGateTestServer(t *testing.T, s store.Store) http.Handler {
 		Store:        s,
 		FeatureFlags: services.NewFeatureFlags(s),
 		Authz:        authz.NewResolver(s),
+		CoreStorage:  &corestorage.Manager{Store: s},
 	}
 	authHandler := handlers.NewAuthHandler(appState, testJWTSecret)
 	root, _ := buildAPIRouter(appState, authHandler, routeCfg{JWTSecret: testJWTSecret})

@@ -113,7 +113,7 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 		return fmt.Errorf("failed to update content: %w", err)
 	}
 	if oldKey != "" {
-		if prov, err := h.state.BuildModpackStorageProvider(); err == nil && prov != nil {
+		if prov, err := h.state.CoreStorage.BuildModpackProvider(); err == nil && prov != nil {
 			h.deleteIfUnreferenced(ctx, prov, oldKey)
 		}
 	}

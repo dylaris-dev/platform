@@ -110,7 +110,7 @@ func TestSaveSMTPConfig_RefusesARebindOnTheWire(t *testing.T) {
 	fs.KV["smtp.default.port"] = "587"
 	fs.KV["smtp.default.username"] = "postmaster@example.com"
 	fs.KV["smtp.default.password"] = "the-real-password"
-	h := NewAuthSettingsHandler(&AppState{Store: fs})
+	h := NewAuthSettingsHandler(withCoreStorage(&AppState{Store: fs}))
 
 	body, _ := json.Marshal(SMTPConfigDTO{
 		Host:     "collector.attacker.example",
@@ -137,7 +137,7 @@ func TestModCacheSet_RefusesARebindOnTheWire(t *testing.T) {
 	fs.KV[settingModCacheAddr] = "cache.internal:6379"
 	fs.KV[settingModCacheUsername] = "dylaris"
 	fs.KV[settingModCachePassword] = "the-real-password"
-	h := NewModCacheSettingsHandler(&AppState{Store: fs})
+	h := NewModCacheSettingsHandler(withCoreStorage(&AppState{Store: fs}))
 
 	body, _ := json.Marshal(modCacheSettings{
 		Addr:     "collector.attacker.example:6379",

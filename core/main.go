@@ -40,6 +40,7 @@ import (
 	"dylaris-core/pkg/leader"
 	"dylaris-core/pkg/netguard"
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/services/modcompat"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/services/storagereach"
@@ -409,18 +410,28 @@ func main() {
 	// The two core-storage connection mechanisms. Exactly one of them is live
 	// at a time, decided by which backend the config names.
 	//
-	// Both are constructed BEFORE SyncStorageGate, which points the watchdog at
+	// Both are constructed BEFORE SyncGate, which points the watchdog at
 	// the configured path and drops any stale s3 state. It touches both, so
 	// creating either one after it would leave that half silently unsynced.
-	appState.StorageGate = storage.NewGate()
-	appState.StorageS3 = storage.NewS3Resilience()
-	appState.SyncStorageGate()
+	//
+	// Core file storage itself is built here, ONCE: every handler and leader
+	// worker shares this pointer, and its mutex is the single-process half of
+	// the reach-round lock (a second Manager would be a second lock).
+	appState.CoreStorage = &corestorage.Manager{
+		Store:         pgStore,
+		Redis:         redisClient,
+		Registry:      grpcRegistry,
+		ClusterSecret: cfg.ClusterSecret,
+		Gate:          storage.NewGate(),
+		S3:            storage.NewS3Resilience(),
+	}
+	appState.CoreStorage.SyncGate()
 
 	// The s3 recovery probe. It idles unless the backend is actually
 	// reconnecting, and it is what lets a Core whose only storage traffic is
 	// uploads notice that the object store came back instead of waiting out
 	// the full retry budget.
-	appState.StorageS3.StartProbe(bgCtx, appState.ProbeS3Connection)
+	appState.CoreStorage.S3.StartProbe(bgCtx, appState.CoreStorage.ProbeS3Connection)
 
 	// System-events publisher. Mutating handlers (regions,
 	// modules, features, maintenance, servers CRUD) drop events into a
@@ -428,11 +439,12 @@ func main() {
 	// without polling. Construction is cheap — wired before any handler so
 	// every code path can call h.state.Events.Publish unconditionally.
 	appState.Events = services.NewSystemEventsPublisher(redisClient)
+	appState.CoreStorage.Events = appState.Events
 
 	// Storage connection state onto the system-events channel. Wired AFTER the
 	// publisher above, because it captures it. Start before Attach so the
 	// forwarder is already draining when the first transition can fire.
-	appState.StorageStatus = services.NewStorageStatus(appState.Events, appState.StorageGate, appState.StorageS3)
+	appState.StorageStatus = services.NewStorageStatus(appState.Events, appState.CoreStorage.Gate, appState.CoreStorage.S3)
 	appState.StorageStatus.Start(bgCtx)
 	appState.StorageStatus.Attach()
 
@@ -682,7 +694,7 @@ func main() {
 	migrationOrchestrator := services.NewMigrationOrchestrator(pgStore, redisClient, appState.Queue, appState.Gateway, cfg.ClusterSecret)
 	migrationOrchestrator.SetLeader(coreLeader)
 	migrationOrchestrator.SetOnMoving(sftpSync.SyncSoon)
-	migrationOrchestrator.SetConnection(appState.ConnectionBackupBuilder())
+	migrationOrchestrator.SetConnection(appState.CoreStorage.ConnectionBackupBuilder())
 	migrationOrchestrator.Start(bgCtx)
 	appState.Migration = migrationOrchestrator
 	migrationOrchestrator.SetCPUPinning(appState.CPUPinning)
@@ -858,12 +870,12 @@ func main() {
 	// tunnel itself. Taking away what the tunnel carries is not the same as
 	// taking away the tunnel, and only this drops the WireGuard peer.
 	appState.Billing.SetWarpPeers(extras.warpService)
-	appState.Billing.SetTemplateRetention(appState.RetentionDropTemplateFiles)
+	appState.Billing.SetTemplateRetention(appState.CoreStorage.RetentionDropTemplateFiles)
 	appState.Billing.Start(bgCtx)
 	// Template folders on our storage that no row names, and template zips a
 	// crashed request left in the temp dir. The storage sweep is leader-gated,
 	// the temp sweep runs on every replica.
-	templateJanitor := services.NewTemplateJanitorService(pgStore, redisClient, appState.TemplateJanitorStorage)
+	templateJanitor := services.NewTemplateJanitorService(pgStore, redisClient, appState.CoreStorage.TemplateJanitorStorage)
 	templateJanitor.SetLeader(coreLeader)
 	templateJanitor.Start(bgCtx)
 	// The auto-delete sweep removes accounts, and an account's link kit holds a
@@ -871,9 +883,9 @@ func main() {
 	// up once the row is gone.
 	autoDelete.SetLinkACL(appState.Gateway, redisClient, aclProvisioner)
 	autoDelete.SetWarpPeers(extras.warpService)
-	autoDelete.SetPackStorage(appState.PackDirsOfUser, appState.DropPackDirs)
-	autoDelete.SetTemplateStorage(appState.TemplatesOfUser, func(ts []models.Template) {
-		appState.DropTemplateFiles(context.Background(), ts)
+	autoDelete.SetPackStorage(appState.CoreStorage.PackDirsOfUser, appState.CoreStorage.DropPackDirs)
+	autoDelete.SetTemplateStorage(appState.CoreStorage.TemplatesOfUser, func(ts []models.Template) {
+		appState.CoreStorage.DropTemplateFiles(context.Background(), ts)
 	})
 	autoDelete.Start(bgCtx)
 	aclHandshake := redisacl.NewHandshake(
@@ -928,8 +940,8 @@ func main() {
 	services.NewBackupTransfer(pgStore, backupstorage.Deps{
 		Registry:    grpcRegistry,
 		NodeStore:   pgStore,
-		CoreStorage: appState.CoreStorageBackupBuilder(),
-		Connection:  appState.ConnectionBackupBuilder(),
+		CoreStorage: appState.CoreStorage.BackupBuilder(),
+		Connection:  appState.CoreStorage.ConnectionBackupBuilder(),
 	}, cfg.StoreEnabled).Register(grpcRegistry)
 	// Read per auth, not once at boot: an admin can set core_public_url long
 	// after Core started, and every node that connects after that edit has to be
@@ -956,16 +968,16 @@ func main() {
 	// from the same core file storage as its peers - at boot, then every
 	// 120s - and gates its own storage routes when it cannot. Deliberately
 	// not leader-gated: every Core must verify itself, and only itself.
-	appState.StorageReach = storagereach.NewService(storagereach.ServiceDeps{
+	appState.CoreStorage.Reach = storagereach.NewService(storagereach.ServiceDeps{
 		Redis:       redisClient,
 		CoreID:      cfg.CoreID,
-		NewProvider: appState.NewReachProvider,
+		NewProvider: appState.CoreStorage.NewReachProvider,
 		ConfigFor: func() (storagereach.Config, bool) {
-			cfg, err := appState.EffectiveCoreStorageConfig()
-			if err != nil || !appState.CoreStorageConfigured() {
+			cfg, err := appState.CoreStorage.EffectiveConfig()
+			if err != nil || !appState.CoreStorage.Configured() {
 				return storagereach.Config{}, false
 			}
-			return handlers.CoreStorageToReachConfig(cfg), true
+			return corestorage.ToReachConfig(cfg), true
 		},
 		OnlineCores: func(ctx context.Context) ([]string, error) {
 			return services.OnlineCoreIDs(ctx, redisClient)
@@ -974,7 +986,7 @@ func main() {
 			appState.Events.Publish(context.Background(), eventType, payload)
 		},
 	})
-	appState.StorageReach.Start(bgCtx)
+	appState.CoreStorage.Reach.Start(bgCtx)
 	// Announce it like every other background service. Without this line the one
 	// service whose job is to make a SILENT storage failure visible is itself
 	// invisible in the boot log, so an operator cannot tell a Core that verified
@@ -984,9 +996,9 @@ func main() {
 	// One-time deletion of the removed Library's files. In the background so a
 	// slow or wedged storage never holds up the boot; it retries on the next
 	// start until it has succeeded once.
-	go appState.PurgeLibraryStorage(bgCtx)
+	go appState.CoreStorage.PurgeLibraryStorage(bgCtx)
 	// Same shape, once: the server packs that used to be stored for share links.
-	go appState.PurgeStoredServerPacks(bgCtx)
+	go appState.CoreStorage.PurgeStoredServerPacks(bgCtx)
 
 	// Backup scheduler — ticks once a minute, dispatches due jobs to nodes.
 	// Wire the gRPC mesh in so retention deletes can reach node-local stores.
@@ -998,8 +1010,8 @@ func main() {
 	// Core file storage behaves identically whether it is reached from a
 	// request or from the scheduler. Without it the scheduler is refused by
 	// backupstorage.Open for exactly those jobs.
-	backupScheduler.SetCoreStorage(appState.CoreStorageBackupBuilder())
-	backupScheduler.SetConnection(appState.ConnectionBackupBuilder())
+	backupScheduler.SetCoreStorage(appState.CoreStorage.BackupBuilder())
+	backupScheduler.SetConnection(appState.CoreStorage.ConnectionBackupBuilder())
 	backupScheduler.SetStoreEnabled(cfg.StoreEnabled)
 	backupScheduler.SetReleaseVersion(appState.ReleaseVersion)
 	backupScheduler.SetFeatureFlags(appState.FeatureFlags)

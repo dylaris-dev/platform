@@ -4,11 +4,12 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"encoding/json"
-	"github.com/gorilla/mux"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/gorilla/mux"
 
 	"dylaris-core/handlers/httpx"
 )

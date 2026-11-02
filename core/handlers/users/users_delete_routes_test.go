@@ -78,7 +78,7 @@ func TestDeleteUserRemovesTheirRouteOnlyAddresses(t *testing.T) {
 		{Domain: "mine-b.eu.dylaris.com", OwnerID: delUser},
 	}}
 	gw := &deleteRoutesFakeGateway{}
-	h := &UserHandler{state: &handlers.AppState{Store: fs, Gateway: gw}}
+	h := &UserHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Gateway: gw})}
 
 	rr := httptest.NewRecorder()
 	h.DeleteUser(rr, deleteUserRequest())
@@ -106,7 +106,7 @@ func TestDeleteUserKeepsTheAccountWhenARouteCannotBeRemoved(t *testing.T) {
 		{Domain: "mine.eu.dylaris.com", OwnerID: delUser},
 	}}
 	gw := &deleteRoutesFakeGateway{err: errors.New("redis down")}
-	h := &UserHandler{state: &handlers.AppState{Store: fs, Gateway: gw}}
+	h := &UserHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Gateway: gw})}
 
 	rr := httptest.NewRecorder()
 	h.DeleteUser(rr, deleteUserRequest())
@@ -131,7 +131,7 @@ func TestDeleteUserWithNoRoutes(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &deleteRoutesFakeStore{}
-			h := &UserHandler{state: &handlers.AppState{Store: fs, Gateway: tc.gw}}
+			h := &UserHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Gateway: tc.gw})}
 			rr := httptest.NewRecorder()
 			h.DeleteUser(rr, deleteUserRequest())
 			if rr.Code != http.StatusOK {

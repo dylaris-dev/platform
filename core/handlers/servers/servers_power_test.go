@@ -168,12 +168,12 @@ func (f *serverPowerFakeStore) CountServersByNode(nodeID int) (int, error) {
 }
 
 func newServerPowerHandler(fs *serverPowerFakeStore, rdb *redis.Client) *ServerHandler {
-	return &ServerHandler{state: &handlers.AppState{
+	return &ServerHandler{state: withCoreStorage(&handlers.AppState{
 		Store: fs,
 		Redis: rdb,
 		Queue: services.NewQueueService(rdb),
 		Authz: authz.NewResolver(fs),
-	}}
+	})}
 }
 
 // serverPowerReq builds the exact request ServerPowerHandler expects: JSON
@@ -769,12 +769,12 @@ func TestServerPowerHandler_QueueSendCommandFailure(t *testing.T) {
 		MaxRetries:  -1,
 	})
 	t.Cleanup(func() { brokenRDB.Close() })
-	h := &ServerHandler{state: &handlers.AppState{
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{
 		Store: fs,
 		Redis: handlertest.RedisClient(t), // cooldown check needs a working Redis
 		Queue: services.NewQueueService(brokenRDB),
 		Authz: authz.NewResolver(fs),
-	}}
+	})}
 	rec := httptest.NewRecorder()
 	h.ServerPowerHandler(rec, serverPowerReq(1, "start", "alice", false, "u1"))
 	if rec.Code != http.StatusInternalServerError {
@@ -840,11 +840,11 @@ func TestByonNodeServerCapReached(t *testing.T) {
 		if err := rdb.Set(context.Background(), "dylaris:node:node-tok:cpu", raw, 0).Err(); err != nil {
 			t.Fatalf("seed topology: %v", err)
 		}
-		h := &ServerHandler{state: &handlers.AppState{
+		h := &ServerHandler{state: withCoreStorage(&handlers.AppState{
 			Store:      fs,
 			Redis:      rdb,
 			CPUPinning: services.NewCPUPinningService(rdb, fs),
-		}}
+		})}
 		// capN = 3 * 4 = 12; count=11 -> not reached
 		reached, capN := h.byonNodeServerCapReached(context.Background(), &models.Node{ID: 1, Token: "node-tok"})
 		if reached || capN != 12 {

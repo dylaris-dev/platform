@@ -98,7 +98,7 @@ func TestInviteRefusesAnythingItDoesNotUnderstand(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &inviteInputStore{}
-			h := NewMemberHandler(&handlers.AppState{Store: fs})
+			h := NewMemberHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 			rec := httptest.NewRecorder()
 
 			h.InviteMember(rec, inviteReq(c.body))

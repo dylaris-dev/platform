@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/google/uuid"
 	"io"
 	"log"
 	"net/http"
@@ -16,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/validate"
@@ -165,7 +166,7 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if provider == nil {
-			provider, err = h.state.BuildModpackStorageProvider()
+			provider, err = h.state.CoreStorage.BuildModpackProvider()
 			if err != nil || provider == nil {
 				httpx.SendJSONError(w, "Modpack storage is unavailable", 503)
 				return

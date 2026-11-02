@@ -285,7 +285,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 
 	// Enabling Tickets requires Core file storage (attachments + backups need a
 	// durable off-host home). Refuse the whole PUT so nothing is half-written.
-	if req.Tickets != nil && *req.Tickets && !h.state.CoreStorageConfigured() {
+	if req.Tickets != nil && *req.Tickets && !h.state.CoreStorage.Configured() {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{

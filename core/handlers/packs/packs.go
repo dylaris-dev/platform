@@ -309,12 +309,12 @@ func (h *PacksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	dirs := h.state.PackDirsOfPack(p)
+	dirs := h.state.CoreStorage.PackDirsOfPack(p)
 	if err := h.state.Store.DeletePack(packID, p.OwnerID); err != nil {
 		httpx.SendJSONError(w, "Failed to delete", http.StatusInternalServerError)
 		return
 	}
-	h.state.DropPackDirs(dirs)
+	h.state.CoreStorage.DropPackDirs(dirs)
 	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": p.OwnerID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
@@ -497,7 +497,7 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 	}
 	// The version string is part of the derived directory: a rename moves
 	// where the next render lands and strands the objects of the old one.
-	oldDirs := h.state.PackBuildDirs(p, b)
+	oldDirs := h.state.CoreStorage.PackBuildDirs(p, b)
 	if v := strings.TrimSpace(req.VersionString); v != "" {
 		if !safeKeyComponent(v) {
 			httpx.SendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
@@ -517,8 +517,8 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Failed to update build", http.StatusInternalServerError)
 		return
 	}
-	if newDirs := h.state.PackBuildDirs(p, b); newDirs[0] != oldDirs[0] {
-		h.state.DropPackDirs(oldDirs[:1])
+	if newDirs := h.state.CoreStorage.PackBuildDirs(p, b); newDirs[0] != oldDirs[0] {
+		h.state.CoreStorage.DropPackDirs(oldDirs[:1])
 	}
 	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "build": b})
@@ -549,12 +549,12 @@ func (h *PacksHandler) DeleteBuild(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	dirs := h.state.PackBuildDirs(p, b)
+	dirs := h.state.CoreStorage.PackBuildDirs(p, b)
 	if err := h.state.Store.DeletePackBuild(buildID, packID); err != nil {
 		httpx.SendJSONError(w, "Failed to delete build", http.StatusInternalServerError)
 		return
 	}
-	h.state.DropPackDirs(dirs)
+	h.state.CoreStorage.DropPackDirs(dirs)
 	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

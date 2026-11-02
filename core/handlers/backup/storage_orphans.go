@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/services/corestorage"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -42,13 +42,13 @@ var errNotObjectStorage = errors.New("only object storage (S3/R2) can be scanned
 // The prefix rules mirror backupstorage.Open and newStorageProviderForConfig;
 // a mismatch would scan a different folder from the one backups go to.
 func (h *BackupHandler) platformObjectStore(ctx context.Context, bs *models.BackupStorage) (*backupstorage.S3Storage, error) {
-	var cfg handlers.CoreStorageConfig
+	var cfg corestorage.Config
 	var sub string
 	switch bs.Provider {
 	case "s3":
 		return backupstorage.NewS3(ctx, bs.Config)
 	case "core-storage":
-		c, err := h.state.EffectiveCoreStorageConfig()
+		c, err := h.state.CoreStorage.EffectiveConfig()
 		if err != nil {
 			return nil, err
 		}
@@ -64,7 +64,7 @@ func (h *BackupHandler) platformObjectStore(ctx context.Context, bs *models.Back
 		if err != nil || conn == nil {
 			return nil, fmt.Errorf("storage connection %d could not be loaded", cc.ConnectionID)
 		}
-		cfg, sub = handlers.CoreStorageConfigFromConnection(conn), cc.Prefix
+		cfg, sub = corestorage.ConfigFromConnection(conn), cc.Prefix
 		if strings.TrimSpace(sub) == "" {
 			sub = backupstorage.CoreStorageSubPrefix
 		}

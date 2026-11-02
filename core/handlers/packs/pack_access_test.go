@@ -62,7 +62,7 @@ func TestPackAccessFollowsTheModrinthTeam(t *testing.T) {
 		"expired":    lapsed(services.TokenInvalidGrace + time.Minute),
 		"removed":    {State: stateNone, CheckedAt: time.Now()},
 	}}
-	h := NewPacksHandler(&handlers.AppState{Store: fs})
+	h := NewPacksHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 	cases := []struct {
 		user  string
 		admin bool
@@ -99,7 +99,7 @@ func TestPackAccessFollowsTheModrinthTeam(t *testing.T) {
 
 // An unbound (legacy) pack is its creator's alone.
 func TestUnboundPackBelongsToItsCreator(t *testing.T) {
-	h := NewPacksHandler(&handlers.AppState{Store: &packAccessStore{members: map[string]*models.ModrinthMembership{"manager": member(services.ModrinthPermAll)}}})
+	h := NewPacksHandler(withCoreStorage(&handlers.AppState{Store: &packAccessStore{members: map[string]*models.ModrinthMembership{"manager": member(services.ModrinthPermAll)}}}))
 	for _, c := range []struct {
 		user  string
 		admin bool
@@ -123,7 +123,7 @@ func TestStaleMembershipWithoutTokenFallsBackToReadOnly(t *testing.T) {
 	stale := member(services.ModrinthPermAll)
 	stale.CheckedAt = time.Now().Add(-10 * time.Minute)
 	fs := &packAccessStore{members: map[string]*models.ModrinthMembership{"manager": stale}}
-	h := NewPacksHandler(&handlers.AppState{Store: fs})
+	h := NewPacksHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 	r := httptest.NewRequest("GET", "/", nil)
 	r = r.WithContext(context.WithValue(r.Context(), "userID", "manager"))
 	if _, ok := h.packAccess(r, 1, packEdit); ok {
@@ -173,7 +173,7 @@ func TestModrinthAnswersMapToMembership(t *testing.T) {
 			}
 			return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 		})
-		h := NewPacksHandler(&handlers.AppState{Store: &packAccessStore{}})
+		h := NewPacksHandler(withCoreStorage(&handlers.AppState{Store: &packAccessStore{}}))
 		h.SetPATLoader(&publishBindingPAT{})
 		m, err := h.askModrinthMembership(context.Background(), "u", "proj", c.cached)
 		if err != nil || m.State != c.state || m.Permissions != c.perms {

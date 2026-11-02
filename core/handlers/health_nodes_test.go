@@ -45,7 +45,7 @@ func nodesHealthHandler(t *testing.T, nodes []models.Node, token, level, msg str
 			t.Fatalf("seed stream: %v", aerr)
 		}
 	}
-	return NewHealthHandler(&AppState{Store: &nodesHealthStore{nodes: nodes}, Redis: rdb})
+	return NewHealthHandler(withCoreStorage(&AppState{Store: &nodesHealthStore{nodes: nodes}, Redis: rdb}))
 }
 
 var onlineNode = []models.Node{{ID: 1, Name: "node-a", Token: "tok-a", Status: "online", Region: "eu-central"}}

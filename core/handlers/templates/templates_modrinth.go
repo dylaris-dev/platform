@@ -163,14 +163,14 @@ func (h *TemplatesHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	files, err := h.state.TemplateList(r.Context(), t)
+	files, err := h.state.CoreStorage.TemplateList(r.Context(), t)
 	if err != nil {
 		fail("list files", err)
 		return
 	}
 	for _, sf := range files {
 		if sf.Name == rel {
-			if err := h.state.TemplateDelete(r.Context(), t, rel); err != nil {
+			if err := h.state.CoreStorage.TemplateDelete(r.Context(), t, rel); err != nil {
 				fail("delete stored", err)
 				return
 			}

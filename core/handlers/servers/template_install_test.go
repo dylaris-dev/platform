@@ -56,6 +56,7 @@ func newTemplateInstallTest(t *testing.T, tmpl *models.Template, audience string
 	fs := &templateFakeStore{installFakeStore: *base, tmpl: tmpl}
 	fs.settings["feature_templates"] = audience
 	h.state.Store = fs
+	h.state.CoreStorage.Store = h.state.Store
 	h.state.FeatureFlags = services.NewFeatureFlags(fs)
 	var pushes []pushedTemplate
 	prev := templatePush

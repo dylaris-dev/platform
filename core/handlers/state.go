@@ -4,16 +4,14 @@ import (
 	"context"
 	"dylaris-core/handlers/access"
 	"dylaris-core/metrics"
-	"sync"
 	"time"
 
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/services/demo"
-	"dylaris-core/services/storagereach"
-	"dylaris-core/storage"
 	"dylaris-core/store"
 
 	"github.com/redis/go-redis/v9"
@@ -109,20 +107,6 @@ type AppState struct {
 	// computes auto cpusets for per-server CPU pinning.
 	CPUPinning *services.CPUPinningService
 
-	// StorageGate is the watchdog for the configured host-path core storage.
-	// SyncStorageGate points it at the current path (or stops it when the
-	// backend is s3), and every per-request provider build consults it. Every
-	// Gate method is nil-safe, so an AppState built without one - which is
-	// only ever a test - simply never gates.
-	StorageGate *storage.Gate
-
-	// StorageS3 is the connection state and retry loop for the configured s3
-	// core storage, the S3-side counterpart to StorageGate. It is long-lived
-	// because providers are rebuilt per request, so state kept on a provider
-	// would reset before anything could read it. Every method is nil-safe, so
-	// an AppState built without one - only ever a test - simply never pauses.
-	StorageS3 *storage.S3Resilience
-
 	// PlatformDB is how to reach Core's OWN database with an external tool.
 	// Not a handle - the handle lives in the store - but the connection
 	// DESCRIPTION pg_dump and pg_restore need as a subprocess, for platform
@@ -141,38 +125,17 @@ type AppState struct {
 	// its bytes.
 	PlatformBackupWorkDir string
 
-	// StorageStatus forwards StorageGate's and StorageS3's transitions onto the
+	// CoreStorage is Core file storage: config, provider builds, the
+	// reachability round and the storage retention jobs. Built ONCE in main.go
+	// and shared by every handler and leader worker (its mutex is the
+	// single-process half of the reach-round lock).
+	CoreStorage *corestorage.Manager
+
+	// StorageStatus forwards CoreStorage.Gate's and CoreStorage.S3's transitions onto the
 	// system-events channel and answers GET /api/storage/connection. It reads
 	// both backends live rather than mirroring them. Nil-safe, so an AppState
 	// built without one - only ever a test - simply reports both backends ok.
 	StorageStatus *services.StorageStatus
-
-	// StorageReach proves this Core can actually reach the SHARED core file
-	// storage, and gates this Core's storage routes when it cannot. Nil in
-	// tooling and tests, which the gate treats as "not enabled" rather than
-	// "deny".
-	StorageReach *storagereach.Service
-
-	// reachRoundDeadline overrides the config-round cap. Zero means the
-	// default; it exists so tests do not wait 15s per case.
-	reachRoundDeadline time.Duration
-
-	// reachRoundPoll overrides the round's poll cadence, which is also how
-	// often the coordinator retries its OWN storage listing. Zero means the
-	// production default (storagereach's 1s). It exists because that cadence
-	// decides how many chances the coordinator gets to observe a peer's beacon
-	// before the deadline: at 1s a short test deadline buys one or two listings
-	// and the positive-control test then depends on a peer goroutine being
-	// scheduled inside a single second, which held locally and flaked on CI.
-	// Production keeps 1s - a config save is interactive, and polling shared
-	// storage faster than that buys nothing.
-	reachRoundPoll time.Duration
-
-	// reachRoundMu is the single-process half of the config-round lock that
-	// checkSharedStorageReachable takes before calling RunRound: the Redis
-	// SETNX lock alongside it is the cluster-wide half. Zero value is a ready
-	// to use, unlocked mutex, so no constructor change is needed.
-	reachRoundMu sync.Mutex
 
 	// Billing drives the BYON non-payment lifecycle (past_due grace -> suspended
 	// -> retention cleanup). Handlers call EnterPastDue/Reactivate/Suspend; the
@@ -270,11 +233,6 @@ type AppState struct {
 	// keyspace. The updates view needs it to tell its own row apart from a
 	// sibling Core's.
 	CoreID string
-
-	// modpackStorage caches "does modpack storage resolve to a provider", which
-	// GET /api/system/features reports to every user at boot. See
-	// modpack_storage_state.go for why that call must not run per request.
-	modpackStorage modpackStorageState
 }
 
 // AdminSecretConfigured reports whether the break-glass ADMIN_SECRET is set.

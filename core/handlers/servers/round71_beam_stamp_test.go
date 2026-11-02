@@ -57,7 +57,7 @@ func proxyStampState(t *testing.T) (*handlers.AppState, *miniredis.Miniredis) {
 		{ID: 2, UUID: "backend", OwnerID: "o", ProxyID: &proxy, NodeID: 1},
 		{ID: 3, UUID: "unlinked", OwnerID: "o", NodeID: 1},
 	}}
-	return &handlers.AppState{Store: fs, Redis: rdb}, mr
+	return withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb}), mr
 }
 
 // A grant with inherit on a proxy reaches its backends, so revoking it has to
@@ -126,7 +126,7 @@ func TestDeletingAProxyStampsItsBackends(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
-	h := &ServerHandler{state: &handlers.AppState{Store: &proxyDeleteStore{}, Redis: rdb, Events: services.NewSystemEventsPublisher(nil)}}
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: &proxyDeleteStore{}, Redis: rdb, Events: services.NewSystemEventsPublisher(nil)})}
 	rw := httptest.NewRecorder()
 	h.DeleteServer(rw, deleteServerRequest())
 	if rw.Code != 200 {

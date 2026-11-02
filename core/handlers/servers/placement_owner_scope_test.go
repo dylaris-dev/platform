@@ -109,7 +109,7 @@ func TestApplyPlacementScopeNamesTheCallerParty(t *testing.T) {
 	}
 
 	t.Run("an admin auto-placing is fenced to platform nodes", func(t *testing.T) {
-		st := &handlers.AppState{Store: byonOn, FeatureFlags: services.NewFeatureFlags(byonOn)}
+		st := withCoreStorage(&handlers.AppState{Store: byonOn, FeatureFlags: services.NewFeatureFlags(byonOn)})
 		var req placement.PickNodeRequest
 		applyPlacementScope(st, request("admin-1", true), &req)
 		if !req.PlatformOnly {
@@ -121,7 +121,7 @@ func TestApplyPlacementScopeNamesTheCallerParty(t *testing.T) {
 	})
 
 	t.Run("a tenant is scoped to their own nodes", func(t *testing.T) {
-		st := &handlers.AppState{Store: byonOn, FeatureFlags: services.NewFeatureFlags(byonOn)}
+		st := withCoreStorage(&handlers.AppState{Store: byonOn, FeatureFlags: services.NewFeatureFlags(byonOn)})
 		var req placement.PickNodeRequest
 		applyPlacementScope(st, request("tenant-a", false), &req)
 		if req.OwnerScope == nil || *req.OwnerScope != "tenant-a" {
@@ -135,7 +135,7 @@ func TestApplyPlacementScopeNamesTheCallerParty(t *testing.T) {
 	// With BYON off no node has an owner, so scoping would only be a way to
 	// break the single-operator panel.
 	t.Run("BYON off scopes nothing", func(t *testing.T) {
-		st := &handlers.AppState{Store: byonOff, FeatureFlags: services.NewFeatureFlags(byonOff)}
+		st := withCoreStorage(&handlers.AppState{Store: byonOff, FeatureFlags: services.NewFeatureFlags(byonOff)})
 		for _, admin := range []bool{true, false} {
 			var req placement.PickNodeRequest
 			applyPlacementScope(st, request("someone", admin), &req)
@@ -163,9 +163,9 @@ func TestPickNodeEndpointPreviewsTheSameNodeCreateWouldUse(t *testing.T) {
 	}}
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	h := &PlacementHandler{state: &handlers.AppState{
+	h := &PlacementHandler{state: withCoreStorage(&handlers.AppState{
 		Store: fs, Redis: rdb, FeatureFlags: services.NewFeatureFlags(fs),
-	}}
+	})}
 
 	r := httptest.NewRequest(http.MethodPost, "/api/placement/pick",
 		strings.NewReader(`{"ramMb":1024}`))

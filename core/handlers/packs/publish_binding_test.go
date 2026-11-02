@@ -53,6 +53,7 @@ func TestPackPatchCannotRebindModrinthProjects(t *testing.T) {
 			base.pack.ModrinthVisibility = "unlisted"
 			fs := &publishBindingStore{packCleanupStore: base}
 			h.state.Store = fs
+			h.state.CoreStorage.Store = h.state.Store
 			r := packReq(http.MethodPatch, map[string]string{"id": "1"}, `{"name":"Allowed edit","ownerId":"attacker","modrinthProjectId":"another-owner-project","projectId":"another-owner-project","modrinthVisibility":"listed"}`)
 			r = r.WithContext(context.WithValue(r.Context(), "userID", actor))
 			w := httptest.NewRecorder()
@@ -83,6 +84,7 @@ func TestPublishUsesStoredOrNewProjectAndCallerPAT(t *testing.T) {
 			base.builds[0].Channel = models.ChannelBeta
 			fs := &publishBindingStore{packCleanupStore: base}
 			h.state.Store = fs
+			h.state.CoreStorage.Store = h.state.Store
 			pat := &publishBindingPAT{}
 			h.SetPATLoader(pat)
 			prov := modpackProviderAt(t, dir)

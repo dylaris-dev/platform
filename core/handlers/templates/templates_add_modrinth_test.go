@@ -158,10 +158,10 @@ func TestAddModrinth(t *testing.T) {
 		h, st := newTestHandler(t, map[string]string{services.TemplatesContentPolicyKey: services.TemplatePolicyUploads})
 		modrinthServer(t, versions)
 		tpl := seedSoftware(t, st, "paper", "1.21.1")
-		if err := h.state.TemplateWrite(context.Background(), tpl, "plugins/LuckPerms.jar", strings.NewReader("own"), 3); err != nil {
+		if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, "plugins/LuckPerms.jar", strings.NewReader("own"), 3); err != nil {
 			t.Fatal(err)
 		}
-		if err := h.state.TemplateWrite(context.Background(), tpl, "plugins/keep.yml", strings.NewReader("k"), 1); err != nil {
+		if err := h.state.CoreStorage.TemplateWrite(context.Background(), tpl, "plugins/keep.yml", strings.NewReader("k"), 1); err != nil {
 			t.Fatal(err)
 		}
 		for _, v := range []string{"lp", "lpNewer"} {

@@ -24,7 +24,7 @@ import (
 // the gate touches it and panics, so "no panic and a 403" is the assertion:
 // the gate fired before anything else ran.
 func TestEveryTicketMigrationHandlerRefusesANonAdmin(t *testing.T) {
-	h := NewTicketMigrationHandler(&handlers.AppState{})
+	h := NewTicketMigrationHandler(withCoreStorage(&handlers.AppState{}))
 
 	handlers := map[string]http.HandlerFunc{
 		"GetStatus":              h.GetStatus,
@@ -68,7 +68,7 @@ func TestEveryTicketMigrationHandlerRefusesANonAdmin(t *testing.T) {
 // And the gate must not be the only thing standing there: an admin still gets
 // through it. Proven by the panic a nil Store causes once the handler proceeds.
 func TestTheAdminGateStillLetsAnAdminThrough(t *testing.T) {
-	h := NewTicketMigrationHandler(&handlers.AppState{})
+	h := NewTicketMigrationHandler(withCoreStorage(&handlers.AppState{}))
 	r := httptest.NewRequest(http.MethodGet, "/api/admin/tickets/migration/status", nil)
 	r = r.WithContext(context.WithValue(r.Context(), "isAdmin", true))
 	w := httptest.NewRecorder()

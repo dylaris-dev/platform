@@ -28,7 +28,7 @@ func TestAStorageInUseIsAConflict(t *testing.T) {
 		7: {ID: 7, Name: "mine", Provider: "s3", OwnerID: &me},
 		8: {ID: 8, Name: "the platform's", Provider: "s3"},
 	}}}
-	h := &BackupHandler{state: &handlers.AppState{Store: st}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 
 	rec := httptest.NewRecorder()
 	h.DeleteOwnStorage(rec, mux.SetURLVars(asUser(httptest.NewRequest(http.MethodDelete, "/x", nil), me), map[string]string{"id": "7"}))
@@ -51,7 +51,7 @@ func TestAdminStorageRoutesRefuseATenantsRow(t *testing.T) {
 		7: {ID: 7, Name: "theirs", Provider: "s3", OwnerID: &tenant},
 		8: {ID: 8, Name: "the platform's", Provider: "s3"},
 	}}
-	h := &BackupHandler{state: &handlers.AppState{Store: st}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 	vars := func(r *http.Request, id string) *http.Request { return mux.SetURLVars(r, map[string]string{"id": id}) }
 
 	for _, tc := range []struct {
@@ -101,7 +101,7 @@ func TestAdminStorageRoutesRefuseATenantsRow(t *testing.T) {
 // storage, of any provider, into a tenant's account.
 func TestAdminCreateStorageIsAlwaysAPlatformStorage(t *testing.T) {
 	st := &ownStorageFakeStore{byID: map[int]*models.BackupStorage{}}
-	h := &BackupHandler{state: &handlers.AppState{Store: st}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 	rec := httptest.NewRecorder()
 	h.CreateStorage(rec, httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader(s3Body("new", map[string]any{"ownerId": "u2", "isDefault": true}))))
 	if rec.Code != http.StatusOK || len(st.created) != 1 || st.created[0].OwnerID != nil {

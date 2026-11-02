@@ -81,7 +81,7 @@ func TestInstallReplyCarriesTheRecordedStatus(t *testing.T) {
 				seedHeartbeat(t, m, "node-token", tt.version)
 			}
 			fs := &installStatusFakeStore{mr: m}
-			h := &ServerModsHandler{state: &handlers.AppState{Store: fs, Redis: rdb, Queue: services.NewQueueService(rdb)}}
+			h := &ServerModsHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb, Queue: services.NewQueueService(rdb)})}
 
 			body := `{"projectId":"P1","versionId":"V1","fileName":"spark.jar","downloadUrl":"https://cdn.modrinth.com/data/P1/versions/V1/spark.jar"}`
 			req := httptest.NewRequest(http.MethodPost, "/api/servers/7/mods", strings.NewReader(body))
@@ -131,7 +131,7 @@ func TestInstallMarksTheRowFailedWhenDispatchFails(t *testing.T) {
 	})
 	t.Cleanup(func() { rdb.Close() })
 	fs := &installStatusFakeStore{}
-	h := &ServerModsHandler{state: &handlers.AppState{Store: fs, Redis: rdb, Queue: services.NewQueueService(rdb)}}
+	h := &ServerModsHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb, Queue: services.NewQueueService(rdb)})}
 
 	body := `{"projectId":"P1","versionId":"V1","fileName":"spark.jar","downloadUrl":"https://cdn.modrinth.com/data/P1/versions/V1/spark.jar"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/servers/7/mods", strings.NewReader(body))

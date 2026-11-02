@@ -41,7 +41,7 @@ func (f *blockerFakeStore) CountUsersMissingSecurityQuestions() (int, int, error
 
 func authPolicyBody(t *testing.T, st store.Store) map[string]interface{} {
 	t.Helper()
-	h := &AuthSettingsHandler{state: &AppState{Store: st}}
+	h := &AuthSettingsHandler{state: withCoreStorage(&AppState{Store: st})}
 	w := httptest.NewRecorder()
 	h.GetAuthPolicy(w, httptest.NewRequest(http.MethodGet, "/api/admin/settings/auth", nil))
 	var out map[string]interface{}
@@ -103,7 +103,7 @@ func TestAuthPolicySaysWhetherMailCanActuallyBeSent(t *testing.T) {
 
 func featuresBody(t *testing.T, st store.Store) map[string]interface{} {
 	t.Helper()
-	h := &FeatureSettingsHandler{state: &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}}
+	h := &FeatureSettingsHandler{state: withCoreStorage(&AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)})}
 	w := httptest.NewRecorder()
 	h.Get(w, httptest.NewRequest(http.MethodGet, "/api/admin/settings/features", nil))
 	var out map[string]interface{}

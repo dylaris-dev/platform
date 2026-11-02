@@ -16,6 +16,7 @@ import (
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 )
 
@@ -25,7 +26,7 @@ import (
 // predicate the handlers ask.
 func foreignState(node *models.Node) *handlers.AppState {
 	st := &handlertest.ForeignStore{Node: node, Byon: "true"}
-	s := &handlers.AppState{Store: st, Authz: authz.NewResolver(st), FeatureFlags: services.NewFeatureFlags(st)}
+	s := withCoreStorage(&handlers.AppState{Store: st, Authz: authz.NewResolver(st), FeatureFlags: services.NewFeatureFlags(st)})
 	s.Authz.SetForeignNode(s.NodeOwnedByOther)
 	return s
 }
@@ -35,7 +36,7 @@ func newPlacementHandler(t *testing.T, nodes []models.Node) *PlacementHandler {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	fs := &placementFakeStore{nodes: nodes, settings: map[string]string{"routing_mode": "gateway"}}
-	return NewPlacementHandler(&handlers.AppState{Store: fs, Redis: rdb})
+	return NewPlacementHandler(withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb}))
 }
 
 func ownedNode(id int, name string, owner *string) models.Node {
@@ -126,7 +127,7 @@ func voiceNodeState(t *testing.T, fs store.Store, path, fixture string) (*handle
 	reg := nodegrpc.NewRegistry()
 	node := handlertest.NewVoiceNode(t, reg, path, fixture)
 	mr := miniredis.RunT(t)
-	return &handlers.AppState{Store: fs, GRPCRegistry: reg, Redis: redis.NewClient(&redis.Options{Addr: mr.Addr()})}, mr, node
+	return withCoreStorage(&handlers.AppState{Store: fs, GRPCRegistry: reg, Redis: redis.NewClient(&redis.Options{Addr: mr.Addr()})}), mr, node
 }
 
 func voiceRaceState(t *testing.T, fs *voiceRaceStore) (*handlers.AppState, *miniredis.Miniredis) {
@@ -313,3 +314,11 @@ func (f *revokeStore) GetUserPanelAuthz(string) (*int, store.CapOverrides, error
 func (f *revokeStore) GetServerRole(int) (*store.ServerRole, error) { return nil, nil }
 
 func (f *revokeStore) GetServerAuditState(int) (bool, bool, int, error) { return false, false, 0, nil }
+
+// withCoreStorage gives a test state the core storage it implicitly was before
+// S12 (the AppState methods ran over its own Store, Redis, Events, ...): a
+// Manager over the very same objects.
+func withCoreStorage(s *handlers.AppState) *handlers.AppState {
+	s.CoreStorage = &corestorage.Manager{Store: s.Store, Redis: s.Redis, Events: s.Events, ClusterSecret: s.ClusterSecret, Registry: s.GRPCRegistry}
+	return s
+}

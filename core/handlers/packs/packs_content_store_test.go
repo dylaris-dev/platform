@@ -55,7 +55,7 @@ func hashesOf(b []byte) (md5hex, sha1hex, sha512hex string) {
 func modpackProviderAt(t *testing.T, dir string) modpack.ModpackStorageProvider {
 	t.Helper()
 	h := localModpackHandler(t, dir)
-	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.BuildCoreStorageProvider)
+	prov, err := modpack.NewProviderFromSettings(h.state.Store.GetSetting, h.state.CoreStorage.BuildProvider)
 	if err != nil || prov == nil {
 		t.Fatalf("provider: %v", err)
 	}

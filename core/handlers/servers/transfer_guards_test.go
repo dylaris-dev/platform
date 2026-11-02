@@ -37,8 +37,9 @@ func transferAs(t *testing.T, st *transferStore) *httptest.ResponseRecorder {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
-	s := &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st),
-		Migration: services.NewMigrationOrchestrator(st, rdb, services.NewQueueService(rdb), nil, "x")}
+	s := withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st),
+		Migration: services.NewMigrationOrchestrator(st, rdb, services.NewQueueService(rdb), nil, "x"),
+	})
 	h := &ServerHandler{state: s}
 	call := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "/x", bytes.NewBufferString(`{"targetNodeId":8}`))

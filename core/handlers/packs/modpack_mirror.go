@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/services/corestorage"
 
 	"github.com/gorilla/mux"
 )
@@ -16,7 +16,7 @@ import (
 //
 // Unauthenticated, because the node fetches it with a plain GET and no
 // credential. The URL carries an expiring signature Core made for that one key
-// (handlers.SignedModpackMirrorURL), and only a build's pack.mrpack is ever
+// (corestorage.SignedModpackMirrorURL), and only a build's pack.mrpack is ever
 // served: the unguessable path alone used to be the credential, with no expiry,
 // which made every install URL a permanent public download. Every refusal is
 // the same 404, so the route is not an oracle for which keys exist.
@@ -34,11 +34,11 @@ func (h *PacksHandler) ModpackMirror(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	if !handlers.ValidModpackMirrorSig(h.state.ClusterSecret, key, q.Get("exp"), q.Get("sig"), time.Now()) {
+	if !corestorage.ValidModpackMirrorSig(h.state.ClusterSecret, key, q.Get("exp"), q.Get("sig"), time.Now()) {
 		notFound()
 		return
 	}
-	prov, err := h.state.BuildModpackStorageProvider()
+	prov, err := h.state.CoreStorage.BuildModpackProvider()
 	if err != nil || prov == nil {
 		httpx.SendJSONError(w, "Storage not configured", http.StatusInternalServerError)
 		return

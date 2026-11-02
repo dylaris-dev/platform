@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"sync"
@@ -8,7 +8,7 @@ import (
 // Whether modpack storage resolves to a real provider, cached.
 //
 // The predicate itself has to stay the same call every write path makes -
-// buildModpackStorageProvider - because a cheaper second opinion is exactly how
+// BuildModpackProvider - because a cheaper second opinion is exactly how
 // a panel ends up disagreeing with the endpoint that answers 424. But that call
 // is not free, and it ended up on GET /api/system/features, which every
 // authenticated user hits at panel boot and again on every features.changed
@@ -16,7 +16,7 @@ import (
 //
 //   - a selected storage connection means a database round trip plus an AES-GCM
 //     decrypt of the stored secret, per request, per user;
-//   - the "core-storage" backend goes through buildCoreStorageProvider, which
+//   - the "core-storage" backend goes through BuildProvider, which
 //     takes one of the shared storage-gate slots that file uploads and downloads
 //     compete for, waits up to storageSlotWaitDeadline for one, and then calls
 //     os.MkdirAll. A plain authenticated GET that can block for fifteen seconds
@@ -36,9 +36,9 @@ type modpackStorageState struct {
 	valid      bool
 }
 
-// ModpackStorageConfigured reports whether modpack archives have somewhere to
+// ModpackConfigured reports whether modpack archives have somewhere to
 // go. Same call every write path makes; the result is reused for a minute.
-func (s *AppState) ModpackStorageConfigured() bool {
+func (s *Manager) ModpackConfigured() bool {
 	s.modpackStorage.mu.Lock()
 	defer s.modpackStorage.mu.Unlock()
 
@@ -46,17 +46,17 @@ func (s *AppState) ModpackStorageConfigured() bool {
 		return s.modpackStorage.configured
 	}
 
-	prov, err := s.buildModpackStorageProvider()
+	prov, err := s.BuildModpackProvider()
 	s.modpackStorage.configured = err == nil && prov != nil
 	s.modpackStorage.at = time.Now()
 	s.modpackStorage.valid = true
 	return s.modpackStorage.configured
 }
 
-// InvalidateModpackStorage forgets the cached answer. Called by the writes that
+// InvalidateModpack forgets the cached answer. Called by the writes that
 // can change it: the modpack settings save, and any change to the storage
 // connection a modpack setting may point at.
-func (s *AppState) InvalidateModpackStorage() {
+func (s *Manager) InvalidateModpack() {
 	s.modpackStorage.mu.Lock()
 	s.modpackStorage.valid = false
 	s.modpackStorage.mu.Unlock()

@@ -22,7 +22,7 @@ func TestMrpackRendersAreBounded(t *testing.T) {
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	h := &PacksHandler{state: &handlers.AppState{}}
+	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{})}
 	if _, err := h.renderMrpack(ctx, nil, nil, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("a render past the limit ran: %v", err)
 	}

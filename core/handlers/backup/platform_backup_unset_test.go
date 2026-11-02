@@ -67,7 +67,7 @@ func pbReq(method, body string, vars map[string]string) *http.Request {
 // started, and it explained itself as a broken database.
 func TestThePassphraseCanBeSetOnAnInstallationThatHasNone(t *testing.T) {
 	t.Run("status says not set, rather than failing", func(t *testing.T) {
-		h := &PlatformBackupHandler{state: &handlers.AppState{Store: &platformBackupUnsetStore{}}}
+		h := &PlatformBackupHandler{state: withCoreStorage(&handlers.AppState{Store: &platformBackupUnsetStore{}})}
 		rec := httptest.NewRecorder()
 		h.PassphraseStatus(rec, pbReq(http.MethodGet, "", nil))
 		if rec.Code != http.StatusOK {
@@ -87,7 +87,7 @@ func TestThePassphraseCanBeSetOnAnInstallationThatHasNone(t *testing.T) {
 
 	t.Run("the first passphrase can be stored", func(t *testing.T) {
 		st := &platformBackupUnsetStore{}
-		h := &PlatformBackupHandler{state: &handlers.AppState{Store: st}}
+		h := &PlatformBackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
 		rec := httptest.NewRecorder()
 		h.SetPassphrase(rec, pbReq(http.MethodPut, `{"passphrase":"a-long-enough-passphrase"}`, nil))
 		if rec.Code != http.StatusOK {
@@ -126,10 +126,10 @@ func TestAFailedPlatformBackupRunAnswersWithAStatus(t *testing.T) {
 	}}
 	// PlatformDB only has to be NAMED for the handler to build a runner; the
 	// run refuses on the missing passphrase long before it dials anything.
-	h := &PlatformBackupHandler{state: &handlers.AppState{
+	h := &PlatformBackupHandler{state: withCoreStorage(&handlers.AppState{
 		Store:      st,
 		PlatformDB: services.PGConn{Name: "dylaris_db"},
-	}}
+	})}
 
 	rec := httptest.NewRecorder()
 	h.RunJob(rec, pbReq(http.MethodPost, "{}", map[string]string{"id": "1"}))
@@ -162,7 +162,7 @@ func (f *platformBackupNoStorageStore) GetDefaultBackupStorage() (*models.Backup
 func TestAPlatformBackupWithoutStorageIsARefusal(t *testing.T) {
 	st := &platformBackupNoStorageStore{platformBackupUnsetStore{hasRow: true, value: "a-long-enough-passphrase",
 		job: &models.PlatformBackupJob{ID: 1, Name: "nightly", Selection: models.PlatformBackupSelection{Database: true}}}}
-	h := &PlatformBackupHandler{state: &handlers.AppState{Store: st, PlatformDB: services.PGConn{Name: "dylaris_db"}}}
+	h := &PlatformBackupHandler{state: withCoreStorage(&handlers.AppState{Store: st, PlatformDB: services.PGConn{Name: "dylaris_db"}})}
 	rec := httptest.NewRecorder()
 	h.RunJob(rec, pbReq(http.MethodPost, "{}", map[string]string{"id": "1"}))
 	if rec.Code != http.StatusConflict {

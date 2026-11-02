@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"strings"
 
-	"dylaris-core/handlers/validate"
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 	backupstorage "dylaris-core/storage/backup"
 )
 
@@ -82,7 +82,7 @@ func validateBackupStorageEndpoint(bs models.BackupStorage) error {
 			}
 		}
 	}
-	return validate.ValidateS3Endpoint("backup storage", jsonString(m["endpoint"]))
+	return corestorage.ValidateS3Endpoint("backup storage", jsonString(m["endpoint"]))
 }
 
 // s3ConfigFields are backup.S3Config's json names.

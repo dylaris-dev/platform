@@ -59,7 +59,7 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// can say so before an author builds a pack rather than at the
 			// upload that ends it. Not sensitive: it says a backend exists, not
 			// what or where it is.
-			"modpackStorage": h.state.ModpackStorageConfigured(),
+			"modpackStorage": h.state.CoreStorage.ModpackConfigured(),
 			// The beta config editor, resolved for THIS caller: the setting is
 			// off, admin or all, and the panel only needs to know whether to
 			// offer the tab.

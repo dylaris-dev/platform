@@ -40,7 +40,7 @@ func (f *packScopeFakeStore) ListBuildContent(buildID int) ([]models.BuildConten
 }
 
 func newPackScopeHandler() *PacksHandler {
-	return &PacksHandler{state: &handlers.AppState{Store: &packScopeFakeStore{
+	return &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: &packScopeFakeStore{
 		packs: map[int]*models.Pack{
 			1: {ID: 1, OwnerID: "alice"},
 			2: {ID: 2, OwnerID: "bob"},
@@ -49,7 +49,7 @@ func newPackScopeHandler() *PacksHandler {
 			10: {ID: 10, PackID: 1}, // alice's
 			20: {ID: 20, PackID: 2}, // bob's
 		},
-	}}}
+	}})}
 }
 
 func packContentRequest(t *testing.T, userID, packID, buildID string) *http.Request {

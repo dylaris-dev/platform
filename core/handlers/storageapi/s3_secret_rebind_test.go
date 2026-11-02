@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 
 	"dylaris-core/models"
 
@@ -29,7 +30,7 @@ import (
 // to a host of the caller's choosing. These pin the two that were missing.
 
 func connConfig(endpoint, bucket string) json.RawMessage {
-	b, _ := json.Marshal(handlers.StorageConnectionConfig{Endpoint: endpoint, Bucket: bucket})
+	b, _ := json.Marshal(corestorage.ConnectionConfig{Endpoint: endpoint, Bucket: bucket})
 	return b
 }
 
@@ -80,7 +81,7 @@ func TestUpdateConnection_RefusesARebindOnTheWire(t *testing.T) {
 		AccessKey: "AKIAREAL",
 		SecretSet: true,
 	}}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	body, _ := json.Marshal(storageConnectionRequest{
 		Name: "nas", Provider: "s3",

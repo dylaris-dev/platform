@@ -83,7 +83,7 @@ func (h *PacksHandler) syncModrinthPacks(ctx context.Context) {
 		log.Printf("modrinth sync: list packs: %v", err)
 		return
 	}
-	prov, err := h.state.BuildModpackStorageProvider()
+	prov, err := h.state.CoreStorage.BuildModpackProvider()
 	if err != nil || prov == nil {
 		return
 	}

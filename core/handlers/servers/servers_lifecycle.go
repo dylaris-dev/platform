@@ -271,7 +271,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 			// setup built the server with no disk limit at all. Nothing was
 			// created on the node, so nothing is kept here either.
 			log.Printf("Redis Queue Failed: %v", err)
-			handlers.PurgeBackupArchivesForServers(h.state, []int{int(serverID)})
+			h.state.CoreStorage.PurgeBackupArchivesForServers([]int{int(serverID)})
 			if derr := h.state.Store.DeleteServer(int(serverID)); derr != nil {
 				log.Printf("create: removing server %d after the failed dispatch: %v", serverID, derr)
 			}
@@ -2739,7 +2739,7 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	// Same reason as the schedule delete: this server's backup jobs and their
 	// runs cascade with the row, and the run is the only record of where its
 	// archive lives.
-	handlers.PurgeBackupArchivesForServers(h.state, []int{serverID})
+	h.state.CoreStorage.PurgeBackupArchivesForServers([]int{serverID})
 	// The foreign key nulls the backends' proxy_id with the row, which ends
 	// what they inherited from it. Listed now, stamped once that has happened.
 	var backends []string

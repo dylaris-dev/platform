@@ -47,7 +47,7 @@ func TestRevokingAnEnrollTokenSaysWhatHappened(t *testing.T) {
 		st := &enrollRevokeStore{removed: removed}
 		// FeatureFlags reads the same fake store, whose GetSetting answers
 		// "true", so the BYON gate in front of the handler is open.
-		h := &NodeEnrollHandler{state: &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}}
+		h := &NodeEnrollHandler{state: withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)})}
 		r := httptest.NewRequest(http.MethodDelete, "/api/nodes/enroll-token/abc", nil)
 		ctx := context.WithValue(r.Context(), "userID", "u1")
 		ctx = context.WithValue(ctx, "isAdmin", true)

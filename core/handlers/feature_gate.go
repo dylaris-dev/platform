@@ -116,7 +116,7 @@ func (s *AppState) RequireStoreEnabled(next http.HandlerFunc) http.HandlerFunc {
 // (ticket attachment upload, ticket backup create).
 func (s *AppState) RequireCoreStorageConfigured(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.CoreStorageConfigured() {
+		if !s.CoreStorage.Configured() {
 			featureDisabledResponse(w, FeatureCoreStorage,
 				"Configure Core file storage (Settings -> Core file storage) before writing files.")
 			return
@@ -136,7 +136,7 @@ func (s *AppState) RequireCoreStorageConfigured(next http.HandlerFunc) http.Hand
 // Wrap it around every route whose handler builds a core storage provider.
 func (s *AppState) RequireCoreStorageReachable(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.StorageReach == nil || s.StorageReach.Status().Healthy() {
+		if s.CoreStorage.Reach == nil || s.CoreStorage.Reach.Status().Healthy() {
 			next(w, r)
 			return
 		}
@@ -147,7 +147,7 @@ func (s *AppState) RequireCoreStorageReachable(next http.HandlerFunc) http.Handl
 		// reach this body. The taxonomy value + remedy below are what a
 		// caller needs; the full detail stays on the fault-list endpoint for
 		// admins.
-		status, _ := s.StorageReach.Status().Snapshot()
+		status, _ := s.CoreStorage.Reach.Status().Snapshot()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{

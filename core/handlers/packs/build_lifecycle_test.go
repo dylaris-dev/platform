@@ -11,6 +11,7 @@ func TestFrozenBuildDeletionDoesNotGrantDeleteRights(t *testing.T) {
 	h, fs, _ := newPackCleanup(t)
 	fs.builds[0].Frozen = true
 	h.state.Store = &publishBindingStore{packCleanupStore: fs}
+	h.state.CoreStorage.Store = h.state.Store
 	r := packReq("DELETE", map[string]string{"id": "1", "buildId": "10"}, `{"confirmVersion":"1.0"}`)
 	r = r.WithContext(context.WithValue(r.Context(), "userID", "editor"))
 	w := httptest.NewRecorder()

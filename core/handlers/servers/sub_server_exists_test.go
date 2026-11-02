@@ -37,7 +37,7 @@ func existsHandler(t *testing.T, st store.Store, seed string) *ServerHandler {
 		mr.Set(invKey, seed)
 	}
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	return &ServerHandler{state: &handlers.AppState{Redis: rdb, Store: st}}
+	return &ServerHandler{state: withCoreStorage(&handlers.AppState{Redis: rdb, Store: st})}
 }
 
 // The switch guard used to consult ONE source: a node-written Redis cache

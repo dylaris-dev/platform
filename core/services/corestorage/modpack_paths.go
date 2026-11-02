@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"crypto/hmac"
@@ -70,9 +70,9 @@ func ValidModpackMirrorSig(secret, key, expRaw, sig string, now time.Time) bool 
 
 // MrpackStorageKey is the derived storage key of a build's rendered .mrpack;
 // see packs.PacksHandler.mrpackStorageKey for why it is derived. It lives here
-// because the storage cleanup (packBuildDirs) needs it as much as the packs
+// because the storage cleanup (PackBuildDirs) needs it as much as the packs
 // handlers do.
-func (s *AppState) MrpackStorageKey(pack *models.Pack, build *models.PackBuild) string {
+func (s *Manager) MrpackStorageKey(pack *models.Pack, build *models.PackBuild) string {
 	mac := hmac.New(sha256.New, crypto.DeriveKey(s.ClusterSecret, "mrpack-path"))
 	fmt.Fprintf(mac, "%s\x1f%s\x1f%s", pack.OwnerID, pack.InternalSlug, build.VersionString)
 	return "modpacks/" + hex.EncodeToString(mac.Sum(nil)) + "/pack.mrpack"

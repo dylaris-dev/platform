@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 )
 
 // The whole point of the split screen: a tab saves its own half.
@@ -81,9 +82,9 @@ func TestSwitchingModpacksOffAlsoClosesAuthoringItDidNotMention(t *testing.T) {
 func TestAModuleRowFollowsItsFeatureFlagInBothDirections(t *testing.T) {
 	// Enabling tickets needs Core file storage.
 	h, st := newFeatureSettingsFixture(t, map[string]string{
-		keyCoreStorageBackend:     "path",
-		keyCoreStoragePath:        "/mnt/shared",
-		keyCoreStoragePathConfirm: "true",
+		corestorage.KeyBackend:     "path",
+		corestorage.KeyPath:        "/mnt/shared",
+		corestorage.KeyPathConfirm: "true",
 	})
 	st.modules = []models.Module{
 		{ID: 5, Name: "Tickets", IsEnabled: false, AccessRole: "admin"},

@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"errors"
@@ -24,7 +24,7 @@ import (
 // WebDAV/NFS-mounted path, or back), and the engine builds a provider from it.
 // This is not new machinery: CoreStorageHandler.TestConnection already builds a
 // working provider from an unsaved candidate config through
-// newStorageProviderForConfig. The migration reuses that exact seam.
+// NewProviderForConfig. The migration reuses that exact seam.
 
 // ErrTargetSameLocation is returned when a migration target resolves to the
 // same physical location as its source.
@@ -37,14 +37,14 @@ var ErrTargetSameLocation = errors.New("core storage: the target resolves to the
 // where a name collision overwrites a live object.
 var ErrTargetNestedLocation = errors.New("core storage: one data set is stored inside the other")
 
-// coreStorageConfigFromTarget converts the transport shape (declared in
+// ConfigFromTarget converts the transport shape (declared in
 // services, because services cannot import handlers) into the handlers shape.
 // This is the ONLY conversion point between the two, so the field mapping
 // cannot drift. The candidate is normalized on the way through, exactly as
 // SaveConfig and TestConnection normalize theirs, so a clipboard-pasted value
 // with stray whitespace does not become a subtly different location.
-func coreStorageConfigFromTarget(t services.StorageTargetConfig) CoreStorageConfig {
-	return normalizeCoreStorageCandidate(CoreStorageConfig{
+func ConfigFromTarget(t services.StorageTargetConfig) Config {
+	return NormalizeCandidate(Config{
 		Backend:       t.Backend,
 		Path:          t.Path,
 		PathConfirmed: t.PathConfirmed,
@@ -62,11 +62,11 @@ func coreStorageConfigFromTarget(t services.StorageTargetConfig) CoreStorageConf
 // this data set lives" in a bucket: the configured prefix joined with the data
 // set's sub-prefix, trimmed of surrounding slashes.
 //
-// It is NOT literally what newStorageProviderForConfig hands the S3 provider,
+// It is NOT literally what NewProviderForConfig hands the S3 provider,
 // and the two do diverge for a configured prefix with a stray slash:
-// newStorageProviderForConfig concatenates cfg.S3Prefix raw, so "prod/" makes
+// NewProviderForConfig concatenates cfg.S3Prefix raw, so "prod/" makes
 // it write under "prod//modpacks" while this reports "prod/modpacks"
-// (normalizeCoreStorageCandidate does not trim S3Prefix, so that config is
+// (NormalizeCandidate does not trim S3Prefix, so that config is
 // reachable). Teaching the provider to call this would silently relocate every
 // object of any install whose saved prefix ends in a slash, so it deliberately
 // does not.
@@ -77,7 +77,7 @@ func coreStorageConfigFromTarget(t services.StorageTargetConfig) CoreStorageConf
 // is refusing a target that is in fact distinct, which an operator can see and
 // work around; the reverse, accepting a target that is really the source, is
 // what would be destructive, and it cannot happen this way.
-func effectiveS3Prefix(cfg CoreStorageConfig, subPrefix string) string {
+func effectiveS3Prefix(cfg Config, subPrefix string) string {
 	p := strings.Trim(cfg.S3Prefix, "/")
 	if p == "" {
 		return subPrefix
@@ -85,12 +85,12 @@ func effectiveS3Prefix(cfg CoreStorageConfig, subPrefix string) string {
 	return p + "/" + subPrefix
 }
 
-// coreStorageRoot is the path-backend directory this data set lives in.
-func coreStorageRoot(cfg CoreStorageConfig, subPrefix string) string {
+// Root is the path-backend directory this data set lives in.
+func Root(cfg Config, subPrefix string) string {
 	return filepath.Join(cfg.Path, subPrefix)
 }
 
-// sameCoreStorageLocation reports whether src and tgt name the same physical
+// SameLocation reports whether src and tgt name the same physical
 // place.
 //
 // The two sub-prefixes are separate on purpose. They are usually identical, but
@@ -118,7 +118,7 @@ func coreStorageRoot(cfg CoreStorageConfig, subPrefix string) string {
 // allowed.
 //
 // A path backend and an s3 backend are never the same location.
-func sameCoreStorageLocation(src, tgt CoreStorageConfig, srcSubPrefix, tgtSubPrefix string) (bool, error) {
+func SameLocation(src, tgt Config, srcSubPrefix, tgtSubPrefix string) (bool, error) {
 	srcS3 := src.Backend == "s3"
 	tgtS3 := tgt.Backend == "s3"
 	if srcS3 != tgtS3 {
@@ -143,18 +143,18 @@ func sameCoreStorageLocation(src, tgt CoreStorageConfig, srcSubPrefix, tgtSubPre
 	// path, and does nothing for the harder case of two DIFFERENT path strings
 	// aliasing the same directory through a symlink or a bind mount, which
 	// os.SameFile below still has to catch.
-	if filepath.Clean(coreStorageRoot(src, srcSubPrefix)) == filepath.Clean(coreStorageRoot(tgt, tgtSubPrefix)) {
+	if filepath.Clean(Root(src, srcSubPrefix)) == filepath.Clean(Root(tgt, tgtSubPrefix)) {
 		return true, nil
 	}
 
-	srcInfo, err := os.Stat(coreStorageRoot(src, srcSubPrefix))
+	srcInfo, err := os.Stat(Root(src, srcSubPrefix))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
 		return false, fmt.Errorf("stat source root: %w", err)
 	}
-	tgtInfo, err := os.Stat(coreStorageRoot(tgt, tgtSubPrefix))
+	tgtInfo, err := os.Stat(Root(tgt, tgtSubPrefix))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -164,11 +164,11 @@ func sameCoreStorageLocation(src, tgt CoreStorageConfig, srcSubPrefix, tgtSubPre
 	return os.SameFile(srcInfo, tgtInfo), nil
 }
 
-// ensureDistinctCoreStorageLocation refuses a same-location target. It runs at
+// EnsureDistinctLocation refuses a same-location target. It runs at
 // Start, before any object is read: discovering this mid-copy would mean the
 // engine had already overwritten source objects with themselves.
-func ensureDistinctCoreStorageLocation(src, tgt CoreStorageConfig, srcSubPrefix, tgtSubPrefix string) error {
-	same, err := sameCoreStorageLocation(src, tgt, srcSubPrefix, tgtSubPrefix)
+func EnsureDistinctLocation(src, tgt Config, srcSubPrefix, tgtSubPrefix string) error {
+	same, err := SameLocation(src, tgt, srcSubPrefix, tgtSubPrefix)
 	if err != nil {
 		return err
 	}
@@ -178,24 +178,24 @@ func ensureDistinctCoreStorageLocation(src, tgt CoreStorageConfig, srcSubPrefix,
 	return nil
 }
 
-// buildTargetStorageProvider validates cfg and builds a provider scoped to
-// subPrefix. Validation reuses validateCoreStorageConfig - the same predicate
+// BuildTargetProvider validates cfg and builds a provider scoped to
+// subPrefix. Validation reuses Validate - the same predicate
 // the settings form enforces - rather than a second copy of the rules.
-func buildTargetStorageProvider(cfg CoreStorageConfig, subPrefix string) (storage.StorageProvider, error) {
-	if err := validateCoreStorageConfig(cfg); err != nil {
+func BuildTargetProvider(cfg Config, subPrefix string) (storage.StorageProvider, error) {
+	if err := Validate(cfg); err != nil {
 		return nil, fmt.Errorf("target storage config: %w", err)
 	}
 	// nil gate: cfg is a MIGRATION TARGET, a different location from the live
-	// one by definition (ensureDistinctCoreStorageLocation enforces it), so
+	// one by definition (EnsureDistinctLocation enforces it), so
 	// the live path's watchdog has no verdict to offer about it.
-	prov, err := newStorageProviderForConfig(cfg, subPrefix, nil, nil)
+	prov, err := NewProviderForConfig(cfg, subPrefix, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("target storage: %w", err)
 	}
 	return prov, nil
 }
 
-// persistCoreStorageConfig writes cfg to the settings store. It is the ONE
+// PersistConfig writes cfg to the settings store. It is the ONE
 // writer of these keys: SaveConfig calls it, and so does the migration's
 // switching_config phase. Two copies would drift, and a drifted writer is how
 // an install ends up with a new access key paired to an old secret.
@@ -203,7 +203,7 @@ func buildTargetStorageProvider(cfg CoreStorageConfig, subPrefix string) (storag
 // secret is the NEWLY supplied secret to store, and it is passed as a value
 // rather than as a "cfg.S3SecretKey is new" flag on purpose. cfg is routinely a
 // MERGED config whose S3SecretKey is the one already stored (that is what
-// mergeCoreStorageCandidate produces when a request omits the backend), so a
+// MergeCandidate produces when a request omits the backend), so a
 // flag plus cfg would let a caller mean "write the submitted secret" and get
 // "rewrite the stored one over itself" - a rotation that returns success and
 // changes nothing. With the value passed explicitly, the only secret this can
@@ -212,7 +212,7 @@ func buildTargetStorageProvider(cfg CoreStorageConfig, subPrefix string) (storag
 // An empty secret leaves the stored one untouched, except that switching the
 // backend away from s3 clears it outright so it does not linger orphaned with
 // S3SecretSet still reporting true.
-func (s *AppState) persistCoreStorageConfig(cfg CoreStorageConfig, secret string) error {
+func (s *Manager) PersistConfig(cfg Config, secret string) error {
 	// 0 stores "" (no connection selected). Written unconditionally like the
 	// other non-secret keys, so switching to an inline target via the migration
 	// path clears a previously selected connection.
@@ -221,45 +221,45 @@ func (s *AppState) persistCoreStorageConfig(cfg CoreStorageConfig, secret string
 		connID = strconv.Itoa(cfg.ConnectionID)
 	}
 	pairs := []struct{ k, v string }{
-		{keyCoreStorageBackend, cfg.Backend},
-		{keyCoreStoragePath, cfg.Path},
-		{keyCoreStoragePathConfirm, boolStr(cfg.PathConfirmed)},
-		{keyCoreStorageS3Endpoint, cfg.S3Endpoint},
-		{keyCoreStorageS3Bucket, cfg.S3Bucket},
-		{keyCoreStorageS3Region, cfg.S3Region},
-		{keyCoreStorageS3AccessKey, cfg.S3AccessKey},
-		{keyCoreStorageS3PathStyle, boolStr(cfg.S3PathStyle)},
-		{keyCoreStorageS3Prefix, cfg.S3Prefix},
-		{keyCoreStorageConnectionID, connID},
+		{KeyBackend, cfg.Backend},
+		{KeyPath, cfg.Path},
+		{KeyPathConfirm, strconv.FormatBool(cfg.PathConfirmed)},
+		{KeyS3Endpoint, cfg.S3Endpoint},
+		{KeyS3Bucket, cfg.S3Bucket},
+		{KeyS3Region, cfg.S3Region},
+		{KeyS3AccessKey, cfg.S3AccessKey},
+		{KeyS3PathStyle, strconv.FormatBool(cfg.S3PathStyle)},
+		{KeyS3Prefix, cfg.S3Prefix},
+		{KeyConnectionID, connID},
 	}
 	if secret != "" {
-		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, secret})
+		pairs = append(pairs, struct{ k, v string }{KeyS3SecretKey, secret})
 	} else if cfg.Backend != "s3" {
-		pairs = append(pairs, struct{ k, v string }{keyCoreStorageS3SecretKey, ""})
+		pairs = append(pairs, struct{ k, v string }{KeyS3SecretKey, ""})
 	}
 	for _, p := range pairs {
 		if err := s.Store.SetSetting(p.k, p.v); err != nil {
-			return &coreStorageSettingWriteError{Key: p.k, Err: err}
+			return &SettingWriteError{Key: p.k, Err: err}
 		}
 	}
 	// The watched root follows the config. Being the one writer is exactly why
 	// this belongs here: a second writer would leave the watchdog probing a
 	// path the platform no longer uses.
-	s.SyncStorageGate()
+	s.SyncGate()
 	return nil
 }
 
-// coreStorageSettingWriteError names the settings key whose write failed while
+// SettingWriteError names the settings key whose write failed while
 // still wrapping the underlying store error. The key is carried as a field so
 // an HTTP caller can name it without putting the raw store error text (which
 // can carry DB internals) in a response body.
-type coreStorageSettingWriteError struct {
+type SettingWriteError struct {
 	Key string
 	Err error
 }
 
-func (e *coreStorageSettingWriteError) Error() string {
+func (e *SettingWriteError) Error() string {
 	return fmt.Sprintf("save setting %s: %v", e.Key, e.Err)
 }
 
-func (e *coreStorageSettingWriteError) Unwrap() error { return e.Err }
+func (e *SettingWriteError) Unwrap() error { return e.Err }

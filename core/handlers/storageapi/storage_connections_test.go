@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -73,7 +74,7 @@ func (f *connFakeStore) DeleteStorageConnection(int) error {
 
 func TestCreateConnection_RejectsUnknownProviderBeforePersisting(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	body, _ := json.Marshal(storageConnectionRequest{Name: "nas", Provider: "ftp"})
 	rw := httptest.NewRecorder()
@@ -89,7 +90,7 @@ func TestCreateConnection_RejectsUnknownProviderBeforePersisting(t *testing.T) {
 
 func TestCreateConnection_RejectsMissingName(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	body, _ := json.Marshal(storageConnectionRequest{Provider: "s3"})
 	rw := httptest.NewRecorder()
@@ -105,7 +106,7 @@ func TestCreateConnection_RejectsMissingName(t *testing.T) {
 
 func TestCreateConnection_AcceptsS3(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	body, _ := json.Marshal(storageConnectionRequest{Name: "nas", Provider: "s3", AccessKey: "AKIA", SecretAccessKey: "sk"})
 	rw := httptest.NewRecorder()
@@ -124,7 +125,7 @@ func TestCreateConnection_AcceptsS3(t *testing.T) {
 // leave the stored secret untouched.
 func TestUpdateConnection_BlankSecretDoesNotRotate(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	body, _ := json.Marshal(storageConnectionRequest{Name: "nas", Provider: "s3", AccessKey: "AKIA"}) // no SecretAccessKey
 	req := httptest.NewRequest(http.MethodPatch, "/api/storage-connections/5", bytes.NewReader(body))
@@ -147,7 +148,7 @@ func TestUpdateConnection_BlankSecretDoesNotRotate(t *testing.T) {
 // exactly once, with the submitted value.
 func TestUpdateConnection_NonBlankSecretRotates(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	body, _ := json.Marshal(storageConnectionRequest{Name: "nas", Provider: "s3", AccessKey: "AKIA", SecretAccessKey: "new-secret"})
 	req := httptest.NewRequest(http.MethodPatch, "/api/storage-connections/5", bytes.NewReader(body))
@@ -168,7 +169,7 @@ func TestUpdateConnection_NonBlankSecretRotates(t *testing.T) {
 
 func TestUpdateConnection_RejectsUnknownProvider(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	body, _ := json.Marshal(storageConnectionRequest{Name: "nas", Provider: "ftp"})
 	req := httptest.NewRequest(http.MethodPatch, "/api/storage-connections/5", bytes.NewReader(body))
@@ -187,7 +188,7 @@ func TestUpdateConnection_RejectsUnknownProvider(t *testing.T) {
 // TestStorageConnectionProvider_RejectsNonS3: the provider builder refuses any
 // non-s3 connection rather than silently mishandling it.
 func TestStorageConnectionProvider_RejectsNonS3(t *testing.T) {
-	_, err := handlers.StorageConnectionProvider(&models.StorageConnection{Provider: "webdav"})
+	_, err := corestorage.ConnectionProvider(&models.StorageConnection{Provider: "webdav"})
 	if err == nil {
 		t.Fatal("storageConnectionProvider(webdav) err = nil, want an unsupported-provider error")
 	}
@@ -195,7 +196,7 @@ func TestStorageConnectionProvider_RejectsNonS3(t *testing.T) {
 
 func TestTestConnection_InvalidID(t *testing.T) {
 	fs := &connFakeStore{}
-	h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+	h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/storage-connections/abc/test", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "abc"})
@@ -224,7 +225,7 @@ func TestDeleteConnection_RefusedWhileTemplatesUseIt(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &connFakeStore{templatesOn: tc.templatesOn, settings: map[string]string{"templates_storage_connection_id": tc.setting}}
-			h := NewStorageConnectionsHandler(&handlers.AppState{Store: fs})
+			h := NewStorageConnectionsHandler(withCoreStorage(&handlers.AppState{Store: fs}))
 			rw := httptest.NewRecorder()
 			req := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/api/storage-connections/3", nil), map[string]string{"id": "3"})
 			h.DeleteConnection(rw, req)

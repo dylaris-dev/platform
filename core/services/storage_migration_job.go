@@ -173,13 +173,13 @@ func StorageMigrationInProgress(p StorageMigrationPhase) bool {
 // destination inline -
 // another S3, a WebDAV/NFS-mounted path, or back - and the engine builds a
 // provider from it. The mechanism already exists and is proven: TestConnection
-// (handlers/core_storage.go) builds a working provider from an unsaved
-// candidate config via newStorageProviderForConfig.
+// (handlers/storageapi) builds a working provider from an unsaved candidate
+// config via corestorage.NewProviderForConfig.
 //
-// Same wire shape as handlers.CoreStorageConfig. It is declared HERE rather
+// Same wire shape as corestorage.Config. It is declared HERE rather
 // than there because both StorageMigrationRequest and StorageDataSetResolver
-// need it, and services cannot import handlers (handlers imports services).
-// handlers converts between the two in ONE place (Task 14).
+// need it, and services cannot import services/corestorage (which imports
+// services). corestorage.ConfigFromTarget converts between the two in ONE place.
 //
 // S3SecretKey is a live credential. It exists in exactly two places: this
 // request-scoped struct, for the life of the run, and - only after a successful

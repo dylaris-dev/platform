@@ -174,7 +174,7 @@ func newTestHandler(t *testing.T, settings map[string]string) (*TemplatesHandler
 			"stranger": {ID: strangerID, Username: "stranger"},
 		},
 	}
-	state := &handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Authz: authz.NewResolver(st)}
+	state := withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st), Authz: authz.NewResolver(st)})
 	stubModrinth(t, nil, nil) // no test reaches the real Modrinth
 	return NewTemplatesHandler(state), st
 }
@@ -251,7 +251,7 @@ func uploadRequest(t *testing.T, meta string, zipBytes []byte) *http.Request {
 
 func storedFiles(t *testing.T, h *TemplatesHandler, tpl *models.Template) []string {
 	t.Helper()
-	files, err := h.state.TemplateList(context.Background(), tpl)
+	files, err := h.state.CoreStorage.TemplateList(context.Background(), tpl)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

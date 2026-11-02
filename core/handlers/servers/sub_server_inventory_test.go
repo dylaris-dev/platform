@@ -18,7 +18,7 @@ func subServerInventoryHandler(t *testing.T) (*ServerHandler, *miniredis.Minired
 	}
 	t.Cleanup(mr.Close)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	return &ServerHandler{state: &handlers.AppState{Redis: rdb}}, mr
+	return &ServerHandler{state: withCoreStorage(&handlers.AppState{Redis: rdb})}, mr
 }
 
 const invUUID = "11111111-1111-4111-8111-111111111111"
@@ -99,7 +99,7 @@ func TestKnownSubServers(t *testing.T) {
 // not as "this server has no sub-servers", or a Redis outage would start
 // refusing switches on every server at once.
 func TestKnownSubServersWithoutRedis(t *testing.T) {
-	h := &ServerHandler{state: &handlers.AppState{}}
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{})}
 	if _, ok := h.knownSubServers(context.Background(), invUUID); ok {
 		t.Error("a missing Redis reported a known inventory")
 	}

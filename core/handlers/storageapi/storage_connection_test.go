@@ -68,7 +68,7 @@ func TestStorageConnectionHandler_GetConnection(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewStorageConnectionHandler(&handlers.AppState{StorageStatus: tc.status()})
+			h := NewStorageConnectionHandler(withCoreStorage(&handlers.AppState{StorageStatus: tc.status()}))
 			rr := httptest.NewRecorder()
 			h.GetConnection(rr, httptest.NewRequest(http.MethodGet, "/api/storage/connection", nil))
 

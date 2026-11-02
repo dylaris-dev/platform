@@ -24,7 +24,7 @@ func (packEventStore) GetPack(id int) (*models.Pack, error) {
 // name the owner, and the stream hands them to the owner alone.
 func TestPackEventsReachOnlyTheOwner(t *testing.T) {
 	rdb := handlertest.RedisClient(t)
-	state := &handlers.AppState{Store: packEventStore{}, Redis: rdb, Events: services.NewSystemEventsPublisher(rdb)}
+	state := withCoreStorage(&handlers.AppState{Store: packEventStore{}, Redis: rdb, Events: services.NewSystemEventsPublisher(rdb)})
 	sub := rdb.Subscribe(context.Background(), services.SystemEventsChannel)
 	defer sub.Close()
 	if _, err := sub.Receive(context.Background()); err != nil {

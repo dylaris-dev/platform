@@ -50,7 +50,7 @@ func TestPutStoragePrefsRefusesWhatIsNotTheCallers(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			st := prefsFixture()
-			rec := putPrefs(&BackupHandler{state: &handlers.AppState{Store: st}}, tc.body)
+			rec := putPrefs(&BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}, tc.body)
 			if rec.Code != tc.want {
 				t.Fatalf("code = %d, want %d: %s", rec.Code, tc.want, rec.Body.String())
 			}
@@ -81,7 +81,7 @@ func TestPutStoragePrefsWritesEachColumnIndependently(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			st := prefsFixture()
-			rec := putPrefs(&BackupHandler{state: &handlers.AppState{Store: st}}, tc.body)
+			rec := putPrefs(&BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}, tc.body)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("code = %d: %s", rec.Code, rec.Body.String())
 			}
@@ -104,7 +104,7 @@ func TestPutStoragePrefsWritesEachColumnIndependently(t *testing.T) {
 
 func TestPutStoragePrefsBodyIsCapped(t *testing.T) {
 	st := prefsFixture()
-	rec := putPrefs(&BackupHandler{state: &handlers.AppState{Store: st}}, `{"backupsStorageId":5,"pad":"`+strings.Repeat("x", 8<<10)+`"}`)
+	rec := putPrefs(&BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}, `{"backupsStorageId":5,"pad":"`+strings.Repeat("x", 8<<10)+`"}`)
 	if rec.Code != http.StatusRequestEntityTooLarge || st.backupsWrites != 0 {
 		t.Fatalf("code = %d, %d writes; want 413 and none", rec.Code, st.backupsWrites)
 	}
@@ -113,7 +113,7 @@ func TestPutStoragePrefsBodyIsCapped(t *testing.T) {
 func TestPutStoragePrefsFailureIsGeneric(t *testing.T) {
 	st := prefsFixture()
 	st.failPrefWrite = true
-	rec := putPrefs(&BackupHandler{state: &handlers.AppState{Store: st}}, `{"backupsStorageId":5}`)
+	rec := putPrefs(&BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}, `{"backupsStorageId":5}`)
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "10.0.0.5") {
 		t.Fatalf("code = %d body = %s; want a generic 500", rec.Code, rec.Body.String())
 	}
@@ -135,7 +135,7 @@ func TestGetStoragePrefs(t *testing.T) {
 			st := prefsFixture()
 			st.prefBackups, st.prefTemplates = tc.pref, intPtr(5)
 			rec := httptest.NewRecorder()
-			(&BackupHandler{state: &handlers.AppState{Store: st}}).GetStoragePrefs(rec,
+			(&BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}).GetStoragePrefs(rec,
 				asUser(httptest.NewRequest(http.MethodGet, "/api/me/storage-prefs", bytes.NewReader(nil)), "u1"))
 			var got struct {
 				Success            bool `json:"success"`

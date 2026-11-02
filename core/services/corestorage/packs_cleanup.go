@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"context"
@@ -21,9 +21,9 @@ import (
 // removed them with the build, its pack or its owner's account, and the
 // provider cannot list, so once the row was gone nothing could find them again.
 
-// packBuildDirs returns the storage directories that hold a build's objects:
+// PackBuildDirs returns the storage directories that hold a build's objects:
 // the derived one, and the stored key's when a publish recorded another.
-func (s *AppState) packBuildDirs(pack *models.Pack, build *models.PackBuild) []string {
+func (s *Manager) PackBuildDirs(pack *models.Pack, build *models.PackBuild) []string {
 	dirs := []string{strings.TrimSuffix(s.MrpackStorageKey(pack, build), "pack.mrpack")}
 	if k := build.MrpackStorageKey; strings.HasPrefix(k, "modpacks/") && strings.HasSuffix(k, "/pack.mrpack") {
 		if d := path.Dir(k) + "/"; d != dirs[0] {
@@ -33,9 +33,9 @@ func (s *AppState) packBuildDirs(pack *models.Pack, build *models.PackBuild) []s
 	return dirs
 }
 
-// packDirsOfPack collects the directories of every build of a pack. Read BEFORE
+// PackDirsOfPack collects the directories of every build of a pack. Read BEFORE
 // the rows are deleted; afterwards there is nothing left to derive them from.
-func (s *AppState) packDirsOfPack(pack *models.Pack) []string {
+func (s *Manager) PackDirsOfPack(pack *models.Pack) []string {
 	builds, err := s.Store.ListPackBuilds(pack.ID)
 	if err != nil {
 		log.Printf("packs: cannot list builds of pack %d for storage cleanup: %v", pack.ID, err)
@@ -43,18 +43,18 @@ func (s *AppState) packDirsOfPack(pack *models.Pack) []string {
 	}
 	var dirs []string
 	for i := range builds {
-		dirs = append(dirs, s.packBuildDirs(pack, &builds[i])...)
+		dirs = append(dirs, s.PackBuildDirs(pack, &builds[i])...)
 	}
 	return dirs
 }
 
 // PackDirsOfUser collects the directories of every build the account owns.
-func (s *AppState) PackDirsOfUser(userID string) []string {
+func (s *Manager) PackDirsOfUser(userID string) []string {
 	if s == nil || s.Store == nil || userID == "" {
 		return nil
 	}
 	// Without a modpack storage nothing can be deleted, so nothing is listed.
-	if prov, err := s.buildModpackStorageProvider(); err != nil || prov == nil {
+	if prov, err := s.BuildModpackProvider(); err != nil || prov == nil {
 		return nil
 	}
 	packs, err := s.Store.ListPacksByOwner(userID)
@@ -64,18 +64,18 @@ func (s *AppState) PackDirsOfUser(userID string) []string {
 	}
 	var dirs []string
 	for i := range packs {
-		dirs = append(dirs, s.packDirsOfPack(&packs[i])...)
+		dirs = append(dirs, s.PackDirsOfPack(&packs[i])...)
 	}
 	return dirs
 }
 
 // DropPackDirs removes the objects in the given build directories. Best effort:
 // called after the rows are gone, so a failure costs storage, never a build.
-func (s *AppState) DropPackDirs(dirs []string) {
+func (s *Manager) DropPackDirs(dirs []string) {
 	if len(dirs) == 0 {
 		return
 	}
-	prov, err := s.buildModpackStorageProvider()
+	prov, err := s.BuildModpackProvider()
 	if err != nil {
 		log.Printf("packs: cannot open modpack storage to clean %d build directories: %v", len(dirs), err)
 		return
@@ -136,7 +136,7 @@ const serverPacksPurgedKey = "modpack_server_packs_purged_at"
 // the next start tries again. Deleting is idempotent, so a retry only repeats
 // work. Without a modpack storage nothing was ever stored, and nothing is
 // recorded either, for the same reason PurgeLibraryStorage leaves it unset.
-func (s *AppState) PurgeStoredServerPacks(ctx context.Context) {
+func (s *Manager) PurgeStoredServerPacks(ctx context.Context) {
 	if s == nil || s.Store == nil {
 		return
 	}
@@ -148,7 +148,7 @@ func (s *AppState) PurgeStoredServerPacks(ctx context.Context) {
 	if done != "" {
 		return
 	}
-	prov, err := s.buildModpackStorageProvider()
+	prov, err := s.BuildModpackProvider()
 	if err != nil || prov == nil {
 		return
 	}
@@ -174,7 +174,7 @@ func (s *AppState) PurgeStoredServerPacks(ctx context.Context) {
 				continue
 			}
 			for j := range builds {
-				for _, dir := range s.packBuildDirs(&packs[i], &builds[j]) {
+				for _, dir := range s.PackBuildDirs(&packs[i], &builds[j]) {
 					dirs++
 					if err := dropStoredServerPack(ctx, prov, dir); err != nil {
 						log.Printf("server pack purge: %v", err)

@@ -37,7 +37,7 @@ func TestServerListBlanksSettingsFieldsWithoutTheSettingsCap(t *testing.T) {
 		1: {CapOverrides: store.CapOverrides{Grant: []string{"console.read"}}},
 		2: {CapOverrides: store.CapOverrides{Grant: []string{"console.read", "server.settings.write"}}},
 	}}
-	state := &handlers.AppState{Authz: authz.NewResolver(st)}
+	state := withCoreStorage(&handlers.AppState{Authz: authz.NewResolver(st)})
 	got := access.ApplyResolvedTabPermissions(state.Authz, []models.Server{
 		settingsFieldsServer(1, "invited"), settingsFieldsServer(2, "invited"), settingsFieldsServer(3, "owner"),
 	}, "friend-1", "friend")
@@ -77,7 +77,7 @@ func TestExternalServerBlanksSettingsFieldsWithoutTheSettingsCap(t *testing.T) {
 	}})
 	get := func(caller string) models.Server {
 		t.Helper()
-		h := handlers.NewAPIKeysHandler(&handlers.AppState{Store: externalServerStore{}, Authz: resolver})
+		h := handlers.NewAPIKeysHandler(withCoreStorage(&handlers.AppState{Store: externalServerStore{}, Authz: resolver}))
 		r := httptest.NewRequest("GET", "/api/external/servers/u", nil)
 		r = mux.SetURLVars(r, map[string]string{"uuid": "u"})
 		r = r.WithContext(reqctx.WithAPIKey(r.Context(), &models.APIKey{ID: 1, UserID: caller}, false))
@@ -114,7 +114,7 @@ func TestAdminOnACustomersMachineSeesSettingsFieldsOnlyWhenGranted(t *testing.T)
 		1: {CapOverrides: store.CapOverrides{Grant: []string{"overview.read", "console.read"}}},
 	}})
 	resolver.SetForeignNode(func(int, string) bool { return true })
-	state := &handlers.AppState{Authz: resolver}
+	state := withCoreStorage(&handlers.AppState{Authz: resolver})
 
 	byon := settingsFieldsServer(1, "admin")
 	byon.NodeKind = models.NodeKindBYON
@@ -131,7 +131,7 @@ func TestAdminOnACustomersMachineSeesSettingsFieldsOnlyWhenGranted(t *testing.T)
 		t.Error("an admin's row on a platform node was redacted")
 	}
 
-	h := handlers.NewAPIKeysHandler(&handlers.AppState{Store: externalServerStore{}, Authz: resolver})
+	h := handlers.NewAPIKeysHandler(withCoreStorage(&handlers.AppState{Store: externalServerStore{}, Authz: resolver}))
 	r := httptest.NewRequest("GET", "/api/external/servers/u", nil)
 	r = mux.SetURLVars(r, map[string]string{"uuid": "u"})
 	r = r.WithContext(reqctx.WithAPIKey(r.Context(), &models.APIKey{ID: 1, UserID: "admin-1"}, false))
@@ -162,7 +162,7 @@ func TestAdminServerListBlanksSettingsFieldsOnACustomersMachine(t *testing.T) {
 		1: {CapOverrides: store.CapOverrides{Grant: []string{"console.read"}}},
 	}})
 	resolver.SetForeignNode(func(int, string) bool { return true })
-	h := &ServerHandler{state: &handlers.AppState{Store: adminListStore{}, Authz: resolver}}
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: adminListStore{}, Authz: resolver})}
 	r := httptest.NewRequest("GET", "/api/admin/servers", nil)
 	ctx := context.WithValue(r.Context(), "userID", "admin-1")
 	r = r.WithContext(context.WithValue(ctx, "isAdmin", true))
@@ -179,7 +179,7 @@ func TestAdminServerListBlanksSettingsFieldsOnACustomersMachine(t *testing.T) {
 // Support (servers.read, not an admin) gets the admin list without the
 // settings fields, like without the node address.
 func TestAdminServerListBlanksSettingsFieldsForSupport(t *testing.T) {
-	h := &ServerHandler{state: &handlers.AppState{Store: adminListStore{}}}
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: adminListStore{}})}
 	r := httptest.NewRequest("GET", "/api/admin/servers", nil)
 	ctx := context.WithValue(r.Context(), "userID", "support-1")
 	r = r.WithContext(context.WithValue(ctx, "isAdmin", false))

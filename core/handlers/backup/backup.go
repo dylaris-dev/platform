@@ -668,7 +668,7 @@ func (h *BackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
 	}
 	// The runs cascade with the job and take their storage keys with them, so
 	// the archives have to go first or nothing can ever name them again.
-	handlers.PurgeBackupArchivesForJob(h.state, jobID)
+	h.state.CoreStorage.PurgeBackupArchivesForJob(jobID)
 	if err := h.state.Store.DeleteBackupJob(jobID); err != nil {
 		httpx.SendJSONError(w, err.Error(), 500)
 		return
@@ -1098,8 +1098,8 @@ func (h *BackupHandler) backupDeps() backupstorage.Deps {
 	return backupstorage.Deps{
 		Registry:    h.state.GRPCRegistry,
 		NodeStore:   h.state.Store,
-		CoreStorage: h.state.CoreStorageBackupBuilder(),
-		Connection:  h.state.ConnectionBackupBuilder(),
+		CoreStorage: h.state.CoreStorage.BackupBuilder(),
+		Connection:  h.state.CoreStorage.ConnectionBackupBuilder(),
 	}
 }
 

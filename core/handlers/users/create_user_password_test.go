@@ -59,7 +59,7 @@ func (f *createUserFakeStore) CreateUser(u *models.User) error {
 // of the two bugs.
 func TestCreateUserTakesThePasswordFromTheWire(t *testing.T) {
 	fake := &createUserFakeStore{}
-	h := NewUserHandler(&handlers.AppState{Store: fake})
+	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fake}))
 
 	const plaintext = "correct-horse-battery"
 	body := `{"username":"alice","password":"` + plaintext + `","isAdmin":false}`
@@ -93,7 +93,7 @@ func TestCreateUserTakesThePasswordFromTheWire(t *testing.T) {
 // A timestamp in the body is replaced, not trusted.
 func TestCreateUserStoresTheAccountVerified(t *testing.T) {
 	fake := &createUserFakeStore{}
-	h := NewUserHandler(&handlers.AppState{Store: fake})
+	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fake}))
 
 	body := `{"username":"alice","password":"correct-horse-battery","emailVerifiedAt":"2001-01-01T00:00:00Z"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(body))
@@ -116,7 +116,7 @@ func TestCreateUserStoresTheAccountVerified(t *testing.T) {
 // all is still refused rather than persisted with an empty hash.
 func TestCreateUserStillRefusesAnEmptyPassword(t *testing.T) {
 	fake := &createUserFakeStore{}
-	h := NewUserHandler(&handlers.AppState{Store: fake})
+	h := NewUserHandler(withCoreStorage(&handlers.AppState{Store: fake}))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/users", bytes.NewBufferString(`{"username":"alice"}`))
 	rec := httptest.NewRecorder()

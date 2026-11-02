@@ -1,11 +1,9 @@
-package handlers
+package corestorage
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,7 +11,6 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
@@ -85,26 +82,26 @@ func newReachRoundLockToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-// sharedStorageRefusal is returned when a config must not be persisted because
+// SharedStorageRefusal is returned when a config must not be persisted because
 // the fleet could not prove shared access. It carries the whole RoundResult,
 // not just a message: the panel names the failing Core and its taxonomy
 // reason, which is the difference between "it broke" and "fix host-2's mount".
-type sharedStorageRefusal struct {
-	status  int
-	message string
-	result  *storagereach.RoundResult
+type SharedStorageRefusal struct {
+	Status  int
+	Message string
+	Result  *storagereach.RoundResult
 }
 
-func (e *sharedStorageRefusal) Error() string { return e.message }
+func (e *SharedStorageRefusal) Error() string { return e.Message }
 
-// CoreStorageToReachConfig narrows the persisted settings shape to what the
+// ToReachConfig narrows the persisted settings shape to what the
 // verifier needs. The s3 secret travels because each participant builds a real
 // client from it; without it every peer would report unreachable.
 //
 // Exported (rather than left package-private) because main.go's boot wiring
 // builds storagereach.ServiceDeps.ConfigFor from it, and that package cannot
 // import handlers.
-func CoreStorageToReachConfig(cfg CoreStorageConfig) storagereach.Config {
+func ToReachConfig(cfg Config) storagereach.Config {
 	return storagereach.Config{
 		Backend:     cfg.Backend,
 		Path:        cfg.Path,
@@ -122,12 +119,12 @@ func CoreStorageToReachConfig(cfg CoreStorageConfig) storagereach.Config {
 // sub-prefix, so probe files land in .dylaris-reachability/ beside
 // ticket-attachments/ and ticket-backups/ instead of inside one of them.
 //
-// Exported for the same reason as CoreStorageToReachConfig: main.go wires this
+// Exported for the same reason as ToReachConfig: main.go wires this
 // in directly as storagereach.ServiceDeps.NewProvider.
 //
 // nil gate, nil s3 resilience - the same RAW build every other candidate-config
 // call site does (ProbeS3Connection, TestConnection, the migration target
-// builder), for the reason newStorageProviderForConfig's own doc comment gives:
+// builder), for the reason NewProviderForConfig's own doc comment gives:
 // a candidate probe must fail fast, and the live instances describe the LIVE
 // backend rather than the one being tested. Passing them here broke three
 // things at once:
@@ -146,8 +143,8 @@ func CoreStorageToReachConfig(cfg CoreStorageConfig) storagereach.Config {
 // Failing fast without the wrapper still holds: every S3Provider method threads
 // the caller's ctx into aws-sdk-go-v2 (storage/s3provider.go), which aborts on
 // it, and the round now hands the probe a context bounded by the round deadline.
-func (s *AppState) NewReachProvider(cfg storagereach.Config) (storage.StorageProvider, error) {
-	return newStorageProviderForConfig(CoreStorageConfig{
+func (s *Manager) NewReachProvider(cfg storagereach.Config) (storage.StorageProvider, error) {
+	return NewProviderForConfig(Config{
 		Backend:     cfg.Backend,
 		Path:        cfg.Path,
 		S3Endpoint:  cfg.S3Endpoint,
@@ -160,20 +157,7 @@ func (s *AppState) NewReachProvider(cfg storagereach.Config) (storage.StoragePro
 	}, "", nil, nil)
 }
 
-// EffectiveCoreStorageConfig exports effectiveCoreStorageConfig for callers
-// outside this package.
-//
-// main.go's storagereach ConfigFor needs the EFFECTIVE config, not
-// LoadCoreStorageConfig's raw persisted one: a deployment that selects a
-// storage connection stores its actual s3 credentials on the connection row,
-// not in the inline core_storage_s3_* settings, so LoadCoreStorageConfig alone
-// would hand the verifier an empty inline config and every Core would report
-// unreachable for a perfectly working, connection-backed setup.
-func (s *AppState) EffectiveCoreStorageConfig() (CoreStorageConfig, error) {
-	return s.effectiveCoreStorageConfig()
-}
-
-// checkSharedStorageReachable replaces the count-only host-path guard with an
+// CheckSharedReachable replaces the count-only host-path guard with an
 // actual proof. It runs a verifier round across every online Core and refuses
 // the save unless all of them wrote, read each other, and cross-wrote.
 //
@@ -185,13 +169,13 @@ func (s *AppState) EffectiveCoreStorageConfig() (CoreStorageConfig, error) {
 // deliberate admin action, so "could not verify, try again" is cheap; letting
 // it through would silently split file storage across instances, which is the
 // failure this exists to prevent.
-func (s *AppState) checkSharedStorageReachable(ctx context.Context, cfg CoreStorageConfig) error {
+func (s *Manager) CheckSharedReachable(ctx context.Context, cfg Config) error {
 	online, err := services.OnlineCoreIDs(ctx, s.Redis)
 	if err != nil {
 		log.Printf("core storage: could not list online Cores: %v", err)
-		return &sharedStorageRefusal{
-			status:  http.StatusServiceUnavailable,
-			message: "Could not verify which Core instances are online, so the storage settings cannot be saved right now. Check that Redis is reachable and try again.",
+		return &SharedStorageRefusal{
+			Status:  http.StatusServiceUnavailable,
+			Message: "Could not verify which Core instances are online, so the storage settings cannot be saved right now. Check that Redis is reachable and try again.",
 		}
 	}
 	// 0 and 1 are both "not more than one": a count of 0 means this Core's own
@@ -200,10 +184,10 @@ func (s *AppState) checkSharedStorageReachable(ctx context.Context, cfg CoreStor
 	if len(online) <= 1 {
 		return nil
 	}
-	if s.StorageReach == nil {
-		return &sharedStorageRefusal{
-			status:  http.StatusServiceUnavailable,
-			message: "The storage reachability verifier is not running on this Core, so a multi-Core storage change cannot be verified.",
+	if s.Reach == nil {
+		return &SharedStorageRefusal{
+			Status:  http.StatusServiceUnavailable,
+			Message: "The storage reachability verifier is not running on this Core, so a multi-Core storage change cannot be verified.",
 		}
 	}
 
@@ -226,7 +210,7 @@ func (s *AppState) checkSharedStorageReachable(ctx context.Context, cfg CoreStor
 	// park, so a same-replica caller and a cross-replica caller behave
 	// identically.
 	if !s.reachRoundMu.TryLock() {
-		return &sharedStorageRefusal{status: http.StatusConflict, message: reachRoundBusyMessage}
+		return &SharedStorageRefusal{Status: http.StatusConflict, Message: reachRoundBusyMessage}
 	}
 	defer s.reachRoundMu.Unlock()
 
@@ -238,22 +222,22 @@ func (s *AppState) checkSharedStorageReachable(ctx context.Context, cfg CoreStor
 	token, tokenErr := newReachRoundLockToken()
 	if tokenErr != nil {
 		log.Printf("core storage: could not generate a config-round lock token: %v", tokenErr)
-		return &sharedStorageRefusal{
-			status:  http.StatusServiceUnavailable,
-			message: "Could not verify shared storage access right now. Check that Redis is reachable and try again.",
+		return &SharedStorageRefusal{
+			Status:  http.StatusServiceUnavailable,
+			Message: "Could not verify shared storage access right now. Check that Redis is reachable and try again.",
 		}
 	}
 
 	acquired, lockErr := s.Redis.SetNX(ctx, reachRoundLockKey, token, reachRoundLockTTL).Result()
 	if lockErr != nil {
 		log.Printf("core storage: could not acquire the config-round lock: %v", lockErr)
-		return &sharedStorageRefusal{
-			status:  http.StatusServiceUnavailable,
-			message: "Could not verify shared storage access right now. Check that Redis is reachable and try again.",
+		return &SharedStorageRefusal{
+			Status:  http.StatusServiceUnavailable,
+			Message: "Could not verify shared storage access right now. Check that Redis is reachable and try again.",
 		}
 	}
 	if !acquired {
-		return &sharedStorageRefusal{status: http.StatusConflict, message: reachRoundBusyMessage}
+		return &SharedStorageRefusal{Status: http.StatusConflict, Message: reachRoundBusyMessage}
 	}
 	defer func() {
 		if err := releaseReachRoundLock(context.WithoutCancel(ctx), s.Redis, token); err != nil {
@@ -266,12 +250,12 @@ func (s *AppState) checkSharedStorageReachable(ctx context.Context, cfg CoreStor
 		deadline = defaultReachRoundDeadline
 	}
 
-	reachCfg := CoreStorageToReachConfig(cfg)
-	result, err := s.StorageReach.Coordinator().RunRound(ctx, reachCfg, online, storagereach.RoundOptions{
+	reachCfg := ToReachConfig(cfg)
+	result, err := s.Reach.Coordinator().RunRound(ctx, reachCfg, online, storagereach.RoundOptions{
 		Deadline: deadline,
 		// Zero leaves storagereach's production cadence in place; only tests set
 		// it, to stop a short deadline from reducing the coordinator to a couple
-		// of listings. See AppState.reachRoundPoll.
+		// of listings. See Manager.reachRoundPoll.
 		PollEvery: s.reachRoundPoll,
 		// Each partial result becomes the panel's live "X/N cores confirmed"
 		// counter. Without this the admin stares at a spinner for 15s.
@@ -287,18 +271,18 @@ func (s *AppState) checkSharedStorageReachable(ctx context.Context, cfg CoreStor
 		},
 	})
 	if err != nil {
-		return &sharedStorageRefusal{
-			status:  http.StatusServiceUnavailable,
-			message: fmt.Sprintf("Could not verify shared storage access across %d Cores: %v", len(online), err),
-			result:  &result,
+		return &SharedStorageRefusal{
+			Status:  http.StatusServiceUnavailable,
+			Message: fmt.Sprintf("Could not verify shared storage access across %d Cores: %v", len(online), err),
+			Result:  &result,
 		}
 	}
 	if !result.OK {
-		return &sharedStorageRefusal{
-			status: http.StatusConflict,
-			message: fmt.Sprintf("Only %d of %d Cores could prove they can read and write this storage. The settings were not saved.",
+		return &SharedStorageRefusal{
+			Status: http.StatusConflict,
+			Message: fmt.Sprintf("Only %d of %d Cores could prove they can read and write this storage. The settings were not saved.",
 				result.Confirmed, result.Total),
-			result: &result,
+			Result: &result,
 		}
 	}
 	return nil
@@ -322,22 +306,4 @@ func redactReachResults(results []storagereach.CoreResult) []storagereach.CoreRe
 		out[i].Detail = ""
 	}
 	return out
-}
-
-// sendReachRefusal writes a refusal as JSON, including the per-Core round
-// result when there is one so the panel can name the failing Cores. Here rather
-// than on CoreStorageHandler: it reads sharedStorageRefusal's fields.
-func sendReachRefusal(w http.ResponseWriter, err error) {
-	var refusal *sharedStorageRefusal
-	if !errors.As(err, &refusal) {
-		httpx.SendJSONError(w, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(refusal.status)
-	body := map[string]interface{}{"success": false, "message": refusal.message}
-	if refusal.result != nil {
-		body["round"] = refusal.result
-	}
-	_ = json.NewEncoder(w).Encode(body)
 }

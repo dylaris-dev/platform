@@ -92,7 +92,7 @@ func TestMayAttachServer(t *testing.T) {
 			granteeID: {"overview.read"},
 		},
 	}
-	h := &TicketsHandler{state: &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}}
+	h := &TicketsHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}
 
 	cases := []struct {
 		name     string

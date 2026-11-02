@@ -313,8 +313,8 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	// list of what this account could reach left to stamp.
 	beamaccess.StampForUser(r.Context(), h.state.Store, h.state.Redis, id)
 	// Read now, removed once the row is gone: the packs cascade with it.
-	packDirs := h.state.PackDirsOfUser(id)
-	templates := h.state.TemplatesOfUser(id)
+	packDirs := h.state.CoreStorage.PackDirsOfUser(id)
+	templates := h.state.CoreStorage.TemplatesOfUser(id)
 	if err := services.TeardownTenantInfrastructure(r.Context(), h.state.Store, h.state.Gateway,
 		h.state.Redis, redisacl.NewProvisioner(h.state.Redis), h.state.WarpPeers, id); err != nil {
 		log.Printf("delete user %s: teardown: %v", id, err)
@@ -345,8 +345,8 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	h.state.DropPackDirs(packDirs)
-	h.state.DropTemplateFiles(r.Context(), templates)
+	h.state.CoreStorage.DropPackDirs(packDirs)
+	h.state.CoreStorage.DropTemplateFiles(r.Context(), templates)
 
 	// The only record that this account ever existed.
 	//

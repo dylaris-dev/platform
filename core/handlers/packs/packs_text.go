@@ -64,7 +64,7 @@ func (h *PacksHandler) loadOwnedContentModversion(r *http.Request, need packNeed
 	if err != nil || mv == nil {
 		return nil, nil, nil, false
 	}
-	prov, err := h.state.BuildModpackStorageProvider()
+	prov, err := h.state.CoreStorage.BuildModpackProvider()
 	if err != nil || prov == nil {
 		return nil, nil, nil, false
 	}

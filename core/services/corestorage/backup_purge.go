@@ -1,4 +1,4 @@
-package handlers
+package corestorage
 
 import (
 	"context"
@@ -9,21 +9,21 @@ import (
 	backupstorage "dylaris-core/storage/backup"
 )
 
-// backupDepsFor assembles the backup-storage dependencies from AppState.
+// BackupDeps assembles the backup-storage dependencies.
 //
 // One place, because a provider that needs one of them must not work on one
 // path and be refused on another - the backup scheduler's own comment records
 // two providers that were broken exactly that way by a second Deps literal.
-func backupDepsFor(state *AppState) backupstorage.Deps {
+func (s *Manager) BackupDeps() backupstorage.Deps {
 	return backupstorage.Deps{
-		Registry:    state.GRPCRegistry,
-		NodeStore:   state.Store,
-		CoreStorage: state.CoreStorageBackupBuilder(),
-		Connection:  state.ConnectionBackupBuilder(),
+		Registry:    s.Registry,
+		NodeStore:   s.Store,
+		CoreStorage: s.BackupBuilder(),
+		Connection:  s.ConnectionBackupBuilder(),
 	}
 }
 
-// purgeBackupArchivesForServers removes the archives of every backup schedule of
+// PurgeBackupArchivesForServers removes the archives of every backup schedule of
 // these servers. Call it BEFORE the server rows are deleted: backup_jobs and
 // backup_runs cascade with them, and the run row is the only record of where an
 // archive lives.
@@ -31,34 +31,34 @@ func backupDepsFor(state *AppState) backupstorage.Deps {
 // Best-effort, like every other post-delete cleanup: the user asked for the
 // delete and it is about to succeed either way. What a failure buys is a log
 // line naming the key, which is what makes a leftover findable at all.
-func purgeBackupArchivesForServers(state *AppState, serverIDs []int) {
-	if state == nil || state.Store == nil || len(serverIDs) == 0 {
+func (s *Manager) PurgeBackupArchivesForServers(serverIDs []int) {
+	if s == nil || s.Store == nil || len(serverIDs) == 0 {
 		return
 	}
 	ctx, cancel := purgeContext()
 	defer cancel()
-	refs, err := state.Store.ListBackupRunRefsForServers(serverIDs)
+	refs, err := s.Store.ListBackupRunRefsForServers(serverIDs)
 	if err != nil {
 		log.Printf("backup purge: listing the archives of %d server(s) failed, they are about to become unnameable: %v", len(serverIDs), err)
 		return
 	}
-	services.PurgeBackupArchives(ctx, state.Store, backupDepsFor(state), refs)
+	services.PurgeBackupArchives(ctx, s.Store, s.BackupDeps(), refs)
 }
 
-// purgeBackupArchivesForJob is the same for one schedule, whose runs cascade
+// PurgeBackupArchivesForJob is the same for one schedule, whose runs cascade
 // with it.
-func purgeBackupArchivesForJob(state *AppState, jobID int) {
-	if state == nil || state.Store == nil {
+func (s *Manager) PurgeBackupArchivesForJob(jobID int) {
+	if s == nil || s.Store == nil {
 		return
 	}
 	ctx, cancel := purgeContext()
 	defer cancel()
-	refs, err := state.Store.ListBackupRunRefsForJob(jobID)
+	refs, err := s.Store.ListBackupRunRefsForJob(jobID)
 	if err != nil {
 		log.Printf("backup purge: listing the archives of schedule %d failed, they are about to become unnameable: %v", jobID, err)
 		return
 	}
-	services.PurgeBackupArchives(ctx, state.Store, backupDepsFor(state), refs)
+	services.PurgeBackupArchives(ctx, s.Store, s.BackupDeps(), refs)
 }
 
 // purgeContext is deliberately NOT the request's.

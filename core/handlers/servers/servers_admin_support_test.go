@@ -28,9 +28,9 @@ func (f *adminServersFakeStore) CountInvitesPerServer() (map[int]int, error) { r
 
 func adminServersRows(t *testing.T, isAdmin bool) []map[string]any {
 	t.Helper()
-	h := &ServerHandler{state: &handlers.AppState{Store: &adminServersFakeStore{servers: []models.Server{
+	h := &ServerHandler{state: withCoreStorage(&handlers.AppState{Store: &adminServersFakeStore{servers: []models.Server{
 		{ID: 1, Name: "srv", NodeName: "node-a", NodeAddress: "203.0.113.7"},
-	}}}}
+	}}})}
 	r := httptest.NewRequest(http.MethodGet, "/api/admin/servers", nil)
 	ctx := context.WithValue(r.Context(), "userID", "reader-1")
 	ctx = context.WithValue(ctx, "isAdmin", isAdmin)

@@ -21,7 +21,7 @@ var templateZipTo = func(ctx context.Context, s *handlers.AppState, t *models.Te
 	if err != nil {
 		return err
 	}
-	return s.TemplateZipWith(ctx, t, w, extra)
+	return s.CoreStorage.TemplateZipWith(ctx, t, w, extra)
 }
 
 // modrinthManifestName lists a template's Modrinth references at the root of

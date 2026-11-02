@@ -167,7 +167,7 @@ func presignedOnlyHandler(t *testing.T, nodeVersion string, run models.BackupRun
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
 
-	h := &BackupHandler{state: &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs), Redis: rdb, Queue: services.NewQueueService(rdb)}}
+	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs), Redis: rdb, Queue: services.NewQueueService(rdb)})}
 	return h, fs, rdb, rec
 }
 

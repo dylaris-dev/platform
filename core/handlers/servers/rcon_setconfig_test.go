@@ -100,7 +100,7 @@ func (f *rconConfigFakeStore) SetServerRconNeedsRestart(serverID int, needsResta
 }
 
 func newRconConfigHandler(fs *rconConfigFakeStore) *RconHandler {
-	h := &RconHandler{state: &handlers.AppState{Store: fs}}
+	h := &RconHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
 	// Inject a fake props-writer so these tests exercise SetConfig's own logic
 	// without a live node/gRPC registry. It records the call and returns the
 	// configured error (nil by default = success).

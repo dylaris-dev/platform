@@ -701,7 +701,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// here. Registered on the ROOT router with NO .Use(...): the node fetches it
 	// with a plain GET and no session, so it bypasses the setup-lock,
 	// maintenance and auth middleware. The URL carries an expiring signature
-	// (handlers.SignedModpackMirrorURL) and the handler serves a build's
+	// (corestorage.SignedModpackMirrorURL) and the handler serves a build's
 	// pack.mrpack only. The modpacks feature is gated in-handler.
 	//
 	// It lived at /solder/mirror/ until Solder was removed, because the same

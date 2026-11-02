@@ -2,9 +2,10 @@ package packs
 
 import (
 	"encoding/json"
-	"github.com/gorilla/mux"
 	"net/http"
 	"strconv"
+
+	"github.com/gorilla/mux"
 
 	"dylaris-core/handlers/httpx"
 )

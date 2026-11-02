@@ -86,7 +86,7 @@ func newTestTechnicHandler(t *testing.T, u *technicUpstream) *TechnicHandler {
 	t.Cleanup(func() { technicCooldown = modcompat.UpstreamCooldown{} })
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	h := NewTechnicHandler(&handlers.AppState{Cache: services.NewCache(rdb)})
+	h := NewTechnicHandler(withCoreStorage(&handlers.AppState{Cache: services.NewCache(rdb)}))
 	h.base = u.srv.URL
 	h.fetchExternal = func(ctx context.Context, raw string, max int64, _ time.Duration) ([]byte, error) {
 		resp, err := http.Get(raw)

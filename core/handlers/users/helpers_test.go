@@ -20,6 +20,7 @@ import (
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 )
 
@@ -109,7 +110,7 @@ func newGuardFakeStore() *guardFakeStore {
 }
 
 func guardState(fs *guardFakeStore) *handlers.AppState {
-	return &handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)}
+	return withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})
 }
 
 func guardRequest(method, actor string, isAdmin bool, target, body string) *http.Request {
@@ -240,7 +241,7 @@ func (f *emailFakeStore) MarkEmailVerified(string) error { return nil }
 
 func emailReq(t *testing.T, st *emailFakeStore, body string) (*httptest.ResponseRecorder, map[string]interface{}) {
 	t.Helper()
-	h := handlers.NewUserEmailHandler(&handlers.AppState{Store: st})
+	h := handlers.NewUserEmailHandler(withCoreStorage(&handlers.AppState{Store: st}))
 	r := httptest.NewRequest(http.MethodPatch, "/api/admin/users/"+emailTestUserID+"/email", bytes.NewReader([]byte(withReauthJSON(body))))
 	r = mux.SetURLVars(r, map[string]string{"id": emailTestUserID})
 	ctx := context.WithValue(r.Context(), "userID", "admin-1")
@@ -323,4 +324,12 @@ func withReauthJSON(body string) string {
 		return body
 	}
 	return string(out)
+}
+
+// withCoreStorage gives a test state the core storage it implicitly was before
+// S12 (the AppState methods ran over its own Store, Redis, Events, ...): a
+// Manager over the very same objects.
+func withCoreStorage(s *handlers.AppState) *handlers.AppState {
+	s.CoreStorage = &corestorage.Manager{Store: s.Store, Redis: s.Redis, Events: s.Events, ClusterSecret: s.ClusterSecret, Registry: s.GRPCRegistry}
+	return s
 }

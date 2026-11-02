@@ -7,15 +7,19 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"dylaris-core/services/corestorage"
 	"dylaris-core/storage"
 	backupstorage "dylaris-core/storage/backup"
+	"dylaris-core/store"
 )
 
 // These cover core storage's appearance in the two health endpoints, and the
@@ -103,16 +107,16 @@ func TestStorageComponent_ReportsThePerBackendState(t *testing.T) {
 		{
 			name: "host path with no evidence of a problem",
 			values: map[string]string{
-				keyCoreStorageBackend: "path",
-				keyCoreStoragePath:    "/mnt/shared",
+				corestorage.KeyBackend: "path",
+				corestorage.KeyPath:    "/mnt/shared",
 			},
 			wantStatus: "up",
 		},
 		{
 			name: "host path not answering",
 			values: map[string]string{
-				keyCoreStorageBackend: "path",
-				keyCoreStoragePath:    "/mnt/shared",
+				corestorage.KeyBackend: "path",
+				corestorage.KeyPath:    "/mnt/shared",
 			},
 			gate:       unhealthyGate,
 			wantStatus: "degraded",
@@ -123,16 +127,16 @@ func TestStorageComponent_ReportsThePerBackendState(t *testing.T) {
 		{
 			name: "s3 with no reported failure",
 			values: map[string]string{
-				keyCoreStorageBackend:  "s3",
-				keyCoreStorageS3Bucket: "my-bucket",
+				corestorage.KeyBackend:  "s3",
+				corestorage.KeyS3Bucket: "my-bucket",
 			},
 			wantStatus: "up",
 		},
 		{
 			name: "s3 reconnecting",
 			values: map[string]string{
-				keyCoreStorageBackend:  "s3",
-				keyCoreStorageS3Bucket: "my-bucket",
+				corestorage.KeyBackend:  "s3",
+				corestorage.KeyS3Bucket: "my-bucket",
 			},
 			s3:         reconnectingS3,
 			wantStatus: "degraded",
@@ -142,12 +146,13 @@ func TestStorageComponent_ReportsThePerBackendState(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &AppState{Store: &coreStorageFakeStore{values: tc.values}}
+			fs := &coreStorageFakeStore{values: tc.values}
+			s := withCoreStorage(&AppState{Store: fs})
 			if tc.gate != nil {
-				s.StorageGate = tc.gate(t)
+				s.CoreStorage.Gate = tc.gate(t)
 			}
 			if tc.s3 != nil {
-				s.StorageS3 = tc.s3(t)
+				s.CoreStorage.S3 = tc.s3(t)
 			}
 
 			comp := (&HealthHandler{state: s}).storageComponent()
@@ -179,19 +184,20 @@ func TestStorageComponent_IsNeverDown(t *testing.T) {
 	}{
 		{
 			name:   "host path wedged",
-			values: map[string]string{keyCoreStorageBackend: "path", keyCoreStoragePath: "/mnt/shared"},
+			values: map[string]string{corestorage.KeyBackend: "path", corestorage.KeyPath: "/mnt/shared"},
 			gate:   unhealthyGate(t),
 		},
 		{
 			name:   "s3 unreachable",
-			values: map[string]string{keyCoreStorageBackend: "s3", keyCoreStorageS3Bucket: "b"},
+			values: map[string]string{corestorage.KeyBackend: "s3", corestorage.KeyS3Bucket: "b"},
 			s3:     reconnectingS3(t),
 		},
 	}
 
 	for _, b := range backends {
 		t.Run(b.name, func(t *testing.T) {
-			s := &AppState{Store: &coreStorageFakeStore{values: b.values}, StorageGate: b.gate, StorageS3: b.s3}
+			fs := &coreStorageFakeStore{values: b.values}
+			s := &AppState{Store: fs, CoreStorage: &corestorage.Manager{Store: fs, Gate: b.gate, S3: b.s3}}
 			comp := (&HealthHandler{state: s}).storageComponent()
 
 			if comp.Status == "down" {
@@ -225,11 +231,12 @@ func newHealthzHandler(t *testing.T, values map[string]string, gate *storage.Gat
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
+	fs := &healthzFakeStore{coreStorageFakeStore{values: values}}
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	return &HealthHandler{state: &AppState{
-		Store:       &healthzFakeStore{coreStorageFakeStore{values: values}},
-		Redis:       redis.NewClient(&redis.Options{Addr: mr.Addr()}),
-		StorageGate: gate,
-		StorageS3:   s3,
+		Store:       fs,
+		Redis:       rdb,
+		CoreStorage: &corestorage.Manager{Store: fs, Redis: rdb, Gate: gate, S3: s3},
 	}}
 }
 
@@ -240,8 +247,8 @@ func newHealthzHandler(t *testing.T, values map[string]string, gate *storage.Gat
 // panel and every running server's supervision down with it.
 func TestHealthz_StorageIsReportedButNeverGates(t *testing.T) {
 	h := newHealthzHandler(t, map[string]string{
-		keyCoreStorageBackend: "path",
-		keyCoreStoragePath:    "/mnt/shared",
+		corestorage.KeyBackend: "path",
+		corestorage.KeyPath:    "/mnt/shared",
 	}, unhealthyGate(t), nil)
 
 	rec := httptest.NewRecorder()
@@ -265,8 +272,8 @@ func TestHealthz_StorageIsReportedButNeverGates(t *testing.T) {
 
 func TestHealthz_HealthyStorageReportsTrue(t *testing.T) {
 	h := newHealthzHandler(t, map[string]string{
-		keyCoreStorageBackend: "path",
-		keyCoreStoragePath:    "/mnt/shared",
+		corestorage.KeyBackend: "path",
+		corestorage.KeyPath:    "/mnt/shared",
 	}, storage.NewGate(), storage.NewS3Resilience())
 
 	rec := httptest.NewRecorder()
@@ -287,8 +294,8 @@ func TestHealthz_HealthyStorageReportsTrue(t *testing.T) {
 // capability-gated admin endpoint.
 func TestHealthz_CarriesNoCause(t *testing.T) {
 	h := newHealthzHandler(t, map[string]string{
-		keyCoreStorageBackend:  "s3",
-		keyCoreStorageS3Bucket: "my-bucket",
+		corestorage.KeyBackend:  "s3",
+		corestorage.KeyS3Bucket: "my-bucket",
 	}, unhealthyGate(t), reconnectingS3(t))
 
 	rec := httptest.NewRecorder()
@@ -316,8 +323,8 @@ func TestSyncStorageGate_DropsStaleS3State(t *testing.T) {
 		{
 			name: "switched to a host path",
 			values: map[string]string{
-				keyCoreStorageBackend: "path",
-				keyCoreStoragePath:    "/mnt/shared",
+				corestorage.KeyBackend: "path",
+				corestorage.KeyPath:    "/mnt/shared",
 			},
 			wantReconnecting: false,
 		},
@@ -329,8 +336,8 @@ func TestSyncStorageGate_DropsStaleS3State(t *testing.T) {
 		{
 			name: "still s3, so a real outage survives",
 			values: map[string]string{
-				keyCoreStorageBackend:  "s3",
-				keyCoreStorageS3Bucket: "my-bucket",
+				corestorage.KeyBackend:  "s3",
+				corestorage.KeyS3Bucket: "my-bucket",
 			},
 			wantReconnecting: true,
 		},
@@ -338,17 +345,41 @@ func TestSyncStorageGate_DropsStaleS3State(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			fs := &coreStorageFakeStore{values: tc.values}
 			s := &AppState{
-				Store:       &coreStorageFakeStore{values: tc.values},
-				StorageGate: storage.NewGate(),
-				StorageS3:   reconnectingS3(t),
+				Store:       fs,
+				CoreStorage: &corestorage.Manager{Store: fs, Gate: storage.NewGate(), S3: reconnectingS3(t)},
 			}
-			s.SyncStorageGate()
+			s.CoreStorage.SyncGate()
 
-			got, _, _ := s.StorageS3.State()
+			got, _, _ := s.CoreStorage.S3.State()
 			if got != tc.wantReconnecting {
 				t.Fatalf("reconnecting = %v, want %v", got, tc.wantReconnecting)
 			}
 		})
 	}
+}
+
+// coreStorageFakeStore returns a per-key canned setting value. A copy of
+// services/corestorage's test fixture, which moved there with the storage
+// tests (S12).
+type coreStorageFakeStore struct {
+	store.Store
+	values map[string]string
+}
+
+func (f *coreStorageFakeStore) GetSetting(key string) (string, error) {
+	return f.values[key], nil
+}
+
+// unhealthyGate returns a gate that has already been tripped, without starting
+// a watcher. A copy of the services/corestorage test helper (S12).
+func unhealthyGate(t *testing.T) *storage.Gate {
+	t.Helper()
+	g := storage.NewGate()
+	g.ReportFailure(&os.PathError{Op: "stat", Path: "/mnt/shared", Err: syscall.EIO})
+	if ok, _ := g.Healthy(); ok {
+		t.Fatal("gate did not trip on an unreachable errno")
+	}
+	return g
 }

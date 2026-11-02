@@ -42,6 +42,7 @@ func TestBuildCopyGuardsSourceAndEnvironment(t *testing.T) {
 			base.builds[0].Frozen = true
 			capture := &cloneCaptureStore{packCleanupStore: base}
 			h.state.Store = capture
+			h.state.CoreStorage.Store = h.state.Store
 			w := httptest.NewRecorder()
 			h.CreateBuild(w, packReq("POST", map[string]string{"id": "1"}, `{"versionString":"1.1.0","minecraft":"1.20.1","loader":"forge","loaderVersion":"47.4.28","sourceBuildId":10}`))
 			if w.Code != tc.want {

@@ -48,9 +48,9 @@ func TestDeleteUserRemovesTheirTemplateFiles(t *testing.T) {
 		},
 		tpl: models.Template{ID: 7, OwnerID: victimID, Name: "base", Kind: "server", Visibility: "personal"},
 	}
-	state := &handlers.AppState{Store: fs}
+	state := withCoreStorage(&handlers.AppState{Store: fs})
 	ctx := context.Background()
-	if err := state.TemplateWrite(ctx, &fs.tpl, "server.properties", strings.NewReader("motd=x"), 6); err != nil {
+	if err := state.CoreStorage.TemplateWrite(ctx, &fs.tpl, "server.properties", strings.NewReader("motd=x"), 6); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,7 +65,7 @@ func TestDeleteUserRemovesTheirTemplateFiles(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
 	}
-	files, err := state.TemplateList(ctx, &fs.tpl)
+	files, err := state.CoreStorage.TemplateList(ctx, &fs.tpl)
 	if err != nil {
 		t.Fatal(err)
 	}

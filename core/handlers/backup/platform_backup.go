@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 
 	"github.com/gorilla/mux"
 
@@ -435,7 +436,7 @@ func (h *PlatformBackupHandler) runner() (*services.PlatformBackupRunner, error)
 			if area != "modpacks" {
 				return nil, fmt.Errorf("unknown Core storage area %q", area)
 			}
-			prov, err := h.state.BuildCoreStorageProvider(handlers.CoreStoragePrefixModpacks)
+			prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixModpacks)
 			if err != nil {
 				return nil, err
 			}

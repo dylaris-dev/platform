@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/services/corestorage"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -79,6 +80,7 @@ func newProxyProtoHandler(t *testing.T, flagOn bool) (*handlers.AppState, *proxy
 	return &handlers.AppState{
 		Store: fs, Redis: rdb, Gateway: services.NewRedisGateway(rdb, fs, "cs"),
 		FeatureFlags: services.NewFeatureFlags(fs),
+		CoreStorage:  &corestorage.Manager{Store: fs, Redis: rdb},
 	}, fs, rdb
 }
 

@@ -137,7 +137,7 @@ func TestInstallChecksTheBuildAgainstTheServer(t *testing.T) {
 			m := miniredis.RunT(t)
 			rdb := redis.NewClient(&redis.Options{Addr: m.Addr()})
 			fs := &modFitFakeStore{installStatusFakeStore: installStatusFakeStore{mr: m}, server: tt.server}
-			h := &ServerModsHandler{state: &handlers.AppState{Store: fs, Redis: rdb, Queue: services.NewQueueService(rdb)}}
+			h := &ServerModsHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb, Queue: services.NewQueueService(rdb)})}
 
 			body := `{"projectId":"P1","versionId":"V1","fileName":"spark.jar","downloadUrl":"https://cdn.modrinth.com/data/P1/versions/V1/spark.jar","sha512":"client"}`
 			req := httptest.NewRequest(http.MethodPost, "/api/servers/7/mods", strings.NewReader(body))
