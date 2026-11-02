@@ -14,7 +14,6 @@ import (
 	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
-	"dylaris-core/handlers/servers"
 	"dylaris-core/services/voicecfg"
 
 	"dylaris-core/handlers/httpx"
@@ -159,12 +158,12 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
 		return
 	}
-	mod, rel, content, err := servers.FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	mod, rel, content, err := nodeops.FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	switch {
-	case errors.Is(err, servers.ErrVoiceModMissing):
+	case errors.Is(err, nodeops.ErrVoiceModMissing):
 		httpx.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
 		return
-	case errors.Is(err, servers.ErrVoiceModAmbiguous):
+	case errors.Is(err, nodeops.ErrVoiceModAmbiguous):
 		httpx.SendJSONErrorCode(w, "Both Simple Voice Chat and Plasmo Voice are installed. Remove one, then try again.", "voice_mod_ambiguous", http.StatusConflict)
 		return
 	case err != nil:
@@ -299,7 +298,7 @@ func RevokeServerVoice(ctx context.Context, st store.Store, rdb *redis.Client, r
 // writeBackVoiceConfig strips the voice address from the mod config on the
 // node. Failures are logged: voice already stopped with the row.
 func writeBackVoiceConfig(st store.Store, reg *nodegrpc.Registry, srv *models.Server) {
-	mod, rel, content, err := servers.FindVoiceConfig(reg, srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	mod, rel, content, err := nodeops.FindVoiceConfig(reg, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	if err != nil {
 		log.Printf("voice: server %d: config write-back skipped: %v", srv.ID, err)
 		return

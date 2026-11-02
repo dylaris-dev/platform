@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"dylaris-core/handlers/access"
 	"dylaris-core/metrics"
 	"time"
 
@@ -11,7 +10,6 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/corestorage"
-	"dylaris-core/services/demo"
 	"dylaris-core/store"
 
 	"github.com/redis/go-redis/v9"
@@ -233,29 +231,4 @@ type AppState struct {
 	// keyspace. The updates view needs it to tell its own row apart from a
 	// sibling Core's.
 	CoreID string
-}
-
-// IsDemoServerID reports whether the numeric server id maps to an admin-flagged
-// demo showcase server. Exported so main can hand the authz resolver a demo-read
-// predicate without the resolver importing handlers. Always false when the
-// store integration is off (open-core/self-host build).
-func (s *AppState) IsDemoServerID(serverID int) bool {
-	if s == nil || !s.StoreEnabled || s.Store == nil {
-		return false
-	}
-	srv, err := s.Store.GetServerByID(serverID)
-	if err != nil || srv == nil {
-		return false
-	}
-	return demo.IsServer(s.Store, s.StoreEnabled, srv.UUID)
-}
-
-// NodeOwnedByOther is access.NodeOwnedByOther over this state's store and
-// flags. main installs it on the resolver with SetForeignNode; a nil state
-// counts every node as foreign, as before the move.
-func (s *AppState) NodeOwnedByOther(nodeID int, userID string) bool {
-	if s == nil {
-		return true
-	}
-	return access.NodeOwnedByOther(s.Store, s.FeatureFlags, nodeID, userID)
 }

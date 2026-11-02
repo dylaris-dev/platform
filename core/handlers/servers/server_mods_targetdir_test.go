@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"dylaris-core/models"
+	"dylaris-core/services/modcompat"
 )
 
 // The uninstall path used to recompute the mod's directory from the server's
@@ -81,7 +82,7 @@ func TestUninstallTargetDirUsesWhatTheInstallRecorded(t *testing.T) {
 // uninstall down the fallback and reintroduce the bug silently.
 func TestInstallOnlyEverRecordsAnAcceptedTargetDir(t *testing.T) {
 	for _, loader := range []string{"paper", "fabric", "forge", "velocity", "", "unknown"} {
-		derived := defaultTargetDirForLoader(loader)
+		derived := modcompat.DefaultTargetDirForLoader(loader)
 		m := &models.ServerMod{TargetDir: derived}
 		// "fabric" here is a deliberately different loader: if the recorded value
 		// were not accepted, the fallback would answer with that one instead.

@@ -30,9 +30,10 @@ import (
 // stage deletes the entries it made obsolete and never adds one; an entry no
 // longer needed fails the test, so the list cannot outlive the edges.
 var layeringAllowed = map[string]bool{
-	"handlers/gateway -> handlers/servers":   true,
-	"handlers/templates -> handlers/servers": true,
-
+	// stats is the long-term statistics read API and queries metrics (Query,
+	// Catalog, SeriesQuery, ReadCoverage) directly. metrics imports no core
+	// package and services already imports it, the same case as layer2Lower;
+	// kept as the one named edge rather than widening that rule (step 2, F).
 	"handlers/stats -> metrics": true,
 }
 

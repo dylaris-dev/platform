@@ -16,6 +16,7 @@ import (
 	"dylaris-core/handlers/auth"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/demo"
 	"dylaris-core/store"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -137,7 +138,9 @@ func newAuthzTestServer(t *testing.T, fs *authzFakeStore) http.Handler {
 		FeatureFlags: services.NewFeatureFlags(fs),
 		Authz:        authz.NewResolver(fs),
 	}
-	appState.Authz.SetDemoRead(appState.IsDemoServerID)
+	appState.Authz.SetDemoRead(func(serverID int) bool {
+		return demo.IsServerID(appState.Store, appState.StoreEnabled, serverID)
+	})
 	authHandler := auth.NewAuthHandler(authDepsOf(appState), testJWTSecret)
 	root, _ := buildAPIRouter(appState, authHandler, routeCfg{JWTSecret: testJWTSecret})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

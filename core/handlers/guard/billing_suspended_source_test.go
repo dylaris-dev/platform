@@ -1,4 +1,4 @@
-package handlers
+package guard_test
 
 import (
 	"go/ast"

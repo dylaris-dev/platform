@@ -50,8 +50,7 @@ func OwnedByOther(flags *services.FeatureFlags, r *http.Request, node *models.No
 }
 
 // NodeOwnedByOther is OwnedByOther by node id and user, for the resolver, which
-// has no request. main installs it with SetForeignNode (through
-// AppState.NodeOwnedByOther).
+// has no request. main installs it with SetForeignNode.
 //
 // A node it cannot read counts as foreign, and so does a flag (see
 // OwnershipInForce): the cost is an admin refused during a database fault, not

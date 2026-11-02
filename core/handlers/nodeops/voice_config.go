@@ -1,12 +1,10 @@
-package servers
+package nodeops
 
 import (
 	nodegrpc "dylaris-core/grpc"
 	"errors"
 	"fmt"
 	"strings"
-
-	"dylaris-core/handlers/nodeops"
 )
 
 // voiceConfigFiles are the config files of the two supported voice mods,
@@ -48,13 +46,13 @@ func detectVoiceMod(found []string) (mod, path string, err error) {
 	}
 }
 
-// findVoiceConfig reads every known voice config path of a sub-server and
+// FindVoiceConfig reads every known voice config path of a sub-server and
 // returns the one that exists. relPath is relative to the sub-server.
 func FindVoiceConfig(reg *nodegrpc.Registry, nodeID int, serverUUID, subServer string) (mod, relPath, content string, err error) {
 	contents := map[string]string{}
 	var found []string
 	for _, f := range voiceConfigFiles {
-		c, ok, err := nodeops.ReadNodeFileString(reg, nodeID, serverUUID, subServer+"/"+f.Path)
+		c, ok, err := ReadNodeFileString(reg, nodeID, serverUUID, subServer+"/"+f.Path)
 		if err != nil {
 			return "", "", "", fmt.Errorf("read %s: %w", f.Path, err)
 		}

@@ -1,4 +1,4 @@
-package handlers
+package reauth_test
 
 import (
 	"go/ast"

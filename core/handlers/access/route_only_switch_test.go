@@ -1,4 +1,4 @@
-package handlers
+package access_test
 
 import (
 	"testing"
@@ -23,8 +23,7 @@ func TestAKitIsItsOwnersWhileRouteOnlyIsOn(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s := &AppState{FeatureFlags: services.NewFeatureFlags(c.settings)}
-			if got := access.KitOwnedByOther(s.FeatureFlags, "tenant", "admin"); got != c.want {
+			if got := access.KitOwnedByOther(services.NewFeatureFlags(c.settings), "tenant", "admin"); got != c.want {
 				t.Errorf("kitOwnedByOther = %v, want %v", got, c.want)
 			}
 		})

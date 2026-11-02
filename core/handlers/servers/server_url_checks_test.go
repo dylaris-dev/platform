@@ -1,6 +1,9 @@
 package servers
 
-import "testing"
+import (
+	"dylaris-core/services/modcompat"
+	"testing"
+)
 
 // TestIsAllowedModrinthURL pins the SSRF guard on mod-download URLs
 // (server_mods.go): https-only, host must be in modrinthAllowedHosts.
@@ -55,8 +58,8 @@ func TestDefaultTargetDirForLoader(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := defaultTargetDirForLoader(c.loader); got != c.want {
-				t.Errorf("defaultTargetDirForLoader(%q) = %q, want %q", c.loader, got, c.want)
+			if got := modcompat.DefaultTargetDirForLoader(c.loader); got != c.want {
+				t.Errorf("modcompat.DefaultTargetDirForLoader(%q) = %q, want %q", c.loader, got, c.want)
 			}
 		})
 	}

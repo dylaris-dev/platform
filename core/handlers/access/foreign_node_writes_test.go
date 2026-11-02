@@ -1,4 +1,4 @@
-package handlers
+package access_test
 
 import (
 	"database/sql"
@@ -38,7 +38,7 @@ func TestNodeOwnedByOther(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := (&AppState{Store: c.st, FeatureFlags: services.NewFeatureFlags(c.st)}).NodeOwnedByOther(7, c.user); got != c.want {
+			if got := access.NodeOwnedByOther(c.st, services.NewFeatureFlags(c.st), 7, c.user); got != c.want {
 				t.Errorf("NodeOwnedByOther = %v, want %v", got, c.want)
 			}
 		})
@@ -50,12 +50,12 @@ func TestNodeOwnedByOther(t *testing.T) {
 // half: the two used to disagree for as long as the settings table did not answer.
 func TestTheOlderFencesFailClosedToo(t *testing.T) {
 	st := &handlertest.ForeignStore{Node: handlertest.OwnedNode(), SettingErr: errors.New("connection refused")}
-	state := &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}
+	flags := services.NewFeatureFlags(st)
 	r := handlertest.AdminRequest("GET", nil, "")
-	if !access.OwnedByOther(state.FeatureFlags, r, handlertest.OwnedNode()) {
+	if !access.OwnedByOther(flags, r, handlertest.OwnedNode()) {
 		t.Error("an unreadable flag switched the ownership fence off")
 	}
-	if access.CanManageNode(state.FeatureFlags, r, handlertest.OwnedNode()) {
+	if access.CanManageNode(flags, r, handlertest.OwnedNode()) {
 		t.Error("an unreadable flag let an admin manage a customer's machine")
 	}
 }

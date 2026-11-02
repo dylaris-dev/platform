@@ -27,6 +27,7 @@ import (
 	"dylaris-core/database"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/gateway"
@@ -42,6 +43,7 @@ import (
 	"dylaris-core/pkg/netguard"
 	"dylaris-core/services"
 	"dylaris-core/services/corestorage"
+	"dylaris-core/services/demo"
 	"dylaris-core/services/modcompat"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/services/storagereach"
@@ -338,8 +340,13 @@ func main() {
 
 	// Demo showcase read access flows through the resolver so the RequireCap
 	// chokepoint covers console/stats/overview reads on demo servers.
-	appState.Authz.SetDemoRead(appState.IsDemoServerID)
-	appState.Authz.SetForeignNode(appState.NodeOwnedByOther)
+	// Both read appState per call, as the AppState methods they replace did.
+	appState.Authz.SetDemoRead(func(serverID int) bool {
+		return demo.IsServerID(appState.Store, appState.StoreEnabled, serverID)
+	})
+	appState.Authz.SetForeignNode(func(nodeID int, userID string) bool {
+		return access.NodeOwnedByOther(appState.Store, appState.FeatureFlags, nodeID, userID)
+	})
 	appState.Authz.SetServerWriteAudit(audit.RecordServerWrite(appState.Store))
 
 	// Precompute the cluster-wide gRPC-TLS fingerprint once so handlers can hand it

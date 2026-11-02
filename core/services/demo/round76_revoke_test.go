@@ -1,4 +1,4 @@
-package handlers
+package demo_test
 
 import (
 	"database/sql"
@@ -37,9 +37,8 @@ func (f *demoListStore) UpdateSetting(k string, fn func(string) (string, error))
 // made the next server with that UUID readable by every signed-in account.
 func TestDeletedServersLeaveTheDemoList(t *testing.T) {
 	fs := &demoListStore{settings: map[string]string{demo.ServerUUIDsSetting: `["keep","gone"]`}}
-	s := &AppState{Store: fs, StoreEnabled: true}
-	demo.DropServers(s.Store, s.StoreEnabled, []string{"gone"})
-	if demo.IsServer(s.Store, s.StoreEnabled, "gone") || !demo.IsServer(s.Store, s.StoreEnabled, "keep") {
+	demo.DropServers(fs, true, []string{"gone"})
+	if demo.IsServer(fs, true, "gone") || !demo.IsServer(fs, true, "keep") {
 		t.Fatalf("demo list after delete: %s", fs.settings[demo.ServerUUIDsSetting])
 	}
 }

@@ -265,7 +265,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	}
 	targetDir := req.TargetDir
 	if targetDir == "" {
-		targetDir = defaultTargetDirForLoader(srv.InstallerType)
+		targetDir = modcompat.DefaultTargetDirForLoader(srv.InstallerType)
 	}
 	if targetDir != "mods" && targetDir != "plugins" {
 		httpx.SendJSONError(w, "targetDir must be 'mods' or 'plugins'", http.StatusBadRequest)
@@ -575,21 +575,5 @@ func uninstallTargetDir(m *models.ServerMod, installerType string) string {
 	if m.TargetDir == "mods" || m.TargetDir == "plugins" {
 		return m.TargetDir
 	}
-	return defaultTargetDirForLoader(installerType)
-}
-
-// DefaultTargetDirForLoader is defaultTargetDirForLoader for other handler packages.
-func DefaultTargetDirForLoader(loader string) string { return defaultTargetDirForLoader(loader) }
-
-// defaultTargetDirForLoader returns "mods" for fabric/forge/quilt/neoforge,
-// "plugins" for paper/spigot/bukkit/purpur. Unknown loader → "mods" (safer
-// default since dropping a jar in "mods" never breaks a paper server, but
-// dropping a fabric mod in "plugins" leaves it silently inactive).
-func defaultTargetDirForLoader(loader string) string {
-	switch strings.ToLower(loader) {
-	case "paper", "spigot", "bukkit", "purpur", "pufferfish", "velocity", "waterfall", "bungeecord":
-		return "plugins"
-	default:
-		return "mods"
-	}
+	return modcompat.DefaultTargetDirForLoader(installerType)
 }

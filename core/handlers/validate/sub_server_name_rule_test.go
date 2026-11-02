@@ -1,4 +1,4 @@
-package handlers
+package validate_test
 
 import (
 	"strings"

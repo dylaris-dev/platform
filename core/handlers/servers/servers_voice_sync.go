@@ -35,8 +35,8 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 		return true
 	}
 
-	mod, rel, content, err := FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, subServer)
-	if errors.Is(err, ErrVoiceModMissing) {
+	mod, rel, content, err := nodeops.FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, subServer)
+	if errors.Is(err, nodeops.ErrVoiceModMissing) {
 		// The sub-server about to run has no voice mod (removed, or a switch
 		// to one without it): the port would be held for nothing, forever.
 		// Released like a disable; turning voice on again takes a new one.

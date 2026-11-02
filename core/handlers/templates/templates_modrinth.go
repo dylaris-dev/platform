@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"dylaris-core/handlers/httpx"
-	"dylaris-core/handlers/servers"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 
 	"github.com/gorilla/mux"
 )
@@ -116,7 +116,7 @@ func (h *TemplatesHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "This Modrinth file is not a plain jar", http.StatusBadRequest)
 		return
 	}
-	rel, ok := services.TemplateRelPath(servers.DefaultTargetDirForLoader(software) + "/" + name)
+	rel, ok := services.TemplateRelPath(modcompat.DefaultTargetDirForLoader(software) + "/" + name)
 	if !ok || strings.Count(rel, "/") != 1 {
 		httpx.SendJSONError(w, "This Modrinth file name cannot be used as a template path", http.StatusBadRequest)
 		return

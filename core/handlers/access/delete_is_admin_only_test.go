@@ -1,4 +1,4 @@
-package handlers
+package access_test
 
 import (
 	"testing"

@@ -1,4 +1,4 @@
-package handlers
+package guard_test
 
 import (
 	"strings"
@@ -14,14 +14,14 @@ func TestEveryRewritingHandlerTakesTheBusyGuard(t *testing.T) {
 	// The guard is matched by name with any package qualifier, so it may
 	// move to another package without this list changing.
 	for _, c := range []struct{ file, header, guard string }{
-		{"servers/servers_lifecycle.go", "SetupServer", "RefuseIfServerBusy("},
-		{"servers/servers_lifecycle.go", "ReinstallServer", "RefuseIfServerBusy("},
-		{"servers/servers_lifecycle.go", "SwitchSubServer", "RefuseIfServerBusy("},
-		{"servers/servers_lifecycle.go", "DeleteSubServer", "RefuseIfServerBusy("},
-		{"servers/servers_lifecycle.go", "queueMigration", "RefuseIfServerBusy("},
-		{"servers/servers_lifecycle.go", "DeleteServer", "RefuseIfMoving("},
-		{"servers/server_version_update.go", "CopySubServer", "RefuseIfServerBusy("},
-		{"backup/backup.go", "RestoreRun", "RefuseIfServerBusy("},
+		{"../servers/servers_lifecycle.go", "SetupServer", "RefuseIfServerBusy("},
+		{"../servers/servers_lifecycle.go", "ReinstallServer", "RefuseIfServerBusy("},
+		{"../servers/servers_lifecycle.go", "SwitchSubServer", "RefuseIfServerBusy("},
+		{"../servers/servers_lifecycle.go", "DeleteSubServer", "RefuseIfServerBusy("},
+		{"../servers/servers_lifecycle.go", "queueMigration", "RefuseIfServerBusy("},
+		{"../servers/servers_lifecycle.go", "DeleteServer", "RefuseIfMoving("},
+		{"../servers/server_version_update.go", "CopySubServer", "RefuseIfServerBusy("},
+		{"../backup/backup.go", "RestoreRun", "RefuseIfServerBusy("},
 	} {
 		body := handlertest.FuncBody(t, c.file, c.header)
 		guard := strings.Index(body, c.guard)
@@ -40,11 +40,11 @@ func TestEveryRewritingHandlerTakesTheBusyGuard(t *testing.T) {
 // after the node finishes. Pinned when the guards moved to handlers/guard.
 func TestSuspensionIsAnsweredBeforeTheBusyGuard(t *testing.T) {
 	for _, c := range []struct{ file, fn string }{
-		{"servers/servers_lifecycle.go", "SetupServer"},
-		{"servers/servers_lifecycle.go", "ReinstallServer"},
-		{"servers/servers_lifecycle.go", "SwitchSubServer"},
-		{"servers/server_version_update.go", "CopySubServer"},
-		{"backup/backup.go", "RestoreRun"},
+		{"../servers/servers_lifecycle.go", "SetupServer"},
+		{"../servers/servers_lifecycle.go", "ReinstallServer"},
+		{"../servers/servers_lifecycle.go", "SwitchSubServer"},
+		{"../servers/server_version_update.go", "CopySubServer"},
+		{"../backup/backup.go", "RestoreRun"},
 	} {
 		body := handlertest.FuncBody(t, c.file, c.fn)
 		sus, busy := strings.Index(body, "RefuseIfSuspended("), strings.Index(body, "RefuseIfServerBusy(")
@@ -57,13 +57,13 @@ func TestSuspensionIsAnsweredBeforeTheBusyGuard(t *testing.T) {
 // Failure paths that used to leave state behind, named per site.
 func TestFailedDispatchesLeaveNothingBehind(t *testing.T) {
 	for _, c := range []struct{ file, fn, want, why string }{
-		{"servers/servers_lifecycle.go", "CreateServer", "h.d.Store.DeleteServer(int(serverID))", "a create the node never got left a row with no disk limit"},
-		{"servers/servers_lifecycle.go", "SetupServer", "services.RestoreSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)", "a setup that was never sent stayed 'installing'"},
-		{"servers/servers_lifecycle.go", "SetupServer", "services.RememberSetupBefore(r.Context(), h.d.Redis, srv, subName)", "a failed install could not be put back"},
-		{"servers/servers_lifecycle.go", "ReinstallServer", "undo()", "a reinstall that was never sent stayed 'installing'"},
-		{"servers/servers_lifecycle.go", "CreateServer", `configPayload["storagePath"] = sp`, "the wizard's storage path was dropped"},
-		{"guard/sub_server_limit.go", "RefuseIfSubServerLimitReached", "if subServerDirExists(entries, target) {", "the cap counted the sub-server being re-installed"},
-		{"servers/servers_lifecycle.go", "ReinstallServer", `h.d.Store.UpdateServerDesiredState(srv.ID, "online")`, "a reinstall of a stopped server would stay down now that the node asks the intent"},
+		{"../servers/servers_lifecycle.go", "CreateServer", "h.d.Store.DeleteServer(int(serverID))", "a create the node never got left a row with no disk limit"},
+		{"../servers/servers_lifecycle.go", "SetupServer", "services.RestoreSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)", "a setup that was never sent stayed 'installing'"},
+		{"../servers/servers_lifecycle.go", "SetupServer", "services.RememberSetupBefore(r.Context(), h.d.Redis, srv, subName)", "a failed install could not be put back"},
+		{"../servers/servers_lifecycle.go", "ReinstallServer", "undo()", "a reinstall that was never sent stayed 'installing'"},
+		{"../servers/servers_lifecycle.go", "CreateServer", `configPayload["storagePath"] = sp`, "the wizard's storage path was dropped"},
+		{"../guard/sub_server_limit.go", "RefuseIfSubServerLimitReached", "if subServerDirExists(entries, target) {", "the cap counted the sub-server being re-installed"},
+		{"../servers/servers_lifecycle.go", "ReinstallServer", `h.d.Store.UpdateServerDesiredState(srv.ID, "online")`, "a reinstall of a stopped server would stay down now that the node asks the intent"},
 	} {
 		if !strings.Contains(handlertest.FuncBody(t, c.file, c.fn), c.want) {
 			t.Errorf("%s: %s", c.fn, c.why)
@@ -74,7 +74,7 @@ func TestFailedDispatchesLeaveNothingBehind(t *testing.T) {
 // A Beam ticket minted while the server moves carries no write: the source copy
 // is deleted after cutover, so a write landing meanwhile was lost.
 func TestABeamTicketIsReadOnlyWhileTheServerMoves(t *testing.T) {
-	body := handlertest.FuncBody(t, "beam/beam.go", "GetBeamTicket")
+	body := handlertest.FuncBody(t, "../beam/beam.go", "GetBeamTicket")
 	if !strings.Contains(body, `if server.Status == "migrating" {`) || !strings.Contains(body, "filePerms.Write, filePerms.Delete = false, false") {
 		t.Error("a ticket for a moving server still writes")
 	}
@@ -85,7 +85,7 @@ func TestABeamTicketIsReadOnlyWhileTheServerMoves(t *testing.T) {
 // Setup and reinstall publish it before they send the command.
 func TestInstallsPublishTheIntentBeforeTheCommand(t *testing.T) {
 	for fn, action := range map[string]string{"SetupServer": `"setup"`, "ReinstallServer": `"reinstall"`} {
-		body := handlertest.FuncBody(t, "servers/servers_lifecycle.go", fn)
+		body := handlertest.FuncBody(t, "../servers/servers_lifecycle.go", fn)
 		pub := strings.Index(body, `services.PublishDesiredState(r.Context(), h.d.Redis, srv.UUID, "online")`)
 		send := strings.Index(body, "SendCommand(context.Background(), node.Token, "+action)
 		if pub < 0 || send < 0 || pub > send {

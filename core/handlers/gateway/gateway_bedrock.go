@@ -10,9 +10,9 @@ import (
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
-	"dylaris-core/handlers/servers"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 
 	"github.com/gorilla/mux"
 )
@@ -114,7 +114,7 @@ func (h *GatewayHandler) GetServerBedrock(w http.ResponseWriter, r *http.Request
 	v := bedrockView{
 		Active: services.BedrockActive(r.Context(), h.d.FeatureFlags), Allowed: h.bedrockAllowed(r),
 		Available: refusal == "", Refusal: refusal, Address: addr,
-		Loader: servers.DefaultTargetDirForLoader(srv.InstallerType), Routes: []bedrockRouteView{},
+		Loader: modcompat.DefaultTargetDirForLoader(srv.InstallerType), Routes: []bedrockRouteView{},
 	}
 	for _, e := range rows {
 		v.Enabled = v.Enabled || e.Bedrock

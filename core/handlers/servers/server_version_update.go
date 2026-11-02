@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers/guard"
+	"dylaris-core/services/modcompat"
 
 	"dylaris-pkg/validate"
 	pb "dylaris-proto/node"
@@ -411,7 +412,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	for _, m := range mods {
 		remove = append(remove, m.FileName)
 	}
-	targetDir := defaultTargetDirForLoader(loader)
+	targetDir := modcompat.DefaultTargetDirForLoader(loader)
 
 	if !javaImageAllowed(h.d.Store, req.JavaImage) {
 		httpx.SendJSONError(w, javaImageRefused, http.StatusBadRequest)

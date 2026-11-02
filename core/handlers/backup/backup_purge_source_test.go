@@ -1,4 +1,4 @@
-package handlers
+package backup_test
 
 import (
 	"os"

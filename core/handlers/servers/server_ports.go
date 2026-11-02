@@ -268,12 +268,12 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 			httpx.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
 			return
 		}
-		voiceMod, voiceRel, voiceContent, err = FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
+		voiceMod, voiceRel, voiceContent, err = nodeops.FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 		switch {
-		case errors.Is(err, ErrVoiceModMissing):
+		case errors.Is(err, nodeops.ErrVoiceModMissing):
 			httpx.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
 			return
-		case errors.Is(err, ErrVoiceModAmbiguous):
+		case errors.Is(err, nodeops.ErrVoiceModAmbiguous):
 			httpx.SendJSONErrorCode(w, "Both Simple Voice Chat and Plasmo Voice are installed. Remove one, then try again.", "voice_mod_ambiguous", http.StatusConflict)
 			return
 		case err != nil:
@@ -480,12 +480,12 @@ func (h *ServerHandler) changePortPreset(w http.ResponseWriter, r *http.Request,
 		httpx.SendJSONErrorCode(w, "Install the server first.", "no_sub_server", http.StatusConflict)
 		return false
 	}
-	mod, rel, content, err := FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	mod, rel, content, err := nodeops.FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	switch {
-	case errors.Is(err, ErrVoiceModMissing):
+	case errors.Is(err, nodeops.ErrVoiceModMissing):
 		httpx.SendJSONErrorCode(w, "Install Simple Voice Chat or Plasmo Voice and start the server once.", "voice_mod_missing", http.StatusConflict)
 		return false
-	case errors.Is(err, ErrVoiceModAmbiguous):
+	case errors.Is(err, nodeops.ErrVoiceModAmbiguous):
 		httpx.SendJSONErrorCode(w, "Both Simple Voice Chat and Plasmo Voice are installed. Remove one, then try again.", "voice_mod_ambiguous", http.StatusConflict)
 		return false
 	case err != nil:
@@ -565,7 +565,7 @@ func (h *ServerHandler) writeBackVoice(srv *models.Server) {
 	if srv.ActiveSubServer == "" {
 		return
 	}
-	mod, rel, content, err := FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
+	mod, rel, content, err := nodeops.FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer)
 	if err != nil {
 		log.Printf("ports: server %d: voice config write-back skipped: %v", srv.ID, err)
 		return
@@ -625,7 +625,7 @@ func (h *ServerHandler) syncPortsToStart(srv *models.Server, subName string) {
 		if p.Preset == "" || subName == "" || address == "" {
 			continue
 		}
-		mod, rel, content, err := FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, subName)
+		mod, rel, content, err := nodeops.FindVoiceConfig(h.d.GRPCRegistry, srv.NodeID, srv.UUID, subName)
 		if err != nil {
 			log.Printf("ports: server %d: voice config: %v", srv.ID, err)
 			continue
