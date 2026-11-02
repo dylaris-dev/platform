@@ -19,6 +19,7 @@ import { linkState } from '@/lib/linkState';
 import LinkBadge from '@/components/infra/LinkBadge';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import ProxyProtocolSwitch from '@/components/ProxyProtocolSwitch';
+import RealIpGuide from '@/components/RealIpGuide';
 import LinkRouteVoiceSwitch from '@/components/infra/LinkRouteVoiceSwitch';
 import LinkRouteBedrock from '@/components/infra/LinkRouteBedrock';
 import { useAppData } from '@/lib/AppDataContext';
@@ -484,6 +485,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             {/* List routes */}
             <div className="space-y-2">
                 <h2 className="font-medium text-(--base-09)">Your routes</h2>
+                {featureFlags.proxyProtocol && routes.length > 0 && <RealIpGuide routeOnly />}
                 {loading ? (
                     <div className="card p-5 text-sm text-(--base-06)">Loading…</div>
                 ) : routes.length === 0 ? (

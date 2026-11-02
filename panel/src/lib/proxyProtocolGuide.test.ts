@@ -3,6 +3,7 @@ import {
     proxyModeStatus,
     proxyProtocolGuide, proxyProtocolEnableMessage,
     PROXY_PROTOCOL_LINK, PROXY_PROTOCOL_RESTART, PROXY_PROTOCOL_SECURITY,
+    HAPROXYCOMPAT, PROXY_PROTOCOL_SUPPORT, NG_PROXY_SUPPORT, PROXY_SETUP_ROWS,
 } from './proxyProtocolGuide';
 
 describe('proxyProtocolGuide', () => {
@@ -12,9 +13,10 @@ describe('proxyProtocolGuide', () => {
         { software: 'velocity', want: { supported: true, file: 'velocity.toml', where: 'in the [advanced] section', line: 'haproxy-protocol = true' } },
         { software: 'bungeecord', want: { supported: true, file: 'config.yml', where: 'on the listener', line: 'proxy_protocol: true' } },
         { software: 'waterfall', want: { supported: true, file: 'config.yml', where: 'on the listener', line: 'proxy_protocol: true' } },
-        { software: 'fabric', want: { supported: true, mods: ['Proxy Protocol Support', 'HAProxyCompat'] } },
-        { software: 'neoforge', want: { supported: true, mods: ['HAProxyCompat', 'ProperProxyProtocol'] } },
-        { software: 'forge', want: { supported: true, mods: ['ProperProxyProtocol', 'NG Proxy Support (Minecraft 1.20.1)'] } },
+        { software: 'folia', want: { supported: true, file: 'config/paper-global.yml', where: 'in the proxies: section', line: 'proxy-protocol: true' } },
+        { software: 'fabric', want: { supported: true, mods: [HAPROXYCOMPAT, PROXY_PROTOCOL_SUPPORT] } },
+        { software: 'neoforge', want: { supported: true, mods: [HAPROXYCOMPAT] } },
+        { software: 'forge', want: { supported: true, mods: [NG_PROXY_SUPPORT] } },
         { software: 'vanilla', want: { supported: false } },
         { software: 'Paper', want: { supported: true, file: 'config/paper-global.yml', where: 'in the proxies: section', line: 'proxy-protocol: true' } },
         { software: 'upload', want: { supported: true } },
@@ -49,7 +51,9 @@ describe('proxyProtocolEnableMessage', () => {
         });
     }
     it('lists the mods for a modded server', () => {
-        expect(proxyProtocolEnableMessage('fabric', false)).toContain('Proxy Protocol Support, HAProxyCompat');
+        expect(proxyProtocolEnableMessage('fabric', false)).toContain('HAProxyCompat, Proxy Protocol Support');
+        expect(proxyProtocolEnableMessage('forge', false)).toContain('NG Proxy Support (Minecraft 1.20.1)');
+        expect(proxyProtocolEnableMessage('fabric', false)).toContain('trusted proxies');
     });
     it('says the link needs an update when traffic goes through one', () => {
         expect(proxyProtocolEnableMessage('paper', true)).toContain(PROXY_PROTOCOL_LINK);
@@ -73,3 +77,16 @@ describe('proxyModeStatus', () => {
     });
 });
 
+
+describe('PROXY_SETUP_ROWS', () => {
+    // Every software with a guide has a setup row, so the panel can mark it,
+    // and every row with mods links to Modrinth only.
+    it('covers every installer the guide knows', () => {
+        for (const sw of ['paper', 'purpur', 'folia', 'velocity', 'bungeecord', 'waterfall', 'fabric', 'neoforge', 'forge', 'vanilla']) {
+            expect(PROXY_SETUP_ROWS.some(r => r.software.includes(sw))).toBe(true);
+        }
+        for (const m of PROXY_SETUP_ROWS.flatMap(r => r.mods ?? [])) {
+            expect(m.url).toMatch(/^https:\/\/modrinth\.com\/mod\/[a-z-]+$/);
+        }
+    });
+});

@@ -576,6 +576,10 @@ func NodeReleaseOlderThan(ctx context.Context, st *AppState, nodeToken, since st
 	return nodeReleaseOlderThan(ctx, st, nodeToken, since)
 }
 
+func NodeReleaseAtLeastKnown(ctx context.Context, st *AppState, nodeToken, since string) bool {
+	return nodeReleaseAtLeastKnown(ctx, st, nodeToken, since)
+}
+
 func NormalizeCaps(caps []string) []string { return normalizeCaps(caps) }
 
 func OperatorOverride(r *http.Request) bool { return operatorOverride(r) }

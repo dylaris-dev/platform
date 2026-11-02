@@ -1,1 +1,4 @@
 *.sh text eol=lf
+# Go source stays LF on every checkout: tests read source files and match
+# multi-line snippets, and core.autocrlf=true on Windows would turn them CRLF.
+*.go text eol=lf

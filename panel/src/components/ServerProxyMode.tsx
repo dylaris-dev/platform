@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import Segmented from '@/components/ui/Segmented';
+import RealIpGuide from '@/components/RealIpGuide';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { getServerProxyMode, setServerProxyMode, type ProxyMode, type ServerProxyState } from '@/lib/api';
 import { proxyProtocolEnableMessage, proxyModeStatus, PROXY_PROTOCOL_DISABLE } from '@/lib/proxyProtocolGuide';
@@ -90,6 +91,7 @@ export default function ServerProxyMode({ serverId, software, viaLink, canWrite,
                 </span>
             </div>
             {error && <div className="alert alert-error text-xs mt-2" role="alert">{error}</div>}
+            <RealIpGuide software={software} />
         </div>
     );
 }

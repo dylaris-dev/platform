@@ -33,7 +33,8 @@ const proxyTemplateRefused = "This node runs an older release that cannot instal
 // reported as a success. Must match that release's version.
 const templateModrinthSince = "2026.11.01.4"
 
-const templateModrinthRefused = "This template contains Modrinth mods/plugins; update the node to install it."
+const templateModrinthRefused = "This template contains Modrinth mods/plugins, which need node release " + templateModrinthSince +
+	" or newer. This node runs an older release or does not report one; update the node, then try again."
 
 // templatePushLockTTL only bounds a lock a crashed Core leaves behind; a large
 // template pushed to a slow node can take minutes, far past the 30 s cooldown.
@@ -102,10 +103,11 @@ func (h *ServerHandler) resolveTemplateInstall(w http.ResponseWriter, r *http.Re
 }
 
 // templateModrinth loads the template's Modrinth references and refuses the
-// install when the node cannot download them. Only a KNOWN older version is
-// refused, like every other release gate here: a node with no heartbeat or no
-// version passes, and if it is in fact old it installs without the jars.
-// Answers the request and returns ok=false when it is refused.
+// install when the node cannot download them. Stricter than the other release
+// gates: an old node does not fail here, it installs WITHOUT the jars and
+// reports success, so a node that reports no version is refused too unless
+// this Core is a dev build (see handlers.NodeReleaseAtLeastKnown). Answers the
+// request and returns ok=false when it is refused.
 func (h *ServerHandler) templateModrinth(w http.ResponseWriter, r *http.Request, nodeID int, t *models.Template) ([]models.TemplateModrinthRef, []services.TemplateModrinthFile, bool) {
 	refs, err := h.state.Store.ListTemplateModrinth(t.ID)
 	if err != nil {
@@ -119,7 +121,7 @@ func (h *ServerHandler) templateModrinth(w http.ResponseWriter, r *http.Request,
 		return nil, nil, false
 	}
 	if len(files) > 0 {
-		if node, err := h.state.Store.GetNodeByID(nodeID); err == nil && handlers.NodeReleaseOlderThan(r.Context(), h.state, node.Token, templateModrinthSince) {
+		if node, err := h.state.Store.GetNodeByID(nodeID); err == nil && handlers.NodeReleaseAtLeastKnown(r.Context(), h.state, node.Token, templateModrinthSince) {
 			handlers.SendJSONError(w, templateModrinthRefused, http.StatusConflict)
 			return nil, nil, false
 		}

@@ -816,6 +816,28 @@ Traefik streams responses by default (no extra SSE buffering tweak needed).
 
 Minecraft routing goes through the separate **Gateway** stack, not this proxy: the Edge is a pure Minecraft-TCP router and maps public `25565` to the player ingress. It no longer serves HTTP/HTTPS (the 80/443 web data-plane was removed in WS7). See the `dylaris-gateway` repo.
 
+### Real player IP (PROXY protocol)
+
+Behind the gateway every player reaches a server from the gateway's address, so IP bans (`/ban-ip`), alt detection by IP, anti-bot/anti-VPN plugins, per-IP limits and IP logs see one address for everyone. **Real player IP** (Routes settings of a server; feature flag `proxyProtocol`) makes the link put a PROXY protocol v2 (TCP) header with the player's address in front of the connection. A server that does not expect the header reads it as garbage and drops the player, hence three modes:
+
+- **Auto** (default): the node's status ping finds out whether the server refuses a connection without the header; only then does Core switch forwarding on (within a minute). Nobody is locked out.
+- **Always**: every connection carries the header. Not set up = nobody can join.
+- **Off**: never.
+
+Route-only routes have an on/off switch instead. New Paper, Velocity, BungeeCord and Waterfall servers that get a gateway address at setup are configured by the node automatically.
+
+| Software | Setting |
+|---|---|
+| Paper, Purpur, Folia | `config/paper-global.yml`, `proxies:` section: `proxy-protocol: true` |
+| Velocity | `velocity.toml`, `[advanced]`: `haproxy-protocol = true` |
+| BungeeCord, Waterfall | `config.yml`, on the listener: `proxy_protocol: true` |
+| Fabric | mod [HAProxyCompat](https://modrinth.com/mod/haproxycompat) or [Proxy Protocol Support](https://modrinth.com/mod/proxy-protocol-support) |
+| NeoForge 1.21+ | mod [HAProxyCompat](https://modrinth.com/mod/haproxycompat) |
+| Forge 1.20.1 | mod [NG Proxy Support](https://modrinth.com/mod/ng-haproxy-support) |
+| Vanilla, Spigot | not supported; switch to Paper or Fabric |
+
+The mods trust the header only from listed addresses (default `127.0.0.1`). The link dials the server container over the node's Docker network (`dylaris_net`; on Swarm an overlay), so the source is the link task's address on that network, which changes on every link update; on route-only it is `127.0.0.1` or the link machine's LAN address. Trust the private ranges `127.0.0.1/32, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16` (HAProxyCompat `trusted_proxies`, the others `proxyServerIPs`). For Auto the server must also refuse plain connections (HAProxyCompat `require_proxy_protocol`/`requireProxyProtocol` true; the others: keep those ranges out of `directAccessIPs`). Behind Velocity/BungeeCord only the front proxy enables it; backends use modern forwarding and must not enable `proxy-protocol`. Only safe while the server port is reachable through the gateway alone (gateway-routed containers publish no host port).
+
 ## Scalability
 
 DYLARIS scales on three axes:
@@ -963,7 +985,7 @@ A template is a saved server or proxy (Paper, Fabric, Forge, NeoForge, Vanilla, 
 **Turning it on (operators).** Settings > Features > Templates sets the audience: off, admins or everyone. The module then appears in the top navigation. Further settings:
 
 - Templates per user (default 10) and size per template (default 512 MB). Both follow the platform limit convention: empty is the default, `unlimited` is no cap, `0` is none.
-- Content policy: `no-jars` (default) keeps every `.jar` out of templates, `uploads` allows any file within the size limit. Under `no-jars` a jar in `mods/` or `plugins/` that Modrinth has byte for byte (sha1 and sha512) is kept as a reference instead of a copy; other jars are skipped on upload and capture, and the panel lists what was left out and why. "Add from Modrinth" adds a reference directly. Installing downloads references on the node from `cdn.modrinth.com` (sha512 verified) and needs a node from 2026.11.01.4.
+- Content policy: `no-jars` (default) keeps every `.jar` out of templates, `uploads` allows any file within the size limit. Under `no-jars` a jar in `mods/` or `plugins/` that Modrinth has byte for byte (sha1 and sha512) is kept as a reference instead of a copy; other jars are skipped on upload and capture, and the panel lists what was left out and why. "Add from Modrinth" adds a reference directly. Installing downloads references on the node from `cdn.modrinth.com` (sha512 verified) and needs a node from 2026.11.01.4; a node that reports no release is refused too (409), unless Core itself is an unstamped dev build, because an older node would install the template without the jars and report success.
 - Platform templates visible to users (default off), and "creating needs the `templates.create` role right" (default off).
 - Storage: Core storage, or a storage connection.
 - Size per template for admins (default 2048 MB), separate from the user cap (512 MB).

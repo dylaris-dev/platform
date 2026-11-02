@@ -298,27 +298,37 @@ func TestTemplateInstallSendsModrinthFiles(t *testing.T) {
 	}
 }
 
-// Only a node KNOWN to be older is refused, and only for a template with
-// references.
+// A template with references is refused on a node known to be older, and on a
+// node that reports no version unless Core itself is an unstamped dev build
+// (the local testbed, where the node is unstamped too). An old node would
+// otherwise install the template without the jars and report success.
 func TestTemplateWithModrinthRefusedOnAnOlderNode(t *testing.T) {
 	cases := []struct {
-		name    string
-		refs    bool
-		version string // "" = no heartbeat
-		want    int
+		name      string
+		refs      bool
+		core      string // this Core's stamp; "" = dev build
+		heartbeat string // "" = no heartbeat (offline node)
+		want      int
 	}{
-		{"refs on an older node", true, "2026.11.01.3", http.StatusConflict},
-		{"refs on an unknown node", true, "", http.StatusOK},
-		{"no refs on an older node", false, "2026.11.01.3", http.StatusOK},
+		{"refs on an older node", true, "2026.11.02", `{"releaseVersion":"2026.11.01.3"}`, http.StatusConflict},
+		{"refs on a node at the release", true, "2026.11.02", `{"releaseVersion":"` + templateModrinthSince + `"}`, http.StatusOK},
+		{"refs on an unstamped node, stamped core", true, "2026.11.02", `{}`, http.StatusConflict},
+		{"refs on an unparseable node version, stamped core", true, "2026.11.02", `{"releaseVersion":"dev"}`, http.StatusConflict},
+		{"refs on an unstamped node, dev core", true, "", `{}`, http.StatusOK},
+		{"refs on an older node, dev core", true, "", `{"releaseVersion":"2026.11.01.3"}`, http.StatusConflict},
+		{"refs, no heartbeat", true, "2026.11.02", "", http.StatusOK},
+		{"no refs on an unstamped node, stamped core", false, "2026.11.02", `{}`, http.StatusOK},
+		{"no refs on an older node", false, "2026.11.02", `{"releaseVersion":"2026.11.01.3"}`, http.StatusOK},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			h, fs, pushes := newTemplateInstallTest(t, &models.Template{ID: 5, OwnerID: "u1", Kind: "server", Visibility: "personal", Software: "paper", SoftwareVersion: "1.21.4"}, "all")
+			h.state.ReleaseVersion = c.core
 			if c.refs {
 				fs.refs = []models.TemplateModrinthRef{templateRef("plugins/LuckPerms.jar", "lp")}
 			}
-			if c.version != "" {
-				h.state.Redis.Set(context.Background(), "dylaris:discovery:node-lib", `{"releaseVersion":"`+c.version+`"}`, 0)
+			if c.heartbeat != "" {
+				h.state.Redis.Set(context.Background(), "dylaris:discovery:node-lib", c.heartbeat, 0)
 			}
 			rec := httptest.NewRecorder()
 			h.SetupServer(rec, installRequest("setup", templateSetup(5), false))

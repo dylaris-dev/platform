@@ -12,18 +12,32 @@ export interface ProxyProtocolGuide {
     /** The exact text to put there, shown on its own so it copies cleanly. */
     line?: string;
     /** Install ONE of these instead of editing a file. */
-    mods?: string[];
+    mods?: ProxyMod[];
 }
+
+/** A server-side mod that reads the PROXY header, with where to get it. */
+export interface ProxyMod {
+    name: string;
+    url: string;
+    /** Which Minecraft or loader versions it covers, when that is narrower than the loader. */
+    note?: string;
+}
+
+// Sources: each mod's Modrinth page, read 2026-11-02.
+export const HAPROXYCOMPAT: ProxyMod = { name: 'HAProxyCompat', url: 'https://modrinth.com/mod/haproxycompat' };
+export const PROXY_PROTOCOL_SUPPORT: ProxyMod = { name: 'Proxy Protocol Support', url: 'https://modrinth.com/mod/proxy-protocol-support' };
+export const NG_PROXY_SUPPORT: ProxyMod = { name: 'NG Proxy Support', url: 'https://modrinth.com/mod/ng-haproxy-support', note: 'Minecraft 1.20.1' };
 
 const GUIDES: Record<string, ProxyProtocolGuide> = {
     paper: { supported: true, file: 'config/paper-global.yml', where: 'in the proxies: section', line: 'proxy-protocol: true' },
     purpur: { supported: true, file: 'config/paper-global.yml', where: 'in the proxies: section', line: 'proxy-protocol: true' },
+    folia: { supported: true, file: 'config/paper-global.yml', where: 'in the proxies: section', line: 'proxy-protocol: true' },
     velocity: { supported: true, file: 'velocity.toml', where: 'in the [advanced] section', line: 'haproxy-protocol = true' },
     bungeecord: { supported: true, file: 'config.yml', where: 'on the listener', line: 'proxy_protocol: true' },
     waterfall: { supported: true, file: 'config.yml', where: 'on the listener', line: 'proxy_protocol: true' },
-    fabric: { supported: true, mods: ['Proxy Protocol Support', 'HAProxyCompat'] },
-    neoforge: { supported: true, mods: ['HAProxyCompat', 'ProperProxyProtocol'] },
-    forge: { supported: true, mods: ['ProperProxyProtocol', 'NG Proxy Support (Minecraft 1.20.1)'] },
+    fabric: { supported: true, mods: [HAPROXYCOMPAT, PROXY_PROTOCOL_SUPPORT] },
+    neoforge: { supported: true, mods: [HAPROXYCOMPAT] },
+    forge: { supported: true, mods: [NG_PROXY_SUPPORT] },
     vanilla: { supported: false },
 };
 
@@ -46,13 +60,17 @@ export const PROXY_PROTOCOL_DISABLE =
 export const PROXY_PROTOCOL_VANILLA =
     'Vanilla servers cannot read the PROXY header, so the real player IP cannot be passed to them. Switch to Paper, Fabric or another supported software to use this.';
 
+export function modLabel(m: ProxyMod): string {
+    return m.note ? `${m.name} (${m.note})` : m.name;
+}
+
 function configStep(g: ProxyProtocolGuide): string {
     if (g.file && g.line) {
         // The value is its own paragraph with no punctuation after it: owners
         // copy it straight into the file, and a trailing period breaks YAML/TOML.
         return `In ${g.file}, ${g.where}, set:\n\n${g.line}`;
     }
-    if (g.mods?.length) return `Install one of these mods: ${g.mods.join(', ')}.`;
+    if (g.mods?.length) return `Install one of these mods: ${g.mods.map(modLabel).join(', ')}. Add the gateway's address range to its trusted proxies.`;
     return 'Configure the server to expect a PROXY protocol v2 header first. Without that, nobody can join once this is on.';
 }
 
@@ -74,3 +92,34 @@ export function proxyModeStatus(mode: 'auto' | 'on' | 'off', active: boolean, de
     return 'Not forwarding yet: the server has not been checked. Start it; it is picked up within a minute of starting.';
 }
 
+
+/**
+ * The private ranges the gateway's connection arrives from. On a DYLARIS node
+ * the link reaches the server over the node's Docker network, and its address
+ * there changes whenever the link is updated, so a single IP would go stale;
+ * on your own machine it is 127.0.0.1 or a LAN address. Docker draws every
+ * network from these ranges. Trusting them is safe only because the server's
+ * port is reachable through the gateway alone (no published host port).
+ */
+export const PROXY_TRUSTED_RANGES = ['127.0.0.1/32', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+
+/** One row of the per-software setup list in the panel and the docs. */
+export interface ProxySetupRow {
+    label: string;
+    /** installerType values this row is about, so the panel can mark the server's own. */
+    software: string[];
+    text: string;
+    file?: string;
+    line?: string;
+    mods?: ProxyMod[];
+}
+
+export const PROXY_SETUP_ROWS: ProxySetupRow[] = [
+    { label: 'Paper, Purpur, Folia', software: ['paper', 'purpur', 'folia'], text: 'Built in.', file: 'config/paper-global.yml, in the proxies: section', line: 'proxy-protocol: true' },
+    { label: 'Velocity', software: ['velocity'], text: 'Built in.', file: 'velocity.toml, in the [advanced] section', line: 'haproxy-protocol = true' },
+    { label: 'BungeeCord, Waterfall', software: ['bungeecord', 'waterfall'], text: 'Built in.', file: 'config.yml, on the listener', line: 'proxy_protocol: true' },
+    { label: 'Fabric', software: ['fabric'], text: 'Install one mod and trust the gateway in its config.', mods: [HAPROXYCOMPAT, PROXY_PROTOCOL_SUPPORT] },
+    { label: 'NeoForge 1.21 and newer', software: ['neoforge'], text: 'Install the mod and trust the gateway in its config.', mods: [HAPROXYCOMPAT] },
+    { label: 'Forge 1.20.1', software: ['forge'], text: 'Install the mod and trust the gateway in its config.', mods: [NG_PROXY_SUPPORT] },
+    { label: 'Vanilla, Spigot', software: ['vanilla', 'spigot'], text: 'Cannot read the header. Switch to Paper (plugins) or Fabric (mods) to get real player IPs.' },
+];

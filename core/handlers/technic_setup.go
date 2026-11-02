@@ -36,3 +36,33 @@ func nodeReleaseOlderThan(ctx context.Context, st *AppState, nodeToken, since st
 	}
 	return have.Compare(want) < 0
 }
+
+// nodeReleaseAtLeastKnown is the stricter gate for a feature an old node gets
+// wrong SILENTLY rather than with an error: it reports whether the node must be
+// refused because it is older than since OR does not report a version at all.
+//
+// An unknown version passes only while this Core is itself unstamped. That is a
+// local or self-built Core, whose nodes are built the same way (the testbed
+// builds both from docker-compose.local.yml with no RELEASE_VERSION), so the
+// feature stays testable where it is developed. A stamped Core is a released
+// image, and a node next to it that reports nothing predates the stamp or was
+// built by hand - neither can be assumed to have the feature. A node with no
+// heartbeat at all is not refused here: it is offline, and the dispatch to it
+// fails on its own.
+func nodeReleaseAtLeastKnown(ctx context.Context, st *AppState, nodeToken, since string) (refuse bool) {
+	if nodeReleaseOlderThan(ctx, st, nodeToken, since) {
+		return true
+	}
+	if st == nil || st.Redis == nil {
+		return false
+	}
+	if core, err := release.ParseVersion(st.ReleaseVersion); err != nil || core.IsZero() {
+		return false
+	}
+	hb := services.LoadHeartbeat(ctx, st.Redis, nodeToken)
+	if hb == nil {
+		return false
+	}
+	have, err := release.ParseVersion(hb.ReleaseVersion)
+	return err != nil || have.IsZero()
+}

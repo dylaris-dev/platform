@@ -377,14 +377,12 @@ jobs:
 
       # This is an npm workspaces monorepo (root package.json declares
       # "workspaces": ["packages/*", "panel"]) and the lockfile lives at the
-      # repo root, not panel/package-lock.json. `npm ci` is intentionally not
-      # used here: the lockfile was generated on Windows and misses the
-      # platform-specific optional native binaries (lightningcss/swc) for other
-      # OS/libc targets, so it does a plain
-      # `npm install --workspaces --include-workspace-root` instead. The root
-      # Dockerfile's panel-build stage says the same and does the same.
+      # repo root, not panel/package-lock.json. `npm ci` installs exactly that
+      # lockfile, like the root Dockerfile's panel-build stage, so the tests run
+      # against the tree the image ships. The lockfile records every platform's
+      # optional native package (lightningcss, swc, oxide).
       - name: Install dependencies
-        run: npm install --workspaces --include-workspace-root
+        run: npm ci --workspaces --include-workspace-root
 
       - name: Run vitest
         working-directory: panel

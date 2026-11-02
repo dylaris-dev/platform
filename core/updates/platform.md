@@ -13,14 +13,19 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Features
 - Backup schedules can run every n hours at fixed times (every 6h from 12:00 = 00:00, 06:00, 12:00, 18:00), daily
   or weekly at a time, or on a cron expression, in the job's own time zone, with the next runs previewed. `core` `panel`
+- Real player IP explains what it is for and what the server's own software needs: the setting or mod (linked),
+  the address ranges a mod must trust, and Auto versus Always. `panel`
 
 ### Breaking
 - Nothing.
 
 ### Security
-- Nothing.
+- The Core and node images now build the panel from the committed lockfile (`npm ci`) on base images pinned by
+  digest, so a rebuild of the same commit gets the same dependencies.
 
 ### Fixes
+- A template with Modrinth mods or plugins is refused on a node that reports no release, unless Core itself is an
+  unstamped dev build. Such a node used to install the template without the jars and report success. `core`
 - A scheduled task at a time the clocks skip (02:30 on the spring change) no longer misses that day, and one at a
   time that repeats in autumn no longer runs twice. `core`
 - Saving a backup job shows why Core refused it instead of a generic failure. `panel`

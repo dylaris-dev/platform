@@ -11,17 +11,23 @@
 # stage that reads it.
 ARG PANEL_STAGE=panel-none
 
+# Base images are pinned by digest (tag kept for the reader), so a rebuild of
+# the same commit gets the same bytes. Bump a digest deliberately with
+# `docker buildx imagetools inspect <image:tag>`.
+
 # --- Panel Stage: the static export Core serves ---
 # The panel is a static export: the same files for every platform, so it is
 # built once on the build machine rather than under emulation per platform.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS panel-build
+FROM --platform=$BUILDPLATFORM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS panel-build
 WORKDIR /app
 
-# Same workspace dance as the old panel/Dockerfile, and the lockfile is
-# deliberately not copied: it was generated on Windows and misses the
-# linux-musl native binaries for lightningcss/swc, so `npm install` has to
-# resolve the platform-specific optional deps fresh.
-COPY package.json ./
+# `npm ci` from the committed root lockfile, so the image is built from the
+# exact tree that was tested. The lockfile used to miss the linux-musl binaries
+# of lightningcss/swc and was left out for that; it now records every
+# platform's optional package (measured 2026-11-02: `npm ci` plus `npm run
+# build` succeed in this image, and `npm ci` on glibc). If a dependency change
+# drops them again, regenerate the lockfile rather than going back to install.
+COPY package.json package-lock.json ./
 COPY packages/ ./packages/
 COPY panel/package.json ./panel/
 # npm is PINNED, and it is the one pin this stage cannot do without.
@@ -32,12 +38,9 @@ COPY panel/package.json ./panel/
 # change on our side. Measured rather than guessed: the same tree, resolved in
 # the same minute, fails on 10.9.8 and succeeds on 11.19.1.
 #
-# Because the lockfile above is deliberately not copied, every build resolves
-# fresh, so anything upstream can break this layer at any time and the failure
-# arrives attached to whichever commit happened to be pushed. An exact version
-# rather than npm@11: a floating npm is precisely what just did this.
+# An exact version rather than npm@11: a floating npm is precisely what did this.
 RUN npm i -g npm@11.19.1
-RUN npm install --workspaces --include-workspace-root
+RUN npm ci --workspaces --include-workspace-root
 
 COPY panel/ ./panel/
 # Next treats a nested lockfile as a second workspace root and picks the wrong one.
@@ -52,7 +55,7 @@ RUN npm run build
 RUN mkdir -p /panel && cp -a out/. /panel/
 
 # --- Panel Stage (none): an empty directory for every non-Core build ---
-FROM --platform=$BUILDPLATFORM alpine:latest AS panel-none
+FROM --platform=$BUILDPLATFORM alpine:latest@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS panel-none
 RUN mkdir -p /panel
 
 # The indirection that makes the choice a build arg.
@@ -61,7 +64,7 @@ FROM ${PANEL_STAGE} AS panel
 # --- Build Stage ---
 # On the build machine's own platform: Go cross-compiles, so the node's arm64
 # image needs no emulated compiler. TARGETARCH is set by buildx per platform.
-FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine@sha256:a2012b4a1d1f9f7e9f44e0d39b805a901e856b1dd80b4e6ee4338db547050308 AS builder
 ARG TARGETARCH
 
 # Install git (important for go mod download with some libs)
@@ -110,7 +113,7 @@ RUN echo "Building from: ${ENTRY_PATH} (tags: ${BUILD_TAGS:-none}, release: ${RE
     chmod +x /app/binary
 
 # --- Run Stage ---
-FROM alpine:latest
+FROM alpine:latest@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 WORKDIR /app
 COPY --from=builder /app/binary .
 

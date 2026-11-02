@@ -98,19 +98,20 @@ func customDomainProveFirst(txtName, txtValue string) string {
 		"then create the route again. DNS changes can take a few minutes to show.", txtName, txtValue)
 }
 
-// armCustomDomainClaim starts the four-hour grant and returns the instruction
-// the customer needs. Call it AFTER the route exists, never before.
+// armCustomDomainClaim runs AFTER the route exists and returns the ownership
+// instruction for a domain that is still unproven. Since customDomainGate runs
+// before every create and refuses a non-admin route on a domain without a
+// verified claim or a live TXT match, a route that got this far is on a proven
+// domain (or was made by an admin), so today this returns "" at the
+// ClaimVerified check below. The arming path is kept as a safety net, not as a
+// grant: there is no longer a window in which an unproven custom domain serves
+// players.
 //
-// Arming used to happen inside the gate, which runs before the port check, the
-// per-account route cap and the create itself. So a request refused with
-// "Route limit reached" still left a live claim on the customer's own domain,
-// with a deadline they were not told about and no route to justify it. The
-// verifier fails a pending claim on its deadline whether or not any route
-// exists, and MaxClaimAttempts failures block the domain for that account - so
-// refused attempts could permanently block a domain the customer had never
-// managed to route at all.
+// It must never move back before the create: a claim armed for a request that
+// is then refused (route cap, port check) would carry a deadline the customer
+// was never told about, and MaxClaimAttempts failed claims block the domain for
+// that account.
 //
-// Idempotent for a domain already proven (returns no notice), and
 // StartCustomDomainClaim refuses to re-arm a permanent block, so a retry
 // cannot launder one.
 func (h *GatewayHandler) armCustomDomainClaim(r *http.Request, userID, domain string, isCustom bool) string {

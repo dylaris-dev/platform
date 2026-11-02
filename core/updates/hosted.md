@@ -16,6 +16,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Features
 - Backups can run every few hours at fixed times, daily or weekly at a time you pick, or on a cron expression, in
   your time zone. The editor shows the next runs before you save; existing schedules keep running as they did.
+- Real player IP in a server's Routes settings now explains why it matters (IP bans and IP logs see one address
+  without it) and what your server software needs: the setting to change or the mod to install, linked.
 
 ### Breaking
 - Nothing.
