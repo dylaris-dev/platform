@@ -13,6 +13,14 @@ func TestValidKeyCap(t *testing.T) {
 		{"users.read", false},  // PANEL: rejected
 		{"nope.nope", false},   // unknown: rejected
 		{"", false},            // empty: rejected
+		// Caps that hand out access never ride on a key (G-9).
+		{"apikeys.write", false},
+		{"apikeys.read", false},
+		{"roles.write", false},
+		{"members.write", false},
+		{"members.delete", false},
+		{"members.read", true},
+		{"library.read", false}, // removed feature
 	}
 	for _, tt := range tests {
 		if got := ValidKeyCap(tt.capID); got != tt.want {
@@ -55,5 +63,23 @@ func TestResolveAPIKey_PanelAndUnknownNeverGranted(t *testing.T) {
 	}
 	if res.HasCap("power.start") {
 		t.Error("HasCap(power.start) = true, want false (cap not in the key's list, deny-by-default)")
+	}
+}
+
+// A key minted before a capability was put out of reach must not keep it.
+func TestResolveAPIKey_StripsCapsNoKeyMayHold(t *testing.T) {
+	res := ResolveAPIKey([]string{"apikeys.write", "roles.write", "members.write", "console.send"}, true)
+	for _, c := range []string{"apikeys.write", "roles.write", "members.write"} {
+		if res.HasCap(c) {
+			t.Errorf("resolved key holds %s", c)
+		}
+	}
+	if !res.HasCap("console.send") {
+		t.Error("console.send lost")
+	}
+	for _, c := range KeyCaps() {
+		if !ValidKeyCap(c) {
+			t.Errorf("KeyCaps lists %s, which ValidKeyCap refuses", c)
+		}
 	}
 }

@@ -3,7 +3,8 @@
 // Every event type Core writes to server_audit_events is mapped here: the
 // named ones (core/handlers/server_audit.go, players.go, services/memory_guard.go,
 // services/sftp_audit.go) and the capability ids RequireCap and API-key
-// requests record verbatim (authz/catalog.go, server scope, non-read verbs).
+// requests record verbatim (authz/catalog.go, server scope; reads only from
+// API keys, bundled per 10 minutes with a count).
 // An unknown type still reads as words, never as JSON, so a server-side
 // addition shows up before the panel learns its wording.
 
@@ -11,6 +12,8 @@ export interface AuditSentenceEvent {
     eventType: string;
     actorUserId?: string;
     actorName?: string;
+    // Set when an API key acted; actorName is then the key's owner.
+    actorApiKeyName?: string;
     targetName?: string;
     metadata?: Record<string, unknown>;
 }
@@ -49,6 +52,8 @@ export function formatMB(mb: number): string {
 // Who did it. Memory guard rows carry no actor because Core acted on its own;
 // SFTP/Beam rows name the login even when it matches no panel user.
 export function auditActor(ev: AuditSentenceEvent): string {
+    // The "key:" prefix keeps a key named like a person from reading as one.
+    if (ev.actorApiKeyName) return keyActorLabel(ev.actorApiKeyName, ev.actorName || (ev.actorUserId ? 'a removed user' : ''));
     if (ev.actorName) return ev.actorName;
     const m = ev.metadata ?? {};
     if (ev.eventType === 'memory_guard') return 'Memory guard';
@@ -56,6 +61,24 @@ export function auditActor(ev: AuditSentenceEvent): string {
         return str(m, 'username');
     }
     return ev.actorUserId ? 'A removed user' : 'System';
+}
+
+export function keyActorLabel(name: string, owner?: string): string {
+    return owner ? `key: ${name} (owner ${owner})` : `key: ${name}`;
+}
+
+// Reads by an API key, recorded one entry per 10 minutes with a count.
+export const READ_PREDICATES: Record<string, string> = {
+    'overview.read': 'read the server details',
+    'console.read': 'read the console history',
+    'stats.read': 'read the statistics',
+    'backups.read': 'listed the backup jobs',
+};
+
+function readPredicate(base: string, m: Meta): string {
+    const n = num(m, 'count');
+    const mins = num(m, 'windowMinutes') ?? 10;
+    return n && n > 1 ? `${base} (${n} times in ${mins} minutes)` : base;
 }
 
 function target(ev: AuditSentenceEvent, m: Meta): string {
@@ -251,10 +274,25 @@ function predicate(ev: AuditSentenceEvent): string | null {
             return filePredicate(m, 'SFTP');
         case 'beam.changes':
             return filePredicate(m, 'Beam');
+        case 'api_key_denied': {
+            const what = [str(m, 'method'), str(m, 'path')].filter(Boolean).join(' ');
+            const status = num(m, 'status');
+            return `was refused${what ? ` on ${what}` : ''}${status ? ` (${status})` : ''}`;
+        }
+        case 'api_request':
+            return withStatus('made an API request', m);
     }
+    const read = own(READ_PREDICATES, ev.eventType);
+    if (read) return readPredicate(read, m);
     const cap = own(CAPABILITY_PREDICATES, ev.eventType);
-    if (cap) return str(m, 'apiKey') ? `${cap} with an API key` : cap;
+    if (cap) return withStatus(str(m, 'apiKey') ? `${cap} with an API key` : cap, m);
     return null;
+}
+
+// A key's write that did not succeed still shows, with how it ended.
+function withStatus(base: string, m: Meta): string {
+    const status = num(m, 'status');
+    return status !== null && (status < 200 || status >= 300) ? `${base}, which failed (${status})` : base;
 }
 
 // "power_action" -> "Power action", "files.write" -> "Files write".

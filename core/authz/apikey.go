@@ -1,12 +1,39 @@
 package authz
 
+import "strings"
+
+// neverOnAKey are capabilities no key may hold even though their scope would
+// allow it: managing keys, roles or members hands out access, and a credential
+// that can mint or widen credentials outlives every check made when it was
+// minted. library.* belongs to a removed feature.
+var neverOnAKey = []string{"apikeys.", "roles.", "members.write", "members.delete", "library."}
+
 // ValidKeyCap reports whether capID may be carried by an API key: it must be a
-// known catalog capability whose scope is SERVER or OWNER. PANEL caps (staff
-// operations) and unknown ids are rejected - a key is an owner-scoped automation
-// credential, not a staff principal.
+// known catalog capability whose scope is SERVER or OWNER, and not one that
+// manages access. PANEL caps (staff operations) and unknown ids are rejected -
+// a key is an owner-scoped automation credential, not a staff principal.
 func ValidKeyCap(capID string) bool {
 	c, ok := Get(capID)
-	return ok && (c.Scope == ScopeServer || c.Scope == ScopeOwner)
+	if !ok || (c.Scope != ScopeServer && c.Scope != ScopeOwner) {
+		return false
+	}
+	for _, p := range neverOnAKey {
+		if strings.HasPrefix(capID, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// KeyCaps lists every capability a key may carry, in catalog order.
+func KeyCaps() []string {
+	var out []string
+	for _, c := range All() {
+		if ValidKeyCap(c.ID) {
+			out = append(out, c.ID)
+		}
+	}
+	return out
 }
 
 // ResolveAPIKey builds a Resolution representing an API key's authority: the
@@ -32,7 +59,9 @@ func ResolveAPIKey(perms []string, serverAllowed bool) *Resolution {
 	}
 	for _, capID := range perms {
 		c, ok := Get(capID)
-		if !ok {
+		// Checked at use as well as at mint: a key minted before a capability
+		// was put out of reach must not keep it.
+		if !ok || !ValidKeyCap(capID) {
 			continue
 		}
 		switch c.Scope {

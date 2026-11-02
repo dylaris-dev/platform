@@ -31,7 +31,7 @@ func TestAPIKeysCreate_OperatorGateBlocksNonAdmins(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	h.Create(rec, createAPIKeyReq("u1", "alice", false, map[string]interface{}{
-		"name": "k", "permissions": []string{"library.read"},
+		"name": "k", "permissions": []string{"modpack.read"},
 	}))
 
 	if rec.Code != http.StatusForbidden {
@@ -56,7 +56,7 @@ func TestAPIKeysCreate_OperatorGateDoesNotBlockAdmins(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	h.Create(rec, createAPIKeyReq("admin-1", "root", true, map[string]interface{}{
-		"name": "k", "permissions": []string{"library.read"}, "password": "admin-pw",
+		"name": "k", "permissions": []string{"modpack.read"}, "password": "admin-pw",
 	}))
 
 	if rec.Code == http.StatusForbidden {
@@ -70,28 +70,28 @@ func TestAPIKeysCreate_OperatorGateDoesNotBlockAdmins(t *testing.T) {
 func TestAPIKeysCreate_OperatorCapWhitelist(t *testing.T) {
 	t.Run("a capability outside the whitelist is refused", func(t *testing.T) {
 		fs := &apiKeysAuthFakeStore{}
-		h := gateHandler(t, "true", "library.read", fs)
+		h := gateHandler(t, "true", "modpack.read", fs)
 		rec := httptest.NewRecorder()
 
 		h.Create(rec, createAPIKeyReq("u1", "alice", false, map[string]interface{}{
-			"name": "k", "permissions": []string{"library.write"},
+			"name": "k", "permissions": []string{"modpack.write"},
 		}))
 
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
 		}
-		if !strings.Contains(rec.Body.String(), "library.write") {
+		if !strings.Contains(rec.Body.String(), "modpack.write") {
 			t.Errorf("body = %s, want it to name the refused capability", rec.Body.String())
 		}
 	})
 
 	t.Run("a capability inside the whitelist passes the gate", func(t *testing.T) {
 		fs := &apiKeysAuthFakeStore{}
-		h := gateHandler(t, "true", "library.read,library.write", fs)
+		h := gateHandler(t, "true", "modpack.read,modpack.write", fs)
 		rec := httptest.NewRecorder()
 
 		h.Create(rec, createAPIKeyReq("u1", "alice", false, map[string]interface{}{
-			"name": "k", "permissions": []string{"library.write"},
+			"name": "k", "permissions": []string{"modpack.write"},
 		}))
 
 		if rec.Code == http.StatusForbidden {
@@ -110,7 +110,7 @@ func TestAPIKeysCreate_OperatorCapWhitelist(t *testing.T) {
 		rec := httptest.NewRecorder()
 
 		h.Create(rec, createAPIKeyReq("u1", "alice", false, map[string]interface{}{
-			"name": "k", "permissions": []string{"library.write"},
+			"name": "k", "permissions": []string{"modpack.write"},
 		}))
 
 		if rec.Code == http.StatusForbidden {
@@ -128,7 +128,7 @@ func TestAPIKeyMiddleware_OperatorGateAppliesAtUse(t *testing.T) {
 			keysByHash: map[string]*models.APIKey{
 				HashAPIKey("mintedearlier"): {
 					ID: 1, RatePerMin: 1000, UserID: "owner-1",
-					Scope: models.APIKeyScope{Permissions: []string{"library.read"}},
+					Scope: models.APIKeyScope{Permissions: []string{"modpack.read"}},
 				},
 			},
 			users: map[string]*models.User{
@@ -137,7 +137,7 @@ func TestAPIKeyMiddleware_OperatorGateAppliesAtUse(t *testing.T) {
 		}
 	}
 	call := func(h *APIKeysHandler) *httptest.ResponseRecorder {
-		wrapped := h.APIKeyOwnerRoute("library.read")(sentinelInner)
+		wrapped := h.APIKeyOwnerRoute("modpack.read")(sentinelInner)
 		r := httptest.NewRequest("GET", "/api/external/library", nil)
 		r.Header.Set("Authorization", "Bearer mintedearlier")
 		rec := httptest.NewRecorder()

@@ -88,14 +88,17 @@ type Region struct {
 // AuditEventIdentity is a single append-only audit row for identity-domain
 // events (registration, login, role change, deletion, settings change, etc.).
 type AuditEventIdentity struct {
-	ID           int64                  `json:"id"`
-	EventType    string                 `json:"eventType"`
-	ActorUserID  *string                `json:"actorUserId,omitempty"`
-	TargetUserID *string                `json:"targetUserId,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
-	IPAddress    string                 `json:"ipAddress,omitempty"`
-	UserAgent    string                 `json:"userAgent,omitempty"`
-	CreatedAt    time.Time              `json:"createdAt"`
+	ID           int64   `json:"id"`
+	EventType    string  `json:"eventType"`
+	ActorUserID  *string `json:"actorUserId,omitempty"`
+	TargetUserID *string `json:"targetUserId,omitempty"`
+	// Set when an API key acted: ActorUserID is then the key's owner.
+	ActorAPIKeyID   *int                   `json:"actorApiKeyId,omitempty"`
+	ActorAPIKeyName string                 `json:"actorApiKeyName,omitempty"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	IPAddress       string                 `json:"ipAddress,omitempty"`
+	UserAgent       string                 `json:"userAgent,omitempty"`
+	CreatedAt       time.Time              `json:"createdAt"`
 }
 
 // ── Tickets ───────────────────────────────────────────────────────────
@@ -249,18 +252,22 @@ type CannedResponse struct {
 // (invite/remove/permission change) so admins can answer "who was kicked off
 // my server" without parsing metadata.
 type ServerAuditEvent struct {
-	ID           int64                  `json:"id"`
-	ServerID     int                    `json:"serverId"`
-	Region       string                 `json:"region"`
-	EventType    string                 `json:"eventType"`
-	ActorUserID  *string                `json:"actorUserId,omitempty"`
-	ActorName    string                 `json:"actorName,omitempty"`
-	TargetUserID *string                `json:"targetUserId,omitempty"`
-	TargetName   string                 `json:"targetName,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
-	IPAddress    string                 `json:"ipAddress,omitempty"`
-	UserAgent    string                 `json:"userAgent,omitempty"`
-	CreatedAt    time.Time              `json:"createdAt"`
+	ID           int64   `json:"id"`
+	ServerID     int     `json:"serverId"`
+	Region       string  `json:"region"`
+	EventType    string  `json:"eventType"`
+	ActorUserID  *string `json:"actorUserId,omitempty"`
+	ActorName    string  `json:"actorName,omitempty"`
+	TargetUserID *string `json:"targetUserId,omitempty"`
+	TargetName   string  `json:"targetName,omitempty"`
+	// Set when an API key acted: ActorUserID is then the key's owner, and the
+	// name is the key's name when the row was written.
+	ActorAPIKeyID   *int                   `json:"actorApiKeyId,omitempty"`
+	ActorAPIKeyName string                 `json:"actorApiKeyName,omitempty"`
+	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	IPAddress       string                 `json:"ipAddress,omitempty"`
+	UserAgent       string                 `json:"userAgent,omitempty"`
+	CreatedAt       time.Time              `json:"createdAt"`
 }
 
 // ServerAuditState is what GET /servers/{id}/audit/status returns — drives

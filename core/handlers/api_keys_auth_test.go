@@ -68,6 +68,14 @@ type apiKeysAuthFakeStore struct {
 	// way the real store answers that branch with the whole fleet rather than a
 	// per-owner query. Kept separate so a test can tell the two apart.
 	fleetServers []models.Server
+
+	// listedKeys is what ListAPIKeysByUser answers (duplicate-name check).
+	listedKeys []models.APIKey
+	// Audit trail the key requests leave (api_key_audit_test.go).
+	auditOn        map[int]bool
+	serverAudits   []models.ServerAuditEvent
+	identityAudits []models.AuditEventIdentity
+	cancelledFor   []string
 }
 
 func (f *apiKeysAuthFakeStore) GetSetting(key string) (string, error) {

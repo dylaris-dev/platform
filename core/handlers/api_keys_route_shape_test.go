@@ -24,14 +24,14 @@ import (
 func TestAPIKeyOwnerRoute_HonorsAnOwnerCapability(t *testing.T) {
 	key := &models.APIKey{
 		ID: 1, RatePerMin: 1000, UserID: "owner-1",
-		Scope: models.APIKeyScope{Permissions: []string{"library.read"}},
+		Scope: models.APIKeyScope{Permissions: []string{"modpack.read"}},
 	}
 	fs := &apiKeysAuthFakeStore{
 		keysByHash: map[string]*models.APIKey{HashAPIKey("ownercap"): key},
 		users:      map[string]*models.User{"owner-1": {ID: "owner-1", Username: "owner"}},
 	}
 	h := newAPIKeysAuthHandler(fs)
-	wrapped := h.APIKeyOwnerRoute("library.read")(sentinelInner)
+	wrapped := h.APIKeyOwnerRoute("modpack.read")(sentinelInner)
 
 	r := httptest.NewRequest("GET", "/api/external/library", nil)
 	r.Header.Set("Authorization", "Bearer ownercap")
@@ -54,14 +54,14 @@ func TestAPIKeyOwnerRoute_HonorsAnOwnerCapability(t *testing.T) {
 func TestAPIKeyOwnerRoute_RechecksThatTheOwnerStillExists(t *testing.T) {
 	key := &models.APIKey{
 		ID: 2, RatePerMin: 1000, UserID: "ghost",
-		Scope: models.APIKeyScope{Permissions: []string{"library.read"}},
+		Scope: models.APIKeyScope{Permissions: []string{"modpack.read"}},
 	}
 	fs := &apiKeysAuthFakeStore{
 		keysByHash: map[string]*models.APIKey{HashAPIKey("ghostkey"): key},
 		users:      map[string]*models.User{}, // the owner's account is gone
 	}
 	h := newAPIKeysAuthHandler(fs)
-	wrapped := h.APIKeyOwnerRoute("library.read")(sentinelInner)
+	wrapped := h.APIKeyOwnerRoute("modpack.read")(sentinelInner)
 
 	r := httptest.NewRequest("GET", "/api/external/library", nil)
 	r.Header.Set("Authorization", "Bearer ghostkey")
@@ -88,7 +88,7 @@ func TestAPIKeyOwnerRoute_RechecksThatTheOwnerStillExists(t *testing.T) {
 func TestAPIKeyMiddleware_InjectsTheKeyForHandlerScoping(t *testing.T) {
 	key := &models.APIKey{
 		ID: 3, RatePerMin: 1000, UserID: "owner-7",
-		Scope: models.APIKeyScope{Permissions: []string{"library.read"}, Servers: []string{"srv-a", "srv-b"}},
+		Scope: models.APIKeyScope{Permissions: []string{"modpack.read"}, Servers: []string{"srv-a", "srv-b"}},
 	}
 	fs := &apiKeysAuthFakeStore{
 		keysByHash: map[string]*models.APIKey{HashAPIKey("ctxkey"): key},
@@ -103,7 +103,7 @@ func TestAPIKeyMiddleware_InjectsTheKeyForHandlerScoping(t *testing.T) {
 		gotServers = APIKeyAllowedServers(r)
 		w.WriteHeader(http.StatusOK)
 	}
-	wrapped := h.APIKeyOwnerRoute("library.read")(inner)
+	wrapped := h.APIKeyOwnerRoute("modpack.read")(inner)
 
 	r := httptest.NewRequest("GET", "/api/external/library", nil)
 	r.Header.Set("Authorization", "Bearer ctxkey")

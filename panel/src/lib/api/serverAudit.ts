@@ -7,6 +7,9 @@ export interface ServerAuditEvent {
     eventType: string;
     actorUserId?: string;
     actorName?: string;
+    // Set when an API key acted; actorName is then the key's owner.
+    actorApiKeyId?: number;
+    actorApiKeyName?: string;
     targetUserId?: string;
     targetName?: string;
     metadata?: Record<string, unknown>;

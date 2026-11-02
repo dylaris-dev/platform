@@ -999,15 +999,24 @@ func (s *PostgresStore) InsertServerAudit(ev *models.ServerAuditEvent) error {
 	if region == "" {
 		region = "default"
 	}
-	_, err := s.db.Exec(
+	return s.db.QueryRow(
 		`INSERT INTO server_audit_events
 			(server_id, region, event_type, actor_user_id, target_user_id,
-			 metadata, ip_address, user_agent)
+			 metadata, ip_address, user_agent, actor_api_key_id, actor_api_key_name)
 		 VALUES ($1, $2, $3, $4, $5,
-		         NULLIF($6, '')::jsonb, NULLIF($7, '')::inet, NULLIF($8, ''))`,
+		         NULLIF($6, '')::jsonb, NULLIF($7, '')::inet, NULLIF($8, ''), $9, NULLIF($10, ''))
+		 RETURNING id`,
 		ev.ServerID, region, ev.EventType, ev.ActorUserID, ev.TargetUserID,
-		string(metaJSON), ev.IPAddress, ev.UserAgent,
-	)
+		string(metaJSON), ev.IPAddress, ev.UserAgent, ev.ActorAPIKeyID, ev.ActorAPIKeyName,
+	).Scan(&ev.ID)
+}
+
+// SetServerAuditCount sets metadata.count on one row: a bundled entry (reads
+// by an API key) counts the requests it stands for.
+func (s *PostgresStore) SetServerAuditCount(id, count int64) error {
+	_, err := s.db.Exec(`UPDATE server_audit_events
+		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{count}', to_jsonb($2::bigint))
+		WHERE id = $1`, id, count)
 	return err
 }
 
@@ -1034,7 +1043,8 @@ func (s *PostgresStore) ListServerAudit(serverID int, eventType string, limit, o
 	q := `SELECT e.id, e.server_id, e.region, e.event_type,
 	             e.actor_user_id, COALESCE(au.username, ''),
 	             e.target_user_id, COALESCE(tu.username, ''),
-	             e.metadata, e.ip_address::text, e.user_agent, e.created_at
+	             e.metadata, e.ip_address::text, e.user_agent, e.created_at,
+	             e.actor_api_key_id, COALESCE(e.actor_api_key_name, '')
 	      FROM server_audit_events e
 	      LEFT JOIN users au ON e.actor_user_id = au.id
 	      LEFT JOIN users tu ON e.target_user_id = tu.id
@@ -1058,11 +1068,17 @@ func (s *PostgresStore) ListServerAudit(serverID int, eventType string, limit, o
 		var actor, target sql.NullString
 		var metaJSON []byte
 		var ipAddr, ua sql.NullString
+		var keyID sql.NullInt64
 		if err := rows.Scan(&ev.ID, &ev.ServerID, &ev.Region, &ev.EventType,
 			&actor, &ev.ActorName,
 			&target, &ev.TargetName,
-			&metaJSON, &ipAddr, &ua, &ev.CreatedAt); err != nil {
+			&metaJSON, &ipAddr, &ua, &ev.CreatedAt,
+			&keyID, &ev.ActorAPIKeyName); err != nil {
 			continue
+		}
+		if keyID.Valid {
+			k := int(keyID.Int64)
+			ev.ActorAPIKeyID = &k
 		}
 		if actor.Valid {
 			n := actor.String

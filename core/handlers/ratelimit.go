@@ -151,6 +151,18 @@ func (l *IPRateLimiter) allow(ip string, perMin int) bool {
 	return true
 }
 
+// exhausted reports whether ip has used up perMin in its current window,
+// without charging the window.
+func (l *IPRateLimiter) exhausted(ip string, perMin int) bool {
+	if perMin <= 0 {
+		perMin = 60
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b, ok := l.buckets[ip]
+	return ok && time.Now().Before(b.reset) && b.count >= perMin
+}
+
 // Limit wraps a public handler with a fixed per-minute budget keyed on the
 // client IP, answering 429 + Retry-After when the budget is exhausted.
 //

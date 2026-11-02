@@ -632,7 +632,9 @@ type Store interface {
 	EnsureRegion(id string) error
 
 	// --- Identity Audit Log (append-only) ---
+	// InsertAuditIdentity sets ev.ID.
 	InsertAuditIdentity(ev *models.AuditEventIdentity) error
+	SetAuditIdentityCount(id, count int64) error
 	ListAuditIdentity(targetUserID *string, eventType string, limit int) ([]models.AuditEventIdentity, error)
 
 	// --- Settings audit trail ---
@@ -787,7 +789,9 @@ type Store interface {
 	DumpTicketTable(table string) ([]map[string]interface{}, error)
 
 	// --- Server audit ---
+	// InsertServerAudit sets ev.ID.
 	InsertServerAudit(ev *models.ServerAuditEvent) error
+	SetServerAuditCount(id, count int64) error
 	ListServerAudit(serverID int, eventType string, limit, offset int) ([]models.ServerAuditEvent, int, error)
 	SetServerAuditEnabled(serverID int, enabled bool) error
 	SetServerAuditForceOn(serverID int, force bool) error

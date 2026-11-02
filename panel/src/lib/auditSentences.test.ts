@@ -116,6 +116,26 @@ describe('auditActor', () => {
         expect(auditActor({ eventType: 'sftp.changes', metadata: { username: 'x.y' } })).toBe('x.y');
         expect(auditActor({ eventType: 'memory_guard' })).toBe('Memory guard');
     });
+    it('names an API key with its owner, prefixed so it never reads as a person', () => {
+        expect(auditActor({ eventType: 'console.send', actorName: 'BartisD', actorApiKeyName: 'deploy-bot' }))
+            .toBe('key: deploy-bot (owner BartisD)');
+        expect(auditActor({ eventType: 'console.send', actorUserId: 'gone', actorApiKeyName: 'bartis' }))
+            .toBe('key: bartis (owner a removed user)');
+    });
+});
+
+describe('API key entries', () => {
+    const key = (eventType: string, metadata: Record<string, unknown>) =>
+        auditSentence({ eventType, actorName: 'BartisD', actorApiKeyName: 'deploy-bot', metadata });
+    it.each([
+        ['bundled read', 'console.read', { count: 12, windowMinutes: 10 }, 'key: deploy-bot (owner BartisD) read the console history (12 times in 10 minutes)'],
+        ['single read', 'stats.read', { count: 1 }, 'key: deploy-bot (owner BartisD) read the statistics'],
+        ['denied', 'api_key_denied', { method: 'POST', path: '/api/external/servers/u/power', status: 403 }, 'key: deploy-bot (owner BartisD) was refused on POST /api/external/servers/u/power (403)'],
+        ['write', 'console.send', { status: 200 }, 'key: deploy-bot (owner BartisD) sent a console command'],
+        ['failed write', 'console.send', { status: 409 }, 'key: deploy-bot (owner BartisD) sent a console command, which failed (409)'],
+    ])('%s', (_n, type, meta, want) => {
+        expect(key(type, meta)).toBe(want);
+    });
 });
 
 describe('auditStep', () => {

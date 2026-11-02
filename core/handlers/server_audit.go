@@ -38,6 +38,8 @@ const (
 	ServerAuditEventForceOnChanged         = "audit_force_on_changed"
 	ServerAuditEventLoaderMetadataDeclared = "loader_metadata_declared"
 	ServerAuditEventTimezoneChanged        = "timezone_changed"
+	// A request with a valid API key that was refused (401/403).
+	ServerAuditEventAPIKeyDenied = "api_key_denied"
 )
 
 // LogServerAudit appends one audit row when the server has audit enabled
@@ -47,25 +49,48 @@ const (
 // Set targetUserID to "" when the event isn't about a specific user (most
 // events). Use it for member-related events so admins can answer "who was
 // removed from my server" without parsing metadata.
+//
+// A request made with an API key is always recorded, with the key's id and
+// name beside the owner: a key counts like an invited member, so its first
+// action on a server with auditing off switches auditing on for good. Every
+// producer gets that here, without knowing about keys.
 func LogServerAudit(state *AppState, r *http.Request, serverID int, eventType string, actorID, targetID string, metadata map[string]interface{}) {
+	var key *models.APIKey
+	if r != nil {
+		key = APIKeyFromContext(r)
+	}
+	logServerAuditAs(state, r, key, serverID, eventType, actorID, targetID, metadata)
+}
+
+// logServerAuditAs is LogServerAudit with the acting key named explicitly (nil
+// for none). It returns the new row's id, or 0 when nothing was written.
+func logServerAuditAs(state *AppState, r *http.Request, key *models.APIKey, serverID int, eventType string, actorID, targetID string, metadata map[string]interface{}) int64 {
 	if state == nil || state.Store == nil || serverID <= 0 {
-		return
+		return 0
 	}
 	// Gate on the effective audit state. Avoids inserting rows that nobody
 	// can ever see — they'd just consume disk + retention sweep cycles.
 	enabled, force, _, err := state.Store.GetServerAuditState(serverID)
 	if err != nil {
 		log.Printf("server-audit: state lookup for %d: %v", serverID, err)
-		return
+		return 0
 	}
 	if !enabled && !force {
-		return
+		if key == nil {
+			return 0
+		}
+		EnableServerAuditIfNeeded(state, serverID)
 	}
 
 	ev := &models.ServerAuditEvent{
 		ServerID:  serverID,
 		EventType: eventType,
 		Metadata:  metadata,
+	}
+	if key != nil {
+		id := key.ID
+		ev.ActorAPIKeyID = &id
+		ev.ActorAPIKeyName = key.Name
 	}
 	if actorID != "" {
 		a := actorID
@@ -81,7 +106,7 @@ func LogServerAudit(state *AppState, r *http.Request, serverID int, eventType st
 	}
 	if err := state.Store.InsertServerAudit(ev); err != nil {
 		log.Printf("server-audit: insert %s for %d: %v", eventType, serverID, err)
-		return
+		return 0
 	}
 	// This handler has said what happened, in its own words and with its own
 	// metadata. RecordServerWrite then stays quiet rather than adding a second,
@@ -89,6 +114,7 @@ func LogServerAudit(state *AppState, r *http.Request, serverID int, eventType st
 	if r != nil {
 		authz.MarkAudited(r.Context())
 	}
+	return ev.ID
 }
 
 // RecordServerWrite is the audit recorder RequireCap calls after an authorized

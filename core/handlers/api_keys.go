@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
@@ -44,6 +46,8 @@ type createAPIKeyRequest struct {
 	Servers     []string `json:"servers"`
 	Permissions []string `json:"permissions"`
 	RatePerMin  int      `json:"ratePerMin,omitempty"`
+	// 0 or absent = never expires.
+	ExpiresInDays int `json:"expiresInDays,omitempty"`
 	// A key outlives the session that minted it: it authenticates by its own
 	// hash, so the password change that kills every session leaves it working.
 	// See requireReauth.
@@ -74,12 +78,16 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" {
-		sendJSONError(w, "Name required", http.StatusBadRequest)
+	if msg := apiKeyNameProblem(req.Name); msg != "" {
+		sendJSONError(w, msg, http.StatusBadRequest)
 		return
 	}
 	if len(req.Permissions) == 0 {
 		sendJSONError(w, "At least one permission required", http.StatusBadRequest)
+		return
+	}
+	if req.ExpiresInDays < 0 || req.ExpiresInDays > maxKeyExpiryDays {
+		sendJSONError(w, fmt.Sprintf("expiresInDays must be between 1 and %d, or 0 for never", maxKeyExpiryDays), http.StatusBadRequest)
 		return
 	}
 
@@ -152,6 +160,21 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The name is what the audit log shows for everything the key does, so two
+	// live keys of one account must not share it.
+	existing, err := h.state.Store.ListAPIKeysByUser(userID)
+	if err != nil {
+		sendJSONError(w, "Failed to check existing keys", http.StatusInternalServerError)
+		return
+	}
+	for _, k := range existing {
+		live := k.RevokedAt == nil && (k.ExpiresAt == nil || time.Now().Before(*k.ExpiresAt))
+		if live && strings.EqualFold(k.Name, req.Name) {
+			sendJSONError(w, "You already have a key with this name", http.StatusConflict)
+			return
+		}
+	}
+
 	// Re-authenticate immediately before minting, and after every cheap check.
 	// What is created here survives the password change that kills every session,
 	// so the question is not what this session may do but whether the account
@@ -191,12 +214,32 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		},
 		RatePerMin: rate,
 	}
+	if req.ExpiresInDays > 0 {
+		exp := time.Now().Add(time.Duration(req.ExpiresInDays) * 24 * time.Hour)
+		k.ExpiresAt = &exp
+	}
 	id, err := h.state.Store.CreateAPIKey(k)
 	if err != nil {
 		sendJSONError(w, "Failed to save key", http.StatusInternalServerError)
 		return
 	}
 	k.ID = id
+	// A key counts like an invited member: the servers it can reach have
+	// auditing on from the moment it exists, so the owner sees it switched on
+	// before the key is first used.
+	for _, u := range req.Servers {
+		if srv, serr := h.state.Store.GetServerByUUID(u); serr == nil && srv != nil {
+			EnableServerAuditIfNeeded(h.state, srv.ID)
+		}
+	}
+	LogIdentityAudit(h.state, r, AuditEventAPIKeyCreated, userID, userID, map[string]interface{}{
+		"keyId":       id,
+		"name":        k.Name,
+		"servers":     req.Servers,
+		"permissions": req.Permissions,
+		"ratePerMin":  rate,
+		"expiresAt":   k.ExpiresAt,
+	})
 	json.NewEncoder(w).Encode(createAPIKeyResponse{
 		Success:   true,
 		APIKey:    k,
@@ -215,6 +258,8 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 type apiKeyOptions struct {
 	Enabled     bool     `json:"enabled"`
 	AllowedCaps []string `json:"allowedCaps"`
+	// KeyCaps is every capability a key may carry at all (authz.KeyCaps).
+	KeyCaps []string `json:"keyCaps"`
 }
 
 // List GET /api/me/api-keys - the calling user's own API keys, plus what they
@@ -231,7 +276,7 @@ func (h *APIKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
-	opts := apiKeyOptions{Enabled: isAdmin || h.userKeysAllowed(r)}
+	opts := apiKeyOptions{Enabled: isAdmin || h.userKeysAllowed(r), KeyCaps: authz.KeyCaps()}
 	if !isAdmin && h.state != nil && h.state.FeatureFlags != nil {
 		opts.AllowedCaps = h.state.FeatureFlags.UserAPIKeyAllowedCaps(r.Context())
 	}
@@ -256,6 +301,15 @@ func (h *APIKeysHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Key not found", http.StatusNotFound)
 		return
 	}
+	meta := map[string]interface{}{"keyId": keyID}
+	if keys, lerr := h.state.Store.ListAPIKeysByUser(userID); lerr == nil {
+		for _, k := range keys {
+			if k.ID == keyID {
+				meta["name"] = k.Name
+			}
+		}
+	}
+	LogIdentityAudit(h.state, r, AuditEventAPIKeyRevoked, userID, userID, meta)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -420,29 +474,44 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 				sendJSONError(w, "Invalid key", http.StatusUnauthorized)
 				return
 			}
-			// Throttle by source IP before the DB lookup so invalid-key brute
-			// force can't hammer GetAPIKeyByHash unbounded (the per-key limiter
-			// below never gets a chance to run for keys that don't exist).
-			if !h.ipLimiter.allow(clientIP(r), 120) {
+			// Failed attempts are throttled by source IP before the DB lookup, so
+			// invalid-key guessing can't hammer GetAPIKeyByHash unbounded. Only
+			// failures are charged: counting valid requests too capped every key
+			// at this number from one host, below the per-key rate it was minted
+			// with.
+			ip := clientIP(r)
+			if h.ipLimiter.exhausted(ip, keyFailuresPerMin) {
 				w.Header().Set("Retry-After", "60")
 				sendJSONError(w, "Too many requests", http.StatusTooManyRequests)
 				return
 			}
 			key, err := h.state.Store.GetAPIKeyByHash(HashAPIKey(plaintext))
 			if err != nil {
+				h.ipLimiter.allow(ip, keyFailuresPerMin)
 				sendJSONError(w, "Invalid key", http.StatusUnauthorized)
 				return
 			}
+
+			// From here on the request belongs to a real key, and what it
+			// comes to is on the record (auditKeyRequest). The audit slot lets
+			// a handler that writes its own entry say so, so the request is not
+			// recorded twice.
+			sw := &keyStatusWriter{ResponseWriter: w}
+			w = sw
+			r = r.WithContext(authz.WithAuditSlot(r.Context()))
+			uuidVar := mux.Vars(r)["uuid"]
+			defer func() { h.auditKeyRequest(r, key, shape, uuidVar, requiredPerm, sw.status) }()
+
 			if key.RevokedAt != nil {
+				h.ipLimiter.allow(ip, keyFailuresPerMin)
 				sendJSONError(w, "Key revoked", http.StatusUnauthorized)
 				return
 			}
 			if key.ExpiresAt != nil && time.Now().After(*key.ExpiresAt) {
+				h.ipLimiter.allow(ip, keyFailuresPerMin)
 				sendJSONError(w, "Key expired", http.StatusUnauthorized)
 				return
 			}
-
-			uuidVar := mux.Vars(r)["uuid"]
 
 			// serverAllowed decides whether the key's SERVER capabilities count
 			// for this request. On an owner route it is false unconditionally:
@@ -507,26 +576,6 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 					return
 				}
 			}
-
-			// A server action taken with a key is on the server's audit trail,
-			// as the same action taken in the panel is. The panel records it in
-			// RequireCap, which these routes never pass through: a console
-			// command, an RCON call or a backup trigger by key left no record.
-			if c, known := authz.Get(requiredPerm); known && shape == keyRouteServer && c.Scope == authz.ScopeServer &&
-				c.Verb != authz.VerbRead && r.Method != http.MethodGet && r.Method != http.MethodHead {
-				sw := &keyStatusWriter{ResponseWriter: w}
-				next(sw, r)
-				if sw.status >= 200 && sw.status < 300 {
-					if srv, serr := h.state.Store.GetServerByUUID(uuidVar); serr == nil && srv != nil {
-						LogServerAudit(h.state, r, srv.ID, requiredPerm, key.UserID, "", map[string]interface{}{
-							"method": r.Method,
-							"path":   r.URL.Path,
-							"apiKey": key.ID,
-						})
-					}
-				}
-				return
-			}
 			next(w, r)
 		}
 	}
@@ -561,9 +610,18 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 		return true
 	}
 	owner, err := h.state.Store.GetUserByID(key.UserID)
-	if err != nil || owner == nil {
+	// An anonymized account's keys are revoked with it (AnonymizeUser); this
+	// covers a key that slipped past that, or an account anonymized before.
+	if err != nil || owner == nil || owner.DeletionStatus == "anonymized" {
 		sendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
 		return false
+	}
+	// A key in use is an account in use, as a login is: an automation-only
+	// member must not be anonymized for not signing in.
+	if owner.DeletionStatus == "pending_deletion" {
+		if err := h.state.Store.CancelUserDeletion(owner.ID); err == nil {
+			logIdentityAuditAs(h.state, r, key, AuditEventDeletionCancelledByAPIKey, owner.ID, owner.ID, nil)
+		}
 	}
 
 	// Operator gate at USE time, not only at mint. Enforcing it only when a key
@@ -691,6 +749,28 @@ func generateNodeWarpIdentity() (string, error) {
 
 // maxKeyRatePerMin bounds the per-key request rate a key may be minted with.
 const maxKeyRatePerMin = 600
+
+// maxKeyExpiryDays bounds the expiry a key may be minted with.
+const maxKeyExpiryDays = 365
+
+// apiKeyNameProblem says what is wrong with a key name, or "". The name is
+// what the audit log shows beside the owner for everything the key does, so it
+// is kept short and printable: no newline or control character can make an
+// entry read as something else.
+func apiKeyNameProblem(name string) string {
+	if name == "" {
+		return "Name required"
+	}
+	if utf8.RuneCountInString(name) > 64 {
+		return "Name can be at most 64 characters"
+	}
+	for _, c := range name {
+		if !unicode.IsPrint(c) {
+			return "Name may only contain printable characters"
+		}
+	}
+	return ""
+}
 
 // keyStatusWriter remembers the status a key-authed handler answered with.
 type keyStatusWriter struct {

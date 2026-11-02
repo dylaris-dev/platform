@@ -182,6 +182,12 @@ func (h *APIKeysHandler) APIKeyPowerGate(next http.HandlerFunc) http.HandlerFunc
 			sendJSONError(w, "Key lacks required permission", http.StatusForbidden)
 			return
 		}
+		// The middleware re-checked the owner and the operator's list against
+		// no capability (the route declares none), so a power capability taken
+		// off "allowed on user keys" kept working on every key minted with it.
+		if !h.ownerStillHolds(w, r, key, mux.Vars(r)["uuid"], "power."+peek.Action) {
+			return
+		}
 		next(w, r)
 	}
 }

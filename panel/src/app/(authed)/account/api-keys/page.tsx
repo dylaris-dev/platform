@@ -35,7 +35,8 @@ export default function ApiKeysPage() {
         servers: string[];
         permissions: string[];
         ratePerMin: number;
-    }>({ name: '', servers: [], permissions: [], ratePerMin: 60 });
+        expiresInDays: number;
+    }>({ name: '', servers: [], permissions: [], ratePerMin: 60, expiresInDays: 0 });
 
     // Kept OUT of `form` so it is never carried across a second create: the
     // form is reset on success, and a password lingering in component state
@@ -78,7 +79,8 @@ export default function ApiKeysPage() {
                 .map(cat => ({
                     ...cat,
                     capabilities: cat.capabilities.filter(
-                        c => !options?.allowedCaps || options.allowedCaps.includes(c.id),
+                        c => (!options?.allowedCaps || options.allowedCaps.includes(c.id))
+                            && (!options?.keyCaps || options.keyCaps.includes(c.id)),
                     ),
                 }))
                 .filter(cat => cat.capabilities.length > 0),
@@ -94,12 +96,13 @@ export default function ApiKeysPage() {
             servers: form.servers,
             permissions: form.permissions,
             ratePerMin: form.ratePerMin,
+            expiresInDays: form.expiresInDays || undefined,
             password: reauthPassword,
             code: reauthCode.replace(/\s/g, '') || undefined,
         });
         if (res.success && res.plaintext) {
             setCreating(false);
-            setForm({ name: '', servers: [], permissions: ['rcon.exec'], ratePerMin: 60 });
+            setForm({ name: '', servers: [], permissions: ['rcon.exec'], ratePerMin: 60, expiresInDays: 0 });
             setReauthPassword('');
             setReauthCode('');
             setRevealedKey({ plaintext: res.plaintext, name });
@@ -154,6 +157,12 @@ export default function ApiKeysPage() {
                         by UUID — e.g. <code className="font-mono">POST /api/external/servers/&lt;uuid&gt;/power</code>
                         {' '}with <code className="font-mono">{'{ "action": "restart" }'}</code>.
                     </p>
+                    <p className="mt-1 text-(--base-06)">
+                        A key counts like an invited member: auditing is switched on for every server it
+                        can reach, and its actions show in the server&apos;s audit log as
+                        {' '}<code className="font-mono">key: &lt;name&gt; (owner &lt;you&gt;)</code>. Signing out
+                        everywhere does not revoke keys; revoke them here.
+                    </p>
                 </div>
             </div>
 
@@ -192,6 +201,9 @@ export default function ApiKeysPage() {
                                     {k.revokedAt && (
                                         <span className="mono-label bg-(--base-03) text-(--base-06) px-1.5 rounded-sm">revoked</span>
                                     )}
+                                    {!k.revokedAt && k.expiresAt && new Date(k.expiresAt).getTime() <= Date.now() && (
+                                        <span className="mono-label bg-(--base-03) text-(--base-06) px-1.5 rounded-sm">expired</span>
+                                    )}
                                     <span className="mono-label bg-(--base-03) text-(--base-07) px-1.5 rounded-sm">
                                         {k.ratePerMin}/min
                                     </span>
@@ -207,6 +219,9 @@ export default function ApiKeysPage() {
                                             const srv = servers.find(s => s.uuid === uuid);
                                             return srv ? srv.name : uuid.slice(0, 8) + '…';
                                         }).join(', ')}
+                                </div>
+                                <div className="text-xs text-(--base-06) mt-0.5">
+                                    Expires: <span className="text-(--base-08)">{k.expiresAt ? fmtDateTime(k.expiresAt) : 'never'}</span>
                                 </div>
                                 {k.lastUsedAt && (
                                     <div className="text-xs text-(--base-06) mt-0.5">
@@ -255,7 +270,7 @@ export default function ApiKeysPage() {
                                     onChange={e => setForm({ ...form, name: e.target.value })}
                                     className="input-field w-full"
                                     placeholder="discord-bot-rcon"
-                                    maxLength={128}
+                                    maxLength={64}
                                 />
                             </div>
 
@@ -350,11 +365,26 @@ export default function ApiKeysPage() {
                                 <input
                                     type="number"
                                     min={1}
-                                    max={1000}
+                                    max={600}
                                     value={form.ratePerMin}
                                     onChange={e => setForm({ ...form, ratePerMin: parseInt(e.target.value || '60', 10) })}
                                     className="input-field input-mono w-32"
                                 />
+                            </div>
+
+                            <div>
+                                <label className="input-label" htmlFor="apikey-expiry">Expires</label>
+                                <select
+                                    id="apikey-expiry"
+                                    className="input-field w-48"
+                                    value={form.expiresInDays}
+                                    onChange={e => setForm({ ...form, expiresInDays: parseInt(e.target.value, 10) })}
+                                >
+                                    <option value={30}>In 30 days</option>
+                                    <option value={90}>In 90 days</option>
+                                    <option value={365}>In a year</option>
+                                    <option value={0}>Never</option>
+                                </select>
                             </div>
                         </div>
                         <ReauthFields

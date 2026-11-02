@@ -101,5 +101,5 @@ func TestAPIKeysList_ReportsWhatTheCallerMayMint(t *testing.T) {
 }
 
 func (f *apiKeysAuthFakeStore) ListAPIKeysByUser(userID string) ([]models.APIKey, error) {
-	return nil, nil
+	return f.listedKeys, nil
 }

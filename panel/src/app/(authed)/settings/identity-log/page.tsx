@@ -12,6 +12,7 @@ import React, { useEffect, useState } from 'react';
 import { History, RefreshCw, Loader2, ShieldAlert } from 'lucide-react';
 
 import { listIdentityAudit, type IdentityAuditEvent } from '@/lib/api/identityAudit';
+import { keyActorLabel } from '@/lib/auditSentences';
 import { SkeletonCard, SkeletonHeader } from '@/components/Skeleton';
 import { fmtDateTime } from '@/lib/time';
 
@@ -72,6 +73,14 @@ const LABELS: Record<string, string> = {
     storage_manifest_deleted: 'Storage manifest deleted',
     storage_orphans_deleted: 'Orphaned storage files deleted',
     storage_lifecycle_applied: 'Storage lifecycle rules applied',
+    api_key_created: 'API key created',
+    api_key_revoked: 'API key revoked',
+    api_keys_revoked: 'API keys revoked',
+    api_key_denied: 'API key request refused',
+    api_key_used: 'API key request',
+    api_key_read: 'API key reads',
+    api_key_rate_limited: 'API key rate limited',
+    deletion_cancelled_by_api_key: 'Deletion cancelled: API key in use',
 };
 
 export default function IdentityLogPage() {
@@ -195,7 +204,9 @@ function EventRow({ ev }: { ev: IdentityAuditEvent }) {
                         {subject && <> · <span className="font-mono text-(--accent-light)">{subject}</span></>}
                     </p>
                     <p className="text-xs text-(--base-06) mt-0.5 font-mono">
-                        {ev.actorName
+                        {ev.actorApiKeyName
+                            ? <>by <span className="text-(--base-08)">{keyActorLabel(ev.actorApiKeyName, ev.actorName || ev.actorUserId)}</span></>
+                            : ev.actorName
                             ? <>by <span className="text-(--base-08)">{ev.actorName}</span></>
                             : ev.actorUserId ? <>by {ev.actorUserId}</> : 'by the system'}
                         {ev.ipAddress && <> · {ev.ipAddress}</>}

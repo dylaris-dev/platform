@@ -26,6 +26,8 @@ export interface CreateAPIKeyInput {
     servers: string[];
     permissions: string[];
     ratePerMin?: number;
+    // Days until the key stops working; 0 or absent = never (at most 365).
+    expiresInDays?: number;
     // Core re-authenticates this one: the key it mints authenticates by its own
     // hash, so it keeps working after the password change that kills every
     // session. code is only required when the account has 2FA.
@@ -49,6 +51,9 @@ export interface APIKeyOptions {
     // empty array would mean "nothing allowed" - the backend deliberately sends
     // null for the first case, so do not normalise it away.
     allowedCaps: string[] | null;
+    // Every capability a key may carry at all. Ones that manage access
+    // (API keys, roles, members) never ride on a key.
+    keyCaps?: string[];
 }
 
 export async function listAPIKeys(): Promise<{ success: boolean; keys?: APIKey[]; options?: APIKeyOptions; message?: string }> {

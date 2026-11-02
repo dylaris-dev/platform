@@ -14,13 +14,16 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.11.02.2
 
 ### Features
-- Nothing.
+- API keys count like invited members: auditing turns on for every server a key can reach, and the audit log shows
+  each action as "key: name (owner you)", refusals included. Reads appear once per 10 minutes with a count.
+- A new key can expire after 30, 90 or 365 days.
 
 ### Breaking
 - Nothing.
 
 ### Security
-- Nothing.
+- No API key can hold a permission that manages keys, roles or members, and keys stop working once their account is
+  removed for inactivity. Using a key counts as activity.
 
 ### Fixes
 - On your own node, a server keeps its port when its container is rebuilt after a Redis restart. Two servers could

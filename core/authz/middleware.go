@@ -56,7 +56,7 @@ func (r *Resolver) RequireCap(capID string) func(http.HandlerFunc) http.HandlerF
 			if r.writeAudit != nil && c.Scope == ScopeServer && c.Verb != VerbRead &&
 				req.Method != http.MethodGet && req.Method != http.MethodHead {
 				aw := &auditedWriter{ResponseWriter: w}
-				req = req.WithContext(withAuditSlot(req.Context()))
+				req = req.WithContext(WithAuditSlot(req.Context()))
 				next(aw, req)
 				// Both conditions are decided HERE so every recorder gets the same
 				// contract: called once, for an action that happened, that nobody

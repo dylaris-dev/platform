@@ -2534,13 +2534,23 @@ func (s *PostgresStore) InsertAuditIdentity(ev *models.AuditEventIdentity) error
 	if ev.Metadata != nil {
 		metaJSON, _ = json.Marshal(ev.Metadata)
 	}
-	_, err := s.db.Exec(
+	return s.db.QueryRow(
 		`INSERT INTO audit_events_identity
-			(event_type, actor_user_id, target_user_id, metadata, ip_address, user_agent)
-		 VALUES ($1, $2, $3, NULLIF($4, '')::jsonb, NULLIF($5, '')::inet, NULLIF($6, ''))`,
+			(event_type, actor_user_id, target_user_id, metadata, ip_address, user_agent,
+			 actor_api_key_id, actor_api_key_name)
+		 VALUES ($1, $2, $3, NULLIF($4, '')::jsonb, NULLIF($5, '')::inet, NULLIF($6, ''), $7, NULLIF($8, ''))
+		 RETURNING id`,
 		ev.EventType, ev.ActorUserID, ev.TargetUserID,
-		string(metaJSON), ev.IPAddress, ev.UserAgent,
-	)
+		string(metaJSON), ev.IPAddress, ev.UserAgent, ev.ActorAPIKeyID, ev.ActorAPIKeyName,
+	).Scan(&ev.ID)
+}
+
+// SetAuditIdentityCount sets metadata.count on one row: a bundled entry
+// (reads by an API key) counts the requests it stands for.
+func (s *PostgresStore) SetAuditIdentityCount(id, count int64) error {
+	_, err := s.db.Exec(`UPDATE audit_events_identity
+		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{count}', to_jsonb($2::bigint))
+		WHERE id = $1`, id, count)
 	return err
 }
 
@@ -2548,7 +2558,8 @@ func (s *PostgresStore) ListAuditIdentity(targetUserID *string, eventType string
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
-	query := `SELECT id, event_type, actor_user_id, target_user_id, metadata, ip_address::text, user_agent, created_at
+	query := `SELECT id, event_type, actor_user_id, target_user_id, metadata, ip_address::text, user_agent, created_at,
+		actor_api_key_id, COALESCE(actor_api_key_name, '')
 		FROM audit_events_identity WHERE 1=1`
 	args := []interface{}{}
 	if targetUserID != nil {
@@ -2576,9 +2587,15 @@ func (s *PostgresStore) ListAuditIdentity(targetUserID *string, eventType string
 			metaJSON      []byte
 			ipAddr, ua    sql.NullString
 			createdAt     sql.NullTime
+			keyID         sql.NullInt64
 		)
-		if err := rows.Scan(&ev.ID, &ev.EventType, &actor, &target, &metaJSON, &ipAddr, &ua, &createdAt); err != nil {
+		if err := rows.Scan(&ev.ID, &ev.EventType, &actor, &target, &metaJSON, &ipAddr, &ua, &createdAt,
+			&keyID, &ev.ActorAPIKeyName); err != nil {
 			continue
+		}
+		if keyID.Valid {
+			k := int(keyID.Int64)
+			ev.ActorAPIKeyID = &k
 		}
 		if actor.Valid {
 			n := actor.String
@@ -2895,6 +2912,9 @@ func (s *PostgresStore) ListInactiveCandidates(idleSince time.Time) ([]InactiveC
 		WHERE u.is_admin = FALSE
 		  AND COALESCE(u.deletion_status, 'active') = 'active'
 		  AND COALESCE(u.last_login_at, u.created_at) < $1
+		  -- An account that only automates (an API key and no logins) is in use.
+		  AND NOT EXISTS (SELECT 1 FROM api_keys k
+		                   WHERE k.user_id = u.id AND k.revoked_at IS NULL AND k.last_used_at >= $1)
 	`
 	rows, err := s.db.Query(query, idleSince)
 	if err != nil {
@@ -2981,7 +3001,13 @@ func (s *PostgresStore) AnonymizeUser(userID string) error {
 	// just by no-longer-being-an-admin; the job only ever targets non-admins
 	// in the first place.
 	tag := fmt.Sprintf("<deleted_user_%s>", userID)
+	// The account's API keys go in the same statement: they authenticate by
+	// their own hash, so an anonymized account kept automation access to every
+	// server it had been invited to.
 	_, err := s.db.Exec(`
+		WITH keys AS (
+			UPDATE api_keys SET revoked_at = NOW() WHERE user_id = $2 AND revoked_at IS NULL
+		)
 		UPDATE users
 		   SET username = $1,
 		       email = NULL,

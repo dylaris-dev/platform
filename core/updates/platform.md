@@ -11,17 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.11.02.2
 
 ### Features
-- Nothing.
+- API keys count like invited members: auditing turns on for the servers a key reaches, and the log names it as
+  "key: name (owner user)" with every write and refusal, and its reads once per 10 minutes. `core` `panel`
+- A new key can expire after 30, 90 or 365 days. `core` `panel`
 
 ### Breaking
 - Nothing.
 
 ### Security
-- Nothing.
+- The operator's list of capabilities allowed on user keys now also covers power actions of keys minted earlier, and
+  no key can hold a capability that manages keys, roles or members. `core`
+- An anonymized account's API keys are revoked, and creating or revoking a key is in the identity log. `core`
 
 ### Fixes
 - A server keeps its host port when its container is rebuilt after Redis lost the port list (a move to Swarm, a
   reinstall, a Redis restart). Servers used to swap ports, so players reached the wrong server. `node`
+- A key name over 64 characters is refused with a message instead of a server error, and one account cannot have
+  two live keys with the same name. `core`
+- The per-IP limit counts only failed key attempts, so a valid key reaches its own rate from one host, and using a key
+  counts as activity for the inactive-account cleanup. `core`
 - `uninstall` says that the stack's Docker secrets are kept too, and `uninstall --purge` says when the machine is
   still in a Swarm. Download the installer again.
 

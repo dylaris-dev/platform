@@ -97,6 +97,18 @@ const (
 	AuditEventStorageOrphansDeleted  = "storage_orphans_deleted"
 	AuditEventStorageLifecycleSet    = "storage_lifecycle_applied"
 
+	// API keys. A key acts like an invited member, so what it does is on the
+	// record: its lifecycle, every refused request, every write on its owner's
+	// realm, and its reads bundled per 10 minutes with a count.
+	AuditEventAPIKeyCreated     = "api_key_created"
+	AuditEventAPIKeyRevoked     = "api_key_revoked"
+	AuditEventAPIKeyDenied      = "api_key_denied"
+	AuditEventAPIKeyUsed        = "api_key_used"
+	AuditEventAPIKeyRead        = "api_key_read"
+	AuditEventAPIKeyRateLimited = "api_key_rate_limited"
+	// A key used by an account scheduled for auto-delete: in use, like a login.
+	AuditEventDeletionCancelledByAPIKey = "deletion_cancelled_by_api_key"
+
 	// Tickets (ticket-scoped audit, written to ticket_audit_events
 	// rather than audit_events_identity).
 	TicketEventCreated         = "ticket_created"
@@ -119,13 +131,28 @@ const (
 // must never block the originating user action. Pass actorID = "" for system
 // events (no human actor), targetID = "" when not applicable.
 func LogIdentityAudit(state *AppState, r *http.Request, eventType string, actorID, targetID string, metadata map[string]interface{}) {
+	var key *models.APIKey
+	if r != nil {
+		key = APIKeyFromContext(r)
+	}
+	logIdentityAuditAs(state, r, key, eventType, actorID, targetID, metadata)
+}
+
+// logIdentityAuditAs is LogIdentityAudit with the acting key named explicitly
+// (nil for none). It returns the new row's id, or 0 when nothing was written.
+func logIdentityAuditAs(state *AppState, r *http.Request, key *models.APIKey, eventType string, actorID, targetID string, metadata map[string]interface{}) int64 {
 	if state == nil || state.Store == nil {
-		return
+		return 0
 	}
 
 	ev := &models.AuditEventIdentity{
 		EventType: eventType,
 		Metadata:  metadata,
+	}
+	if key != nil {
+		id := key.ID
+		ev.ActorAPIKeyID = &id
+		ev.ActorAPIKeyName = key.Name
 	}
 	if actorID != "" {
 		a := actorID
@@ -142,5 +169,7 @@ func LogIdentityAudit(state *AppState, r *http.Request, eventType string, actorI
 
 	if err := state.Store.InsertAuditIdentity(ev); err != nil {
 		log.Printf("audit: failed to insert %s event: %v", eventType, err)
+		return 0
 	}
+	return ev.ID
 }

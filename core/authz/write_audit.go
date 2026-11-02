@@ -35,7 +35,7 @@ func (r *Resolver) SetServerWriteAudit(fn WriteAuditFunc) { r.writeAudit = fn }
 type auditSlotKey struct{}
 
 // withAuditSlot puts a "a handler already recorded this" flag in the context.
-func withAuditSlot(ctx context.Context) context.Context {
+func WithAuditSlot(ctx context.Context) context.Context {
 	done := false
 	return context.WithValue(ctx, auditSlotKey{}, &done)
 }
@@ -132,7 +132,7 @@ func (r *Resolver) AuditResolvedWrite(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		slot := &writeSlot{}
-		req = req.WithContext(context.WithValue(withAuditSlot(req.Context()), writeSlotKey{}, slot))
+		req = req.WithContext(context.WithValue(WithAuditSlot(req.Context()), writeSlotKey{}, slot))
 		aw := &auditedWriter{ResponseWriter: w}
 		next(aw, req)
 		if slot.serverID == 0 || aw.status < 200 || aw.status >= 300 || WasAudited(req.Context()) {
