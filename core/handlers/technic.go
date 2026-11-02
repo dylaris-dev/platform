@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
 )
 
@@ -131,7 +132,7 @@ type solderBuild struct {
 func (h *TechnicHandler) apiGet(ctx context.Context, path string, q url.Values, ttl time.Duration) ([]byte, error) {
 	q.Set("build", technicBuildParam)
 	u := h.base + path + "?" + q.Encode()
-	key := "dylaris:technic:" + hashURL(u)
+	key := "dylaris:technic:" + validate.HashURL(u)
 	if h.state != nil && h.state.Cache != nil {
 		if cached, ok := h.state.Cache.Get(ctx, key); ok {
 			return []byte(cached), nil
@@ -175,7 +176,7 @@ func (h *TechnicHandler) apiGet(ctx context.Context, path string, q url.Values, 
 
 // solderGet reads a Solder API document, cached like the API.
 func (h *TechnicHandler) solderGet(ctx context.Context, rawURL string, out any) error {
-	key := "dylaris:technic:solder:" + hashURL(rawURL)
+	key := "dylaris:technic:solder:" + validate.HashURL(rawURL)
 	if h.state != nil && h.state.Cache != nil {
 		if cached, ok := h.state.Cache.Get(ctx, key); ok {
 			return json.Unmarshal([]byte(cached), out)

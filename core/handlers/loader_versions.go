@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"dylaris-core/handlers/httpx"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
 

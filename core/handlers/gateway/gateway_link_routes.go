@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +12,8 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -48,7 +49,7 @@ func validateLocalTarget(host string) error {
 		return nil // any other IP literal, including LAN / loopback
 	}
 	// Hostname (e.g. localhost, my-pc.local): basic format check, no wildcard.
-	if !handlers.IsHostname(host, 1) {
+	if !validate.IsHostname(host, 1) {
 		return fmt.Errorf("invalid target host")
 	}
 	return nil

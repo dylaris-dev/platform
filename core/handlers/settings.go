@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +14,8 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -395,11 +396,11 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	cleaned := make([]HosterDomain, 0, len(req.HosterDomains))
 	seen := map[string]bool{}
 	for _, hd := range req.HosterDomains {
-		dom := normHost(hd.Domain)
+		dom := validate.NormHost(hd.Domain)
 		if dom == "" {
 			continue
 		}
-		if !isHostname(dom, 2) {
+		if !validate.IsHostname(dom, 2) {
 			httpx.SendJSONError(w, "Invalid hoster domain: "+dom, http.StatusBadRequest)
 			return
 		}
@@ -421,7 +422,7 @@ func (h *SettingsHandler) SaveGatewaySettings(w http.ResponseWriter, r *http.Req
 	// "route.eu.example.com.eu.example.com", which would resolve nowhere and
 	// only surface as a customer whose CNAME never works.
 	cnameLabel := strings.ToLower(strings.TrimSpace(req.CnameTarget))
-	if cnameLabel != "" && !subRegexDNS.MatchString(cnameLabel) {
+	if cnameLabel != "" && !validate.SubRegexDNS.MatchString(cnameLabel) {
 		httpx.SendJSONError(w, "CNAME target must be a single label such as \"route\", not a full domain — it is combined with each hoster domain automatically", http.StatusBadRequest)
 		return
 	}
@@ -994,7 +995,7 @@ func (h *SettingsHandler) SaveBeamSettings(w http.ResponseWriter, r *http.Reques
 	// SSRF; this rejects the obviously-wrong value at the point where an
 	// operator can still see the error.
 	req.DownloadLink = strings.TrimSpace(req.DownloadLink)
-	if err := validatePublicBaseURL("beam download link", req.DownloadLink); err != nil {
+	if err := validate.ValidatePublicBaseURL("beam download link", req.DownloadLink); err != nil {
 		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}

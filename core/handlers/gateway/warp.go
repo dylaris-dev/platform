@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,6 +20,7 @@ import (
 	"dylaris-pkg/validate"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/store"

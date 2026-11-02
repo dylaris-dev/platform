@@ -14,9 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage/modpack"
@@ -198,7 +197,7 @@ func (h *PacksHandler) addModrinthVersion(ownerID string, b *models.PackBuild, v
 	if side != "" && !validContentSide(side) {
 		return fmt.Errorf("invalid content side")
 	}
-	slug := handlers.Slugify(v.ProjectSlugOrID())
+	slug := validate.Slugify(v.ProjectSlugOrID())
 	modID, err := h.state.Store.UpsertMod(&models.Mod{
 		OwnerID: ownerID, Slug: slug, PrettyName: v.Name, ContentType: contentType,
 	})
@@ -369,7 +368,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
 		return
 	}
-	slug := handlers.Slugify(strings.TrimSuffix(fileName, ".jar"))
+	slug := validate.Slugify(strings.TrimSuffix(fileName, ".jar"))
 	if contentType == models.ContentTypeConfig || contentType == models.ContentTypeOther || targetPath != targetPathFor(contentType, fileName) {
 		// Equal basenames in config/defaultconfigs/KubeJS must not overwrite
 		// each other's owner-scoped catalog metadata.

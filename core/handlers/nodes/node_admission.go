@@ -2,7 +2,6 @@ package nodes
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,6 +13,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/store"

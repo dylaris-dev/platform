@@ -2,7 +2,6 @@ package servers
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
@@ -17,8 +16,10 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/demo"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -2752,7 +2753,7 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	// Background, not the request context: the rows are already gone, and a
 	// caller who hung up must not leave the address answering.
 	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, []string{srv.UUID})
-	handlers.DropDemoServers(h.state, []string{srv.UUID})
+	demo.DropServers(h.state.Store, h.state.StoreEnabled, []string{srv.UUID})
 	log.Printf("DeleteServer: server %s — cleaned up %d route(s)", srv.UUID, matched)
 
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)

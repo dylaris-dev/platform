@@ -1,11 +1,11 @@
 package handlers
 
 import (
-	"dylaris-core/handlers/reqctx"
 	"net/http"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 )
 

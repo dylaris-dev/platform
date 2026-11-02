@@ -14,6 +14,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
 )
 
@@ -66,9 +67,9 @@ func (h *ModrinthHandler) proxyJSONWith(ctx context.Context, ttl time.Duration, 
 // handling. A body (POST) is part of the cache key, since the same URL answers
 // differently per body.
 func (h *ModrinthHandler) proxyRequest(ctx context.Context, ttl time.Duration, method, urlStr string, reqBody []byte, w http.ResponseWriter, transform func([]byte) []byte) {
-	cacheKey := "dylaris:modrinth:" + handlers.HashURL(urlStr)
+	cacheKey := "dylaris:modrinth:" + validate.HashURL(urlStr)
 	if reqBody != nil {
-		cacheKey = "dylaris:modrinth:" + handlers.HashURL(method+" "+urlStr+" "+string(reqBody))
+		cacheKey = "dylaris:modrinth:" + validate.HashURL(method+" "+urlStr+" "+string(reqBody))
 	}
 	if h.state.Cache != nil {
 		if cached, ok := h.state.Cache.Get(ctx, cacheKey); ok {

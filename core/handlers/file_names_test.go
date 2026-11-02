@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +14,7 @@ import (
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 
 	pb "dylaris-proto/node"

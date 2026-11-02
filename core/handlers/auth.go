@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql" // Import Models
-	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,8 +15,10 @@ import (
 	"time"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/demo"
 	"dylaris-core/store"
 	"dylaris-pkg/validate"
 
@@ -114,7 +115,7 @@ func (h *AuthHandler) ParseTabProxyTicket(tokenString string) (*Claims, error) {
 func (h *AuthHandler) DemoStatus(w http.ResponseWriter, r *http.Request) {
 	available := false
 	if h.state.StoreEnabled && h.state.Store != nil {
-		if uuid, _ := h.state.Store.GetSetting(demoAccountUUIDSetting); uuid != "" {
+		if uuid, _ := h.state.Store.GetSetting(demo.AccountUUIDSetting); uuid != "" {
 			if u, err := h.state.Store.GetUserByID(uuid); err == nil && u != nil {
 				available = true
 			}
@@ -137,7 +138,7 @@ func (h *AuthHandler) DemoLogin(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Database not connected", http.StatusServiceUnavailable)
 		return
 	}
-	uuid, _ := h.state.Store.GetSetting(demoAccountUUIDSetting)
+	uuid, _ := h.state.Store.GetSetting(demo.AccountUUIDSetting)
 	if uuid == "" {
 		httpx.SendJSONError(w, "Demo is not enabled", http.StatusNotFound)
 		return
@@ -558,7 +559,7 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 				// "yes". The lookup's error used to be discarded, and its
 				// zero value said "not the demo account" - so a failed
 				// settings read silently lifted the read-only gate.
-				demo, derr := isDemoAccountChecked(h.state, user.ID)
+				demo, derr := demo.IsAccountChecked(h.state.Store, h.state.StoreEnabled, user.ID)
 				if derr != nil {
 					httpx.SendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
 					return

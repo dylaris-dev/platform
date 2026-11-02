@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"crypto/rand"
-	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -17,7 +16,9 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/services/demo"
 
 	"github.com/gorilla/mux"
 )
@@ -545,7 +546,7 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 			// The demo account is read-only, and AuthMiddleware is where that is
 			// enforced - which a key request never passes through.
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
-				if demo, derr := isDemoAccountChecked(h.state, key.UserID); derr != nil || demo {
+				if demo, derr := demo.IsAccountChecked(h.state.Store, h.state.StoreEnabled, key.UserID); derr != nil || demo {
 					httpx.SendJSONError(w, "This account is read-only", http.StatusForbidden)
 					return
 				}

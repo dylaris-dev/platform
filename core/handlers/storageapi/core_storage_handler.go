@@ -12,13 +12,14 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
 	"dylaris-core/services/storagereach"
 )
 
 // pathOnContainerRootFS is this package's seam for the ephemeral-path warning
 // (tests replace it); it points at the check handlers' core storage uses.
-var pathOnContainerRootFS = handlers.PathIsOnContainerRootFS
+var pathOnContainerRootFS = validate.PathIsOnContainerRootFS
 
 // CoreStorageHandler serves the shared Core file storage config CRUD + probe.
 type CoreStorageHandler struct {

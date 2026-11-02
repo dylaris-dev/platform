@@ -22,8 +22,8 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage/modpack"
@@ -176,7 +176,7 @@ func (h *PacksHandler) ImportModrinthProject(w http.ResponseWriter, r *http.Requ
 		taken[p.InternalSlug] = true
 	}
 	for n := 2; taken[slug] || !packSlugRe.MatchString(slug); n++ {
-		slug = handlers.Slugify(project.Slug) + "-" + strconv.Itoa(n)
+		slug = validate.Slugify(project.Slug) + "-" + strconv.Itoa(n)
 		if n > 50 {
 			httpx.SendJSONError(w, "Could not find a free slug for this pack", http.StatusConflict)
 			return
@@ -432,7 +432,7 @@ func (h *PacksHandler) addModrinthFileReference(ownerID string, b *models.PackBu
 		return fmt.Errorf("invalid content side")
 	}
 	fileName := path.Base(f.Path)
-	slug := handlers.Slugify(f.ModrinthProjectID)
+	slug := validate.Slugify(f.ModrinthProjectID)
 	modID, err := h.state.Store.UpsertMod(&models.Mod{OwnerID: ownerID, Slug: slug, PrettyName: fileName, ContentType: kind})
 	if err != nil {
 		return err
@@ -463,7 +463,7 @@ func (h *PacksHandler) storeImportedFile(ctx context.Context, prov modpack.Modpa
 		return upErr(http.StatusUnprocessableEntity, "Unusable path in pack: "+targetPath)
 	}
 	fileName := path.Base(targetPath)
-	slug := handlers.Slugify(strings.TrimSuffix(fileName, ".jar"))
+	slug := validate.Slugify(strings.TrimSuffix(fileName, ".jar"))
 	if len(slug) > 100 {
 		slug = slug[:100]
 	}

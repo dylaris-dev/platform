@@ -3,7 +3,6 @@ package handlers
 import (
 	"bytes"
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"errors"
 	"io"
 	"net/http"
@@ -13,6 +12,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )

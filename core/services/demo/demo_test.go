@@ -1,4 +1,4 @@
-package handlers
+package demo
 
 import (
 	"database/sql"
@@ -25,26 +25,27 @@ func TestIsDemoAccountChecked(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		state     *AppState
+		st        store.Store
+		enabled   bool
 		userID    string
 		wantDemo  bool
 		wantError bool
 	}{
 		{
-			name:     "the demo account, lookup succeeded",
-			state:    &AppState{StoreEnabled: true, Store: &demoFakeStore{value: demoID}},
+			name: "the demo account, lookup succeeded",
+			st:   &demoFakeStore{value: demoID}, enabled: true,
 			userID:   demoID,
 			wantDemo: true,
 		},
 		{
-			name:     "an ordinary account, lookup succeeded",
-			state:    &AppState{StoreEnabled: true, Store: &demoFakeStore{value: demoID}},
+			name: "an ordinary account, lookup succeeded",
+			st:   &demoFakeStore{value: demoID}, enabled: true,
 			userID:   "someone-else",
 			wantDemo: false,
 		},
 		{
-			name:     "no demo account configured",
-			state:    &AppState{StoreEnabled: true, Store: &demoFakeStore{value: ""}},
+			name: "no demo account configured",
+			st:   &demoFakeStore{value: ""}, enabled: true,
 			userID:   demoID,
 			wantDemo: false,
 		},
@@ -53,24 +54,24 @@ func TestIsDemoAccountChecked(t *testing.T) {
 			// like until someone nominates a demo account. Reporting it as an
 			// unknown made AuthMiddleware 503 every non-admin write on the whole
 			// hosted panel.
-			name:     "the setting row does not exist",
-			state:    &AppState{StoreEnabled: true, Store: &demoFakeStore{err: sql.ErrNoRows}},
+			name: "the setting row does not exist",
+			st:   &demoFakeStore{err: sql.ErrNoRows}, enabled: true,
 			userID:   demoID,
 			wantDemo: false,
 		},
 		{
 			// The case the discarded error created. It must NOT come back as a
 			// plain false, which is what lifted the gate.
-			name:      "lookup failed",
-			state:     &AppState{StoreEnabled: true, Store: &demoFakeStore{err: errors.New("connection reset")}},
+			name: "lookup failed",
+			st:   &demoFakeStore{err: errors.New("connection reset")}, enabled: true,
 			userID:    demoID,
 			wantError: true,
 		},
 		{
 			// Not a SaaS build: there is no demo account and no lookup at all,
 			// so this is a real "no", not an unknown.
-			name:     "store integration disabled",
-			state:    &AppState{StoreEnabled: false, Store: &demoFakeStore{err: errors.New("should not be called")}},
+			name: "store integration disabled",
+			st:   &demoFakeStore{err: errors.New("should not be called")}, enabled: false,
 			userID:   demoID,
 			wantDemo: false,
 		},
@@ -78,7 +79,7 @@ func TestIsDemoAccountChecked(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			demo, err := isDemoAccountChecked(tt.state, tt.userID)
+			demo, err := IsAccountChecked(tt.st, tt.enabled, tt.userID)
 			if (err != nil) != tt.wantError {
 				t.Fatalf("err = %v, wantError = %v", err, tt.wantError)
 			}
@@ -96,8 +97,7 @@ func TestIsDemoAccountChecked(t *testing.T) {
 // as before: unknown collapses to false there, where being wrong costs a
 // misdrawn button rather than a lifted write gate.
 func TestIsDemoAccount_WrapperCollapsesUnknownToFalse(t *testing.T) {
-	s := &AppState{StoreEnabled: true, Store: &demoFakeStore{err: errors.New("boom")}}
-	if isDemoAccount(s, "demo-uuid") {
+	if IsAccount(&demoFakeStore{err: errors.New("boom")}, true, "demo-uuid") {
 		t.Error("wrapper reported true on a failed lookup")
 	}
 }

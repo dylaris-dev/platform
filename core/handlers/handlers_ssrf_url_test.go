@@ -1,6 +1,10 @@
 package handlers
 
-import "testing"
+import (
+	"testing"
+
+	"dylaris-core/handlers/validate"
+)
 
 // TestValidateTabURL pins the custom-tab URL guard (server_tabs.go): must
 // parse, must carry a host, scheme restricted to http/https (no host
@@ -20,7 +24,7 @@ func TestValidateTabURL(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := validateTabURL(c.raw)
+			err := validate.ValidateTabURL(c.raw)
 			if (err != nil) != c.wantErr {
 				t.Errorf("validateTabURL(%q) err = %v, wantErr %v", c.raw, err, c.wantErr)
 			}
@@ -64,7 +68,7 @@ func TestValidateSubdomain(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := validateSubdomain(c.sub, c.mode); got != c.want {
+			if got := validate.ValidateSubdomain(c.sub, c.mode); got != c.want {
 				t.Errorf("validateSubdomain(%q, %q) = %v, want %v", c.sub, c.mode, got, c.want)
 			}
 		})

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"crypto/rand"
-	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 )
 
 // sseTicketTTL is the lifetime of an SSE auth ticket. AuthMiddleware also

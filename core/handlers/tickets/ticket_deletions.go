@@ -2,7 +2,6 @@ package tickets
 
 import (
 	"database/sql"
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"

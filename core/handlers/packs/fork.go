@@ -3,8 +3,6 @@ package packs
 import (
 	"context"
 	"crypto/md5"
-	"dylaris-core/handlers"
-	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/storage/modpack"
 	"encoding/hex"
@@ -18,6 +16,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 )
 
 const maxForkObjectBytes int64 = 1 << 30
@@ -72,7 +73,7 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 		}
 		target.InternalSlug = strings.TrimSpace(req.Slug)
 		if target.InternalSlug == "" {
-			target.InternalSlug = handlers.Slugify(target.InternalName)
+			target.InternalSlug = validate.Slugify(target.InternalName)
 			if len(target.InternalSlug) > 64 {
 				target.InternalSlug = strings.TrimRight(target.InternalSlug[:64], "-_")
 			}

@@ -9,6 +9,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/services/demo"
 
 	"github.com/gorilla/mux"
 )
@@ -42,7 +43,7 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = handlers.EditDemoList(h.state.Store, func(current []string) ([]string, error) {
+	err = demo.EditList(h.state.Store, func(current []string) ([]string, error) {
 		next := make([]string, 0, len(current)+1)
 		for _, u := range current {
 			if u != srv.UUID {
@@ -54,13 +55,13 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 			// load above has already run its dropDemoServers, and adding the
 			// UUID now would put a deleted server back on the list.
 			if again, err := h.state.Store.GetServerByID(serverID); err != nil || again == nil || again.UUID != srv.UUID {
-				return nil, handlers.ErrDemoServerGone
+				return nil, demo.ErrServerGone
 			}
 			next = append(next, srv.UUID)
 		}
 		return next, nil
 	})
-	if errors.Is(err, handlers.ErrDemoServerGone) {
+	if errors.Is(err, demo.ErrServerGone) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
@@ -81,7 +82,7 @@ func (h *ServerHandler) GetDemoAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username := ""
-	if uuid, _ := h.state.Store.GetSetting(handlers.DemoAccountUUIDSetting); uuid != "" {
+	if uuid, _ := h.state.Store.GetSetting(demo.AccountUUIDSetting); uuid != "" {
 		if u, err := h.state.Store.GetUserByID(uuid); err == nil && u != nil {
 			username = u.Username
 		}
@@ -108,7 +109,7 @@ func (h *ServerHandler) SetDemoAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	username := strings.TrimSpace(req.Username)
 	if username == "" {
-		if err := h.state.Store.SetSetting(handlers.DemoAccountUUIDSetting, ""); err != nil {
+		if err := h.state.Store.SetSetting(demo.AccountUUIDSetting, ""); err != nil {
 			httpx.SendJSONError(w, "Failed to clear demo account", http.StatusInternalServerError)
 			return
 		}
@@ -131,7 +132,7 @@ func (h *ServerHandler) SetDemoAccount(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "A staff account cannot be the demo account", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetSetting(handlers.DemoAccountUUIDSetting, u.ID); err != nil {
+	if err := h.state.Store.SetSetting(demo.AccountUUIDSetting, u.ID); err != nil {
 		httpx.SendJSONError(w, "Failed to save demo account", http.StatusInternalServerError)
 		return
 	}

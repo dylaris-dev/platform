@@ -31,6 +31,7 @@ import (
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
+	"dylaris-core/services/demo"
 
 	"github.com/gorilla/mux"
 )
@@ -170,7 +171,7 @@ func knownPlayers(raw json.RawMessage, n int) json.RawMessage {
 // list is the same player identities. Owners, admins and real members hold
 // files.read or players.manage, neither of which the demo grants. Fails closed.
 func (h *PlayersHandler) demoStranger(r *http.Request, srv *models.Server) bool {
-	if !isDemoServer(h.state, srv.UUID) {
+	if !demo.IsServer(h.state.Store, h.state.StoreEnabled, srv.UUID) {
 		return false
 	}
 	if h.state.Authz == nil {

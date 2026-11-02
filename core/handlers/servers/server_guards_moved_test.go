@@ -16,6 +16,7 @@ import (
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/demo"
 )
 
 // The two remaining ownership checks that sat behind byonActive: an unreadable
@@ -287,7 +288,7 @@ func TestRevokingANarrowGrantUnderAProxyIsTheOwnersCall(t *testing.T) {
 // Toggling goes through the same locked edit as the delete path, and must add,
 // keep others, and remove - including a duplicate a racing toggle left behind.
 func TestSetServerDemoEditsTheListInPlace(t *testing.T) {
-	fs := &demoListStore{settings: map[string]string{handlers.DemoServerUUIDsSetting: `["other","srv-7","srv-7"]`}}
+	fs := &demoListStore{settings: map[string]string{demo.ServerUUIDsSetting: `["other","srv-7","srv-7"]`}}
 	s := &handlers.AppState{Store: fs, StoreEnabled: true}
 	toggle := func(on bool) {
 		body := `{"enabled":false}`
@@ -301,12 +302,12 @@ func TestSetServerDemoEditsTheListInPlace(t *testing.T) {
 		}
 	}
 	toggle(false)
-	if got := fs.settings[handlers.DemoServerUUIDsSetting]; got != `["other"]` {
+	if got := fs.settings[demo.ServerUUIDsSetting]; got != `["other"]` {
 		t.Fatalf("after off: %s", got)
 	}
 	toggle(true)
 	toggle(true)
-	if got := fs.settings[handlers.DemoServerUUIDsSetting]; got != `["other","srv-7"]` {
+	if got := fs.settings[demo.ServerUUIDsSetting]; got != `["other","srv-7"]` {
 		t.Fatalf("after on twice: %s", got)
 	}
 }
@@ -314,11 +315,11 @@ func TestSetServerDemoEditsTheListInPlace(t *testing.T) {
 // A delete that lands between the handler's load and the locked edit must not
 // see its dropDemoServers undone by the toggle writing the UUID back.
 func TestSetServerDemoDoesNotReAddADeletedServer(t *testing.T) {
-	fs := &demoListStore{settings: map[string]string{handlers.DemoServerUUIDsSetting: `["other"]`}, deleteInLock: true}
+	fs := &demoListStore{settings: map[string]string{demo.ServerUUIDsSetting: `["other"]`}, deleteInLock: true}
 	s := &handlers.AppState{Store: fs, StoreEnabled: true}
 	w := httptest.NewRecorder()
 	(&ServerHandler{state: s}).SetServerDemo(w, handlertest.AdminRequest("PATCH", map[string]string{"id": "7"}, `{"enabled":true}`))
-	if w.Code != http.StatusNotFound || fs.settings[handlers.DemoServerUUIDsSetting] != `["other"]` {
-		t.Fatalf("got %d, list %s", w.Code, fs.settings[handlers.DemoServerUUIDsSetting])
+	if w.Code != http.StatusNotFound || fs.settings[demo.ServerUUIDsSetting] != `["other"]` {
+		t.Fatalf("got %d, list %s", w.Code, fs.settings[demo.ServerUUIDsSetting])
 	}
 }

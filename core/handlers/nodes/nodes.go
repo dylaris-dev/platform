@@ -3,7 +3,6 @@ package nodes
 import (
 	"context"
 	"database/sql"
-	"dylaris-core/handlers/reqctx"
 	"dylaris-pkg/validate"
 	"encoding/json"
 	"errors"
@@ -18,8 +17,10 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/demo"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 
@@ -558,7 +559,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	// Background, not the request context: an operator who hung up must not be
 	// the reason a deleted machine's addresses keep resolving.
 	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, services.ServerUUIDs(servers))
-	handlers.DropDemoServers(h.state, services.ServerUUIDs(servers))
+	demo.DropServers(h.state.Store, h.state.StoreEnabled, services.ServerUUIDs(servers))
 	log.Printf("ForceDeleteNode: node %d — cleaned up %d route(s) across %d server(s)", id, matched, len(servers))
 	h.cleanupDeletedNode(r, node, warpKeys)
 

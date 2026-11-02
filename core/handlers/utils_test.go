@@ -3,6 +3,8 @@ package handlers
 import (
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers/validate"
 )
 
 // TestSlugify pins slugify's real behavior read from handlers/utils.go:
@@ -44,7 +46,7 @@ func TestSlugify(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := slugify(c.input); got != c.want {
+			if got := validate.Slugify(c.input); got != c.want {
 				t.Errorf("slugify(%q) = %q, want %q", c.input, got, c.want)
 			}
 		})

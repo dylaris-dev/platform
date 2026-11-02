@@ -28,6 +28,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/demo"
 	"dylaris-core/services/redisacl"
 )
 
@@ -259,7 +260,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// hands out a write credential the node enforces without knowing about demo.
 	// Fail closed: an unreadable demo setting is not proof of a normal account.
 	userID, _ := r.Context().Value("userID").(string)
-	demo, err := handlers.IsDemoAccountChecked(h.state, userID)
+	demo, err := demo.IsAccountChecked(h.state.Store, h.state.StoreEnabled, userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not verify account restrictions", http.StatusServiceUnavailable)
 		return

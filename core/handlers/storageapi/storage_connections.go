@@ -11,6 +11,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage"
@@ -57,7 +58,7 @@ func validateStorageConnectionEndpoint(raw json.RawMessage) error {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return fmt.Errorf("invalid config JSON")
 	}
-	return handlers.ValidateS3Endpoint("storage connection", cfg.Endpoint)
+	return validate.ValidateS3Endpoint("storage connection", cfg.Endpoint)
 }
 
 func validStorageConnectionProvider(p string) bool {

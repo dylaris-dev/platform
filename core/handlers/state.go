@@ -10,6 +10,7 @@ import (
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/demo"
 	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 	"dylaris-core/store"
@@ -277,3 +278,18 @@ type AppState struct {
 
 // AdminSecretConfigured reports whether the break-glass ADMIN_SECRET is set.
 func (s *AppState) AdminSecretConfigured() bool { return s.AdminSecret != "" }
+
+// IsDemoServerID reports whether the numeric server id maps to an admin-flagged
+// demo showcase server. Exported so main can hand the authz resolver a demo-read
+// predicate without the resolver importing handlers. Always false when the
+// store integration is off (open-core/self-host build).
+func (s *AppState) IsDemoServerID(serverID int) bool {
+	if s == nil || !s.StoreEnabled || s.Store == nil {
+		return false
+	}
+	srv, err := s.Store.GetServerByID(serverID)
+	if err != nil || srv == nil {
+		return false
+	}
+	return demo.IsServer(s.Store, s.StoreEnabled, srv.UUID)
+}

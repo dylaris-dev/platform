@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 
 	"github.com/gorilla/mux"
 )
@@ -262,7 +263,7 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		req.Surface = "tab"
 		req.Visibility = "private"
 		req.TargetPath = "/"
-		if err := handlers.ValidateTabURL(req.URL); err != nil {
+		if err := validate.ValidateTabURL(req.URL); err != nil {
 			httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -376,7 +377,7 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.URL != "" {
-		if err := handlers.ValidateTabURL(strings.TrimSpace(req.URL)); err != nil {
+		if err := validate.ValidateTabURL(strings.TrimSpace(req.URL)); err != nil {
 			httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}

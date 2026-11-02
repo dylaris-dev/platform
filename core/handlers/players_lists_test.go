@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"dylaris-core/models"
+	"dylaris-core/services/demo"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -37,7 +38,7 @@ type playersListsStore struct {
 
 func (f *playersListsStore) GetServerByID(int) (*models.Server, error) { return f.srv, nil }
 func (f *playersListsStore) GetSetting(key string) (string, error) {
-	if key == demoServerUUIDsSetting {
+	if key == demo.ServerUUIDsSetting {
 		return f.demos, nil
 	}
 	return "", nil

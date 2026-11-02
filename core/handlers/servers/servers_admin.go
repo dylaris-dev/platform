@@ -1,7 +1,6 @@
 package servers
 
 import (
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -9,6 +8,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"

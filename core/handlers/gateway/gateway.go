@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,8 @@ import (
 	"dylaris-core/store"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
@@ -514,7 +515,7 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 	// 1) Hoster-picker path
 	if req.Subdomain != "" || req.HosterDomain != "" {
 		sub := strings.ToLower(strings.TrimSpace(req.Subdomain))
-		host := handlers.NormHost(req.HosterDomain)
+		host := validate.NormHost(req.HosterDomain)
 		if sub == "" || host == "" {
 			return "", false, fmt.Errorf("subdomain and hosterDomain must both be set")
 		}
@@ -533,7 +534,7 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 
 	// 2) Custom-domain path
 	if req.CustomDomain != "" {
-		return resolveBroughtDomain(handlers.NormHost(req.CustomDomain), hosters, customEnabled, blocked)
+		return resolveBroughtDomain(validate.NormHost(req.CustomDomain), hosters, customEnabled, blocked)
 	}
 
 	// 3) Raw-FQDN path (admin tools, scripts, backwards compat).
@@ -554,8 +555,8 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 	// answers to that path's rules, the ownership proof included (the isCustom
 	// return is what arms it at the call site).
 	if req.Domain != "" {
-		dom := handlers.NormHost(req.Domain)
-		if !handlers.IsHostname(dom, 2) {
+		dom := validate.NormHost(req.Domain)
+		if !validate.IsHostname(dom, 2) {
 			return "", false, fmt.Errorf("invalid domain format")
 		}
 		if isAdmin {
@@ -594,7 +595,7 @@ func (h *GatewayHandler) resolveRouteDomain(req *struct {
 // An empty sub (the caller typed the hoster apex itself) fails validation, and
 // that is the intended answer: the apex is not a tenant's to route.
 func resolveHosterSubdomain(sub string, hd handlers.HosterDomain, blocked map[string]bool) (string, bool, error) {
-	if !handlers.ValidateSubdomain(sub, hd.Validation) {
+	if !validate.ValidateSubdomain(sub, hd.Validation) {
 		return "", false, fmt.Errorf("subdomain does not match the allowed format for %s", hd.Domain)
 	}
 	if blocked[sub] {
@@ -611,7 +612,7 @@ func resolveBroughtDomain(dom string, hosters []handlers.HosterDomain, customEna
 	if !customEnabled {
 		return "", false, fmt.Errorf("custom domains are not enabled")
 	}
-	if !handlers.IsHostname(dom, 1) {
+	if !validate.IsHostname(dom, 1) {
 		return "", false, fmt.Errorf("invalid custom domain format")
 	}
 	labels := strings.Split(dom, ".")

@@ -2,7 +2,6 @@ package nodes
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"errors"
 	"log"
@@ -13,8 +12,10 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/demo"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 
@@ -187,7 +188,7 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 	// Background, not the request context: a browser that timed out must not be
 	// the reason an address outlives the machine behind it.
 	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, services.ServerUUIDs(servers))
-	handlers.DropDemoServers(h.state, services.ServerUUIDs(servers))
+	demo.DropServers(h.state.Store, h.state.StoreEnabled, services.ServerUUIDs(servers))
 	log.Printf("DeleteMyNode: node %d — cleaned up %d route(s) across %d server(s)", node.ID, matched, len(servers))
 
 	// The Redis ACL user and the node's keys are all keyed by its token, which

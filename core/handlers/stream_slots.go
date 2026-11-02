@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/services/demo"
 	"dylaris-core/store"
 )
 
@@ -57,7 +58,7 @@ func acquireLiveStream(w http.ResponseWriter, r *http.Request, st store.Store, k
 	userID, _ := r.Context().Value("userID").(string)
 	holder := userID
 	if st != nil && userID != "" {
-		if demo, _ := st.GetSetting(demoAccountUUIDSetting); demo == userID {
+		if demo, _ := st.GetSetting(demo.AccountUUIDSetting); demo == userID {
 			holder = "demo@" + httpx.ClientIP(r)
 		}
 	}

@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/handlers/servers"
 	"dylaris-core/models"
 	"dylaris-core/services"

@@ -12,6 +12,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -200,7 +201,7 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	slug := strings.TrimSpace(req.Slug)
 	if slug == "" {
-		slug = handlers.Slugify(req.Name)
+		slug = validate.Slugify(req.Name)
 	}
 	if !packSlugRe.MatchString(slug) {
 		httpx.SendJSONError(w, "Invalid slug", http.StatusBadRequest)

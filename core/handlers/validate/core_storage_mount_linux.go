@@ -1,8 +1,8 @@
-package handlers
+package validate
 
 import "syscall"
 
-// pathIsOnContainerRootFS reports whether path sits on the SAME filesystem
+// PathIsOnContainerRootFS reports whether path sits on the SAME filesystem
 // device as "/", and whether that question could be answered at all.
 //
 // Core ships as a Docker image, so "/" is the container's own writable overlay
@@ -16,7 +16,7 @@ import "syscall"
 // It cannot see the reverse case: a path on a different device is definitely
 // mounted, but says nothing about whether that mount is the one the operator
 // intended.
-func pathIsOnContainerRootFS(path string) (onRoot bool, determinable bool) {
+func PathIsOnContainerRootFS(path string) (onRoot bool, determinable bool) {
 	var st, root syscall.Stat_t
 	if err := syscall.Stat(path, &st); err != nil {
 		return false, false

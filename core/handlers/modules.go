@@ -1,13 +1,15 @@
 package handlers
 
 import (
-	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/gorilla/mux"
+
+	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 )
 
 type ModuleHandler struct {
@@ -157,7 +159,7 @@ func (h *ModuleHandler) CreateModuleHandler(w http.ResponseWriter, r *http.Reque
 	// was taken as sent - only the form said "url" - so the same rule as a
 	// custom tab's applies: a parsable http or https address.
 	if req.Type == "iframe" || req.URL != "" {
-		if err := validateTabURL(req.URL); err != nil {
+		if err := validate.ValidateTabURL(req.URL); err != nil {
 			httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}

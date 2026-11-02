@@ -1,10 +1,11 @@
 package packs
 
 import (
-	"dylaris-core/handlers/httpx"
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"dylaris-core/handlers/httpx"
 )
 
 // Folders stores empty authoring directories as metadata; file paths already

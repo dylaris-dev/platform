@@ -2,7 +2,6 @@ package nodes
 
 import (
 	"crypto/rand"
-	"dylaris-core/handlers/reqctx"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
 	"dylaris-core/store"
 

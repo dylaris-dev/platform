@@ -2,14 +2,15 @@ package handlers
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/services/demo"
 	"dylaris-core/store"
 )
 
@@ -88,7 +89,7 @@ func TestADemoAccountKeyCannotWrite(t *testing.T) {
 	fs := externalFixture([]string{"console.send"}, []string{"uuid-a"}, owner, map[string]*models.Server{
 		"uuid-a": {ID: 10, UUID: "uuid-a", OwnerID: "owner-1"},
 	})
-	fs.settings = map[string]string{demoAccountUUIDSetting: "owner-1"}
+	fs.settings = map[string]string{demo.AccountUUIDSetting: "owner-1"}
 	h := newAPIKeysAuthHandler(fs)
 	h.state.StoreEnabled = true
 	rec := httptest.NewRecorder()

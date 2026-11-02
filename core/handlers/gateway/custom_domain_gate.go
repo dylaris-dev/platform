@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"errors"
 	"fmt"
 	"log"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )

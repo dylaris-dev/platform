@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
 )
 
@@ -261,7 +262,7 @@ func normPortsHost(s string) (string, error) {
 		return v, nil
 	}
 	labels := strings.Split(v, ".")
-	if _, err := strconv.Atoi(labels[len(labels)-1]); err == nil || !handlers.IsHostname(v, 2) {
+	if _, err := strconv.Atoi(labels[len(labels)-1]); err == nil || !validate.IsHostname(v, 2) {
 		return "", errors.New("enter an IPv4 address or a hostname such as play.example.com")
 	}
 	return v, nil

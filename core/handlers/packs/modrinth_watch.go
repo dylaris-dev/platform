@@ -1,7 +1,6 @@
 package packs
 
 import (
-	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"encoding/json"
@@ -10,6 +9,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"dylaris-core/handlers/httpx"
 )
 
 var modrinthIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)

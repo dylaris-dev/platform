@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )

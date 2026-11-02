@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/handlers/validate"
 )
 
 // TestValidatePublicBaseURL pins the input rules for core_public_url. A node is
@@ -34,7 +34,7 @@ func TestValidatePublicBaseURL(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := handlers.ValidatePublicBaseURL("core public URL", c.in)
+			err := validate.ValidatePublicBaseURL("core public URL", c.in)
 			if c.ok && err != nil {
 				t.Fatalf("validatePublicBaseURL(%q) = %v, want nil", c.in, err)
 			}

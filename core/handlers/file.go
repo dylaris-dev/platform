@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +15,9 @@ import (
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
+	"dylaris-core/services/demo"
 	"dylaris-pkg/beam/quota"
 	"dylaris-pkg/validate"
 	pb "dylaris-proto/node"
@@ -203,7 +204,7 @@ func (h *FileHandler) resolveServerUUID(r *http.Request, allowDemoRead bool, req
 	// they fall into the demo-bypass branch below, which is redaction-aware.
 	res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, srv.ID)
 	if rerr != nil || !res.HasCap(requiredCap) {
-		if allowDemoRead && isDemoServer(h.state, uuid) {
+		if allowDemoRead && demo.IsServer(h.state.Store, h.state.StoreEnabled, uuid) {
 			return uuid, true, nil // read-only demo access; redaction downstream via viaDemoBypass
 		}
 		return "", false, fmt.Errorf("access denied")

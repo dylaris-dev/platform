@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"dylaris-core/models"
+	"dylaris-core/services/demo"
 	"dylaris-core/store"
 )
 
@@ -35,11 +36,11 @@ func (f *demoListStore) UpdateSetting(k string, fn func(string) (string, error))
 // adopting a leftover folder reuses it), so a deleted server left on the list
 // made the next server with that UUID readable by every signed-in account.
 func TestDeletedServersLeaveTheDemoList(t *testing.T) {
-	fs := &demoListStore{settings: map[string]string{demoServerUUIDsSetting: `["keep","gone"]`}}
+	fs := &demoListStore{settings: map[string]string{demo.ServerUUIDsSetting: `["keep","gone"]`}}
 	s := &AppState{Store: fs, StoreEnabled: true}
-	dropDemoServers(s, []string{"gone"})
-	if isDemoServer(s, "gone") || !isDemoServer(s, "keep") {
-		t.Fatalf("demo list after delete: %s", fs.settings[demoServerUUIDsSetting])
+	demo.DropServers(s.Store, s.StoreEnabled, []string{"gone"})
+	if demo.IsServer(s.Store, s.StoreEnabled, "gone") || !demo.IsServer(s.Store, s.StoreEnabled, "keep") {
+		t.Fatalf("demo list after delete: %s", fs.settings[demo.ServerUUIDsSetting])
 	}
 }
 

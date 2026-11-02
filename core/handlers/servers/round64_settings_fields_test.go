@@ -2,7 +2,6 @@ package servers
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http/httptest"
 	"regexp"
@@ -13,6 +12,7 @@ import (
 	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/store"
 

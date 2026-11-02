@@ -1,13 +1,13 @@
 package users
 
 import (
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"net/http"
 
 	"dylaris-core/handlers"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/store"
 )
 

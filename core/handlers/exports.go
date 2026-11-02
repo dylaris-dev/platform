@@ -20,16 +20,11 @@ import (
 // handlers. Thin wrappers rather than renames: the unexported names stay what
 // the rest of this package calls.
 
-func Slugify(name string) string { return slugify(name) }
-
 func GeneratePlaintextKey() (string, error) { return generatePlaintextKey() }
 
 type ModpackDelivery = modpackDelivery
 
-const (
-	DeliverStream   = deliverStream
-	DeliverRedirect = deliverRedirect
-)
+const DeliverStream = deliverStream
 
 func ServeModpackObject(w http.ResponseWriter, r *http.Request, prov modpack.ModpackStorageProvider, key string, mode ModpackDelivery, contentType, filename string) error {
 	return serveModpackObject(w, r, prov, key, mode, contentType, filename)
@@ -112,17 +107,6 @@ func AnnotateStalledRestores(ctx context.Context, rdb *redis.Client, connected f
 	annotateStalledRestores(ctx, rdb, connected, nodeID, serverUUID, restores)
 }
 
-func ValidateS3Endpoint(subject, endpoint string) error { return validateS3Endpoint(subject, endpoint) }
-
-// PathIsOnContainerRootFS is the real check behind the root-filesystem seams;
-// a subpackage keeps its own seam variable pointing here so its tests can
-// replace it without touching this package's.
-func PathIsOnContainerRootFS(path string) (onRoot bool, determinable bool) {
-	return pathIsOnContainerRootFS(path)
-}
-
-func ValidateTabURL(raw string) error { return validateTabURL(raw) }
-
 const TabProxyTicketTTL = tabProxyTicketTTL
 
 type SparkDBProvider = sparkDBProvider
@@ -131,13 +115,9 @@ func SyncCustomTabsModule(state *AppState, enabled bool, audience string) error 
 	return syncCustomTabsModule(state, enabled, audience)
 }
 
-func IsDemoAccount(s *AppState, userID string) bool { return isDemoAccount(s, userID) }
-
 func GuardAccountTerms(w http.ResponseWriter, r *http.Request, state *AppState, userID string) bool {
 	return guardAccountTerms(w, r, state, userID)
 }
-
-func ValidatePublicBaseURL(subject, raw string) error { return validatePublicBaseURL(subject, raw) }
 
 func UserRouteScope(userID string) string { return userRouteScope(userID) }
 
@@ -159,10 +139,6 @@ func ResolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, public
 	return resolveRelay(ctx, rdb, manualOverride, publicHost, preferredRegion)
 }
 
-func IsDemoAccountChecked(s *AppState, userID string) (bool, error) {
-	return isDemoAccountChecked(s, userID)
-}
-
 func RedactNodeAddressOne(state *AppState, srv *models.Server, isAdmin bool, userID string) {
 	redactNodeAddressOne(state, srv, isAdmin, userID)
 }
@@ -170,9 +146,6 @@ func RedactNodeAddressOne(state *AppState, srv *models.Server, isAdmin bool, use
 // SuspendedMessage is what a suspended account is told; for the subpackages'
 // tests that assert it.
 const SuspendedMessage = suspendedMessage
-
-// DemoAccountUUIDSetting is the settings key naming the demo account.
-const DemoAccountUUIDSetting = demoAccountUUIDSetting
 
 // --- gateway -----------------------------------------------------------------
 
@@ -193,12 +166,6 @@ func (s *AppState) KitOwnedByOther(ownerID string, userID string) bool {
 }
 
 func (s *AppState) DeployConfig() DeployConfig { return s.deployConfig() }
-
-func NormHost(s string) string { return normHost(s) }
-
-func IsHostname(s string, minLabels int) bool { return isHostname(s, minLabels) }
-
-func ValidateSubdomain(sub, mode string) bool { return validateSubdomain(sub, mode) }
 
 func ByonActive(state *AppState, r *http.Request) bool { return byonActive(state, r) }
 
@@ -287,8 +254,6 @@ func PurgeBackupArchivesForServers(state *AppState, serverIDs []int) {
 	purgeBackupArchivesForServers(state, serverIDs)
 }
 
-func DropDemoServers(s *AppState, uuids []string) { dropDemoServers(s, uuids) }
-
 func AnnotateStalledInstallsFor(ctx context.Context, state *AppState, servers []models.Server) {
 	annotateStalledInstallsFor(ctx, state, servers)
 }
@@ -332,15 +297,11 @@ func (c *upstreamCooldown) Blocked(now time.Time) (time.Duration, bool) { return
 
 func (c *upstreamCooldown) Trip(h http.Header, now time.Time) time.Duration { return c.trip(h, now) }
 
-func HashURL(s string) string { return hashURL(s) }
-
 const MaxCachedResponseBytes = maxCachedResponseBytes
 
 const KeyModpackStorageConnectionID = keyModpackStorageConnectionID
 
 func StorageConnIDSetting(id int) string { return storageConnIDSetting(id) }
-
-func BoolStr(b bool) string { return boolStr(b) }
 
 // --- storage -----------------------------------------------------------------
 
@@ -477,8 +438,6 @@ func ApplyResolvedTabPermissions(state *AppState, servers []models.Server, userI
 	return applyResolvedTabPermissions(state, servers, userID, username)
 }
 
-var BungeeCordBuildPattern = bungeeCordBuildPattern
-
 func CanPlaceOnNode(state *AppState, r *http.Request, node *models.Node) bool {
 	return canPlaceOnNode(state, r, node)
 }
@@ -487,13 +446,7 @@ func CountSubServerDirs(entries []*pb.FileInfo) int { return countSubServerDirs(
 
 func DiskMBToGBCeil(mb int64) int { return diskMBToGBCeil(mb) }
 
-func EditDemoList(st store.Store, edit func([]string) ([]string, error)) error {
-	return editDemoList(st, edit)
-}
-
 var EffectiveCpuset = effectiveCpuset
-
-var ErrDemoServerGone = errDemoServerGone
 
 func ExactMinecraftVersion(software, mcVersion, version, loader string) string {
 	return exactMinecraftVersion(software, mcVersion, version, loader)
@@ -506,8 +459,6 @@ func InstallStatusFor(ctx context.Context, st *AppState, nodeToken string) strin
 func ListServerDirFor(state *AppState, nodeID int, serverUUID, dir string) ([]*pb.FileInfo, error) {
 	return listServerDirFor(state, nodeID, serverUUID, dir)
 }
-
-func LoadDemoServerUUIDs(st store.Store) []string { return loadDemoServerUUIDs(st) }
 
 func ModFitKnown(serverLoader, serverMC string) bool { return modFitKnown(serverLoader, serverMC) }
 
@@ -528,8 +479,6 @@ func NodeReleaseAtLeastKnown(ctx context.Context, st *AppState, nodeToken, since
 }
 
 func NormalizeCaps(caps []string) []string { return normalizeCaps(caps) }
-
-var PaperMCReleasePattern = paperMCReleasePattern
 
 func ProxyBackendUUIDs(state *AppState, proxyID int) []string {
 	return proxyBackendUUIDs(state, proxyID)
@@ -617,10 +566,6 @@ const ModReportingSince = modReportingSince
 
 func NeoForgeMajor(v string) (string, bool) { return neoForgeMajor(v) }
 
-var SubRegexDNS = subRegexDNS
-
 func (h *PlacementHandler) ScoreNode(ctx context.Context, n *models.Node, req PickNodeRequest, hb *services.NodeHeartbeat) NodeCandidate {
 	return h.scoreNode(ctx, n, req, hb)
 }
-
-const DemoServerUUIDsSetting = demoServerUUIDsSetting

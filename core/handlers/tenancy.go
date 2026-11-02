@@ -2,9 +2,9 @@ package handlers
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"net/http"
 
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 )
 

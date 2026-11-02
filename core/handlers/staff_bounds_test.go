@@ -8,6 +8,7 @@ import (
 	"dylaris-core/authz"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
+	"dylaris-core/services/demo"
 	"dylaris-core/store"
 )
 
@@ -50,7 +51,7 @@ type demoLoginStore struct {
 }
 
 func (f *demoLoginStore) GetSetting(key string) (string, error) {
-	if key == demoAccountUUIDSetting {
+	if key == demo.AccountUUIDSetting {
 		return "u-demo", nil
 	}
 	return "", nil

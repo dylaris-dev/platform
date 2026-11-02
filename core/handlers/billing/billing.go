@@ -2,7 +2,6 @@ package billing
 
 import (
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -12,6 +11,8 @@ import (
 
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -387,7 +388,7 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 	// http/https + host + no-credentials rule the other operator-set public
 	// URLs already take; empty stays valid and simply renders no link.
 	req.PaymentUrl = strings.TrimSpace(req.PaymentUrl)
-	if err := handlers.ValidatePublicBaseURL("payment URL", req.PaymentUrl); err != nil {
+	if err := validate.ValidatePublicBaseURL("payment URL", req.PaymentUrl); err != nil {
 		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}

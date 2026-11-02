@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/models"
+	"dylaris-core/services/demo"
 	"dylaris-core/store"
 
 	"github.com/alicebob/miniredis/v2"
@@ -162,7 +163,7 @@ type demoSettingStore struct {
 }
 
 func (d demoSettingStore) GetSetting(key string) (string, error) {
-	if key == demoAccountUUIDSetting {
+	if key == demo.AccountUUIDSetting {
 		return d.demo, nil
 	}
 	return "", nil

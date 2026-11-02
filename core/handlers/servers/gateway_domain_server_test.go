@@ -5,6 +5,7 @@ import (
 
 	"dylaris-core/handlers"
 
+	"dylaris-core/handlers/validate"
 	"dylaris-core/store"
 )
 
@@ -84,7 +85,7 @@ func TestIsSnapshotFetchHostAllowed(t *testing.T) {
 func TestCnameLabelValidation(t *testing.T) {
 	valid := []string{"route", "connect", "mc", "r", "play-here", "a1"}
 	for _, v := range valid {
-		if !handlers.SubRegexDNS.MatchString(v) {
+		if !validate.SubRegexDNS.MatchString(v) {
 			t.Errorf("label %q should be accepted as a CNAME label", v)
 		}
 	}
@@ -101,7 +102,7 @@ func TestCnameLabelValidation(t *testing.T) {
 		"route_1",
 	}
 	for _, v := range invalid {
-		if handlers.SubRegexDNS.MatchString(v) {
+		if validate.SubRegexDNS.MatchString(v) {
 			t.Errorf("label %q should be rejected as a CNAME label", v)
 		}
 	}

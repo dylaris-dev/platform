@@ -1,7 +1,6 @@
 package tabs
 
 import (
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -15,6 +14,8 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
+	"dylaris-core/services/demo"
 
 	"github.com/gorilla/mux"
 )
@@ -365,7 +366,7 @@ func (h *ProxyHandler) MintTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	readOnly := !isAdmin && handlers.IsDemoAccount(h.state, userID)
+	readOnly := !isAdmin && demo.IsAccount(h.state.Store, h.state.StoreEnabled, userID)
 	sid := ""
 	if c, _ := reqctx.SessionClaims(r).(*handlers.Claims); c != nil {
 		sid = c.ID

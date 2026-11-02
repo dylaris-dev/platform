@@ -1,13 +1,14 @@
 package handlers
 
 import (
-	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/gorilla/mux"
+
+	"dylaris-core/handlers/httpx"
 )
 
 // effectiveCpuset: see models.EffectiveCpuset.

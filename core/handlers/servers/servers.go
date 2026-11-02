@@ -11,6 +11,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/demo"
 )
 
 // defaultJvmFlags are always injected into the start command but not stored in extra_jvm_flags.
@@ -230,7 +231,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	// panel to render the appended ones read-only.
 	// Whole demo surface only exists on the hosted (store-enabled) build; a
 	// self-host build never reads a stale demo_server_uuids setting.
-	if demoUUIDs := handlers.LoadDemoServerUUIDs(h.state.Store); h.state.StoreEnabled && len(demoUUIDs) > 0 {
+	if demoUUIDs := demo.LoadServerUUIDs(h.state.Store); h.state.StoreEnabled && len(demoUUIDs) > 0 {
 		demoSet := make(map[string]bool, len(demoUUIDs))
 		for _, u := range demoUUIDs {
 			demoSet[u] = true
@@ -240,7 +241,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 				servers[i].IsDemo = true
 			}
 		}
-		if handlers.IsDemoAccount(h.state, userID) {
+		if demo.IsAccount(h.state.Store, h.state.StoreEnabled, userID) {
 			for _, uuid := range demoUUIDs {
 				ds, derr := h.state.Store.GetServerByUUID(uuid)
 				if derr != nil || ds == nil {

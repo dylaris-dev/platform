@@ -3,7 +3,6 @@ package handlers
 import (
 	"bytes"
 	"context"
-	"dylaris-core/handlers/reqctx"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
