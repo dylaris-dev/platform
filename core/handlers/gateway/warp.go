@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"dylaris-pkg/validate"
 
@@ -641,7 +642,7 @@ func (h *WarpHandler) DeleteAPIKey(w http.ResponseWriter, r *http.Request) {
 // token). The key lives in warp_api_keys beside the node keys, and warp enroll
 // refuses it.
 func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
-	if !handlers.RouteOnlyActive(h.state, r) {
+	if !access.RouteOnlyActive(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
 		return
 	}
@@ -906,7 +907,7 @@ func (h *WarpHandler) nodeLinkBoot(w http.ResponseWriter, key store.WarpAPIKey) 
 // no secrets). The link token is re-derivable from link_id, so it is re-revealed
 // via the kit's reveal flow, not listed here.
 func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
-	if !handlers.RouteOnlyActive(h.state, r) {
+	if !access.RouteOnlyActive(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
 		return
 	}
@@ -990,7 +991,7 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Link not found", http.StatusNotFound)
 		return
 	}
-	if key.OwnerID != userID && (!isAdmin || h.state.KitOwnedByOther(key.OwnerID, userID)) {
+	if key.OwnerID != userID && (!isAdmin || access.KitOwnedByOther(h.state.FeatureFlags, key.OwnerID, userID)) {
 		httpx.SendJSONError(w, "Link not found", http.StatusNotFound)
 		return
 	}
@@ -1063,7 +1064,7 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 	// carry no capability, so "any admin" would be the whole gate, and a rolled
 	// External node key boots that machine's Link. The admin way to act on one
 	// is RevokeAPIKey / DeleteAPIKey under /api/admin/warp/keys.
-	if key.OwnerID == "" || (key.OwnerID != userID && (!isAdmin || h.state.KitOwnedByOther(key.OwnerID, userID))) {
+	if key.OwnerID == "" || (key.OwnerID != userID && (!isAdmin || access.KitOwnedByOther(h.state.FeatureFlags, key.OwnerID, userID))) {
 		httpx.SendJSONError(w, notFound, http.StatusNotFound)
 		return "", false
 	}
@@ -1094,7 +1095,7 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 // New secret, same machine: node_id and the location name do not move, so the
 // tenant's servers keep resolving to the same node row.
 func (h *WarpHandler) RollNodeWarpKey(w http.ResponseWriter, r *http.Request) {
-	if !handlers.ByonActive(h.state, r) {
+	if !access.ByonActive(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
@@ -1337,7 +1338,7 @@ func (h *WarpHandler) DeleteLeader(w http.ResponseWriter, r *http.Request) {
 // self-service - so the deploy snippet handed the tenant a placeholder and left
 // the operator to pass the other secret by hand, per customer.
 func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
-	if !handlers.ByonActive(h.state, r) {
+	if !access.ByonActive(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
@@ -1429,7 +1430,7 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 // ListNodeWarpKeys GET /api/warp/node-keys - the caller's own BYON node keys,
 // metadata only (the secret is stored as a hash and is gone after minting).
 func (h *WarpHandler) ListNodeWarpKeys(w http.ResponseWriter, r *http.Request) {
-	if !handlers.ByonActive(h.state, r) {
+	if !access.ByonActive(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
@@ -1484,7 +1485,7 @@ func (h *WarpHandler) ListNodeWarpKeys(w http.ResponseWriter, r *http.Request) {
 // this endpoint's: an External node's key is bound once, at its enrolment, by
 // the platform token minted with it (store.BindWarpKeyFromEnrollToken).
 func (h *WarpHandler) BindNodeWarpKey(w http.ResponseWriter, r *http.Request) {
-	if !handlers.ByonActive(h.state, r) {
+	if !access.ByonActive(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
@@ -1581,7 +1582,7 @@ func (h *WarpHandler) BindNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 // FIRST so a failure below cannot undo itself - same ordering as
 // RevokeLinkKitTeardown.
 func (h *WarpHandler) RevokeNodeWarpKey(w http.ResponseWriter, r *http.Request) {
-	if !handlers.ByonActive(h.state, r) {
+	if !access.ByonActive(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
@@ -1607,7 +1608,7 @@ func (h *WarpHandler) RevokeNodeWarpKey(w http.ResponseWriter, r *http.Request) 
 	// confirm the id belongs to someone. An owner-less key is an External node's
 	// and is answered the same way: this endpoint has no capability, and the
 	// admin kill switch for that key is RevokeAPIKey under /api/admin/warp/keys.
-	if key.OwnerID == "" || (key.OwnerID != userID && (!isAdmin || h.state.UserOwnedByOther(&key.OwnerID, userID))) {
+	if key.OwnerID == "" || (key.OwnerID != userID && (!isAdmin || access.UserOwnedByOther(h.state.FeatureFlags, &key.OwnerID, userID))) {
 		httpx.SendJSONError(w, "Node key not found", http.StatusNotFound)
 		return
 	}

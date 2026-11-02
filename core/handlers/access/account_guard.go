@@ -1,4 +1,4 @@
-package handlers
+package access
 
 import (
 	"net/http"
@@ -7,9 +7,10 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/store"
 )
 
-// mayManageAccount reports whether the caller may change another account's way
+// MayManageAccount reports whether the caller may change another account's way
 // in - its password, 2FA, email, username, role, permission flags, route limit,
 // pending deletion - or delete it.
 //
@@ -29,18 +30,18 @@ import (
 // a role lookup error and would make a stronger account look powerless. A
 // lookup that fails refuses. The caller's side may stay lenient: reading the
 // caller as weaker than they are only refuses more.
-func mayManageAccount(state *AppState, r *http.Request, target *models.User) bool {
+func MayManageAccount(st store.Store, az *authz.Resolver, r *http.Request, target *models.User) bool {
 	if reqctx.IsAdmin(r) {
 		return true
 	}
-	if target == nil || target.IsAdmin || target.Role == "admin" || state == nil || state.Authz == nil || state.Store == nil {
+	if target == nil || target.IsAdmin || target.Role == "admin" || az == nil || st == nil {
 		return false
 	}
-	held, ok := strictPanelCaps(state, target.ID)
+	held, ok := StrictPanelCaps(st, target.ID)
 	if !ok {
 		return false
 	}
-	actor, err := state.Authz.Resolve(authz.IdentityFromContext(r.Context()), 0)
+	actor, err := az.Resolve(authz.IdentityFromContext(r.Context()), 0)
 	if err != nil {
 		return false
 	}
@@ -55,7 +56,7 @@ func mayManageAccount(state *AppState, r *http.Request, target *models.User) boo
 	// are visible. Taking such an account over handed the caller a right the
 	// permissions route refuses to grant them.
 	actorID, _ := r.Context().Value("userID").(string)
-	mine := LoadEffectivePermissions(state, actorID)
+	mine := LoadEffectivePermissions(st, az, actorID)
 	if target.Role == "support" && !(mine.IsSupport && mine.CanManageTickets) {
 		return false
 	}
@@ -63,7 +64,7 @@ func mayManageAccount(state *AppState, r *http.Request, target *models.User) boo
 		return false
 	}
 	if target.SupportTeam != "" && target.ID != actorID {
-		me, err := state.Store.GetUserByID(actorID)
+		me, err := st.GetUserByID(actorID)
 		if err != nil || me == nil || me.SupportTeam != target.SupportTeam {
 			return false
 		}
@@ -71,15 +72,15 @@ func mayManageAccount(state *AppState, r *http.Request, target *models.User) boo
 	return true
 }
 
-// strictPanelCaps is the panel-role half of Resolve with every error kept.
-func strictPanelCaps(state *AppState, userID string) (map[string]bool, bool) {
-	roleID, overrides, err := state.Store.GetUserPanelAuthz(userID)
+// StrictPanelCaps is the panel-role half of Resolve with every error kept.
+func StrictPanelCaps(st store.Store, userID string) (map[string]bool, bool) {
+	roleID, overrides, err := st.GetUserPanelAuthz(userID)
 	if err != nil {
 		return nil, false
 	}
 	caps := map[string]bool{}
 	if roleID != nil {
-		role, rerr := state.Store.GetPanelRole(*roleID)
+		role, rerr := st.GetPanelRole(*roleID)
 		if rerr != nil || role == nil {
 			return nil, false
 		}
@@ -96,23 +97,23 @@ func strictPanelCaps(state *AppState, userID string) (map[string]bool, bool) {
 	return caps, true
 }
 
-// guardAccountTerms is the rule for what an account is entitled to and
+// GuardAccountTerms is the rule for what an account is entitled to and
 // charged: entitlement grants, limit and billing overrides, billing status.
-// mayManageAccount, plus: not the caller's own account unless they are an
+// MayManageAccount, plus: not the caller's own account unless they are an
 // admin. plans.write is not an admin capability, and a holder granting
 // themselves BYON, unlimited limits or lifting their own suspension is spending
 // what nobody approved. Writes the refusal and returns false.
-func guardAccountTerms(w http.ResponseWriter, r *http.Request, state *AppState, userID string) bool {
+func GuardAccountTerms(w http.ResponseWriter, r *http.Request, st store.Store, az *authz.Resolver, userID string) bool {
 	if actor, _ := r.Context().Value("userID").(string); !reqctx.IsAdmin(r) && actor != "" && actor == userID {
 		httpx.SendJSONError(w, "You cannot change your own account's entitlement, limits or billing", http.StatusForbidden)
 		return false
 	}
-	target, err := state.Store.GetUserByID(userID)
+	target, err := st.GetUserByID(userID)
 	if err != nil || target == nil {
 		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return false
 	}
-	if !mayManageAccount(state, r, target) {
+	if !MayManageAccount(st, az, r, target) {
 		httpx.SendJSONError(w, "You cannot change the terms of an account with more rights than yours", http.StatusForbidden)
 		return false
 	}

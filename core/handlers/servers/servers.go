@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -187,7 +188,7 @@ func (h *ServerHandler) GetGatewayPlayers(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}
-	servers = handlers.ApplyResolvedTabPermissions(h.state, servers, userID, username)
+	servers = access.ApplyResolvedTabPermissions(h.state.Authz, servers, userID, username)
 	counts := services.GatewayPlayersByServer(r.Context(), h.state.Redis)
 	out := map[string]int{}
 	for _, s := range servers {
@@ -221,7 +222,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username, _ := r.Context().Value("username").(string)
-	servers = handlers.ApplyResolvedTabPermissions(h.state, servers, userID, username)
+	servers = access.ApplyResolvedTabPermissions(h.state.Authz, servers, userID, username)
 
 	// Demo servers. Mark any server already in the list that is on the demo list
 	// (so its owner/admin sees the demo status in the toggle), and — for the
@@ -250,7 +251,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 				ds.IsDemo = true
 				ds.Role = "demo"
 				ds.Permissions = &models.TabPermissions{Console: true, Files: true}
-				handlers.RedactSettingsFields(ds)
+				access.RedactSettingsFields(ds)
 				servers = append(servers, *ds)
 			}
 		}
@@ -260,7 +261,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	// never resolves. Costs nothing when no server is installing.
 	handlers.AnnotateStalledInstallsFor(r.Context(), h.state, servers)
 
-	handlers.RedactNodeAddress(h.state, servers, isAdmin, userID)
+	access.RedactNodeAddress(h.state.Store, h.state.GatewayEnabled, servers, isAdmin, userID)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -245,14 +246,14 @@ func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Requ
 	// that carries no capability - an invite with nothing ticked - still put
 	// the full server record (start command, JVM flags, ports, node) in front
 	// of a key that only had to name the server.
-	servers = applyResolvedTabPermissions(h.state, servers, ownerID, owner.Username)
+	servers = access.ApplyResolvedTabPermissions(h.state.Authz, servers, ownerID, owner.Username)
 	out := make([]models.Server, 0, len(allowed))
 	for _, s := range servers {
 		if inScope[s.UUID] {
 			out = append(out, s)
 		}
 	}
-	redactNodeAddress(h.state, out, owner.IsAdmin, ownerID)
+	access.RedactNodeAddress(h.state.Store, h.state.gatewayEnabled, out, owner.IsAdmin, ownerID)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "servers": out})
 }
 
@@ -268,14 +269,14 @@ func (h *APIKeysHandler) GetExternalServer(w http.ResponseWriter, r *http.Reques
 	ownerID := APIKeyCallerID(r)
 	owner, oerr := h.state.Store.GetUserByID(ownerID)
 	isAdmin := oerr == nil && owner != nil && owner.IsAdmin
-	redactNodeAddressOne(h.state, srv, isAdmin, ownerID)
+	access.RedactNodeAddressOne(h.state.Store, h.state.gatewayEnabled, srv, isAdmin, ownerID)
 	// Not short-cut on isAdmin: on a customer's machine the resolver treats an
 	// admin as a guest with whatever the owner granted.
 	if srv.OwnerID != ownerID {
 		if h.state.Authz == nil {
-			redactSettingsFields(srv)
-		} else if res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: ownerID, IsAdmin: isAdmin}, srv.ID); rerr != nil || !res.HasCap(settingsFieldsCap) {
-			redactSettingsFields(srv)
+			access.RedactSettingsFields(srv)
+		} else if res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: ownerID, IsAdmin: isAdmin}, srv.ID); rerr != nil || !res.HasCap(access.SettingsFieldsCap) {
+			access.RedactSettingsFields(srv)
 		}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "server": srv})

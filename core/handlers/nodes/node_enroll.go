@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -41,7 +42,7 @@ const maxNodeEnrollTokenExpiryDays = 30
 // MintToken POST /api/nodes/enroll-token — generate a new enroll token for the
 // calling user. The plaintext is returned ONCE; only its hash is stored.
 func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
-	if !handlers.ByonActive(h.state, r) {
+	if !access.ByonActive(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
@@ -186,7 +187,7 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 
 // ListTokens GET /api/nodes/enroll-token — the caller's tokens (metadata only).
 func (h *NodeEnrollHandler) ListTokens(w http.ResponseWriter, r *http.Request) {
-	if !handlers.ByonActive(h.state, r) {
+	if !access.ByonActive(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
@@ -209,7 +210,7 @@ func (h *NodeEnrollHandler) ListTokens(w http.ResponseWriter, r *http.Request) {
 // RevokeToken DELETE /api/nodes/enroll-token/{id} — revoke one of the caller's
 // tokens (scoped to owner).
 func (h *NodeEnrollHandler) RevokeToken(w http.ResponseWriter, r *http.Request) {
-	if !handlers.ByonActive(h.state, r) {
+	if !access.ByonActive(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}

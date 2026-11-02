@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/handlers/validate"
@@ -248,7 +249,7 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 	// admin capability, and a suspension stops every server the account owns
 	// and revokes its link kits for good - it was the one action a holder could
 	// aim at an admin or at staff with more rights than their own.
-	if h.state.Store != nil && !handlers.GuardAccountTerms(w, r, h.state, userID) {
+	if h.state.Store != nil && !access.GuardAccountTerms(w, r, h.state.Store, h.state.Authz, userID) {
 		return
 	}
 	status := req.Status
@@ -425,7 +426,7 @@ func (h *BillingHandler) SetBillingSettings(w http.ResponseWriter, r *http.Reque
 // empty spec clears the override (falls back to the platform default).
 func (h *BillingHandler) SetBillingOverrides(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	if !handlers.GuardAccountTerms(w, r, h.state, userID) {
+	if !access.GuardAccountTerms(w, r, h.state.Store, h.state.Authz, userID) {
 		return
 	}
 	var req struct {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -127,8 +128,8 @@ func TestMayManageAccount(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			target, _ := fs.GetUserByID(c.target)
-			if got := mayManageAccount(st, guardRequest("GET", c.actor, c.isAdmin, c.target, ""), target); got != c.want {
-				t.Errorf("mayManageAccount = %v, want %v", got, c.want)
+			if got := access.MayManageAccount(st.Store, st.Authz, guardRequest("GET", c.actor, c.isAdmin, c.target, ""), target); got != c.want {
+				t.Errorf("MayManageAccount = %v, want %v", got, c.want)
 			}
 		})
 	}
@@ -167,7 +168,7 @@ func TestStaffCannotTakeOverAStrongerAccount(t *testing.T) {
 			rec := httptest.NewRecorder()
 			func() {
 				defer func() {
-					if p := recover(); p != nil && bytes.Contains(debug.Stack(), []byte("mayManageAccount")) {
+					if p := recover(); p != nil && bytes.Contains(debug.Stack(), []byte("MayManageAccount")) {
 						t.Fatalf("the guard itself panicked: %v", p)
 					}
 				}()
@@ -311,8 +312,8 @@ func TestTheLegacyRightsGuardTheAccount(t *testing.T) {
 				target.Role = "user"
 			}
 			fs.users[guardMember] = &target
-			if got := mayManageAccount(guardState(fs), guardRequest("PUT", guardStaff, false, guardMember, ""), &target); got != c.want {
-				t.Fatalf("mayManageAccount = %v, want %v", got, c.want)
+			if got := access.MayManageAccount(fs, authz.NewResolver(fs), guardRequest("PUT", guardStaff, false, guardMember, ""), &target); got != c.want {
+				t.Fatalf("MayManageAccount = %v, want %v", got, c.want)
 			}
 		})
 	}

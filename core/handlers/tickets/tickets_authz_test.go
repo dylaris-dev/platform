@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -23,29 +23,29 @@ func TestCanSeeTicket(t *testing.T) {
 	cases := []struct {
 		name        string
 		ticket      *models.Ticket
-		perms       handlers.EffectivePermissions
+		perms       access.EffectivePermissions
 		userID      string
 		isWatcher   bool
 		settings    TicketSettings
 		supportTeam string
 		want        bool
 	}{
-		{"admin sees everything", &models.Ticket{UserID: owner}, handlers.EffectivePermissions{IsAdmin: true}, other, false, TicketSettings{}, "", true},
-		{"owner sees their own ticket", &models.Ticket{UserID: owner}, handlers.EffectivePermissions{}, owner, false, TicketSettings{}, "", true},
-		{"watcher always sees it", &models.Ticket{UserID: owner}, handlers.EffectivePermissions{}, other, true, TicketSettings{}, "", true},
-		{"plain outsider denied", &models.Ticket{UserID: owner}, handlers.EffectivePermissions{}, other, false, TicketSettings{}, "", false},
+		{"admin sees everything", &models.Ticket{UserID: owner}, access.EffectivePermissions{IsAdmin: true}, other, false, TicketSettings{}, "", true},
+		{"owner sees their own ticket", &models.Ticket{UserID: owner}, access.EffectivePermissions{}, owner, false, TicketSettings{}, "", true},
+		{"watcher always sees it", &models.Ticket{UserID: owner}, access.EffectivePermissions{}, other, true, TicketSettings{}, "", true},
+		{"plain outsider denied", &models.Ticket{UserID: owner}, access.EffectivePermissions{}, other, false, TicketSettings{}, "", false},
 
-		{"support with cross-team visibility sees everything", &models.Ticket{UserID: owner, AssignedTeam: "billing"}, handlers.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: true}, "sales", true},
+		{"support with cross-team visibility sees everything", &models.Ticket{UserID: owner, AssignedTeam: "billing"}, access.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: true}, "sales", true},
 
-		{"support, cross-team off, assigned to me", &models.Ticket{UserID: owner, AssignedUserID: strPtrTickets(supportUser)}, handlers.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: false}, "sales", true},
+		{"support, cross-team off, assigned to me", &models.Ticket{UserID: owner, AssignedUserID: strPtrTickets(supportUser)}, access.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: false}, "sales", true},
 
-		{"support, cross-team off, unassigned is visible for triage", &models.Ticket{UserID: owner, AssignedTeam: ""}, handlers.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: false}, "sales", true},
+		{"support, cross-team off, unassigned is visible for triage", &models.Ticket{UserID: owner, AssignedTeam: ""}, access.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: false}, "sales", true},
 
-		{"support, cross-team off, assigned to other but team matches", &models.Ticket{UserID: owner, AssignedUserID: strPtrTickets(other), AssignedTeam: "sales"}, handlers.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: false}, "sales", true},
+		{"support, cross-team off, assigned to other but team matches", &models.Ticket{UserID: owner, AssignedUserID: strPtrTickets(other), AssignedTeam: "sales"}, access.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: false}, "sales", true},
 
-		{"support, cross-team off, assigned to other and team mismatches", &models.Ticket{UserID: owner, AssignedUserID: strPtrTickets(other), AssignedTeam: "billing"}, handlers.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: false}, "sales", false},
+		{"support, cross-team off, assigned to other and team mismatches", &models.Ticket{UserID: owner, AssignedUserID: strPtrTickets(other), AssignedTeam: "billing"}, access.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: false}, "sales", false},
 
-		{"support, cross-team off, assigned to other, empty supportTeam, has a team -> denied", &models.Ticket{UserID: owner, AssignedUserID: strPtrTickets(other), AssignedTeam: "billing"}, handlers.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: false}, "", false},
+		{"support, cross-team off, assigned to other, empty supportTeam, has a team -> denied", &models.Ticket{UserID: owner, AssignedUserID: strPtrTickets(other), AssignedTeam: "billing"}, access.EffectivePermissions{IsSupport: true}, supportUser, false, TicketSettings{CrossTeamVisibility: false}, "", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -66,23 +66,23 @@ func TestCanReply(t *testing.T) {
 
 	cases := []struct {
 		name            string
-		perms           handlers.EffectivePermissions
+		perms           access.EffectivePermissions
 		userID          string
 		isWatcher       bool
 		watcherCanReply bool
 		wantAllowed     bool
 		wantInternal    bool
 	}{
-		{"admin can reply and post internal", handlers.EffectivePermissions{IsAdmin: true}, other, false, false, true, true},
-		{"support can reply and post internal", handlers.EffectivePermissions{IsSupport: true, CanManageTickets: true}, other, false, false, true, true},
+		{"admin can reply and post internal", access.EffectivePermissions{IsAdmin: true}, other, false, false, true, true},
+		{"support can reply and post internal", access.EffectivePermissions{IsSupport: true, CanManageTickets: true}, other, false, false, true, true},
 		// Seeing the queue and answering in the platform's name are different
 		// rights now, because they have different sources: tickets.read and
 		// tickets.write. A read-only supporter reads and does not answer.
-		{"read-only support may not reply", handlers.EffectivePermissions{IsSupport: true}, other, false, false, false, false},
-		{"owner can reply but not internal", handlers.EffectivePermissions{}, owner, false, false, true, false},
-		{"watcher with can-reply flag may reply but not internal", handlers.EffectivePermissions{}, other, true, true, true, false},
-		{"watcher without can-reply flag denied", handlers.EffectivePermissions{}, other, true, false, false, false},
-		{"outsider denied entirely", handlers.EffectivePermissions{}, other, false, false, false, false},
+		{"read-only support may not reply", access.EffectivePermissions{IsSupport: true}, other, false, false, false, false},
+		{"owner can reply but not internal", access.EffectivePermissions{}, owner, false, false, true, false},
+		{"watcher with can-reply flag may reply but not internal", access.EffectivePermissions{}, other, true, true, true, false},
+		{"watcher without can-reply flag denied", access.EffectivePermissions{}, other, true, false, false, false},
+		{"outsider denied entirely", access.EffectivePermissions{}, other, false, false, false, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -100,13 +100,13 @@ func TestCanReply(t *testing.T) {
 func TestCanMutate(t *testing.T) {
 	cases := []struct {
 		name  string
-		perms handlers.EffectivePermissions
+		perms access.EffectivePermissions
 		want  bool
 	}{
-		{"admin can mutate", handlers.EffectivePermissions{IsAdmin: true}, true},
-		{"support can mutate", handlers.EffectivePermissions{IsSupport: true, CanManageTickets: true}, true},
-		{"read-only support cannot mutate", handlers.EffectivePermissions{IsSupport: true}, false},
-		{"plain user cannot mutate", handlers.EffectivePermissions{}, false},
+		{"admin can mutate", access.EffectivePermissions{IsAdmin: true}, true},
+		{"support can mutate", access.EffectivePermissions{IsSupport: true, CanManageTickets: true}, true},
+		{"read-only support cannot mutate", access.EffectivePermissions{IsSupport: true}, false},
+		{"plain user cannot mutate", access.EffectivePermissions{}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -124,21 +124,21 @@ func TestTicketVisibilityFilter(t *testing.T) {
 	const uid = "u-1"
 
 	t.Run("admin gets the unrestricted (zero-value) filter", func(t *testing.T) {
-		got := h.ticketVisibilityFilter(uid, handlers.EffectivePermissions{IsAdmin: true}, TicketSettings{})
+		got := h.ticketVisibilityFilter(uid, access.EffectivePermissions{IsAdmin: true}, TicketSettings{})
 		if !reflect.DeepEqual(got, store.TicketFilter{}) {
 			t.Errorf("got %+v, want zero-value filter", got)
 		}
 	})
 
 	t.Run("support with cross-team visibility gets the unrestricted filter", func(t *testing.T) {
-		got := h.ticketVisibilityFilter(uid, handlers.EffectivePermissions{IsSupport: true}, TicketSettings{CrossTeamVisibility: true})
+		got := h.ticketVisibilityFilter(uid, access.EffectivePermissions{IsSupport: true}, TicketSettings{CrossTeamVisibility: true})
 		if !reflect.DeepEqual(got, store.TicketFilter{}) {
 			t.Errorf("got %+v, want zero-value filter", got)
 		}
 	})
 
 	t.Run("support without cross-team visibility falls back to own assignments", func(t *testing.T) {
-		got := h.ticketVisibilityFilter(uid, handlers.EffectivePermissions{IsSupport: true}, TicketSettings{CrossTeamVisibility: false})
+		got := h.ticketVisibilityFilter(uid, access.EffectivePermissions{IsSupport: true}, TicketSettings{CrossTeamVisibility: false})
 		if got.AssignedUserID == nil || *got.AssignedUserID != uid {
 			t.Errorf("got %+v, want AssignedUserID = %q", got, uid)
 		}
@@ -148,7 +148,7 @@ func TestTicketVisibilityFilter(t *testing.T) {
 	})
 
 	t.Run("plain user is scoped to their own tickets", func(t *testing.T) {
-		got := h.ticketVisibilityFilter(uid, handlers.EffectivePermissions{}, TicketSettings{})
+		got := h.ticketVisibilityFilter(uid, access.EffectivePermissions{}, TicketSettings{})
 		if got.UserID == nil || *got.UserID != uid {
 			t.Errorf("got %+v, want UserID = %q", got, uid)
 		}

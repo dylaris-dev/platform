@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -205,7 +206,7 @@ func (h *UserHandler) CancelUserDeletion(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if target, terr := h.state.Store.GetUserByID(id); terr != nil || target == nil || !handlers.MayManageAccount(h.state, r, target) {
+	if target, terr := h.state.Store.GetUserByID(id); terr != nil || target == nil || !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
 		httpx.SendJSONError(w, "You cannot change an account with more rights than yours", http.StatusForbidden)
 		return
 	}
@@ -255,7 +256,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "You cannot delete yourself", 403)
 		return
 	}
-	if !reqctx.IsAdmin(r) && (err != nil || userToDelete == nil || !handlers.MayManageAccount(h.state, r, userToDelete)) {
+	if !reqctx.IsAdmin(r) && (err != nil || userToDelete == nil || !access.MayManageAccount(h.state.Store, h.state.Authz, r, userToDelete)) {
 		httpx.SendJSONError(w, "You cannot delete an account with more rights than yours", 403)
 		return
 	}
@@ -398,7 +399,7 @@ func (h *UserHandler) ResetUserPassword(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
-	if !handlers.MayManageAccount(h.state, r, target) {
+	if !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
 		httpx.SendJSONError(w, "You cannot change the password of an account with more rights than yours", http.StatusForbidden)
 		return
 	}
@@ -488,7 +489,7 @@ func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	if !reqctx.IsAdmin(r) {
 		actorID, _ := r.Context().Value("userID").(string)
 		target, terr := h.state.Store.GetUserByID(id)
-		if actorID == id || terr != nil || target == nil || !handlers.MayManageAccount(h.state, r, target) {
+		if actorID == id || terr != nil || target == nil || !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
 			httpx.SendJSONError(w, "You cannot change this account's route limit", http.StatusForbidden)
 			return
 		}

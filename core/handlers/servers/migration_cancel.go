@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 
 	"github.com/gorilla/mux"
@@ -79,7 +79,7 @@ func (h *ServerHandler) CancelMigration(w http.ResponseWriter, r *http.Request) 
 	}
 	// A customer's own transfer is theirs to cancel, not staff's.
 	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil || srv == nil || handlers.ForeignToCaller(h.state, r, srv.NodeID) {
+	if err != nil || srv == nil || access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, srv.NodeID) {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 
@@ -88,7 +89,7 @@ func (h *UsernameHistoryHandler) AdminRename(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
-	if !handlers.MayManageAccount(h.state, r, target) {
+	if !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
 		httpx.SendJSONError(w, "You cannot rename an account with more rights than yours", http.StatusForbidden)
 		return
 	}

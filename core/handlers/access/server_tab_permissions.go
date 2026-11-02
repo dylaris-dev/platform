@@ -1,4 +1,4 @@
-package handlers
+package access
 
 import (
 	"dylaris-core/authz"
@@ -58,7 +58,7 @@ func mergeResolvedTabPermissions(base *models.TabPermissions, hasCap func(string
 	return out
 }
 
-// applyResolvedTabPermissions fills in the tab bits for every server the caller
+// ApplyResolvedTabPermissions fills in the tab bits for every server the caller
 // reaches through an invite, a server-role or a grant, and DROPS the ones the
 // resolver gives no server capability on at all. Owner and admin rows are left
 // alone: the panel short-circuits both on role, and resolving a cap set per
@@ -77,8 +77,8 @@ func mergeResolvedTabPermissions(base *models.TabPermissions, hasCap func(string
 // "keep the legacy blob rather than answer with less" is the wrong direction for
 // that: the list query has just succeeded, so an error here is not an outage
 // that would empty everybody's list.
-func applyResolvedTabPermissions(state *AppState, servers []models.Server, userID, username string) []models.Server {
-	if state == nil || state.Authz == nil || userID == "" {
+func ApplyResolvedTabPermissions(az *authz.Resolver, servers []models.Server, userID, username string) []models.Server {
+	if az == nil || userID == "" {
 		return servers
 	}
 	identity := authz.Identity{UserID: userID, Username: username}
@@ -90,22 +90,22 @@ func applyResolvedTabPermissions(state *AppState, servers []models.Server, userI
 		if s.Role == "admin" && s.NodeKind != models.NodeKindPlatform {
 			admin := identity
 			admin.IsAdmin = true
-			if res, err := state.Authz.Resolve(admin, s.ID); err != nil || !res.HasCap(settingsFieldsCap) {
-				redactSettingsFields(&s)
+			if res, err := az.Resolve(admin, s.ID); err != nil || !res.HasCap(SettingsFieldsCap) {
+				RedactSettingsFields(&s)
 			}
 		}
 		if s.Role != "invited" && s.Role != "inherited" {
 			out = append(out, s)
 			continue
 		}
-		res, err := state.Authz.Resolve(identity, s.ID)
+		res, err := az.Resolve(identity, s.ID)
 		if err != nil || !res.HasAnyServerCap() {
 			continue
 		}
 		merged := mergeResolvedTabPermissions(s.Permissions, res.HasCap)
 		s.Permissions = &merged
-		if !res.HasCap(settingsFieldsCap) {
-			redactSettingsFields(&s)
+		if !res.HasCap(SettingsFieldsCap) {
+			RedactSettingsFields(&s)
 		}
 		out = append(out, s)
 	}

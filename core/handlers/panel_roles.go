@@ -2,13 +2,12 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/gorilla/mux"
 
-	"dylaris-core/authz"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/store"
 )
@@ -32,47 +31,8 @@ type panelRoleView struct {
 	IsSystem     bool     `json:"isSystem"`
 }
 
-func normalizeCaps(caps []string) []string {
-	if caps == nil {
-		return []string{}
-	}
-	return caps
-}
-
-// catalogCaps is normalizeCaps minus ids the catalog no longer has (e.g. the
-// retired regions.*). Stored roles and overrides keep such ids, and the role
-// editor sends back what it was shown, so showing one would make every later
-// save fail validatePanelCaps with "unknown capability". Read views only; the
-// audit metadata keeps the stored list as it was.
-func catalogCaps(caps []string) []string {
-	out := make([]string, 0, len(caps))
-	for _, id := range caps {
-		if _, ok := authz.Get(id); ok {
-			out = append(out, id)
-		}
-	}
-	return out
-}
-
 func toPanelRoleView(pr store.PanelRole) panelRoleView {
-	return panelRoleView{ID: pr.ID, Name: pr.Name, Capabilities: catalogCaps(pr.Capabilities), IsSystem: pr.IsSystem}
-}
-
-// validatePanelCaps returns an error naming the first capability that is not a
-// real PANEL-scope capability. The catalog is the single source of truth, so an
-// unknown id or a server/owner-scope id is rejected (deny-by-default). An empty
-// slice is valid. Reused by the per-user assignment endpoint (user_role_perms.go).
-func validatePanelCaps(caps []string) error {
-	for _, id := range caps {
-		c, ok := authz.Get(id)
-		if !ok {
-			return errors.New("unknown capability: " + id)
-		}
-		if c.Scope != authz.ScopePanel {
-			return errors.New("not a panel capability: " + id)
-		}
-	}
-	return nil
+	return panelRoleView{ID: pr.ID, Name: pr.Name, Capabilities: access.CatalogCaps(pr.Capabilities), IsSystem: pr.IsSystem}
 }
 
 func parsePanelRoleID(w http.ResponseWriter, r *http.Request) (int, bool) {
@@ -144,8 +104,8 @@ func (h *PanelRolesHandler) ListPanelAssignments(w http.ResponseWriter, r *http.
 		views = append(views, panelAssignmentView{
 			UserID:      a.UserID,
 			PanelRoleID: a.PanelRoleID,
-			GrantCaps:   catalogCaps(a.CapOverrides.Grant),
-			DenyCaps:    catalogCaps(a.CapOverrides.Deny),
+			GrantCaps:   access.CatalogCaps(a.CapOverrides.Grant),
+			DenyCaps:    access.CatalogCaps(a.CapOverrides.Deny),
 		})
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "assignments": views})
@@ -167,7 +127,7 @@ func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Name is required", 400)
 		return
 	}
-	if err := validatePanelCaps(req.Capabilities); err != nil {
+	if err := access.ValidatePanelCaps(req.Capabilities); err != nil {
 		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
@@ -184,11 +144,11 @@ func (h *PanelRolesHandler) CreatePanelRole(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	LogIdentityAudit(h.state, r, AuditEventPanelRoleCreated, actorID, "", map[string]interface{}{
-		"role_id": id, "name": req.Name, "capabilities": normalizeCaps(req.Capabilities),
+		"role_id": id, "name": req.Name, "capabilities": access.NormalizeCaps(req.Capabilities),
 	})
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"role":    panelRoleView{ID: id, Name: req.Name, Capabilities: normalizeCaps(req.Capabilities), IsSystem: false},
+		"role":    panelRoleView{ID: id, Name: req.Name, Capabilities: access.NormalizeCaps(req.Capabilities), IsSystem: false},
 	})
 }
 
@@ -212,7 +172,7 @@ func (h *PanelRolesHandler) UpdatePanelRole(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Name is required", 400)
 		return
 	}
-	if err := validatePanelCaps(req.Capabilities); err != nil {
+	if err := access.ValidatePanelCaps(req.Capabilities); err != nil {
 		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
@@ -232,11 +192,11 @@ func (h *PanelRolesHandler) UpdatePanelRole(w http.ResponseWriter, r *http.Reque
 	actorID, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventPanelRoleUpdated, actorID, "", map[string]interface{}{
 		"role_id": id, "name": req.Name, "previous_name": existing.Name,
-		"capabilities": normalizeCaps(req.Capabilities), "previous_capabilities": normalizeCaps(existing.Capabilities),
+		"capabilities": access.NormalizeCaps(req.Capabilities), "previous_capabilities": access.NormalizeCaps(existing.Capabilities),
 	})
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"role":    panelRoleView{ID: id, Name: req.Name, Capabilities: normalizeCaps(req.Capabilities), IsSystem: false},
+		"role":    panelRoleView{ID: id, Name: req.Name, Capabilities: access.NormalizeCaps(req.Capabilities), IsSystem: false},
 	})
 }
 
@@ -266,7 +226,7 @@ func (h *PanelRolesHandler) DeletePanelRole(w http.ResponseWriter, r *http.Reque
 	}
 	actorID, _ := r.Context().Value("userID").(string)
 	LogIdentityAudit(h.state, r, AuditEventPanelRoleDeleted, actorID, "", map[string]interface{}{
-		"role_id": id, "name": existing.Name, "capabilities": normalizeCaps(existing.Capabilities),
+		"role_id": id, "name": existing.Name, "capabilities": access.NormalizeCaps(existing.Capabilities),
 	})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -151,7 +152,7 @@ func (h *AuthHandler) DemoLogin(w http.ResponseWriter, r *http.Request) {
 	// Checked again here and not only when the account was designated: it can
 	// be given an admin flag or a staff role afterwards, and every public demo
 	// session would then hold it.
-	if caps, ok := strictPanelCaps(h.state, u.ID); u.IsAdmin || !ok || len(caps) > 0 {
+	if caps, ok := access.StrictPanelCaps(h.state.Store, u.ID); u.IsAdmin || !ok || len(caps) > 0 {
 		log.Printf("demo login: the demo account %s holds staff rights, refusing", u.Username)
 		httpx.SendJSONError(w, "Demo account unavailable", http.StatusNotFound)
 		return

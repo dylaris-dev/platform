@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
@@ -272,7 +273,7 @@ func (h *ServerRolesHandler) RevokeGrant(w http.ResponseWriter, r *http.Request)
 				httpx.SendJSONError(w, "Forbidden", 403)
 				return
 			}
-			if handlers.RevokeUncoversInheritance(h.state, srv, target.ID) {
+			if access.RevokeUncoversInheritance(h.state.Store, srv, target.ID) {
 				httpx.SendJSONError(w, "Removing this grant would give them the wider access they inherit from the proxy; only the owner can do that", 403)
 				return
 			}
@@ -346,8 +347,8 @@ func (h *ServerRolesHandler) ListGrants(w http.ResponseWriter, r *http.Request) 
 			ServerName:     g.ServerName,
 			ServerRoleID:   g.ServerRoleID,
 			ServerRoleName: g.ServerRoleName,
-			GrantCaps:      handlers.NormalizeCaps(g.CapOverrides.Grant),
-			DenyCaps:       handlers.NormalizeCaps(g.CapOverrides.Deny),
+			GrantCaps:      access.NormalizeCaps(g.CapOverrides.Grant),
+			DenyCaps:       access.NormalizeCaps(g.CapOverrides.Deny),
 			Inherit:        g.Inherit,
 			AccountWide:    g.ServerID == nil,
 		})

@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"dylaris-core/handlers/access"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -25,17 +26,17 @@ func TestComputeEffectivePermissions(t *testing.T) {
 	cases := []struct {
 		name string
 		user *models.User
-		want EffectivePermissions
+		want access.EffectivePermissions
 	}{
 		{
 			name: "nil user denies everything by default",
 			user: nil,
-			want: EffectivePermissions{Role: "user"},
+			want: access.EffectivePermissions{Role: "user"},
 		},
 		{
 			name: "is_admin flag grants everything regardless of per-user flags",
 			user: &models.User{IsAdmin: true, Role: "user", CanDeleteServers: false, CanChangeResources: false},
-			want: EffectivePermissions{
+			want: access.EffectivePermissions{
 				Role: "admin", IsAdmin: true, IsSupport: true, CanManageTickets: true,
 				CanDeleteServers: true, CanChangeResources: true,
 			},
@@ -43,7 +44,7 @@ func TestComputeEffectivePermissions(t *testing.T) {
 		{
 			name: "role=admin grants everything even without the is_admin flag",
 			user: &models.User{IsAdmin: false, Role: "admin"},
-			want: EffectivePermissions{
+			want: access.EffectivePermissions{
 				Role: "admin", IsAdmin: true, IsSupport: true, CanManageTickets: true,
 				CanDeleteServers: true, CanChangeResources: true,
 			},
@@ -51,7 +52,7 @@ func TestComputeEffectivePermissions(t *testing.T) {
 		{
 			name: "empty role defaults to user",
 			user: &models.User{Role: ""},
-			want: EffectivePermissions{Role: "user"},
+			want: access.EffectivePermissions{Role: "user"},
 		},
 		{
 			// The LEGACY role keeps conferring both halves. The capability half is
@@ -60,7 +61,7 @@ func TestComputeEffectivePermissions(t *testing.T) {
 			// exactly the behaviour that existed before the split.
 			name: "support role is flagged as support and may manage, not admin",
 			user: &models.User{Role: "support"},
-			want: EffectivePermissions{Role: "support", IsSupport: true, CanManageTickets: true},
+			want: access.EffectivePermissions{Role: "support", IsSupport: true, CanManageTickets: true},
 		},
 		{
 			// The stored can_delete_servers is deliberately NOT carried through:
@@ -68,13 +69,13 @@ func TestComputeEffectivePermissions(t *testing.T) {
 			// still is - see TestDeletingServersIsAdminOnly.
 			name: "a regular user's stored delete flag is ignored, the rest carries through",
 			user: &models.User{Role: "user", CanDeleteServers: true, CanChangeResources: true},
-			want: EffectivePermissions{Role: "user", CanDeleteServers: false, CanChangeResources: true},
+			want: access.EffectivePermissions{Role: "user", CanDeleteServers: false, CanChangeResources: true},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ComputeEffectivePermissions(tc.user)
+			got := access.ComputeEffectivePermissions(tc.user)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("ComputeEffectivePermissions = %+v, want %+v", got, tc.want)
 			}
@@ -84,39 +85,39 @@ func TestComputeEffectivePermissions(t *testing.T) {
 
 func TestLoadEffectivePermissions(t *testing.T) {
 	t.Run("nil state denies by default", func(t *testing.T) {
-		got := LoadEffectivePermissions(nil, "u1")
-		if !reflect.DeepEqual(got, EffectivePermissions{Role: "user"}) {
+		got := access.LoadEffectivePermissions(nil, nil, "u1")
+		if !reflect.DeepEqual(got, access.EffectivePermissions{Role: "user"}) {
 			t.Fatalf("got %+v, want zero-value user", got)
 		}
 	})
 
 	t.Run("nil store denies by default", func(t *testing.T) {
-		got := LoadEffectivePermissions(&AppState{}, "u1")
-		if !reflect.DeepEqual(got, EffectivePermissions{Role: "user"}) {
+		got := access.LoadEffectivePermissions(nil, nil, "u1")
+		if !reflect.DeepEqual(got, access.EffectivePermissions{Role: "user"}) {
 			t.Fatalf("got %+v, want zero-value user", got)
 		}
 	})
 
 	t.Run("empty userID denies by default", func(t *testing.T) {
 		fs := &permissionsFakeStore{}
-		got := LoadEffectivePermissions(&AppState{Store: fs}, "")
-		if !reflect.DeepEqual(got, EffectivePermissions{Role: "user"}) {
+		got := access.LoadEffectivePermissions(fs, nil, "")
+		if !reflect.DeepEqual(got, access.EffectivePermissions{Role: "user"}) {
 			t.Fatalf("got %+v, want zero-value user", got)
 		}
 	})
 
 	t.Run("a failed user lookup denies by default", func(t *testing.T) {
 		fs := &permissionsFakeStore{userErr: errors.New("db down")}
-		got := LoadEffectivePermissions(&AppState{Store: fs}, "u1")
-		if !reflect.DeepEqual(got, EffectivePermissions{Role: "user"}) {
+		got := access.LoadEffectivePermissions(fs, nil, "u1")
+		if !reflect.DeepEqual(got, access.EffectivePermissions{Role: "user"}) {
 			t.Fatalf("got %+v, want zero-value user", got)
 		}
 	})
 
 	t.Run("a nil user (no error) denies by default", func(t *testing.T) {
 		fs := &permissionsFakeStore{user: nil}
-		got := LoadEffectivePermissions(&AppState{Store: fs}, "u1")
-		if !reflect.DeepEqual(got, EffectivePermissions{Role: "user"}) {
+		got := access.LoadEffectivePermissions(fs, nil, "u1")
+		if !reflect.DeepEqual(got, access.EffectivePermissions{Role: "user"}) {
 			t.Fatalf("got %+v, want zero-value user", got)
 		}
 	})
@@ -128,8 +129,8 @@ func TestLoadEffectivePermissions(t *testing.T) {
 		fs := &permissionsFakeStore{
 			user: &models.User{Role: "user", CanChangeResources: true},
 		}
-		got := LoadEffectivePermissions(&AppState{Store: fs}, "u1")
-		want := EffectivePermissions{Role: "user", CanChangeResources: true}
+		got := access.LoadEffectivePermissions(fs, nil, "u1")
+		want := access.EffectivePermissions{Role: "user", CanChangeResources: true}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("got %+v, want %+v", got, want)
 		}

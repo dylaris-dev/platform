@@ -1,8 +1,9 @@
-package handlers
+package access
 
 import (
 	"dylaris-core/authz"
 	"dylaris-core/models"
+	"dylaris-core/store"
 )
 
 // EffectivePermissions is the materialized set of capability flags for one user.
@@ -99,26 +100,26 @@ func computeEffectivePermissions(user *models.User, tc ticketCaps) EffectivePerm
 // LoadEffectivePermissions is a convenience for handlers: fetches the user,
 // then computes the permissions. Returns zero-value
 // permissions (role="user", everything denied) if the lookup fails.
-func LoadEffectivePermissions(state *AppState, userID string) EffectivePermissions {
-	if state == nil || state.Store == nil || userID == "" {
+func LoadEffectivePermissions(st store.Store, az *authz.Resolver, userID string) EffectivePermissions {
+	if st == nil || userID == "" {
 		return EffectivePermissions{Role: "user"}
 	}
-	user, err := state.Store.GetUserByID(userID)
+	user, err := st.GetUserByID(userID)
 	if err != nil || user == nil {
 		return EffectivePermissions{Role: "user"}
 	}
-	return computeEffectivePermissions(user, loadTicketCaps(state, userID))
+	return computeEffectivePermissions(user, loadTicketCaps(az, userID))
 }
 
 // loadTicketCaps asks the resolver for the two ticket capabilities. PANEL caps
 // resolve without a server, so the user id is all it needs. A resolver failure
 // yields no capabilities rather than a guess: the legacy role still decides on
 // its own, which is exactly the behaviour that existed before.
-func loadTicketCaps(state *AppState, userID string) ticketCaps {
-	if state == nil || state.Authz == nil {
+func loadTicketCaps(az *authz.Resolver, userID string) ticketCaps {
+	if az == nil {
 		return ticketCaps{}
 	}
-	res, err := state.Authz.Resolve(authz.Identity{UserID: userID}, 0)
+	res, err := az.Resolve(authz.Identity{UserID: userID}, 0)
 	if err != nil || res == nil {
 		return ticketCaps{}
 	}

@@ -101,10 +101,6 @@ func SyncCustomTabsModule(state *AppState, enabled bool, audience string) error 
 	return syncCustomTabsModule(state, enabled, audience)
 }
 
-func GuardAccountTerms(w http.ResponseWriter, r *http.Request, state *AppState, userID string) bool {
-	return guardAccountTerms(w, r, state, userID)
-}
-
 func UserRouteScope(userID string) string { return userRouteScope(userID) }
 
 func UsagePeriod(r *http.Request) time.Time { return usagePeriod(r) }
@@ -125,10 +121,6 @@ func ResolveRelay(ctx context.Context, rdb *redis.Client, manualOverride, public
 	return resolveRelay(ctx, rdb, manualOverride, publicHost, preferredRegion)
 }
 
-func RedactNodeAddressOne(state *AppState, srv *models.Server, isAdmin bool, userID string) {
-	redactNodeAddressOne(state, srv, isAdmin, userID)
-}
-
 // --- gateway -----------------------------------------------------------------
 
 func (s *AppState) GatewayEnabled() bool { return s.gatewayEnabled() }
@@ -139,19 +131,7 @@ func (s *AppState) RequireEntitlement(r *http.Request, w http.ResponseWriter, us
 	return s.requireEntitlement(r, w, userID, kind)
 }
 
-func (s *AppState) UserOwnedByOther(ownerID *string, userID string) bool {
-	return s.userOwnedByOther(ownerID, userID)
-}
-
-func (s *AppState) KitOwnedByOther(ownerID string, userID string) bool {
-	return s.kitOwnedByOther(ownerID, userID)
-}
-
 func (s *AppState) DeployConfig() DeployConfig { return s.deployConfig() }
-
-func ByonActive(state *AppState, r *http.Request) bool { return byonActive(state, r) }
-
-func RouteOnlyActive(state *AppState, r *http.Request) bool { return routeOnlyActive(state, r) }
 
 func GenerateLinkIdentity() (string, error) { return generateLinkIdentity() }
 
@@ -213,20 +193,6 @@ func AdminRouteScope(userID string) string { return adminRouteScope(userID) }
 const DefaultWarpSpokeAllowedPorts = defaultWarpSpokeAllowedPorts
 
 // --- nodes -------------------------------------------------------------------
-
-func ForeignToCaller(state *AppState, r *http.Request, nodeID int) bool {
-	return foreignToCaller(state, r, nodeID)
-}
-
-func CanManageNode(state *AppState, r *http.Request, node *models.Node) bool {
-	return canManageNode(state, r, node)
-}
-
-func OwnedByOther(state *AppState, r *http.Request, node *models.Node) bool {
-	return ownedByOther(state, r, node)
-}
-
-func OwnershipInForce(state *AppState, r *http.Request) bool { return ownershipInForce(state, r) }
 
 func PurgeBackupArchivesForServers(state *AppState, serverIDs []int) {
 	purgeBackupArchivesForServers(state, serverIDs)
@@ -353,10 +319,6 @@ const (
 
 // --- users -------------------------------------------------------------------
 
-func MayManageAccount(state *AppState, r *http.Request, target *models.User) bool {
-	return mayManageAccount(state, r, target)
-}
-
 // AdminReauthRequest is embedded in the admin account-action bodies; the alias
 // keeps the JSON shape ({"reauth": {...}}) exactly as it was.
 type (
@@ -396,10 +358,6 @@ func StampBeamUUIDs(ctx context.Context, state *AppState, uuids []string) {
 
 func BeamReachOf(state *AppState, userID string) []string { return beamReachOf(state, userID) }
 
-func CatalogCaps(caps []string) []string { return catalogCaps(caps) }
-
-func ValidatePanelCaps(caps []string) error { return validatePanelCaps(caps) }
-
 // SetAccountMailSender replaces the account notice sender for a test and
 // returns the restore func. Production never calls it.
 func SetAccountMailSender(fn func(services.MailStore, string, string, string, map[string]string) error) (restore func()) {
@@ -410,14 +368,6 @@ func SetAccountMailSender(fn func(services.MailStore, string, string, string, ma
 
 func ApplyPlacementScope(state *AppState, r *http.Request, req *PickNodeRequest) {
 	applyPlacementScope(state, r, req)
-}
-
-func ApplyResolvedTabPermissions(state *AppState, servers []models.Server, userID, username string) []models.Server {
-	return applyResolvedTabPermissions(state, servers, userID, username)
-}
-
-func CanPlaceOnNode(state *AppState, r *http.Request, node *models.Node) bool {
-	return canPlaceOnNode(state, r, node)
 }
 
 func DiskMBToGBCeil(mb int64) int { return diskMBToGBCeil(mb) }
@@ -448,8 +398,6 @@ func NodeReleaseAtLeastKnown(ctx context.Context, st *AppState, nodeToken, since
 	return nodeReleaseAtLeastKnown(ctx, st, nodeToken, since)
 }
 
-func NormalizeCaps(caps []string) []string { return normalizeCaps(caps) }
-
 func ProxyBackendUUIDs(state *AppState, proxyID int) []string {
 	return proxyBackendUUIDs(state, proxyID)
 }
@@ -472,16 +420,6 @@ func RconNeedsStamping(subServer string, enabled bool, password string) bool {
 	return rconNeedsStamping(subServer, enabled, password)
 }
 
-func RedactNodeAddress(state *AppState, servers []models.Server, isAdmin bool, userID string) {
-	redactNodeAddress(state, servers, isAdmin, userID)
-}
-
-func RedactSettingsFields(s *models.Server) { redactSettingsFields(s) }
-
-func RevokeUncoversInheritance(state *AppState, srv *models.Server, targetID string) bool {
-	return revokeUncoversInheritance(state, srv, targetID)
-}
-
 func SendTechnicError(w http.ResponseWriter, err error) { sendTechnicError(w, err) }
 
 func StampBeamAccess(ctx context.Context, state *AppState, serverID int) {
@@ -490,10 +428,6 @@ func StampBeamAccess(ctx context.Context, state *AppState, serverID int) {
 
 func StampBeamAccessForOwner(ctx context.Context, state *AppState, ownerUserID string) {
 	stampBeamAccessForOwner(ctx, state, ownerUserID)
-}
-
-func StrictPanelCaps(state *AppState, userID string) (map[string]bool, bool) {
-	return strictPanelCaps(state, userID)
 }
 
 const TechnicSince = technicSince

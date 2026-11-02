@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -54,7 +55,12 @@ func TestByonActive(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := tenancyRequest("u1", false)
-			if got := byonActive(c.state, r); got != c.want {
+			// a caller without a state has no flags to hand over
+			var flags *services.FeatureFlags
+			if c.state != nil {
+				flags = c.state.FeatureFlags
+			}
+			if got := access.ByonActive(flags, r); got != c.want {
 				t.Errorf("byonActive() = %v, want %v", got, c.want)
 			}
 		})
@@ -118,7 +124,7 @@ func TestCanManageNode(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			state := &AppState{FeatureFlags: tenancyFeatureFlags(c.byon)}
 			r := tenancyRequest(c.userID, c.isAdmin)
-			if got := canManageNode(state, r, c.node); got != c.want {
+			if got := access.CanManageNode(state.FeatureFlags, r, c.node); got != c.want {
 				t.Errorf("canManageNode() = %v, want %v", got, c.want)
 			}
 		})
@@ -160,9 +166,18 @@ func TestCanPlaceOnNode(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			state := &AppState{FeatureFlags: tenancyFeatureFlags(c.byon)}
 			r := tenancyRequest(c.userID, c.isAdmin)
-			if got := canPlaceOnNode(state, r, c.node); got != c.want {
+			if got := access.CanPlaceOnNode(state.FeatureFlags, r, c.node); got != c.want {
 				t.Errorf("canPlaceOnNode() = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+// The resolver hook main installs stays on AppState after the check moved to
+// handlers/access; a state that is not there counts every node as foreign.
+func TestANilStateCountsEveryNodeAsForeign(t *testing.T) {
+	var s *AppState
+	if !s.NodeOwnedByOther(7, "u1") {
+		t.Error("a nil state answered that the node is the caller's")
 	}
 }

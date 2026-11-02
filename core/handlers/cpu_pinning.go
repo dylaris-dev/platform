@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"dylaris-core/handlers/access"
 	"dylaris-core/models"
 	"encoding/json"
 	"net/http"
@@ -43,9 +44,9 @@ func (h *CPUPinningHandler) GetNodeCPU(w http.ResponseWriter, r *http.Request) {
 	// holds it too, so without the ownedByOther fence the admin would walk back
 	// in through this second arm exactly where canManageNode now refuses.
 	userID, _ := r.Context().Value("userID").(string)
-	perms := LoadEffectivePermissions(h.state, userID)
-	staffMay := perms.CanChangeResources && !ownedByOther(h.state, r, node)
-	if !canManageNode(h.state, r, node) && !staffMay {
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
+	staffMay := perms.CanChangeResources && !access.OwnedByOther(h.state.FeatureFlags, r, node)
+	if !access.CanManageNode(h.state.FeatureFlags, r, node) && !staffMay {
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}

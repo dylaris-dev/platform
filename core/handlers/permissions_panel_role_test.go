@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/access"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -26,10 +27,10 @@ func (f *ticketCapStore) GetUserPanelAuthz(userID string) (*int, store.CapOverri
 }
 func (f *ticketCapStore) GetPanelRole(id int) (*store.PanelRole, error) { return f.role, nil }
 
-func permsFor(t *testing.T, user *models.User, role *store.PanelRole) EffectivePermissions {
+func permsFor(t *testing.T, user *models.User, role *store.PanelRole) access.EffectivePermissions {
 	t.Helper()
 	st := &ticketCapStore{user: user, role: role}
-	return LoadEffectivePermissions(&AppState{Store: st, Authz: authz.NewResolver(st)}, user.ID)
+	return access.LoadEffectivePermissions(st, authz.NewResolver(st), user.ID)
 }
 
 // The platform has TWO ways to make somebody support, and the ticket subsystem

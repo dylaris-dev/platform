@@ -1,4 +1,4 @@
-package handlers
+package access
 
 import (
 	"database/sql"
@@ -150,7 +150,7 @@ func TestServerListDropsInvitedServersTheResolverWillNotOpen(t *testing.T) {
 		account: &store.ServerGrant{CapOverrides: store.CapOverrides{Grant: []string{"modpack.read"}}},
 		failOn:  4,
 	}
-	state := &AppState{Authz: authz.NewResolver(st)}
+	az := authz.NewResolver(st)
 
 	servers := []models.Server{
 		{ID: 1, Role: "invited"},
@@ -159,7 +159,7 @@ func TestServerListDropsInvitedServersTheResolverWillNotOpen(t *testing.T) {
 		{ID: 4, Role: "inherited"},
 		{ID: 5, Role: "owner"}, // the caller's own: never resolved, never dropped
 	}
-	got := applyResolvedTabPermissions(state, servers, "friend-1", "friend")
+	got := ApplyResolvedTabPermissions(az, servers, "friend-1", "friend")
 
 	kept := map[int]bool{}
 	for _, s := range got {

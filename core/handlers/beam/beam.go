@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/guard"
 
 	beamauth "dylaris-pkg/beam/auth"
@@ -349,7 +350,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// one the server list hides from them. The same rule decides here, so an
 	// admin or the node's own owner keeps the direct path.
 	probe := models.Server{NodeID: server.NodeID, NodeAddress: nodePublicIP}
-	handlers.RedactNodeAddressOne(h.state, &probe, isAdmin, userID)
+	access.RedactNodeAddressOne(h.state.Store, h.state.GatewayEnabled, &probe, isAdmin, userID)
 	nodePublicIP = probe.NodeAddress
 	directHints := buildBeamDirectHints(relayAddr, nodePrivateIPs, nodePublicIP, beamLANPort, directFingerprint)
 

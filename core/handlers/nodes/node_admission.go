@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -199,7 +200,7 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 	node, err := h.state.Store.GetNodeByID(id)
 	// A customer re-pairs their own machine (scope=own); resetting it from the
 	// fleet routes restarts their game servers.
-	if err != nil || node == nil || handlers.ForeignToCaller(h.state, r, node.ID) {
+	if err != nil || node == nil || access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, node.ID) {
 		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
@@ -263,7 +264,7 @@ func resetNodePairing(ctx context.Context, state *handlers.AppState, node *model
 func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	node, err := h.state.Store.GetNodeByID(id)
-	if err != nil || node == nil || handlers.ForeignToCaller(h.state, r, node.ID) {
+	if err != nil || node == nil || access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, node.ID) {
 		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
@@ -353,7 +354,7 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 		httpx.SendJSONError(w, "No node with that identity", http.StatusNotFound)
 		return
 	}
-	if handlers.ForeignToCaller(h.state, r, node.ID) {
+	if access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, node.ID) {
 		httpx.SendJSONError(w, "This machine belongs to a customer. They admit it themselves under My infrastructure, with the fingerprint their machine logs.", http.StatusConflict)
 		return
 	}

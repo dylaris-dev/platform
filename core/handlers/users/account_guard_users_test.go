@@ -11,6 +11,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 )
@@ -189,7 +190,7 @@ func TestTheAccountGuardAfterReview(t *testing.T) {
 		fs := newGuardFakeStore()
 		st := &handlers.AppState{Store: &faultyRoleStore{guardFakeStore: fs, failFor: guardStronger}, Authz: authz.NewResolver(fs)}
 		target, _ := fs.GetUserByID(guardStronger)
-		if handlers.MayManageAccount(st, guardRequest("GET", guardStaff, false, guardStronger, ""), target) {
+		if access.MayManageAccount(st.Store, st.Authz, guardRequest("GET", guardStaff, false, guardStronger, ""), target) {
 			t.Error("a role lookup error made a stronger account manageable")
 		}
 	})

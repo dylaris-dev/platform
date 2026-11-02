@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/authz"
@@ -37,7 +38,7 @@ func TestServerListBlanksSettingsFieldsWithoutTheSettingsCap(t *testing.T) {
 		2: {CapOverrides: store.CapOverrides{Grant: []string{"console.read", "server.settings.write"}}},
 	}}
 	state := &handlers.AppState{Authz: authz.NewResolver(st)}
-	got := handlers.ApplyResolvedTabPermissions(state, []models.Server{
+	got := access.ApplyResolvedTabPermissions(state.Authz, []models.Server{
 		settingsFieldsServer(1, "invited"), settingsFieldsServer(2, "invited"), settingsFieldsServer(3, "owner"),
 	}, "friend-1", "friend")
 	byID := map[int]models.Server{}
@@ -101,8 +102,8 @@ func TestExternalServerBlanksSettingsFieldsWithoutTheSettingsCap(t *testing.T) {
 // Demo rows are always shown without the settings fields: the demo account
 // never holds the right to change settings.
 func TestDemoRowsCarryNoSettingsFields(t *testing.T) {
-	if body := handlertest.FuncBody(t, "servers.go", "GetServers"); !regexp.MustCompile(`ds.Permissions = &models.TabPermissions{Console: true, Files: true}\s+handlers\.RedactSettingsFields\(ds\)`).MatchString(body) {
-		t.Error("demo rows are appended without redactSettingsFields")
+	if body := handlertest.FuncBody(t, "servers.go", "GetServers"); !regexp.MustCompile(`ds.Permissions = &models.TabPermissions{Console: true, Files: true}\s+access\.RedactSettingsFields\(ds\)`).MatchString(body) {
+		t.Error("demo rows are appended without RedactSettingsFields")
 	}
 }
 
@@ -119,7 +120,7 @@ func TestAdminOnACustomersMachineSeesSettingsFieldsOnlyWhenGranted(t *testing.T)
 	byon.NodeKind = models.NodeKindBYON
 	platform := settingsFieldsServer(2, "admin")
 	platform.NodeKind = models.NodeKindPlatform
-	got := handlers.ApplyResolvedTabPermissions(state, []models.Server{byon, platform}, "admin-1", "admin")
+	got := access.ApplyResolvedTabPermissions(state.Authz, []models.Server{byon, platform}, "admin-1", "admin")
 	if len(got) != 2 {
 		t.Fatalf("admin rows dropped: %d", len(got))
 	}

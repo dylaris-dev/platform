@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -26,7 +27,7 @@ func NewCannedResponsesHandler(state *handlers.AppState) *CannedResponsesHandler
 // Available to support+admin. Filter optional ?categoryId= to limit.
 func (h *CannedResponsesHandler) ListForSupport(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	if !perms.IsAdmin && !perms.IsSupport {
 		httpx.SendJSONError(w, "Support or admin required", http.StatusForbidden)
 		return

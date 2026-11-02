@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
@@ -31,7 +32,7 @@ func NewTicketsHandler(state *handlers.AppState) *TicketsHandler {
 // ticketVisibilityFilter returns the right store.TicketFilter for the
 // given caller. Admin sees everything (no scope filter); support sees per
 // the cross-team-visibility setting; everyone else sees only own tickets.
-func (h *TicketsHandler) ticketVisibilityFilter(userID string, perms handlers.EffectivePermissions, settings TicketSettings) store.TicketFilter {
+func (h *TicketsHandler) ticketVisibilityFilter(userID string, perms access.EffectivePermissions, settings TicketSettings) store.TicketFilter {
 	if perms.IsAdmin {
 		return store.TicketFilter{}
 	}
@@ -52,7 +53,7 @@ func (h *TicketsHandler) ticketVisibilityFilter(userID string, perms handlers.Ef
 // canSeeTicket gates GET-detail. Support + admin see everything per their
 // visibility scope; users see their own; watchers always see what they were
 // added to. assignedTeamMatch is precomputed by the caller.
-func canSeeTicket(t *models.Ticket, perms handlers.EffectivePermissions, userID string, isWatcher bool, settings TicketSettings, supportTeam string) bool {
+func canSeeTicket(t *models.Ticket, perms access.EffectivePermissions, userID string, isWatcher bool, settings TicketSettings, supportTeam string) bool {
 	if perms.IsAdmin {
 		return true
 	}
@@ -84,7 +85,7 @@ func canSeeTicket(t *models.Ticket, perms handlers.EffectivePermissions, userID 
 
 // canReply gates POST replies. Returns (allowed, mayPostInternal). Internal
 // notes are support+admin only. Watchers obey their can_reply flag.
-func canReply(t *models.Ticket, perms handlers.EffectivePermissions, userID string, isWatcher bool, watcherCanReply bool) (bool, bool) {
+func canReply(t *models.Ticket, perms access.EffectivePermissions, userID string, isWatcher bool, watcherCanReply bool) (bool, bool) {
 	// CanManageTickets, not IsSupport: seeing the queue and answering in the
 	// platform's name are different rights now that they have different sources
 	// (tickets.read and tickets.write).
@@ -101,7 +102,7 @@ func canReply(t *models.Ticket, perms handlers.EffectivePermissions, userID stri
 }
 
 // canMutate gates status/priority/assignment endpoints — support+admin only.
-func canMutate(perms handlers.EffectivePermissions) bool {
+func canMutate(perms access.EffectivePermissions) bool {
 	return perms.IsAdmin || perms.CanManageTickets
 }
 
@@ -128,7 +129,7 @@ func (h *TicketsHandler) mayAttachServer(userID, username, serverUUID string) (s
 	if err != nil || srv == nil {
 		return "", false
 	}
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	res, rerr := h.state.Authz.Resolve(authz.Identity{
 		UserID: userID, Username: username, IsAdmin: perms.IsAdmin,
 	}, srv.ID)
@@ -374,7 +375,7 @@ func (h *TicketsHandler) ListMyTickets(w http.ResponseWriter, r *http.Request) {
 // status/priority/category/assigned querystring.
 func (h *TicketsHandler) ListInboxTickets(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	settings := LoadTicketSettings(h.state)
 	q := r.URL.Query()
 
@@ -465,7 +466,7 @@ func (h *TicketsHandler) ListInboxTickets(w http.ResponseWriter, r *http.Request
 // matches; anything else is 403.
 func (h *TicketsHandler) GetTicket(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	settings := LoadTicketSettings(h.state)
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
@@ -530,7 +531,7 @@ type replyRequest struct {
 // other participants.
 func (h *TicketsHandler) AddReply(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		httpx.SendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
@@ -744,7 +745,7 @@ func internalNoteRecipients(state *handlers.AppState, t *models.Ticket, ticketID
 		if seen[w.UserID] {
 			continue
 		}
-		if p := handlers.LoadEffectivePermissions(state, w.UserID); p.IsAdmin || p.IsSupport {
+		if p := access.LoadEffectivePermissions(state.Store, state.Authz, w.UserID); p.IsAdmin || p.IsSupport {
 			add(w.UserID)
 		}
 	}
@@ -763,7 +764,7 @@ func (h *TicketsHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		httpx.SendJSONError(w, "Invalid id", http.StatusBadRequest)
@@ -837,7 +838,7 @@ func (h *TicketsHandler) UpdatePriority(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	if !canMutate(perms) {
 		httpx.SendJSONError(w, "Support or admin required", http.StatusForbidden)
 		return
@@ -899,7 +900,7 @@ func (h *TicketsHandler) UpdateAssignment(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	if !canMutate(perms) {
 		httpx.SendJSONError(w, "Support or admin required", http.StatusForbidden)
 		return
@@ -981,7 +982,7 @@ func (h *TicketsHandler) AddWatcher(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	settings := LoadTicketSettings(h.state)
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	t, err := h.state.Store.GetTicket(id)
@@ -1082,7 +1083,7 @@ func (h *TicketsHandler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
 	targetID, ok := httpx.ParseUserID(w, r, "userId")
 	if !ok {
@@ -1141,7 +1142,7 @@ func (h *TicketsHandler) ListMyServersViaTickets(w http.ResponseWriter, r *http.
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	if !perms.IsAdmin && !perms.IsSupport {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,

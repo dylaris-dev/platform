@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -95,7 +96,7 @@ func grantKinds(kind string) []string {
 // of colliding with the grant.
 func (h *EntitlementHandler) Grant(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	if !handlers.GuardAccountTerms(w, r, h.state, userID) {
+	if !access.GuardAccountTerms(w, r, h.state.Store, h.state.Authz, userID) {
 		return
 	}
 	var req grantRequest
@@ -173,7 +174,7 @@ func (h *EntitlementHandler) subjectIsAdmin(userID string) bool {
 // "take back what I gave", not "cut them off" (that is the billing status).
 func (h *EntitlementHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	if !handlers.GuardAccountTerms(w, r, h.state, userID) {
+	if !access.GuardAccountTerms(w, r, h.state.Store, h.state.Authz, userID) {
 		return
 	}
 	// ?kind= takes back ONE of the two. Without it the whole grant goes, which

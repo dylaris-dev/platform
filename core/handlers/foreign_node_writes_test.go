@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -130,10 +131,10 @@ func TestTheOlderFencesFailClosedToo(t *testing.T) {
 	st := &handlertest.ForeignStore{Node: handlertest.OwnedNode(), SettingErr: errors.New("connection refused")}
 	state := &AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)}
 	r := handlertest.AdminRequest("GET", nil, "")
-	if !ownedByOther(state, r, handlertest.OwnedNode()) {
+	if !access.OwnedByOther(state.FeatureFlags, r, handlertest.OwnedNode()) {
 		t.Error("an unreadable flag switched the ownership fence off")
 	}
-	if canManageNode(state, r, handlertest.OwnedNode()) {
+	if access.CanManageNode(state.FeatureFlags, r, handlertest.OwnedNode()) {
 		t.Error("an unreadable flag let an admin manage a customer's machine")
 	}
 }

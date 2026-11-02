@@ -8,7 +8,9 @@ import (
 	"sort"
 	"strings"
 
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 )
@@ -379,7 +381,7 @@ func (h *PlacementHandler) SetNodePlacement(w http.ResponseWriter, r *http.Reque
 	}
 	// Overcommit on a customer's machine decides how much of their hardware the
 	// scheduler hands out; that is theirs to set.
-	if foreignToCaller(h.state, r, id) {
+	if access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, id) {
 		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
@@ -487,4 +489,30 @@ func (h *PlacementHandler) AvailableRegionsHandler(w http.ResponseWriter, r *htt
 		"success": true,
 		"regions": regions,
 	})
+}
+
+// applyPlacementScope decides how an AUTOMATIC placement is scoped, which is a
+// different question from "may this caller use that node". Nobody named a
+// machine here, so the scheduler is about to choose one, and it must choose one
+// belonging to the same party as the caller.
+//
+// A tenant gets their own nodes. An admin gets the platform's - not the whole
+// fleet, which is what it used to be: a customer's BYON box is often the
+// emptiest machine in its region, which made it the one this scheduler
+// preferred, and the customer has root on it. An admin who wants that can still
+// name the node; only the automatic pick is fenced.
+//
+// It is a function rather than two lines at the call site so a test can name
+// the DECISION. Testing the scheduler with the flag already set proves the flag
+// works, not that anything sets it.
+func applyPlacementScope(state *AppState, r *http.Request, req *PickNodeRequest) {
+	if state == nil || !access.OwnershipInForce(state.FeatureFlags, r) {
+		return // no node has an owner; nothing to scope
+	}
+	if reqctx.IsAdmin(r) {
+		req.PlatformOnly = true
+		return
+	}
+	uid := reqctx.ByonCallerID(r)
+	req.OwnerScope = &uid
 }

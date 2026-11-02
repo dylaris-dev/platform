@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -77,7 +78,7 @@ func (h *UserHandler) SetUserRoleHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if !handlers.MayManageAccount(h.state, r, target) {
+	if !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
 		httpx.SendJSONError(w, "You cannot change the role of an account with more rights than yours", http.StatusForbidden)
 		return
 	}
@@ -159,7 +160,7 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 	if terr != nil || target == nil || !(target.IsAdmin || target.Role == "admin") {
 		req.CanDeleteServers = false
 	}
-	if !reqctx.IsAdmin(r) && (terr != nil || target == nil || !handlers.MayManageAccount(h.state, r, target)) {
+	if !reqctx.IsAdmin(r) && (terr != nil || target == nil || !access.MayManageAccount(h.state.Store, h.state.Authz, r, target)) {
 		httpx.SendJSONError(w, "You cannot change the permissions of an account with more rights than yours", http.StatusForbidden)
 		return
 	}
@@ -186,7 +187,7 @@ func (h *UserHandler) SetUserPermissionsHandler(w http.ResponseWriter, r *http.R
 	// change from off to on hands it out: the panel re-sends the current value.
 	if req.CanChangeResources && !reqctx.IsAdmin(r) && !target.CanChangeResources {
 		actorID, _ := r.Context().Value("userID").(string)
-		if !handlers.LoadEffectivePermissions(h.state, actorID).CanChangeResources {
+		if !access.LoadEffectivePermissions(h.state.Store, h.state.Authz, actorID).CanChangeResources {
 			httpx.SendJSONError(w, "You cannot grant resource changes you do not hold", http.StatusForbidden)
 			return
 		}
@@ -254,11 +255,11 @@ func (h *UserHandler) SetUserPanelRoleHandler(w http.ResponseWriter, r *http.Req
 	}
 	// Override caps must be real PANEL-scope caps (validatePanelCaps lives in
 	// panel_roles.go, same package).
-	if err := handlers.ValidatePanelCaps(req.GrantCaps); err != nil {
+	if err := access.ValidatePanelCaps(req.GrantCaps); err != nil {
 		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
-	if err := handlers.ValidatePanelCaps(req.DenyCaps); err != nil {
+	if err := access.ValidatePanelCaps(req.DenyCaps); err != nil {
 		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
@@ -320,7 +321,7 @@ func (h *UserHandler) GetUserPanelRoleHandler(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":     true,
 		"panelRoleId": roleID,
-		"grantCaps":   handlers.CatalogCaps(ov.Grant),
-		"denyCaps":    handlers.CatalogCaps(ov.Deny),
+		"grantCaps":   access.CatalogCaps(ov.Grant),
+		"denyCaps":    access.CatalogCaps(ov.Deny),
 	})
 }

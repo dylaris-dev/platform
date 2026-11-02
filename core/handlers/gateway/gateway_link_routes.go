@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/guard"
 
 	"dylaris-core/handlers/httpx"
@@ -182,7 +183,7 @@ func (h *GatewayHandler) resolveOwnedLinkToken(userID, linkID string) (string, e
 // means the domain is already routed to someone else.
 func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userID").(string)
-	if !handlers.RouteOnlyActive(h.state, r) {
+	if !access.RouteOnlyActive(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "Route-only is not enabled", http.StatusForbidden)
 		return
 	}

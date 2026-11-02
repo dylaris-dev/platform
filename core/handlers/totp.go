@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -496,7 +497,7 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
-	if !mayManageAccount(h.state, r, target) {
+	if !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
 		httpx.SendJSONError(w, "You cannot reset 2FA on an account with more rights than yours", http.StatusForbidden)
 		return
 	}

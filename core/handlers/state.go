@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"dylaris-core/handlers/access"
 	"dylaris-core/metrics"
 	"sync"
 	"time"
@@ -292,4 +293,14 @@ func (s *AppState) IsDemoServerID(serverID int) bool {
 		return false
 	}
 	return demo.IsServer(s.Store, s.StoreEnabled, srv.UUID)
+}
+
+// NodeOwnedByOther is access.NodeOwnedByOther over this state's store and
+// flags. main installs it on the resolver with SetForeignNode; a nil state
+// counts every node as foreign, as before the move.
+func (s *AppState) NodeOwnedByOther(nodeID int, userID string) bool {
+	if s == nil {
+		return true
+	}
+	return access.NodeOwnedByOther(s.Store, s.FeatureFlags, nodeID, userID)
 }

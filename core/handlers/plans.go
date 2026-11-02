@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
@@ -31,7 +32,7 @@ func NewPlansHandler(state *AppState) *PlansHandler { return &PlansHandler{state
 
 func (h *PlansHandler) SetUserLimitOverrides(w http.ResponseWriter, r *http.Request) {
 	userID := mux.Vars(r)["id"]
-	if !guardAccountTerms(w, r, h.state, userID) {
+	if !access.GuardAccountTerms(w, r, h.state.Store, h.state.Authz, userID) {
 		return
 	}
 	var req struct {

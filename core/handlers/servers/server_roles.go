@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"github.com/gorilla/mux"
 
@@ -35,7 +36,7 @@ type serverRoleView struct {
 }
 
 func toServerRoleView(sr store.ServerRole) serverRoleView {
-	return serverRoleView{ID: sr.ID, Name: sr.Name, Capabilities: handlers.NormalizeCaps(sr.Capabilities)}
+	return serverRoleView{ID: sr.ID, Name: sr.Name, Capabilities: access.NormalizeCaps(sr.Capabilities)}
 }
 
 // validateServerOwnerCaps returns an error naming the first capability that is
@@ -126,11 +127,11 @@ func (h *ServerRolesHandler) CreateServerRole(w http.ResponseWriter, r *http.Req
 		return
 	}
 	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventServerRoleCreated, owner, "", map[string]interface{}{
-		"role_id": id, "name": req.Name, "capabilities": handlers.NormalizeCaps(req.Capabilities),
+		"role_id": id, "name": req.Name, "capabilities": access.NormalizeCaps(req.Capabilities),
 	})
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"role":    serverRoleView{ID: id, Name: req.Name, Capabilities: handlers.NormalizeCaps(req.Capabilities)},
+		"role":    serverRoleView{ID: id, Name: req.Name, Capabilities: access.NormalizeCaps(req.Capabilities)},
 	})
 }
 
@@ -176,10 +177,10 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 		httpx.SendJSONError(w, "Server role not found", 404)
 		return
 	}
-	meta := map[string]interface{}{"role_id": id, "name": req.Name, "capabilities": handlers.NormalizeCaps(req.Capabilities)}
+	meta := map[string]interface{}{"role_id": id, "name": req.Name, "capabilities": access.NormalizeCaps(req.Capabilities)}
 	if before != nil && before.OwnerUserID == owner {
 		meta["previous_name"] = before.Name
-		meta["previous_capabilities"] = handlers.NormalizeCaps(before.Capabilities)
+		meta["previous_capabilities"] = access.NormalizeCaps(before.Capabilities)
 	}
 	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventServerRoleUpdated, owner, "", meta)
 	// A role's capabilities are every holder's: changing them changes who may
@@ -189,7 +190,7 @@ func (h *ServerRolesHandler) UpdateServerRole(w http.ResponseWriter, r *http.Req
 	h.state.Events.Publish(r.Context(), "servers.changed", nil)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"role":    serverRoleView{ID: id, Name: req.Name, Capabilities: handlers.NormalizeCaps(req.Capabilities)},
+		"role":    serverRoleView{ID: id, Name: req.Name, Capabilities: access.NormalizeCaps(req.Capabilities)},
 	})
 }
 
@@ -224,7 +225,7 @@ func (h *ServerRolesHandler) DeleteServerRole(w http.ResponseWriter, r *http.Req
 	meta := map[string]interface{}{"role_id": id}
 	if before != nil && before.OwnerUserID == owner {
 		meta["name"] = before.Name
-		meta["capabilities"] = handlers.NormalizeCaps(before.Capabilities)
+		meta["capabilities"] = access.NormalizeCaps(before.Capabilities)
 	}
 	handlers.LogIdentityAudit(h.state, r, handlers.AuditEventServerRoleDeleted, owner, "", meta)
 	handlers.StampBeamAccessForOwner(r.Context(), h.state, owner)

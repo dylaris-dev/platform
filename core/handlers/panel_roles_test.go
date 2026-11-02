@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 
+	"dylaris-core/handlers/access"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -316,10 +317,10 @@ func TestRoleViewsDropRetiredCapabilities(t *testing.T) {
 	if len(v.Capabilities) != 1 || v.Capabilities[0] != "tickets.read" {
 		t.Fatalf("capabilities = %v, want only [tickets.read]", v.Capabilities)
 	}
-	if err := validatePanelCaps(v.Capabilities); err != nil {
+	if err := access.ValidatePanelCaps(v.Capabilities); err != nil {
 		t.Fatalf("the view no longer round-trips through validation: %v", err)
 	}
-	if got := catalogCaps(nil); got == nil || len(got) != 0 {
-		t.Fatalf("catalogCaps(nil) = %#v, want an empty non-nil slice", got)
+	if got := access.CatalogCaps(nil); got == nil || len(got) != 0 {
+		t.Fatalf("CatalogCaps(nil) = %#v, want an empty non-nil slice", got)
 	}
 }

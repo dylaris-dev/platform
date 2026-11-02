@@ -1,10 +1,11 @@
-package handlers
+package access
 
 import (
 	"dylaris-core/models"
+	"dylaris-core/store"
 )
 
-// redactNodeAddress blanks the node's public address on servers where the
+// RedactNodeAddress blanks the node's public address on servers where the
 // caller has no use for it.
 //
 // The address used to ride along on every server object, so anyone who could
@@ -28,14 +29,18 @@ import (
 //
 // hostPort is deliberately left alone: without an address it names nothing, and
 // the panel's direct-connect line already requires both.
-func redactNodeAddress(state *AppState, servers []models.Server, isAdmin bool, userID string) {
-	if state == nil || state.Store == nil || len(servers) == 0 || isAdmin {
+//
+// gatewayEnabled is the platform's routing-mode check, passed in rather than
+// read here so the one definition (AppState.GatewayEnabled) stays the only
+// one; it is asked only after the cheap early returns, as before.
+func RedactNodeAddress(st store.Store, gatewayEnabled func() bool, servers []models.Server, isAdmin bool, userID string) {
+	if st == nil || len(servers) == 0 || isAdmin {
 		return
 	}
-	if !state.gatewayEnabled() {
+	if !gatewayEnabled() {
 		return
 	}
-	if mode, _ := state.Store.GetSetting("file_access_mode"); mode == "sftp" || mode == "both" {
+	if mode, _ := st.GetSetting("file_access_mode"); mode == "sftp" || mode == "both" {
 		return
 	}
 	// One lookup per node rather than per server: a list is usually several
@@ -45,7 +50,7 @@ func redactNodeAddress(state *AppState, servers []models.Server, isAdmin bool, u
 		id := servers[i].NodeID
 		own, seen := ownNode[id]
 		if !seen {
-			node, err := state.Store.GetNodeByID(id)
+			node, err := st.GetNodeByID(id)
 			own = err == nil && node != nil && node.OwnerID != nil && *node.OwnerID == userID && userID != ""
 			ownNode[id] = own
 		}
@@ -55,24 +60,24 @@ func redactNodeAddress(state *AppState, servers []models.Server, isAdmin bool, u
 	}
 }
 
-// redactNodeAddressOne is redactNodeAddress for a single server.
-func redactNodeAddressOne(state *AppState, srv *models.Server, isAdmin bool, userID string) {
+// RedactNodeAddressOne is RedactNodeAddress for a single server.
+func RedactNodeAddressOne(st store.Store, gatewayEnabled func() bool, srv *models.Server, isAdmin bool, userID string) {
 	if srv == nil {
 		return
 	}
 	one := []models.Server{*srv}
-	redactNodeAddress(state, one, isAdmin, userID)
+	RedactNodeAddress(st, gatewayEnabled, one, isAdmin, userID)
 	srv.NodeAddress = one[0].NodeAddress
 }
 
-// settingsFieldsCap governs the server fields only the Setup view needs.
-const settingsFieldsCap = "server.settings.write"
+// SettingsFieldsCap governs the server fields only the Setup view needs.
+const SettingsFieldsCap = "server.settings.write"
 
-// redactSettingsFields blanks what a member without settingsFieldsCap has no
+// RedactSettingsFields blanks what a member without SettingsFieldsCap has no
 // screen for. The JVM flags are free text that can carry a secret
 // (-Dsome.token=...), the start command is built from them, and the cpuset is
 // the host's CPU layout. They went to every member with any capability on the
 // server, a console-only guest included.
-func redactSettingsFields(s *models.Server) {
+func RedactSettingsFields(s *models.Server) {
 	s.StartCommand, s.ExtraJvmFlags, s.Cpuset, s.CPUPinningMode = "", "", "", ""
 }

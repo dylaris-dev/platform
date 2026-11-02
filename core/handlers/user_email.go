@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/mailer"
 	"dylaris-core/services"
@@ -67,7 +68,7 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	// The address is where a password reset goes, so this is a password change
 	// by other means.
-	if !mayManageAccount(h.state, r, target) {
+	if !access.MayManageAccount(h.state.Store, h.state.Authz, r, target) {
 		httpx.SendJSONError(w, "You cannot change the email of an account with more rights than yours", http.StatusForbidden)
 		return
 	}

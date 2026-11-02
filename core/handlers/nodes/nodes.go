@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -71,7 +72,7 @@ func (h *NodeHandler) diskToolNode(r *http.Request, nodeID int) bool {
 	if err != nil || node == nil {
 		return false
 	}
-	return !handlers.OwnedByOther(h.state, r, node)
+	return !access.OwnedByOther(h.state.FeatureFlags, r, node)
 }
 
 // requireOrphan writes an error and returns false unless uuid has NO server row,
@@ -166,7 +167,7 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	// Node list is admin-only today. In BYON mode a non-admin tenant may list
 	// THEIR OWN nodes; everything else stays admin-only.
 	admin := reqctx.IsAdmin(r)
-	byon := handlers.ByonActive(h.state, r)
+	byon := access.ByonActive(h.state.FeatureFlags, r)
 	if !admin && !byon {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
@@ -329,7 +330,7 @@ func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 	// The CPU pool of a customer's machine is theirs to set.
-	if handlers.ForeignToCaller(h.state, r, id) {
+	if access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, id) {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
@@ -477,7 +478,7 @@ func (h *NodeHandler) GetNodeServers(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !handlers.CanManageNode(h.state, r, node) {
+	if !access.CanManageNode(h.state.FeatureFlags, r, node) {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
@@ -516,7 +517,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	// them in one call. Decommissioning a customer's machine is the plain
 	// DELETE /api/nodes/{id}, which is refused while servers remain and names
 	// none. Its owner removes their own through /api/me/nodes/{id}.
-	if node.OwnerID != nil && handlers.OwnershipInForce(h.state, r) {
+	if node.OwnerID != nil && access.OwnershipInForce(h.state.FeatureFlags, r) {
 		httpx.SendJSONError(w, "This machine belongs to a user, and its servers are theirs. Remove the node once they are gone.", http.StatusConflict)
 		return
 	}
@@ -585,7 +586,7 @@ func (h *NodeHandler) GetNodeStorage(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !handlers.CanManageNode(h.state, r, node) {
+	if !access.CanManageNode(h.state.FeatureFlags, r, node) {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
@@ -703,7 +704,7 @@ func (h *NodeHandler) SetNodeStoragePlacement(w http.ResponseWriter, r *http.Req
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !handlers.CanManageNode(h.state, r, node) {
+	if !access.CanManageNode(h.state.FeatureFlags, r, node) {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
@@ -856,7 +857,7 @@ func (h *NodeHandler) GetDeployBundle(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !handlers.CanManageNode(h.state, r, node) {
+	if !access.CanManageNode(h.state.FeatureFlags, r, node) {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
@@ -888,7 +889,7 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(vars["id"])
 
 	node, err := h.state.Store.GetNodeByID(id)
-	if err != nil || node == nil || handlers.OwnedByOther(h.state, r, node) {
+	if err != nil || node == nil || access.OwnedByOther(h.state.FeatureFlags, r, node) {
 		// Every server's name and owner is in this answer. See diskToolNode.
 		httpx.SendJSONError(w, "Node not found", 404)
 		return

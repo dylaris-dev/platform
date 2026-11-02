@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
@@ -266,7 +267,7 @@ func (c *clamdScanner) Scan(r io.Reader) error {
 // canAttach gates upload + delete. Mirrors canReply from tickets.go but
 // without the "user reply → may not internal" carve-out — internal-ness
 // belongs to the message, not the attachment.
-func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms handlers.EffectivePermissions, userID string, isWatcher, watcherCanReply bool) bool {
+func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms access.EffectivePermissions, userID string, isWatcher, watcherCanReply bool) bool {
 	// Uploading and deleting are acting, so they follow tickets.write. Reading
 	// an attachment stays with IsSupport, beside reading the ticket it hangs on.
 	if perms.IsAdmin || perms.CanManageTickets {
@@ -285,13 +286,13 @@ func (h *TicketAttachmentsHandler) canAttach(t *models.Ticket, perms handlers.Ef
 // delete leaned on tickets.write / support alone, so a supporter on another
 // team - who cannot open the ticket - could still add files to it and delete
 // its attachments by walking the sequential ids.
-func (h *TicketAttachmentsHandler) seesTicket(t *models.Ticket, perms handlers.EffectivePermissions, userID string) bool {
+func (h *TicketAttachmentsHandler) seesTicket(t *models.Ticket, perms access.EffectivePermissions, userID string) bool {
 	return callerSeesTicket(h.state, t, perms, userID)
 }
 
 // callerSeesTicket is canSeeTicket with the watcher flag and support team
 // looked up for the caller.
-func callerSeesTicket(state *handlers.AppState, t *models.Ticket, perms handlers.EffectivePermissions, userID string) bool {
+func callerSeesTicket(state *handlers.AppState, t *models.Ticket, perms access.EffectivePermissions, userID string) bool {
 	isWatcher, _ := state.Store.IsTicketWatcher(t.ID, userID)
 	myTeam := ""
 	if me, err := state.Store.GetUserByID(userID); err == nil && me != nil {
@@ -300,19 +301,19 @@ func callerSeesTicket(state *handlers.AppState, t *models.Ticket, perms handlers
 	return canSeeTicket(t, perms, userID, isWatcher, LoadTicketSettings(state), myTeam)
 }
 
-func (h *TicketAttachmentsHandler) loadTicketAndGate(w http.ResponseWriter, r *http.Request) (*models.Ticket, handlers.EffectivePermissions, string, bool) {
+func (h *TicketAttachmentsHandler) loadTicketAndGate(w http.ResponseWriter, r *http.Request) (*models.Ticket, access.EffectivePermissions, string, bool) {
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
 	if err != nil || id <= 0 {
 		httpx.SendJSONError(w, "Invalid ticket id", http.StatusBadRequest)
-		return nil, handlers.EffectivePermissions{}, "", false
+		return nil, access.EffectivePermissions{}, "", false
 	}
 	t, err := h.state.Store.GetTicket(id)
 	if err != nil || t == nil {
 		httpx.SendJSONError(w, "Ticket not found", http.StatusNotFound)
-		return nil, handlers.EffectivePermissions{}, "", false
+		return nil, access.EffectivePermissions{}, "", false
 	}
 	userID, _ := r.Context().Value("userID").(string)
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	return t, perms, userID, true
 }
 

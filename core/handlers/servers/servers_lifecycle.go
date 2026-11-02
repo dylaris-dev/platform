@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/guard"
 
 	"dylaris-core/authz"
@@ -126,8 +127,8 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	// user could create a server on any node, with any memory and no plan to
 	// limit it. canPlaceOnNode already answered that case ("operator territory,
 	// admins only"); nothing asked it.
-	if !handlers.CanPlaceOnNode(h.state, r, node) {
-		if handlers.OwnershipInForce(h.state, r) {
+	if !access.CanPlaceOnNode(h.state.FeatureFlags, r, node) {
+		if access.OwnershipInForce(h.state.FeatureFlags, r) {
 			httpx.SendJSONError(w, "You can only deploy on your own nodes", http.StatusForbidden)
 		} else {
 			httpx.SendJSONError(w, "Only an administrator can create servers on this platform's nodes", http.StatusForbidden)
@@ -139,7 +140,7 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	// their own nodes. The limit protects the shared control plane (every
 	// container is a DB row + Redis keys + heartbeat/stats work), not the node's
 	// own hardware. Scales with the node's thread count. Admins are exempt.
-	if handlers.ByonActive(h.state, r) && !reqctx.IsAdmin(r) {
+	if access.ByonActive(h.state.FeatureFlags, r) && !reqctx.IsAdmin(r) {
 		if reached, capN := h.byonNodeServerCapReached(r.Context(), node); reached {
 			httpx.SendJSONError(w, fmt.Sprintf("This node's server limit (%d) is reached. Stop/delete a server or add another node.", capN), http.StatusForbidden)
 			return
@@ -1909,7 +1910,7 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 	// Capability gate. Admins always pass; non-admins need the
 	// can_change_resources flag set by an admin in the user-settings UI.
 	userID, _ := r.Context().Value("userID").(string)
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	if !perms.IsAdmin && !perms.CanChangeResources {
 		httpx.SendJSONError(w, "Changing server resources requires elevated permissions — contact an administrator", 403)
 		return
@@ -2246,12 +2247,12 @@ func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
 	// Oversight moves between the platform's own machines. Either end on a
 	// customer's machine is their world leaving their hardware, or ours landing
 	// on a box they have root on.
-	if handlers.ForeignToCaller(h.state, r, srv.NodeID) {
+	if access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, srv.NodeID) {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
 	target, err := h.state.Store.GetNodeByID(req.TargetNodeID)
-	if err != nil || target == nil || handlers.ForeignToCaller(h.state, r, target.ID) {
+	if err != nil || target == nil || access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, target.ID) {
 		httpx.SendJSONError(w, "Target node not found", 404)
 		return
 	}
@@ -2289,7 +2290,7 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 	// BYON availability stays a separate feature-gate, not authz.
 	username, _ := r.Context().Value("username").(string)
 	if !reqctx.IsAdmin(r) {
-		if !handlers.ByonActive(h.state, r) {
+		if !access.ByonActive(h.state.FeatureFlags, r) {
 			httpx.SendJSONError(w, "Server transfer is not enabled", 403)
 			return
 		}
@@ -2311,13 +2312,13 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 	// the owner's world onto the invitee's own machine, and an admin invited on a
 	// customer's machine could pull the server onto ours. A transfer is the
 	// owner's decision; oversight moves between platform machines are MoveServer.
-	if handlers.ForeignToCaller(h.state, r, srv.NodeID) || (!reqctx.IsAdmin(r) && srv.OwnerID != reqctx.ByonCallerID(r)) {
+	if access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, srv.NodeID) || (!reqctx.IsAdmin(r) && srv.OwnerID != reqctx.ByonCallerID(r)) {
 		httpx.SendJSONError(w, "Only the server's owner can transfer it", 403)
 		return
 	}
 	// Placement authz: the caller must be allowed to place on the target node
 	// (their own BYON node, or a platform node for an admin).
-	if !handlers.CanPlaceOnNode(h.state, r, target) {
+	if !access.CanPlaceOnNode(h.state.FeatureFlags, r, target) {
 		httpx.SendJSONError(w, "You cannot place servers on the target node", 403)
 		return
 	}
@@ -2329,7 +2330,7 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 	// plane, and filling one node by creating and then moving servers onto
 	// another got past it.
 	// ponytail: counted at queue time, so moves queued together can overshoot by the queue depth.
-	if handlers.ByonActive(h.state, r) && !reqctx.IsAdmin(r) {
+	if access.ByonActive(h.state.FeatureFlags, r) && !reqctx.IsAdmin(r) {
 		if reached, capN := h.byonNodeServerCapReached(r.Context(), target); reached {
 			httpx.SendJSONError(w, fmt.Sprintf("The target node's server limit (%d) is reached.", capN), http.StatusForbidden)
 			return
@@ -2356,7 +2357,7 @@ func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 // their own - root on the box that now holds it. Only while ownership is in
 // force, like every other ownership rule: otherwise owner_id means nothing.
 func movesToAnotherOwner(state *handlers.AppState, r *http.Request, srv *models.Server, target *models.Node) bool {
-	return handlers.OwnershipInForce(state, r) && target.OwnerID != nil && *target.OwnerID != srv.OwnerID
+	return access.OwnershipInForce(state.FeatureFlags, r) && target.OwnerID != nil && *target.OwnerID != srv.OwnerID
 }
 
 // queueMigration runs the shared validation + enqueue for both the admin move
@@ -2540,7 +2541,7 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 	// response message on failure, and the full-server delete button is
 	// likewise shown to everyone with Core doing the refusing.
 	userID, _ := r.Context().Value("userID").(string)
-	if perms := handlers.LoadEffectivePermissions(h.state, userID); !perms.IsAdmin && !perms.CanDeleteServers {
+	if perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID); !perms.IsAdmin && !perms.CanDeleteServers {
 		httpx.SendJSONError(w, "Deleting servers requires elevated permissions — contact an administrator", 403)
 		return
 	}
@@ -2654,7 +2655,7 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	// can_delete_servers flag. This is in addition to the route's
 	// RequireCap("server.delete") ownership/grant check — both gates must be open.
 	userID, _ := r.Context().Value("userID").(string)
-	perms := handlers.LoadEffectivePermissions(h.state, userID)
+	perms := access.LoadEffectivePermissions(h.state.Store, h.state.Authz, userID)
 	if !perms.IsAdmin && !perms.CanDeleteServers {
 		httpx.SendJSONError(w, "Deleting servers requires elevated permissions — contact an administrator", 403)
 		return

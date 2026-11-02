@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services/demo"
 
@@ -31,7 +31,7 @@ func (h *ServerHandler) SetServerDemo(w http.ResponseWriter, r *http.Request) {
 	// A demo server is readable by every signed-in account, so flagging one on a
 	// customer's machine published their console and stats to everyone.
 	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil || srv == nil || handlers.ForeignToCaller(h.state, r, srv.NodeID) {
+	if err != nil || srv == nil || access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, srv.NodeID) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
@@ -128,7 +128,7 @@ func (h *ServerHandler) SetDemoAccount(w http.ResponseWriter, r *http.Request) {
 	// Anyone can open a demo session, and it reads everything the account
 	// reads. A staff account there handed users.read, audit.read or a node's
 	// credentials to the public.
-	if caps, ok := handlers.StrictPanelCaps(h.state, u.ID); !ok || len(caps) > 0 {
+	if caps, ok := access.StrictPanelCaps(h.state.Store, u.ID); !ok || len(caps) > 0 {
 		httpx.SendJSONError(w, "A staff account cannot be the demo account", http.StatusBadRequest)
 		return
 	}

@@ -3,6 +3,7 @@ package handlers
 import (
 	"testing"
 
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services"
 )
@@ -23,12 +24,12 @@ func TestAKitIsItsOwnersWhileRouteOnlyIsOn(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s := &AppState{FeatureFlags: services.NewFeatureFlags(c.settings)}
-			if got := s.kitOwnedByOther("tenant", "admin"); got != c.want {
+			if got := access.KitOwnedByOther(s.FeatureFlags, "tenant", "admin"); got != c.want {
 				t.Errorf("kitOwnedByOther = %v, want %v", got, c.want)
 			}
 		})
 	}
-	if (&AppState{}).kitOwnedByOther("tenant", "tenant") {
+	if access.KitOwnedByOther(nil, "tenant", "tenant") {
 		t.Error("the owner is not a stranger to their own kit")
 	}
 }

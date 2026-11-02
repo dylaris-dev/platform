@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -445,7 +446,7 @@ func (h *MemberHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	}
 	caller, _ := r.Context().Value("userID").(string)
 	adminHere := reqctx.IsAdmin(r) && !h.state.NodeOwnedByOther(srv.NodeID, caller)
-	if !adminHere && caller != srv.OwnerID && revokeUncoversInheritance(h.state, srv, targetUserID) {
+	if !adminHere && caller != srv.OwnerID && access.RevokeUncoversInheritance(h.state.Store, srv, targetUserID) {
 		httpx.SendJSONError(w, "Removing this member would give them the wider access they inherit from the proxy; only the owner can do that", http.StatusForbidden)
 		return
 	}

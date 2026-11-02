@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -33,7 +34,7 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 	// the tenant list: the settings fields only with server.settings.write.
 	if isAdmin, _ := r.Context().Value("isAdmin").(bool); isAdmin {
 		username, _ := r.Context().Value("username").(string)
-		servers = handlers.ApplyResolvedTabPermissions(h.state, servers, userID, username)
+		servers = access.ApplyResolvedTabPermissions(h.state.Authz, servers, userID, username)
 	}
 
 	search := strings.ToLower(r.URL.Query().Get("search"))
@@ -69,7 +70,7 @@ func (h *ServerHandler) GetAdminServers(w http.ResponseWriter, r *http.Request) 
 	for i, s := range servers {
 		if !isAdmin {
 			s.NodeAddress = ""
-			handlers.RedactSettingsFields(&s)
+			access.RedactSettingsFields(&s)
 		}
 		rows[i] = adminServerRow{Server: s, MemberCount: memberCounts[s.ID]}
 	}
@@ -107,7 +108,7 @@ func (h *ServerHandler) AdminUpdateServerOwner(w http.ResponseWriter, r *http.Re
 	// short-circuit, so on a customer's machine this was a staff member taking
 	// the customer's world for themselves.
 	srv, err := h.state.Store.GetServerByID(serverID)
-	if err != nil || srv == nil || handlers.ForeignToCaller(h.state, r, srv.NodeID) {
+	if err != nil || srv == nil || access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, srv.NodeID) {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
