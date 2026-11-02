@@ -389,6 +389,7 @@ func main() {
 	// Redis holds the port ledger but is in-memory only, so a host reboot wipes
 	// it while the containers keep their ports. Rebuild it from them.
 	dockerMgr.portMgr.AdoptExistingBindings(dockerMgr.ExistingHostPortBindings())
+	dockerMgr.restorePortLedger()
 
 	// Load routing modes from Redis, refresh every 30s
 	// Defaults before the first poll; setModes so nothing reads them unguarded.
@@ -921,6 +922,10 @@ func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 // saveNodeConfig persists the ServerConfig as .node_config.json in the server directory.
 // The reconciler reads this file to recreate containers that were manually deleted.
 func saveNodeConfig(serverDir string, config ServerConfig) {
+	if config.Docker.HostPort == 0 {
+		// Core sends 0 for "the node picks one"; what it picked is what must be saved.
+		config.Docker.HostPort = ledgerHostPort(config.UUID)
+	}
 	data, err := json.Marshal(config)
 	if err != nil {
 		log.Printf("saveNodeConfig: marshal error for %s: %v", config.UUID, err)

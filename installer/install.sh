@@ -987,7 +987,7 @@ cmd_uninstall() {
   step "Removing DYLARIS from this machine"
   docker_cmd || die "Docker is not reachable."
   if (( PURGE )); then
-    warn "This deletes every server, world, backup in the volumes, the database and the secrets in $OUT_DIR."
+    warn "This deletes every server, world, backup in the volumes, the database, the secrets in $OUT_DIR and the Docker secrets of the stack."
     local t; read -r -p "Type DELETE EVERYTHING to continue: " t </dev/tty
     [[ $t == "DELETE EVERYTHING" ]] || die "Stopped; nothing was deleted."
   fi
@@ -1021,8 +1021,14 @@ cmd_uninstall() {
     done
     run $SUDO rm -rf "$OUT_DIR"
     ok "Removed, including all data."
+    # The Swarm may carry other workloads or nodes, so it is not left here.
+    if [[ $("${DOCKER[@]}" info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null) == active ]]; then
+      warn "This machine is still in a Docker Swarm. If nothing else uses it: docker swarm leave --force"
+    fi
   else
-    ok "Containers removed. Data volumes and $OUT_DIR were kept; install again to continue, or uninstall --purge to delete them."
+    local kept="Data volumes"
+    if "${DOCKER[@]}" secret inspect "${PROJECT}_jwt_secret" >/dev/null 2>&1; then kept="Data volumes, the stack's Docker secrets"; fi
+    ok "Containers removed. $kept and $OUT_DIR were kept; install again to continue, or uninstall --purge to delete them."
   fi
 }
 

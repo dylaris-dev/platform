@@ -81,7 +81,7 @@ func (pm *PortManager) AdoptExistingBindings(bindings map[string]int) {
 		adopted++
 	}
 	if adopted > 0 {
-		log.Printf("PortManager: adopted %d port binding(s) from existing containers", adopted)
+		log.Printf("PortManager: adopted %d port binding(s)", adopted)
 	}
 }
 
@@ -261,6 +261,17 @@ func (pm *PortManager) forget(ctx context.Context, serverUUID, key string) {
 	pipe.Del(ctx, key)
 	pipe.HDel(ctx, pm.portsKey(), serverUUID)
 	pipe.Exec(ctx)
+}
+
+// Snapshot returns serverUUID -> port for every allocation.
+func (pm *PortManager) Snapshot() map[string]int {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	out := make(map[string]int, len(pm.usedPorts))
+	for port, uuid := range pm.usedPorts {
+		out[uuid] = port
+	}
+	return out
 }
 
 // GetPort returns the port assigned to a server, or 0 if none.

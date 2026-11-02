@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.02.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A server keeps its host port when its container is rebuilt after Redis lost the port list (a move to Swarm, a
+  reinstall, a Redis restart). Servers used to swap ports, so players reached the wrong server. `node`
+- `uninstall` says that the stack's Docker secrets are kept too, and `uninstall --purge` says when the machine is
+  still in a Swarm. Download the installer again.
+
 ## 2026.11.02
 
 ### Features

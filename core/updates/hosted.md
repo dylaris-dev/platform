@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.02.2
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- On your own node, a server keeps its port when its container is rebuilt after a Redis restart. Two servers could
+  swap ports before, so players reached the wrong one. `node`
+
 ## 2026.11.02
 
 ### Features

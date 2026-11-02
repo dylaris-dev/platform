@@ -1,0 +1,104 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+)
+
+// The port ledger lives in Redis, which is in-memory only, and its other record
+// is the running containers. A move from Compose to Swarm, an uninstall and
+// reinstall, or a Redis restart while the containers are being recreated loses
+// both, and the reconciler then handed out ports again in whatever order the
+// servers came up: two servers swapped addresses, silently. The saved
+// .node_config.json is on the data volume and survives all of that, so it
+// carries the port too.
+
+// savedHostPorts maps serverUUID -> the host port its saved config holds.
+func savedHostPorts(storagePaths []string) map[string]int {
+	out := map[string]int{}
+	for _, sp := range storagePaths {
+		entries, err := os.ReadDir(sp)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() || e.Name() == "" || e.Name()[0] == '.' {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(sp, e.Name(), ".node_config.json"))
+			if err != nil {
+				continue
+			}
+			var saved ServerConfig
+			if json.Unmarshal(data, &saved) != nil || saved.Docker.HostPort <= 0 {
+				continue
+			}
+			// Keyed by the directory, not the file's uuid: the file sits in the
+			// tenant's /data (see pinSavedConfig).
+			out[e.Name()] = saved.Docker.HostPort
+		}
+	}
+	return out
+}
+
+// restorePortLedger runs once at startup, after the running containers were
+// adopted (they hold their ports for real, so they win a conflict). The saved
+// ports are reserved next, so no server is handed a port another one had
+// before its container went away. Last, every port in the ledger is written
+// back to its saved config, which backfills configs saved before they carried
+// one.
+func (dm *DockerManager) restorePortLedger() {
+	dm.portMgr.AdoptExistingBindings(savedHostPorts(dm.storageMgr.Paths()))
+	for uuid, port := range dm.portMgr.Snapshot() {
+		dm.rememberHostPort(uuid, port)
+	}
+}
+
+// rememberHostPort writes the server's host port into its saved config.
+func (dm *DockerManager) rememberHostPort(uuid string, port int) {
+	if port > 0 {
+		setSavedDockerField(dm.resolveLocalServerPath(uuid), "hostPort", port)
+	}
+}
+
+// setSavedDockerField sets one field under "docker" in a server's saved config.
+// Only that field is touched, through a generic map so fields this build does
+// not know survive. No saved config means nothing to update: a partial file
+// would read to the reconciler as a server it can rebuild.
+func setSavedDockerField(dir, field string, value any) {
+	data, err := os.ReadFile(filepath.Join(dir, ".node_config.json"))
+	if err != nil {
+		return
+	}
+	var saved map[string]any
+	if json.Unmarshal(data, &saved) != nil {
+		return
+	}
+	docker, _ := saved["docker"].(map[string]any)
+	if docker == nil {
+		docker = map[string]any{}
+		saved["docker"] = docker
+	}
+	if cur, ok := docker[field]; ok && fmt.Sprint(cur) == fmt.Sprint(value) {
+		return
+	}
+	docker[field] = value
+	out, err := json.Marshal(saved)
+	if err != nil {
+		return
+	}
+	if err := writeServerRootFile(dir, ".node_config.json", out); err != nil {
+		log.Printf("saved config %s: set %s: %v", dir, field, err)
+	}
+}
+
+// ledgerHostPort is the port the running node holds for a server, or 0.
+func ledgerHostPort(uuid string) int {
+	if dockerManager == nil || dockerManager.portMgr == nil {
+		return 0
+	}
+	return dockerManager.portMgr.GetPort(uuid)
+}

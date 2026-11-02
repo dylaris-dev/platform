@@ -1329,6 +1329,9 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 				}
 			}
 		}
+		if hostP != config.Docker.HostPort {
+			dm.rememberHostPort(config.UUID, hostP)
+		}
 		cPortKey := nat.Port(fmt.Sprintf("%d/tcp", cPort))
 		hc.PortBindings = nat.PortMap{
 			cPortKey: []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: fmt.Sprint(hostP)}},
@@ -1419,25 +1422,7 @@ func (dm *DockerManager) RestartContainer(uuid string) error {
 // rebuilds a missing container from. Only that one field is touched, through a
 // generic map so fields this build does not know survive.
 func (dm *DockerManager) rememberTimezone(uuid, tz string) {
-	dir := dm.resolveLocalServerPath(uuid)
-	data, err := os.ReadFile(filepath.Join(dir, ".node_config.json"))
-	if err != nil {
-		return
-	}
-	var saved map[string]any
-	if json.Unmarshal(data, &saved) != nil {
-		return
-	}
-	docker, _ := saved["docker"].(map[string]any)
-	if docker == nil || docker["timezone"] == tz {
-		return
-	}
-	docker["timezone"] = tz
-	if out, err := json.Marshal(saved); err == nil {
-		if err := writeServerRootFile(dir, ".node_config.json", out); err != nil {
-			log.Printf("rememberTimezone %s: %v", uuid, err)
-		}
-	}
+	setSavedDockerField(dm.resolveLocalServerPath(uuid), "timezone", tz)
 }
 
 // RestartContainerInZone is RestartContainer with the container's TZ set to
