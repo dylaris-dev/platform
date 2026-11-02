@@ -33,6 +33,10 @@ type Route struct {
 	Router  string   // the router variable it was registered on
 	Auth    string   // the credential the route accepts, "" when it takes none
 	Cap     string   // capability id from RequireCap, "" when the route declares none
+	// Caps is every capability the chain applies, including one bound to a
+	// variable first (pbCap := ...RequireCap("x")). Cap keeps the rendered
+	// value; the per-method coverage pin reads this.
+	Caps    []string
 	Authz   string   // why it declares none: "in-handler", "exempt", "uncapped method"
 	Gates   []string // the remaining middleware in the chain, outermost first
 	Handler string   // "PacksHandler.List", or "" for an inline func literal
@@ -158,6 +162,10 @@ func requiredCapTemplates(file *ast.File) map[string]string {
 	return out
 }
 
+// capVarPrefix marks a varTypes entry as a RequireCap wrapper rather than a
+// handler type. A handler type never contains a colon.
+const capVarPrefix = "cap:"
+
 func findFunc(file *ast.File, name string) *ast.FuncDecl {
 	for _, d := range file.Decls {
 		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == name && fn.Body != nil {
@@ -183,6 +191,12 @@ func learnAssignment(s *ast.AssignStmt, varTypes, prefixes map[string]string) {
 	if call, isCall := s.Rhs[0].(*ast.CallExpr); isCall {
 		if sel, isSel := call.Fun.(*ast.SelectorExpr); isSel && strings.HasPrefix(sel.Sel.Name, "New") {
 			varTypes[name.Name] = strings.TrimPrefix(sel.Sel.Name, "New")
+		}
+		// x := appState.Authz.RequireCap("c") makes x a capability wrapper.
+		if sel, isSel := call.Fun.(*ast.SelectorExpr); isSel && sel.Sel.Name == "RequireCap" && len(call.Args) == 1 {
+			if c, isStr := strLit(call.Args[0]); isStr {
+				varTypes[name.Name] = capVarPrefix + c
+			}
 		}
 	}
 	if base, prefix, isRouter := routerChain(s.Rhs[0]); isRouter {
@@ -301,6 +315,10 @@ func analyzeChain(e ast.Expr, r *Route, varTypes map[string]string) {
 	ast.Inspect(e, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CallExpr:
+			if id, isID := x.Fun.(*ast.Ident); isID && strings.HasPrefix(varTypes[id.Name], capVarPrefix) {
+				r.Caps = append(r.Caps, strings.TrimPrefix(varTypes[id.Name], capVarPrefix))
+				return true
+			}
 			sel, isSel := x.Fun.(*ast.SelectorExpr)
 			if !isSel {
 				return true
@@ -328,6 +346,7 @@ func analyzeChain(e ast.Expr, r *Route, varTypes map[string]string) {
 				if len(x.Args) == 1 {
 					if c, isStr := strLit(x.Args[0]); isStr {
 						r.Cap = c
+						r.Caps = append(r.Caps, c)
 					}
 				}
 			case "WarpAPIKeyMiddleware":
@@ -336,6 +355,7 @@ func analyzeChain(e ast.Expr, r *Route, varTypes map[string]string) {
 				if len(x.Args) == 1 {
 					if c, isStr := strLit(x.Args[0]); isStr {
 						r.Cap = c
+						r.Caps = append(r.Caps, c)
 					}
 				}
 			default:

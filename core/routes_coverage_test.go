@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"dylaris-core/apidoc"
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
 	"dylaris-core/services"
@@ -164,4 +165,67 @@ func TestPrintRouteTemplates(t *testing.T) {
 		t.Logf("%v %s", methods, tpl)
 		return nil
 	})
+}
+
+// uncappedMethods lists, per METHOD and template, the registrations under a
+// requiredCaps template that deliberately carry no RequireCap. Each one is a
+// read whose handler serves every authenticated caller (or filters for them);
+// the write beside it on the same template is capped. A new entry here is a
+// security decision and needs the same justification as an ExemptRoutes one.
+var uncappedMethods = map[string]string{
+	"GET /api/modules":               "navbar for every user; admin-only modules filtered in-handler by role",
+	"GET /api/nodes":                 "GetNodes filters: admin sees all, a BYON tenant only its own nodes",
+	"GET /api/settings/features":     "feature flags drive UI for every user; no secret fields",
+	"GET /api/settings/beam":         "relay address + download link the Files tab needs",
+	"GET /api/settings/routing-mode": "drives the file-access-mode choice in the UI",
+}
+
+// TestEveryMethodCarriesItsCapability closes the hole the template-keyed
+// coverage leaves: requiredCaps is satisfied as soon as ONE method of a
+// template carries a capability, so dropping RequireCap from
+// PUT /api/admin/settings/features stayed green because its GET sibling
+// carried settings.read. Here every method+template pair under a requiredCaps
+// template must carry a catalog capability or be listed in uncappedMethods,
+// and the template's declared capability must be carried by one of them.
+func TestEveryMethodCarriesItsCapability(t *testing.T) {
+	routes, err := apidoc.Parse("routes.go", []string{"handlers"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	carried := map[string]bool{}
+	for _, r := range routes {
+		declared, ok := requiredCaps[r.Path]
+		if !ok {
+			continue
+		}
+		for _, c := range r.Caps {
+			if !authz.Has(c) {
+				t.Errorf("%v %s carries %q, not a catalog capability", r.Methods, r.Path, c)
+			}
+			if c == declared {
+				carried[r.Path] = true
+			}
+		}
+		for _, k := range (walkedRoute{methods: r.Methods, path: r.Path}).keys() {
+			seen[k] = true
+			_, exempt := uncappedMethods[k]
+			switch {
+			case len(r.Caps) == 0 && !exempt:
+				t.Errorf("%s carries no RequireCap although its template is in requiredCaps (%s); gate it, or list it in uncappedMethods with the reason", k, declared)
+			case len(r.Caps) != 0 && exempt:
+				t.Errorf("uncappedMethods[%q] is stale: the route carries %v now", k, r.Caps)
+			}
+		}
+	}
+	for tpl, c := range requiredCaps {
+		if !carried[tpl] {
+			t.Errorf("requiredCaps[%q]=%q is carried by none of its methods", tpl, c)
+		}
+	}
+	for k := range uncappedMethods {
+		if !seen[k] {
+			t.Errorf("uncappedMethods[%q] matches no registration under a requiredCaps template - delete it", k)
+		}
+	}
 }
