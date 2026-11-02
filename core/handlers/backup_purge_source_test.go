@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers/handlertest"
 )
 
 // Deleting a server or a backup schedule takes its backup archives out of
@@ -27,34 +29,33 @@ func TestEveryDeleteThatCascadesBackupsPurgesFirst(t *testing.T) {
 		"Store.DeleteBackupJob(":     "urgeBackupArchivesForJob(",
 	}
 
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	sub, err := filepath.Glob(filepath.Join("*", "*.go"))
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	files = append(files, sub...)
+	// Every package under handlers/ at any depth, and services/: a delete
+	// that moved behind a service still cascades.
+	root := handlertest.HandlersRoot(t)
+	files := handlertest.SourceFiles(t, root)
+	files = append(files, handlertest.SourceFiles(t, filepath.Join(root, "..", "services"))...)
 	found := map[string]int{}
 	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
 		}
 		src := string(b)
 		for call, purge := range needs {
-			at := strings.Index(src, call)
-			if at < 0 {
-				continue
-			}
-			found[call]++
-			p := strings.Index(src, purge)
-			if p < 0 || p > at {
-				t.Errorf("%s calls %s without %s before it: the archives of what it deletes are left in the bucket with no row naming them", f, call, purge)
+			// Every call site, each against its own enclosing func: a purge
+			// earlier in the file, in another function, does not cover it.
+			for off := 0; ; {
+				i := strings.Index(src[off:], call)
+				if i < 0 {
+					break
+				}
+				at := off + i
+				off = at + len(call)
+				found[call]++
+				fnStart := strings.LastIndex(src[:at], "\nfunc ")
+				if fnStart < 0 || !strings.Contains(src[fnStart:at], purge) {
+					t.Errorf("%s calls %s without %s before it: the archives of what it deletes are left in the bucket with no row naming them", f, call, purge)
+				}
 			}
 		}
 	}
@@ -63,6 +64,19 @@ func TestEveryDeleteThatCascadesBackupsPurgesFirst(t *testing.T) {
 	for call := range needs {
 		if found[call] == 0 {
 			t.Errorf("no call site of %s found in this package any more - has the delete moved? The purge has to move with it", call)
+		}
+	}
+	// Floors, measured: losing SOME call sites (one of two moved where this
+	// walk does not look) fails here instead of passing until the last one is
+	// gone. A delete path really added or removed updates its number.
+	floor := map[string]int{
+		"Store.DeleteServer(":        2,
+		"Store.DeleteServersByNode(": 2,
+		"Store.DeleteBackupJob(":     1,
+	}
+	for call, want := range floor {
+		if found[call] != want {
+			t.Errorf("%d call sites of %s, the pin expects %d: if one moved out of reach the purge has to move with it; if one was really added or removed, update the floor", found[call], call, want)
 		}
 	}
 }

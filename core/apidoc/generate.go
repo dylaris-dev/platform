@@ -2,6 +2,7 @@ package apidoc
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,26 +28,16 @@ const PreamblePath = "apidoc/preamble.md"
 // different document on each platform and break the freshness test for reasons
 // that have nothing to do with the routes.
 func Generate(coreDir string) (string, error) {
-	// coreDir itself is a source of doc comments too: a handful of routes are
-	// served by a plain function in package main rather than by a handler method.
-	routes, err := Parse(filepath.Join(coreDir, "routes.go"), []string{
-		filepath.Join(coreDir, "handlers"),
-		filepath.Join(coreDir, "handlers", "packs"),
-		filepath.Join(coreDir, "handlers", "servers"),
-		filepath.Join(coreDir, "handlers", "users"),
-		filepath.Join(coreDir, "handlers", "storageapi"),
-		filepath.Join(coreDir, "handlers", "mods"),
-		filepath.Join(coreDir, "handlers", "nodes"),
-		filepath.Join(coreDir, "handlers", "gateway"),
-		filepath.Join(coreDir, "handlers", "beam"),
-		filepath.Join(coreDir, "handlers", "billing"),
-		filepath.Join(coreDir, "handlers", "tabs"),
-		filepath.Join(coreDir, "handlers", "backup"),
-		filepath.Join(coreDir, "handlers", "stats"),
-		filepath.Join(coreDir, "handlers", "tickets"),
-		filepath.Join(coreDir, "handlers", "templates"),
-		coreDir,
-	})
+	// Every directory under handlers/ is a source of doc comments, found by
+	// walking rather than listed, so a new handler package cannot silently
+	// lose its descriptions. coreDir itself is one too: a handful of routes
+	// are served by a plain function in package main rather than by a
+	// handler method.
+	dirs, err := handlerDirs(filepath.Join(coreDir, "handlers"))
+	if err != nil {
+		return "", err
+	}
+	routes, err := Parse(filepath.Join(coreDir, "routes.go"), append(dirs, coreDir))
 	if err != nil {
 		return "", err
 	}
@@ -55,6 +46,29 @@ func Generate(coreDir string) (string, error) {
 		return "", fmt.Errorf("read preamble: %w", err)
 	}
 	return Render(routes, Normalize(string(raw))), nil
+}
+
+// handlerDirs returns root and every directory below it in WalkDir's lexical
+// order, skipping testdata as the go tool does.
+func handlerDirs(root string) ([]string, error) {
+	var dirs []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if d.Name() == "testdata" {
+			return filepath.SkipDir
+		}
+		dirs = append(dirs, path)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk %s: %w", root, err)
+	}
+	return dirs, nil
 }
 
 // Normalize strips carriage returns so generated and checked-in text compare on

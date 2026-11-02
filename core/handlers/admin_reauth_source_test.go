@@ -4,9 +4,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"path/filepath"
-	"strings"
 	"testing"
+
+	"dylaris-core/handlers/handlertest"
 )
 
 // The admin actions that hand out DURABLE access re-authenticate, and this
@@ -35,23 +35,13 @@ func TestAdminAccountActionsReauthenticate(t *testing.T) {
 		"SetUserPanelRoleHandler":   "a panel role is the level-1 grant; panelroles.write alone is effectively full admin",
 	}
 
-	// The handlers split into handlers/<domain> subpackages; they call the
-	// check as handlers.RequireAdminReauth.
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	sub, err := filepath.Glob(filepath.Join("*", "*.go"))
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	files = append(files, sub...)
+	// Every package under handlers/, at any depth: the handlers live in
+	// handlers/<domain> subpackages and reach the check through whichever
+	// package holds it (handlers.RequireAdminReauth today).
+	files := handlertest.SourceFiles(t, handlertest.HandlersRoot(t))
 	fset := token.NewFileSet()
 	found := map[string]bool{}
 	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
 		file, err := parser.ParseFile(fset, f, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", f, err)
@@ -75,9 +65,7 @@ func TestAdminAccountActionsReauthenticate(t *testing.T) {
 					calls = true
 				}
 				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "RequireAdminReauth" {
-					if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "handlers" {
-						calls = true
-					}
+					calls = true
 				}
 				return true
 			})

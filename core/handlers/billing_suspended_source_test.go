@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"dylaris-core/handlers/handlertest"
 )
 
 // Suspension for non-payment used to be enforced in ONE place, on start and
@@ -32,23 +34,14 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 		"startBackupRun":  "the SCHEDULE keeps protecting a suspended tenant's data for the retention window; its on-demand caller TriggerJob carries the guard",
 	}
 
-	// The domain subpackages (handlers/servers, handlers/backup, ...) are part
-	// of the same rule: a dispatch that moved there is still a dispatch.
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	sub, err := filepath.Glob("*/*.go")
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	files = append(files, sub...)
+	// Every package under handlers/, at any depth, and services/: a dispatch
+	// that moved into a subpackage or behind a service is still a dispatch.
+	root := handlertest.HandlersRoot(t)
+	files := handlertest.SourceFiles(t, root)
+	files = append(files, handlertest.SourceFiles(t, filepath.Join(root, "..", "services"))...)
 	fset := token.NewFileSet()
 	checked, guarded := 0, 0
 	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
 		file, err := parser.ParseFile(fset, f, nil, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", f, err)
@@ -69,8 +62,10 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 					if strings.HasPrefix(fun.Sel.Name, "Send") && isQueueReceiver(fun.X) {
 						sends = true
 					}
-					// a subpackage reaches the guard as handlers.RefuseIfSuspended
-					if pkg, ok := fun.X.(*ast.Ident); ok && pkg.Name == "handlers" && suspensionGuards[fun.Sel.Name] {
+					// the guard is reached through whatever package holds it
+					// (handlers.RefuseIfSuspended today); the set of names is
+					// what stays explicit
+					if suspensionGuards[fun.Sel.Name] {
 						guards = true
 					}
 				case *ast.Ident:
@@ -108,6 +103,16 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 	}
 	if guarded == 0 {
 		t.Fatal("not one dispatching function carries the guard, which cannot be right")
+	}
+	// Floors, measured: a move that hides some dispatch sites from this walk
+	// (but not all) would otherwise still pass. A change that really adds or
+	// removes a dispatching function updates the numbers in the same commit.
+	const wantChecked, wantGuarded = 16, 13
+	if checked != wantChecked || guarded != wantGuarded {
+		t.Errorf("saw %d dispatching functions, %d guarded; the pin expects %d and %d. "+
+			"If dispatch moved somewhere this walk does not reach, the guard has to move with it; "+
+			"if a dispatching function was really added or removed, update the floor here",
+			checked, guarded, wantChecked, wantGuarded)
 	}
 }
 

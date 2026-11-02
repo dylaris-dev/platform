@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/pquerna/otp/totp"
+
+	"dylaris-core/handlers/handlertest"
 )
 
 // pquerna validates a code against an empty secret: the HMAC key is empty, so
@@ -30,12 +32,14 @@ func TestAnEmptySecretMatchesNoCode(t *testing.T) {
 // Every check of a stored or submitted secret goes through matchTOTPStep. The
 // setup wizard refuses an empty secret itself before it validates.
 func TestNoHandlerValidatesAroundTheEmptySecretGuard(t *testing.T) {
-	// the handlers/<domain> subpackages included: one of them could grow a check too
-	files, _ := filepath.Glob("*.go")
-	sub, _ := filepath.Glob(filepath.Join("*", "*.go"))
-	files = append(files, sub...)
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") || f == "setup.go" {
+	// All of core, at any depth: a check that moved into a subpackage or a
+	// service is still a check. The setup wizard is exempt by its exact path,
+	// so the exemption cannot follow a file of the same name elsewhere and
+	// fails loudly when setup.go moves.
+	root := handlertest.HandlersRoot(t)
+	setup := filepath.Join(root, "setup.go")
+	for _, f := range handlertest.SourceFiles(t, filepath.Join(root, "..")) {
+		if f == setup {
 			continue
 		}
 		b, err := os.ReadFile(f)
@@ -45,5 +49,8 @@ func TestNoHandlerValidatesAroundTheEmptySecretGuard(t *testing.T) {
 		if strings.Contains(string(b), "totp.Validate(") {
 			t.Errorf("%s calls totp.Validate directly; use matchTOTPStep", f)
 		}
+	}
+	if _, err := os.Stat(setup); err != nil {
+		t.Errorf("the exempt setup wizard is gone from %s: move the exemption with it", setup)
 	}
 }

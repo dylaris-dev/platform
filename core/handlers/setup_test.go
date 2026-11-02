@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -436,7 +437,7 @@ func TestBackupCodeResponsesAreNotCached(t *testing.T) {
 		{"totp.go", "VerifyTOTPHandler"},
 		{"totp.go", "RegenerateBackupCodesHandler"},
 	} {
-		if !strings.Contains(funcBody(t, fn.file, fn.name), `"Cache-Control", "no-store"`) {
+		if !strings.Contains(handlertest.FuncBody(t, fn.file, fn.name), `"Cache-Control", "no-store"`) {
 			t.Errorf("%s sends backup codes without no-store", fn.name)
 		}
 	}
