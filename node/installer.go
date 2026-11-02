@@ -320,19 +320,8 @@ func installForge(dir, mcVersion, build, javaImage, serverUUID string) error {
 
 	combined := mcVersion + "-" + build
 	installerURL := fmt.Sprintf("https://maven.minecraftforge.net/net/minecraftforge/forge/%s/forge-%s-installer.jar", combined, combined)
-	installerPath := filepath.Join(dir, "_forge-installer.jar")
-
 	log.Printf("Downloading Forge installer (mc=%s build=%s)", mcVersion, build)
-	if err := downloadFile(installerURL, installerPath); err != nil {
-		return fmt.Errorf("forge installer download failed: %v", err)
-	}
-	defer os.Remove(installerPath)
-	if err := clearLoaderLaunchDirs(dir); err != nil {
-		return err
-	}
-
-	log.Printf("Running Forge --installServer inside %s ...", javaImage)
-	return runJavaInstaller(serverUUID, filepath.Base(dir), javaImage, "_forge-installer.jar", "--installServer")
+	return runLoaderInstaller(dir, "forge", installerURL, "_forge-installer.jar", javaImage, serverUUID, "--installServer")
 }
 
 // installNeoForge resolves the requested NeoForge version (or latest if blank)
@@ -370,19 +359,35 @@ func installNeoForge(dir, version, javaImage, serverUUID string) error {
 	}
 
 	installerURL := fmt.Sprintf("https://maven.neoforged.net/releases/net/neoforged/neoforge/%s/neoforge-%s-installer.jar", version, version)
-	installerPath := filepath.Join(dir, "_neoforge-installer.jar")
-
 	log.Printf("Downloading NeoForge installer (version=%s)", version)
-	if err := downloadFile(installerURL, installerPath); err != nil {
-		return fmt.Errorf("neoforge installer download failed: %v", err)
-	}
+	return runLoaderInstaller(dir, "neoforge", installerURL, "_neoforge-installer.jar", javaImage, serverUUID, "--install-server")
+}
+
+// runJavaInstallerFn is runJavaInstaller, swapped in tests.
+var runJavaInstallerFn = runJavaInstaller
+
+// runLoaderInstaller downloads a Forge/NeoForge installer jar into dir and
+// runs it there. The jar goes whatever happens - the removal is registered
+// before the download, so a failed one leaves no empty jar behind - and the
+// installer's own log (<jar>.log, a megabyte in every server) goes after a
+// successful run; after a failed one it stays for whoever has to look.
+func runLoaderInstaller(dir, name, installerURL, jarName, javaImage, serverUUID string, args ...string) error {
+	installerPath := filepath.Join(dir, jarName)
 	defer os.Remove(installerPath)
+	if err := downloadFile(installerURL, installerPath); err != nil {
+		return fmt.Errorf("%s installer download failed: %v", name, err)
+	}
 	if err := clearLoaderLaunchDirs(dir); err != nil {
 		return err
 	}
-
-	log.Printf("Running NeoForge --install-server inside %s ...", javaImage)
-	return runJavaInstaller(serverUUID, filepath.Base(dir), javaImage, "_neoforge-installer.jar", "--install-server")
+	log.Printf("Running %s %s inside %s ...", name, strings.Join(args, " "), javaImage)
+	if err := runJavaInstallerFn(serverUUID, filepath.Base(dir), javaImage, jarName, args...); err != nil {
+		return err
+	}
+	if err := os.Remove(installerPath + ".log"); err != nil && !os.IsNotExist(err) {
+		log.Printf("%s installer: could not remove its log: %v", name, err)
+	}
+	return nil
 }
 
 // runJavaInstaller wraps the installer-JAR execution inside a one-shot Java

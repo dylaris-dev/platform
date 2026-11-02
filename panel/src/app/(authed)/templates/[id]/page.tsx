@@ -10,7 +10,7 @@ import {
     deleteTemplate, getTemplate, listTemplates, templateDownloadUrl, updateTemplate,
     type SkippedFile, type Template, type TemplateVisibility,
 } from '@/lib/api/templates';
-import { formatTemplateSize, softwareVersionLabel, templateCap } from '@/lib/templates';
+import { formatTemplateSize, softwareVersionField, TEMPLATE_SOFTWARE, templateCap, usesMinecraftVersion } from '@/lib/templates';
 import { SkeletonHeader, SkeletonList } from '@/components/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
@@ -110,7 +110,7 @@ export default function TemplateDetailPage() {
         router.push('/templates');
     };
 
-    const field = (k: keyof Draft, label: string) => (
+    const field = (k: keyof Draft, label: string, placeholder?: string) => (
         <div>
             <label htmlFor={`tpl-${k}`} className="input-label">{label}</label>
             <input
@@ -119,10 +119,15 @@ export default function TemplateDetailPage() {
                 value={draft[k]}
                 maxLength={64}
                 readOnly={!canWrite}
+                placeholder={placeholder}
                 onChange={(e) => setDraft({ ...draft, [k]: e.target.value })}
             />
         </div>
     );
+    const versionField = softwareVersionField(draft.software);
+    // A value an older release let through stays selectable, so the page shows what is stored.
+    const softwareOptions: string[] = draft.software && !(TEMPLATE_SOFTWARE as readonly string[]).includes(draft.software)
+        ? [draft.software, ...TEMPLATE_SOFTWARE] : [...TEMPLATE_SOFTWARE];
 
     return (
         <main className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
@@ -155,9 +160,15 @@ export default function TemplateDetailPage() {
             <form onSubmit={(e) => runSave(() => save(e))} className="card p-4 space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {field('name', 'Name')}
-                    {field('software', 'Software')}
-                    {field('mcVersion', 'Minecraft version')}
-                    {field('softwareVersion', softwareVersionLabel(draft.software.trim()))}
+                    <div>
+                        <label htmlFor="tpl-software" className="input-label">Software</label>
+                        <select id="tpl-software" className="input-field w-full" value={draft.software} disabled={!canWrite} onChange={(e) => setDraft({ ...draft, software: e.target.value })}>
+                            <option value="">None yet</option>
+                            {softwareOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                    </div>
+                    {usesMinecraftVersion(draft.software) && field('mcVersion', 'Minecraft version', '1.21.4')}
+                    {versionField && field('softwareVersion', versionField.label, versionField.placeholder)}
                     {isAdmin && (
                         <div>
                             <label htmlFor="tpl-visibility" className="input-label">Visibility</label>

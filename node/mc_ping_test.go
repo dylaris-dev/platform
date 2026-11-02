@@ -131,3 +131,44 @@ func TestProxyV2Header(t *testing.T) {
 		t.Errorf("non-TCP addresses = % x, want LOCAL", got)
 	}
 }
+
+// slpAnswer serves one connection: it reads the handshake and status request,
+// then answers with body as the JSON of packet 0x00.
+func slpAnswer(t *testing.T, body string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		if _, err := readPacket(c); err != nil {
+			return
+		}
+		if _, err := readPacket(c); err != nil {
+			return
+		}
+		var b bytes.Buffer
+		b.WriteByte(0x00)
+		writeString(&b, body)
+		writePacket(c, b.Bytes())
+	}()
+	return ln.Addr().String()
+}
+
+// Forge answers while it is still loading with a disconnect that parses as
+// JSON but carries no version; that is not the server being up.
+func TestPingStillStartingIsNoAnswer(t *testing.T) {
+	if _, err := PingMinecraftServer(slpAnswer(t, `{"text":"Server is still starting! Please wait before reconnecting."}`), time.Second, false); err == nil {
+		t.Fatal("a still-starting disconnect counted as a status answer")
+	}
+	resp, err := PingMinecraftServer(slpAnswer(t, `{"version":{"name":"1.20.1"},"players":{"max":20,"online":1},"description":{"text":"hi"}}`), time.Second, false)
+	if err != nil || resp.Version != "1.20.1" || resp.Players != 1 {
+		t.Fatalf("a real status: %+v, %v", resp, err)
+	}
+}

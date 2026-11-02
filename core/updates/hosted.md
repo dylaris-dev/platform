@@ -28,6 +28,12 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Fixes
 - A scheduled task at a time the clocks skip in spring no longer misses that day, and one at a time that repeats in
   autumn no longer runs twice. A task or backup every hour or more often keeps running through that repeated hour.
+- Templates are checked when you save them: unsupported software such as Purpur and versions the install cannot
+  use are refused with what to enter instead. Before, the template saved and failed when you made a server from it.
+- Saving a server as a template keeps the loader version that server runs, and leaves logs and the player name cache
+  unticked so a shared template does not carry player names or IP addresses by accident.
+- Forge and NeoForge servers show online once players can join, not while they are still loading. BYON nodes pick
+  this up with their next update.
 
 ## 2026.11.01.6
 

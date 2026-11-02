@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -112,12 +113,19 @@ func PingMinecraftServer(address string, timeout time.Duration, proxyLocal bool)
 			Max    int `json:"max"`
 			Online int `json:"online"`
 		} `json:"players"`
-		Version struct {
+		Version *struct {
 			Name string `json:"name"`
 		} `json:"version"`
 	}
 	if err := json.Unmarshal([]byte(jsonStr), &resp); err != nil {
 		return nil, fmt.Errorf("parse json: %v", err)
+	}
+	// A status answer always carries a version. Forge answers every
+	// connection while it is still loading with a login disconnect ("Server
+	// is still starting!"), which parses as JSON without one; taking that as
+	// an answer reported the server online before players could join.
+	if resp.Version == nil {
+		return nil, errors.New("no status yet: the server answered without a version (still starting)")
 	}
 
 	motd := extractMOTD(resp.Description)

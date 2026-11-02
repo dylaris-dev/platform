@@ -66,12 +66,37 @@ export function limitToSetting(v: number | null): string {
     return v === null ? 'unlimited' : String(v);
 }
 
-/** What a template's softwareVersion means for its software. Fabric and Forge
- *  record a loader there only when it differs from the Minecraft version. */
-export function softwareVersionLabel(software: string): string {
-    if (software === 'fabric' || software === 'forge') return 'Loader version';
-    if (software === 'neoforge') return 'NeoForge version';
-    return 'Software build';
+/** The software a template can install: Core's services.TemplateSoftware,
+ *  which is what the node installs. Change both together. */
+export const TEMPLATE_SOFTWARE = ['paper', 'vanilla', 'fabric', 'forge', 'neoforge', 'velocity', 'waterfall', 'bungeecord'] as const;
+
+/** What a template's softwareVersion means for its software, or null where it
+ *  has none: Paper and vanilla install the newest build of the Minecraft
+ *  version, so a build number there would only be mistaken for one. */
+export function softwareVersionField(software: string): { label: string; placeholder: string; required: boolean } | null {
+    switch (software.trim().toLowerCase()) {
+        case 'forge': return { label: 'Forge build', placeholder: '47.3.0, empty = recommended', required: false };
+        case 'fabric': return { label: 'Fabric loader', placeholder: '0.16.10, empty = newest', required: false };
+        case 'neoforge': return { label: 'NeoForge version', placeholder: '21.1.265 (for 1.21.1)', required: true };
+        case 'velocity': return { label: 'Velocity version', placeholder: '3.4.0', required: true };
+        case 'waterfall': return { label: 'Waterfall version', placeholder: '1.21', required: true };
+        case 'bungeecord': return { label: 'BungeeCord build', placeholder: '#2104', required: true };
+        case 'paper': case 'vanilla': return null;
+        default: return { label: 'Software version', placeholder: '', required: false };
+    }
+}
+
+/** Whether the Minecraft version field applies: proxies have none. */
+export function usesMinecraftVersion(software: string): boolean {
+    return !['velocity', 'waterfall', 'bungeecord'].includes(software.trim().toLowerCase());
+}
+
+/** Top-level entries a capture leaves unticked at first: logs, crash reports
+ *  and the name cache hold player names and IP addresses, and a template can
+ *  be shared. They can still be ticked; Core then warns. */
+export function captureExcludedByDefault(name: string, isDir: boolean): boolean {
+    if (isDir) return name === 'logs' || name === 'crash-reports';
+    return name === 'usercache.json' || /\.log(\.[0-9]+)?(\.gz)?$/.test(name);
 }
 
 /** Paths one capture may name: Core's maxCaptureSelected in

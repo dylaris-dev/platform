@@ -374,25 +374,7 @@ func validateInstallerRequest(typ, version, loader, url string) string {
 	if !validate.IsInstallerType(typ) {
 		return "Unsupported installer type"
 	}
-	needsVersion := map[string]bool{"paper": true, "vanilla": true, "fabric": true, "forge": true, "velocity": true, "waterfall": true, "bungeecord": true}
-	if needsVersion[typ] && strings.TrimSpace(version) == "" {
-		return "installer.version is required for " + typ
-	}
-	switch typ {
-	case "velocity", "waterfall":
-		if !handlers.PaperMCReleasePattern.MatchString(version) {
-			return "installer.version must be a " + typ + " release such as 3.5.1"
-		}
-	case "bungeecord":
-		if !handlers.BungeeCordBuildPattern.MatchString(version) {
-			return "installer.version must be a BungeeCord build number such as #2104"
-		}
-	case "neoforge":
-		if strings.TrimSpace(loader) == "" {
-			return "installer.loader is required for neoforge"
-		}
-	}
-	return ""
+	return services.InstallerVersionRefusal(typ, version, loader)
 }
 
 // recordedInstallerType is what a setup records as the install: an upload

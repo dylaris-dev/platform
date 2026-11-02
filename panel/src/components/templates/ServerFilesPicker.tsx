@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { overPathLimit, SelectiveTree, selectedPaths, useSelectionTree } from '@dylaris/ui-filebrowser';
-import { MAX_CAPTURE_PATHS } from '@/lib/templates';
+import { captureExcludedByDefault, MAX_CAPTURE_PATHS } from '@/lib/templates';
 import { getFiles } from '@/lib/api/files';
 
 type Listing = { success: boolean; files?: { name: string; is_dir: boolean; size: number }[]; message?: string };
 
 // Picks a sub-server and the files in it to capture, as the full checkbox
-// tree the selective download uses. Reports the sub-server and the paths
+// tree the selective download uses; logs and the like start unticked
+// (captureExcludedByDefault). Reports the sub-server and the paths
 // Core expects (relative to it, never "").
 export default function ServerFilesPicker({ uuid, preferredSub, disabled, onChange }: {
     uuid: string;
@@ -44,7 +45,7 @@ export default function ServerFilesPicker({ uuid, preferredSub, disabled, onChan
         void sel.open(async (rel) => {
             const res: Listing = await getFiles(rel ? `${subServer}/${rel}` : subServer, uuid);
             return { success: res.success, files: res.files ?? [], message: res.message };
-        });
+        }, captureExcludedByDefault);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [uuid, subServer]);
 

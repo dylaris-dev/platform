@@ -3,7 +3,8 @@ package handlers
 import (
 	"context"
 	"net/http"
-	"regexp"
+
+	"dylaris-core/services"
 )
 
 // proxyInstallSince is the node release that installs velocity, waterfall and
@@ -17,11 +18,11 @@ var proxyInstallers = map[string]bool{"velocity": true, "waterfall": true, "bung
 // paperMCReleasePattern is a stable Velocity or Waterfall release as the version
 // list offers it ("3.5.1", "1.21"). Snapshots carry a "-" suffix and are not
 // offered.
-var paperMCReleasePattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+){1,3}$`)
+var paperMCReleasePattern = services.PaperMCReleasePattern
 
 // bungeeCordBuildPattern is a BungeeCord Jenkins build, sent the way the
 // version list writes it ("#2104"). The node accepts the same shape.
-var bungeeCordBuildPattern = regexp.MustCompile(`^#?[0-9]{1,9}$`)
+var bungeeCordBuildPattern = services.BungeeCordBuildPattern
 
 // proxyInstallRefusal reports why a proxy install must not go out: on a game
 // server, or to a node that predates the installer. Zero means go ahead, and

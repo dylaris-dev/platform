@@ -10,13 +10,13 @@ import NewTemplateDialog from './NewTemplateDialog';
 // "Save as template" from a server's Files view: the new-template form locked
 // to that server, then what was saved and what Core left out.
 export default function CaptureTemplateDialog({ serverId, onClose }: { serverId: number; onClose: () => void }) {
-    const [done, setDone] = useState<{ template: Template; skipped: SkippedFile[] } | null>(null);
+    const [done, setDone] = useState<{ template: Template; skipped: SkippedFile[]; warning?: string } | null>(null);
 
     if (!done) {
-        return <NewTemplateDialog fromServerId={serverId} onClose={onClose} onCreated={(template, skipped) => setDone({ template, skipped })} />;
+        return <NewTemplateDialog fromServerId={serverId} onClose={onClose} onCreated={(template, skipped, warning) => setDone({ template, skipped, warning })} />;
     }
 
-    const { template, skipped } = done;
+    const { template, skipped, warning } = done;
     return (
         <div className="modal-overlay animate-fade-in" onClick={onClose}>
             <ModalPanel onClose={onClose} className="modal-panel max-w-lg" onClick={(e) => e.stopPropagation()}>
@@ -27,7 +27,13 @@ export default function CaptureTemplateDialog({ serverId, onClose }: { serverId:
                     </h3>
                     <button type="button" onClick={onClose} aria-label="Close" className="text-(--base-06) hover:text-(--base-09)"><X size={16} /></button>
                 </div>
-                <div className="modal-body">
+                <div className="modal-body space-y-3">
+                    {warning && (
+                        <div className="flex items-start gap-2 text-xs text-(--base-09)" role="alert">
+                            <CircleAlert size={16} className="text-(--warning) mt-0.5 shrink-0" />
+                            <p className="min-w-0">{warning}</p>
+                        </div>
+                    )}
                     {skipped.length === 0 ? (
                         <p className="text-sm text-(--base-08)">Every selected file is in the template.</p>
                     ) : (

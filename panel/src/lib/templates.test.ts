@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-    formatTemplateSize, groupTemplates, templateCap, limitFromSetting, limitToSetting, softwareVersionLabel, templateInstallPayload, templatesVisible, templateModrinthTarget, templateFolderEntries,
+    formatTemplateSize, groupTemplates, templateCap, limitFromSetting, limitToSetting, softwareVersionField, usesMinecraftVersion, captureExcludedByDefault, templateInstallPayload, templatesVisible, templateModrinthTarget, templateFolderEntries,
 } from './templates';
 import type { Template, TemplateFile } from './api/templates';
 
@@ -98,15 +98,44 @@ describe('limitFromSetting / limitToSetting', () => {
     });
 });
 
-describe('softwareVersionLabel', () => {
+describe('softwareVersionField', () => {
     it.each([
-        ['fabric', 'Loader version'],
-        ['forge', 'Loader version'],
+        ['fabric', 'Fabric loader'],
+        ['forge', 'Forge build'],
+        ['Forge', 'Forge build'],
         ['neoforge', 'NeoForge version'],
-        ['paper', 'Software build'],
-        ['', 'Software build'],
+        ['bungeecord', 'BungeeCord build'],
+        ['', 'Software version'],
     ])('%s -> %s', (software, want) => {
-        expect(softwareVersionLabel(software)).toBe(want);
+        expect(softwareVersionField(software)?.label).toBe(want);
+    });
+    it('has no field for paper and vanilla, which install the newest build', () => {
+        expect(softwareVersionField('paper')).toBeNull();
+        expect(softwareVersionField('vanilla')).toBeNull();
+    });
+    it('requires the NeoForge version', () => {
+        expect(softwareVersionField('neoforge')?.required).toBe(true);
+        expect(softwareVersionField('forge')?.required).toBe(false);
+    });
+    it('proxies have no Minecraft version', () => {
+        expect(usesMinecraftVersion('velocity')).toBe(false);
+        expect(usesMinecraftVersion('forge')).toBe(true);
+    });
+});
+
+describe('captureExcludedByDefault', () => {
+    it.each([
+        ['logs', true, true],
+        ['crash-reports', true, true],
+        ['latest.log', false, true],
+        ['proxy.log.0', false, true],
+        ['usercache.json', false, true],
+        ['world', true, false],
+        ['logs', false, false],
+        ['logback.xml', false, false],
+        ['server.properties', false, false],
+    ])('%s (dir %s) -> %s', (name, isDir, want) => {
+        expect(captureExcludedByDefault(name as string, isDir as boolean)).toBe(want);
     });
 });
 

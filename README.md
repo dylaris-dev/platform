@@ -1010,7 +1010,20 @@ A template is a saved server or proxy (Paper, Fabric, Forge, NeoForge, Vanilla, 
 - Admin: created by admins, visible to admins and holders of the `templates.admin.read` right.
 - Platform: created by admins, visible to every user while "Platform templates visible to users" is on.
 
-**Creating one.** Upload a zip, capture from a running server (pick files and folders in the file picker, or use "Save as template" in the server's Files view), or start empty. Afterwards edit the file tree and text configs in the panel.
+**Creating one.** Upload a zip, capture from a running server (pick files and folders in the file picker, or use "Save as template" in the server's Files view), or start empty. Afterwards edit the file tree and text configs in the panel. A capture starts with `logs/`, `crash-reports/`, `*.log` and `usercache.json` unticked because they hold player names and IP addresses; ticked anyway, the response carries a `warning` naming them.
+
+**Software and versions.** A template installs one of `paper`, `vanilla`, `fabric`, `forge`, `neoforge`, `velocity`, `waterfall`, `bungeecord` (Purpur is not supported: the node has no installer for it). Create, update, upload and capture check software and versions with the same rules the install applies (`services.ValidateTemplateSoftware`) and store them normalised:
+
+| Software | Minecraft version | Software version |
+|---|---|---|
+| paper, vanilla | required, e.g. `1.21.4` | not used; the newest build of that version is installed |
+| forge | required | Forge build, e.g. `47.3.0`; `1.20.1-47.3.0` is split; empty = recommended |
+| fabric | required | Fabric loader, e.g. `0.16.10`; empty = newest |
+| neoforge | optional, derived | NeoForge version, required, e.g. `21.1.265` (`26.1.0.5` from 26 on); a Minecraft version is refused |
+| velocity, waterfall | not used | release, e.g. `3.4.0` / `1.21` |
+| bungeecord | not used | build, e.g. `#2104` |
+
+A capture fills empty fields from the sub-server's install record and pins the loader actually installed (the recorded loader, else the single version folder under `libraries/` for Forge, NeoForge and Fabric), so later installs get the loader the files were made with.
 
 **Installing.** Server setup has a Template tab, for servers and proxies. Proxy templates need a node from this release; an older node is refused with a message. While Real player IP is on and not in auto mode, a template install is refused (409), like an upload.
 

@@ -272,6 +272,12 @@ func validField(s string) bool {
 	return true
 }
 
+// sentence is a validation error as the panel shows it: capitalised, one full stop.
+func sentence(err error) string {
+	msg := err.Error()
+	return strings.ToUpper(msg[:1]) + msg[1:] + "."
+}
+
 func validVisibility(v string) bool { return v == "personal" || v == "admin" || v == "platform" }
 
 // newTemplate validates meta and the create rules (visibility, count limit)
@@ -298,6 +304,12 @@ func (h *TemplatesHandler) newTemplate(w http.ResponseWriter, r *http.Request, m
 		handlers.SendJSONError(w, "Software and version fields must be at most 64 characters", http.StatusBadRequest)
 		return nil, s, false
 	}
+	sw := models.Template{Software: m.Software, McVersion: m.McVersion, SoftwareVersion: m.SoftwareVersion}
+	if err := services.ValidateTemplateSoftware(&sw); err != nil {
+		handlers.SendJSONError(w, sentence(err), http.StatusBadRequest)
+		return nil, s, false
+	}
+	m.Software, m.McVersion, m.SoftwareVersion = sw.Software, sw.McVersion, sw.SoftwareVersion
 	v, _ := h.viewer(r, nil)
 	own, ok := h.ownTarget(w, r, v.UserID, v.IsAdmin, m.Visibility)
 	if !ok || !h.mayCreate(w, s, v, m.Visibility, own) {
@@ -457,6 +469,14 @@ func (h *TemplatesHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		*f.out = *f.in
+	}
+	// Only when one of them changes: a rename must not fail on what an older
+	// release let through.
+	if p.Software != nil || p.McVersion != nil || p.SoftwareVersion != nil {
+		if err := services.ValidateTemplateSoftware(t); err != nil {
+			handlers.SendJSONError(w, sentence(err), http.StatusBadRequest)
+			return
+		}
 	}
 	if err := h.state.Store.UpdateTemplate(t); err != nil {
 		log.Printf("templates: update %d: %v", t.ID, err)

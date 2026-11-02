@@ -38,6 +38,12 @@ Newest release first. The format is fixed and checked in CI - see the
   time that repeats in autumn no longer runs twice. `core`
 - Saving a backup job shows why Core refused it instead of a generic failure. `panel`
 - Creating a server through the API keeps the name you give it instead of a generated one. `core`
+- Templates check software and versions on save with the install's rules: Purpur and unknown software are refused,
+  `1.20.1-47.3.0` is Forge 47.3.0, NeoForge needs a NeoForge version. They used to fail only at install. `core` `panel`
+- A template captured from a Forge, NeoForge or Fabric server pins the loader it runs, and the capture starts with
+  logs, crash reports and the name cache unticked; Core warns when they are included. `core` `panel`
+- Forge and NeoForge servers report online once they answer a status ping instead of while still loading, and no
+  longer keep the installer's log in their folder. `node`
 
 ## 2026.11.01.6
 

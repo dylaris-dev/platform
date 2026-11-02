@@ -43,6 +43,7 @@ type fakeStore struct {
 	storages  map[int]*models.BackupStorage
 	billing   map[string]*store.UserBilling // by user id
 	refs      []models.TemplateModrinthRef
+	install   *models.SubServerInstall // nil: the paper record GetSubServerInstall returns
 }
 
 func (f *fakeStore) GetUserStoragePrefs(userID string) (*int, *int, error) {

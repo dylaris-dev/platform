@@ -43,9 +43,10 @@ export default function TemplatesPage() {
     useEffect(() => { refresh(); }, [refresh]);
     const reload = () => { setLoading(true); refresh(); };
 
-    const onCreated = (template: Template, skipped: SkippedFile[]) => {
+    const onCreated = (template: Template, skipped: SkippedFile[], warning?: string) => {
         setCreating(false);
         toast('Template created.');
+        if (warning) toast(warning, false);
         // Skipped files are worth reading before moving on, so the list page
         // keeps the alert and links to the template instead of navigating away.
         if (skipped.length === 0) { router.push(`/templates/${template.id}`); return; }

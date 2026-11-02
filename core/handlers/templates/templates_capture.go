@@ -9,10 +9,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
+	"slices"
+	"strings"
 
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
+	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-pkg/validate"
 
@@ -156,7 +160,7 @@ func (h *TemplatesHandler) Capture(w http.ResponseWriter, r *http.Request) {
 		handlers.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
-	h.fillFromInstall(&req)
+	h.fillFromInstall(&req, srv)
 
 	t, s, ok := h.newTemplate(w, r, req.templateMeta)
 	if !ok {
@@ -184,12 +188,18 @@ func (h *TemplatesHandler) Capture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, _ := h.viewer(r, t)
-	writeJSON(w, http.StatusCreated, map[string]interface{}{"template": item(*t, v, s.MaxSizeBytes), "skipped": skipped})
+	body := map[string]interface{}{"template": item(*t, v, s.MaxSizeBytes), "skipped": skipped}
+	if private := services.TemplatePrivacyPaths(req.Selected); len(private) > 0 {
+		body["warning"] = "The template includes " + strings.Join(private, ", ") + ", which can hold player names and IP addresses. Remove them before you share the template."
+	}
+	writeJSON(w, http.StatusCreated, body)
 }
 
 // fillFromInstall defaults empty software and versions to what the sub-server
-// was installed as. A missing record leaves them empty; they are only labels.
-func (h *TemplatesHandler) fillFromInstall(req *captureRequest) {
+// was installed as. A missing record leaves them empty. The software version
+// is the loader actually installed (installedLoader), so the template installs
+// the loader its files were made with rather than whatever is newest that day.
+func (h *TemplatesHandler) fillFromInstall(req *captureRequest, srv *models.Server) {
 	if req.Software != "" && req.McVersion != "" && req.SoftwareVersion != "" {
 		return
 	}
@@ -197,13 +207,50 @@ func (h *TemplatesHandler) fillFromInstall(req *captureRequest) {
 	if err != nil || rec == nil {
 		return
 	}
-	if req.Software == "" {
+	// A record of another source (upload, modpack) is not software a template
+	// can install; the caller picks one instead.
+	if req.Software == "" && slices.Contains(services.TemplateSoftware, rec.InstallerType) {
 		req.Software = rec.InstallerType
+	}
+	if strings.ToLower(strings.TrimSpace(req.Software)) != rec.InstallerType {
+		return
 	}
 	if req.McVersion == "" {
 		req.McVersion = services.RecordedMinecraftVersion(rec.InstallerType, rec.McVersion, rec.BuildVersion, rec.Loader)
 	}
 	if req.SoftwareVersion == "" {
-		req.SoftwareVersion = rec.BuildVersion
+		req.SoftwareVersion = h.installedLoader(req, rec, srv)
 	}
+}
+
+// listServerDir is handlers.ListServerDirFor, swapped in tests.
+var listServerDir = handlers.ListServerDirFor
+
+// installedLoader is the loader version the sub-server runs: the recorded one,
+// else the one its library folder holds, else the recorded build (for an
+// online Forge or Fabric install that is the Minecraft version, which installs
+// the newest loader).
+func (h *TemplatesHandler) installedLoader(req *captureRequest, rec *models.SubServerInstall, srv *models.Server) string {
+	dir := services.TemplateLoaderLibraryDir(rec.InstallerType)
+	if dir == "" {
+		return rec.BuildVersion
+	}
+	if rec.Loader != "" {
+		return rec.Loader
+	}
+	entries, err := listServerDir(h.state, srv.NodeID, srv.UUID, path.Join(req.SubServer, dir))
+	if err != nil {
+		log.Printf("templates: loader of server %d/%s: %v", srv.ID, req.SubServer, err)
+		return rec.BuildVersion
+	}
+	var names []string
+	for _, e := range entries {
+		if e != nil && e.IsDir {
+			names = append(names, e.Name)
+		}
+	}
+	if v := services.TemplateLoaderFromLibraries(rec.InstallerType, req.McVersion, names); v != "" {
+		return v
+	}
+	return rec.BuildVersion
 }

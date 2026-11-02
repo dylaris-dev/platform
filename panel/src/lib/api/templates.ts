@@ -100,7 +100,7 @@ export function uploadTemplate(meta: TemplateMeta, file: File) {
 }
 
 export const captureTemplate = (req: TemplateMeta & { serverId: number; subServer: string; selected: string[] }) =>
-    call<{ template: Template; skipped: SkippedFile[] }>(`/templates/capture`, json('POST', req));
+    call<{ template: Template; skipped: SkippedFile[]; warning?: string }>(`/templates/capture`, json('POST', req));
 
 export const updateTemplate = (id: number, patch: Partial<Omit<TemplateMeta, 'kind'>>) =>
     call<Template>(`/templates/${id}`, json('PATCH', patch));

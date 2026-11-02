@@ -16,7 +16,8 @@ export function useSelectionTree() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const open = async (load: LoadDir) => {
+  // exclude names root entries that start unticked; without it all start ticked.
+  const open = async (load: LoadDir, exclude?: (name: string, isDir: boolean) => boolean) => {
     loader.current = load;
     setTree({});
     setExpanded(new Set());
@@ -27,8 +28,14 @@ export function useSelectionTree() {
     const res = await load('');
     // A newer open() owns the state now.
     if (loader.current !== load) return;
-    if (res.success) setTree({ '': res.files });
-    else setError(res.message || 'Could not read the folder.');
+    if (res.success) {
+      setTree({ '': res.files });
+      const keep = exclude ? res.files.filter(e => !exclude(e.name, e.is_dir)) : res.files;
+      if (keep.length < res.files.length) {
+        setSelectAll(false);
+        setChecked(new Set(keep.map(e => e.name)));
+      }
+    } else setError(res.message || 'Could not read the folder.');
     setLoading(false);
   };
 

@@ -5,7 +5,7 @@ import { FileArchive, FilePlus, Loader2, Server as ServerIcon, X, LayoutTemplate
 import ModalPanel from '@/components/ui/ModalPanel';
 import Tabs from '@/components/ui/Tabs';
 import { useAppData } from '@/lib/AppDataContext';
-import { MAX_CAPTURE_PATHS, softwareVersionLabel } from '@/lib/templates';
+import { MAX_CAPTURE_PATHS, softwareVersionField, TEMPLATE_SOFTWARE, usesMinecraftVersion } from '@/lib/templates';
 import { overPathLimit, TOO_MANY_PATHS_MESSAGE } from '@dylaris/ui-filebrowser';
 import ServerFilesPicker from './ServerFilesPicker';
 import {
@@ -24,8 +24,9 @@ export default function NewTemplateDialog({
     fromServerId,
 }: {
     onClose: () => void;
-    /** skipped is what Core left out; the caller shows it as an alert. */
-    onCreated: (template: Template, skipped: SkippedFile[]) => void;
+    /** skipped is what Core left out; the caller shows it as an alert. warning
+     *  names captured paths that can hold player data. */
+    onCreated: (template: Template, skipped: SkippedFile[], warning?: string) => void;
     fromServerId?: number;
 }) {
     const { user, servers } = useAppData();
@@ -56,6 +57,8 @@ export default function NewTemplateDialog({
     const onPick = (sub: string, paths: string[]) => { setSubServer(sub); setSelected(paths); };
     // Core refuses more with a message about choosing a path, which misleads here.
     const tooMany = overPathLimit(selected, MAX_CAPTURE_PATHS);
+    const versionField = softwareVersionField(software);
+    const hasMc = usesMinecraftVersion(software);
 
     // A proxy server makes a proxy template; the field stays editable.
     useEffect(() => {
@@ -66,7 +69,13 @@ export default function NewTemplateDialog({
         e.preventDefault();
         setError(null);
         if (!name.trim()) { setError('Enter a name.'); return; }
-        const meta: TemplateMeta = { name: name.trim(), kind, visibility, software: software.trim(), mcVersion: mcVersion.trim(), softwareVersion: softwareVersion.trim() };
+        // A field the chosen software has no use for is not sent: it would only
+        // be a stale value from another software.
+        const meta: TemplateMeta = {
+            name: name.trim(), kind, visibility, software,
+            mcVersion: hasMc ? mcVersion.trim() : '',
+            softwareVersion: versionField ? softwareVersion.trim() : '',
+        };
         setBusy(true);
         try {
             if (mode === 'upload') {
@@ -80,7 +89,7 @@ export default function NewTemplateDialog({
                 if (tooMany) { setError(TOO_MANY_PATHS_MESSAGE); return; }
                 const res = await captureTemplate({ ...meta, serverId: server.id, subServer, selected });
                 if (!res.success || !res.template) { setError(res.message || 'Could not capture the files.'); return; }
-                onCreated(res.template, res.skipped ?? []);
+                onCreated(res.template, res.skipped ?? [], res.warning);
             } else {
                 const res = await createTemplate(meta);
                 if (!res.success || !res.id) { setError(res.message || 'Could not create the template.'); return; }
@@ -160,17 +169,24 @@ export default function NewTemplateDialog({
                             </div>
                         )}
                         <div>
-                            <label htmlFor="tpl-software" className="input-label">Software (optional)</label>
-                            <input id="tpl-software" className="input-field w-full" value={software} onChange={(e) => setSoftware(e.target.value)} maxLength={64} placeholder="paper" />
+                            <label htmlFor="tpl-software" className="input-label">Software</label>
+                            <select id="tpl-software" className="input-field w-full" value={software} onChange={(e) => setSoftware(e.target.value)}>
+                                <option value="">{mode === 'server' ? 'As installed' : 'None yet'}</option>
+                                {TEMPLATE_SOFTWARE.map((s) => <option key={s} value={s}>{s}</option>)}
+                            </select>
                         </div>
-                        <div>
-                            <label htmlFor="tpl-mc" className="input-label">Minecraft version (optional)</label>
-                            <input id="tpl-mc" className="input-field w-full" value={mcVersion} onChange={(e) => setMcVersion(e.target.value)} maxLength={64} placeholder="1.21.4" />
-                        </div>
-                        <div>
-                            <label htmlFor="tpl-swv" className="input-label">{softwareVersionLabel(software.trim())} (optional)</label>
-                            <input id="tpl-swv" className="input-field w-full" value={softwareVersion} onChange={(e) => setSoftwareVersion(e.target.value)} maxLength={64} />
-                        </div>
+                        {hasMc && (
+                            <div>
+                                <label htmlFor="tpl-mc" className="input-label">Minecraft version{software ? '' : ' (optional)'}</label>
+                                <input id="tpl-mc" className="input-field w-full" value={mcVersion} onChange={(e) => setMcVersion(e.target.value)} maxLength={64} placeholder="1.21.4" />
+                            </div>
+                        )}
+                        {versionField && (
+                            <div>
+                                <label htmlFor="tpl-swv" className="input-label">{versionField.label}{versionField.required ? '' : ' (optional)'}</label>
+                                <input id="tpl-swv" className="input-field w-full" value={softwareVersion} onChange={(e) => setSoftwareVersion(e.target.value)} maxLength={64} placeholder={versionField.placeholder} />
+                            </div>
+                        )}
                     </div>
                     {mode === 'server' && <p className="text-xs text-(--base-06)">Left empty, software and versions are taken from how the sub-server was installed.</p>}
 
