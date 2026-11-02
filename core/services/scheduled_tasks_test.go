@@ -156,6 +156,37 @@ func TestComputeNextRun(t *testing.T) {
 	}
 }
 
+// robfig's own Next skipped a 02:30 task on the spring-forward day and ran it
+// twice in autumn; tasks now follow the backup schedule's DST rule.
+func TestComputeNextRunInAcrossDST(t *testing.T) {
+	cases := []struct {
+		name, tz, from string
+		want           []string
+	}{
+		{"Berlin spring runs once, an hour later", "Europe/Berlin", "2026-03-28T12:00:00Z",
+			[]string{"2026-03-29T01:30:00Z", "2026-03-30T00:30:00Z"}},
+		{"Berlin autumn runs once", "Europe/Berlin", "2026-10-24T12:00:00Z",
+			[]string{"2026-10-25T00:30:00Z", "2026-10-26T01:30:00Z"}},
+		{"New York spring runs once", "America/New_York", "2026-03-07T12:00:00Z",
+			[]string{"2026-03-08T07:30:00Z", "2026-03-09T06:30:00Z"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			from, _ := time.Parse(time.RFC3339, c.from)
+			for i, w := range c.want {
+				got, err := ComputeNextRunIn("30 2 * * *", c.tz, from)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if want, _ := time.Parse(time.RFC3339, w); !got.Equal(want) {
+					t.Fatalf("run %d = %s, want %s", i, got.UTC().Format(time.RFC3339), w)
+				}
+				from = got
+			}
+		})
+	}
+}
+
 func TestRunDue_NoDueTasks_NoOp(t *testing.T) {
 	fs := &schedTaskFakeStore{}
 	svc, done := newSchedTestService(t, fs)

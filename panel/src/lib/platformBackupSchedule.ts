@@ -1,10 +1,21 @@
 import type { PlatformBackupJob } from '@/lib/api/platformBackups';
+import { parseSchedule } from '@/lib/backupSchedule';
 
-/** The interval of an "every <n>h" / "every <n>d" schedule in ms; null for manual or unparseable. */
+/**
+ * The longest gap between two runs in ms; null for manual, for cron (which
+ * needs Core's parser to tell) and for anything unparseable.
+ */
 export function scheduleIntervalMs(schedule: string): number | null {
-    const m = /^every (\d+)([hd])$/.exec(schedule.trim());
-    if (!m || Number(m[1]) <= 0) return null;
-    return Number(m[1]) * (m[2] === 'd' ? 24 : 1) * 3_600_000;
+    const d = parseSchedule(schedule);
+    const hour = 3_600_000;
+    if (d.every <= 0) return null;
+    switch (d.kind) {
+        case 'interval': return d.every * (d.unit === 'd' ? 24 : 1) * hour;
+        case 'anchored': return 24 % d.every === 0 ? d.every * hour : null;
+        case 'daily': return 24 * hour;
+        case 'weekly': return 7 * 24 * hour;
+        default: return null;
+    }
 }
 
 /**

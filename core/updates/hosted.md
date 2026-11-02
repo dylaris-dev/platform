@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.02
+
+### Features
+- Backups can run every few hours at fixed times, daily or weekly at a time you pick, or on a cron expression, in
+  your time zone. The editor shows the next runs before you save; existing schedules keep running as they did.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A scheduled task at a time the clocks skip in spring no longer misses that day, and one at a time that repeats in
+  autumn no longer runs twice.
+
 ## 2026.11.01.6
 
 ### Features

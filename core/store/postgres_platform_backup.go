@@ -42,7 +42,7 @@ func (s *PostgresStore) ListBackupTargetServers() ([]models.BackupTargetServer, 
 	return out, rows.Err()
 }
 
-const platformBackupJobCols = `id, name, schedule, selection, storage_id, retention_count, enabled, last_run_at, next_run_at, created_at`
+const platformBackupJobCols = `id, name, schedule, selection, storage_id, retention_count, enabled, last_run_at, next_run_at, created_at, timezone`
 
 func scanPlatformBackupJob(sc interface{ Scan(...any) error }) (*models.PlatformBackupJob, error) {
 	var j models.PlatformBackupJob
@@ -50,7 +50,7 @@ func scanPlatformBackupJob(sc interface{ Scan(...any) error }) (*models.Platform
 	var storageID sql.NullInt64
 	var lastRun, nextRun sql.NullTime
 	if err := sc.Scan(&j.ID, &j.Name, &j.Schedule, &selection, &storageID,
-		&j.RetentionCount, &j.Enabled, &lastRun, &nextRun, &j.CreatedAt); err != nil {
+		&j.RetentionCount, &j.Enabled, &lastRun, &nextRun, &j.CreatedAt, &j.Timezone); err != nil {
 		return nil, err
 	}
 	// A selection that cannot be parsed is left at its zero value, which selects
@@ -79,9 +79,9 @@ func (s *PostgresStore) CreatePlatformBackupJob(j *models.PlatformBackupJob) (in
 	}
 	var id int
 	err = s.db.QueryRow(`
-		INSERT INTO platform_backup_jobs (name, schedule, selection, storage_id, retention_count, enabled, next_run_at)
-		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7) RETURNING id`,
-		j.Name, j.Schedule, sel, nullableInt(j.StorageID), j.RetentionCount, j.Enabled, nullableTime(j.NextRunAt)).Scan(&id)
+		INSERT INTO platform_backup_jobs (name, schedule, selection, storage_id, retention_count, enabled, next_run_at, timezone)
+		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8) RETURNING id`,
+		j.Name, j.Schedule, sel, nullableInt(j.StorageID), j.RetentionCount, j.Enabled, nullableTime(j.NextRunAt), backupJobZone(j.Timezone)).Scan(&id)
 	return id, err
 }
 
@@ -141,9 +141,9 @@ func (s *PostgresStore) UpdatePlatformBackupJob(j *models.PlatformBackupJob) err
 	}
 	res, err := s.db.Exec(`
 		UPDATE platform_backup_jobs
-		SET name=$1, schedule=$2, selection=$3::jsonb, storage_id=$4, retention_count=$5, enabled=$6, next_run_at=$7
-		WHERE id=$8`,
-		j.Name, j.Schedule, sel, nullableInt(j.StorageID), j.RetentionCount, j.Enabled, nullableTime(j.NextRunAt), j.ID)
+		SET name=$1, schedule=$2, selection=$3::jsonb, storage_id=$4, retention_count=$5, enabled=$6, next_run_at=$7, timezone=$8
+		WHERE id=$9`,
+		j.Name, j.Schedule, sel, nullableInt(j.StorageID), j.RetentionCount, j.Enabled, nullableTime(j.NextRunAt), backupJobZone(j.Timezone), j.ID)
 	if err != nil {
 		return err
 	}

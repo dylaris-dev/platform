@@ -142,6 +142,13 @@ func ComputeNextRunIn(cronExpr, tz string, from time.Time) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, fmt.Errorf("invalid cron: %w", err)
 	}
+	// robfig's Next steps hours in absolute time, which skipped a 02:30 task on
+	// the spring-forward day and ran it twice in autumn. The backup scheduler's
+	// wall-clock walk applies its documented rule instead (backup_schedule.go).
+	if spec, ok := sched.(*cron.SpecSchedule); ok {
+		next, _ := nextWallClockRun(spec, spec.Location, from)
+		return next, nil
+	}
 	return sched.Next(from), nil
 }
 

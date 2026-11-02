@@ -133,9 +133,9 @@ can still show what exists.
 
 ## At a glance
 
-- **601 routes** in 52 sections: 263 GET, 172 POST, 58 PUT, 41 PATCH, 68 DELETE.
+- **602 routes** in 53 sections: 263 GET, 173 POST, 58 PUT, 41 PATCH, 68 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **380** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **150** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **380** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **151** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **41** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -146,6 +146,7 @@ can still show what exists.
 - [/api/avatar](#apiavatar) (1)
 - [/api/backup-jobs](#apibackup-jobs) (4)
 - [/api/backup-runs](#apibackup-runs) (3)
+- [/api/backup-schedules](#apibackup-schedules) (1)
 - [/api/backup-storages](#apibackup-storages) (5)
 - [/api/beam](#apibeam) (4)
 - [/api/disk](#apidisk) (4)
@@ -393,6 +394,12 @@ can still show what exists.
 | DELETE | `/api/backup-runs/{runId:[0-9]+}` | session | _in-handler_ | AuditResolvedWrite | `BackupHandler.DeleteRun` | deletes the stored archive and then the run row. |
 | GET | `/api/backup-runs/{runId:[0-9]+}/download` | session | _in-handler_ | - | `BackupHandler.DownloadRun` | For S3-backed storage returns 302 to a pre-signed URL. |
 | POST | `/api/backup-runs/{runId:[0-9]+}/restore` | session | _in-handler_ | AuditResolvedWrite | `BackupHandler.RestoreRun` | Dispatches a restore command to the node. |
+
+## /api/backup-schedules
+
+| Method | Path | Auth | Capability | Gates | Handler | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| POST | `/api/backup-schedules/preview` | session | _no capability_ | - | `BackupHandler.PreviewSchedule` | the next runs of a schedule before it is saved, so the panel keeps no second copy of the grammar and its DST rule. |
 
 ## /api/backup-storages
 

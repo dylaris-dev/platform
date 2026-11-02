@@ -1915,6 +1915,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// numeric-constrained, so "test" cannot be swallowed by it.
 	api.HandleFunc("/storage-connections/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(storageConnectionsHandler.TestDraftConnection))).Methods("POST")
 
+	// Schedule preview - pure transform, available to anyone authed.
+	api.HandleFunc("/backup-schedules/preview", authHandler.AuthMiddleware(backupHandler.PreviewSchedule)).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.read")(backupHandler.ListJobs))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/backup-jobs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backups.create")(backupHandler.CreateJob))).Methods("POST")
 	api.HandleFunc("/backup-jobs/{jobId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.AuditResolvedWrite(backupHandler.UpdateJob))).Methods("PATCH")

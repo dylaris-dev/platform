@@ -22,7 +22,9 @@ import { SkeletonList } from '@/components/Skeleton';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import { useBusy } from '@/lib/useBusy';
-import { scheduleIntervalMs, scheduleWarning } from '@/lib/platformBackupSchedule';
+import { scheduleWarning } from '@/lib/platformBackupSchedule';
+import BackupScheduleEditor from '@/components/BackupScheduleEditor';
+import { describeSchedule, editorZone, parseSchedule, usesTimeZone } from '@/lib/backupSchedule';
 import { fmtDateTime } from '@/lib/time';
 
 const MIN_PASSPHRASE = 12;
@@ -49,6 +51,7 @@ interface JobDraft {
     id: number;
     name: string;
     schedule: string;
+    timezone: string;
     retentionCount: number;
     storageId: number | null;
     enabled: boolean;
@@ -60,6 +63,7 @@ function draftFrom(job: PlatformBackupJob): JobDraft {
         id: job.id,
         name: job.name,
         schedule: job.schedule,
+        timezone: editorZone(job.schedule, job.timezone),
         retentionCount: job.retentionCount,
         storageId: job.storageId ?? null,
         enabled: job.enabled,
@@ -72,6 +76,7 @@ function emptyDraft(): JobDraft {
         id: 0,
         name: 'Nightly platform backup',
         schedule: 'manual',
+        timezone: editorZone('manual'),
         retentionCount: 3,
         storageId: null,
         enabled: true,
@@ -145,6 +150,9 @@ export default function PlatformBackupsTab() {
             const input = {
                 name: draft.name,
                 schedule: draft.schedule,
+                // Omitted for a relative schedule, which never reads it: a
+                // changed zone re-arms the job and would push "every 1d" back.
+                timezone: usesTimeZone(parseSchedule(draft.schedule).kind) ? draft.timezone : undefined,
                 selection: draft.selection,
                 storageId: draft.storageId,
                 retentionCount: draft.retentionCount,
@@ -236,8 +244,8 @@ export default function PlatformBackupsTab() {
                                         {!job.enabled && <span className="ml-2 text-xs text-(--base-06)">(disabled)</span>}
                                     </p>
                                     <p className="text-xs text-(--base-06) truncate">
-                                        {summarise(job.selection, targets)} &middot; {job.schedule} &middot; last run {formatWhen(job.lastRunAt)}
-                                        {job.enabled && scheduleIntervalMs(job.schedule) !== null && job.nextRunAt && <> &middot; next run {formatWhen(job.nextRunAt)}</>}
+                                        {summarise(job.selection, targets)} &middot; {describeSchedule(job.schedule, job.timezone)} &middot; last run {formatWhen(job.lastRunAt)}
+                                        {job.enabled && job.schedule !== 'manual' && job.nextRunAt && <> &middot; next run {formatWhen(job.nextRunAt)}</>}
                                     </p>
                                     {scheduleWarning(job) && (
                                         <p className="text-xs text-(--warning-light) flex items-center gap-1 mt-0.5">
@@ -430,11 +438,9 @@ function JobEditor({
                     <input id="pb-name" className="input-field w-full" value={draft.name}
                         onChange={e => onChange({ ...draft, name: e.target.value })} />
                 </div>
-                <div>
-                    <label className="input-label mb-1 block" htmlFor="pb-schedule">Schedule</label>
-                    <input id="pb-schedule" className="input-field w-full" value={draft.schedule}
-                        placeholder="manual, every 24h, every 7d"
-                        onChange={e => onChange({ ...draft, schedule: e.target.value })} />
+                <div className="md:col-span-2">
+                    <BackupScheduleEditor key={draft.id} idPrefix="pb-schedule" schedule={draft.schedule} timezone={draft.timezone}
+                        onChange={(schedule, timezone) => onChange({ ...draft, schedule, timezone })} />
                 </div>
                 <div>
                     <label className="input-label mb-1 block" htmlFor="pb-storage">Destination</label>

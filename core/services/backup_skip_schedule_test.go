@@ -49,13 +49,13 @@ func TestNextScheduledRunFollowsThePlan(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := nextScheduledRun("every 1h", tt.planned, now)
+			got := nextScheduledRun("every 1h", "", tt.planned, now)
 			if got == nil || !got.Equal(tt.want) {
 				t.Errorf("nextScheduledRun = %v, want %v", got, tt.want)
 			}
 		})
 	}
-	if got := nextScheduledRun("manual", at(-time.Minute), now); got != nil {
+	if got := nextScheduledRun("manual", "", at(-time.Minute), now); got != nil {
 		t.Errorf("manual schedule = %v, want nil", got)
 	}
 }

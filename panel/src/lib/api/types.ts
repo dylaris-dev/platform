@@ -562,7 +562,8 @@ export interface BackupJob {
     serverId: number;
     subServer?: string | null;
     name: string;
-    schedule: string;             // "manual" | "every Nh" | "every Nd"
+    schedule: string;             // see lib/backupSchedule.ts
+    timezone?: string;            // IANA zone the schedule is read in
     includePatterns: string[];
     excludePatterns: string[];
     retentionCount: number;
@@ -672,10 +673,14 @@ export const testDraftStorageConnection = (
 
 export const listBackupJobs = (serverId: number): Promise<{ success: boolean; jobs?: BackupJob[] }> =>
     fetchAPI(`/servers/${serverId}/backup-jobs`);
-export const createBackupJob = (serverId: number, j: Partial<BackupJob>): Promise<{ success: boolean; id?: number }> =>
+export const createBackupJob = (serverId: number, j: Partial<BackupJob>): Promise<{ success: boolean; id?: number; message?: string }> =>
     fetchAPI(`/servers/${serverId}/backup-jobs`, { method: 'POST', body: JSON.stringify(j) });
-export const updateBackupJob = (jobId: number, j: Partial<BackupJob>): Promise<{ success: boolean }> =>
+export const updateBackupJob = (jobId: number, j: Partial<BackupJob>): Promise<{ success: boolean; message?: string }> =>
     fetchAPI(`/backup-jobs/${jobId}`, { method: 'PATCH', body: JSON.stringify(j) });
+// The next runs of a schedule before it is saved; Core owns the grammar and
+// the daylight-saving rule, so the preview cannot disagree with the scheduler.
+export const previewBackupSchedule = (schedule: string, timezone: string): Promise<{ success: boolean; valid?: boolean; error?: string; nextRuns?: string[]; message?: string }> =>
+    fetchAPI('/backup-schedules/preview', { method: 'POST', body: JSON.stringify({ schedule, timezone }) });
 export const deleteBackupJob = (jobId: number): Promise<{ success: boolean }> =>
     fetchAPI(`/backup-jobs/${jobId}`, { method: 'DELETE' });
 // message is declared because Core sends one on every refusal here (quota

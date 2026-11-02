@@ -37,6 +37,7 @@ export interface PlatformBackupJob {
     id: number;
     name: string;
     schedule: string;
+    timezone?: string;
     selection: PlatformBackupSelection;
     storageId?: number;
     retentionCount: number;
@@ -101,6 +102,7 @@ export async function listPlatformBackupJobs(): Promise<{ success: boolean; jobs
 export interface PlatformBackupJobInput {
     name: string;
     schedule: string;
+    timezone?: string;
     selection: PlatformBackupSelection;
     storageId: number | null;
     retentionCount: number;

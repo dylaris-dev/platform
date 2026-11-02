@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.02
+
+### Features
+- Backup schedules can run every n hours at fixed times (every 6h from 12:00 = 00:00, 06:00, 12:00, 18:00), daily
+  or weekly at a time, or on a cron expression, in the job's own time zone, with the next runs previewed. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A scheduled task at a time the clocks skip (02:30 on the spring change) no longer misses that day, and one at a
+  time that repeats in autumn no longer runs twice. `core`
+- Saving a backup job shows why Core refused it instead of a generic failure. `panel`
+
 ## 2026.11.01.6
 
 ### Features

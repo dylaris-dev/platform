@@ -1698,6 +1698,16 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/backup-schedules/preview",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "the next runs of a schedule before it is saved, so the panel keeps no second copy of the grammar and its DST rule.",
+      "handler": "BackupHandler.PreviewSchedule",
+      "group": "backup-schedules",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/backup-storages",
       "auth": "session",
@@ -5964,10 +5974,10 @@
     }
   ],
   "counts": {
-    "total": 602,
+    "total": 603,
     "byAuth": {
       "none": 30,
-      "session": 554,
+      "session": 555,
       "user API key": 10,
       "warp key": 8
     },
@@ -5978,6 +5988,7 @@
       "avatar": 1,
       "backup-jobs": 4,
       "backup-runs": 3,
+      "backup-schedules": 1,
       "backup-storages": 5,
       "beam": 5,
       "disk": 4,

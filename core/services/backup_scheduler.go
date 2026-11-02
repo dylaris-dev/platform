@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"strings"
 	"time"
 
 	nodegrpc "dylaris-core/grpc"
@@ -944,7 +943,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 // not dispatch it again.
 func (b *BackupScheduler) advanceSchedule(job models.BackupJob) {
 	now := time.Now()
-	next := nextScheduledRun(job.Schedule, job.NextRunAt, now)
+	next := nextScheduledRun(job.Schedule, job.Timezone, job.NextRunAt, now)
 	if next != nil {
 		b.store.SetBackupJobScheduled(job.ID, now, *next)
 	} else {
@@ -957,7 +956,7 @@ func (b *BackupScheduler) advanceSchedule(job models.BackupJob) {
 // for a backup that never happened.
 func (b *BackupScheduler) skipRun(job models.BackupJob, reason string) {
 	now := time.Now()
-	next := nextScheduledRun(job.Schedule, job.NextRunAt, now)
+	next := nextScheduledRun(job.Schedule, job.Timezone, job.NextRunAt, now)
 	if next == nil {
 		return
 	}
@@ -971,8 +970,8 @@ func (b *BackupScheduler) skipRun(job models.BackupJob, reason string) {
 // run by however late the tick was. A planned slot more than one interval in the
 // past (Core was down, the job was just re-enabled) is not caught up on; the
 // schedule restarts from now instead.
-func nextScheduledRun(schedule string, planned *time.Time, now time.Time) *time.Time {
-	next := ComputeBackupNextRun(schedule, now)
+func nextScheduledRun(schedule, tz string, planned *time.Time, now time.Time) *time.Time {
+	next := ComputeBackupNextRun(schedule, tz, now)
 	if next == nil || planned == nil || planned.IsZero() {
 		return next
 	}
@@ -980,7 +979,7 @@ func nextScheduledRun(schedule string, planned *time.Time, now time.Time) *time.
 	if now.Sub(*planned) >= interval {
 		return next
 	}
-	fromPlan := ComputeBackupNextRun(schedule, *planned)
+	fromPlan := ComputeBackupNextRun(schedule, tz, *planned)
 	if !fromPlan.After(now) {
 		return next
 	}
@@ -1000,50 +999,6 @@ func NewBackupStorageKey(serverUUID string, jobID int, now time.Time) string {
 	var suffix [4]byte
 	_, _ = rand.Read(suffix[:]) // crypto/rand.Read never fails
 	return fmt.Sprintf("backups/%s/job-%d/%s-%s.tar.gz", serverUUID, jobID, now.UTC().Format("20060102-150405"), hex.EncodeToString(suffix[:]))
-}
-
-// ValidBackupSchedule reports whether a schedule string is one the scheduler can act
-// on. Defined in terms of ComputeNextRun rather than re-parsing, so the answer
-// and the behaviour can never disagree - which is the whole failure it exists
-// to stop: the parser was always right about "banana", the caller just stored
-// the job anyway and it silently never ran.
-func ValidBackupSchedule(schedule string) bool {
-	schedule = strings.TrimSpace(schedule)
-	if schedule == "" || schedule == "manual" {
-		return true
-	}
-	return ComputeBackupNextRun(schedule, time.Now()) != nil
-}
-
-// ComputeBackupNextRun parses the schedule expressions the backup scheduler
-// understands: "manual"/empty and "every Nh" / "every Nd". Anything else
-// returns nil, meaning "I cannot schedule this" - callers must act on that
-// rather than store the job regardless.
-//
-// It used to have an identical twin in handlers/backup.go, "duplicated here to
-// keep services free of any handlers dependency" - but the dependency runs the
-// other way (handlers already imports services), so the copy bought nothing and
-// gave a validator two definitions to drift between.
-func ComputeBackupNextRun(schedule string, from time.Time) *time.Time {
-	if schedule == "" || schedule == "manual" {
-		return nil
-	}
-	var n int
-	var unit string
-	if _, err := fmt.Sscanf(schedule, "every %d%s", &n, &unit); err != nil || n <= 0 {
-		return nil
-	}
-	var d time.Duration
-	switch unit {
-	case "h":
-		d = time.Duration(n) * time.Hour
-	case "d":
-		d = time.Duration(n) * 24 * time.Hour
-	default:
-		return nil
-	}
-	next := from.Add(d)
-	return &next
 }
 
 // snapshotInstalls records how the archived sub-servers were installed.

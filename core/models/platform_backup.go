@@ -130,6 +130,7 @@ type PlatformBackupJob struct {
 	ID             int                     `json:"id"`
 	Name           string                  `json:"name"`
 	Schedule       string                  `json:"schedule"`
+	Timezone       string                  `json:"timezone"`
 	Selection      PlatformBackupSelection `json:"selection"`
 	StorageID      *int                    `json:"storageId,omitempty"`
 	RetentionCount int                     `json:"retentionCount"`

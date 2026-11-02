@@ -91,7 +91,7 @@ func (s *PlatformBackupScheduler) tick(ctx context.Context) {
 		// schedule was never armed and is overdue by definition, so it runs now
 		// and runDue arms it. One without (manual, or a schedule nothing can
 		// parse) must not run here, or it would run every minute.
-		if jobs[i].NextRunAt == nil && ComputeBackupNextRun(jobs[i].Schedule, time.Now()) == nil {
+		if jobs[i].NextRunAt == nil && ComputeBackupNextRun(jobs[i].Schedule, jobs[i].Timezone, time.Now()) == nil {
 			continue
 		}
 		s.runDue(ctx, &jobs[i])
@@ -134,7 +134,7 @@ func (s *PlatformBackupScheduler) runDue(ctx context.Context, job *models.Platfo
 func (s *PlatformBackupScheduler) rearm(job *models.PlatformBackupJob) {
 	// From the planned slot, so a run does not push the schedule back by its
 	// own duration every time.
-	next := nextScheduledRun(job.Schedule, job.NextRunAt, time.Now())
+	next := nextScheduledRun(job.Schedule, job.Timezone, job.NextRunAt, time.Now())
 	if err := s.store.SetPlatformBackupJobSchedule(job.ID, next); err != nil {
 		logErrf("platform-backup", "job %d: re-arming the schedule: %v", job.ID, err)
 	}

@@ -21,6 +21,8 @@ import { formatBytes } from '@/lib/format';
 import { currentSkip, relativeTime } from '@/lib/backupJobStatus';
 import { fmtDateTime } from '@/lib/time';
 import { listOwnBackupStorages, jobStorageOptions, type OwnBackupStorage } from '@/lib/api/ownBackupStorage';
+import BackupScheduleEditor from '@/components/BackupScheduleEditor';
+import { describeSchedule, editorZone, parseSchedule, usesTimeZone } from '@/lib/backupSchedule';
 
 // A run that archived nothing yet shows a dash rather than "0 B".
 function runSize(b: number): string {
@@ -34,14 +36,6 @@ function localTime(iso: string): string {
 // Runs shown before "Show all": enough for the usual retention of a few.
 const RUNS_COLLAPSED = 5;
 
-const SCHEDULE_OPTIONS = [
-    { value: 'manual', label: 'Manual only' },
-    { value: 'every 6h', label: 'Every 6 hours' },
-    { value: 'every 12h', label: 'Every 12 hours' },
-    { value: 'every 1d', label: 'Daily' },
-    { value: 'every 7d', label: 'Weekly' },
-];
-
 interface JobFormProps {
     initial: Partial<BackupJob>;
     storages: { id: number; label: string }[];
@@ -53,6 +47,7 @@ interface JobFormProps {
 function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProps) {
     const [job, setJob] = useState<Partial<BackupJob>>(initial);
     const [saving, setSaving] = useState(false);
+    const [zone, setZone] = useState(() => editorZone(initial.schedule ?? 'manual', initial.timezone));
     const isSelective = (job.includePatterns?.length || 0) + (job.excludePatterns?.length || 0) > 0;
     const [mode, setMode] = useState<'full-container' | 'sub-server' | 'selective'>(
         job.subServer ? (isSelective ? 'selective' : 'sub-server') : 'full-container',
@@ -67,6 +62,9 @@ function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProp
             subServer: mode === 'full-container' ? null : (job.subServer || subServers[0] || ''),
             includePatterns: mode === 'selective' ? (job.includePatterns ?? []) : [],
             excludePatterns: mode === 'selective' ? (job.excludePatterns ?? []) : [],
+            // Omitted for a relative schedule: it never reads the zone, and a
+            // changed zone re-arms the job, which would push "every 6h" back.
+            timezone: usesTimeZone(parseSchedule(job.schedule ?? 'manual').kind) ? zone : undefined,
         };
         await onSave(finalJob);
         setSaving(false);
@@ -142,17 +140,16 @@ function JobForm({ initial, storages, subServers, onClose, onSave }: JobFormProp
                         </>
                     )}
 
-                    <div className="grid grid-cols-2 gap-3">
-                        <div className="form-group">
-                            <label className="input-label">Schedule</label>
-                            <select value={job.schedule ?? 'manual'} onChange={e => updateField('schedule', e.target.value)} className="input-field">
-                                {SCHEDULE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                            </select>
-                        </div>
-                        <div className="form-group">
-                            <label className="input-label">Keep last N runs</label>
-                            <input type="number" min={1} max={100} value={job.retentionCount ?? 3} onChange={e => updateField('retentionCount', Math.max(1, Number(e.target.value)))} className="input-field text-right tabular-nums" />
-                        </div>
+                    <BackupScheduleEditor
+                        idPrefix="job-schedule"
+                        schedule={job.schedule ?? 'manual'}
+                        timezone={zone}
+                        onChange={(schedule, tz) => { updateField('schedule', schedule); setZone(tz); }}
+                    />
+
+                    <div className="form-group">
+                        <label className="input-label" htmlFor="job-retention">Keep last N runs</label>
+                        <input id="job-retention" type="number" min={1} max={100} value={job.retentionCount ?? 3} onChange={e => updateField('retentionCount', Math.max(1, Number(e.target.value)))} className="input-field text-right tabular-nums max-w-32" />
                     </div>
 
                     <div className="form-group">
@@ -286,7 +283,7 @@ export default function ServerBackupsView() {
             setShowForm(false);
             reload();
         } else {
-            showToast('Failed to create job.', false);
+            showToast(res.message || 'Failed to create job.', false);
         }
     };
     const handleUpdate = async (job: Partial<BackupJob>) => {
@@ -299,7 +296,7 @@ export default function ServerBackupsView() {
             setEditingJob(null);
             reload();
         } else {
-            showToast('Failed to save job.', false);
+            showToast(res.message || 'Failed to save job.', false);
         }
     };
     const handleDeleteJob = async (id: number) => {
@@ -438,7 +435,7 @@ export default function ServerBackupsView() {
                                         {(job.includePatterns?.length || job.excludePatterns?.length) ? <span className="badge badge-accent">selective</span> : null}
                                     </div>
                                     <div className="flex items-center gap-x-3 gap-y-1 mt-1 text-xs text-(--base-06) flex-wrap">
-                                        <span className="inline-flex items-center gap-1"><Clock size={11} />{job.schedule}</span>
+                                        <span className="inline-flex items-center gap-1"><Clock size={11} />{describeSchedule(job.schedule, job.timezone)}</span>
                                         <span>keep {job.retentionCount}</span>
                                     </div>
                                 </div>

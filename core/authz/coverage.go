@@ -187,6 +187,7 @@ var ExemptRoutes = map[string]bool{
 
 	// Cron preview: pure transform, no server scoping needed.
 	"/api/scheduled-tasks/validate": true, // authed; pure preview
+	"/api/backup-schedules/preview": true, // authed; pure preview
 
 	// Modrinth external proxy: read-only, cached, rate-limited, all authed.
 	"/api/modrinth/search":                  true, // authed; external proxy

@@ -55,6 +55,7 @@ func (h *PlatformBackupHandler) ListJobs(w http.ResponseWriter, r *http.Request)
 type platformBackupJobRequest struct {
 	Name           string                         `json:"name"`
 	Schedule       string                         `json:"schedule"`
+	Timezone       string                         `json:"timezone"`
 	Selection      models.PlatformBackupSelection `json:"selection"`
 	StorageID      *int                           `json:"storageId"`
 	RetentionCount *int                           `json:"retentionCount"`
@@ -78,21 +79,26 @@ func (h *PlatformBackupHandler) CreateJob(w http.ResponseWriter, r *http.Request
 	}
 
 	schedule := scheduleOrManual(req.Schedule)
-	if !services.ValidBackupSchedule(schedule) {
-		handlers.SendJSONError(w, platformScheduleError, http.StatusBadRequest)
+	tz := strings.TrimSpace(req.Timezone)
+	if tz == "" {
+		tz = "UTC"
+	}
+	if err := services.CheckBackupSchedule(schedule, tz); err != nil {
+		handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	job := &models.PlatformBackupJob{
 		Name:           strings.TrimSpace(req.Name),
 		Schedule:       schedule,
+		Timezone:       tz,
 		Selection:      req.Selection,
 		StorageID:      req.StorageID,
 		RetentionCount: derefInt(req.RetentionCount, 3),
 		Enabled:        derefBool(req.Enabled, true),
 		// Armed here: the scheduler only ever re-arms a job it has run, so a job
 		// stored without a next run was never picked up (production job 3).
-		NextRunAt: services.ComputeBackupNextRun(schedule, time.Now()),
+		NextRunAt: services.ComputeBackupNextRun(schedule, tz, time.Now()),
 	}
 	id, err := h.state.Store.CreatePlatformBackupJob(job)
 	if err != nil {
@@ -117,11 +123,16 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 	if strings.TrimSpace(req.Name) != "" {
 		job.Name = strings.TrimSpace(req.Name)
 	}
-	prevSchedule, prevEnabled := job.Schedule, job.Enabled
+	prevSchedule, prevZone, prevEnabled := job.Schedule, job.Timezone, job.Enabled
+	if tz := strings.TrimSpace(req.Timezone); tz != "" {
+		job.Timezone = tz
+	}
 	if req.Schedule != "" {
 		job.Schedule = scheduleOrManual(req.Schedule)
-		if !services.ValidBackupSchedule(job.Schedule) {
-			handlers.SendJSONError(w, platformScheduleError, http.StatusBadRequest)
+	}
+	if job.Schedule != prevSchedule || job.Timezone != prevZone {
+		if err := services.CheckBackupSchedule(job.Schedule, job.Timezone); err != nil {
+			handlers.SendJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -142,8 +153,8 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 	// Re-armed only when the timing changed. Recomputing on every edit would let
 	// a daily rename push the next backup back a day, forever; a stale time left
 	// from before a job was re-enabled would fire it on the next tick.
-	if job.Schedule != prevSchedule || (job.Enabled && !prevEnabled) {
-		job.NextRunAt = services.ComputeBackupNextRun(job.Schedule, time.Now())
+	if job.Schedule != prevSchedule || job.Timezone != prevZone || (job.Enabled && !prevEnabled) {
+		job.NextRunAt = services.ComputeBackupNextRun(job.Schedule, job.Timezone, time.Now())
 	}
 
 	if err := h.state.Store.UpdatePlatformBackupJob(job); err != nil {
@@ -198,7 +209,7 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 		// A run was opened, so the job ran: record it, and arm a job that has
 		// no next run, but keep a planned slot. A refusal before any run (no
 		// passphrase, empty selection) leaves both untouched.
-		if err := h.state.Store.SetPlatformBackupJobRanByHand(job.ID, services.ComputeBackupNextRun(job.Schedule, time.Now())); err != nil {
+		if err := h.state.Store.SetPlatformBackupJobRanByHand(job.ID, services.ComputeBackupNextRun(job.Schedule, job.Timezone, time.Now())); err != nil {
 			log.Printf("platform backup: job %d: recording the manual run: %v", job.ID, err)
 		}
 	}
@@ -497,8 +508,6 @@ func (a *coreStorageArea) Walk(ctx context.Context) ([]services.BundleFile, erro
 func (a *coreStorageArea) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 	return a.prov.GetFile(ctx, key)
 }
-
-const platformScheduleError = `Schedule must be "manual" or "every <n>h" / "every <n>d" - for example "every 1d"`
 
 func scheduleOrManual(s string) string {
 	s = strings.TrimSpace(s)

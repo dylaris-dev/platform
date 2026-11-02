@@ -29,7 +29,7 @@ func TestBackupAuditCWiring(t *testing.T) {
 	for _, c := range []struct{ file, fn, want, why string }{
 		{"platform_backup.go", "RunJob", "context.WithoutCancel(r.Context())", "a closed tab cancels a manual platform backup"},
 		{"platform_restore.go", "runRestore", "context.WithoutCancel(r.Context())", "a closed tab cancels a platform restore"},
-		{"backup.go", "UpdateJob", "if next.Schedule != job.Schedule || (next.Enabled && !job.Enabled) || job.NextRunAt == nil {", "every edit restarts the schedule"},
+		{"backup.go", "UpdateJob", "if next.Schedule != job.Schedule || next.Timezone != job.Timezone || (next.Enabled && !job.Enabled) || job.NextRunAt == nil {", "every edit restarts the schedule"},
 		{"backup.go", "DownloadRun", "backupDownloadURLTTL", "a backup download link lives an hour"},
 	} {
 		if !strings.Contains(funcBody(t, c.file, c.fn), c.want) {

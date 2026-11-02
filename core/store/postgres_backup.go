@@ -328,7 +328,7 @@ func (s *PostgresStore) scanJob(row interface{ Scan(...interface{}) error }) (*m
 		&j.ID, &j.ServerID, &subServer, &j.Name, &j.Schedule,
 		&includes, &excludes, &j.RetentionCount,
 		&storageID, &j.Enabled, &lastRun, &nextRun, &j.CreatedAt,
-		&lastSkip, &j.LastSkipReason,
+		&lastSkip, &j.LastSkipReason, &j.Timezone,
 	)
 	if err != nil {
 		return nil, err
@@ -358,7 +358,7 @@ func (s *PostgresStore) scanJob(row interface{ Scan(...interface{}) error }) (*m
 	return &j, nil
 }
 
-const backupJobCols = `id, server_id, sub_server, name, schedule, include_patterns, exclude_patterns, retention_count, storage_id, enabled, last_run_at, next_run_at, created_at, last_skip_at, last_skip_reason`
+const backupJobCols = `id, server_id, sub_server, name, schedule, include_patterns, exclude_patterns, retention_count, storage_id, enabled, last_run_at, next_run_at, created_at, last_skip_at, last_skip_reason, timezone`
 
 func (s *PostgresStore) ListBackupJobs(serverID int) ([]models.BackupJob, error) {
 	rows, err := s.db.Query(`SELECT `+backupJobCols+` FROM backup_jobs WHERE server_id = $1 ORDER BY id`, serverID)
@@ -385,11 +385,11 @@ func (s *PostgresStore) GetBackupJob(id int) (*models.BackupJob, error) {
 func (s *PostgresStore) CreateBackupJob(j *models.BackupJob) (int, error) {
 	var id int
 	err := s.db.QueryRow(
-		`INSERT INTO backup_jobs (server_id, sub_server, name, schedule, include_patterns, exclude_patterns, retention_count, storage_id, enabled, next_run_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+		`INSERT INTO backup_jobs (server_id, sub_server, name, schedule, include_patterns, exclude_patterns, retention_count, storage_id, enabled, next_run_at, timezone)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
 		j.ServerID, nullableString(j.SubServer), j.Name, j.Schedule,
 		textArray(j.IncludePatterns), textArray(j.ExcludePatterns),
-		j.RetentionCount, nullableInt(j.StorageID), j.Enabled, nullableTime(j.NextRunAt),
+		j.RetentionCount, nullableInt(j.StorageID), j.Enabled, nullableTime(j.NextRunAt), backupJobZone(j.Timezone),
 	).Scan(&id)
 	return id, err
 }
@@ -397,10 +397,10 @@ func (s *PostgresStore) CreateBackupJob(j *models.BackupJob) (int, error) {
 func (s *PostgresStore) UpdateBackupJob(j *models.BackupJob) error {
 	_, err := s.db.Exec(
 		`UPDATE backup_jobs SET sub_server = $1, name = $2, schedule = $3, include_patterns = $4,
-		 exclude_patterns = $5, retention_count = $6, storage_id = $7, enabled = $8, next_run_at = $9 WHERE id = $10`,
+		 exclude_patterns = $5, retention_count = $6, storage_id = $7, enabled = $8, next_run_at = $9, timezone = $10 WHERE id = $11`,
 		nullableString(j.SubServer), j.Name, j.Schedule,
 		textArray(j.IncludePatterns), textArray(j.ExcludePatterns),
-		j.RetentionCount, nullableInt(j.StorageID), j.Enabled, nullableTime(j.NextRunAt), j.ID,
+		j.RetentionCount, nullableInt(j.StorageID), j.Enabled, nullableTime(j.NextRunAt), backupJobZone(j.Timezone), j.ID,
 	)
 	return err
 }
@@ -944,4 +944,13 @@ func (s *PostgresStore) SetBackupRunInstallSnapshot(runID int, snapshot string) 
 func (s *PostgresStore) SetBackupRunManifest(runID int, manifest string) error {
 	_, err := s.db.Exec(`UPDATE backup_runs SET manifest = $1 WHERE id = $2`, manifest, runID)
 	return err
+}
+
+// backupJobZone writes "" as UTC: the column is NOT NULL, and UTC is what an
+// empty zone already means to the scheduler.
+func backupJobZone(tz string) string {
+	if tz == "" {
+		return "UTC"
+	}
+	return tz
 }

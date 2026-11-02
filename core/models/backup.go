@@ -42,14 +42,15 @@ type BackupStorageUsage struct {
 }
 
 // BackupJob describes a recurring or manual backup configuration.
-// Schedule is a free-form string; "manual" disables auto-runs.
-// Otherwise expected formats: "every Nh", "every Nd" (parsed by scheduler).
+// Schedule is "manual" or one of the forms in services/backup_schedule.go,
+// read in Timezone (IANA; "" = UTC).
 type BackupJob struct {
 	ID              int        `json:"id"`
 	ServerID        int        `json:"serverId"`
 	SubServer       *string    `json:"subServer,omitempty"` // NULL = full container
 	Name            string     `json:"name"`
 	Schedule        string     `json:"schedule"`
+	Timezone        string     `json:"timezone"`
 	IncludePatterns []string   `json:"includePatterns"`
 	ExcludePatterns []string   `json:"excludePatterns"`
 	RetentionCount  int        `json:"retentionCount"`

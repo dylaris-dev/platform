@@ -100,6 +100,7 @@ what any serious panel needs.
 - **RCON & player management** — gRPC-backed RCON console, player list, ban/kick/op, plus an external API-key surface for automation.
 - **File access** — in-panel file browser, plus pluggable file transport: **Beam** (overlay gRPC, no exposed IP) or **SFTP**.
 - **Scheduled tasks** — cron-style restarts and console commands per server.
+- **Backups** - per-server and platform backup jobs, run by hand or on a schedule: every n hours or days, every n hours at fixed times, daily, weekly, or a cron expression, in the job's own time zone. See [Backup schedules](#backup-schedules).
 - **Custom tabs** — attach iframe/popout tools to a server's UI.
 - **Live events** — Server-Sent Events over Redis Pub/Sub for real-time status (no polling).
 - **Multi-tenant user management** — UUID users, roles and per-server grants, username history + cooldowns, admin controls, API keys.
@@ -859,6 +860,21 @@ docker compose exec timescaledb sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB
 The single quotes matter: the variables are expanded inside the container, where they are set, not on the host. Restoring the dump needs a superuser on the target database, because it contains TimescaleDB extension objects.
 
 Server files live on the Node host under the `dylaris_data` volume; back that up alongside the database.
+
+### Backup schedules
+
+Server backup jobs (`/api/servers/{id}/backup-jobs`) and platform backup jobs (`/api/platform-backups/jobs`) share one grammar in `schedule`, read in the IANA zone in `timezone`:
+
+| Schedule | Runs |
+| --- | --- |
+| `manual` | only by hand |
+| `every <n>h`, `every <n>d` | n hours or days after the previous slot; the original form, the zone is not read |
+| `every <n>h from HH:MM` | at HH:MM and every n hours around the day from it; n divides 24 (`every 6h from 12:00` = 00:00, 06:00, 12:00, 18:00) |
+| `daily HH:MM` | once a day |
+| `weekly <mon..sun> HH:MM` | once a week |
+| `cron <min> <hour> <dom> <month> <dow>` | standard 5 fields; the minute must be a single value, so at most once an hour |
+
+The panel sends the viewer's zone; an API call without one gets `UTC`, and jobs from before zones existed are `UTC` (their relative schedules never read it). Daylight saving: a wall time skipped when the clocks go forward runs shifted by the gap (02:30 -> 03:30), and a wall time that happens twice runs once, at the first. A daily job therefore runs exactly once on both change days. Scheduled tasks follow the same rule. `POST /api/backup-schedules/preview` with `{"schedule", "timezone"}` returns `valid`, an `error`, or the next five `nextRuns`; an invalid schedule on a job write is a `400` naming the reason.
 
 A platform backup (Settings, Platform backups) with **Statistics database** selected puts a `pg_dump` of the TimescaleDB statistics database into the bundle (`metrics.dump`, with the TimescaleDB version it came from in `metrics.version`). A configured statistics database that cannot be dumped fails the run. TimescaleDB restores such a dump only through its own procedure ([docs](https://docs.timescale.com/self-hosted/latest/backup-and-restore/logical-backup)). The restore API (`POST /api/platform-backups/restore` or `/runs/{id}/restore` with the `metricsDb` component and a `metricsTarget` connection, which must be a superuser on a new, empty database) runs it as follows, which is also the procedure for a `metrics.dump` file restored by hand:
 

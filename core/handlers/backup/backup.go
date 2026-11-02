@@ -430,14 +430,19 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	// were all accepted with 200 and left with no next run. Scheduled TASKS
 	// have refused an unparseable cron with a 400 all along; this is the
 	// sibling that did not.
-	if !services.ValidBackupSchedule(req.Schedule) {
-		handlers.SendJSONError(w, `Schedule must be "manual" or "every <n>h" / "every <n>d" - for example "every 6h"`, 400)
+	// The panel sends the viewer's zone; an API caller that sends none gets UTC.
+	req.Timezone = strings.TrimSpace(req.Timezone)
+	if req.Timezone == "" {
+		req.Timezone = "UTC"
+	}
+	if err := services.CheckBackupSchedule(req.Schedule, req.Timezone); err != nil {
+		handlers.SendJSONError(w, err.Error(), 400)
 		return
 	}
 	if h.refuseUnusableStorage(w, r, serverID, req.StorageID, nil) {
 		return
 	}
-	req.NextRunAt = services.ComputeBackupNextRun(req.Schedule, time.Now())
+	req.NextRunAt = services.ComputeBackupNextRun(req.Schedule, req.Timezone, time.Now())
 	id, err := h.state.Store.CreateBackupJob(&req)
 	if err != nil {
 		log.Printf("create backup job for server %d: %v", serverID, err)
@@ -445,6 +450,34 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "id": id})
+}
+
+// PreviewSchedule POST /api/backup-schedules/preview - the next runs of a
+// schedule before it is saved, so the panel keeps no second copy of the grammar
+// and its DST rule. A pure transform with no server scope: any signed-in user.
+// Body: {schedule, timezone}. Response: {success, valid, error?, nextRuns}.
+func (h *BackupHandler) PreviewSchedule(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Schedule string `json:"schedule"`
+		Timezone string `json:"timezone"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		handlers.SendJSONError(w, "Invalid JSON", 400)
+		return
+	}
+	tz := strings.TrimSpace(req.Timezone)
+	if tz == "" {
+		tz = "UTC"
+	}
+	if err := services.CheckBackupSchedule(req.Schedule, tz); err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"success": true, "valid": false, "error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"success":  true,
+		"valid":    true,
+		"nextRuns": services.BackupNextRuns(req.Schedule, tz, time.Now(), 5),
+	})
 }
 
 // refuseUnusableStorage answers the request when a job names a backup storage
@@ -512,6 +545,7 @@ type updateBackupJobRequest struct {
 	Name            *string   `json:"name"`
 	SubServer       *string   `json:"subServer"`
 	Schedule        *string   `json:"schedule"`
+	Timezone        *string   `json:"timezone"`
 	IncludePatterns *[]string `json:"includePatterns"`
 	ExcludePatterns *[]string `json:"excludePatterns"`
 	RetentionCount  *int      `json:"retentionCount"`
@@ -579,18 +613,24 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		next.Enabled = *req.Enabled
 	}
-	// Only what the CALLER sent is validated. An omitted schedule keeps the
-	// stored one untouched - including one of the broken values saved before
+	// Only a schedule or zone that CHANGES is validated. An omitted or resent
+	// one keeps the stored value untouched - including one of the broken values saved before
 	// that check existed, which would otherwise make such a job impossible to
 	// edit at all, even to rename it.
+	if req.Timezone != nil {
+		if tz := strings.TrimSpace(*req.Timezone); tz != "" {
+			next.Timezone = tz
+		}
+	}
 	if req.Schedule != nil {
-		s := strings.TrimSpace(*req.Schedule)
-		if s != "" {
-			if !services.ValidBackupSchedule(s) {
-				handlers.SendJSONError(w, `Schedule must be "manual" or "every <n>h" / "every <n>d" - for example "every 6h"`, 400)
-				return
-			}
+		if s := strings.TrimSpace(*req.Schedule); s != "" {
 			next.Schedule = s
+		}
+	}
+	if next.Schedule != job.Schedule || next.Timezone != job.Timezone {
+		if err := services.CheckBackupSchedule(next.Schedule, next.Timezone); err != nil {
+			handlers.SendJSONError(w, err.Error(), 400)
+			return
 		}
 	}
 	if h.refuseUnusableStorage(w, r, next.ServerID, next.StorageID, job.StorageID) {
@@ -599,8 +639,8 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	// Re-armed only when WHEN it runs changed. Every edit used to restart the
 	// interval from now, so a daily job renamed or given a new retention every
 	// day never ran.
-	if next.Schedule != job.Schedule || (next.Enabled && !job.Enabled) || job.NextRunAt == nil {
-		next.NextRunAt = services.ComputeBackupNextRun(next.Schedule, time.Now())
+	if next.Schedule != job.Schedule || next.Timezone != job.Timezone || (next.Enabled && !job.Enabled) || job.NextRunAt == nil {
+		next.NextRunAt = services.ComputeBackupNextRun(next.Schedule, next.Timezone, time.Now())
 	}
 	if err := h.state.Store.UpdateBackupJob(&next); err != nil {
 		log.Printf("update backup job %d: %v", jobID, err)
@@ -1195,7 +1235,7 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// A manual run is recorded but leaves the planned slot alone: it used to
 	// move the schedule to click time plus the interval.
 	now := time.Now()
-	if err := h.state.Store.SetBackupJobRanByHand(job.ID, now, services.ComputeBackupNextRun(job.Schedule, now)); err != nil {
+	if err := h.state.Store.SetBackupJobRanByHand(job.ID, now, services.ComputeBackupNextRun(job.Schedule, job.Timezone, now)); err != nil {
 		log.Printf("backup: job %d: recording the manual run: %v", job.ID, err)
 	}
 
