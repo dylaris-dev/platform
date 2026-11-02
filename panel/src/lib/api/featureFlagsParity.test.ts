@@ -15,7 +15,7 @@ import { join } from 'node:path';
  */
 
 const GO = readFileSync(
-    join(__dirname, '../../../../core/handlers/feature_settings.go'), 'utf8',
+    join(__dirname, '../../../../core/handlers/settings/feature_settings.go'), 'utf8',
 );
 const TS = readFileSync(join(__dirname, 'featureFlags.ts'), 'utf8');
 
