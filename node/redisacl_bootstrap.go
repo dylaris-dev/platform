@@ -313,11 +313,15 @@ func bootstrapSecretViaGRPC(ctx context.Context, allowIdentityChange bool) ([]by
 		// One line for both read as the benign one and hid that for a whole
 		// investigation.
 		previous := nodeID
+		// Before the save overwrites it. With no cached id, previous is only
+		// the machine name dialIdentity fell back to: a first pairing, not a
+		// replaced identity, and no row was orphaned.
+		cached, _ := cachedNodeID(nodeSecretDir)
 		nodeID = res.AssignedId
 		if werr := saveNodeID(nodeSecretDir, res.AssignedId); werr != nil {
 			log.Printf("redisacl: WARN failed to persist assigned node id: %v", werr)
 		}
-		if previous == "" {
+		if cached == "" {
 			log.Printf("redisacl: paired, Core assigned node identity %s", res.AssignedId)
 		} else {
 			log.Printf("redisacl: WARN identity REPLACED: was %s, Core assigned %s. "+

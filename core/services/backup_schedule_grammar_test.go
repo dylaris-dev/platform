@@ -160,29 +160,91 @@ func TestBackupScheduleDST(t *testing.T) {
 		})
 	}
 
-	// Hourly on the wall clock: the short day has 23 runs, the long day 24 (the
-	// repeated hour runs once), and no two runs share an instant.
+	// Hourly on the wall clock: the short day has 23 runs, the long day 25 (an
+	// hourly job runs in both occurrences of the repeated hour, so there is no
+	// two-hour hole), and no two runs share an instant.
 	berlin := mustLoc(t, "Europe/Berlin")
 	for _, day := range []struct {
 		date string
 		want int
-	}{{"2026-03-29", 23}, {"2026-10-25", 24}, {"2026-06-01", 24}} {
+	}{{"2026-03-29", 23}, {"2026-10-25", 25}, {"2026-06-01", 24}} {
 		start, err := time.ParseInLocation("2006-01-02", day.date, berlin)
 		if err != nil {
 			t.Fatal(err)
 		}
-		runs := BackupNextRuns("every 1h from 00:00", "Europe/Berlin", start.Add(-time.Minute), 30)
-		n := 0
-		for i, r := range runs {
-			if i > 0 && !r.After(runs[i-1]) {
-				t.Fatalf("%s: runs not strictly increasing at %d: %v", day.date, i, runs)
+		for _, sched := range []string{"every 1h from 00:00", "cron 0 * * * *"} {
+			runs := BackupNextRuns(sched, "Europe/Berlin", start.Add(-time.Minute), 30)
+			n := 0
+			for i, r := range runs {
+				if i > 0 && !r.After(runs[i-1]) {
+					t.Fatalf("%s: runs not strictly increasing at %d: %v", day.date, i, runs)
+				}
+				if r.In(berlin).Format("2006-01-02") == day.date {
+					n++
+				}
 			}
-			if r.In(berlin).Format("2006-01-02") == day.date {
-				n++
+			if n != day.want {
+				t.Errorf("%s %q: %d hourly runs, want %d", day.date, sched, n, day.want)
 			}
 		}
-		if n != day.want {
-			t.Errorf("%s: %d hourly runs, want %d", day.date, n, day.want)
+	}
+}
+
+// Berlin 2026-10-25, 03:00 CEST -> 02:00 CET: an hourly backup runs at 02:00
+// CEST and again at 02:00 CET, one hour apart, while a daily 02:00 runs once.
+func TestBackupScheduleFallBackHourlyRunsBothOccurrences(t *testing.T) {
+	from := rfc(t, "2026-10-24T23:30:00Z") // 01:30 CEST
+	got := BackupNextRuns("cron 0 * * * *", "Europe/Berlin", from, 3)
+	want := []string{"2026-10-25T00:00:00Z", "2026-10-25T01:00:00Z", "2026-10-25T02:00:00Z"}
+	for i, w := range want {
+		if i >= len(got) || !got[i].Equal(rfc(t, w)) {
+			t.Fatalf("hourly runs = %v, want %v", got, want)
 		}
+	}
+	daily := BackupNextRuns("daily 02:00", "Europe/Berlin", from, 2)
+	if len(daily) != 2 || !daily[0].Equal(rfc(t, "2026-10-25T00:00:00Z")) || !daily[1].Equal(rfc(t, "2026-10-26T01:00:00Z")) {
+		t.Fatalf("daily runs = %v, want only the first 02:00", daily)
+	}
+	// A fixed hour stays first-occurrence-only for cron as well.
+	if got := ComputeBackupNextRun("cron 0 2 * * *", "Europe/Berlin", rfc(t, "2026-10-25T00:00:00Z")); got == nil || !got.Equal(rfc(t, "2026-10-26T01:00:00Z")) {
+		t.Fatalf("cron 0 2 after the first 02:00 = %v, want the next day", got)
+	}
+}
+
+// "every 5h from 12:00" is refused when saved, but a row stored before the
+// anchored form existed was read as plain "every 5h" and keeps running so.
+func TestStoredAnchorThatDoesNotDivideTheDayKeepsTheRelativeReading(t *testing.T) {
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, s := range []string{"every 5h from 12:00", "every 7h from 25:00", "every 1d from 03:00"} {
+		every, _, err := parseBackupSchedule(s, false)
+		if err != nil {
+			t.Fatalf("%q non-strict: %v", s, err)
+		}
+		got := ComputeBackupNextRun(s, "Europe/Berlin", from)
+		if got == nil || !got.Equal(from.Add(every)) {
+			t.Fatalf("%q: next = %v, want from + %s", s, got, every)
+		}
+	}
+	if got := ComputeBackupNextRun("every 5h from 12:00", "", from); got == nil || !got.Equal(from.Add(5*time.Hour)) {
+		t.Fatalf("every 5h from 12:00 = %v, want from + 5h", got)
+	}
+}
+
+// The wall-clock walk used to resolve all 1440 minutes of a day through the
+// zone database for "* * * * *". 1000 next-run computations must stay cheap.
+func TestNextWallClockRunIsCheap(t *testing.T) {
+	from := rfc(t, "2026-07-01T10:17:30Z")
+	start := time.Now()
+	for i := 0; i < 1000; i++ {
+		next, err := ComputeNextRunIn("* * * * *", "Europe/Berlin", from)
+		if err != nil || !next.Equal(rfc(t, "2026-07-01T10:18:00Z")) {
+			t.Fatalf("next = %v, %v", next, err)
+		}
+		if _, err := ComputeNextRunIn("0 3 1 1 *", "America/New_York", from); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("1000 next-run computations took %s", d)
 	}
 }

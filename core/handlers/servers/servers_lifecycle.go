@@ -23,6 +23,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// serverDisplayName is the name a new server gets: the caller's, collapsed and
+// held to the rename rule, or the slug when none is given. The field used to be
+// decoded and dropped, so every server got the slug.
+func serverDisplayName(requested, slug string) (string, bool) {
+	name := strings.Join(strings.Fields(requested), " ")
+	if name == "" {
+		return slug, true
+	}
+	return name, validate.IsServerName(name)
+}
+
 // CreateServer (Step 1): Creates container with resources, status=pending_setup
 func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	if h.state.Store == nil {
@@ -161,7 +172,11 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 	// Container name: Heroku-style slug like "crimson-otter-7a3f". The 4-hex
 	// suffix gives ~65k entropy per adj+noun pair, collisions are vanishingly
 	// rare; DB uniqueness still enforces final correctness on insert.
-	containerName := services.GenerateContainerSlug()
+	containerName, ok := serverDisplayName(req.Name, services.GenerateContainerSlug())
+	if !ok {
+		handlers.SendJSONError(w, "Invalid name: 1-50 characters, start with a letter or digit, then letters, digits, space, '-', '+' or '_'", 400)
+		return
+	}
 
 	isFixedVal := true
 	if req.IsFixed != nil {

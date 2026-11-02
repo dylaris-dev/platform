@@ -721,6 +721,36 @@ write_files() {
 
 compose() { "${DOCKER[@]}" compose --project-directory "$OUT_DIR" -f "$OUT_DIR/docker-compose.yml" "$@"; }
 
+# State, not files: a leftover file says nothing about what runs.
+compose_running() { [[ -n $("${DOCKER[@]}" ps -aq --filter "label=com.docker.compose.project=$PROJECT" 2>/dev/null) ]]; }
+stack_running() { "${DOCKER[@]}" stack ls --format '{{.Name}}' 2>/dev/null | grep -qx "$PROJECT"; }
+
+# Removes this install's game servers. The node goes first: it recreates any
+# game container it still owns, which then holds the network and blocks both
+# "compose down" and a Swarm overlay of the same name. Only THIS install's
+# servers: they sit on its network. A bare name=mc_ filter also took every
+# other panel's servers on a shared Docker host.
+stop_node_and_game_servers() {
+  if stack_running; then run "${DOCKER[@]}" service rm "${PROJECT}_node" >/dev/null 2>&1 || true; fi
+  if [[ -f $OUT_DIR/docker-compose.yml ]]; then run compose stop node >/dev/null 2>&1 || true; fi
+  local c; for c in $("${DOCKER[@]}" ps -aq --filter name=mc_ --filter "network=${PROJECT}_dylaris_net"); do run "${DOCKER[@]}" rm -f "$c" >/dev/null; done
+}
+
+# A Swarm chosen over a running Compose install: stop it, keep its volumes,
+# and free the bridge network name the stack's overlay needs. The stack reuses
+# the volumes ${PROJECT}_* and the secrets from .env.
+compose_to_swarm() {
+  step "Stopping the single-machine installation (its data is kept)"
+  stop_node_and_game_servers
+  run compose down
+  if (( ! DRY_RUN )) && "${DOCKER[@]}" network inspect "${PROJECT}_dylaris_net" >/dev/null 2>&1; then
+    "${DOCKER[@]}" network rm "${PROJECT}_dylaris_net" >/dev/null ||
+      die "The network ${PROJECT}_dylaris_net is still in use (docker network inspect ${PROJECT}_dylaris_net shows by what). Remove that container and run the installer again; the Swarm stack was not deployed."
+  fi
+  run $SUDO rm -f "$OUT_DIR/docker-compose.yml"
+  ok "Stopped; volumes kept."
+}
+
 start_stack() {
   step "Starting DYLARIS"
   run compose pull -q
@@ -810,7 +840,10 @@ verify() {
       grep -q '"status":"online"' <<<"$nodes" && { ok "The node is online"; break; }
       sleep 3
     done
-    grep -q '"status":"online"' <<<"$nodes" || warn "The node is not online yet; check: docker compose -f $OUT_DIR/docker-compose.yml logs node"
+    if ! grep -q '"status":"online"' <<<"$nodes"; then
+      if [[ ${A[topology]} == swarm ]]; then warn "The node is not online yet; check: docker service logs ${PROJECT}_node"
+      else warn "The node is not online yet; check: docker compose -f $OUT_DIR/docker-compose.yml logs node"; fi
+    fi
   fi
 }
 
@@ -826,14 +859,20 @@ summary_done() {
     if [[ -n $SETUP_CODE ]]; then
       say "  Setup code: ${B}$SETUP_CODE${N} (/setup asks for it once)"
     else
-      say "  Setup code: printed by Core on its first start; find it with: docker compose -f $OUT_DIR/docker-compose.yml logs core | grep 'SETUP CODE'"
+      if [[ ${A[topology]} == swarm ]]; then say "  Setup code: printed by Core on its first start; find it with: docker service logs ${PROJECT}_core | grep 'SETUP CODE'"
+      else say "  Setup code: printed by Core on its first start; find it with: docker compose -f $OUT_DIR/docker-compose.yml logs core | grep 'SETUP CODE'"; fi
     fi
   fi
   [[ ${A[tls]} == proxy ]] && say "  Proxy:      point https://${A[host]} at http://127.0.0.1:25500 (WebSocket upgrade on)."
   say "  Files:      $OUT_DIR (.env holds the secrets, mode 600)"
   say "  Data:       Docker volumes ${PROJECT}_dylaris_data, ${PROJECT}_core_data$( [[ ${A[db]} == bundled ]] && echo ", ${PROJECT}_timescaledb_data")"
-  say "  Firewall:   open 25500/25443 (panel), 25600-25699 (Minecraft servers, direct routing) and 25700-25799 TCP+UDP (extra ports such as voice chat); keep 25501 private."
-  say "  Backups:    set a backup target in the panel (Settings > Backups) before people play."
+  local pp=25500; [[ ${A[tls]} == self-signed || ${A[tls]} == files ]] && pp=25443
+  say "  Firewall:   open $pp (panel), 25600-25699 (Minecraft servers, direct routing) and 25700-25799 TCP+UDP (extra ports such as voice chat); keep 25501 private."
+  if [[ ${A[topology]} == swarm ]]; then
+    say "              Between the Swarm machines only: 2377/tcp, 7946/tcp+udp, 4789/udp and IP protocol 50"
+    say "              (ESP; the overlay network is encrypted). Without ESP a node on another machine cannot reach Core."
+  fi
+  say "  Backups:    add a backup storage in the panel (Settings > Server Backups) before people play; platform backups need one too."
   if [[ ${A[updates]:-} == auto ]]; then
     say "  Updates:    automatic, every night at 04:00 ($(host_tz)); by hand: bash install.sh update"
   else
@@ -845,7 +884,10 @@ summary_done() {
 plan_and_confirm() {
   step "8. Plan"
   [[ ${A[need_docker]:-} == y ]] && say "  - Install Docker"
-  say "  - Write $OUT_DIR/.env and docker-compose.yml"
+  say "  - Write $OUT_DIR/.env and $( [[ ${A[topology]} == swarm ]] && echo docker-stack.yml || echo docker-compose.yml )"
+  if [[ ${A[topology]} == swarm ]] && compose_running; then
+    say "  - ${Y}Stop the running single-machine installation and move it to Swarm (data volumes and secrets are kept)${N}"
+  fi
   say "  - Topology: ${A[topology]}; PostgreSQL: ${A[db]}; Valkey: ${A[redis]}; panel: ${A[frontend]} (${A[tls]})"
   [[ ${A[mode]} == start ]] && say "  - Pull the images and start: core, node$( [[ ${A[db]} == bundled ]] && echo ', timescaledb')$( [[ ${A[redis]} == bundled ]] && echo ', redis')"
   [[ ${A[admin]:-} == now ]] && say "  - Create the administrator ${A[admin_user]}"
@@ -861,6 +903,15 @@ plan_and_confirm() {
 
 swarm_install() {
   step "Docker Swarm"
+  local migrate=0
+  if compose_running; then
+    warn "A single-machine (Compose) installation is running here."
+    say "  Moving it to Swarm stops it and its game servers for a few minutes. Its data volumes"
+    say "  (${PROJECT}_*) and secrets are kept and used by the Swarm stack."
+    ask_yn migrate "Move this installation to Docker Swarm now?" y
+    [[ ${A[migrate]} == y ]] || die "Stopped; nothing was changed."
+    migrate=1
+  fi
   local state; state=$("${DOCKER[@]}" info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || echo inactive)
   if [[ $state == active ]]; then
     "${DOCKER[@]}" info --format '{{.Swarm.ControlAvailable}}' | grep -q true || die "This machine is a Swarm worker; run the installer on a manager."
@@ -871,8 +922,10 @@ swarm_install() {
     ask swarm_addr "Address the other machines reach this one on (advertise address)" "$ip"
     ask_yn swarm_init "Initialise a new Swarm on this machine?" y
     [[ ${A[swarm_init]} == y ]] || die "Stopped."
-    run "${DOCKER[@]}" swarm init --advertise-addr "${A[swarm_addr]}"
+    # Its output prints the worker join token, a secret; the summary says how to get it.
+    run "${DOCKER[@]}" swarm init --advertise-addr "${A[swarm_addr]}" >/dev/null
   fi
+  if (( migrate )); then compose_to_swarm; fi
   write_files
   # Secrets go into Docker's encrypted store once. An existing one is kept:
   # a Swarm secret cannot be changed in place, and the running stack holds it.
@@ -904,7 +957,13 @@ cmd_add_node() {
   local state; state=$("${DOCKER[@]}" info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null || echo inactive)
   [[ $state == active ]] && { ok "This machine is already in a Swarm; the node service runs on it automatically."; return; }
   ask manager "Manager address (host:2377)" ""
-  ask_secret join_token "Worker join token (on the manager: docker swarm join-token -q worker)"
+  # Pasted, not typed: ask_secret's "type it again" is for passwords.
+  if [[ -n ${CFG[join_token]+x} ]]; then A[join_token]=${CFG[join_token]}
+  else
+    local tok; read -r -s -p "Worker join token (on the manager: docker swarm join-token -q worker): " tok </dev/tty; echo
+    A[join_token]=$tok
+  fi
+  [[ -n ${A[join_token]} ]] || die "The join token is required."
   run "${DOCKER[@]}" swarm join --token "${A[join_token]}" "${A[manager]}"
   ok "Joined. The DYLARIS node starts here by itself and shows up in the panel within a minute."
 }
@@ -914,7 +973,7 @@ cmd_add_node() {
 cmd_update() {
   step "Updating DYLARIS in $OUT_DIR"
   docker_cmd || die "Docker is not reachable."
-  [[ -f $OUT_DIR/docker-compose.yml ]] || die "No installation in $OUT_DIR."
+  [[ -f $OUT_DIR/docker-compose.yml || -f $OUT_DIR/docker-stack.yml ]] || die "No installation in $OUT_DIR."
   if [[ -f $OUT_DIR/docker-stack.yml ]]; then
     run sh -c "cd '$OUT_DIR' && set -a && . ./.env && set +a && ${DOCKER[*]} stack deploy --with-registry-auth -c docker-stack.yml $PROJECT"
   else
@@ -932,16 +991,34 @@ cmd_uninstall() {
     local t; read -r -p "Type DELETE EVERYTHING to continue: " t </dev/tty
     [[ $t == "DELETE EVERYTHING" ]] || die "Stopped; nothing was deleted."
   fi
-  # Game servers are siblings the node started, not part of the compose project.
-  # Only THIS install's: they sit on its network. A bare name=mc_ filter also
-  # took every other panel's servers on a shared Docker host. Removed before the
-  # project goes down, while the network still exists to filter on.
-  local c; for c in $("${DOCKER[@]}" ps -aq --filter name=mc_ --filter "network=${PROJECT}_dylaris_net"); do run "${DOCKER[@]}" rm -f "$c" >/dev/null; done
-  if [[ -f $OUT_DIR/docker-stack.yml ]]; then run "${DOCKER[@]}" stack rm "$PROJECT"
-  elif [[ -f $OUT_DIR/docker-compose.yml ]]; then
+  # Game servers are siblings the node started, not part of the project.
+  # Removed before the project goes down, while the network still exists to
+  # filter on. Both forms are checked: a half-finished move to Swarm leaves both.
+  stop_node_and_game_servers
+  if stack_running; then run "${DOCKER[@]}" stack rm "$PROJECT"; fi
+  if [[ -f $OUT_DIR/docker-compose.yml ]]; then
     if (( PURGE )); then run compose down -v; else run compose down; fi
   fi
+  if (( ! DRY_RUN )); then
+    # stack rm returns before its tasks are gone; report what is really left.
+    local i left=""
+    for i in $(seq 1 30); do
+      left=$("${DOCKER[@]}" ps -a --format '{{.Names}}' --filter "label=com.docker.compose.project=$PROJECT"
+        "${DOCKER[@]}" ps -a --format '{{.Names}}' --filter "label=com.docker.stack.namespace=$PROJECT")
+      [[ -z $left ]] && break
+      sleep 2
+    done
+    [[ -z $left ]] || die "These containers are still there: $(tr '\n' ' ' <<<"$left")- remove them with docker rm -f and run uninstall again."
+  fi
   if (( PURGE )); then
+    # stack rm keeps volumes and secrets, and a stack moved from Compose runs
+    # on volumes carrying Compose's labels, so they go by name.
+    local v; for v in dylaris_data core_data timescaledb_data; do
+      if "${DOCKER[@]}" volume inspect "${PROJECT}_$v" >/dev/null 2>&1; then run "${DOCKER[@]}" volume rm "${PROJECT}_$v" >/dev/null; fi
+    done
+    local n; for n in JWT_SECRET BEAM_JWT_SECRET CLUSTER_SECRET DB_PASSWORD REDIS_PASSWORD; do
+      if "${DOCKER[@]}" secret inspect "${PROJECT}_${n,,}" >/dev/null 2>&1; then run "${DOCKER[@]}" secret rm "${PROJECT}_${n,,}" >/dev/null; fi
+    done
     run $SUDO rm -rf "$OUT_DIR"
     ok "Removed, including all data."
   else
@@ -951,6 +1028,8 @@ cmd_uninstall() {
 
 cmd_diagnostics() {
   docker_cmd || die "Docker is not reachable."
+  # The report can hold what masking misses; only root reads it.
+  umask 077
   local f; f="/tmp/dylaris-diagnostics-$(date +%Y%m%d-%H%M%S).txt"
   local secrets=()
   if [[ -f $OUT_DIR/.env ]]; then
@@ -960,10 +1039,17 @@ cmd_diagnostics() {
     echo "installer $INSTALLER_VERSION, $(date -u)"; uname -a; cat /etc/os-release 2>/dev/null | head -3
     "${DOCKER[@]}" version --format '{{.Server.Version}}' 2>/dev/null
     "${DOCKER[@]}" ps -a --format '{{.Names}}  {{.Image}}  {{.Status}}' | grep -E "^${PROJECT}|mc_" || true
-    for s in core node timescaledb redis; do echo "--- $s"; "${DOCKER[@]}" logs --tail 60 "${PROJECT}-$s-1" 2>&1 || true; done
+    for s in core node timescaledb redis; do
+      echo "--- $s"
+      if stack_running; then "${DOCKER[@]}" service logs --raw --tail 60 "${PROJECT}_$s" 2>&1 || true
+      else "${DOCKER[@]}" logs --tail 60 "${PROJECT}-$s-1" 2>&1 || true; fi
+    done
   } >"$f.raw" 2>&1
   local s; for s in "${secrets[@]}"; do sed -i "s|$s|***|g" "$f.raw"; done
-  sed -E 's/((SECRET|PASSWORD|TOKEN)[=: ]+)[^ ]+/\1***/Ig' "$f.raw" >"$f"; rm -f "$f.raw"
+  # The setup code creates the first administrator: whoever reads the report
+  # could take the panel before its owner does.
+  sed -E -e 's/((SECRET|PASSWORD|TOKEN)[=: ]+)[^ ]+/\1***/Ig' -e 's/(SETUP CODE:? *)[A-Za-z0-9-]+/\1***/Ig' "$f.raw" >"$f"; rm -f "$f.raw"
+  chmod 600 "$f"
   ok "Wrote $f (secrets masked). Read it before you share it."
 }
 
@@ -979,6 +1065,9 @@ cmd_install() {
   existing_env && info "Found an existing installation in $OUT_DIR; its secrets and data stay."
   interview
   [[ ${A[db_check]:-} == later ]] && check_postgres
+  if [[ ${A[topology]} != swarm ]] && stack_running; then
+    die "A Swarm installation (stack $PROJECT) runs on this machine. Moving it back to a single machine is not automated; nothing was changed. Rerun and choose Swarm, or remove it first: bash install.sh uninstall"
+  fi
   plan_and_confirm
   if [[ ${A[topology]} == swarm ]]; then swarm_install; summary_done; return; fi
   write_files

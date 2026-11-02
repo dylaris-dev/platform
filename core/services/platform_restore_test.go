@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services/bundle"
@@ -40,6 +41,12 @@ type fakeReseal struct {
 	calls    int
 	report   *store.ResealReport
 	err      error
+	failed   []time.Duration
+}
+
+func (f *fakeReseal) FailStalePlatformBackupRuns(olderThan time.Duration) (int64, error) {
+	f.failed = append(f.failed, olderThan)
+	return 1, nil
 }
 
 func (f *fakeReseal) ResealAtRest(from, to string) (*store.ResealReport, error) {
@@ -153,6 +160,11 @@ func TestRestorePutsEveryPartBack(t *testing.T) {
 	}
 	if res.Source != "2026.09.08" {
 		t.Errorf("source = %q", res.Source)
+	}
+	// The run that wrote the bundle was "running" in the dump; the restored
+	// database closes every such run at once, not after six hours.
+	if len(rig.reseal.failed) != 1 || rig.reseal.failed[0] != 0 {
+		t.Errorf("running runs closed with %v, want one call with age 0", rig.reseal.failed)
 	}
 }
 

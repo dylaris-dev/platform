@@ -66,6 +66,7 @@ type CoreStorageWriter interface {
 // ResealTarget is the slice of a store bound to the RESTORED database.
 type ResealTarget interface {
 	ResealAtRest(fromSecret, toSecret string) (*store.ResealReport, error)
+	FailStalePlatformBackupRuns(olderThan time.Duration) (int64, error)
 }
 
 // ErrBundleWrongPassphrase is a passphrase that does not open the bundle.
@@ -413,6 +414,28 @@ func (r *PlatformRestorer) spoolInto(src io.Reader, load func(f *os.File) error)
 // token and mail credential read as empty - because the ciphertext in the dump
 // only opens under the source installation's CLUSTER_SECRET.
 func (r *PlatformRestorer) resealRestored(ctx context.Context, m *bundle.Manifest, res *PlatformRestoreResult) error {
+	var target ResealTarget
+	var openErr error
+	if r.OpenTarget == nil {
+		openErr = errors.New("the restored database cannot be reached to re-encrypt its credentials")
+	} else {
+		t, closer, err := r.OpenTarget(ctx)
+		if err != nil {
+			openErr = fmt.Errorf("opening the restored database: %w", err)
+		} else {
+			if closer != nil {
+				defer closer.Close()
+			}
+			target = t
+			// The dump is taken while the run writing it reads "running", so
+			// the restored database holds at least that one. Nothing there is
+			// running it; left alone it read "running" for up to six hours.
+			if _, err := target.FailStalePlatformBackupRuns(0); err != nil {
+				res.Warnings = append(res.Warnings,
+					"Platform backup runs that were in progress when this backup was taken still read running; they are closed by themselves within six hours.")
+			}
+		}
+	}
 	if m == nil || m.ClusterSecret == "" {
 		res.Warnings = append(res.Warnings,
 			"This bundle carries no cluster secret, so the stored credentials could not be re-encrypted for this installation. Nodes will need to re-pair and storage credentials will need to be entered again.")
@@ -426,15 +449,8 @@ func (r *PlatformRestorer) resealRestored(ctx context.Context, m *bundle.Manifes
 		// Nothing to move, and ResealAtRest refuses a no-op rotation anyway.
 		return nil
 	}
-	if r.OpenTarget == nil {
-		return errors.New("the restored database cannot be reached to re-encrypt its credentials")
-	}
-	target, closer, err := r.OpenTarget(ctx)
-	if err != nil {
-		return fmt.Errorf("opening the restored database: %w", err)
-	}
-	if closer != nil {
-		defer closer.Close()
+	if target == nil {
+		return openErr
 	}
 	rep, err := target.ResealAtRest(m.ClusterSecret, r.ClusterSecret)
 	if err != nil {

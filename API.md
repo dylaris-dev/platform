@@ -399,7 +399,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/backup-schedules/preview` | session | _no capability_ | - | `BackupHandler.PreviewSchedule` | the next runs of a schedule before it is saved, so the panel keeps no second copy of the grammar and its DST rule. |
+| POST | `/api/backup-schedules/preview` | session | _no capability_ | Limit, LimitBody | `BackupHandler.PreviewSchedule` | the next runs of a schedule before it is saved, so the panel keeps no second copy of the grammar and its DST rule. |
 
 ## /api/backup-storages
 

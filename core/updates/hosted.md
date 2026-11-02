@@ -27,7 +27,7 @@ Newest release first. The format is fixed and checked in CI - see the
 
 ### Fixes
 - A scheduled task at a time the clocks skip in spring no longer misses that day, and one at a time that repeats in
-  autumn no longer runs twice.
+  autumn no longer runs twice. A task or backup every hour or more often keeps running through that repeated hour.
 
 ## 2026.11.01.6
 

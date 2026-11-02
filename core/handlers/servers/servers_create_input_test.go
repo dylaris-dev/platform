@@ -122,3 +122,23 @@ func TestCreateServerWithoutNodeOrFiltersAutoPlaces(t *testing.T) {
 		t.Fatalf("status = %d, want 503 from the scheduler: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestServerDisplayName(t *testing.T) {
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"", "slug-ab12", true},
+		{"   ", "slug-ab12", true},
+		{"x4-paper", "x4-paper", true},
+		{"  My   Server ", "My Server", true},
+		{"<script>", "<script>", false},
+		{"-leading", "-leading", false},
+	}
+	for _, c := range cases {
+		got, ok := serverDisplayName(c.in, "slug-ab12")
+		if ok != c.ok || (ok && got != c.want) {
+			t.Errorf("serverDisplayName(%q) = %q, %v; want %q, %v", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}

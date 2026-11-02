@@ -287,6 +287,20 @@ managed gateway, several machines are only supported as a Swarm, because a
 lone node would need Valkey reachable over the network. The Gateway is a
 managed DYLARIS service and is not installed by this script.
 
+Between Swarm machines, open 2377/tcp (cluster management), 7946/tcp+udp
+(node discovery), 4789/udp (overlay traffic) and IP protocol 50 (ESP): the
+installer's overlay network is encrypted, and a firewall that drops ESP leaves
+a node on another machine unable to reach Core. Keep these ports closed to the
+internet. Every machine that joins runs the node (it is a global service).
+
+Moving a single-machine install to Swarm: rerun `install.sh` and choose
+several machines. It sees the running Compose install, asks, stops the node
+and its game servers, runs `docker compose down` (volumes are kept), removes
+the Compose network and `docker-compose.yml`, and deploys the stack on the same
+volumes and secrets. Servers are offline for those few minutes. The reverse
+move is not automated: on a Swarm install the installer refuses the
+single-machine choice before changing anything.
+
 After installing: extra ports (voice chat and the like) come from
 `25700-25799` by default, so open that range for TCP and UDP. A node uses the
 default only while neither it nor the global setting (Settings, Extra ports)

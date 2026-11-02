@@ -139,6 +139,9 @@ func (r *PlatformBackupRunner) Run(ctx context.Context, jobID int) (int, error) 
 	// platform bundle out of a customer's bucket.
 	dest, err := ResolveJobStorage(r.Store, job.StorageID, "")
 	if err != nil {
+		if errors.Is(err, ErrNoBackupStorage) {
+			return 0, fmt.Errorf("platform backup: %w: add one under Settings > Server Backups first", err)
+		}
 		return 0, fmt.Errorf("platform backup: destination: %w", err)
 	}
 
@@ -255,7 +258,7 @@ func (r *PlatformBackupRunner) build(ctx context.Context, job *models.PlatformBa
 		return "", 0, components, fmt.Errorf("opening the destination: %w", err)
 	}
 	key := fmt.Sprintf("platform-backups/%d/%s-%s.dylaris-bundle",
-		job.ID, r.clock().Format("20060102-150405"), filepath.Base(spoolPath))
+		job.ID, r.clock().Format("20060102-150405"), strings.TrimSuffix(filepath.Base(spoolPath), ".tmp"))
 	if err := store.Put(ctx, key, spool, size); err != nil {
 		return "", 0, components, fmt.Errorf("uploading the bundle: %w", err)
 	}

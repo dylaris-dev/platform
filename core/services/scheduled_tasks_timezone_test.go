@@ -47,3 +47,34 @@ func TestComputeNextRunInReadsTheScheduleInTheTasksZone(t *testing.T) {
 		})
 	}
 }
+
+// Berlin 2026-10-25, 03:00 CEST -> 02:00 CET: a task every five minutes keeps
+// running through both occurrences of 02:xx, with no hour skipped.
+func TestComputeNextRunInFallBackEveryFiveMinutes(t *testing.T) {
+	from := time.Date(2026, 10, 24, 23, 50, 0, 0, time.UTC) // 01:50 CEST
+	end := time.Date(2026, 10, 25, 3, 0, 0, 0, time.UTC)    // 04:00 CET
+	prev := from
+	n := 0
+	for {
+		next, err := ComputeNextRunIn("*/5 * * * *", "Europe/Berlin", prev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !next.After(end) && next.Sub(prev) != 5*time.Minute {
+			t.Fatalf("gap %s after %v", next.Sub(prev), prev.UTC())
+		}
+		if next.After(end) {
+			break
+		}
+		prev = next
+		n++
+	}
+	if n != 38 { // 3h10m of absolute time in 5-minute steps
+		t.Fatalf("%d runs, want 38", n)
+	}
+	// Hourly on the hour: 02:00 CEST, then 02:00 CET one hour later.
+	next, _ := ComputeNextRunIn("0 * * * *", "Europe/Berlin", time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC))
+	if !next.Equal(time.Date(2026, 10, 25, 1, 0, 0, 0, time.UTC)) {
+		t.Fatalf("hourly after 02:00 CEST = %v, want 01:00 UTC (02:00 CET)", next.UTC())
+	}
+}

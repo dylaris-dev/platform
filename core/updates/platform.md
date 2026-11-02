@@ -22,13 +22,22 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Security
 - The Core and node images now build the panel from the committed lockfile (`npm ci`) on base images pinned by
   digest, so a rebuild of the same commit gets the same dependencies.
+- The installer's `diagnostics` report no longer contains the one-time setup code and is readable by root only.
+  Download the installer again to get it.
 
 ### Fixes
+- The installer moves a running single-machine install to Swarm (data and secrets kept) instead of failing half-way,
+  and `update`, `diagnostics` and `uninstall` work on Swarm installs. Download the installer again.
+- A scheduled task or backup that runs every hour or more often now also runs in the hour that repeats in autumn;
+  fixed-time ones still run once. `core`
+- A platform backup with no backup storage is refused with what to do instead of a server error, and a restored
+  database no longer shows the run that wrote the bundle as running for six hours. `core`
 - A template with Modrinth mods or plugins is refused on a node that reports no release, unless Core itself is an
   unstamped dev build. Such a node used to install the template without the jars and report success. `core`
 - A scheduled task at a time the clocks skip (02:30 on the spring change) no longer misses that day, and one at a
   time that repeats in autumn no longer runs twice. `core`
 - Saving a backup job shows why Core refused it instead of a generic failure. `panel`
+- Creating a server through the API keeps the name you give it instead of a generated one. `core`
 
 ## 2026.11.01.6
 

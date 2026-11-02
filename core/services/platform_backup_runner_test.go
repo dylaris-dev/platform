@@ -460,7 +460,7 @@ func TestPlatformBackupKeyNamesTheJob(t *testing.T) {
 	if !strings.HasPrefix(dest.key, "platform-backups/3/") {
 		t.Errorf("key = %q, want it under the job's own prefix", dest.key)
 	}
-	if !strings.HasSuffix(dest.key, ".dylaris-bundle") {
+	if !strings.HasSuffix(dest.key, ".dylaris-bundle") || strings.Contains(dest.key, ".tmp") {
 		t.Errorf("key = %q, want a bundle suffix", dest.key)
 	}
 	if st.finished[0].key != dest.key {

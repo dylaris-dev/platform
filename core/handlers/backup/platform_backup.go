@@ -216,6 +216,7 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 	if rerr != nil {
 		status := 500
 		if errors.Is(rerr, services.ErrNoBackupPassphrase) ||
+			errors.Is(rerr, services.ErrNoBackupStorage) ||
 			errors.Is(rerr, models.ErrEmptyPlatformBackupSelection) ||
 			errors.Is(rerr, store.ErrPlatformRunInProgress) {
 			// A refusal by policy is the system working. Answering 500 puts it

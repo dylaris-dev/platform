@@ -149,3 +149,26 @@ func TestAFailedPlatformBackupRunAnswersWithAStatus(t *testing.T) {
 		t.Errorf("the answer blamed the database: %s", rec.Body.String())
 	}
 }
+
+type platformBackupNoStorageStore struct{ platformBackupUnsetStore }
+
+func (f *platformBackupNoStorageStore) GetDefaultBackupStorage() (*models.BackupStorage, error) {
+	return nil, nil
+}
+
+// A fresh installation has no backup storage. Running a platform backup there
+// is a configuration refusal like the missing passphrase, not a server fault,
+// and it answered 500.
+func TestAPlatformBackupWithoutStorageIsARefusal(t *testing.T) {
+	st := &platformBackupNoStorageStore{platformBackupUnsetStore{hasRow: true, value: "a-long-enough-passphrase",
+		job: &models.PlatformBackupJob{ID: 1, Name: "nightly", Selection: models.PlatformBackupSelection{Database: true}}}}
+	h := &PlatformBackupHandler{state: &handlers.AppState{Store: st, PlatformDB: services.PGConn{Name: "dylaris_db"}}}
+	rec := httptest.NewRecorder()
+	h.RunJob(rec, pbReq(http.MethodPost, "{}", map[string]string{"id": "1"}))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "add one under Settings") {
+		t.Errorf("the operator was not told what to do: %s", rec.Body.String())
+	}
+}
