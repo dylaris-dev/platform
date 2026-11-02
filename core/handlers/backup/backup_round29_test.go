@@ -6,8 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/authz"
 	"dylaris-core/models"
 )
@@ -49,7 +47,7 @@ func TestAJobsScopeCannotMoveUnderItsRuns(t *testing.T) {
 		{"without runs", nil, http.StatusOK},
 	} {
 		fs := &backupSubServerFakeStore{runs: tc.runs}
-		h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}
+		h := &BackupHandler{d: testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)})}
 		rw := httptest.NewRecorder()
 		h.UpdateJob(rw, backupJobRequest(http.MethodPatch, "/api/backup-jobs/1", `{"subServer":"lobby"}`, map[string]string{"jobId": "1"}))
 		if rw.Code != tc.want {

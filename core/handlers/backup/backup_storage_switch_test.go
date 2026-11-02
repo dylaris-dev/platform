@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
@@ -22,7 +21,7 @@ func (s switchSettings) GetSetting(k string) (string, error) { return s[k], nil 
 
 func ownStorageOffHandler(st *ownStorageFakeStore) *BackupHandler {
 	ff := services.NewFeatureFlags(switchSettings{services.OwnStorageSettingKey: "off"})
-	return &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: ff})}
+	return &BackupHandler{d: testDeps(Deps{Store: st, FeatureFlags: ff})}
 }
 
 // With own storage off, adding an own target, marking one default and choosing
@@ -142,7 +141,7 @@ func (j jobSwitchStore) GetDefaultBackupStorage() (*models.BackupStorage, error)
 
 func jobSwitchHandler(audience string) *BackupHandler {
 	ff := services.NewFeatureFlags(switchSettings{services.OwnStorageSettingKey: audience})
-	return &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: jobSwitchStore{prefsFixture()}, FeatureFlags: ff})}
+	return &BackupHandler{d: testDeps(Deps{Store: jobSwitchStore{prefsFixture()}, FeatureFlags: ff})}
 }
 
 // A job may not be pointed at an own target while own storage is off for the

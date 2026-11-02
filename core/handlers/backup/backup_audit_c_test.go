@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/services"
@@ -14,7 +13,7 @@ import (
 // A restore with overwrite over the database Core runs on replaced the live
 // platform with the snapshot. It is refused before anything connects.
 func TestAPlatformRestoreNeverTargetsTheLiveDatabase(t *testing.T) {
-	h := &PlatformBackupHandler{state: withCoreStorage(&handlers.AppState{PlatformDB: services.PGConn{Host: "db", Port: "5432", Name: "dylaris"}})}
+	h := &PlatformBackupHandler{d: testDeps(Deps{PlatformDB: services.PGConn{Host: "db", Port: "5432", Name: "dylaris"}})}
 	req := restoreRequest{
 		Components: services.PlatformRestoreSelection{Database: true},
 		Target:     restoreTargetRequest{Host: "DB", DBName: "dylaris", User: "u"},

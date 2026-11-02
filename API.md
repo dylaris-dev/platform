@@ -135,7 +135,7 @@ can still show what exists.
 
 - **602 routes** in 53 sections: 263 GET, 173 POST, 58 PUT, 41 PATCH, 68 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **380** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **151** need a credential but no capability, **30** are fully public, and **18** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **393** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **151** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **41** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -671,19 +671,19 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/api/platform-backups/inspect` | session | _uncapped method_ | - | `PlatformBackupHandler.InspectBundle` | Multipart: `bundle` is the file, `passphrase` is optional. |
-| GET | `/api/platform-backups/jobs` | session | _uncapped method_ | - | `PlatformBackupHandler.ListJobs` | - |
-| POST | `/api/platform-backups/jobs` | session | _uncapped method_ | - | `PlatformBackupHandler.CreateJob` | - |
-| PATCH | `/api/platform-backups/jobs/{id:[0-9]+}` | session | _uncapped method_ | - | `PlatformBackupHandler.UpdateJob` | - |
-| DELETE | `/api/platform-backups/jobs/{id:[0-9]+}` | session | _uncapped method_ | - | `PlatformBackupHandler.DeleteJob` | deletes the job's bundles from their storage, then its runs, then the job. |
-| POST | `/api/platform-backups/jobs/{id:[0-9]+}/run` | session | _uncapped method_ | - | `PlatformBackupHandler.RunJob` | Synchronous on purpose, for now: a platform run is started by a person who is looking at the screen, and the components it covers are the database and the storage areas rather than every world. |
-| GET | `/api/platform-backups/jobs/{id:[0-9]+}/runs` | session | _uncapped method_ | - | `PlatformBackupHandler.ListRuns` | - |
-| GET | `/api/platform-backups/passphrase` | session | _uncapped method_ | - | `PlatformBackupHandler.PassphraseStatus` | whether one is set, never what it is. |
-| PUT | `/api/platform-backups/passphrase` | session | _uncapped method_ | - | `PlatformBackupHandler.SetPassphrase` | - |
-| POST | `/api/platform-backups/restore` | session | _uncapped method_ | - | `PlatformBackupHandler.RestoreBundle` | Multipart: `bundle` is the file, `request` is the JSON above. |
-| GET | `/api/platform-backups/runs/{id:[0-9]+}/download` | session | _uncapped method_ | - | `PlatformBackupHandler.DownloadRun` | Streamed through Core rather than redirected to a presigned URL. |
-| POST | `/api/platform-backups/runs/{id:[0-9]+}/restore` | session | _uncapped method_ | - | `PlatformBackupHandler.RestoreRun` | The same restore, reading the bundle out of the storage it was written to rather than back up through an upload. |
-| GET | `/api/platform-backups/targets` | session | _uncapped method_ | - | `PlatformBackupHandler.ListTargets` | What the selection screen offers. |
+| POST | `/api/platform-backups/inspect` | session | `settings.write` | - | `PlatformBackupHandler.InspectBundle` | Multipart: `bundle` is the file, `passphrase` is optional. |
+| GET | `/api/platform-backups/jobs` | session | `settings.write` | - | `PlatformBackupHandler.ListJobs` | - |
+| POST | `/api/platform-backups/jobs` | session | `settings.write` | - | `PlatformBackupHandler.CreateJob` | - |
+| PATCH | `/api/platform-backups/jobs/{id:[0-9]+}` | session | `settings.write` | - | `PlatformBackupHandler.UpdateJob` | - |
+| DELETE | `/api/platform-backups/jobs/{id:[0-9]+}` | session | `settings.write` | - | `PlatformBackupHandler.DeleteJob` | deletes the job's bundles from their storage, then its runs, then the job. |
+| POST | `/api/platform-backups/jobs/{id:[0-9]+}/run` | session | `settings.write` | - | `PlatformBackupHandler.RunJob` | Synchronous on purpose, for now: a platform run is started by a person who is looking at the screen, and the components it covers are the database and the storage areas rather than every world. |
+| GET | `/api/platform-backups/jobs/{id:[0-9]+}/runs` | session | `settings.write` | - | `PlatformBackupHandler.ListRuns` | - |
+| GET | `/api/platform-backups/passphrase` | session | `settings.write` | - | `PlatformBackupHandler.PassphraseStatus` | whether one is set, never what it is. |
+| PUT | `/api/platform-backups/passphrase` | session | `settings.write` | - | `PlatformBackupHandler.SetPassphrase` | - |
+| POST | `/api/platform-backups/restore` | session | `settings.write` | - | `PlatformBackupHandler.RestoreBundle` | Multipart: `bundle` is the file, `request` is the JSON above. |
+| GET | `/api/platform-backups/runs/{id:[0-9]+}/download` | session | `settings.write` | - | `PlatformBackupHandler.DownloadRun` | Streamed through Core rather than redirected to a presigned URL. |
+| POST | `/api/platform-backups/runs/{id:[0-9]+}/restore` | session | `settings.write` | - | `PlatformBackupHandler.RestoreRun` | The same restore, reading the bundle out of the storage it was written to rather than back up through an upload. |
+| GET | `/api/platform-backups/targets` | session | `settings.write` | - | `PlatformBackupHandler.ListTargets` | What the selection screen offers. |
 
 ## /api/regions
 

@@ -73,3 +73,16 @@ func TestMainWiresTheOverlayTeardownIntoTheAutoDeleteSweep(t *testing.T) {
 		t.Fatal("main() never calls SetWarpPeers on the auto-delete sweep; its DEFAULT mode keeps the user row, so nothing cascades and the tenant's machine re-enrols into the overlay on its own timer")
 	}
 }
+
+// main's platform-backup scheduler runs through extras.platformBackupHandler
+// (one backup.Deps for the routes and the scheduler). Left nil, Core would
+// panic at boot instead of failing a test.
+func TestBuildAPIRouterHandsMainThePlatformBackupHandler(t *testing.T) {
+	appState := &handlers.AppState{Store: &store.PostgresStore{}}
+	appState.FeatureFlags = services.NewFeatureFlags(appState.Store)
+	appState.Authz = authz.NewResolver(appState.Store)
+	_, extras := buildAPIRouter(appState, handlers.NewAuthHandler(appState, testJWTSecret), routeCfg{JWTSecret: testJWTSecret})
+	if extras.platformBackupHandler == nil {
+		t.Fatal("routeExtras.platformBackupHandler is nil: the platform backup schedule would run into a nil handler")
+	}
+}

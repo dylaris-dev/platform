@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -59,7 +57,7 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 	cases := []struct {
 		name     string
 		storeErr error
-		call     func(h *handlers.AppState, rw http.ResponseWriter, req *http.Request)
+		call     func(h Deps, rw http.ResponseWriter, req *http.Request)
 		method   string
 		path     string
 		body     []byte
@@ -68,7 +66,7 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 		{
 			name:     "backup storage create, duplicate name",
 			storeErr: store.ErrNameTaken,
-			call: func(s *handlers.AppState, rw http.ResponseWriter, r *http.Request) {
+			call: func(s Deps, rw http.ResponseWriter, r *http.Request) {
 				NewBackupHandler(s).CreateStorage(rw, r)
 			},
 			method: http.MethodPost, path: "/api/backup-storages", body: backupStorageBody(),
@@ -77,7 +75,7 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 		{
 			name:     "backup storage rename, duplicate name",
 			storeErr: store.ErrNameTaken,
-			call: func(s *handlers.AppState, rw http.ResponseWriter, r *http.Request) {
+			call: func(s Deps, rw http.ResponseWriter, r *http.Request) {
 				NewBackupHandler(s).UpdateStorage(rw, r)
 			},
 			method: http.MethodPatch, path: "/api/backup-storages/5", body: backupStorageBody(),
@@ -86,7 +84,7 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 		{
 			name:     "backup storage patch, ghost id",
 			storeErr: sql.ErrNoRows,
-			call: func(s *handlers.AppState, rw http.ResponseWriter, r *http.Request) {
+			call: func(s Deps, rw http.ResponseWriter, r *http.Request) {
 				NewBackupHandler(s).UpdateStorage(rw, r)
 			},
 			method: http.MethodPatch, path: "/api/backup-storages/9999", body: backupStorageBody(),
@@ -96,7 +94,7 @@ func TestStorageHandlersMapNameConflictsAndMissingRows(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			state := withCoreStorage(&handlers.AppState{Store: &nameConflictStore{err: tc.storeErr}})
+			state := testDeps(Deps{Store: &nameConflictStore{err: tc.storeErr}})
 			req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(tc.body))
 			req = mux.SetURLVars(req, map[string]string{"id": "5"})
 			rw := httptest.NewRecorder()

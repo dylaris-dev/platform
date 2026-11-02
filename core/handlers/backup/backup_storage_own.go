@@ -47,7 +47,7 @@ func ownBackupStorageAllowed(provider string) bool { return provider == "s3" }
 // stays reachable, and rotating its credentials writes no new data there.
 func (h *BackupHandler) refuseOwnStorageOff(w http.ResponseWriter, r *http.Request) bool {
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
-	if h.state.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
+	if h.d.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
 		return false
 	}
 	httpx.SendJSONErrorCode(w, "Your administrator has turned off own storage. Existing data stays reachable.", "own_storage_disabled", http.StatusForbidden)
@@ -70,7 +70,7 @@ func (h *BackupHandler) ownStorageFor(w http.ResponseWriter, r *http.Request) (*
 		httpx.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
 		return nil, false
 	}
-	bs, err := h.state.Store.GetBackupStorage(id)
+	bs, err := h.d.Store.GetBackupStorage(id)
 	if err != nil || bs == nil || bs.OwnerID == nil || *bs.OwnerID != userID {
 		httpx.SendJSONError(w, "Backup storage not found", http.StatusNotFound)
 		return nil, false
@@ -86,7 +86,7 @@ func (h *BackupHandler) ListOwnStorages(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
-	list, err := h.state.Store.ListBackupStoragesByOwner(userID)
+	list, err := h.d.Store.ListBackupStoragesByOwner(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load your backup storages", http.StatusInternalServerError)
 		return
@@ -131,7 +131,7 @@ func (h *BackupHandler) CreateOwnStorage(w http.ResponseWriter, r *http.Request)
 	// where it becomes a target admins can select.
 	req.OwnerID = &userID
 	req.ID = 0
-	id, err := h.state.Store.CreateBackupStorage(&req)
+	id, err := h.d.Store.CreateBackupStorage(&req)
 	if err != nil {
 		if errors.Is(err, store.ErrNameTaken) {
 			httpx.SendJSONError(w, "You already have a backup storage with that name", http.StatusConflict)
@@ -154,23 +154,23 @@ func (h *BackupHandler) CreateOwnStorage(w http.ResponseWriter, r *http.Request)
 // it cannot undo a templates choice (or a backups choice) saved meanwhile.
 func (h *BackupHandler) syncBackupsPref(userID string, id int, isDefault bool) error {
 	if isDefault {
-		return h.state.Store.SetUserBackupsStoragePref(userID, &id)
+		return h.d.Store.SetUserBackupsStoragePref(userID, &id)
 	}
-	return h.state.Store.ClearUserBackupsStoragePrefIf(userID, id)
+	return h.d.Store.ClearUserBackupsStoragePrefIf(userID, id)
 }
 
 // clearPrefsNaming returns both of the user's choices that name id to the
 // platform storage. The templates read-then-write cannot race a choice of an
 // own target: it is only called while choosing one is refused.
 func (h *BackupHandler) clearPrefsNaming(userID string, id int) error {
-	if err := h.state.Store.ClearUserBackupsStoragePrefIf(userID, id); err != nil {
+	if err := h.d.Store.ClearUserBackupsStoragePrefIf(userID, id); err != nil {
 		return err
 	}
-	_, tpl, err := h.state.Store.GetUserStoragePrefs(userID)
+	_, tpl, err := h.d.Store.GetUserStoragePrefs(userID)
 	if err != nil || tpl == nil || *tpl != id {
 		return err
 	}
-	return h.state.Store.SetUserTemplatesStoragePref(userID, nil)
+	return h.d.Store.SetUserTemplatesStoragePref(userID, nil)
 }
 
 // UpdateOwnStorage PATCH /api/me/backup-storages/{id}
@@ -224,7 +224,7 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	merged.ID, merged.OwnerID = existing.ID, existing.OwnerID
-	if err := h.state.Store.UpdateBackupStorage(&merged); err != nil {
+	if err := h.d.Store.UpdateBackupStorage(&merged); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNameTaken):
 			httpx.SendJSONError(w, "You already have a backup storage with that name", http.StatusConflict)
@@ -262,14 +262,14 @@ func (h *BackupHandler) DeleteOwnStorage(w http.ResponseWriter, r *http.Request)
 	// none, so a choice naming this target would block the delete with nothing
 	// the user can see to undo. Dropping it first is what they would do anyway.
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
-	if !h.state.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
+	if !h.d.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
 		if err := h.clearPrefsNaming(*bs.OwnerID, bs.ID); err != nil {
 			log.Printf("own storage %d: clear prefs: %v", bs.ID, err)
 			httpx.SendJSONError(w, "Could not remove this storage", http.StatusInternalServerError)
 			return
 		}
 	}
-	if err := h.state.Store.DeleteBackupStorage(bs.ID); err != nil {
+	if err := h.d.Store.DeleteBackupStorage(bs.ID); err != nil {
 		if errors.Is(err, store.ErrStorageInUse) {
 			httpx.SendJSONError(w, "Backups, backup schedules, templates or your storage choices still use this storage. Under Account > Storage, choose another storage for backups and templates; then move the schedules, and delete the backups and templates stored in it.", http.StatusConflict)
 			return

@@ -38,6 +38,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/nowhere", packsHandler.Nowhere).Methods("GET")
 	api.HandleFunc("/plain", plainHandler).Methods("GET")
 	api.HandleFunc("/auth/profile", authHandler.AuthMiddleware(authHandler.GetProfileHandler)).Methods("GET")
+	pbCap := appState.Authz.RequireCap("settings.write")
+	api.HandleFunc("/platform-backups/jobs", authHandler.AuthMiddleware(pbCap(packsHandler.Jobs))).Methods("GET")
 
 	return r, nil
 }
@@ -97,8 +99,8 @@ func find(t *testing.T, routes []Route, method, path string) Route {
 
 func TestParseRoutes(t *testing.T) {
 	routes := parseFixture(t)
-	if len(routes) != 10 {
-		t.Fatalf("parsed %d routes, want 10", len(routes))
+	if len(routes) != 11 {
+		t.Fatalf("parsed %d routes, want 11", len(routes))
 	}
 
 	tests := []struct {
@@ -142,6 +144,12 @@ func TestParseRoutes(t *testing.T) {
 			auth: "", cap: "",
 			gates:   "",
 			handler: "ProxyHandler.Public",
+		},
+		{
+			name: "capability bound to a variable first", method: "GET", path: "/api/platform-backups/jobs",
+			auth: "session", cap: "settings.write",
+			gates:   "",
+			handler: "PacksHandler.Jobs",
 		},
 		{
 			name: "second subrouter has its own prefix", method: "GET", path: "/solder/api/modpack",

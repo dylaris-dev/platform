@@ -32,7 +32,7 @@ type Route struct {
 	Path    string   // full template, including the subrouter's prefix
 	Router  string   // the router variable it was registered on
 	Auth    string   // the credential the route accepts, "" when it takes none
-	Cap     string   // capability id from RequireCap, "" when the route declares none
+	Cap     string   // capability id from RequireCap (inline or bound to a variable), "" when the route declares none
 	// Caps is every capability the chain applies, including one bound to a
 	// variable first (pbCap := ...RequireCap("x")). Cap keeps the rendered
 	// value; the per-method coverage pin reads this.
@@ -315,8 +315,13 @@ func analyzeChain(e ast.Expr, r *Route, varTypes map[string]string) {
 	ast.Inspect(e, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.CallExpr:
+			// A capability bound to a variable first is still the route's
+			// capability: rendering only the inline form documented the 13
+			// platform-backup routes as "no capability on this method".
 			if id, isID := x.Fun.(*ast.Ident); isID && strings.HasPrefix(varTypes[id.Name], capVarPrefix) {
-				r.Caps = append(r.Caps, strings.TrimPrefix(varTypes[id.Name], capVarPrefix))
+				c := strings.TrimPrefix(varTypes[id.Name], capVarPrefix)
+				r.Cap = c
+				r.Caps = append(r.Caps, c)
 				return true
 			}
 			sel, isSel := x.Fun.(*ast.SelectorExpr)

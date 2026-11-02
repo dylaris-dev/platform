@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
 
@@ -86,11 +85,11 @@ func backupQuotaRefusal(usedBytes, quotaBytes int64, scope, raise string) error 
 }
 
 type BackupHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewBackupHandler(state *handlers.AppState) *BackupHandler {
-	return &BackupHandler{state: state}
+func NewBackupHandler(d Deps) *BackupHandler {
+	return &BackupHandler{d: d}
 }
 
 // ───────────── Storages (PANEL settings.read/write) ─────────────
@@ -102,7 +101,7 @@ func NewBackupHandler(state *handlers.AppState) *BackupHandler {
 // the S3 secret stripped from each row so a settings.read holder cannot
 // harvest backup credentials out of a list.
 func (h *BackupHandler) ListStorages(w http.ResponseWriter, r *http.Request) {
-	storages, err := h.state.Store.ListBackupStorages()
+	storages, err := h.d.Store.ListBackupStorages()
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -160,7 +159,7 @@ func (h *BackupHandler) CreateStorage(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, err.Error(), 400)
 		return
 	}
-	id, err := h.state.Store.CreateBackupStorage(&req)
+	id, err := h.d.Store.CreateBackupStorage(&req)
 	if err != nil {
 		if errors.Is(err, store.ErrNameTaken) {
 			httpx.SendJSONError(w, "A backup storage with that name already exists", 409)
@@ -217,7 +216,7 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 	// while the real objects stayed under the old location, billed, with
 	// nothing left that names them.
 	if backupStorageLocation(req) != backupStorageLocation(*existing) {
-		inUse, ierr := h.state.Store.BackupStorageInUse(id)
+		inUse, ierr := h.d.Store.BackupStorageInUse(id)
 		if ierr != nil {
 			httpx.SendJSONError(w, "Could not check what uses this storage", 500)
 			return
@@ -230,7 +229,7 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 	// A platform row stays one: the body's ownerId would otherwise move it, and
 	// a nil one is what clearOtherDefaults reads as "the platform's default".
 	req.OwnerID = nil
-	if err := h.state.Store.UpdateBackupStorage(&req); err != nil {
+	if err := h.d.Store.UpdateBackupStorage(&req); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNameTaken):
 			httpx.SendJSONError(w, "A backup storage with that name already exists", 409)
@@ -269,7 +268,7 @@ func (h *BackupHandler) DeleteStorage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.platformStorage(w, id); !ok {
 		return
 	}
-	if err := h.state.Store.DeleteBackupStorage(id); err != nil {
+	if err := h.d.Store.DeleteBackupStorage(id); err != nil {
 		if errors.Is(err, store.ErrStorageInUse) {
 			httpx.SendJSONError(w, "Backups or backup schedules still use this storage. Move the schedules to another storage first; it can be deleted once the backups stored on it are deleted or have aged out under retention.", 409)
 			return
@@ -285,7 +284,7 @@ func (h *BackupHandler) DeleteStorage(w http.ResponseWriter, r *http.Request) {
 // shows one, and editing it from here could turn it into a provider the
 // tenant guard does not cover or clear the platform default.
 func (h *BackupHandler) platformStorage(w http.ResponseWriter, id int) (*models.BackupStorage, bool) {
-	bs, err := h.state.Store.GetBackupStorage(id)
+	bs, err := h.d.Store.GetBackupStorage(id)
 	if err != nil || bs == nil || bs.OwnerID != nil {
 		httpx.SendJSONError(w, "Backup storage not found", 404)
 		return nil, false
@@ -374,12 +373,12 @@ func (h *BackupHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = srv
-	jobs, err := h.state.Store.ListBackupJobs(serverID)
+	jobs, err := h.d.Store.ListBackupJobs(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
-	kept, err := h.state.Store.BackupKeptByJob(serverID)
+	kept, err := h.d.Store.BackupKeptByJob(serverID)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -446,7 +445,7 @@ func (h *BackupHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.NextRunAt = services.ComputeBackupNextRun(req.Schedule, req.Timezone, time.Now())
-	id, err := h.state.Store.CreateBackupJob(&req)
+	id, err := h.d.Store.CreateBackupJob(&req)
 	if err != nil {
 		log.Printf("create backup job for server %d: %v", serverID, err)
 		httpx.SendJSONError(w, "Failed to create the backup job", 500)
@@ -502,8 +501,8 @@ func (h *BackupHandler) refuseUnusableStorage(w http.ResponseWriter, r *http.Req
 	if storageID == nil {
 		return false // no choice made: the resolver picks the default at run time
 	}
-	owner := services.BackupJobOwner(h.state.Store, serverID)
-	bs, err := services.ResolveJobStorage(h.state.Store, storageID, owner)
+	owner := services.BackupJobOwner(h.d.Store, serverID)
+	bs, err := services.ResolveJobStorage(h.d.Store, storageID, owner)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrForeignBackupStorage):
@@ -521,7 +520,7 @@ func (h *BackupHandler) refuseUnusableStorage(w http.ResponseWriter, r *http.Req
 		return true
 	}
 	unchanged := previous != nil && *previous == *storageID
-	if bs.OwnerID != nil && !unchanged && !services.OwnStorageAllowedFor(r.Context(), h.state.FeatureFlags, h.state.Store, owner) {
+	if bs.OwnerID != nil && !unchanged && !services.OwnStorageAllowedFor(r.Context(), h.d.FeatureFlags, h.d.Store, owner) {
 		httpx.SendJSONErrorCode(w, "Own storage is turned off on this platform. Choose a platform storage.", "own_storage_disabled", http.StatusForbidden)
 		return true
 	}
@@ -590,7 +589,7 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 		// A job's runs are restored into what the job covers, so what it covers
 		// cannot move under runs it already has. A different scope is a new job.
 		if deref(next.SubServer) != deref(job.SubServer) {
-			if runs, err := h.state.Store.ListBackupRuns(jobID, 1); err != nil || len(runs) > 0 {
+			if runs, err := h.d.Store.ListBackupRuns(jobID, 1); err != nil || len(runs) > 0 {
 				httpx.SendJSONError(w, "This job already has backups, which restore into what it covers. Create a new job for a different sub-server.", http.StatusConflict)
 				return
 			}
@@ -645,7 +644,7 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	if next.Schedule != job.Schedule || next.Timezone != job.Timezone || (next.Enabled && !job.Enabled) || job.NextRunAt == nil {
 		next.NextRunAt = services.ComputeBackupNextRun(next.Schedule, next.Timezone, time.Now())
 	}
-	if err := h.state.Store.UpdateBackupJob(&next); err != nil {
+	if err := h.d.Store.UpdateBackupJob(&next); err != nil {
 		log.Printf("update backup job %d: %v", jobID, err)
 		httpx.SendJSONError(w, "Failed to update the backup job", 500)
 		return
@@ -662,14 +661,14 @@ func (h *BackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
 	}
 	// Same rule as DeleteRun: a restore waiting on one of these archives has
 	// usually stopped the server already, and the download would fail.
-	if busy, err := h.state.Store.BackupJobRestoring(jobID); err != nil || busy {
+	if busy, err := h.d.Store.BackupJobRestoring(jobID); err != nil || busy {
 		httpx.SendJSONError(w, "A backup of this schedule is being restored. Delete it once the restore has finished.", http.StatusConflict)
 		return
 	}
 	// The runs cascade with the job and take their storage keys with them, so
 	// the archives have to go first or nothing can ever name them again.
-	h.state.CoreStorage.PurgeBackupArchivesForJob(jobID)
-	if err := h.state.Store.DeleteBackupJob(jobID); err != nil {
+	h.d.CoreStorage.PurgeBackupArchivesForJob(jobID)
+	if err := h.d.Store.DeleteBackupJob(jobID); err != nil {
 		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
@@ -688,7 +687,7 @@ func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 	// The SCHEDULE is deliberately left running for a suspended tenant: their
 	// data keeps being protected for the retention window, which is what makes
 	// a cutoff reversible. Asking for an extra run on demand is not that.
-	if srv, err := h.state.Store.GetServerByID(job.ServerID); err == nil && guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+	if srv, err := h.d.Store.GetServerByID(job.ServerID); err == nil && guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
 	runID, err := h.startBackupRun(r.Context(), job)
@@ -715,7 +714,7 @@ func (h *BackupHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	runs, err := h.state.Store.ListBackupRuns(jobID, 50)
+	runs, err := h.d.Store.ListBackupRuns(jobID, 50)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -735,12 +734,12 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid run ID", 400)
 		return
 	}
-	run, err := h.state.Store.GetBackupRun(runID)
+	run, err := h.d.Store.GetBackupRun(runID)
 	if err != nil {
 		httpx.SendJSONError(w, "Run not found", 404)
 		return
 	}
-	job, err := h.state.Store.GetBackupJob(run.JobID)
+	job, err := h.d.Store.GetBackupJob(run.JobID)
 	if err != nil {
 		httpx.SendJSONError(w, "Job not found", 404)
 		return
@@ -753,8 +752,8 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 	// job's, else the default. Refusing on a nil StorageID made every job
 	// created with the panel's "Default storage" option undownloadable even
 	// though its backup succeeded.
-	bs, err := services.ResolveRunStorage(h.state.Store, run, job.StorageID,
-		services.BackupJobOwner(h.state.Store, job.ServerID))
+	bs, err := services.ResolveRunStorage(h.d.Store, run, job.StorageID,
+		services.BackupJobOwner(h.d.Store, job.ServerID))
 	if err != nil {
 		if errors.Is(err, services.ErrNoBackupStorage) {
 			httpx.SendJSONError(w, "No backup storage is configured", 400)
@@ -801,12 +800,12 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid run ID", 400)
 		return
 	}
-	run, err := h.state.Store.GetBackupRun(runID)
+	run, err := h.d.Store.GetBackupRun(runID)
 	if err != nil {
 		httpx.SendJSONError(w, "Run not found", 404)
 		return
 	}
-	job, err := h.state.Store.GetBackupJob(run.JobID)
+	job, err := h.d.Store.GetBackupJob(run.JobID)
 	if err != nil {
 		httpx.SendJSONError(w, "Job not found", 404)
 		return
@@ -823,12 +822,12 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Cannot restore a run that did not complete successfully", 400)
 		return
 	}
-	srv, err := h.state.Store.GetServerByID(job.ServerID)
+	srv, err := h.d.Store.GetServerByID(job.ServerID)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
-	if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
 	// None while it moves: a restore during a move restarted the server on the
@@ -843,10 +842,10 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "The server is being moved. Restore it once the move has finished.", http.StatusConflict)
 		return
 	}
-	if guard.RefuseIfServerBusy(w, r, h.state.Redis, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
 		return
 	}
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
@@ -854,7 +853,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	// Same resolution the run path uses. This is the one that matters most: a
 	// backup that cannot be restored is worse than no backup, because the
 	// failure only shows up when someone is already recovering.
-	storage, err := services.ResolveRunStorage(h.state.Store, run, job.StorageID, srv.OwnerID)
+	storage, err := services.ResolveRunStorage(h.d.Store, run, job.StorageID, srv.OwnerID)
 	if err != nil {
 		if errors.Is(err, services.ErrNoBackupStorage) {
 			httpx.SendJSONError(w, "No backup storage is configured", 400)
@@ -868,11 +867,11 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	// even after the node finishes (or fails).
 	username := r.Context().Value("username").(string)
 	var requestedBy *string
-	if user, _ := h.state.Store.GetUserByUsername(username); user != nil {
+	if user, _ := h.d.Store.GetUserByUsername(username); user != nil {
 		v := user.ID
 		requestedBy = &v
 	}
-	restoreID, err := h.state.Store.CreateBackupRestore(&models.BackupRestore{
+	restoreID, err := h.d.Store.CreateBackupRestore(&models.BackupRestore{
 		RunID:       run.ID,
 		ServerID:    job.ServerID,
 		RequestedBy: requestedBy,
@@ -883,17 +882,17 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.state.Queue == nil {
-		h.state.Store.UpdateBackupRestoreStatus(restoreID, "failed", "queue unavailable", time.Now())
+	if h.d.Queue == nil {
+		h.d.Store.UpdateBackupRestoreStatus(restoreID, "failed", "queue unavailable", time.Now())
 		httpx.SendJSONError(w, "Queue unavailable", 500)
 		return
 	}
 
 	// Refuses a node too old for a presigned-only restore here, before the node
 	// is told anything: a restore stops the server before it downloads.
-	storageCfgJSON, objectStorage, err := services.PrepareNodeStorage(r.Context(), h.state.Redis, storage, node, h.backupDeps())
+	storageCfgJSON, objectStorage, err := services.PrepareNodeStorage(r.Context(), h.d.Redis, storage, node, h.backupDeps())
 	if err != nil {
-		h.state.Store.UpdateBackupRestoreStatus(restoreID, "failed", err.Error(), time.Now())
+		h.d.Store.UpdateBackupRestoreStatus(restoreID, "failed", err.Error(), time.Now())
 		status := 500
 		if errors.Is(err, services.ErrNodeUpdateRequired) {
 			status = http.StatusConflict
@@ -937,8 +936,8 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// Publish to the node's durable :cmds stream (BC1) instead of RPush to the
 	// retired dylaris:node:<token>:queue list, which nothing reads anymore.
-	if err := h.state.Queue.SendRawCommand(r.Context(), node.Token, payload); err != nil {
-		h.state.Store.UpdateBackupRestoreStatus(restoreID, "failed", "queue push failed: "+err.Error(), time.Now())
+	if err := h.d.Queue.SendRawCommand(r.Context(), node.Token, payload); err != nil {
+		h.d.Store.UpdateBackupRestoreStatus(restoreID, "failed", "queue push failed: "+err.Error(), time.Now())
 		httpx.SendJSONError(w, "Failed to queue restore: "+err.Error(), 500)
 		return
 	}
@@ -953,7 +952,7 @@ func (h *BackupHandler) ListRestores(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	restores, err := h.state.Store.ListBackupRestores(serverID, 25)
+	restores, err := h.d.Store.ListBackupRestores(serverID, 25)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -963,8 +962,8 @@ func (h *BackupHandler) ListRestores(w http.ResponseWriter, r *http.Request) {
 	}
 	// A restore left "queued" by a node that went away looks exactly like one
 	// that is about to start. See restore_stall.go.
-	if srv != nil && h.state.GRPCRegistry != nil {
-		nodeops.AnnotateStalledRestores(r.Context(), h.state.Redis, h.state.GRPCRegistry.IsConnected, srv.NodeID, srv.UUID, restores)
+	if srv != nil && h.d.GRPCRegistry != nil {
+		nodeops.AnnotateStalledRestores(r.Context(), h.d.Redis, h.d.GRPCRegistry.IsConnected, srv.NodeID, srv.UUID, restores)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "restores": restores})
 }
@@ -979,12 +978,12 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid run ID", 400)
 		return
 	}
-	run, err := h.state.Store.GetBackupRun(runID)
+	run, err := h.d.Store.GetBackupRun(runID)
 	if err != nil {
 		httpx.SendJSONError(w, "Run not found", 404)
 		return
 	}
-	job, err := h.state.Store.GetBackupJob(run.JobID)
+	job, err := h.d.Store.GetBackupJob(run.JobID)
 	if err != nil {
 		httpx.SendJSONError(w, "Job not found", 404)
 		return
@@ -993,7 +992,7 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
-	if busy, err := h.state.Store.BackupRunRestoring(runID); err != nil || busy {
+	if busy, err := h.d.Store.BackupRunRestoring(runID); err != nil || busy {
 		httpx.SendJSONError(w, "This backup is being restored. Delete it once the restore has finished.", http.StatusConflict)
 		return
 	}
@@ -1006,8 +1005,8 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 	// is perfectly reachable. Since the panel's storage dropdown offers "Default
 	// storage" first, deleting a backup from the UI usually removed the row and
 	// left the archive behind for good.
-	if bs, sErr := services.ResolveRunStorage(h.state.Store, run, job.StorageID,
-		services.BackupJobOwner(h.state.Store, job.ServerID)); sErr == nil {
+	if bs, sErr := services.ResolveRunStorage(h.d.Store, run, job.StorageID,
+		services.BackupJobOwner(h.d.Store, job.ServerID)); sErr == nil {
 		if provider, pErr := backupstorage.Open(r.Context(), bs, h.backupDeps()); pErr == nil {
 			// A run still uploading holds parts that are not an archive yet, and
 			// deleting the row leaves nothing that would ever complete or abort
@@ -1023,7 +1022,7 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := h.state.Store.DeleteBackupRun(runID); err != nil {
+	if err := h.d.Store.DeleteBackupRun(runID); err != nil {
 		httpx.SendJSONError(w, err.Error(), 500)
 		return
 	}
@@ -1043,7 +1042,7 @@ func (h *BackupHandler) BackupUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = serverID
 
-	if h.state.GRPCRegistry == nil {
+	if h.d.GRPCRegistry == nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":   true,
 			"usedBytes": 0,
@@ -1060,7 +1059,7 @@ func (h *BackupHandler) BackupUsage(w http.ResponseWriter, r *http.Request) {
 			BackupUsageReq: &pbNode.BackupUsageReq{},
 		},
 	}
-	resp, err := h.state.GRPCRegistry.SendRequest(srv.NodeID, msg, 5*time.Second)
+	resp, err := h.d.GRPCRegistry.SendRequest(srv.NodeID, msg, 5*time.Second)
 	if err != nil {
 		// Node offline or RPC failure — return zeros so the Overview tab
 		// degrades gracefully (no quota row instead of an error toast).
@@ -1096,10 +1095,10 @@ func (h *BackupHandler) BackupUsage(w http.ResponseWriter, r *http.Request) {
 // handler — keeps the call-sites uniform.
 func (h *BackupHandler) backupDeps() backupstorage.Deps {
 	return backupstorage.Deps{
-		Registry:    h.state.GRPCRegistry,
-		NodeStore:   h.state.Store,
-		CoreStorage: h.state.CoreStorage.BackupBuilder(),
-		Connection:  h.state.CoreStorage.ConnectionBackupBuilder(),
+		Registry:    h.d.GRPCRegistry,
+		NodeStore:   h.d.Store,
+		CoreStorage: h.d.CoreStorage.BackupBuilder(),
+		Connection:  h.d.CoreStorage.ConnectionBackupBuilder(),
 	}
 }
 
@@ -1112,7 +1111,7 @@ func (h *BackupHandler) resolveServer(w http.ResponseWriter, r *http.Request) (i
 		httpx.SendJSONError(w, "Invalid server ID", 400)
 		return 0, nil, false
 	}
-	srv, err := h.state.Store.GetServerByID(id)
+	srv, err := h.d.Store.GetServerByID(id)
 	if err != nil {
 		httpx.SendJSONError(w, "Server not found", 404)
 		return 0, nil, false
@@ -1130,7 +1129,7 @@ func (h *BackupHandler) resolveJobWithAccess(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Invalid job ID", 400)
 		return 0, nil, false
 	}
-	job, err := h.state.Store.GetBackupJob(jobID)
+	job, err := h.d.Store.GetBackupJob(jobID)
 	if err != nil {
 		httpx.SendJSONError(w, "Job not found", 404)
 		return 0, nil, false
@@ -1149,7 +1148,7 @@ func (h *BackupHandler) hasServerAccess(r *http.Request, serverID int, capID str
 	username, _ := r.Context().Value("username").(string)
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	userID, _ := r.Context().Value("userID").(string)
-	res, err := h.state.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
+	res, err := h.d.Authz.Resolve(authz.Identity{UserID: userID, Username: username, IsAdmin: isAdmin}, serverID)
 	if err != nil || !res.HasCap(capID) {
 		return false
 	}
@@ -1168,8 +1167,8 @@ func (h *BackupHandler) hasServerAccess(r *http.Request, serverID int, capID str
 // own-storage switch is resolved for the OWNER, never for whoever pressed run:
 // it is the owner's data and the owner's bucket.
 func (h *BackupHandler) newRunStorage(ctx context.Context, storageID *int, ownerID string) (*models.BackupStorage, error) {
-	return services.ResolveNewRunStorage(h.state.Store, storageID, ownerID,
-		services.OwnStorageAllowedFor(ctx, h.state.FeatureFlags, h.state.Store, ownerID))
+	return services.ResolveNewRunStorage(h.d.Store, storageID, ownerID,
+		services.OwnStorageAllowedFor(ctx, h.d.FeatureFlags, h.d.Store, ownerID))
 }
 
 // startBackupRun creates a backup_run row, dispatches a node command, and
@@ -1177,7 +1176,7 @@ func (h *BackupHandler) newRunStorage(ctx context.Context, storageID *int, owner
 // function returns immediately so the HTTP request stays snappy.
 func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJob) (int, error) {
 	// The server first, because who owns it decides which storage answers.
-	srv, err := h.state.Store.GetServerByID(job.ServerID)
+	srv, err := h.d.Store.GetServerByID(job.ServerID)
 	if err != nil {
 		return 0, fmt.Errorf("server not found: %w", err)
 	}
@@ -1197,7 +1196,7 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// to meet the customer's ceiling, or the ceiling means nothing. Skipped
 	// where `storage` is one the tenant connected themselves; see
 	// BackupAllowanceExceeded.
-	if exceeded, used, quota := services.BackupAllowanceExceeded(h.state.Store, srv.OwnerID, h.state.StoreEnabled, storage); exceeded {
+	if exceeded, used, quota := services.BackupAllowanceExceeded(h.d.Store, srv.OwnerID, h.d.StoreEnabled, storage); exceeded {
 		return 0, backupQuotaRefusal(used, quota, "", "raise the limit in Settings, Backups")
 	}
 	// Per-server node-local cap. Separate budget from the allowance above: that
@@ -1207,10 +1206,10 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// No administrator exemption here, unlike the allowance: this bounds a real
 	// disk, and a full one takes down every server on the host including other
 	// people's.
-	if exceeded, used, quota := services.NodeLocalBackupQuotaExceeded(h.state.Store, h.state.GRPCRegistry, srv, storage); exceeded {
+	if exceeded, used, quota := services.NodeLocalBackupQuotaExceeded(h.d.Store, h.d.GRPCRegistry, srv, storage); exceeded {
 		return 0, backupQuotaRefusal(used, quota, " on this server", "raise the per-server limit in Settings, Backups")
 	}
-	node, err := h.state.Store.GetNodeByID(srv.NodeID)
+	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		return 0, fmt.Errorf("node not found: %w", err)
 	}
@@ -1220,7 +1219,7 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// beside one already in progress, every time - a loop through the API ran
 	// as many archive-and-upload passes of one server in parallel as it liked,
 	// on a node that works through eight commands at once for every tenant.
-	runID, started, err := h.state.Store.StartBackupRunIfIdle(&models.BackupRun{
+	runID, started, err := h.d.Store.StartBackupRunIfIdle(&models.BackupRun{
 		JobID:  job.ID,
 		Status: "running",
 		// Recorded from the storage this dispatch resolved, so the archive stays
@@ -1238,18 +1237,18 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// A manual run is recorded but leaves the planned slot alone: it used to
 	// move the schedule to click time plus the interval.
 	now := time.Now()
-	if err := h.state.Store.SetBackupJobRanByHand(job.ID, now, services.ComputeBackupNextRun(job.Schedule, job.Timezone, now)); err != nil {
+	if err := h.d.Store.SetBackupJobRanByHand(job.ID, now, services.ComputeBackupNextRun(job.Schedule, job.Timezone, now)); err != nil {
 		log.Printf("backup: job %d: recording the manual run: %v", job.ID, err)
 	}
 
-	if h.state.Queue == nil {
+	if h.d.Queue == nil {
 		return runID, fmt.Errorf("queue unavailable")
 	}
 	// No node receives bucket credentials or a URL here: on object storage the
 	// node asks Core for part URLs as it uploads. See services/backup_transfer.go.
-	storageCfgJSON, objectStorage, err := services.PrepareNodeStorage(ctx, h.state.Redis, storage, node, h.backupDeps())
+	storageCfgJSON, objectStorage, err := services.PrepareNodeStorage(ctx, h.d.Redis, storage, node, h.backupDeps())
 	if err != nil {
-		h.state.Store.UpdateBackupRunStatus(runID, "failed", err.Error(), 0, "", time.Now())
+		h.d.Store.UpdateBackupRunStatus(runID, "failed", err.Error(), 0, "", time.Now())
 		return runID, err
 	}
 	// What this archive contains, described. The SAME bytes go to the node (to
@@ -1263,9 +1262,9 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// refuse a backup. The restore side already treats an absent manifest as
 	// "this archive says nothing" and leaves the rows alone.
 	manifest := services.EncodeBackupManifest(
-		services.BuildBackupManifest(h.state.Store, srv.ID, deref(job.SubServer), h.state.ReleaseVersion))
+		services.BuildBackupManifest(h.d.Store, srv.ID, deref(job.SubServer), h.d.ReleaseVersion))
 	if len(manifest) > 0 {
-		if err := h.state.Store.SetBackupRunManifest(runID, string(manifest)); err != nil {
+		if err := h.d.Store.SetBackupRunManifest(runID, string(manifest)); err != nil {
 			log.Printf("backup manifest: run %d: %v", runID, err)
 		}
 	}
@@ -1302,8 +1301,8 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	if len(manifest) > 0 {
 		payload["manifest"] = json.RawMessage(manifest)
 	}
-	if err := h.state.Queue.SendRawCommand(ctx, node.Token, payload); err != nil {
-		h.state.Store.UpdateBackupRunStatus(runID, "failed", "queue push failed: "+err.Error(), 0, "", time.Now())
+	if err := h.d.Queue.SendRawCommand(ctx, node.Token, payload); err != nil {
+		h.d.Store.UpdateBackupRunStatus(runID, "failed", "queue push failed: "+err.Error(), 0, "", time.Now())
 		return runID, err
 	}
 	return runID, nil

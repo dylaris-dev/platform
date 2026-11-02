@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -83,7 +81,7 @@ func TestValidBackupProvider(t *testing.T) {
 
 func TestCreateStorage_RejectsUnknownProviderBeforePersisting(t *testing.T) {
 	fs := &backupValidationFakeStore{}
-	h := NewBackupHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewBackupHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(models.BackupStorage{Name: "typo", Provider: "corestorage"})
 	rw := httptest.NewRecorder()
@@ -99,7 +97,7 @@ func TestCreateStorage_RejectsUnknownProviderBeforePersisting(t *testing.T) {
 
 func TestCreateStorage_AcceptsCoreStorage(t *testing.T) {
 	fs := &backupValidationFakeStore{}
-	h := NewBackupHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewBackupHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(models.BackupStorage{Name: "Core storage", Provider: "core-storage"})
 	rw := httptest.NewRecorder()
@@ -115,7 +113,7 @@ func TestCreateStorage_AcceptsCoreStorage(t *testing.T) {
 
 func TestUpdateStorage_RejectsUnknownProviderBeforePersisting(t *testing.T) {
 	fs := &backupValidationFakeStore{}
-	h := NewBackupHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewBackupHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(models.BackupStorage{Name: "x", Provider: "ftp"})
 	req := httptest.NewRequest(http.MethodPatch, "/api/backup-storages/1", bytes.NewReader(body))
@@ -133,7 +131,7 @@ func TestUpdateStorage_RejectsUnknownProviderBeforePersisting(t *testing.T) {
 
 func TestUpdateStorage_AcceptsCoreStorage(t *testing.T) {
 	fs := &backupValidationFakeStore{}
-	h := NewBackupHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewBackupHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(models.BackupStorage{Name: "x", Provider: "core-storage"})
 	req := httptest.NewRequest(http.MethodPatch, "/api/backup-storages/1", bytes.NewReader(body))
@@ -151,7 +149,7 @@ func TestUpdateStorage_AcceptsCoreStorage(t *testing.T) {
 
 func TestCreateStorage_AcceptsConnection(t *testing.T) {
 	fs := &backupValidationFakeStore{}
-	h := NewBackupHandler(withCoreStorage(&handlers.AppState{Store: fs}))
+	h := NewBackupHandler(testDeps(Deps{Store: fs}))
 
 	body, _ := json.Marshal(models.BackupStorage{
 		Name:     "R2 backups",
@@ -178,7 +176,7 @@ func TestUpdateStorageKeepsTheLocationOfArchivesInUse(t *testing.T) {
 		body, _ := json.Marshal(models.BackupStorage{Name: name, Provider: "connection", Config: json.RawMessage(`{"connectionId":3,"prefix":"` + prefix + `"}`)})
 		req := mux.SetURLVars(httptest.NewRequest(http.MethodPatch, "/api/backup-storages/1", bytes.NewReader(body)), map[string]string{"id": "1"})
 		rw := httptest.NewRecorder()
-		NewBackupHandler(withCoreStorage(&handlers.AppState{Store: fs})).UpdateStorage(rw, req)
+		NewBackupHandler(testDeps(Deps{Store: fs})).UpdateStorage(rw, req)
 		return rw.Code
 	}
 	if code := patch(&backupValidationFakeStore{inUse: true, stored: stored}, "elsewhere", "r2"); code != http.StatusConflict {

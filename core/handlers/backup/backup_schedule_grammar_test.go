@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"dylaris-core/authz"
-	"dylaris-core/handlers"
 )
 
 // The server job handlers store the zone the schedule is read in, default it
@@ -36,7 +35,7 @@ func TestServerBackupJobScheduleAndZone(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := &backupSubServerFakeStore{}
-			h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}
+			h := &BackupHandler{d: testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)})}
 			rw := httptest.NewRecorder()
 			h.CreateJob(rw, backupJobRequest(http.MethodPost, "/api/servers/7/backup-jobs", tc.body, map[string]string{"id": "7"}))
 			if rw.Code != tc.wantCode {
@@ -65,7 +64,7 @@ func TestServerBackupJobScheduleAndZone(t *testing.T) {
 // the job and is validated like a schedule change.
 func TestUpdatingOnlyTheZoneRearmsTheJob(t *testing.T) {
 	fs := &backupSubServerFakeStore{}
-	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}
+	h := &BackupHandler{d: testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)})}
 	rw := httptest.NewRecorder()
 	h.UpdateJob(rw, backupJobRequest(http.MethodPatch, "/api/backup-jobs/1", `{"schedule":"daily 03:00","timezone":"Asia/Tokyo"}`, map[string]string{"jobId": "1"}))
 	if rw.Code != 200 {
@@ -79,7 +78,7 @@ func TestUpdatingOnlyTheZoneRearmsTheJob(t *testing.T) {
 	}
 
 	fs = &backupSubServerFakeStore{}
-	h = &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs)})}
+	h = &BackupHandler{d: testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)})}
 	rw = httptest.NewRecorder()
 	h.UpdateJob(rw, backupJobRequest(http.MethodPatch, "/api/backup-jobs/1", `{"timezone":"Local"}`, map[string]string{"jobId": "1"}))
 	if rw.Code != 400 || fs.updated != nil {
@@ -126,7 +125,7 @@ func TestPreviewScheduleListsTheNextRuns(t *testing.T) {
 // The platform handlers share the grammar and store the zone too.
 func TestPlatformBackupJobTakesTheNewGrammar(t *testing.T) {
 	st := &platformScheduleStore{}
-	h := &PlatformBackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
+	h := &PlatformBackupHandler{d: testDeps(Deps{Store: st})}
 	rec := httptest.NewRecorder()
 	h.CreateJob(rec, pbReq(http.MethodPost, `{"name":"n","schedule":"weekly sun 04:00","timezone":"America/New_York","selection":{"database":true}}`, nil))
 	if rec.Code != http.StatusOK {
@@ -141,7 +140,7 @@ func TestPlatformBackupJobTakesTheNewGrammar(t *testing.T) {
 
 	soon := time.Now().Add(2 * time.Hour)
 	st = &platformScheduleStore{job: dailyJob(&soon, true)}
-	h = &PlatformBackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
+	h = &PlatformBackupHandler{d: testDeps(Deps{Store: st})}
 	rec = httptest.NewRecorder()
 	h.UpdateJob(rec, pbReq(http.MethodPatch, `{"schedule":"daily 99:00","selection":{"database":true}}`, map[string]string{"id": "3"}))
 	if rec.Code != http.StatusBadRequest || st.updated != nil {

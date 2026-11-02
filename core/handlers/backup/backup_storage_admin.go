@@ -36,7 +36,7 @@ type adminStorageTarget struct {
 // AdminListUserStorages GET /api/admin/users/{id}/storage-targets - a user's
 // own storage targets, with what still uses each one. Never the credentials.
 func (h *BackupHandler) AdminListUserStorages(w http.ResponseWriter, r *http.Request) {
-	list, err := h.state.Store.ListBackupStoragesByOwner(mux.Vars(r)["id"])
+	list, err := h.d.Store.ListBackupStoragesByOwner(mux.Vars(r)["id"])
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load the user's storage targets", http.StatusInternalServerError)
 		return
@@ -46,7 +46,7 @@ func (h *BackupHandler) AdminListUserStorages(w http.ResponseWriter, r *http.Req
 		var cfg backupstorage.S3Config
 		_ = json.Unmarshal(bs.Config, &cfg)
 		host, _, _ := services.HostPortFromEndpoint(cfg.Endpoint)
-		usage, err := h.state.Store.BackupStorageUsage(bs.ID)
+		usage, err := h.d.Store.BackupStorageUsage(bs.ID)
 		if err != nil {
 			httpx.SendJSONError(w, "Failed to load the user's storage targets", http.StatusInternalServerError)
 			return
@@ -72,12 +72,12 @@ func (h *BackupHandler) AdminDeleteUserStorage(w http.ResponseWriter, r *http.Re
 		httpx.SendJSONError(w, "Invalid ID", http.StatusBadRequest)
 		return
 	}
-	bs, err := h.state.Store.GetBackupStorage(id)
+	bs, err := h.d.Store.GetBackupStorage(id)
 	if err != nil || bs == nil || bs.OwnerID == nil || *bs.OwnerID != userID {
 		httpx.SendJSONError(w, "Storage target not found", http.StatusNotFound)
 		return
 	}
-	if err := h.state.Store.DeleteBackupStorage(bs.ID); err != nil {
+	if err := h.d.Store.DeleteBackupStorage(bs.ID); err != nil {
 		if errors.Is(err, store.ErrStorageInUse) {
 			httpx.SendJSONError(w, "Backups, backup schedules, templates or the user's storage choices still use this storage target. The user has to move or delete them first.", http.StatusConflict)
 			return

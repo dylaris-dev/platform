@@ -6,8 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -44,7 +42,7 @@ func (f *backupStashStore) GetAccountGrant(ownerUserID, userID string) (*store.S
 // what hands them to the audit wrapper on the route.
 func TestBackupAccessCheckFeedsTheAuditTrail(t *testing.T) {
 	st := &backupStashStore{}
-	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st, Authz: authz.NewResolver(st)})}
+	h := &BackupHandler{d: testDeps(Deps{Store: st, Authz: authz.NewResolver(st)})}
 	res := authz.NewResolver(st)
 
 	var recorded []string

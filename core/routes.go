@@ -78,6 +78,9 @@ type routeExtras struct {
 	warpService     *services.WarpService
 	proxyHandler    *tabs.ProxyHandler
 	packsHandler    *packs.PacksHandler
+	// The scheduler in main runs platform backups through the same handler
+	// the routes use, so both read one backup.Deps.
+	platformBackupHandler *backup.PlatformBackupHandler
 }
 
 // requiredCaps maps a route's mux path template to the capability id that
@@ -647,6 +650,22 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		CoreStorage:   appState.CoreStorage,
 		ClusterSecret: appState.ClusterSecret,
 	}
+	backupDeps := backup.Deps{
+		Store:                 appState.Store,
+		Redis:                 appState.Redis,
+		Queue:                 appState.Queue,
+		GRPCRegistry:          appState.GRPCRegistry,
+		FeatureFlags:          appState.FeatureFlags,
+		Authz:                 appState.Authz,
+		CoreStorage:           appState.CoreStorage,
+		PlatformDB:            appState.PlatformDB,
+		PlatformDBMajor:       appState.PlatformDBMajor,
+		PlatformBackupWorkDir: appState.PlatformBackupWorkDir,
+		SuspendGrace:          appState.SuspendGrace,
+		StoreEnabled:          appState.StoreEnabled,
+		ReleaseVersion:        appState.ReleaseVersion,
+		ClusterSecret:         appState.ClusterSecret,
+	}
 	templatesDeps := templates.Deps{
 		Store:        appState.Store,
 		Authz:        appState.Authz,
@@ -738,8 +757,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	beamHandler := beam.NewBeamHandler(beamDeps, cfg.BeamJWTSecret, cfg.ClusterSecret)
 	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
 	timezoneHandler := handlers.NewTimezoneHandler(appState)
-	backupHandler := backup.NewBackupHandler(appState)
-	platformBackupHandler := backup.NewPlatformBackupHandler(appState)
+	backupHandler := backup.NewBackupHandler(backupDeps)
+	platformBackupHandler := backup.NewPlatformBackupHandler(backupDeps)
 	storageConnectionsHandler := storageapi.NewStorageConnectionsHandler(appState)
 	regionsHandler := handlers.NewRegionsHandler(appState)
 	authSettingsHandler := handlers.NewAuthSettingsHandler(appState)
@@ -2100,6 +2119,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		warpService:     warpService,
 		proxyHandler:    proxyHandler,
 		packsHandler:    packsHandler,
+
+		platformBackupHandler: platformBackupHandler,
 	}
 }
 

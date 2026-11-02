@@ -152,7 +152,7 @@ func (h *PlatformBackupHandler) RestoreRun(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONError(w, "Invalid run id", http.StatusBadRequest)
 		return
 	}
-	run, err := h.state.Store.GetPlatformBackupRun(id)
+	run, err := h.d.Store.GetPlatformBackupRun(id)
 	if err != nil || run == nil {
 		httpx.SendJSONError(w, "Run not found", http.StatusNotFound)
 		return
@@ -161,12 +161,12 @@ func (h *PlatformBackupHandler) RestoreRun(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONError(w, "This run produced no archive", http.StatusConflict)
 		return
 	}
-	bs, err := services.ResolveJobStorage(h.state.Store, run.StorageID, "")
+	bs, err := services.ResolveJobStorage(h.d.Store, run.StorageID, "")
 	if err != nil {
 		httpx.SendJSONError(w, "The storage this run wrote to is not available", http.StatusConflict)
 		return
 	}
-	st, err := backupstorage.Open(r.Context(), bs, NewBackupHandler(h.state).backupDeps())
+	st, err := backupstorage.Open(r.Context(), bs, NewBackupHandler(h.d).backupDeps())
 	if err != nil {
 		httpx.SendJSONError(w, "Could not open the storage", 500)
 		return
@@ -230,13 +230,13 @@ func (h *PlatformBackupHandler) runRestore(w http.ResponseWriter, r *http.Reques
 // connection it may have opened to the operator's target database.
 func (h *PlatformBackupHandler) restorer(ctx context.Context, req restoreRequest) (*services.PlatformRestorer, func(), error) {
 	rst := &services.PlatformRestorer{
-		ClusterSecret: h.state.ClusterSecret,
-		WorkDir:       h.state.PlatformBackupWorkDir,
+		ClusterSecret: h.d.ClusterSecret,
+		WorkDir:       h.d.PlatformBackupWorkDir,
 		OpenCoreStorageWriter: func(area string) (services.CoreStorageWriter, error) {
 			if area != "modpacks" {
 				return nil, fmt.Errorf("unknown Core storage area %q", area)
 			}
-			prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixModpacks)
+			prov, err := h.d.CoreStorage.BuildProvider(corestorage.PrefixModpacks)
 			if err != nil {
 				return nil, err
 			}
@@ -263,11 +263,11 @@ func (h *PlatformBackupHandler) restorer(ctx context.Context, req restoreRequest
 	// Each target against BOTH live databases: a statistics restore aimed at
 	// the platform database destroys it just as well.
 	var liveDBs []services.DBConnParams
-	if h.state.PlatformDB.Name != "" {
-		liveDBs = append(liveDBs, services.DBConnParams{Host: h.state.PlatformDB.Host, Port: h.state.PlatformDB.Port, DBName: h.state.PlatformDB.Name})
+	if h.d.PlatformDB.Name != "" {
+		liveDBs = append(liveDBs, services.DBConnParams{Host: h.d.PlatformDB.Host, Port: h.d.PlatformDB.Port, DBName: h.d.PlatformDB.Name})
 	}
-	if h.state.Store != nil {
-		if m := services.LoadMetricsDBTarget(h.state.Store); m.Configured() {
+	if h.d.Store != nil {
+		if m := services.LoadMetricsDBTarget(h.d.Store); m.Configured() {
 			liveDBs = append(liveDBs, services.DBConnParams{Host: m.Host, Port: m.Port, DBName: m.DBName})
 		}
 	}

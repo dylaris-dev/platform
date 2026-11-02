@@ -21,13 +21,13 @@ func (h *BackupHandler) GetStoragePrefs(w http.ResponseWriter, r *http.Request) 
 	// With own storage off, new data goes to the platform storage whatever is
 	// saved, so that is what is shown. The saved choice is kept for later.
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
-	if !h.state.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
+	if !h.d.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true, "backupsStorageId": nil, "templatesStorageId": nil,
 		})
 		return
 	}
-	backups, templates, err := h.state.Store.GetUserStoragePrefs(userID)
+	backups, templates, err := h.d.Store.GetUserStoragePrefs(userID)
 	if err != nil {
 		log.Printf("storage prefs for %s: %v", userID, err)
 		httpx.SendJSONError(w, "Failed to load your storage choices", http.StatusInternalServerError)
@@ -36,7 +36,7 @@ func (h *BackupHandler) GetStoragePrefs(w http.ResponseWriter, r *http.Request) 
 	// Show what backups actually use: a NULL pref resolves to the own default
 	// (ResolveJobStorage), so showing "Dylaris storage" there would be wrong.
 	if backups == nil {
-		def, err := h.state.Store.GetUserDefaultBackupStorage(userID)
+		def, err := h.d.Store.GetUserDefaultBackupStorage(userID)
 		if err != nil {
 			log.Printf("storage prefs default for %s: %v", userID, err)
 			httpx.SendJSONError(w, "Failed to load your storage choices", http.StatusInternalServerError)
@@ -76,8 +76,8 @@ func (h *BackupHandler) PutStoragePrefs(w http.ResponseWriter, r *http.Request) 
 		field string
 		set   func(string, *int) error
 	}{
-		{"backupsStorageId", h.state.Store.SetUserBackupsStoragePref},
-		{"templatesStorageId", h.state.Store.SetUserTemplatesStoragePref},
+		{"backupsStorageId", h.d.Store.SetUserBackupsStoragePref},
+		{"templatesStorageId", h.d.Store.SetUserTemplatesStoragePref},
 	}
 	chosen := map[string]*int{}
 	for _, wr := range writes {
@@ -96,7 +96,7 @@ func (h *BackupHandler) PutStoragePrefs(w http.ResponseWriter, r *http.Request) 
 			if h.refuseOwnStorageOff(w, r) {
 				return
 			}
-			bs, err := h.state.Store.GetBackupStorage(*id)
+			bs, err := h.d.Store.GetBackupStorage(*id)
 			// Same 404 for missing and foreign as ownStorageFor: a distinct answer
 			// would confirm that an id exists.
 			if err != nil || bs == nil || bs.OwnerID == nil || *bs.OwnerID != userID {

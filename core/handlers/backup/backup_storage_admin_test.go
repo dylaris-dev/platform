@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -42,7 +41,7 @@ func newAdminStorageFake() *adminStorageFakeStore {
 
 func TestAdminListUserStoragesOmitsCredentials(t *testing.T) {
 	st := newAdminStorageFake()
-	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
+	h := &BackupHandler{d: testDeps(Deps{Store: st})}
 	rec := httptest.NewRecorder()
 	req := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/x", nil), map[string]string{"id": "u1"})
 	h.AdminListUserStorages(rec, req)
@@ -88,7 +87,7 @@ func TestAdminDeleteUserStorage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newAdminStorageFake()
 			st.inUse = tc.inUse
-			h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: st})}
+			h := &BackupHandler{d: testDeps(Deps{Store: st})}
 			rec := httptest.NewRecorder()
 			req := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/x", nil), map[string]string{"id": tc.user, "storageId": tc.sid})
 			h.AdminDeleteUserStorage(rec, req)

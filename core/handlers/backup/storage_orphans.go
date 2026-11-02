@@ -48,7 +48,7 @@ func (h *BackupHandler) platformObjectStore(ctx context.Context, bs *models.Back
 	case "s3":
 		return backupstorage.NewS3(ctx, bs.Config)
 	case "core-storage":
-		c, err := h.state.CoreStorage.EffectiveConfig()
+		c, err := h.d.CoreStorage.EffectiveConfig()
 		if err != nil {
 			return nil, err
 		}
@@ -60,7 +60,7 @@ func (h *BackupHandler) platformObjectStore(ctx context.Context, bs *models.Back
 				return nil, fmt.Errorf("invalid connection config: %w", err)
 			}
 		}
-		conn, err := h.state.Store.GetStorageConnection(cc.ConnectionID)
+		conn, err := h.d.Store.GetStorageConnection(cc.ConnectionID)
 		if err != nil || conn == nil {
 			return nil, fmt.Errorf("storage connection %d could not be loaded", cc.ConnectionID)
 		}
@@ -141,22 +141,22 @@ func (h *BackupHandler) orphanLookups() services.OrphanLookups {
 	}
 	return services.OrphanLookups{
 		ServerExists: func(uuid string) bool {
-			srv, err := h.state.Store.GetServerByUUID(uuid)
+			srv, err := h.d.Store.GetServerByUUID(uuid)
 			return exists(srv != nil, err)
 		},
 		BackupJobExists: func(id int) bool {
-			j, err := h.state.Store.GetBackupJob(id)
+			j, err := h.d.Store.GetBackupJob(id)
 			return exists(j != nil, err)
 		},
 		PlatformBackupExists: func(id int) bool {
-			j, err := h.state.Store.GetPlatformBackupJob(id)
+			j, err := h.d.Store.GetPlatformBackupJob(id)
 			return exists(j != nil, err)
 		},
 	}
 }
 
 func (h *BackupHandler) orphanRefs() services.OrphanRefs {
-	return services.StoreOrphanRefs(h.state.Store, h.state.Redis)
+	return services.StoreOrphanRefs(h.d.Store, h.d.Redis)
 }
 
 // ScanOrphans GET /api/admin/storage/{id}/orphans - dry run. Lists the platform
@@ -237,7 +237,7 @@ func (h *BackupHandler) DeleteOrphans(w http.ResponseWriter, r *http.Request) {
 	}
 	// Audited whatever happened: a partial run deleted real files.
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventStorageOrphansDeleted, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventStorageOrphansDeleted, actorID, "", map[string]interface{}{
 		"storageId":   bs.ID,
 		"requested":   len(req.Keys),
 		"includeLive": req.IncludeLive,
@@ -295,7 +295,7 @@ func viewLifecycleRules(rules []types.LifecycleRule) []lifecycleRuleView {
 func (h *BackupHandler) plannedLifecycle(bs *models.BackupStorage, st *backupstorage.S3Storage) []types.LifecycleRule {
 	var days int32
 	if bs.Provider == "s3" {
-		days = backupstorage.MigrationExpiryDays(services.MigrationTransferTTL(h.state.Store))
+		days = backupstorage.MigrationExpiryDays(services.MigrationTransferTTL(h.d.Store))
 	}
 	return backupstorage.DylarisLifecycleRules(st.KeyPrefix(), days)
 }
@@ -361,7 +361,7 @@ func (h *BackupHandler) ApplyLifecycle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorID, _ := r.Context().Value("userID").(string)
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventStorageLifecycleSet, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventStorageLifecycleSet, actorID, "", map[string]interface{}{
 		"storageId": bs.ID,
 		"bucket":    st.Bucket(),
 		"rules":     len(merged),

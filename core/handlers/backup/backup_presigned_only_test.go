@@ -13,8 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -167,7 +165,7 @@ func presignedOnlyHandler(t *testing.T, nodeVersion string, run models.BackupRun
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
 
-	h := &BackupHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Authz: authz.NewResolver(fs), Redis: rdb, Queue: services.NewQueueService(rdb)})}
+	h := &BackupHandler{d: testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs), Redis: rdb, Queue: services.NewQueueService(rdb)})}
 	return h, fs, rdb, rec
 }
 

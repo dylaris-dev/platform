@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/services"
 )
 
@@ -33,7 +31,7 @@ func TestSameDatabase(t *testing.T) {
 // Refused before either database is opened: nothing listens on these hosts, so
 // reaching a connection attempt would answer with a different error.
 func TestRestoreRefusesOneDatabaseForBothDumps(t *testing.T) {
-	h := &PlatformBackupHandler{state: withCoreStorage(&handlers.AppState{})}
+	h := &PlatformBackupHandler{d: testDeps(Deps{})}
 	target := restoreTargetRequest{Host: "nowhere.invalid", User: "u", DBName: "restored"}
 	_, _, err := h.restorer(context.Background(), restoreRequest{
 		Components:    services.PlatformRestoreSelection{Database: true, MetricsDB: true},

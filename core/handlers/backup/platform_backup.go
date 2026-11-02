@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/corestorage"
 
 	"github.com/gorilla/mux"
@@ -35,18 +34,18 @@ import (
 // platform. settings.read is the capability for looking at configuration; it is
 // not the capability for downloading the installation.
 type PlatformBackupHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewPlatformBackupHandler(state *handlers.AppState) *PlatformBackupHandler {
-	return &PlatformBackupHandler{state: state}
+func NewPlatformBackupHandler(d Deps) *PlatformBackupHandler {
+	return &PlatformBackupHandler{d: d}
 }
 
 // ───────────── Jobs ─────────────
 
 // ListJobs GET /api/platform-backups/jobs
 func (h *PlatformBackupHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
-	jobs, err := h.state.Store.ListPlatformBackupJobs()
+	jobs, err := h.d.Store.ListPlatformBackupJobs()
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -102,7 +101,7 @@ func (h *PlatformBackupHandler) CreateJob(w http.ResponseWriter, r *http.Request
 		// stored without a next run was never picked up (production job 3).
 		NextRunAt: services.ComputeBackupNextRun(schedule, tz, time.Now()),
 	}
-	id, err := h.state.Store.CreatePlatformBackupJob(job)
+	id, err := h.d.Store.CreatePlatformBackupJob(job)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -159,7 +158,7 @@ func (h *PlatformBackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request
 		job.NextRunAt = services.ComputeBackupNextRun(job.Schedule, job.Timezone, time.Now())
 	}
 
-	if err := h.state.Store.UpdatePlatformBackupJob(job); err != nil {
+	if err := h.d.Store.UpdatePlatformBackupJob(job); err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
@@ -175,7 +174,7 @@ func (h *PlatformBackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if err := services.DeletePlatformBackupJob(r.Context(), h.state.Store, job.ID, h.DeleteRunArchive); err != nil {
+	if err := services.DeletePlatformBackupJob(r.Context(), h.d.Store, job.ID, h.DeleteRunArchive); err != nil {
 		if errors.Is(err, services.ErrPlatformBackupRunning) {
 			httpx.SendJSONError(w, "A backup of this job is running; try again when it finishes", http.StatusConflict)
 			return
@@ -211,7 +210,7 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 		// A run was opened, so the job ran: record it, and arm a job that has
 		// no next run, but keep a planned slot. A refusal before any run (no
 		// passphrase, empty selection) leaves both untouched.
-		if err := h.state.Store.SetPlatformBackupJobRanByHand(job.ID, services.ComputeBackupNextRun(job.Schedule, job.Timezone, time.Now())); err != nil {
+		if err := h.d.Store.SetPlatformBackupJobRanByHand(job.ID, services.ComputeBackupNextRun(job.Schedule, job.Timezone, time.Now())); err != nil {
 			log.Printf("platform backup: job %d: recording the manual run: %v", job.ID, err)
 		}
 	}
@@ -250,7 +249,7 @@ func (h *PlatformBackupHandler) RunJob(w http.ResponseWriter, r *http.Request) {
 
 // scheduler is the same object main.go starts, built here for its Prune only.
 func (h *PlatformBackupHandler) scheduler() *services.PlatformBackupScheduler {
-	return services.NewPlatformBackupScheduler(h.state.Store, nil, h.Runner, h.DeleteRunArchive)
+	return services.NewPlatformBackupScheduler(h.d.Store, nil, h.Runner, h.DeleteRunArchive)
 }
 
 // ListRuns GET /api/platform-backups/jobs/{id}/runs
@@ -259,7 +258,7 @@ func (h *PlatformBackupHandler) ListRuns(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	runs, err := h.state.Store.ListPlatformBackupRuns(job.ID, 50)
+	runs, err := h.d.Store.ListPlatformBackupRuns(job.ID, 50)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -279,7 +278,7 @@ func (h *PlatformBackupHandler) DownloadRun(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Invalid run id", http.StatusBadRequest)
 		return
 	}
-	run, err := h.state.Store.GetPlatformBackupRun(id)
+	run, err := h.d.Store.GetPlatformBackupRun(id)
 	if err != nil || run == nil {
 		httpx.SendJSONError(w, "Run not found", http.StatusNotFound)
 		return
@@ -288,12 +287,12 @@ func (h *PlatformBackupHandler) DownloadRun(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "This run produced no archive", http.StatusConflict)
 		return
 	}
-	bs, err := services.ResolveJobStorage(h.state.Store, run.StorageID, "")
+	bs, err := services.ResolveJobStorage(h.d.Store, run.StorageID, "")
 	if err != nil {
 		httpx.SendJSONError(w, "The storage this run wrote to is not available", http.StatusConflict)
 		return
 	}
-	store, err := backupstorage.Open(r.Context(), bs, NewBackupHandler(h.state).backupDeps())
+	store, err := backupstorage.Open(r.Context(), bs, NewBackupHandler(h.d).backupDeps())
 	if err != nil {
 		httpx.SendJSONError(w, "Could not open the storage", 500)
 		return
@@ -320,7 +319,7 @@ func (h *PlatformBackupHandler) DownloadRun(w http.ResponseWriter, r *http.Reque
 // the panel filters on it, and "all BYON servers" is only a meaningful choice on
 // a store-connected platform - a self-hoster has no BYON tenants to tell apart.
 func (h *PlatformBackupHandler) ListTargets(w http.ResponseWriter, r *http.Request) {
-	targets, err := h.state.Store.ListBackupTargetServers()
+	targets, err := h.d.Store.ListBackupTargetServers()
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -328,7 +327,7 @@ func (h *PlatformBackupHandler) ListTargets(w http.ResponseWriter, r *http.Reque
 	json.NewEncoder(w).Encode(map[string]any{
 		"success":     true,
 		"targets":     targets,
-		"byonOffered": h.state.StoreEnabled,
+		"byonOffered": h.d.StoreEnabled,
 	})
 }
 
@@ -337,7 +336,7 @@ func (h *PlatformBackupHandler) ListTargets(w http.ResponseWriter, r *http.Reque
 // PassphraseStatus GET /api/platform-backups/passphrase - whether one is set,
 // never what it is.
 func (h *PlatformBackupHandler) PassphraseStatus(w http.ResponseWriter, r *http.Request) {
-	v, err := handlers.SettingOrUnset(h.state.Store, services.PlatformBackupPassphraseSetting)
+	v, err := settingOrUnset(h.d.Store, services.PlatformBackupPassphraseSetting)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -363,7 +362,7 @@ func (h *PlatformBackupHandler) SetPassphrase(w http.ResponseWriter, r *http.Req
 		httpx.SendJSONError(w, fmt.Sprintf("The passphrase must be at least %d characters", crypto.MinPassphraseLength), http.StatusBadRequest)
 		return
 	}
-	existing, err := handlers.SettingOrUnset(h.state.Store, services.PlatformBackupPassphraseSetting)
+	existing, err := settingOrUnset(h.d.Store, services.PlatformBackupPassphraseSetting)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
@@ -377,7 +376,7 @@ func (h *PlatformBackupHandler) SetPassphrase(w http.ResponseWriter, r *http.Req
 			http.StatusConflict)
 		return
 	}
-	if err := h.state.Store.SetSetting(services.PlatformBackupPassphraseSetting, req.Passphrase); err != nil {
+	if err := h.d.Store.SetSetting(services.PlatformBackupPassphraseSetting, req.Passphrase); err != nil {
 		httpx.SendJSONError(w, "Database error", 500)
 		return
 	}
@@ -401,11 +400,11 @@ func (h *PlatformBackupHandler) DeleteRunArchive(ctx context.Context, run *model
 	if run == nil || run.StorageKey == "" {
 		return nil
 	}
-	bs, err := services.ResolveJobStorage(h.state.Store, run.StorageID, "")
+	bs, err := services.ResolveJobStorage(h.d.Store, run.StorageID, "")
 	if err != nil {
 		return err
 	}
-	st, err := backupstorage.Open(ctx, bs, NewBackupHandler(h.state).backupDeps())
+	st, err := backupstorage.Open(ctx, bs, NewBackupHandler(h.d).backupDeps())
 	if err != nil {
 		return err
 	}
@@ -418,25 +417,25 @@ func (h *PlatformBackupHandler) DeleteRunArchive(ctx context.Context, run *model
 // and the database version can all change under a running Core, and every other
 // provider in this codebase resolves per request too.
 func (h *PlatformBackupHandler) runner() (*services.PlatformBackupRunner, error) {
-	if h.state.PlatformDB.Name == "" {
+	if h.d.PlatformDB.Name == "" {
 		return nil, errors.New("this Core does not know how to reach its own database for a backup")
 	}
 	return &services.PlatformBackupRunner{
-		Store:         h.state.Store,
-		Release:       h.state.ReleaseVersion,
-		ClusterSecret: h.state.ClusterSecret,
-		WorkDir:       h.state.PlatformBackupWorkDir,
-		DB:            h.state.PlatformDB,
-		ServerMajor:   h.state.PlatformDBMajor,
+		Store:         h.d.Store,
+		Release:       h.d.ReleaseVersion,
+		ClusterSecret: h.d.ClusterSecret,
+		WorkDir:       h.d.PlatformBackupWorkDir,
+		DB:            h.d.PlatformDB,
+		ServerMajor:   h.d.PlatformDBMajor,
 
 		OpenDest: func(ctx context.Context, bs *models.BackupStorage) (services.BundleDestination, error) {
-			return backupstorage.Open(ctx, bs, NewBackupHandler(h.state).backupDeps())
+			return backupstorage.Open(ctx, bs, NewBackupHandler(h.d).backupDeps())
 		},
 		OpenCoreStorage: func(area string) (services.CoreStorageArea, error) {
 			if area != "modpacks" {
 				return nil, fmt.Errorf("unknown Core storage area %q", area)
 			}
-			prov, err := h.state.CoreStorage.BuildProvider(corestorage.PrefixModpacks)
+			prov, err := h.d.CoreStorage.BuildProvider(corestorage.PrefixModpacks)
 			if err != nil {
 				return nil, err
 			}
@@ -444,10 +443,10 @@ func (h *PlatformBackupHandler) runner() (*services.PlatformBackupRunner, error)
 		},
 		TriggerServerBackup: h.triggerServerBackup,
 		MetricsConfigured: func() bool {
-			return services.LoadMetricsDBTarget(h.state.Store).Configured()
+			return services.LoadMetricsDBTarget(h.d.Store).Configured()
 		},
 		DumpMetrics: func(ctx context.Context, dest io.Writer) (string, error) {
-			return services.DumpMetricsDB(ctx, services.LoadMetricsDBTarget(h.state.Store), dest)
+			return services.DumpMetricsDB(ctx, services.LoadMetricsDBTarget(h.d.Store), dest)
 		},
 	}, nil
 }
@@ -460,7 +459,7 @@ func (h *PlatformBackupHandler) runner() (*services.PlatformBackupRunner, error)
 // an error rather than a silent success - the operator selected it, and
 // pretending it was covered is the one answer that gets someone hurt later.
 func (h *PlatformBackupHandler) triggerServerBackup(ctx context.Context, serverID int) (string, error) {
-	jobs, err := h.state.Store.ListBackupJobs(serverID)
+	jobs, err := h.d.Store.ListBackupJobs(serverID)
 	if err != nil {
 		return "", fmt.Errorf("reading the server's backup jobs: %w", err)
 	}
@@ -485,7 +484,7 @@ func (h *PlatformBackupHandler) triggerServerBackup(ctx context.Context, serverI
 // path the manual trigger uses, so quota, storage resolution and the run record
 // behave identically.
 func (h *PlatformBackupHandler) startBackupRunForPlatform(ctx context.Context, job *models.BackupJob) (int, error) {
-	return NewBackupHandler(h.state).startBackupRun(ctx, job)
+	return NewBackupHandler(h.d).startBackupRun(ctx, job)
 }
 
 // coreStorageArea adapts a scoped Core storage provider to what the runner
@@ -540,7 +539,7 @@ func (h *PlatformBackupHandler) loadJob(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Invalid job id", http.StatusBadRequest)
 		return nil, false
 	}
-	job, err := h.state.Store.GetPlatformBackupJob(id)
+	job, err := h.d.Store.GetPlatformBackupJob(id)
 	if err != nil || job == nil {
 		httpx.SendJSONError(w, "Job not found", http.StatusNotFound)
 		return nil, false

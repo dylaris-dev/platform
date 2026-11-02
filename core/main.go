@@ -28,7 +28,6 @@ import (
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/audit"
-	"dylaris-core/handlers/backup"
 	"dylaris-core/handlers/gateway"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/storageapi"
@@ -1037,7 +1036,7 @@ func main() {
 	// Without this the schedule field on the screen would be a control that
 	// does nothing, which is worse than an absent one because somebody believes
 	// it.
-	platformBackups := backup.NewPlatformBackupHandler(appState)
+	platformBackups := extras.platformBackupHandler
 	services.NewPlatformBackupScheduler(pgStore, coreLeader,
 		platformBackups.Runner, platformBackups.DeleteRunArchive).Start(bgCtx)
 
