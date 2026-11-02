@@ -32,7 +32,7 @@ func (h *PacksHandler) PackAudit(w http.ResponseWriter, r *http.Request) {
 		}
 		ownerID = p.OwnerID
 	}
-	events, err := h.state.Store.ListPackAudit(ownerID, packID, 200)
+	events, err := h.d.Store.ListPackAudit(ownerID, packID, 200)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load the history", http.StatusInternalServerError)
 		return
@@ -45,11 +45,11 @@ func (h *PacksHandler) audit(r *http.Request, ownerID string, packID int, action
 	actor, _ := r.Context().Value("userID").(string)
 	name := ""
 	if packID > 0 {
-		if p, err := h.state.Store.GetPack(packID); err == nil && p != nil {
+		if p, err := h.d.Store.GetPack(packID); err == nil && p != nil {
 			name = p.InternalName
 		}
 	}
-	if err := h.state.Store.AddPackAudit(ownerID, packID, name, actor, action, detail); err != nil {
+	if err := h.d.Store.AddPackAudit(ownerID, packID, name, actor, action, detail); err != nil {
 		log.Printf("packs: audit %s on pack %d: %v", action, packID, err)
 	}
 }
@@ -61,7 +61,7 @@ func (h *PacksHandler) audit(r *http.Request, ownerID string, packID int, action
 func (h *PacksHandler) Audited(action string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		packID, _ := strconv.Atoi(mux.Vars(r)["id"])
-		p, _ := h.state.Store.GetPack(packID)
+		p, _ := h.d.Store.GetPack(packID)
 		rec := &statusRecorder{ResponseWriter: w}
 		next(rec, r)
 		if p == nil || rec.status >= 300 {
@@ -74,7 +74,7 @@ func (h *PacksHandler) Audited(action string, next http.HandlerFunc) http.Handle
 			}
 		}
 		actor, _ := r.Context().Value("userID").(string)
-		if err := h.state.Store.AddPackAudit(p.OwnerID, p.ID, p.InternalName, actor, action, detail); err != nil {
+		if err := h.d.Store.AddPackAudit(p.OwnerID, p.ID, p.InternalName, actor, action, detail); err != nil {
 			log.Printf("packs: audit %s on pack %d: %v", action, p.ID, err)
 		}
 	}

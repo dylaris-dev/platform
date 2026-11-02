@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/corestorage"
 
 	"github.com/gorilla/mux"
@@ -50,7 +49,7 @@ func TestModpackMirrorServesSignedPacksOnly(t *testing.T) {
 		"modpack_storage_paths":    string(paths),
 	}}
 	const secret = "cluster-secret-under-test"
-	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: fs, FeatureFlags: services.NewFeatureFlags(fs), ClusterSecret: secret})}
+	h := &PacksHandler{d: Deps{Store: fs, FeatureFlags: services.NewFeatureFlags(fs), ClusterSecret: secret, CoreStorage: &corestorage.Manager{Store: fs, ClusterSecret: secret}}}
 
 	r := mux.NewRouter()
 	r.HandleFunc("/mirror/{rest:.*}", h.ModpackMirror).Methods("GET")
@@ -109,7 +108,7 @@ func TestSignedMirrorURLKeepsHostAndPath(t *testing.T) {
 // Core's signed mirror URL instead.
 func TestInstallMrpackURLPrefersModrinth(t *testing.T) {
 	fs := &serverPackFakeStore{settings: map[string]string{"core_public_url": "https://core.example.com/"}}
-	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: fs, ClusterSecret: "s"})}
+	h := &PacksHandler{d: Deps{Store: fs, ClusterSecret: "s", CoreStorage: &corestorage.Manager{Store: fs, ClusterSecret: "s"}}}
 	pack := &models.Pack{ID: 1, ModrinthProjectID: "proj"}
 	const cdn = "https://cdn.modrinth.com/data/proj/versions/v1/p.mrpack"
 

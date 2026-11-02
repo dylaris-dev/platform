@@ -78,12 +78,12 @@ func (h *PacksHandler) syncModrinthPacks(ctx context.Context) {
 	if h.pat == nil {
 		return
 	}
-	packs, err := h.state.Store.ListModrinthBoundPacks()
+	packs, err := h.d.Store.ListModrinthBoundPacks()
 	if err != nil {
 		log.Printf("modrinth sync: list packs: %v", err)
 		return
 	}
-	prov, err := h.state.CoreStorage.BuildModpackProvider()
+	prov, err := h.d.CoreStorage.BuildModpackProvider()
 	if err != nil || prov == nil {
 		return
 	}
@@ -102,7 +102,7 @@ func (h *PacksHandler) syncModrinthPacks(ctx context.Context) {
 			log.Printf("modrinth sync: pack %d: versions: %v", pack.ID, err)
 			continue
 		}
-		builds, err := h.state.Store.ListPackBuilds(pack.ID)
+		builds, err := h.d.Store.ListPackBuilds(pack.ID)
 		if err != nil {
 			continue
 		}
@@ -122,8 +122,8 @@ func (h *PacksHandler) syncModrinthPacks(ctx context.Context) {
 			}
 			names[todo[j].VersionNumber] = true
 			log.Printf("modrinth sync: pack %d imported %s as build %d", pack.ID, todo[j].VersionNumber, res.BuildID)
-			if h.state.Events != nil {
-				h.state.Events.Publish(ctx, "pack_builds.changed", map[string]interface{}{"packId": pack.ID, "ownerId": pack.OwnerID})
+			if h.d.Events != nil {
+				h.d.Events.Publish(ctx, "pack_builds.changed", map[string]interface{}{"packId": pack.ID, "ownerId": pack.OwnerID})
 			}
 		}
 	}

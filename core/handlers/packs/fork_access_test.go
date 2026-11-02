@@ -71,12 +71,12 @@ func TestForkBuildValidatesSourceAndEmptyTargetBeforeWriting(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newPackScopeHandler()
-			base := h.state.Store.(*packScopeFakeStore)
+			base := h.d.Store.(*packScopeFakeStore)
 			base.packs[3] = &models.Pack{ID: 3, OwnerID: "alice"}
 			base.packs[1].ModrinthProjectID = "proj"
 			s := &forkAccessStore{packScopeFakeStore: base}
-			h.state.Store = s
-			h.state.CoreStorage.Store = h.state.Store
+			h.d.Store = s
+			h.d.CoreStorage.Store = h.d.Store
 			request := packContentRequest(t, tc.user, "1", tc.build)
 			request.Method = http.MethodPost
 			request.Body = io.NopCloser(strings.NewReader(tc.body))

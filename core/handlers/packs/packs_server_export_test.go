@@ -48,8 +48,8 @@ func (s *serverExportStore) UpsertModrinthMembership(*models.ModrinthMembership)
 func TestServerExportNeedsEditAccess(t *testing.T) {
 	h, st, _, pack, build := serverPackFixture(t)
 	pack.ModrinthProjectID = "proj"
-	h.state.Store = &serverExportStore{draftRenderStore: st, pack: pack, build: build}
-	h.state.CoreStorage.Store = h.state.Store
+	h.d.Store = &serverExportStore{draftRenderStore: st, pack: pack, build: build}
+	h.d.CoreStorage.Store = h.d.Store
 	request := func(user string, admin bool, kind string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, "/api/packs/1/builds/1/export?kind="+kind, nil)
 		ctx := context.WithValue(r.Context(), "userID", user)

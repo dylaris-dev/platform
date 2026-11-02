@@ -24,7 +24,7 @@ func (packEventStore) GetPack(id int) (*models.Pack, error) {
 // name the owner, and the stream hands them to the owner alone.
 func TestPackEventsReachOnlyTheOwner(t *testing.T) {
 	rdb := handlertest.RedisClient(t)
-	state := withCoreStorage(&handlers.AppState{Store: packEventStore{}, Redis: rdb, Events: services.NewSystemEventsPublisher(rdb)})
+	state := Deps{Store: packEventStore{}, Events: services.NewSystemEventsPublisher(rdb)}
 	sub := rdb.Subscribe(context.Background(), services.SystemEventsChannel)
 	defer sub.Close()
 	if _, err := sub.Receive(context.Background()); err != nil {
@@ -37,7 +37,7 @@ func TestPackEventsReachOnlyTheOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := handlers.NewSystemEventsHandler(state)
+	h := handlers.NewSystemEventsHandler(&handlers.AppState{Store: state.Store, Redis: rdb, Events: state.Events})
 	as := func(userID string) bool {
 		r := httptest.NewRequest("GET", "/api/system/events", nil)
 		ctx := context.WithValue(r.Context(), "userID", userID)
@@ -50,4 +50,9 @@ func TestPackEventsReachOnlyTheOwner(t *testing.T) {
 	if as("someone-else") {
 		t.Fatalf("another tenant received the pack event: %s", msg.Payload)
 	}
+}
+
+// No events publisher wired is a no-op, not a panic.
+func TestPackEventsWithoutAPublisherAreANoOp(t *testing.T) {
+	publishPackEvent(httptest.NewRequest("POST", "/x", nil), Deps{Store: packEventStore{}}, "packs.changed", 5, nil)
 }

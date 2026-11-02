@@ -34,9 +34,9 @@ func (s *replaceStore) CountModversionsByStorageKey(string) (int, error) {
 func TestReplaceWithModrinthStoresAReferenceOnly(t *testing.T) {
 	dir := t.TempDir()
 	h := localModpackHandler(t, dir)
-	st := &replaceStore{serverPackFakeStore: h.state.Store.(*serverPackFakeStore)}
-	h.state.Store = st
-	h.state.CoreStorage.Store = h.state.Store
+	st := &replaceStore{serverPackFakeStore: h.d.Store.(*serverPackFakeStore)}
+	h.d.Store = st
+	h.d.CoreStorage.Store = h.d.Store
 	storeZip(t, dir, "packs/u/mods/sodium/old.zip", "mods/sodium.jar", []byte("uploaded copy"))
 
 	old := http.DefaultTransport

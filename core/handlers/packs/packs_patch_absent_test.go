@@ -8,9 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -47,7 +46,7 @@ func newPackPatchHandler() (*PacksHandler, *packPatchFakeStore) {
 		InternalSlug: "my-pack",
 		Summary:      "a summary",
 	}}
-	return NewPacksHandler(withCoreStorage(&handlers.AppState{Store: fs})), fs
+	return NewPacksHandler(Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}}), fs
 }
 
 func packPatchRequest(path, body string) *http.Request {

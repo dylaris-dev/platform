@@ -224,11 +224,11 @@ func (h *PacksHandler) EditModrinthPage(w http.ResponseWriter, r *http.Request) 
 	// The panel shows the local summary; keep it what Modrinth shows.
 	if s, ok := fields["description"].(string); ok && s != pack.Summary {
 		pack.Summary = s
-		if err := h.state.Store.UpdatePack(pack); err != nil {
+		if err := h.d.Store.UpdatePack(pack); err != nil {
 			log.Printf("packs: summary of pack %d not mirrored: %v", pack.ID, err)
 		}
 	}
-	publishPackEvent(r, h.state, "packs.changed", pack.ID, map[string]interface{}{})
+	publishPackEvent(r, h.d, "packs.changed", pack.ID, map[string]interface{}{})
 	h.writeModrinthPage(w, r, pack, mc, "Saved to Modrinth.")
 }
 

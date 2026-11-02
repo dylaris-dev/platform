@@ -8,9 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -40,7 +39,7 @@ func (f *packScopeFakeStore) ListBuildContent(buildID int) ([]models.BuildConten
 }
 
 func newPackScopeHandler() *PacksHandler {
-	return &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: &packScopeFakeStore{
+	st := &packScopeFakeStore{
 		packs: map[int]*models.Pack{
 			1: {ID: 1, OwnerID: "alice"},
 			2: {ID: 2, OwnerID: "bob"},
@@ -49,7 +48,8 @@ func newPackScopeHandler() *PacksHandler {
 			10: {ID: 10, PackID: 1}, // alice's
 			20: {ID: 20, PackID: 2}, // bob's
 		},
-	}})}
+	}
+	return &PacksHandler{d: Deps{Store: st, CoreStorage: &corestorage.Manager{Store: st}}}
 }
 
 func packContentRequest(t *testing.T, userID, packID, buildID string) *http.Request {

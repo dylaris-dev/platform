@@ -22,7 +22,7 @@ func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "This build has no Minecraft version or loader set, so nothing can be compared against it", http.StatusUnprocessableEntity)
 		return
 	}
-	content, err := h.state.Store.ListBuildContent(build.ID)
+	content, err := h.d.Store.ListBuildContent(build.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load build content", http.StatusInternalServerError)
 		return
@@ -71,7 +71,7 @@ func (h *PacksHandler) BuildCompat(w http.ResponseWriter, r *http.Request) {
 		Current: build.Minecraft,
 		Mode:    mode,
 		Targets: targets,
-		Cache:   modcompat.AvailabilityCache(h.state.Cache),
+		Cache:   modcompat.AvailabilityCache(h.d.Cache),
 	})
 	if err != nil {
 		httpx.SendJSONError(w, "Availability check failed: "+err.Error(), http.StatusBadGateway)

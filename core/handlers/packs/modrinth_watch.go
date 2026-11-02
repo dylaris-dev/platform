@@ -24,7 +24,7 @@ func (h *PacksHandler) Favorites(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		rows, err := h.state.Store.ListModrinthFavorites(r.Context(), user)
+		rows, err := h.d.Store.ListModrinthFavorites(r.Context(), user)
 		if err != nil {
 			httpx.SendJSONError(w, "Could not load favorites", 500)
 			return
@@ -54,7 +54,7 @@ func (h *PacksHandler) Favorites(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Title = p.Title
 	}
-	if err := h.state.Store.SetModrinthFavorite(r.Context(), user, f, req.Remove); err != nil {
+	if err := h.d.Store.SetModrinthFavorite(r.Context(), user, f, req.Remove); err != nil {
 		httpx.SendJSONError(w, "Could not save favorite", 500)
 		return
 	}
@@ -69,7 +69,7 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		rows, err := h.state.Store.ListModrinthWatches(r.Context(), user, false)
+		rows, err := h.d.Store.ListModrinthWatches(r.Context(), user, false)
 		if err != nil {
 			httpx.SendJSONError(w, "Could not load alerts", 500)
 			return
@@ -138,7 +138,7 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.BuildID > 0 {
-			build, err := h.state.Store.GetPackBuild(req.BuildID)
+			build, err := h.d.Store.GetPackBuild(req.BuildID)
 			if err != nil || build == nil || build.PackID != pack.ID {
 				httpx.SendJSONError(w, "Build not found", 404)
 				return
@@ -147,7 +147,7 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 		watch.PackID = pack.ID
 		watch.FollowPack = true
 		// Missing recommendations are a waiting state, not a draft fallback.
-		_ = services.RefreshPackWatchSource(h.state.Store, &watch)
+		_ = services.RefreshPackWatchSource(h.d.Store, &watch)
 	} else {
 		if !modrinthIDPattern.MatchString(req.ProjectID) {
 			httpx.SendJSONError(w, "Valid projectId required", 400)
@@ -171,7 +171,7 @@ func (h *PacksHandler) Watches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	watch.Title = strings.TrimSpace(watch.Title)
-	if err := h.state.Store.CreateModrinthWatch(r.Context(), &watch); err != nil {
+	if err := h.d.Store.CreateModrinthWatch(r.Context(), &watch); err != nil {
 		httpx.SendJSONError(w, "Could not create alert; check your 100-alert limit", 409)
 		return
 	}
@@ -190,7 +190,7 @@ func (h *PacksHandler) DeleteWatch(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid id", 400)
 		return
 	}
-	if err = h.state.Store.DeleteModrinthWatch(r.Context(), id, user); err != nil {
+	if err = h.d.Store.DeleteModrinthWatch(r.Context(), id, user); err != nil {
 		httpx.SendJSONError(w, "Could not remove alert", 500)
 		return
 	}

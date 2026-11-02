@@ -39,7 +39,7 @@ func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	mvID, _ := strconv.Atoi(mux.Vars(r)["modversionId"])
-	mv, err := h.state.Store.GetModversion(mvID)
+	mv, err := h.d.Store.GetModversion(mvID)
 	if err != nil || mv == nil {
 		httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 		return
@@ -48,7 +48,7 @@ func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Reques
 	// pack/build ownership, not that this modversion belongs to it. Without this
 	// check a caller could pass another tenant's modversionId and repoint their
 	// storage_key/hashes to this caller's storage path.
-	if ok, _ := h.state.Store.IsModversionInBuild(build.ID, mvID); !ok {
+	if ok, _ := h.d.Store.IsModversionInBuild(build.ID, mvID); !ok {
 		httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 		return
 	}
@@ -61,7 +61,7 @@ func (h *PacksHandler) ReplaceWithModrinth(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONError(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	publishPackEvent(r, h.state, "pack_content.changed", build.PackID, map[string]interface{}{"buildId": build.ID})
+	publishPackEvent(r, h.d, "pack_content.changed", build.PackID, map[string]interface{}{"buildId": build.ID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "modversionId": mv.ID, "linked": true})
 }
 
@@ -109,11 +109,11 @@ func (h *PacksHandler) swapModversionToModrinth(ctx context.Context, ownerID str
 	mv.ModrinthGameVersions = strings.Join(v.GameVersions, ",")
 	mv.ModrinthLatestVersionID = v.ID // aligned: current == latest-known -> clears "update available"
 	mv.ModrinthLastChecked = &now
-	if err := h.state.Store.UpdateModversion(mv); err != nil {
+	if err := h.d.Store.UpdateModversion(mv); err != nil {
 		return fmt.Errorf("failed to update content: %w", err)
 	}
 	if oldKey != "" {
-		if prov, err := h.state.CoreStorage.BuildModpackProvider(); err == nil && prov != nil {
+		if prov, err := h.d.CoreStorage.BuildModpackProvider(); err == nil && prov != nil {
 			h.deleteIfUnreferenced(ctx, prov, oldKey)
 		}
 	}
@@ -137,7 +137,7 @@ func (h *PacksHandler) deleteIfUnreferenced(ctx context.Context, prov modpack.Mo
 	if key == "" {
 		return
 	}
-	n, err := h.state.Store.CountModversionsByStorageKey(key)
+	n, err := h.d.Store.CountModversionsByStorageKey(key)
 	if err != nil || n > 0 {
 		return
 	}

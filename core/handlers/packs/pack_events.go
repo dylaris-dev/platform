@@ -3,8 +3,6 @@ package packs
 import (
 	"log"
 	"net/http"
-
-	"dylaris-core/handlers"
 )
 
 // publishPackEvent sends a pack event to the pack's owner only. It names the
@@ -15,15 +13,15 @@ import (
 // edited - the leak packs.changed was already fixed for. A pack whose owner
 // cannot be read is not announced at all: the page that would have refreshed
 // simply does not, which is the safe way to be wrong.
-func publishPackEvent(r *http.Request, state *handlers.AppState, event string, packID int, payload map[string]interface{}) {
-	if state == nil || state.Store == nil || state.Events == nil {
+func publishPackEvent(r *http.Request, d Deps, event string, packID int, payload map[string]interface{}) {
+	if d.Store == nil || d.Events == nil {
 		return
 	}
-	pack, err := state.Store.GetPack(packID)
+	pack, err := d.Store.GetPack(packID)
 	if err != nil || pack == nil || pack.OwnerID == "" {
 		log.Printf("events: %s for pack %d not sent: owner unknown (%v)", event, packID, err)
 		return
 	}
 	payload["ownerId"] = pack.OwnerID
-	state.Events.Publish(r.Context(), event, payload)
+	d.Events.Publish(r.Context(), event, payload)
 }

@@ -11,9 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
 )
 
@@ -62,7 +61,7 @@ func localModpackHandler(t *testing.T, dir string) *PacksHandler {
 		"modpack_storage_provider": "local",
 		"modpack_storage_paths":    string(paths),
 	}}
-	return &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
+	return &PacksHandler{d: Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}}}
 }
 
 // storeZip writes a zip holding one file at entryName into the local modpack

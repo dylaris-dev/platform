@@ -47,7 +47,7 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 	var jobs []job
 
 	if req.All {
-		content, err := h.state.Store.ListBuildContent(build.ID)
+		content, err := h.d.Store.ListBuildContent(build.ID)
 		if err != nil {
 			httpx.SendJSONError(w, "Failed to load build content", http.StatusInternalServerError)
 			return
@@ -62,7 +62,7 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "modversionId or all required", http.StatusBadRequest)
 			return
 		}
-		mv, err := h.state.Store.GetModversion(req.ModversionID)
+		mv, err := h.d.Store.GetModversion(req.ModversionID)
 		if err != nil || mv == nil {
 			httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 			return
@@ -72,7 +72,7 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 		// Without this check a caller could pass another tenant's modversionId and
 		// repoint their storage_key/hashes to this caller's storage path. Batch
 		// mode is already safe (it iterates ListBuildContent(build.ID)).
-		if ok, _ := h.state.Store.IsModversionInBuild(build.ID, req.ModversionID); !ok {
+		if ok, _ := h.d.Store.IsModversionInBuild(build.ID, req.ModversionID); !ok {
 			httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 			return
 		}
@@ -94,7 +94,7 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 	results := make([]updateModsResult, 0, len(jobs))
 	upgraded := 0
 	for _, j := range jobs {
-		mv, err := h.state.Store.GetModversion(j.mvID)
+		mv, err := h.d.Store.GetModversion(j.mvID)
 		if err != nil || mv == nil {
 			results = append(results, updateModsResult{ModversionID: j.mvID, Error: "content not found"})
 			continue
@@ -108,7 +108,7 @@ func (h *PacksHandler) UpdateMods(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if upgraded > 0 {
-		publishPackEvent(r, h.state, "pack_content.changed", build.PackID, map[string]interface{}{"buildId": build.ID})
+		publishPackEvent(r, h.d, "pack_content.changed", build.PackID, map[string]interface{}{"buildId": build.ID})
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "upgraded": upgraded, "results": results})
 }

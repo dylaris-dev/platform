@@ -22,7 +22,7 @@ func (h *PacksHandler) Folders(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
-	folders, err := h.state.Store.ListPackFolders(r.Context(), build.ID)
+	folders, err := h.d.Store.ListPackFolders(r.Context(), build.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not load folders", 500)
 		return
@@ -42,7 +42,7 @@ func (h *PacksHandler) Folders(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid relative folder path", 400)
 		return
 	}
-	content, err := h.state.Store.ListBuildContent(build.ID)
+	content, err := h.d.Store.ListBuildContent(build.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not inspect folder content", 500)
 		return
@@ -61,10 +61,10 @@ func (h *PacksHandler) Folders(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := h.state.Store.SetPackFolder(r.Context(), build.ID, req.Path, r.Method == http.MethodDelete); err != nil {
+	if err := h.d.Store.SetPackFolder(r.Context(), build.ID, req.Path, r.Method == http.MethodDelete); err != nil {
 		httpx.SendJSONError(w, "Could not change folder", 409)
 		return
 	}
-	publishPackEvent(r, h.state, "pack_content.changed", build.PackID, map[string]interface{}{"buildId": build.ID})
+	publishPackEvent(r, h.d, "pack_content.changed", build.PackID, map[string]interface{}{"buildId": build.ID})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

@@ -53,7 +53,7 @@ func allows(m *models.ModrinthMembership, need packNeed) bool {
 }
 
 func (h *PacksHandler) membershipFor(ctx context.Context, userID, projectID string) *models.ModrinthMembership {
-	return services.MembershipFor(ctx, h.state.Store, h.patLoader(), userID, projectID)
+	return services.MembershipFor(ctx, h.d.Store, h.patLoader(), userID, projectID)
 }
 
 func (h *PacksHandler) askModrinthMembership(ctx context.Context, userID, projectID string, cached *models.ModrinthMembership) (*models.ModrinthMembership, error) {
@@ -72,7 +72,7 @@ func (h *PacksHandler) patLoader() services.PATLoader {
 // or imported the project with their own token).
 func (h *PacksHandler) grantMembership(userID, projectID string, perms int64) {
 	now := time.Now()
-	if err := h.state.Store.UpsertModrinthMembership(&models.ModrinthMembership{UserID: userID, ProjectID: projectID, State: stateMember, Permissions: perms, ConfirmedAt: &now}); err != nil {
+	if err := h.d.Store.UpsertModrinthMembership(&models.ModrinthMembership{UserID: userID, ProjectID: projectID, State: stateMember, Permissions: perms, ConfirmedAt: &now}); err != nil {
 		log.Printf("packs: membership %s/%s not stored: %v", userID, projectID, err)
 	}
 }
@@ -105,11 +105,11 @@ func (h *PacksHandler) discoverTeamPacks(ctx context.Context, userID string) {
 		return
 	}
 	for _, p := range projects {
-		pack, err := h.state.Store.GetPackByModrinthProject(p.ID)
+		pack, err := h.d.Store.GetPackByModrinthProject(p.ID)
 		if err != nil || pack == nil {
 			continue
 		}
-		if cached, _ := h.state.Store.GetModrinthMembership(userID, p.ID); cached == nil {
+		if cached, _ := h.d.Store.GetModrinthMembership(userID, p.ID); cached == nil {
 			h.membershipFor(ctx, userID, p.ID)
 		}
 	}
@@ -121,7 +121,7 @@ func (h *PacksHandler) discoverTeamPacks(ctx context.Context, userID string) {
 // their builds stay; they belong to the Modrinth team.
 func (h *PacksHandler) ClearModrinthMemberships(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value("userID").(string)
-	n, err := h.state.Store.ClearModrinthMemberships(userID)
+	n, err := h.d.Store.ClearModrinthMemberships(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not clear", http.StatusInternalServerError)
 		return

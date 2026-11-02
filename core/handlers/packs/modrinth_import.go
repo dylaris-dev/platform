@@ -99,7 +99,7 @@ func (h *PacksHandler) ListModrinthProjects(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Could not read your Modrinth projects: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	hidden, err := h.state.Store.HiddenModrinthProjects(userID)
+	hidden, err := h.d.Store.HiddenModrinthProjects(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not read hidden projects", http.StatusInternalServerError)
 		return
@@ -111,7 +111,7 @@ func (h *PacksHandler) ListModrinthProjects(w http.ResponseWriter, r *http.Reque
 	rows := make([]importProjectRow, 0, len(projects))
 	for _, p := range projects {
 		row := importProjectRow{ModrinthProjectSummary: p, Hidden: hiddenSet[p.ID]}
-		if pack, err := h.state.Store.GetPackByModrinthProject(p.ID); err == nil && pack != nil {
+		if pack, err := h.d.Store.GetPackByModrinthProject(p.ID); err == nil && pack != nil {
 			row.PackID = pack.ID
 		}
 		rows = append(rows, row)
@@ -130,7 +130,7 @@ func (h *PacksHandler) SetModrinthProjectHidden(w http.ResponseWriter, r *http.R
 		httpx.SendJSONError(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetModrinthProjectHidden(userID, projectID, req.Hidden); err != nil {
+	if err := h.d.Store.SetModrinthProjectHidden(userID, projectID, req.Hidden); err != nil {
 		httpx.SendJSONError(w, "Could not save", http.StatusInternalServerError)
 		return
 	}
@@ -164,12 +164,12 @@ func (h *PacksHandler) ImportModrinthProject(w http.ResponseWriter, r *http.Requ
 	}
 	// One Modrinth project is one pack: a teammate who imported it first
 	// already made it, and the team decides who reaches it.
-	if existing, err := h.state.Store.GetPackByModrinthProject(projectID); err == nil && existing != nil {
+	if existing, err := h.d.Store.GetPackByModrinthProject(projectID); err == nil && existing != nil {
 		h.membershipFor(r.Context(), userID, projectID)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": existing, "existing": true})
 		return
 	}
-	packs, _ := h.state.Store.ListPacksByOwner(userID)
+	packs, _ := h.d.Store.ListPacksByOwner(userID)
 	slug := project.Slug
 	taken := map[string]bool{}
 	for _, p := range packs {
@@ -191,7 +191,7 @@ func (h *PacksHandler) ImportModrinthProject(w http.ResponseWriter, r *http.Requ
 		ModrinthProjectName: project.Slug,
 		ModrinthVisibility:  "unlisted",
 	}
-	id, err := h.state.Store.CreatePack(p)
+	id, err := h.d.Store.CreatePack(p)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to create pack", http.StatusInternalServerError)
 		return
@@ -199,7 +199,7 @@ func (h *PacksHandler) ImportModrinthProject(w http.ResponseWriter, r *http.Requ
 	p.ID = id
 	h.membershipFor(r.Context(), userID, project.ID)
 	h.audit(r, userID, id, "pack.imported", map[string]any{"modrinthProject": project.ID})
-	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
+	h.d.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": p})
 }
 
@@ -228,7 +228,7 @@ func (h *PacksHandler) ListModrinthVersions(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Could not read the Modrinth versions: "+err.Error(), http.StatusBadGateway)
 		return
 	}
-	builds, _ := h.state.Store.ListPackBuilds(pack.ID)
+	builds, _ := h.d.Store.ListPackBuilds(pack.ID)
 	have := map[string]int{}
 	for _, b := range builds {
 		if b.ModrinthVersionID != "" {
@@ -268,7 +268,7 @@ func (h *PacksHandler) ImportModrinthVersion(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "That version does not belong to this pack's Modrinth project.", http.StatusNotFound)
 		return
 	}
-	builds, _ := h.state.Store.ListPackBuilds(pack.ID)
+	builds, _ := h.d.Store.ListPackBuilds(pack.ID)
 	names := map[string]bool{}
 	for _, b := range builds {
 		if b.ModrinthVersionID == versionID {
@@ -277,7 +277,7 @@ func (h *PacksHandler) ImportModrinthVersion(w http.ResponseWriter, r *http.Requ
 		}
 		names[b.VersionString] = true
 	}
-	prov, err := h.state.CoreStorage.BuildModpackProvider()
+	prov, err := h.d.CoreStorage.BuildModpackProvider()
 	if err != nil || prov == nil {
 		httpx.SendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
 		return
@@ -289,7 +289,7 @@ func (h *PacksHandler) ImportModrinthVersion(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	h.audit(r, pack.OwnerID, pack.ID, "build.imported", map[string]any{"modrinthVersion": versionID, "buildId": result.BuildID})
-	publishPackEvent(r, h.state, "pack_builds.changed", pack.ID, map[string]interface{}{"packId": pack.ID})
+	publishPackEvent(r, h.d, "pack_builds.changed", pack.ID, map[string]interface{}{"packId": pack.ID})
 	_ = json.NewEncoder(w).Encode(result)
 }
 
@@ -338,13 +338,13 @@ func (h *PacksHandler) importVersion(ctx context.Context, prov modpack.ModpackSt
 		name = strings.TrimSpace(name + " (" + v.ID + ")")
 	}
 	build := &models.PackBuild{PackID: pack.ID, VersionString: name, Minecraft: minecraft, Loader: loader, LoaderVersion: loaderVersion, Changelog: v.Changelog, Channel: models.ChannelDraft, ImportedFrom: "modrinth"}
-	buildID, err := h.state.Store.CreatePackBuild(build)
+	buildID, err := h.d.Store.CreatePackBuild(build)
 	if err != nil {
 		return nil, upErr(http.StatusConflict, "Could not create the build: "+err.Error())
 	}
 	build.ID = buildID
 	fail := func(status int, msg string) (*importVersionResult, *uploadError) {
-		if err := h.state.Store.DeletePackBuild(buildID, pack.ID); err != nil {
+		if err := h.d.Store.DeletePackBuild(buildID, pack.ID); err != nil {
 			log.Printf("packs: half-imported build %d not removed: %v", buildID, err)
 		}
 		return nil, upErr(status, msg)
@@ -419,7 +419,7 @@ func (h *PacksHandler) importVersion(ctx context.Context, prov modpack.ModpackSt
 	build.ModrinthPublished = true
 	build.ModrinthVersionID = v.ID
 	build.PublishedAt = &published
-	if err := h.state.Store.UpdatePackBuild(build); err != nil {
+	if err := h.d.Store.UpdatePackBuild(build); err != nil {
 		return fail(http.StatusInternalServerError, "Could not finish the build: "+err.Error())
 	}
 	return res, nil
@@ -433,11 +433,11 @@ func (h *PacksHandler) addModrinthFileReference(ownerID string, b *models.PackBu
 	}
 	fileName := path.Base(f.Path)
 	slug := validate.Slugify(f.ModrinthProjectID)
-	modID, err := h.state.Store.UpsertMod(&models.Mod{OwnerID: ownerID, Slug: slug, PrettyName: fileName, ContentType: kind})
+	modID, err := h.d.Store.UpsertMod(&models.Mod{OwnerID: ownerID, Slug: slug, PrettyName: fileName, ContentType: kind})
 	if err != nil {
 		return err
 	}
-	mvID, err := h.state.Store.CreateModversion(&models.Modversion{
+	mvID, err := h.d.Store.CreateModversion(&models.Modversion{
 		ModID:               modID,
 		Version:             fileName,
 		Filesize:            f.Size,
@@ -452,7 +452,7 @@ func (h *PacksHandler) addModrinthFileReference(ownerID string, b *models.PackBu
 	if err != nil {
 		return err
 	}
-	_, err = h.state.Store.AttachModversionToBuild(b.ID, mvID, f.Side)
+	_, err = h.d.Store.AttachModversionToBuild(b.ID, mvID, f.Side)
 	return err
 }
 
@@ -474,12 +474,12 @@ func (h *PacksHandler) storeImportedFile(ctx context.Context, prov modpack.Modpa
 	if herr != nil {
 		return herr
 	}
-	modID, err := h.state.Store.UpsertMod(&models.Mod{OwnerID: pack.OwnerID, Slug: slug, PrettyName: fileName, ContentType: kind})
+	modID, err := h.d.Store.UpsertMod(&models.Mod{OwnerID: pack.OwnerID, Slug: slug, PrettyName: fileName, ContentType: kind})
 	if err != nil {
 		h.deleteIfUnreferenced(context.WithoutCancel(ctx), prov, meta.key)
 		return upErr(http.StatusInternalServerError, "Failed to save "+fileName)
 	}
-	mvID, err := h.state.Store.CreateModversion(&models.Modversion{
+	mvID, err := h.d.Store.CreateModversion(&models.Modversion{
 		ModID: modID, Version: meta.version, Filesize: meta.size, StorageKey: meta.key,
 		MD5: meta.md5, SHA1: meta.innerSha1, SHA512: meta.innerSha512,
 		Source: models.SourceUpload, TargetPath: targetPath,
@@ -488,7 +488,7 @@ func (h *PacksHandler) storeImportedFile(ctx context.Context, prov modpack.Modpa
 		h.deleteIfUnreferenced(context.WithoutCancel(ctx), prov, meta.key)
 		return upErr(http.StatusInternalServerError, "Failed to save "+fileName)
 	}
-	if _, err := h.state.Store.AttachModversionToBuild(b.ID, mvID, side); err != nil {
+	if _, err := h.d.Store.AttachModversionToBuild(b.ID, mvID, side); err != nil {
 		return upErr(http.StatusInternalServerError, "Failed to attach "+fileName)
 	}
 	return nil

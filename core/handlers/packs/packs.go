@@ -9,8 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/validate"
 	"dylaris-core/models"
@@ -20,8 +18,8 @@ import (
 )
 
 type PacksHandler struct {
-	state *handlers.AppState
-	pat   PATLoader
+	d   Deps
+	pat PATLoader
 
 	// teamScans remembers when a user's Modrinth projects were last listed,
 	// so the pack list asks Modrinth at most every few minutes per user.
@@ -29,8 +27,8 @@ type PacksHandler struct {
 	teamScans  map[string]time.Time
 }
 
-func NewPacksHandler(state *handlers.AppState) *PacksHandler {
-	return &PacksHandler{state: state}
+func NewPacksHandler(d Deps) *PacksHandler {
+	return &PacksHandler{d: d}
 }
 
 // SetPATLoader wires the Modrinth PAT loader (set from main after both handlers exist).
@@ -59,7 +57,7 @@ const (
 // (legacy) pack is its creator's alone. An admin may read any pack. Every pack
 // and build handler asks this one function.
 func (h *PacksHandler) packAccess(r *http.Request, packID int, need packNeed) (*models.Pack, bool) {
-	p, err := h.state.Store.GetPack(packID)
+	p, err := h.d.Store.GetPack(packID)
 	if err != nil || p == nil {
 		return nil, false
 	}
@@ -129,7 +127,7 @@ func (h *PacksHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.discoverTeamPacks(r.Context(), userID)
-	own, err := h.state.Store.ListPacksByOwner(userID)
+	own, err := h.d.Store.ListPacksByOwner(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list packs", http.StatusInternalServerError)
 		return
@@ -144,13 +142,13 @@ func (h *PacksHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	shared := []sharedPack{}
-	memberships, err := h.state.Store.ListModrinthMemberships(userID)
+	memberships, err := h.d.Store.ListModrinthMemberships(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list packs", http.StatusInternalServerError)
 		return
 	}
 	for _, cached := range memberships {
-		p, err := h.state.Store.GetPackByModrinthProject(cached.ProjectID)
+		p, err := h.d.Store.GetPackByModrinthProject(cached.ProjectID)
 		if err != nil || p == nil || listed[p.ID] {
 			continue
 		}
@@ -229,7 +227,7 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ModrinthProjectID = created.ID
 	p.ModrinthProjectName = created.Slug
-	id, err := h.state.Store.CreatePack(p)
+	id, err := h.d.Store.CreatePack(p)
 	if err != nil {
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "duplicate") || strings.Contains(msg, "unique") {
@@ -242,7 +240,7 @@ func (h *PacksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	p.ID = id
 	h.grantMembership(userID, created.ID, services.ModrinthPermAll)
 	h.audit(r, userID, id, "pack.created", map[string]any{"slug": slug, "modrinthProject": created.ID})
-	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
+	h.d.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": userID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": p})
 }
 
@@ -262,7 +260,7 @@ func (h *PacksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	tokenInvalid := false
 	if p.ModrinthProjectID != "" {
 		caller, _ := r.Context().Value("userID").(string)
-		if m, _ := h.state.Store.GetModrinthMembership(caller, p.ModrinthProjectID); m != nil && m.State == stateTokenInvalid {
+		if m, _ := h.d.Store.GetModrinthMembership(caller, p.ModrinthProjectID); m != nil && m.State == stateTokenInvalid {
 			tokenInvalid = true
 		}
 	}
@@ -293,11 +291,11 @@ func (h *PacksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if req.Summary != nil {
 		p.Summary = strings.TrimSpace(*req.Summary)
 	}
-	if err := h.state.Store.UpdatePack(p); err != nil {
+	if err := h.d.Store.UpdatePack(p); err != nil {
 		httpx.SendJSONError(w, "Failed to update", http.StatusInternalServerError)
 		return
 	}
-	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": p.OwnerID})
+	h.d.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": p.OwnerID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": p})
 }
 
@@ -309,13 +307,13 @@ func (h *PacksHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	dirs := h.state.CoreStorage.PackDirsOfPack(p)
-	if err := h.state.Store.DeletePack(packID, p.OwnerID); err != nil {
+	dirs := h.d.CoreStorage.PackDirsOfPack(p)
+	if err := h.d.Store.DeletePack(packID, p.OwnerID); err != nil {
 		httpx.SendJSONError(w, "Failed to delete", http.StatusInternalServerError)
 		return
 	}
-	h.state.CoreStorage.DropPackDirs(dirs)
-	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": p.OwnerID})
+	h.d.CoreStorage.DropPackDirs(dirs)
+	h.d.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": p.OwnerID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
@@ -343,7 +341,7 @@ func (h *PacksHandler) ListBuilds(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	builds, err := h.state.Store.ListPackBuilds(packID)
+	builds, err := h.d.Store.ListPackBuilds(packID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list builds", http.StatusInternalServerError)
 		return
@@ -423,7 +421,7 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 		Channel:       models.ChannelDraft,
 	}
 	if req.SourceBuildID != 0 {
-		source, err := h.state.Store.GetPackBuild(req.SourceBuildID)
+		source, err := h.d.Store.GetPackBuild(req.SourceBuildID)
 		if err != nil || source == nil || source.PackID != packID {
 			httpx.SendJSONError(w, "Source build not found", http.StatusNotFound)
 			return
@@ -437,16 +435,16 @@ func (h *PacksHandler) CreateBuild(w http.ResponseWriter, r *http.Request) {
 	var id int
 	var err error
 	if req.SourceBuildID != 0 {
-		id, err = h.state.Store.ClonePackBuild(r.Context(), b, req.SourceBuildID)
+		id, err = h.d.Store.ClonePackBuild(r.Context(), b, req.SourceBuildID)
 	} else {
-		id, err = h.state.Store.CreatePackBuild(b)
+		id, err = h.d.Store.CreatePackBuild(b)
 	}
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to create build (version may exist)", http.StatusConflict)
 		return
 	}
 	b.ID = id
-	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
+	publishPackEvent(r, h.d, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "build": b})
 }
 
@@ -460,7 +458,7 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	b, err := h.state.Store.GetPackBuild(buildID)
+	b, err := h.d.Store.GetPackBuild(buildID)
 	if err != nil || b == nil || b.PackID != packID {
 		httpx.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
@@ -497,7 +495,7 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 	}
 	// The version string is part of the derived directory: a rename moves
 	// where the next render lands and strands the objects of the old one.
-	oldDirs := h.state.CoreStorage.PackBuildDirs(p, b)
+	oldDirs := h.d.CoreStorage.PackBuildDirs(p, b)
 	if v := strings.TrimSpace(req.VersionString); v != "" {
 		if !safeKeyComponent(v) {
 			httpx.SendJSONError(w, "versionString contains invalid path characters", http.StatusBadRequest)
@@ -513,14 +511,14 @@ func (h *PacksHandler) UpdateBuild(w http.ResponseWriter, r *http.Request) {
 	b.Loader = strings.TrimSpace(req.Loader)
 	b.LoaderVersion = strings.TrimSpace(req.LoaderVersion)
 	b.Changelog = req.Changelog
-	if err := h.state.Store.UpdatePackBuild(b); err != nil {
+	if err := h.d.Store.UpdatePackBuild(b); err != nil {
 		httpx.SendJSONError(w, "Failed to update build", http.StatusInternalServerError)
 		return
 	}
-	if newDirs := h.state.CoreStorage.PackBuildDirs(p, b); newDirs[0] != oldDirs[0] {
-		h.state.CoreStorage.DropPackDirs(oldDirs[:1])
+	if newDirs := h.d.CoreStorage.PackBuildDirs(p, b); newDirs[0] != oldDirs[0] {
+		h.d.CoreStorage.DropPackDirs(oldDirs[:1])
 	}
-	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
+	publishPackEvent(r, h.d, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "build": b})
 }
 
@@ -535,7 +533,7 @@ func (h *PacksHandler) DeleteBuild(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	b, err := h.state.Store.GetPackBuild(buildID)
+	b, err := h.d.Store.GetPackBuild(buildID)
 	if err != nil || b == nil || b.PackID != packID {
 		httpx.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
@@ -549,12 +547,12 @@ func (h *PacksHandler) DeleteBuild(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	dirs := h.state.CoreStorage.PackBuildDirs(p, b)
-	if err := h.state.Store.DeletePackBuild(buildID, packID); err != nil {
+	dirs := h.d.CoreStorage.PackBuildDirs(p, b)
+	if err := h.d.Store.DeletePackBuild(buildID, packID); err != nil {
 		httpx.SendJSONError(w, "Failed to delete build", http.StatusInternalServerError)
 		return
 	}
-	h.state.CoreStorage.DropPackDirs(dirs)
-	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
+	h.d.CoreStorage.DropPackDirs(dirs)
+	publishPackEvent(r, h.d, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }

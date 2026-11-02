@@ -281,7 +281,7 @@ func (h *PacksHandler) renderMrpack(ctx context.Context, pack *models.Pack, buil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	prov, _ := h.state.CoreStorage.BuildModpackProvider()
+	prov, _ := h.d.CoreStorage.BuildModpackProvider()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	if err := h.writeMrpackZip(ctx, zw, pack, build, content, prov); err != nil {
@@ -317,7 +317,7 @@ func (h *PacksHandler) renderMrpack(ctx context.Context, pack *models.Pack, buil
 // build is unaffected because its key is stored on the build row, and an
 // unpublished one is re-rendered under the new path, orphaning the old object.
 func (h *PacksHandler) mrpackStorageKey(pack *models.Pack, build *models.PackBuild) string {
-	return h.state.CoreStorage.MrpackStorageKey(pack, build)
+	return h.d.CoreStorage.MrpackStorageKey(pack, build)
 }
 
 // persistMrpackForBuild renders + (for beta/release) persists the mrpack to
@@ -330,7 +330,7 @@ func (h *PacksHandler) persistMrpackForBuild(ctx context.Context, pack *models.P
 	if build.Channel == models.ChannelDraft {
 		return data, nil
 	}
-	prov, err := h.state.CoreStorage.BuildModpackProvider()
+	prov, err := h.d.CoreStorage.BuildModpackProvider()
 	if err != nil {
 		return nil, fmt.Errorf("modpack storage misconfigured: %w", err)
 	}
@@ -345,7 +345,7 @@ func (h *PacksHandler) persistMrpackForBuild(ctx context.Context, pack *models.P
 	build.MrpackStorageKey = key
 	build.MrpackSHA256 = hex.EncodeToString(sum[:])
 	build.Frozen = true
-	if err := h.state.Store.UpdatePackBuild(build); err != nil {
+	if err := h.d.Store.UpdatePackBuild(build); err != nil {
 		return nil, fmt.Errorf("mrpack persisted but stamp failed: %w", err)
 	}
 	return data, nil
@@ -360,7 +360,7 @@ func (h *PacksHandler) EnsureInstallMrpack(ctx context.Context, pack *models.Pac
 	if build.MrpackStorageKey != "" {
 		return build.MrpackStorageKey, nil
 	}
-	content, err := h.state.Store.ListBuildContent(build.ID)
+	content, err := h.d.Store.ListBuildContent(build.ID)
 	if err != nil {
 		return "", err
 	}
@@ -385,11 +385,11 @@ func (h *PacksHandler) InstallMrpackURL(ctx context.Context, pack *models.Pack, 
 	if err != nil {
 		return "", err
 	}
-	base, err := corestorage.ModpackMirrorBase(h.state.Store.GetSetting)
+	base, err := corestorage.ModpackMirrorBase(h.d.Store.GetSetting)
 	if err != nil {
 		return "", err
 	}
-	return corestorage.SignedModpackMirrorURL(base, h.state.ClusterSecret, key, time.Now()), nil
+	return corestorage.SignedModpackMirrorURL(base, h.d.ClusterSecret, key, time.Now()), nil
 }
 
 // fetchPublishedVersion is a var so a test can stand in for Modrinth.
@@ -422,7 +422,7 @@ func (h *PacksHandler) storeDraftMrpack(ctx context.Context, pack *models.Pack, 
 	if err != nil {
 		return "", err
 	}
-	prov, err := h.state.CoreStorage.BuildModpackProvider()
+	prov, err := h.d.CoreStorage.BuildModpackProvider()
 	if err != nil {
 		return "", err
 	}
@@ -455,12 +455,12 @@ func (h *PacksHandler) ExportMrpack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
-	build, err := h.state.Store.GetPackBuild(buildID)
+	build, err := h.d.Store.GetPackBuild(buildID)
 	if err != nil || build == nil || build.PackID != packID {
 		httpx.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
 	}
-	content, err := h.state.Store.ListBuildContent(buildID)
+	content, err := h.d.Store.ListBuildContent(buildID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load content", http.StatusInternalServerError)
 		return

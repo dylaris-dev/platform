@@ -58,7 +58,7 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Target edit access is required", 403)
 			return
 		}
-		builds, err := h.state.Store.ListPackBuilds(target.ID)
+		builds, err := h.d.Store.ListPackBuilds(target.ID)
 		if err != nil {
 			httpx.SendJSONError(w, "Could not inspect the target", 500)
 			return
@@ -83,7 +83,7 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Invalid target slug", 400)
 			return
 		}
-		own, err := h.state.Store.ListPacksByOwner(user)
+		own, err := h.d.Store.ListPacksByOwner(user)
 		if err != nil {
 			httpx.SendJSONError(w, "Could not inspect existing packs", 500)
 			return
@@ -112,7 +112,7 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	rows, err := h.state.Store.ListBuildContent(source.ID)
+	rows, err := h.d.Store.ListBuildContent(source.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not read source content", 500)
 		return
@@ -121,7 +121,7 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "A fork supports up to 2000 content entries", 422)
 		return
 	}
-	folders, err := h.state.Store.ListPackFolders(ctx, source.ID)
+	folders, err := h.d.Store.ListPackFolders(ctx, source.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not read source folders", 500)
 		return
@@ -136,7 +136,7 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 		}
 		cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stop()
-		unused, err := h.state.Store.UnreferencedPackForkUploads(cleanup, forkID, staged)
+		unused, err := h.d.Store.UnreferencedPackForkUploads(cleanup, forkID, staged)
 		if err != nil {
 			log.Print("pack fork: retained staged uploads because the database outcome could not be verified")
 			return
@@ -166,7 +166,7 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if provider == nil {
-			provider, err = h.state.CoreStorage.BuildModpackProvider()
+			provider, err = h.d.CoreStorage.BuildModpackProvider()
 			if err != nil || provider == nil {
 				httpx.SendJSONError(w, "Modpack storage is unavailable", 503)
 				return
@@ -196,14 +196,14 @@ func (h *PacksHandler) ForkBuild(w http.ResponseWriter, r *http.Request) {
 	}
 	b := &models.PackBuild{VersionString: version, Minecraft: source.Minecraft, Loader: source.Loader, LoaderVersion: source.LoaderVersion, MinJava: source.MinJava, MinMemory: source.MinMemory, Changelog: source.Changelog, Channel: models.ChannelDraft}
 	f := &models.PackFork{SourcePackID: source.PackID, SourceBuildID: source.ID, Target: target, Build: b, CatalogSuffix: forkID, Content: rows, Folders: folders}
-	packID, _, err := h.state.Store.ForkPackBuild(ctx, f)
+	packID, _, err := h.d.Store.ForkPackBuild(ctx, f)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not finish the fork: target must still be empty and its slug unique", 409)
 		return
 	}
 	committed = true
 	h.audit(r, target.OwnerID, packID, "build.forked", map[string]any{"sourcePackId": source.PackID, "sourceBuildId": source.ID, "buildId": b.ID})
-	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
+	publishPackEvent(r, h.d, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "pack": target, "build": b})
 }
 

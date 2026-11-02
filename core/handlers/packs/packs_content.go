@@ -42,7 +42,7 @@ func (h *PacksHandler) loadBuild(r *http.Request, need packNeed) (*models.PackBu
 	if !ok {
 		return nil, "", false
 	}
-	b, err := h.state.Store.GetPackBuild(buildID)
+	b, err := h.d.Store.GetPackBuild(buildID)
 	if err != nil || b == nil || b.PackID != packID {
 		return nil, "", false
 	}
@@ -66,12 +66,12 @@ func (h *PacksHandler) ListContent(w http.ResponseWriter, r *http.Request) {
 	// build-scoped route already carries it, via loadOwnedBuild or explicitly
 	// like ExportMrpack; this one was the exception.
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
-	b, err := h.state.Store.GetPackBuild(buildID)
+	b, err := h.d.Store.GetPackBuild(buildID)
 	if err != nil || b == nil || b.PackID != packID {
 		httpx.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
 	}
-	entries, err := h.state.Store.ListBuildContent(buildID)
+	entries, err := h.d.Store.ListBuildContent(buildID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list content", http.StatusInternalServerError)
 		return
@@ -130,7 +130,7 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	existing, err := h.state.Store.ListBuildContent(b.ID)
+	existing, err := h.d.Store.ListBuildContent(b.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to read existing build content", http.StatusInternalServerError)
 		return
@@ -180,7 +180,7 @@ func (h *PacksHandler) AddModrinth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp["added"] = added
-	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
+	publishPackEvent(r, h.d, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
 	json.NewEncoder(w).Encode(resp)
 }
 
@@ -198,14 +198,14 @@ func (h *PacksHandler) addModrinthVersion(ownerID string, b *models.PackBuild, v
 		return fmt.Errorf("invalid content side")
 	}
 	slug := validate.Slugify(v.ProjectSlugOrID())
-	modID, err := h.state.Store.UpsertMod(&models.Mod{
+	modID, err := h.d.Store.UpsertMod(&models.Mod{
 		OwnerID: ownerID, Slug: slug, PrettyName: v.Name, ContentType: contentType,
 	})
 	if err != nil {
 		return err
 	}
 	file := v.PrimaryFile()
-	mvID, err := h.state.Store.CreateModversion(&models.Modversion{
+	mvID, err := h.d.Store.CreateModversion(&models.Modversion{
 		ModID:                 modID,
 		Version:               v.VersionNum,
 		Filesize:              file.Size,
@@ -225,7 +225,7 @@ func (h *PacksHandler) addModrinthVersion(ownerID string, b *models.PackBuild, v
 	if side == "" {
 		side = sideFromModrinthDefault()
 	}
-	_, err = h.state.Store.AttachModversionToBuild(b.ID, mvID, side)
+	_, err = h.d.Store.AttachModversionToBuild(b.ID, mvID, side)
 	return err
 }
 
@@ -350,7 +350,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	}
 	isBundle := archive || contentType == models.ContentTypeMod && strings.HasSuffix(strings.ToLower(fileName), ".zip")
 	if !isBundle {
-		entries, err := h.state.Store.ListBuildContent(b.ID)
+		entries, err := h.d.Store.ListBuildContent(b.ID)
 		if err != nil {
 			httpx.SendJSONError(w, "Failed to check existing content", http.StatusInternalServerError)
 			return
@@ -363,7 +363,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	prov, err := h.state.CoreStorage.BuildModpackProvider()
+	prov, err := h.d.CoreStorage.BuildModpackProvider()
 	if err != nil || prov == nil {
 		httpx.SendJSONError(w, "No pack storage configured (Settings -> Modpacks)", http.StatusFailedDependency)
 		return
@@ -387,7 +387,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 	md5hex, innerSha1, innerSha512 := meta.md5, meta.innerSha1, meta.innerSha512
 	key, version := meta.key, meta.version
 
-	modID, err := h.state.Store.UpsertMod(&models.Mod{
+	modID, err := h.d.Store.UpsertMod(&models.Mod{
 		OwnerID: owner, Slug: slug, PrettyName: fileName, ContentType: contentType,
 	})
 	if err != nil {
@@ -429,7 +429,7 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	mvID, err := h.state.Store.CreateModversion(mv)
+	mvID, err := h.d.Store.CreateModversion(mv)
 	if err != nil {
 		h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, key)
 		httpx.SendJSONError(w, "Failed to save version", http.StatusInternalServerError)
@@ -439,11 +439,11 @@ func (h *PacksHandler) UploadContent(w http.ResponseWriter, r *http.Request) {
 		// Linked: the row is a reference now, so the stored upload goes.
 		h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, key)
 	}
-	if _, err := h.state.Store.AttachModversionToBuild(b.ID, mvID, side); err != nil {
+	if _, err := h.d.Store.AttachModversionToBuild(b.ID, mvID, side); err != nil {
 		httpx.SendJSONError(w, "Failed to attach", http.StatusInternalServerError)
 		return
 	}
-	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
+	publishPackEvent(r, h.d, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "modversionId": mvID, "linked": mv.ModrinthProjectID != ""})
 }
 
@@ -456,11 +456,11 @@ func (h *PacksHandler) RemoveContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mvID, _ := strconv.Atoi(mux.Vars(r)["modversionId"])
-	if err := h.state.Store.DetachFromBuild(b.ID, mvID); err != nil {
+	if err := h.d.Store.DetachFromBuild(b.ID, mvID); err != nil {
 		httpx.SendJSONError(w, "Failed to remove", http.StatusInternalServerError)
 		return
 	}
-	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
+	publishPackEvent(r, h.d, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 
@@ -489,15 +489,15 @@ func (h *PacksHandler) SetSide(w http.ResponseWriter, r *http.Request) {
 	}
 	// AttachModversionToBuild is an upsert: without this check a caller could pass
 	// another tenant's modversionId and pull it into their own build.
-	if ok, _ := h.state.Store.IsModversionInBuild(b.ID, mvID); !ok {
+	if ok, _ := h.d.Store.IsModversionInBuild(b.ID, mvID); !ok {
 		httpx.SendJSONError(w, "Content not found", http.StatusNotFound)
 		return
 	}
-	if _, err := h.state.Store.AttachModversionToBuild(b.ID, mvID, req.Side); err != nil {
+	if _, err := h.d.Store.AttachModversionToBuild(b.ID, mvID, req.Side); err != nil {
 		httpx.SendJSONError(w, "Failed to set side", http.StatusInternalServerError)
 		return
 	}
-	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
+	publishPackEvent(r, h.d, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 

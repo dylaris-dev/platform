@@ -2,10 +2,9 @@ package packs
 
 import (
 	"context"
+	"dylaris-core/services/corestorage"
 	"errors"
 	"testing"
-
-	"dylaris-core/handlers"
 )
 
 // Renders hold a stored zip and the pack being built in memory; with nothing
@@ -22,7 +21,7 @@ func TestMrpackRendersAreBounded(t *testing.T) {
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{})}
+	h := &PacksHandler{d: Deps{CoreStorage: &corestorage.Manager{}}}
 	if _, err := h.renderMrpack(ctx, nil, nil, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("a render past the limit ran: %v", err)
 	}

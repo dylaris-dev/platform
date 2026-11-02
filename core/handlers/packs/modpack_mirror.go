@@ -22,7 +22,7 @@ import (
 // the same 404, so the route is not an oracle for which keys exist.
 func (h *PacksHandler) ModpackMirror(w http.ResponseWriter, r *http.Request) {
 	notFound := func() { httpx.SendJSONError(w, "Not found", http.StatusNotFound) }
-	if !h.state.FeatureFlags.IsModpacksEnabled(r.Context()) {
+	if !h.d.FeatureFlags.IsModpacksEnabled(r.Context()) {
 		httpx.SendJSONError(w, "Modpacks are disabled", http.StatusForbidden)
 		return
 	}
@@ -34,11 +34,11 @@ func (h *PacksHandler) ModpackMirror(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	if !corestorage.ValidModpackMirrorSig(h.state.ClusterSecret, key, q.Get("exp"), q.Get("sig"), time.Now()) {
+	if !corestorage.ValidModpackMirrorSig(h.d.ClusterSecret, key, q.Get("exp"), q.Get("sig"), time.Now()) {
 		notFound()
 		return
 	}
-	prov, err := h.state.CoreStorage.BuildModpackProvider()
+	prov, err := h.d.CoreStorage.BuildModpackProvider()
 	if err != nil || prov == nil {
 		httpx.SendJSONError(w, "Storage not configured", http.StatusInternalServerError)
 		return

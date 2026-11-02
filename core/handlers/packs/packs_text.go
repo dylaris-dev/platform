@@ -57,14 +57,14 @@ func (h *PacksHandler) loadOwnedContentModversion(r *http.Request, need packNeed
 		return nil, nil, nil, false
 	}
 	mvID, _ := strconv.Atoi(mux.Vars(r)["modversionId"])
-	if ok, _ := h.state.Store.IsModversionInBuild(b.ID, mvID); !ok {
+	if ok, _ := h.d.Store.IsModversionInBuild(b.ID, mvID); !ok {
 		return nil, nil, nil, false
 	}
-	mv, err := h.state.Store.GetModversion(mvID)
+	mv, err := h.d.Store.GetModversion(mvID)
 	if err != nil || mv == nil {
 		return nil, nil, nil, false
 	}
-	prov, err := h.state.CoreStorage.BuildModpackProvider()
+	prov, err := h.d.CoreStorage.BuildModpackProvider()
 	if err != nil || prov == nil {
 		return nil, nil, nil, false
 	}
@@ -196,7 +196,7 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 	mv.ModrinthDownloadURL = ""
 	mv.ModrinthLatestVersionID = ""
 	mv.ModrinthLastChecked = nil
-	if err := h.state.Store.UpdateModversion(mv); err != nil {
+	if err := h.d.Store.UpdateModversion(mv); err != nil {
 		if newKey != oldKey {
 			h.deleteIfUnreferenced(context.WithoutCancel(r.Context()), prov, newKey)
 		}
@@ -209,7 +209,7 @@ func (h *PacksHandler) SetContentText(w http.ResponseWriter, r *http.Request) {
 	if oldKey != newKey {
 		h.deleteIfUnreferenced(r.Context(), prov, oldKey)
 	}
-	publishPackEvent(r, h.state, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
+	publishPackEvent(r, h.d, "pack_content.changed", b.PackID, map[string]interface{}{"buildId": b.ID})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 }
 

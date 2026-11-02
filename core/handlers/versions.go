@@ -329,7 +329,7 @@ type VersionHandler struct {
 }
 
 func NewVersionHandler(state *AppState) *VersionHandler {
-	return &VersionHandler{state: state, loaderHTTP: &http.Client{Timeout: 15 * time.Second}}
+	return &VersionHandler{state: state, loaderHTTP: &http.Client{Timeout: modcompat.LoaderHTTPTimeout}}
 }
 
 // GetVersions GET /api/versions - the available versions for one server

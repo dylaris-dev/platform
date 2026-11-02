@@ -16,6 +16,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/handlers/users"
+	"dylaris-core/services/corestorage"
 
 	"github.com/gorilla/mux"
 
@@ -94,7 +95,7 @@ func newPackCleanup(t *testing.T) (*PacksHandler, *packCleanupStore, string) {
 		pack:     &models.Pack{ID: 1, OwnerID: cleanupOwner, InternalSlug: "pack"},
 		builds:   []models.PackBuild{{ID: 10, PackID: 1, VersionString: "1.0"}, {ID: 11, PackID: 1, VersionString: "2.0"}},
 	}
-	h := &PacksHandler{state: withCoreStorage(&handlers.AppState{Store: fs, ClusterSecret: "test-cluster-secret-0123456789"})}
+	h := &PacksHandler{d: Deps{Store: fs, ClusterSecret: "test-cluster-secret-0123456789", CoreStorage: &corestorage.Manager{Store: fs, ClusterSecret: "test-cluster-secret-0123456789"}}}
 	return h, fs, dir
 }
 
@@ -102,7 +103,7 @@ func newPackCleanup(t *testing.T) (*PacksHandler, *packCleanupStore, string) {
 // share: the .mrpack, a server pack and the marker naming it.
 func seedBuild(t *testing.T, h *PacksHandler, root string, b *models.PackBuild) string {
 	t.Helper()
-	d := h.state.CoreStorage.PackBuildDirs(h.state.Store.(*packCleanupStore).pack, b)[0]
+	d := h.d.CoreStorage.PackBuildDirs(h.d.Store.(*packCleanupStore).pack, b)[0]
 	files := map[string]string{
 		d + "pack.mrpack":     "mrpack",
 		d + "server-abc.zip":  "zip",
@@ -132,8 +133,8 @@ func packReq(method string, vars map[string]string, body string) *http.Request {
 
 func TestDeletingABuildRemovesItsStoredObjects(t *testing.T) {
 	h, _, root := newPackCleanup(t)
-	gone := seedBuild(t, h, root, &h.state.Store.(*packCleanupStore).builds[0])
-	kept := seedBuild(t, h, root, &h.state.Store.(*packCleanupStore).builds[1])
+	gone := seedBuild(t, h, root, &h.d.Store.(*packCleanupStore).builds[0])
+	kept := seedBuild(t, h, root, &h.d.Store.(*packCleanupStore).builds[1])
 	h.DeleteBuild(httptest.NewRecorder(), packReq("DELETE", map[string]string{"id": "1", "buildId": "10"}, ""))
 	for _, k := range []string{"pack.mrpack", "server-abc.zip", "server.last"} {
 		if exists(root, gone+k) {
@@ -160,7 +161,7 @@ func TestDeletingAPackRemovesEveryBuildsObjects(t *testing.T) {
 func TestDeletingAnAccountRemovesItsPackObjects(t *testing.T) {
 	h, fs, root := newPackCleanup(t)
 	d := seedBuild(t, h, root, &fs.builds[0])
-	h.state.CoreStorage.DropPackDirs(h.state.CoreStorage.PackDirsOfUser(cleanupOwner))
+	h.d.CoreStorage.DropPackDirs(h.d.CoreStorage.PackDirsOfUser(cleanupOwner))
 	if exists(root, d+"pack.mrpack") {
 		t.Error("the account's objects survived")
 	}
@@ -187,7 +188,7 @@ func TestDropPackDirsIgnoresAMarkerPointingElsewhere(t *testing.T) {
 	d := seedBuild(t, h, root, &fs.builds[0])
 	other := seedBuild(t, h, root, &fs.builds[1])
 	os.WriteFile(filepath.Join(root, filepath.FromSlash(d+"server.last")), []byte(other+"server-abc.zip"), 0o644)
-	h.state.CoreStorage.DropPackDirs([]string{d})
+	h.d.CoreStorage.DropPackDirs([]string{d})
 	if !exists(root, other+"server-abc.zip") {
 		t.Error("a marker deleted another build's server pack")
 	}
@@ -262,7 +263,7 @@ func deleteUserPackObjects(t *testing.T, fail bool) {
 	h, fs, root := newPackCleanup(t)
 	d := seedBuild(t, h, root, &fs.builds[0])
 	us := &userDeletePackStore{userDeleteWarpStore: &userDeleteWarpStore{}, pc: fs, failDelete: fail}
-	st := withCoreStorage(&handlers.AppState{Store: us, ClusterSecret: h.state.ClusterSecret})
+	st := &handlers.AppState{Store: us, ClusterSecret: h.d.ClusterSecret, CoreStorage: &corestorage.Manager{Store: us, ClusterSecret: h.d.ClusterSecret}}
 	r := httptest.NewRequest(http.MethodDelete, "/api/users/"+cleanupOwner, bytes.NewBufferString(`{"reauth":{"password":"`+handlertest.ReauthPassword+`"}}`))
 	ctx := context.WithValue(r.Context(), "userID", "admin-id")
 	ctx = context.WithValue(ctx, "username", "admin")
@@ -310,15 +311,15 @@ func TestPurgeStoredServerPacksRunsOnce(t *testing.T) {
 	a := seedBuild(t, h, root, &fs.builds[0])
 	b := seedBuild(t, h, root, &fs.builds[1])
 	ps := &purgeStore{packCleanupStore: fs, failUsers: true}
-	h.state.Store = ps
-	h.state.CoreStorage.Store = h.state.Store
+	h.d.Store = ps
+	h.d.CoreStorage.Store = h.d.Store
 
-	h.state.CoreStorage.PurgeStoredServerPacks(context.Background())
+	h.d.CoreStorage.PurgeStoredServerPacks(context.Background())
 	if fs.settings["modpack_server_packs_purged_at"] != "" || !exists(root, a+"server-abc.zip") {
 		t.Fatal("a failed purge was recorded as done, or deleted anyway")
 	}
 	ps.failUsers = false
-	h.state.CoreStorage.PurgeStoredServerPacks(context.Background())
+	h.d.CoreStorage.PurgeStoredServerPacks(context.Background())
 	for _, d := range []string{a, b} {
 		if exists(root, d+"server-abc.zip") || exists(root, d+"server.last") {
 			t.Errorf("a stored server pack under %s survived", d)
@@ -330,12 +331,12 @@ func TestPurgeStoredServerPacksRunsOnce(t *testing.T) {
 	if fs.settings["modpack_server_packs_purged_at"] == "" {
 		t.Fatal("a successful purge was not recorded")
 	}
-	h.state.Store = fs
-	h.state.CoreStorage.Store = h.state.Store
+	h.d.Store = fs
+	h.d.CoreStorage.Store = h.d.Store
 	seedBuild(t, h, root, &fs.builds[0])
-	h.state.Store = ps
-	h.state.CoreStorage.Store = h.state.Store
-	h.state.CoreStorage.PurgeStoredServerPacks(context.Background())
+	h.d.Store = ps
+	h.d.CoreStorage.Store = h.d.Store
+	h.d.CoreStorage.PurgeStoredServerPacks(context.Background())
 	if !exists(root, a+"server-abc.zip") {
 		t.Error("the purge ran again after it was recorded")
 	}

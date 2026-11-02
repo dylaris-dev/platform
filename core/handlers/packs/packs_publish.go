@@ -90,12 +90,12 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	packID, _ := strconv.Atoi(mux.Vars(r)["id"])
 	buildID, _ := strconv.Atoi(mux.Vars(r)["buildId"])
 
-	pack, err := h.state.Store.GetPack(packID)
+	pack, err := h.d.Store.GetPack(packID)
 	if err != nil || pack == nil || !h.mayEditPack(r, pack) {
 		httpx.SendJSONError(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	build, err := h.state.Store.GetPackBuild(buildID)
+	build, err := h.d.Store.GetPackBuild(buildID)
 	if err != nil || build == nil || build.PackID != packID {
 		httpx.SendJSONError(w, "Build not found", http.StatusNotFound)
 		return
@@ -116,7 +116,7 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := h.state.Store.ListBuildContent(buildID)
+	content, err := h.d.Store.ListBuildContent(buildID)
 	if err != nil || len(content) == 0 {
 		httpx.SendJSONError(w, "Build has no content yet — add some before publishing", http.StatusBadRequest)
 		return
@@ -154,7 +154,7 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	build.Channel = channel
 	var mrpack []byte
 	if build.Frozen && build.MrpackStorageKey != "" {
-		prov, perr := h.state.CoreStorage.BuildModpackProvider()
+		prov, perr := h.d.CoreStorage.BuildModpackProvider()
 		if perr != nil || prov == nil {
 			httpx.SendJSONError(w, "Modpack storage misconfigured; cannot read frozen build", http.StatusInternalServerError)
 			return
@@ -183,7 +183,7 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		}
 		projectID = created.ID
 		pack.ModrinthProjectID = projectID
-		if err := h.state.Store.UpdatePack(pack); err != nil {
+		if err := h.d.Store.UpdatePack(pack); err != nil {
 			httpx.SendJSONError(w, "Project created ("+projectID+") but local update failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -225,7 +225,7 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 	build.ModrinthVersionID = created.ID
 	build.ModrinthPublished = true
 	build.PublishedAt = &now
-	if err := h.state.Store.UpdatePackBuild(build); err != nil {
+	if err := h.d.Store.UpdatePackBuild(build); err != nil {
 		httpx.SendJSONError(w, "Published "+created.ID+" but local stamp failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -242,8 +242,8 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		message += ". Set its environment on the pack's Modrinth page."
 	}
 
-	publishPackEvent(r, h.state, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
-	h.state.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": pack.OwnerID})
+	publishPackEvent(r, h.d, "pack_builds.changed", packID, map[string]interface{}{"packId": packID})
+	h.d.Events.Publish(r.Context(), "packs.changed", map[string]interface{}{"ownerId": pack.OwnerID})
 	json.NewEncoder(w).Encode(publishModrinthResponse{
 		Success:           true,
 		ModrinthProjectID: projectID,

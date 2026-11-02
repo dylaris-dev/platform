@@ -6,11 +6,10 @@ import (
 	"net/http"
 	"strings"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/modcompat"
 )
 
 // Migrating a build to another Minecraft version.
@@ -83,7 +82,7 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(req.LoaderVersion) == "" && req.Loader != "vanilla" {
-		version, err := handlers.NewVersionHandler(h.state).PreferredLoaderVersion(r.Context(), req.Loader, req.Minecraft)
+		version, err := modcompat.PreferredLoaderVersion(r.Context(), &http.Client{Timeout: modcompat.LoaderHTTPTimeout}, req.Loader, req.Minecraft)
 		if err != nil {
 			httpx.SendJSONError(w, "Could not resolve the target loader version: "+err.Error(), http.StatusBadGateway)
 			return
@@ -91,7 +90,7 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		req.LoaderVersion = version
 	}
 
-	content, err := h.state.Store.ListBuildContent(source.ID)
+	content, err := h.d.Store.ListBuildContent(source.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load build content", http.StatusInternalServerError)
 		return
@@ -126,7 +125,7 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		Changelog: req.Changelog,
 		Channel:   models.ChannelDraft,
 	}
-	newID, err := h.state.Store.CreatePackBuild(target)
+	newID, err := h.d.Store.CreatePackBuild(target)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to create the target build (that version string may already exist)", http.StatusConflict)
 		return
@@ -165,7 +164,7 @@ func (h *PacksHandler) MigrateBuild(w http.ResponseWriter, r *http.Request) {
 		copiedUploads = append(copiedUploads, migratedItem{ModversionID: mvID, Title: e.PrettyName, Version: e.Version})
 	}
 
-	publishPackEvent(r, h.state, "pack_builds.changed", source.PackID, map[string]interface{}{"packId": source.PackID})
+	publishPackEvent(r, h.d, "pack_builds.changed", source.PackID, map[string]interface{}{"packId": source.PackID})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":     true,
@@ -263,7 +262,7 @@ func (h *PacksHandler) resolveMigrationTargets(content []models.BuildContentEntr
 // The storage object itself is shared. Nothing deletes a modpack content object
 // except a replace/update, and those now always write to a fresh key first.
 func (h *PacksHandler) copyUploadedContent(ownerID string, e models.BuildContentEntry, target *models.PackBuild) (int, error) {
-	modID, err := h.state.Store.UpsertMod(&models.Mod{
+	modID, err := h.d.Store.UpsertMod(&models.Mod{
 		OwnerID:     ownerID,
 		Slug:        e.ModSlug,
 		PrettyName:  e.PrettyName,
@@ -275,11 +274,11 @@ func (h *PacksHandler) copyUploadedContent(ownerID string, e models.BuildContent
 	mv := e.Modversion
 	mv.ID = 0
 	mv.ModID = modID
-	mvID, err := h.state.Store.CreateModversion(&mv)
+	mvID, err := h.d.Store.CreateModversion(&mv)
 	if err != nil {
 		return 0, err
 	}
-	if _, err := h.state.Store.AttachModversionToBuild(target.ID, mvID, e.Side); err != nil {
+	if _, err := h.d.Store.AttachModversionToBuild(target.ID, mvID, e.Side); err != nil {
 		return 0, err
 	}
 	return mvID, nil

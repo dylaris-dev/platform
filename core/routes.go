@@ -639,6 +639,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		StoreURL:       appState.StoreURL,
 		StoreSharedKey: appState.StoreSharedKey,
 	}
+	packsDeps := packs.Deps{
+		Store:         appState.Store,
+		Events:        appState.Events,
+		Cache:         appState.Cache,
+		FeatureFlags:  appState.FeatureFlags,
+		CoreStorage:   appState.CoreStorage,
+		ClusterSecret: appState.ClusterSecret,
+	}
 	templatesDeps := templates.Deps{
 		Store:        appState.Store,
 		Authz:        appState.Authz,
@@ -725,7 +733,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	serverTabsHandler := tabs.NewServerTabsHandler(tabsDeps)
 	proxyHandler := tabs.NewProxyHandler(tabsDeps, tabTickets(authHandler))
 	modrinthPATHandler := mods.NewModrinthPATHandler(modsDeps, cfg.ClusterSecret)
-	packsHandler := packs.NewPacksHandler(appState)
+	packsHandler := packs.NewPacksHandler(packsDeps)
 	packsHandler.SetPATLoader(modrinthPATHandler)
 	// Server installs and pack alerts resolve team access the same way.
 	services.SetPackPATLoader(modrinthPATHandler)

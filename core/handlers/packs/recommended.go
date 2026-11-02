@@ -26,11 +26,11 @@ func (h *PacksHandler) SetRecommended(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Choose a build or automatic latest release", 400)
 		return
 	}
-	if err := h.state.Store.SetPackRecommended(r.Context(), p.ID, *req.BuildID); err != nil {
+	if err := h.d.Store.SetPackRecommended(r.Context(), p.ID, *req.BuildID); err != nil {
 		httpx.SendJSONError(w, "Could not set recommended build; it must belong to this pack", 409)
 		return
 	}
 	h.audit(r, p.OwnerID, p.ID, "pack.recommended_changed", map[string]any{"buildId": *req.BuildID})
-	publishPackEvent(r, h.state, "pack_builds.changed", p.ID, map[string]interface{}{"packId": p.ID})
+	publishPackEvent(r, h.d, "pack_builds.changed", p.ID, map[string]interface{}{"packId": p.ID})
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

@@ -57,7 +57,7 @@ func TestPackFolderPermissionsAndPaths(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newPackScopeHandler()
-			base := h.state.Store.(*packScopeFakeStore)
+			base := h.d.Store.(*packScopeFakeStore)
 			base.builds[10].Frozen = tc.frozen
 			base.packs[1].ModrinthProjectID = "proj"
 			s := &folderTestStore{packScopeFakeStore: base}
@@ -66,8 +66,8 @@ func TestPackFolderPermissionsAndPaths(t *testing.T) {
 				e.TargetPath = "config/file.toml"
 				s.content = []models.BuildContentEntry{e}
 			}
-			h.state.Store = s
-			h.state.CoreStorage.Store = h.state.Store
+			h.d.Store = s
+			h.d.CoreStorage.Store = h.d.Store
 			r := packContentRequest(t, tc.user, "1", tc.build)
 			r.Method = tc.method
 			r.Body = io.NopCloser(strings.NewReader(`{"path":"` + tc.path + `"}`))
