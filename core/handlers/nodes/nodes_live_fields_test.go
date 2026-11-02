@@ -29,7 +29,7 @@ func TestEveryNodeListEndpointEnrichesFromTheHeartbeat(t *testing.T) {
 		fn   string
 	}{
 		{"nodes.go", "GetNodes"},
-		{"../infrastructure.go", "GetOverview"},
+		{"../health/infrastructure.go", "GetOverview"},
 	}
 
 	for _, site := range sites {

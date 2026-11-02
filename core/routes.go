@@ -13,6 +13,7 @@ import (
 	"dylaris-core/handlers/billing"
 	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/gateway"
+	"dylaris-core/handlers/health"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/mods"
 	"dylaris-core/handlers/nodes"
@@ -714,11 +715,29 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		CoreStorage:  appState.CoreStorage,
 		SuspendGrace: appState.SuspendGrace,
 	}
+	healthDeps := health.Deps{
+		Store:            appState.Store,
+		Redis:            appState.Redis,
+		Authz:            appState.Authz,
+		FeatureFlags:     appState.FeatureFlags,
+		CoreStorage:      appState.CoreStorage,
+		RoutingMigration: appState.RoutingMigration,
+		DBType:           appState.DBType,
+		FrontendURL:      appState.FrontendURL,
+		PanelAPIURL:      appState.PanelAPIURL,
+		ClusterSecret:    appState.ClusterSecret,
+		StoreEnabled:     appState.StoreEnabled,
+		Hosted:           appState.Hosted,
+		StoreURL:         appState.StoreURL,
+		StoreSharedKey:   appState.StoreSharedKey,
+		ReleaseVersion:   appState.ReleaseVersion,
+		CoreID:           appState.CoreID,
+	}
 
 	// Initialize handlers
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
-	systemHandler := handlers.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyHostSuffix)
+	systemHandler := health.NewSystemHandler(cfg.Region, cfg.CoreID, cfg.TabProxyHostSuffix)
 	fileHandler := handlers.NewFileHandler(appState)
 	settingsHandler := handlers.NewSettingsHandler(appState)
 	authzHandler := handlers.NewAuthzHandler()
@@ -788,9 +807,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	consoleHandler := handlers.NewConsoleHandler(appState)
 	statsHandler := stats.NewStatsHandler(statsDeps)
-	versionHandler := handlers.NewVersionHandler(appState)
+	versionHandler := health.NewVersionHandler(healthDeps)
 	beamHandler := beam.NewBeamHandler(beamDeps, cfg.BeamJWTSecret, cfg.ClusterSecret)
-	updatesHandler := handlers.NewUpdatesHandler(appState, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
+	updatesHandler := health.NewUpdatesHandler(healthDeps, appState.UpdatesURLPlatform, appState.UpdatesURLHosted)
 	timezoneHandler := handlers.NewTimezoneHandler(appState)
 	backupHandler := backup.NewBackupHandler(backupDeps)
 	platformBackupHandler := backup.NewPlatformBackupHandler(backupDeps)
@@ -806,12 +825,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	ticketSettingsHandler := tickets.NewTicketSettingsHandler(ticketsDeps)
 	ticketAttachmentsHandler := tickets.NewTicketAttachmentsHandler(ticketsDeps)
 	cannedResponsesHandler := tickets.NewCannedResponsesHandler(ticketsDeps)
-	notificationsHandler := handlers.NewNotificationsHandler(appState)
+	notificationsHandler := health.NewNotificationsHandler(healthDeps)
 	serverAuditHandler := audit.NewServerAuditHandler(appState.Store)
 	identityAuditHandler := audit.NewIdentityAuditHandler(appState.Store)
 	auditSettingsHandler := handlers.NewAuditSettingsHandler(appState)
 	ticketMigrationHandler := tickets.NewTicketMigrationHandler(ticketsDeps)
-	systemEventsHandler := handlers.NewSystemEventsHandler(appState)
+	systemEventsHandler := health.NewSystemEventsHandler(healthDeps)
 	scheduledTasksHandler := handlers.NewScheduledTasksHandler(appState)
 	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
 	modrinthHandler := mods.NewModrinthHandler(modsDeps)
@@ -859,14 +878,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	accountPolicyHandler := users.NewAccountPolicyHandler(usersDeps)
 	modpackSettingsHandler := mods.NewModpackSettingsHandler(modsDeps)
 	modCacheSettingsHandler := handlers.NewModCacheSettingsHandler(appState)
-	systemFeaturesHandler := handlers.NewSystemFeaturesHandler(appState)
+	systemFeaturesHandler := health.NewSystemFeaturesHandler(healthDeps)
 	featureSettingsHandler := handlers.NewFeatureSettingsHandler(appState)
 	tabProxySettingsHandler := tabs.NewTabProxySettingsHandler(tabsDeps)
 	usageHandler := billing.NewUsageHandler(billingDeps)
 	billingHandler := billing.NewBillingHandler(billingDeps)
 	entitlementHandler := billing.NewEntitlementHandler(billingDeps)
 	plansHandler := handlers.NewPlansHandler(appState)
-	healthHandler := handlers.NewHealthHandler(appState)
+	healthHandler := health.NewHealthHandler(healthDeps)
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
 	storageMigrationHandler := storageapi.NewStorageMigrationHandler(storageapiDeps)
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
@@ -874,7 +893,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	nodeAdmissionHandler := nodes.NewNodeAdmissionHandler(nodesDeps)
 	gatewayDNSHandler := gateway.NewGatewayDNSHandler(gatewayDeps)
 	gatewayBandwidthHandler := gateway.NewGatewayBandwidthHandler(gatewayDeps)
-	voiceStatsHandler := handlers.NewVoiceStatsHandler(appState)
+	voiceStatsHandler := health.NewVoiceStatsHandler(healthDeps)
 	ticketDeletionsHandler := tickets.NewTicketDeletionsHandler(ticketsDeps)
 	setupHandler := handlers.NewSetupHandler(appState, authHandler)
 
@@ -1757,9 +1776,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// --- Gateway Endpoints ---
 	gatewayHandler := gateway.NewGatewayHandler(gatewayDeps)
-	dnsHandler := handlers.NewDNSHandler(appState)
+	dnsHandler := health.NewDNSHandler(healthDeps)
 	trafficLimitHandler := billing.NewTrafficLimitHandler(billingDeps)
-	infrastructureHandler := handlers.NewInfrastructureHandler(appState)
+	infrastructureHandler := health.NewInfrastructureHandler(healthDeps)
 	metricsHandler := stats.NewMetricsHandler(statsDeps)
 	metricsDBHandler := stats.NewMetricsDBHandler(statsDeps)
 

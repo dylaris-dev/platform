@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
+	"dylaris-core/handlers/health"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -37,7 +37,7 @@ func TestPackEventsReachOnlyTheOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := handlers.NewSystemEventsHandler(&handlers.AppState{Store: state.Store, Redis: rdb, Events: state.Events})
+	h := health.NewSystemEventsHandler(health.Deps{Store: state.Store, Redis: rdb})
 	as := func(userID string) bool {
 		r := httptest.NewRequest("GET", "/api/system/events", nil)
 		ctx := context.WithValue(r.Context(), "userID", userID)

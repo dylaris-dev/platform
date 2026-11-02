@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"dylaris-core/handlers/health"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -38,7 +39,7 @@ func TestModConfigsFlagIsResolvedPerCaller(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/system/features", nil)
 		req = req.WithContext(context.WithValue(req.Context(), "isAdmin", admin))
 		rec := httptest.NewRecorder()
-		NewSystemFeaturesHandler(state).Get(rec, req)
+		health.NewSystemFeaturesHandler(health.Deps{Store: state.Store, FeatureFlags: state.FeatureFlags, CoreStorage: state.CoreStorage}).Get(rec, req)
 		var out struct {
 			Features map[string]any `json:"features"`
 		}

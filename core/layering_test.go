@@ -14,7 +14,8 @@ import (
 // The import rules of the handler packages (spec
 // docs/superpowers/specs/2026-11-02-core-handlers-step2-design.md, section 5):
 //
-//	layer 2  handlers/<domain>          layer 0-1, services/**, store, models, authz, grpc, storage/**, pkg/**
+//	layer 2  handlers/<domain>          layer 0-1, services/**, store, models, authz, grpc, storage/**, pkg/**,
+//	                                    and layer2Lower (database, updates)
 //	layer 1  guard access audit reauth  layer 0, services/**, store, models, authz, grpc, storage/**, pkg/**
 //	         nodeops gate               (no lateral imports inside layer 1)
 //	layer 0  httpx reqctx validate      stdlib, models, mux, google/uuid, pkg/** only
@@ -154,12 +155,19 @@ func layeringViolation(from, to string, internal bool) string {
 			return "handlertest never imports the root handlers package or a layer-2 package"
 		}
 	case strings.HasPrefix(from, "handlers/"):
-		if internal && !layer0Pkgs[to] && !layer1Pkgs[to] && !lowerShared(to) {
+		if internal && !layer0Pkgs[to] && !layer1Pkgs[to] && !lowerShared(to) && !layer2Lower[to] {
 			return "a handler package imports only layer 0-1, services, store, models, authz, grpc, storage and pkg"
 		}
 	}
 	return ""
 }
+
+// layer2Lower are core packages a layer-2 handler package may use beyond
+// lowerShared. Each is already imported by services, so a handler reaching it
+// gains nothing services could not reach; they were root imports until the root
+// files moved out (Phase 5): database for the Redis error classifier the health
+// view reports, updates for the embedded release notes.
+var layer2Lower = map[string]bool{"database": true, "updates": true}
 
 // lowerShared reports whether a module-relative package is one every handler
 // layer above 0 may use.
