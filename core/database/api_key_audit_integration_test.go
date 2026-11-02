@@ -24,6 +24,10 @@ func TestIntegrationAuditRowsCarryTheAPIKey(t *testing.T) {
 	if err := st.SetServerAuditCount(ev.ID, 7); err != nil {
 		t.Fatal(err)
 	}
+	// Two Cores may write a window's count out of order; it never goes back.
+	if err := st.SetServerAuditCount(ev.ID, 5); err != nil {
+		t.Fatal(err)
+	}
 	plain := &models.ServerAuditEvent{ServerID: f.server.ID, EventType: "power_action", ActorUserID: &f.user.ID}
 	if err := st.InsertServerAudit(plain); err != nil {
 		t.Fatal(err)
@@ -57,6 +61,9 @@ func TestIntegrationAuditRowsCarryTheAPIKey(t *testing.T) {
 		t.Fatalf("InsertAuditIdentity: id %d, %v", id.ID, err)
 	}
 	if err := st.SetAuditIdentityCount(id.ID, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAuditIdentityCount(id.ID, 2); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.ListAuditIdentity(&f.user.ID, "api_key_read", 10)

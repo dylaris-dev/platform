@@ -145,3 +145,17 @@ func TestSaveNodeConfig_StoresThePortTheNodePicked(t *testing.T) {
 		t.Fatalf("saved hostPort = %d, want Core's explicit 25650", got)
 	}
 }
+
+// Defence in depth: the saved config sits in the tenant's /data, so a port
+// outside the game range or one of the node's own listeners is not reserved.
+func TestSavedHostPorts_IgnoresPortsOutsideTheRangeOrOwnedByTheNode(t *testing.T) {
+	dir := t.TempDir()
+	writeSavedConfig(t, dir, "in-range", 25610)
+	writeSavedConfig(t, dir, "ssh", 22)
+	writeSavedConfig(t, dir, "sftp", 25520)
+	writeSavedConfig(t, dir, "far", 30000)
+	got := savedHostPorts([]string{dir}, 25500, 25699)
+	if len(got) != 1 || got["in-range"] != 25610 {
+		t.Fatalf("savedHostPorts = %v, want only in-range:25610", got)
+	}
+}

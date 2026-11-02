@@ -15,7 +15,7 @@ Newest release first. The format is fixed and checked in CI - see the
 
 ### Features
 - API keys count like invited members: auditing turns on for every server a key can reach, and the audit log shows
-  each action as "key: name (owner you)", refusals included. Reads appear once per 10 minutes with a count.
+  each action as "key: name (owner you)". Reads and refused requests appear once per 10 minutes with a count.
 - A new key can expire after 30, 90 or 365 days.
 
 ### Breaking

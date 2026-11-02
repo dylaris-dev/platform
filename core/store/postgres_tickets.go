@@ -1012,10 +1012,12 @@ func (s *PostgresStore) InsertServerAudit(ev *models.ServerAuditEvent) error {
 }
 
 // SetServerAuditCount sets metadata.count on one row: a bundled entry (reads
-// by an API key) counts the requests it stands for.
+// by an API key) counts the requests it stands for. Never lowered: two Cores
+// may write a window's count out of order.
 func (s *PostgresStore) SetServerAuditCount(id, count int64) error {
 	_, err := s.db.Exec(`UPDATE server_audit_events
-		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{count}', to_jsonb($2::bigint))
+		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{count}',
+			to_jsonb(GREATEST(COALESCE((metadata->>'count')::bigint, 0), $2::bigint)))
 		WHERE id = $1`, id, count)
 	return err
 }

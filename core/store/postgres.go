@@ -2550,10 +2550,12 @@ func (s *PostgresStore) InsertAuditIdentity(ev *models.AuditEventIdentity) error
 }
 
 // SetAuditIdentityCount sets metadata.count on one row: a bundled entry
-// (reads by an API key) counts the requests it stands for.
+// (reads by an API key) counts the requests it stands for. Never lowered: two
+// Cores may write a window's count out of order.
 func (s *PostgresStore) SetAuditIdentityCount(id, count int64) error {
 	_, err := s.db.Exec(`UPDATE audit_events_identity
-		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{count}', to_jsonb($2::bigint))
+		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{count}',
+			to_jsonb(GREATEST(COALESCE((metadata->>'count')::bigint, 0), $2::bigint)))
 		WHERE id = $1`, id, count)
 	return err
 }

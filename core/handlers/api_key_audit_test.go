@@ -112,17 +112,24 @@ func TestPanelActionOnAServerWithAuditingOffStaysUnrecorded(t *testing.T) {
 	}
 }
 
-func TestRefusedKeyRequestsAreRecordedEachTime(t *testing.T) {
-	t.Run("in scope: on the server's trail", func(t *testing.T) {
+func withRedis(t *testing.T, h *APIKeysHandler) *miniredis.Miniredis {
+	mr := miniredis.RunT(t)
+	h.state.Redis = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	return mr
+}
+
+func TestRefusedKeyRequestsAreRecordedBundled(t *testing.T) {
+	t.Run("in scope: on the server's trail, one entry with a count", func(t *testing.T) {
 		fs, h := keyAuditFixture([]string{"console.read"})
+		withRedis(t, h)
 		for i := 0; i < 2; i++ {
 			if code := serve(h.APIKeyServerRoute("console.send")(reachedInner), "POST", "uuid-a"); code != http.StatusForbidden {
 				t.Fatalf("status %d, want 403", code)
 			}
 		}
-		if len(fs.serverAudits) != 2 || fs.serverAudits[1].EventType != ServerAuditEventAPIKeyDenied ||
-			fs.serverAudits[1].ActorAPIKeyName != "deploy-bot" {
-			t.Fatalf("rows %+v, want two api_key_denied", fs.serverAudits)
+		if len(fs.serverAudits) != 1 || fs.serverAudits[0].EventType != ServerAuditEventAPIKeyDenied ||
+			fs.serverAudits[0].ActorAPIKeyName != "deploy-bot" || fs.serverAudits[0].Metadata["count"] != int64(2) {
+			t.Fatalf("rows %+v, want one api_key_denied with count 2", fs.serverAudits)
 		}
 	})
 	t.Run("out of scope: identity log, the other server untouched", func(t *testing.T) {
@@ -132,6 +139,19 @@ func TestRefusedKeyRequestsAreRecordedEachTime(t *testing.T) {
 		}
 		if len(fs.serverAudits) != 0 || fs.auditOn[20] {
 			t.Fatalf("someone else's server got rows %+v / auditing %v", fs.serverAudits, fs.auditOn[20])
+		}
+		if len(fs.identityAudits) != 1 || fs.identityAudits[0].EventType != AuditEventAPIKeyDenied {
+			t.Fatalf("identity rows %+v, want one api_key_denied", fs.identityAudits)
+		}
+	})
+	t.Run("in scope but the owner lost the server: identity log", func(t *testing.T) {
+		fs, h := keyAuditFixture([]string{"console.send"})
+		fs.keysByHash[HashAPIKey("thekey")].Scope.Servers = []string{"uuid-b"} // owner holds nothing there
+		if code := serve(h.APIKeyServerRoute("console.send")(reachedInner), "POST", "uuid-b"); code != http.StatusForbidden {
+			t.Fatalf("status %d, want 403", code)
+		}
+		if len(fs.serverAudits) != 0 || fs.auditOn[20] {
+			t.Fatalf("a server the owner cannot reach got rows %+v / auditing %v", fs.serverAudits, fs.auditOn[20])
 		}
 		if len(fs.identityAudits) != 1 || fs.identityAudits[0].EventType != AuditEventAPIKeyDenied {
 			t.Fatalf("identity rows %+v, want one api_key_denied", fs.identityAudits)
@@ -150,26 +170,52 @@ func TestRefusedKeyRequestsAreRecordedEachTime(t *testing.T) {
 	})
 }
 
+// A real key refused again and again is throttled like a guess.
+func TestRefusalsOfAValidKeyAreThrottledPerIP(t *testing.T) {
+	_, h := keyAuditFixture([]string{"console.read"})
+	route := h.APIKeyServerRoute("console.send")(reachedInner)
+	for i := 0; i < keyFailuresPerMin; i++ {
+		if code := serve(route, "POST", "uuid-a"); code != http.StatusForbidden {
+			t.Fatalf("refusal %d: status %d, want 403", i+1, code)
+		}
+	}
+	if code := serve(route, "POST", "uuid-a"); code != http.StatusTooManyRequests {
+		t.Fatalf("refusal past the limit: status %d, want 429", code)
+	}
+}
+
 // Owner decision: reads are one entry per key, server and kind per 10 minutes,
-// with a count.
-func TestKeyReadsAreBundledWithACount(t *testing.T) {
+// with a count. The count is written back sparsely: at powers of two and at
+// most every keyCountEvery otherwise.
+func TestKeyReadsAreBundledWithASparseCount(t *testing.T) {
 	fs, h := keyAuditFixture([]string{"console.read", "stats.read"})
-	mr := miniredis.RunT(t)
-	h.state.Redis = redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	for i := 0; i < 3; i++ {
-		serve(h.APIKeyServerRoute("console.read")(reachedInner), "GET", "uuid-a")
+	mr := withRedis(t, h)
+	read := func() { serve(h.APIKeyServerRoute("console.read")(reachedInner), "GET", "uuid-a") }
+	for i := 0; i < 5; i++ {
+		read()
 	}
 	serve(h.APIKeyServerRoute("stats.read")(reachedInner), "GET", "uuid-a")
 	if len(fs.serverAudits) != 2 {
 		t.Fatalf("rows %+v, want one per kind", fs.serverAudits)
 	}
-	if ev := fs.serverAudits[0]; ev.EventType != "console.read" || ev.Metadata["count"] != int64(3) {
-		t.Fatalf("console.read row %+v, want count 3", ev)
+	if ev := fs.serverAudits[0]; ev.EventType != "console.read" || ev.Metadata["count"] != int64(4) {
+		t.Fatalf("console.read row %+v, want count 4 (5th not written back yet)", ev)
 	}
-	mr.FastForward(keyAuditWindow + time.Second)
-	serve(h.APIKeyServerRoute("console.read")(reachedInner), "GET", "uuid-a")
+	mr.FastForward(keyCountEvery + time.Second)
+	read()
+	if c := fs.serverAudits[0].Metadata["count"]; c != int64(6) {
+		t.Fatalf("count %v after the interval, want 6", c)
+	}
+	if ttl := mr.TTL("audit:apikey:1:10:console.read"); ttl <= 0 {
+		t.Fatalf("counter TTL %v, want one", ttl)
+	}
+	mr.FastForward(keyAuditWindow)
+	read()
 	if len(fs.serverAudits) != 3 {
 		t.Fatalf("a read after the window did not start a new entry: %d rows", len(fs.serverAudits))
+	}
+	if ttl := mr.TTL("audit:apikey:1:10:console.read"); ttl <= 0 || ttl > keyAuditWindow {
+		t.Fatalf("recreated counter TTL %v, want 0 < ttl <= window", ttl)
 	}
 }
 
@@ -199,6 +245,16 @@ func TestKeyOwnerDeletionState(t *testing.T) {
 	}
 	if len(fs.cancelledFor) != 1 {
 		t.Fatalf("deletion not cancelled by key use: %v", fs.cancelledFor)
+	}
+	// A key the operator gate refuses is not in use.
+	fs.cancelledFor = nil
+	fs.settings["apikeys_user_enabled"] = "false"
+	h = newAPIKeysAuthHandler(fs) // feature flags are cached per handler
+	if code := serve(h.APIKeyServerRoute("console.send")(reachedInner), "POST", "uuid-a"); code != http.StatusForbidden {
+		t.Fatalf("keys off: status %d, want 403", code)
+	}
+	if len(fs.cancelledFor) != 0 {
+		t.Fatalf("a refused key cancelled the deletion: %v", fs.cancelledFor)
 	}
 }
 
@@ -239,6 +295,7 @@ func TestCreateValidatesTheKey(t *testing.T) {
 	}{
 		{"too long", map[string]interface{}{"name": strings.Repeat("a", 65)}, nil, http.StatusBadRequest},
 		{"newline", map[string]interface{}{"name": "a\nSystem"}, nil, http.StatusBadRequest},
+		{"fake owner", map[string]interface{}{"name": "bot (owner admin)"}, nil, http.StatusBadRequest},
 		{"duplicate", map[string]interface{}{"name": "Deploy"}, []models.APIKey{{ID: 5, Name: "deploy"}}, http.StatusConflict},
 		{"revoked duplicate is fine", map[string]interface{}{"name": "deploy"}, []models.APIKey{{ID: 5, Name: "deploy", RevokedAt: &time.Time{}}}, http.StatusOK},
 		{"expiry too long", map[string]interface{}{"name": "k", "expiresInDays": 366}, nil, http.StatusBadRequest},

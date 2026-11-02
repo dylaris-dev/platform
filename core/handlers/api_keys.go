@@ -500,15 +500,21 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 			w = sw
 			r = r.WithContext(authz.WithAuditSlot(r.Context()))
 			uuidVar := mux.Vars(r)["uuid"]
-			defer func() { h.auditKeyRequest(r, key, shape, uuidVar, requiredPerm, sw.status) }()
+			defer func() {
+				// A refusal is a failed attempt whatever the key: a valid key
+				// pointed at what it may not touch must be throttled like a
+				// guess, or each refusal is a free DB round and an audit write.
+				if keyRefusal(sw.status) {
+					h.ipLimiter.allow(ip, keyFailuresPerMin)
+				}
+				h.auditKeyRequest(r, key, shape, uuidVar, requiredPerm, sw.status)
+			}()
 
 			if key.RevokedAt != nil {
-				h.ipLimiter.allow(ip, keyFailuresPerMin)
 				sendJSONError(w, "Key revoked", http.StatusUnauthorized)
 				return
 			}
 			if key.ExpiresAt != nil && time.Now().After(*key.ExpiresAt) {
-				h.ipLimiter.allow(ip, keyFailuresPerMin)
 				sendJSONError(w, "Key expired", http.StatusUnauthorized)
 				return
 			}
@@ -616,14 +622,6 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 		sendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
 		return false
 	}
-	// A key in use is an account in use, as a login is: an automation-only
-	// member must not be anonymized for not signing in.
-	if owner.DeletionStatus == "pending_deletion" {
-		if err := h.state.Store.CancelUserDeletion(owner.ID); err == nil {
-			logIdentityAuditAs(h.state, r, key, AuditEventDeletionCancelledByAPIKey, owner.ID, owner.ID, nil)
-		}
-	}
-
 	// Operator gate at USE time, not only at mint. Enforcing it only when a key
 	// is created would leave every key minted before the switch was turned off
 	// working afterwards, which is not what an operator who turned it off means.
@@ -631,6 +629,14 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 	if !owner.IsAdmin && !h.userKeysAllowed(r) {
 		sendJSONError(w, "API keys are not enabled for users on this platform", http.StatusForbidden)
 		return false
+	}
+	// A key in use is an account in use, as a login is: an automation-only
+	// member must not be anonymized for not signing in. After the gate: a key
+	// the platform refuses is not in use.
+	if owner.DeletionStatus == "pending_deletion" {
+		if err := h.state.Store.CancelUserDeletion(owner.ID); err == nil {
+			logIdentityAuditAs(h.state, r, key, AuditEventDeletionCancelledByAPIKey, owner.ID, owner.ID, nil)
+		}
 	}
 
 	if requiredPerm == "" {
@@ -767,6 +773,11 @@ func apiKeyNameProblem(name string) string {
 	for _, c := range name {
 		if !unicode.IsPrint(c) {
 			return "Name may only contain printable characters"
+		}
+		// The log shows "key: <name> (owner <user>)"; a parenthesis in the name
+		// could fake the owner part.
+		if c == '(' || c == ')' {
+			return "Name may not contain parentheses"
 		}
 	}
 	return ""

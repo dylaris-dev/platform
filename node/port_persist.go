@@ -16,8 +16,11 @@ import (
 // .node_config.json is on the data volume and survives all of that, so it
 // carries the port too.
 
-// savedHostPorts maps serverUUID -> the host port its saved config holds.
-func savedHostPorts(storagePaths []string) map[string]int {
+// savedHostPorts maps serverUUID -> the host port its saved config holds,
+// for ports inside [rangeStart, rangeEnd] that may be published at all. The
+// file sits in the tenant's /data, so a planted port must not reserve a port
+// outside the game range or one of the node's own listeners.
+func savedHostPorts(storagePaths []string, rangeStart, rangeEnd int) map[string]int {
 	out := map[string]int{}
 	for _, sp := range storagePaths {
 		entries, err := os.ReadDir(sp)
@@ -33,12 +36,16 @@ func savedHostPorts(storagePaths []string) map[string]int {
 				continue
 			}
 			var saved ServerConfig
-			if json.Unmarshal(data, &saved) != nil || saved.Docker.HostPort <= 0 {
+			if json.Unmarshal(data, &saved) != nil {
+				continue
+			}
+			p := saved.Docker.HostPort
+			if p < rangeStart || p > rangeEnd || hostPortProblem(p) != "" {
 				continue
 			}
 			// Keyed by the directory, not the file's uuid: the file sits in the
 			// tenant's /data (see pinSavedConfig).
-			out[e.Name()] = saved.Docker.HostPort
+			out[e.Name()] = p
 		}
 	}
 	return out
@@ -51,7 +58,7 @@ func savedHostPorts(storagePaths []string) map[string]int {
 // back to its saved config, which backfills configs saved before they carried
 // one.
 func (dm *DockerManager) restorePortLedger() {
-	dm.portMgr.AdoptExistingBindings(savedHostPorts(dm.storageMgr.Paths()))
+	dm.portMgr.AdoptExistingBindings(savedHostPorts(dm.storageMgr.Paths(), dm.portMgr.rangeStart, dm.portMgr.rangeEnd))
 	for uuid, port := range dm.portMgr.Snapshot() {
 		dm.rememberHostPort(uuid, port)
 	}

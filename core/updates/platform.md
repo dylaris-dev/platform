@@ -11,8 +11,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.11.02.2
 
 ### Features
-- API keys count like invited members: auditing turns on for the servers a key reaches, and the log names it as
-  "key: name (owner user)" with every write and refusal, and its reads once per 10 minutes. `core` `panel`
+- API keys count like invited members: auditing turns on for the servers a key reaches, the log names it as
+  "key: name (owner user)", each write is an entry, reads and refusals one per 10 minutes. `core` `panel`
 - A new key can expire after 30, 90 or 365 days. `core` `panel`
 
 ### Breaking
