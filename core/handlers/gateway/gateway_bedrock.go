@@ -70,7 +70,7 @@ func (h *GatewayHandler) bedrockService() *services.BedrockService {
 // route domain exactly one label under an online edge's wildcard, because that
 // is the only name that resolves and the only one whose region is known.
 func (h *GatewayHandler) bedrockAvailability(ctx context.Context, srv *models.Server) (address, refusal string) {
-	if !h.state.GatewayEnabled() || h.state.Redis == nil {
+	if !services.GatewayRoutingEnabled(h.state.Store) || h.state.Redis == nil {
 		return "", bedrockNotRouted
 	}
 	routes, err := services.ReadRoutesFromRedis(ctx, h.state.Redis)

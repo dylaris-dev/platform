@@ -5,6 +5,7 @@ import (
 
 	"dylaris-core/handlers/access"
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 )
 
@@ -91,7 +92,7 @@ func TestNodeAddressIsWithheldFromAnOrdinaryViewer(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &AppState{Store: &redactFakeStore{settings: tc.settings, nodes: nodes}}
 			servers := base()
-			access.RedactNodeAddress(st.Store, st.gatewayEnabled, servers, tc.isAdmin, tc.userID)
+			access.RedactNodeAddress(st.Store, func() bool { return services.GatewayRoutingEnabled(st.Store) }, servers, tc.isAdmin, tc.userID)
 			for i := range servers {
 				if servers[i].NodeAddress != tc.want[i] {
 					t.Errorf("server %d address = %q, want %q", servers[i].ID, servers[i].NodeAddress, tc.want[i])
@@ -109,7 +110,7 @@ func TestNodeAddressIsWithheldOnASingleServerToo(t *testing.T) {
 		nodes:    map[int]*models.Node{1: {ID: 1}},
 	}}
 	srv := &models.Server{ID: 10, NodeID: 1, NodeAddress: "203.0.113.9"}
-	access.RedactNodeAddressOne(st.Store, st.gatewayEnabled, srv, false, "tenant")
+	access.RedactNodeAddressOne(st.Store, func() bool { return services.GatewayRoutingEnabled(st.Store) }, srv, false, "tenant")
 	if srv.NodeAddress != "" {
 		t.Errorf("address = %q, want it withheld", srv.NodeAddress)
 	}

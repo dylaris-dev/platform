@@ -1,4 +1,4 @@
-package handlers
+package gate
 
 import (
 	"encoding/json"
@@ -15,7 +15,7 @@ import (
 //
 // We deliberately do NOT cache CountAdmins. The value of "setup completes on
 // Core A, Core B unlocks on the very next request" is worth the SELECT cost.
-func (s *AppState) RequireSetupComplete(next http.HandlerFunc) http.HandlerFunc {
+func (s Gates) RequireSetupComplete(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/setup/") {
 			next(w, r)

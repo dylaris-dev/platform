@@ -21,6 +21,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -391,7 +392,7 @@ func TestAudienceOffRefusesUsers(t *testing.T) {
 	h, _ := newTestHandler(t, map[string]string{services.TemplatesSettingKey: "off"})
 	for _, admin := range []bool{false, true} {
 		rec := httptest.NewRecorder()
-		h.state.RequireTemplatesAudience(h.List)(rec, asUser(httptest.NewRequest("GET", "/api/templates", nil), ownerID, admin))
+		gate.Gates{Store: h.state.Store, FeatureFlags: h.state.FeatureFlags}.RequireTemplatesAudience(h.List)(rec, asUser(httptest.NewRequest("GET", "/api/templates", nil), ownerID, admin))
 		want := http.StatusForbidden
 		if admin {
 			want = http.StatusOK

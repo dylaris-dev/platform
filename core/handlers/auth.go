@@ -1066,7 +1066,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 		// To the address the account had BEFORE this save: when one save
 		// changes both, the new address is the one that cannot be trusted
 		// to tell the owner anything.
-		notifyPasswordChanged(h.state, oldEmail, user.Username)
+		NotifyPasswordChanged(h.state, oldEmail, user.Username)
 	}
 
 	// A password change invalidates every session issued against the old one -

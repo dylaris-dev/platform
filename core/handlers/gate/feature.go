@@ -1,12 +1,28 @@
-package handlers
+// Package gate holds the route middleware that refuses a request before its
+// handler runs: feature toggles, gateway routing, the setup lock and Core file
+// storage. routes.go builds one Gates value from AppState and wraps routes with
+// its methods.
+package gate
 
 import (
 	"encoding/json"
 	"net/http"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/services"
+	"dylaris-core/services/corestorage"
 	"dylaris-core/services/storagereach"
+	"dylaris-core/store"
 )
+
+// Gates is what the route middleware reads. Built once in routes.go; the
+// field names are AppState's.
+type Gates struct {
+	Store        store.Store
+	FeatureFlags *services.FeatureFlags
+	StoreEnabled bool
+	CoreStorage  *corestorage.Manager
+}
 
 // FeatureModpacks is the canonical name used in X-Feature-Disabled headers
 // + JSON error responses for the modpacks feature.
@@ -36,10 +52,10 @@ const FeatureStore = "store"
 // the platform-wide modpacks toggle is off. Use on every WRITE endpoint that
 // touches modpack data (modpacks CRUD, versions, mods, publish, mrpack PAT
 // management).
-func (s *AppState) RequireModpacksEnabled(next http.HandlerFunc) http.HandlerFunc {
+func (s Gates) RequireModpacksEnabled(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsModpacksEnabled(r.Context()) {
-			featureDisabledResponse(w, FeatureModpacks, "Modpack authoring is disabled by the platform admin.")
+			FeatureDisabledResponse(w, FeatureModpacks, "Modpack authoring is disabled by the platform admin.")
 			return
 		}
 		next(w, r)
@@ -51,10 +67,10 @@ func (s *AppState) RequireModpacksEnabled(next http.HandlerFunc) http.HandlerFun
 // ticket subsystem (tickets, categories, attachments, canned responses,
 // notifications, settings) so the panel + external clients all see the same
 // 503 when the admin pauses tickets.
-func (s *AppState) RequireTicketsEnabled(next http.HandlerFunc) http.HandlerFunc {
+func (s Gates) RequireTicketsEnabled(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsTicketsEnabled(r.Context()) {
-			featureDisabledResponse(w, FeatureTickets, "The ticket system is disabled by the platform admin.")
+			FeatureDisabledResponse(w, FeatureTickets, "The ticket system is disabled by the platform admin.")
 			return
 		}
 		next(w, r)
@@ -68,20 +84,20 @@ func (s *AppState) RequireTicketsEnabled(next http.HandlerFunc) http.HandlerFunc
 // RequireTenancyEnabled is RequireBYONEnabled for the admin planes both
 // products share - billing, entitlements, limits, usage. With route-only on and
 // BYON off an operator still has tenants to grant and bill.
-func (s *AppState) RequireTenancyEnabled(next http.HandlerFunc) http.HandlerFunc {
+func (s Gates) RequireTenancyEnabled(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsTenancyEnabled(r.Context()) {
-			featureDisabledResponse(w, FeatureBYON, "Customer tenancy (BYON and route-only) is disabled by the platform admin.")
+			FeatureDisabledResponse(w, FeatureBYON, "Customer tenancy (BYON and route-only) is disabled by the platform admin.")
 			return
 		}
 		next(w, r)
 	}
 }
 
-func (s *AppState) RequireBYONEnabled(next http.HandlerFunc) http.HandlerFunc {
+func (s Gates) RequireBYONEnabled(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsBYONEnabled(r.Context()) {
-			featureDisabledResponse(w, FeatureBYON, "BYON (bring-your-own-node) is disabled by the platform admin.")
+			FeatureDisabledResponse(w, FeatureBYON, "BYON (bring-your-own-node) is disabled by the platform admin.")
 			return
 		}
 		next(w, r)
@@ -100,10 +116,10 @@ func (s *AppState) RequireBYONEnabled(next http.HandlerFunc) http.HandlerFunc {
 //
 // StoreEnabled is process config (config.StoreEnabled), not a settings row, so
 // this reads a field rather than the feature-flag cache.
-func (s *AppState) RequireStoreEnabled(next http.HandlerFunc) http.HandlerFunc {
+func (s Gates) RequireStoreEnabled(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.StoreEnabled {
-			featureDisabledResponse(w, FeatureStore,
+			FeatureDisabledResponse(w, FeatureStore,
 				"This install is not linked to the hosted store, so there is nothing to bill. Per-user backup allowances live under Settings, Backups.")
 			return
 		}
@@ -114,10 +130,10 @@ func (s *AppState) RequireStoreEnabled(next http.HandlerFunc) http.HandlerFunc {
 // RequireCoreStorageConfigured blocks a WRITE with 503 feature_disabled when no
 // valid Core file storage config exists. Wrap every endpoint that STORES a blob
 // (ticket attachment upload, ticket backup create).
-func (s *AppState) RequireCoreStorageConfigured(next http.HandlerFunc) http.HandlerFunc {
+func (s Gates) RequireCoreStorageConfigured(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.CoreStorage.Configured() {
-			featureDisabledResponse(w, FeatureCoreStorage,
+			FeatureDisabledResponse(w, FeatureCoreStorage,
 				"Configure Core file storage (Settings -> Core file storage) before writing files.")
 			return
 		}
@@ -134,7 +150,7 @@ func (s *AppState) RequireCoreStorageConfigured(next http.HandlerFunc) http.Hand
 // storage and leave nobody able to read the error.
 //
 // Wrap it around every route whose handler builds a core storage provider.
-func (s *AppState) RequireCoreStorageReachable(next http.HandlerFunc) http.HandlerFunc {
+func (s Gates) RequireCoreStorageReachable(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.CoreStorage.Reach == nil || s.CoreStorage.Reach.Status().Healthy() {
 			next(w, r)
@@ -189,7 +205,7 @@ func storageReachMessage(status storagereach.Status) string {
 // X-Feature-Disabled response header when the toggle is off. Used on READ
 // endpoints (list/get modpacks, download .mrpack) so existing modpacks stay
 // viewable + downloadable when the feature is paused.
-func (s *AppState) AllowReadOnlyWhenDisabled(next http.HandlerFunc) http.HandlerFunc {
+func (s Gates) AllowReadOnlyWhenDisabled(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.FeatureFlags.IsModpacksEnabled(r.Context()) {
 			w.Header().Set("X-Feature-Disabled", FeatureModpacks)
@@ -210,14 +226,14 @@ func (s *AppState) AllowReadOnlyWhenDisabled(next http.HandlerFunc) http.Handler
 //
 // Layer this AFTER RequireModpacksEnabled so the user lookup only happens when
 // the subsystem check passes.
-func (s *AppState) RequireUserCanCreateModpacks(next http.HandlerFunc) http.HandlerFunc {
+func (s Gates) RequireUserCanCreateModpacks(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if isAdmin, _ := r.Context().Value("isAdmin").(bool); isAdmin {
 			next(w, r)
 			return
 		}
 		if !s.FeatureFlags.IsModpackAuthoringEnabled(r.Context()) {
-			featureDisabledResponse(w, FeatureModpackAuthoring, "Modpack authoring is not open to users on this platform.")
+			FeatureDisabledResponse(w, FeatureModpackAuthoring, "Modpack authoring is not open to users on this platform.")
 			return
 		}
 		userID, _ := r.Context().Value("userID").(string)
@@ -231,7 +247,7 @@ func (s *AppState) RequireUserCanCreateModpacks(next http.HandlerFunc) http.Hand
 			return
 		}
 		if !user.CanCreateModpacks {
-			featureDisabledResponse(w, "modpacks_user", "Your account is not permitted to author modpacks.")
+			FeatureDisabledResponse(w, "modpacks_user", "Your account is not permitted to author modpacks.")
 			return
 		}
 		next(w, r)
@@ -242,7 +258,7 @@ func (s *AppState) RequireUserCanCreateModpacks(next http.HandlerFunc) http.Hand
 // audience: "all" lets everyone through, "admin" and "off" only admins. Admins
 // are let through while the feature is off so they can set it up and look at it
 // before anyone else is offered it. Everyone else gets 403.
-func (s *AppState) RequireTemplatesAudience(next http.HandlerFunc) http.HandlerFunc {
+func (s Gates) RequireTemplatesAudience(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		isAdmin, _ := r.Context().Value("isAdmin").(bool)
 		if !isAdmin && s.FeatureFlags.TemplatesAudience(r.Context()) != "all" {
@@ -253,9 +269,9 @@ func (s *AppState) RequireTemplatesAudience(next http.HandlerFunc) http.HandlerF
 	}
 }
 
-// featureDisabledResponse writes the canonical 503 + X-Feature-Disabled +
+// FeatureDisabledResponse writes the canonical 503 + X-Feature-Disabled +
 // machine-readable error body.
-func featureDisabledResponse(w http.ResponseWriter, feature, msg string) {
+func FeatureDisabledResponse(w http.ResponseWriter, feature, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Feature-Disabled", feature)
 	w.WriteHeader(http.StatusServiceUnavailable)

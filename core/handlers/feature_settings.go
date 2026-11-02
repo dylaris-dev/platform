@@ -272,7 +272,7 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// server's address stable across a node change). Refuse the whole PUT
 	// rather than partially apply, so the admin gets a single clear error and
 	// no flag is half-written.
-	if req.AutoMove != nil && *req.AutoMove && !h.state.gatewayEnabled() {
+	if req.AutoMove != nil && *req.AutoMove && !services.GatewayRoutingEnabled(h.state.Store) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{

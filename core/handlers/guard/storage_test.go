@@ -56,7 +56,7 @@ func TestCoreStorageUnavailableResponse(t *testing.T) {
 			}
 			// The router-level gate's shape must stay distinguishable from this one.
 			if h := rw.Header().Get("X-Feature-Disabled"); h != "" {
-				t.Errorf("X-Feature-Disabled = %q; that header belongs to featureDisabledResponse alone", h)
+				t.Errorf("X-Feature-Disabled = %q; that header belongs to gate.FeatureDisabledResponse alone", h)
 			}
 
 			var body struct {

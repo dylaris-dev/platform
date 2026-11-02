@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
@@ -100,8 +100,8 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 			httpx.SendJSONError(w, msg, http.StatusForbidden)
 			return
 		}
-		if !h.state.GatewayEnabled() || h.state.Redis == nil {
-			handlers.GatewayDisabledResponse(w)
+		if !services.GatewayRoutingEnabled(h.state.Store) || h.state.Redis == nil {
+			gate.GatewayDisabledResponse(w)
 			return
 		}
 		entries, err := services.LiveBedrockEntries(ctx, h.state.Redis)

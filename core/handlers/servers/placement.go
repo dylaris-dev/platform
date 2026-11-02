@@ -13,6 +13,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/services/placement"
 )
 
@@ -62,7 +63,7 @@ func (h *PlacementHandler) PickNode(w http.ResponseWriter, r *http.Request) {
 
 // pickNode binds placement.Pick to this handler's state.
 func (h *PlacementHandler) pickNode(ctx context.Context, req placement.PickNodeRequest) placement.PickNodeResponse {
-	return placement.Pick(ctx, h.state.Store, h.state.Redis, h.state.GatewayEnabled(), req)
+	return placement.Pick(ctx, h.state.Store, h.state.Redis, services.GatewayRoutingEnabled(h.state.Store), req)
 }
 
 // SetNodePlacementRequest is the body for PUT /api/nodes/{id}/placement.

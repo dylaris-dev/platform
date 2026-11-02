@@ -83,40 +83,6 @@ func (f *gateFakeStore) BulkSetCanCreateModpacks(can bool, includeManual bool) (
 	return int64(len(f.bulkCalls)), nil
 }
 
-func TestRequireCoreStorageConfigured(t *testing.T) {
-	called := false
-	inner := func(w http.ResponseWriter, r *http.Request) { called = true; w.WriteHeader(http.StatusOK) }
-
-	t.Run("blocks when unconfigured", func(t *testing.T) {
-		called = false
-		fs := &gateFakeStore{kv: map[string]string{}}
-		st := withCoreStorage(&AppState{Store: fs})
-		rw := httptest.NewRecorder()
-		st.RequireCoreStorageConfigured(inner)(rw, httptest.NewRequest(http.MethodPost, "/x", nil))
-		if called {
-			t.Fatal("inner ran despite unconfigured storage")
-		}
-		if rw.Code != http.StatusServiceUnavailable {
-			t.Fatalf("status = %d, want 503", rw.Code)
-		}
-	})
-
-	t.Run("passes when configured (path)", func(t *testing.T) {
-		called = false
-		fs := &gateFakeStore{kv: map[string]string{
-			corestorage.KeyBackend:     "path",
-			corestorage.KeyPath:        "/mnt/shared",
-			corestorage.KeyPathConfirm: "true",
-		}}
-		st := withCoreStorage(&AppState{Store: fs})
-		rw := httptest.NewRecorder()
-		st.RequireCoreStorageConfigured(inner)(rw, httptest.NewRequest(http.MethodPost, "/x", nil))
-		if !called {
-			t.Fatalf("inner did not run; status = %d body %s", rw.Code, rw.Body.String())
-		}
-	})
-}
-
 func TestFeatureSettings_RefusesTicketsWhenStorageUnconfigured(t *testing.T) {
 	newHandler := func() *FeatureSettingsHandler {
 		st := &AppState{

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"dylaris-core/authz"
@@ -11,6 +12,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/corestorage"
+	"dylaris-core/services/storagereach"
 	"dylaris-core/store"
 )
 
@@ -148,5 +150,44 @@ func TestCoreStorageGate_ReadsNeverBlockedWritesAlwaysBlocked(t *testing.T) {
 	}
 	for _, r := range reads {
 		assertNotCoreStorageGated(t, r.method+" "+r.path, do(r.method, r.path))
+	}
+}
+
+// The route gates are built once in routes.go from appState (gate.Gates) and
+// must read the SAME Core storage the handlers hold: a gate given its own
+// Manager would keep answering from a Reach nobody updates. The verifier here
+// lives only on appState.CoreStorage, so a reach-gated route refusing proves
+// the gate reads that one, and flipping its status on the same pointer
+// letting the request through proves it reads it live.
+func TestTheRouteGatesReadTheSharedCoreStorage(t *testing.T) {
+	fs := &authzFakeStore{settings: map[string]string{"feature_tickets_enabled": "true"}}
+	admin := fs.addUser("admin-id", "root", true)
+	svc := storagereach.NewService(storagereach.ServiceDeps{CoreID: "core-a"})
+	svc.Status().Set(storagereach.StatusUnreachable, "/mnt/shared: no such file or directory")
+	appState := &handlers.AppState{
+		Store:        fs,
+		FeatureFlags: services.NewFeatureFlags(fs),
+		Authz:        authz.NewResolver(fs),
+		CoreStorage:  &corestorage.Manager{Store: fs, Reach: svc},
+	}
+	authHandler := handlers.NewAuthHandler(appState, testJWTSecret)
+	root, _ := buildAPIRouter(appState, authHandler, routeCfg{JWTSecret: testJWTSecret})
+	do := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/admin/tickets/backups", nil)
+		req.Header.Set("Authorization", "Bearer "+mintToken(t, testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}))
+		rec := httptest.NewRecorder()
+		func() {
+			defer func() { _ = recover() }()
+			root.ServeHTTP(rec, req)
+		}()
+		return rec
+	}
+
+	if rec := do(); rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "storage_unreachable") {
+		t.Fatalf("unreachable shared storage: got %d %s, want the reach gate's 503", rec.Code, rec.Body.String())
+	}
+	appState.CoreStorage.Reach.Status().Set(storagereach.StatusOK, "")
+	if rec := do(); strings.Contains(rec.Body.String(), "storage_unreachable") {
+		t.Fatalf("the verifier on appState.CoreStorage says ok, the gate still refuses: %d %s", rec.Code, rec.Body.String())
 	}
 }

@@ -31,7 +31,7 @@ import (
 // the panel's direct-connect line already requires both.
 //
 // gatewayEnabled is the platform's routing-mode check, passed in rather than
-// read here so the one definition (AppState.GatewayEnabled) stays the only
+// read here so the one definition (services.GatewayRoutingEnabled) stays the only
 // one; it is asked only after the cheap early returns, as before.
 func RedactNodeAddress(st store.Store, gatewayEnabled func() bool, servers []models.Server, isAdmin bool, userID string) {
 	if st == nil || len(servers) == 0 || isAdmin {

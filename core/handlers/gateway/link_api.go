@@ -63,7 +63,7 @@ func (h *WarpHandler) routeOnlyKey(w http.ResponseWriter, r *http.Request) (key 
 		httpx.SendJSONError(w, "Not a route-only link key", http.StatusForbidden)
 		return key, "", false, false
 	}
-	if !h.state.GatewayEnabled() || h.state.Gateway == nil || h.state.Redis == nil {
+	if !services.GatewayRoutingEnabled(h.state.Store) || h.state.Gateway == nil || h.state.Redis == nil {
 		httpx.SendJSONError(w, "Gateway routing is disabled", http.StatusConflict)
 		return key, "", false, false
 	}

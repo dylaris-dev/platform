@@ -83,10 +83,10 @@ func TestReauthWithoutTwoFactorTakesThePasswordAlone(t *testing.T) {
 	u := &models.User{ID: "u1", Password: hashFor(t, "correct horse"), Is2FAEnabled: false}
 	state, _ := reauthState(t, u)
 
-	if err := reauth.RequireReauth(state.Store, reauthCodeVerifier(state), "u1", "correct horse", ""); err != nil {
+	if err := reauth.RequireReauth(state.Store, ReauthCodeVerifier(state), "u1", "correct horse", ""); err != nil {
 		t.Errorf("a user without 2FA cannot re-authenticate at all: %v", err)
 	}
-	if err := reauth.RequireReauth(state.Store, reauthCodeVerifier(state), "u1", "wrong", ""); err == nil {
+	if err := reauth.RequireReauth(state.Store, ReauthCodeVerifier(state), "u1", "wrong", ""); err == nil {
 		t.Error("the wrong password was accepted, so the carve-out skipped the whole check")
 	}
 }
@@ -102,7 +102,7 @@ func TestReauthWithTwoFactorNeedsBoth(t *testing.T) {
 
 	for name, code := range map[string]string{"empty": "", "wrong": "000000"} {
 		t.Run(name+" code", func(t *testing.T) {
-			err := reauth.RequireReauth(state.Store, reauthCodeVerifier(state), "u1", "correct horse", code)
+			err := reauth.RequireReauth(state.Store, ReauthCodeVerifier(state), "u1", "correct horse", code)
 			if err == nil {
 				t.Fatal("the password alone was accepted while 2FA is on")
 			}
@@ -116,7 +116,7 @@ func TestReauthWithTwoFactorNeedsBoth(t *testing.T) {
 
 	// The wrong password must be refused before the code is even considered,
 	// so a valid code can never carry a caller who does not know the password.
-	if err := reauth.RequireReauth(state.Store, reauthCodeVerifier(state), "u1", "wrong", "000000"); err == nil {
+	if err := reauth.RequireReauth(state.Store, ReauthCodeVerifier(state), "u1", "wrong", "000000"); err == nil {
 		t.Error("the wrong password was accepted")
 	}
 }
@@ -137,13 +137,13 @@ func TestReauthAcceptsABackupCodeAndConsumesIt(t *testing.T) {
 	}
 	state, fs := reauthState(t, u)
 
-	if rerr := reauth.RequireReauth(state.Store, reauthCodeVerifier(state), "u1", "correct horse", code); rerr != nil {
+	if rerr := reauth.RequireReauth(state.Store, ReauthCodeVerifier(state), "u1", "correct horse", code); rerr != nil {
 		t.Fatalf("a valid backup code was refused: %v", rerr)
 	}
 	if !fs.totpSaved {
 		t.Error("the backup code was not written back, so it can be replayed")
 	}
-	if rerr := reauth.RequireReauth(state.Store, reauthCodeVerifier(state), "u1", "correct horse", code); rerr == nil {
+	if rerr := reauth.RequireReauth(state.Store, ReauthCodeVerifier(state), "u1", "correct horse", code); rerr == nil {
 		t.Error("the same backup code worked twice")
 	}
 }
@@ -151,7 +151,7 @@ func TestReauthAcceptsABackupCodeAndConsumesIt(t *testing.T) {
 // A store that cannot answer must not read as a successful re-authentication.
 func TestReauthFailsClosedWhenTheUserCannotBeLoaded(t *testing.T) {
 	state := &AppState{Store: &reauthFakeStore{lookupErr: errors.New("db down")}}
-	if err := reauth.RequireReauth(state.Store, reauthCodeVerifier(state), "u1", "anything", ""); err == nil {
+	if err := reauth.RequireReauth(state.Store, ReauthCodeVerifier(state), "u1", "anything", ""); err == nil {
 		t.Fatal("a failed user lookup was treated as a successful re-authentication")
 	}
 	if err := reauth.RequireReauth(nil, nil, "u1", "anything", ""); err == nil {
@@ -163,7 +163,7 @@ func TestReauthFailsClosedWhenTheUserCannotBeLoaded(t *testing.T) {
 // permissions" button calls two endpoints), so re-authentication checks a
 // TOTP code without spending its step; the login spends it. Pinned with a
 // real replay store, because without Redis every step reads as free and the
-// difference cannot show. The check is wired through reauthCodeVerifier since
+// difference cannot show. The check is wired through ReauthCodeVerifier since
 // re-authentication moved to handlers/reauth.
 func TestOneReauthCodeCoversTwoWritesButNotTwoLogins(t *testing.T) {
 	secret := "JBSWY3DPEHPK3PXP"
@@ -175,7 +175,7 @@ func TestOneReauthCodeCoversTwoWritesButNotTwoLogins(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 2 {
-		if rerr := reauth.RequireReauth(state.Store, reauthCodeVerifier(state), "u1", "correct horse", code); rerr != nil {
+		if rerr := reauth.RequireReauth(state.Store, ReauthCodeVerifier(state), "u1", "correct horse", code); rerr != nil {
 			t.Fatalf("re-authentication %d refused the code: %v", i+1, rerr)
 		}
 	}

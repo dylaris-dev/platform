@@ -13,6 +13,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/services"
 
 	"github.com/gorilla/mux"
 )
@@ -253,7 +254,7 @@ func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Requ
 			out = append(out, s)
 		}
 	}
-	access.RedactNodeAddress(h.state.Store, h.state.gatewayEnabled, out, owner.IsAdmin, ownerID)
+	access.RedactNodeAddress(h.state.Store, func() bool { return services.GatewayRoutingEnabled(h.state.Store) }, out, owner.IsAdmin, ownerID)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "servers": out})
 }
 
@@ -269,7 +270,7 @@ func (h *APIKeysHandler) GetExternalServer(w http.ResponseWriter, r *http.Reques
 	ownerID := APIKeyCallerID(r)
 	owner, oerr := h.state.Store.GetUserByID(ownerID)
 	isAdmin := oerr == nil && owner != nil && owner.IsAdmin
-	access.RedactNodeAddressOne(h.state.Store, h.state.gatewayEnabled, srv, isAdmin, ownerID)
+	access.RedactNodeAddressOne(h.state.Store, func() bool { return services.GatewayRoutingEnabled(h.state.Store) }, srv, isAdmin, ownerID)
 	// Not short-cut on isAdmin: on a customer's machine the resolver treats an
 	// admin as a guest with whatever the owner granted.
 	if srv.OwnerID != ownerID {

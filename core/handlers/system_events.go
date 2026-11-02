@@ -20,7 +20,7 @@ type SystemEventsHandler struct {
 	state *AppState
 }
 
-// mayReceive decides whether one broadcast frame goes to THIS subscriber.
+// MayReceive decides whether one broadcast frame goes to THIS subscriber.
 //
 // The channel is a single fleet-wide fan-out, so everything published on it
 // reached every authenticated session. Most of that is harmless by design -
@@ -37,7 +37,7 @@ type SystemEventsHandler struct {
 // properly. Dropping a frame we could not classify would silently stop a panel
 // from refreshing; forwarding one leaks an integer. So only a resolution that
 // actually says "no" drops the frame.
-func (h *SystemEventsHandler) mayReceive(r *http.Request, payload string) bool {
+func (h *SystemEventsHandler) MayReceive(r *http.Request, payload string) bool {
 	return h.mayReceiveCached(r, payload, nil)
 }
 
@@ -53,7 +53,7 @@ type cachedVisibility struct {
 	until   time.Time
 }
 
-// mayReceiveCached is mayReceive with the per-server answer kept in visible
+// mayReceiveCached is MayReceive with the per-server answer kept in visible
 // for visibilityTTL. A nil map caches nothing.
 func (h *SystemEventsHandler) mayReceiveCached(r *http.Request, payload string, visible map[int]cachedVisibility) bool {
 	userID, _ := r.Context().Value("userID").(string)

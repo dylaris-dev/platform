@@ -7,7 +7,7 @@ import (
 	"dylaris-core/store"
 )
 
-// settingOrUnset reads a setting, treating "there is no such row" as the empty
+// SettingOrUnset reads a setting, treating "there is no such row" as the empty
 // string rather than as a fault.
 //
 // GetSetting answers a key that was never written with sql.ErrNoRows, which is
@@ -26,7 +26,7 @@ import (
 // reason about ErrNoRows on purpose, and one of them - the BYON ownership fence
 // - fails CLOSED on a read error. Turning a missing row into a clean empty
 // string there would open it.
-func settingOrUnset(st store.Store, key string) (string, error) {
+func SettingOrUnset(st store.Store, key string) (string, error) {
 	v, err := st.GetSetting(key)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil

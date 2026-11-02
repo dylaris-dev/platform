@@ -1,4 +1,4 @@
-package handlers
+package gate
 
 import (
 	"net/http"
@@ -23,7 +23,7 @@ func TestRequireStoreEnabled(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			called := false
-			s := &AppState{StoreEnabled: tt.enabled}
+			s := Gates{StoreEnabled: tt.enabled}
 			h := s.RequireStoreEnabled(func(w http.ResponseWriter, r *http.Request) {
 				called = true
 				w.WriteHeader(http.StatusOK)

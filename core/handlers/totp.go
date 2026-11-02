@@ -484,7 +484,7 @@ func (h *AuthHandler) AdminResetTOTPHandler(w http.ResponseWriter, r *http.Reque
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req) // an absent body fails the check below, with its own message
 	}
-	if !reauth.RequireAdminReauth(w, r, h.state.Store, reauthCodeVerifier(h.state), req) {
+	if !reauth.RequireAdminReauth(w, r, h.state.Store, ReauthCodeVerifier(h.state), req) {
 		return
 	}
 	if err := h.state.Store.DisableUserTOTP(id); err != nil {
@@ -523,12 +523,12 @@ func verifyTOTPOrBackupFor(state *AppState, user *models.User, code string) (boo
 	return verifyTOTPOrBackupWith(state, user, code, true)
 }
 
-// reauthCodeVerifier is the second-factor check re-authentication runs:
+// ReauthCodeVerifier is the second-factor check re-authentication runs:
 // verifyTOTPOrBackupWith without spending the step (see there for why). It
 // lives here because the check needs the replay and wrong-code limits, the
 // backup-code store and the identity audit, none of which belong to the
 // reauth package.
-func reauthCodeVerifier(state *AppState) reauth.CodeVerifier {
+func ReauthCodeVerifier(state *AppState) reauth.CodeVerifier {
 	return func(user *models.User, code string) (bool, error) {
 		return verifyTOTPOrBackupWith(state, user, code, false)
 	}

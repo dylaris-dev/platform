@@ -16,7 +16,7 @@ import (
 // BuildProvider calls this on failure instead of proceeding with
 // a nil provider.
 //
-// Deliberately NOT featureDisabledResponse/FeatureCoreStorage's exact shape
+// Deliberately NOT gate.FeatureDisabledResponse/FeatureCoreStorage's exact shape
 // (no X-Feature-Disabled header, a different "error" value): that response is
 // reserved for RequireCoreStorageConfigured, the router-level gate wrapping
 // EXACTLY the 4 WRITE routes, which fires before the request body is even
@@ -32,7 +32,7 @@ import (
 // second as the first sends the operator to rewrite a working config; a plain
 // 500 tells them nothing; and a 404 would be an outright lie, claiming the
 // file is gone when the truth is that Core cannot see the mount. Both keep the
-// shape this response already had, so the distinction from featureDisabledResponse
+// shape this response already had, so the distinction from gate.FeatureDisabledResponse
 // described above is unaffected.
 func CoreStorageUnavailableResponse(w http.ResponseWriter, err error) {
 	code := "core_storage_unavailable"

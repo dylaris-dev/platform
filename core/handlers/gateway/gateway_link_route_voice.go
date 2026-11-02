@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/guard"
 
 	"dylaris-core/handlers/httpx"
@@ -115,8 +115,8 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !h.state.GatewayEnabled() {
-		handlers.GatewayDisabledResponse(w)
+	if !services.GatewayRoutingEnabled(h.state.Store) {
+		gate.GatewayDisabledResponse(w)
 		return
 	}
 	rt, err := h.coreRoute(domain)

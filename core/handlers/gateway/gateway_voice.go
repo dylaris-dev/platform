@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
 	"dylaris-core/handlers/servers"
@@ -97,8 +98,8 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if enabled {
-		if !h.state.GatewayEnabled() {
-			handlers.GatewayDisabledResponse(w)
+		if !services.GatewayRoutingEnabled(h.state.Store) {
+			gate.GatewayDisabledResponse(w)
 			return
 		}
 		if guard.RefuseIfSuspended(w, r, h.state.Store, h.state.SuspendGrace, srv) {

@@ -10,6 +10,7 @@ import (
 	"dylaris-core/handlers/backup"
 	"dylaris-core/handlers/beam"
 	"dylaris-core/handlers/billing"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/gateway"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/mods"
@@ -552,6 +553,16 @@ var requiredCaps = map[string]string{
 // walk the REAL router. Pure extraction: no route, method, or middleware
 // changed relative to the prior inline registration in main().
 func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandler, cfg routeCfg) (*mux.Router, *routeExtras) {
+	// The route middleware reads these four through one value, built from the
+	// state the handlers share; CoreStorage is the same pointer every handler
+	// holds through appState (one Manager per process, spec R7).
+	gates := gate.Gates{
+		Store:        appState.Store,
+		FeatureFlags: appState.FeatureFlags,
+		StoreEnabled: appState.StoreEnabled,
+		CoreStorage:  appState.CoreStorage,
+	}
+
 	// Initialize handlers
 	serverHandler := servers.NewServerHandler(appState)
 	portsAdminHandler := servers.NewPortsAdminHandler(appState)
@@ -687,7 +698,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// per request that we deliberately don't cache so a wizard completion on
 	// one Core unlocks others on their very next request.
 	api.Use(func(next http.Handler) http.Handler {
-		return http.HandlerFunc(appState.RequireSetupComplete(next.ServeHTTP))
+		return http.HandlerFunc(gates.RequireSetupComplete(next.ServeHTTP))
 	})
 
 	// Maintenance gate: blocks writes / all traffic per block_level while
@@ -939,44 +950,44 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// and outside the existing feature gates (Rule R1). The caller's own PAT
 	// row is the realm (userID from context, no path {id}), so there is no
 	// separate owner-filter to keep or remove here.
-	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status)))).Methods("GET")
-	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Set))))).Methods("PUT")
-	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(modrinthPATHandler.Clear))))).Methods("DELETE")
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status)))).Methods("GET")
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(modrinthPATHandler.Set))))).Methods("PUT")
+	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(modrinthPATHandler.Clear))))).Methods("DELETE")
 	// --- Pack builder. Reuses the modpacks feature gates. ---
 	// Phase 4 Task 20: OWNER modpack.read/write/delete, chokepoint-open by
 	// design. The real per-realm boundary is packsHandler.packAccess: the
 	// pack's Modrinth team (or the creator of an unbound pack), admin read. Every write
 	// route is wrapped in Audited, which records it in the pack's history.
-	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.List)))).Methods("GET")
+	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(packsHandler.List)))).Methods("GET")
 	// The history of the caller's packs.
-	api.HandleFunc("/me/pack-audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.PackAudit)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.PackAudit)))).Methods("GET")
-	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Create))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.Get)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("pack.updated", packsHandler.Update)))))).Methods("PATCH")
-	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("pack.deleted", packsHandler.Delete)))))).Methods("DELETE")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListBuilds)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.created", packsHandler.CreateBuild)))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.updated", packsHandler.UpdateBuild)))))).Methods("PATCH")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.deleted", packsHandler.DeleteBuild)))))).Methods("DELETE")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ListContent)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.Folders)))).Methods("GET")
+	api.HandleFunc("/me/pack-audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(packsHandler.PackAudit)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/audit", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(packsHandler.PackAudit)))).Methods("GET")
+	api.HandleFunc("/me/packs", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Create))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(packsHandler.Get)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("pack.updated", packsHandler.Update)))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("pack.deleted", packsHandler.Delete)))))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(packsHandler.ListBuilds)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("build.created", packsHandler.CreateBuild)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("build.updated", packsHandler.UpdateBuild)))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("build.deleted", packsHandler.DeleteBuild)))))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(packsHandler.ListContent)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(packsHandler.Folders)))).Methods("GET")
 	forkLimiter := httpx.NewIPRateLimiter()
-	api.HandleFunc("/packs/{id:[0-9]+}/recommended", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.SetRecommended))))).Methods("PATCH")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/fork", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.Authz.RequireCap("modpack.read")(forkLimiter.Limit(3, appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ForkBuild))))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.folder_created", packsHandler.Folders)))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.folder_deleted", packsHandler.Folders)))))).Methods("DELETE")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.added", packsHandler.AddModrinth)))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.uploaded", packsHandler.UploadContent)))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.removed", packsHandler.RemoveContent)))))).Methods("DELETE")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.side_changed", packsHandler.SetSide)))))).Methods("PATCH")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.GetContentText)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.text_edited", packsHandler.SetContentText)))))).Methods("PUT")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.published", packsHandler.PublishModrinth)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/recommended", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.SetRecommended))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/fork", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.Authz.RequireCap("modpack.read")(forkLimiter.Limit(3, gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.ForkBuild))))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("content.folder_created", packsHandler.Folders)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/folders", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("content.folder_deleted", packsHandler.Folders)))))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("content.added", packsHandler.AddModrinth)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/upload", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("content.uploaded", packsHandler.UploadContent)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.delete")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("content.removed", packsHandler.RemoveContent)))))).Methods("DELETE")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/side", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("content.side_changed", packsHandler.SetSide)))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(packsHandler.GetContentText)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/text", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("content.text_edited", packsHandler.SetContentText)))))).Methods("PUT")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/publish", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("build.published", packsHandler.PublishModrinth)))))).Methods("POST")
 	// Templates: the audience gate keeps non-admins out while the feature is off or
 	// admin-only; who may see, edit and share each template is decided in the handler.
-	api.HandleFunc("/templates", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.List))).Methods("GET")
-	api.HandleFunc("/templates", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Create))).Methods("POST")
+	api.HandleFunc("/templates", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.List))).Methods("GET")
+	api.HandleFunc("/templates", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.Create))).Methods("POST")
 	// Upload and capture each unpack a whole archive; one instance so the two
 	// share one budget. Add-files has its own. It was raised to 1200/min while
 	// the panel sent one request per subfolder; the panel now bundles up to 200
@@ -986,48 +997,48 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// A download zips the whole template on the fly, from our storage or a
 	// tenant bucket: 30/min is far above a person clicking, far below a loop.
 	templateDownloadLimiter := httpx.NewIPRateLimiter()
-	api.HandleFunc("/templates/upload", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateArchiveLimiter.Limit(5, templatesHandler.Upload)))).Methods("POST")
-	api.HandleFunc("/templates/capture", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateArchiveLimiter.Limit(5, templatesHandler.Capture)))).Methods("POST")
-	api.HandleFunc("/templates/owner-shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.ListOwnerShares))).Methods("GET")
-	api.HandleFunc("/templates/owner-shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.PutOwnerShare))).Methods("PUT")
-	api.HandleFunc("/templates/owner-shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.DeleteOwnerShare))).Methods("DELETE")
-	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Get))).Methods("GET")
-	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Update))).Methods("PATCH")
-	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Delete))).Methods("DELETE")
-	api.HandleFunc("/templates/{id:[0-9]+}/download", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateDownloadLimiter.Limit(30, templatesHandler.Download)))).Methods("GET")
-	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.Files))).Methods("GET")
-	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateAddFilesLimiter.Limit(60, templatesHandler.AddFiles)))).Methods("POST")
-	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.DeleteFile))).Methods("DELETE")
-	api.HandleFunc("/templates/{id:[0-9]+}/files/text", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.GetText))).Methods("GET")
-	api.HandleFunc("/templates/{id:[0-9]+}/files/text", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.PutText))).Methods("PUT")
-	api.HandleFunc("/templates/{id:[0-9]+}/modrinth", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templateAddFilesLimiter.Limit(60, templatesHandler.AddModrinth)))).Methods("POST")
-	api.HandleFunc("/templates/{id:[0-9]+}/modrinth/{refId:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.DeleteModrinth))).Methods("DELETE")
-	api.HandleFunc("/templates/{id:[0-9]+}/shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.ListShares))).Methods("GET")
-	api.HandleFunc("/templates/{id:[0-9]+}/shares", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.PutShare))).Methods("PUT")
-	api.HandleFunc("/templates/{id:[0-9]+}/shares/{userId:[0-9a-fA-F-]{36}}", authHandler.AuthMiddleware(appState.RequireTemplatesAudience(templatesHandler.DeleteShare))).Methods("DELETE")
+	api.HandleFunc("/templates/upload", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templateArchiveLimiter.Limit(5, templatesHandler.Upload)))).Methods("POST")
+	api.HandleFunc("/templates/capture", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templateArchiveLimiter.Limit(5, templatesHandler.Capture)))).Methods("POST")
+	api.HandleFunc("/templates/owner-shares", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.ListOwnerShares))).Methods("GET")
+	api.HandleFunc("/templates/owner-shares", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.PutOwnerShare))).Methods("PUT")
+	api.HandleFunc("/templates/owner-shares", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.DeleteOwnerShare))).Methods("DELETE")
+	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.Get))).Methods("GET")
+	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.Update))).Methods("PATCH")
+	api.HandleFunc("/templates/{id:[0-9]+}", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.Delete))).Methods("DELETE")
+	api.HandleFunc("/templates/{id:[0-9]+}/download", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templateDownloadLimiter.Limit(30, templatesHandler.Download)))).Methods("GET")
+	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.Files))).Methods("GET")
+	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templateAddFilesLimiter.Limit(60, templatesHandler.AddFiles)))).Methods("POST")
+	api.HandleFunc("/templates/{id:[0-9]+}/files", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.DeleteFile))).Methods("DELETE")
+	api.HandleFunc("/templates/{id:[0-9]+}/files/text", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.GetText))).Methods("GET")
+	api.HandleFunc("/templates/{id:[0-9]+}/files/text", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.PutText))).Methods("PUT")
+	api.HandleFunc("/templates/{id:[0-9]+}/modrinth", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templateAddFilesLimiter.Limit(60, templatesHandler.AddModrinth)))).Methods("POST")
+	api.HandleFunc("/templates/{id:[0-9]+}/modrinth/{refId:[0-9]+}", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.DeleteModrinth))).Methods("DELETE")
+	api.HandleFunc("/templates/{id:[0-9]+}/shares", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.ListShares))).Methods("GET")
+	api.HandleFunc("/templates/{id:[0-9]+}/shares", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.PutShare))).Methods("PUT")
+	api.HandleFunc("/templates/{id:[0-9]+}/shares/{userId:[0-9a-fA-F-]{36}}", authHandler.AuthMiddleware(gates.RequireTemplatesAudience(templatesHandler.DeleteShare))).Methods("DELETE")
 	// Importing existing Modrinth modpacks: the caller's projects, hiding, import.
-	api.HandleFunc("/me/modrinth/memberships", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ClearModrinthMemberships)))).Methods("DELETE")
-	api.HandleFunc("/me/modrinth/projects", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(packsHandler.ListModrinthProjects)))).Methods("GET")
-	api.HandleFunc("/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/hidden", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.RequireModpacksEnabled(packsHandler.SetModrinthProjectHidden)))).Methods("PUT")
-	api.HandleFunc("/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/import", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportModrinthProject))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/versions", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ListModrinthVersions))))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/versions/{versionId:[A-Za-z0-9]+}/import", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.ImportModrinthVersion))))).Methods("POST")
+	api.HandleFunc("/me/modrinth/memberships", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(packsHandler.ClearModrinthMemberships)))).Methods("DELETE")
+	api.HandleFunc("/me/modrinth/projects", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.RequireModpacksEnabled(packsHandler.ListModrinthProjects)))).Methods("GET")
+	api.HandleFunc("/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/hidden", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.RequireModpacksEnabled(packsHandler.SetModrinthProjectHidden)))).Methods("PUT")
+	api.HandleFunc("/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/import", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.ImportModrinthProject))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/versions", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.ListModrinthVersions))))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/versions/{versionId:[A-Za-z0-9]+}/import", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.ImportModrinthVersion))))).Methods("POST")
 	// The pack's Modrinth project page: read, edit, icon, submit for review.
-	api.HandleFunc("/packs/{id:[0-9]+}/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.GetModrinthPage))))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("modrinth.page_edited", packsHandler.EditModrinthPage)))))).Methods("PATCH")
-	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/icon", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("modrinth.icon_changed", packsHandler.UploadModrinthIcon)))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/submit", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("modrinth.submitted", packsHandler.SubmitModrinthReview)))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.ExportMrpack)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.replaced", packsHandler.ReplaceWithModrinth)))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("content.updated", packsHandler.UpdateMods)))))).Methods("POST")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(appState.AllowReadOnlyWhenDisabled(packsHandler.BuildCompat)))).Methods("GET")
-	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(appState.RequireModpacksEnabled(appState.RequireUserCanCreateModpacks(packsHandler.Audited("build.migrated", packsHandler.MigrateBuild)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.GetModrinthPage))))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("modrinth.page_edited", packsHandler.EditModrinthPage)))))).Methods("PATCH")
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/icon", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("modrinth.icon_changed", packsHandler.UploadModrinthIcon)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/modrinth/submit", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("modrinth.submitted", packsHandler.SubmitModrinthReview)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/export", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(packsHandler.ExportMrpack)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/content/{modversionId:[0-9]+}/replace-modrinth", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("content.replaced", packsHandler.ReplaceWithModrinth)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/update-mods", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("content.updated", packsHandler.UpdateMods)))))).Methods("POST")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/compat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(packsHandler.BuildCompat)))).Methods("GET")
+	api.HandleFunc("/packs/{id:[0-9]+}/builds/{buildId:[0-9]+}/migrate", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(packsHandler.Audited("build.migrated", packsHandler.MigrateBuild)))))).Methods("POST")
 
 	// --- Username history + account policy ---
 	// /me/usage is the caller's OWN metered usage: EXEMPT-authed, no RequireCap
 	// (not in requiredCaps). /admin/usage is PANEL plans.read.
 	api.HandleFunc("/me/usage", authHandler.AuthMiddleware(usageHandler.GetMyUsage)).Methods("GET")
-	api.HandleFunc("/admin/usage", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireTenancyEnabled(usageHandler.GetAllUsage)))).Methods("GET")
+	api.HandleFunc("/admin/usage", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(gates.RequireTenancyEnabled(usageHandler.GetAllUsage)))).Methods("GET")
 
 	// /me/billing is the caller's OWN lifecycle state: EXEMPT-authed, no RequireCap
 	// (not in requiredCaps). The admin billing routes below are PANEL plans.*.
@@ -1039,28 +1050,28 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// DELETE /nodes/{id} is untouched and stays capability-gated - opening THAT
 	// one to tenants would have let any of them delete any node, since it has no
 	// ownership check of its own.
-	api.HandleFunc("/me/nodes/{id:[0-9]+}/contents", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.GetMyNodeContents))).Methods("GET")
-	api.HandleFunc("/me/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.DeleteMyNode))).Methods("DELETE")
-	api.HandleFunc("/me/nodes/{id:[0-9]+}/reset-pairing", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.ResetMyNodePairing))).Methods("POST")
-	api.HandleFunc("/me/nodes/{id:[0-9]+}/join-attempt", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.GetMyNodeJoinAttempt))).Methods("GET")
-	api.HandleFunc("/me/nodes/{id:[0-9]+}/admit", authHandler.AuthMiddleware(appState.RequireBYONEnabled(nodeHandler.AdmitMyNode))).Methods("POST")
+	api.HandleFunc("/me/nodes/{id:[0-9]+}/contents", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.GetMyNodeContents))).Methods("GET")
+	api.HandleFunc("/me/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.DeleteMyNode))).Methods("DELETE")
+	api.HandleFunc("/me/nodes/{id:[0-9]+}/reset-pairing", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.ResetMyNodePairing))).Methods("POST")
+	api.HandleFunc("/me/nodes/{id:[0-9]+}/join-attempt", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.GetMyNodeJoinAttempt))).Methods("GET")
+	api.HandleFunc("/me/nodes/{id:[0-9]+}/admit", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.AdmitMyNode))).Methods("POST")
 	// Own entitlement: what the caller may use. Deliberately NOT gated on
 	// RequireBYONEnabled - with BYON off the tenant UI still asks, and needs the
 	// answer "no" rather than a 503 it would have to special-case.
 	api.HandleFunc("/me/entitlement", authHandler.AuthMiddleware(entitlementHandler.GetMine)).Methods("GET")
-	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireTenancyEnabled(appState.RequireStoreEnabled(billingHandler.GetBillingSettings))))).Methods("GET")
-	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(appState.RequireStoreEnabled(billingHandler.SetBillingSettings))))).Methods("PUT")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireTenancyEnabled(billingHandler.GetUserBilling)))).Methods("GET")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(billingHandler.SetBillingStatus)))).Methods("PATCH")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(appState.RequireStoreEnabled(billingHandler.SetBillingOverrides))))).Methods("PATCH")
+	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(gates.RequireTenancyEnabled(gates.RequireStoreEnabled(billingHandler.GetBillingSettings))))).Methods("GET")
+	api.HandleFunc("/admin/settings/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(gates.RequireTenancyEnabled(gates.RequireStoreEnabled(billingHandler.SetBillingSettings))))).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(gates.RequireTenancyEnabled(billingHandler.GetUserBilling)))).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(gates.RequireTenancyEnabled(billingHandler.SetBillingStatus)))).Methods("PATCH")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/billing-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(gates.RequireTenancyEnabled(gates.RequireStoreEnabled(billingHandler.SetBillingOverrides))))).Methods("PATCH")
 	// Entitlement = WHAT a tenant may use (BYON / route-only), as opposed to the
 	// billing routes above, which are status and HOW MUCH.
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(appState.RequireTenancyEnabled(entitlementHandler.GetForUser)))).Methods("GET")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(entitlementHandler.Grant)))).Methods("POST")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(entitlementHandler.Revoke)))).Methods("DELETE")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.read")(gates.RequireTenancyEnabled(entitlementHandler.GetForUser)))).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(gates.RequireTenancyEnabled(entitlementHandler.Grant)))).Methods("POST")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/entitlement", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(gates.RequireTenancyEnabled(entitlementHandler.Revoke)))).Methods("DELETE")
 
 	// --- BYON plans + per-user plan/limit overrides (admin, PANEL plans.*) ---
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/limit-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(appState.RequireTenancyEnabled(plansHandler.SetUserLimitOverrides)))).Methods("PATCH")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/limit-overrides", authHandler.AuthMiddleware(appState.Authz.RequireCap("plans.write")(gates.RequireTenancyEnabled(plansHandler.SetUserLimitOverrides)))).Methods("PATCH")
 
 	// /me/username-history is the caller's OWN history: EXEMPT-authed, no
 	// RequireCap (not in requiredCaps). The admin two below are PANEL users.*.
@@ -1299,11 +1310,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// support-or-admin check specific to that route - that check IS the
 	// boundary and is not superseded by a route-level cap.
 	// Categories: public list (enabled only) for create form, admin CRUD for management.
-	api.HandleFunc("/ticket-categories", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketCategoriesHandler.ListCategories))).Methods("GET")
-	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketCategoriesHandler.AdminListCategories)))).Methods("GET")
-	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketCategoriesHandler.CreateCategory)))).Methods("POST")
-	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketCategoriesHandler.UpdateCategory)))).Methods("PATCH")
-	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.delete")(appState.RequireTicketsEnabled(ticketCategoriesHandler.DeleteCategory)))).Methods("DELETE")
+	api.HandleFunc("/ticket-categories", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketCategoriesHandler.ListCategories))).Methods("GET")
+	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(gates.RequireTicketsEnabled(ticketCategoriesHandler.AdminListCategories)))).Methods("GET")
+	api.HandleFunc("/admin/ticket-categories", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(ticketCategoriesHandler.CreateCategory)))).Methods("POST")
+	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(ticketCategoriesHandler.UpdateCategory)))).Methods("PATCH")
+	api.HandleFunc("/admin/ticket-categories/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.delete")(gates.RequireTicketsEnabled(ticketCategoriesHandler.DeleteCategory)))).Methods("DELETE")
 
 	// Tickets: user CRUD + support inbox. GET/POST /tickets and GET/DELETE
 	// /tickets/{id} stay authed-exempt (the owner/watcher/support ACL in
@@ -1311,44 +1322,44 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// is the boundary). GET /tickets/inbox IS admin/support management (the
 	// support triage view), so it is RequireCap("tickets.read")-gated here and
 	// its in-handler "support or admin" pure gate was removed.
-	api.HandleFunc("/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.ListMyTickets))).Methods("GET")
+	api.HandleFunc("/tickets", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketsHandler.ListMyTickets))).Methods("GET")
 	// Per IP: each new ticket notifies every supporter and each added watcher
 	// gets a notification carrying the ticket title, so unthrottled these were
 	// a free notification flood (and add-watcher a username oracle).
 	ticketLimiter := httpx.NewIPRateLimiter()
 	watcherLimiter := httpx.NewIPRateLimiter() // its own count: watchers must not use up ticket creation
-	api.HandleFunc("/tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketLimiter.Limit(10, ticketsHandler.CreateTicket)))).Methods("POST")
-	api.HandleFunc("/tickets/inbox", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketsHandler.ListInboxTickets)))).Methods("GET")
-	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.GetTicket))).Methods("GET")
-	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketDeletionsHandler.DeleteTicket))).Methods("DELETE")
-	api.HandleFunc("/tickets/{id:[0-9]+}/messages", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.AddReply))).Methods("POST")
-	api.HandleFunc("/tickets/{id:[0-9]+}/status", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.UpdateStatus))).Methods("PATCH")
-	api.HandleFunc("/tickets/{id:[0-9]+}/priority", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.UpdatePriority))).Methods("PATCH")
-	api.HandleFunc("/tickets/{id:[0-9]+}/assignment", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.UpdateAssignment))).Methods("PATCH")
-	api.HandleFunc("/tickets/{id:[0-9]+}/watchers", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(watcherLimiter.Limit(20, ticketsHandler.AddWatcher)))).Methods("POST")
-	api.HandleFunc("/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.RemoveWatcher))).Methods("DELETE")
+	api.HandleFunc("/tickets", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketLimiter.Limit(10, ticketsHandler.CreateTicket)))).Methods("POST")
+	api.HandleFunc("/tickets/inbox", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(gates.RequireTicketsEnabled(ticketsHandler.ListInboxTickets)))).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketsHandler.GetTicket))).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketDeletionsHandler.DeleteTicket))).Methods("DELETE")
+	api.HandleFunc("/tickets/{id:[0-9]+}/messages", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketsHandler.AddReply))).Methods("POST")
+	api.HandleFunc("/tickets/{id:[0-9]+}/status", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketsHandler.UpdateStatus))).Methods("PATCH")
+	api.HandleFunc("/tickets/{id:[0-9]+}/priority", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketsHandler.UpdatePriority))).Methods("PATCH")
+	api.HandleFunc("/tickets/{id:[0-9]+}/assignment", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketsHandler.UpdateAssignment))).Methods("PATCH")
+	api.HandleFunc("/tickets/{id:[0-9]+}/watchers", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(watcherLimiter.Limit(20, ticketsHandler.AddWatcher)))).Methods("POST")
+	api.HandleFunc("/tickets/{id:[0-9]+}/watchers/{userId:[0-9a-f-]{36}}", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketsHandler.RemoveWatcher))).Methods("DELETE")
 
 	// Sidebar source for support's "Via tickets" tab.
-	api.HandleFunc("/me/servers/via-tickets", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketsHandler.ListMyServersViaTickets))).Methods("GET")
+	api.HandleFunc("/me/servers/via-tickets", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketsHandler.ListMyServersViaTickets))).Methods("GET")
 
 	// Settings (admin management -> PANEL tickets.*).
-	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketSettingsHandler.GetSettings)))).Methods("GET")
-	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketSettingsHandler.SaveSettings)))).Methods("PUT")
+	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(gates.RequireTicketsEnabled(ticketSettingsHandler.GetSettings)))).Methods("GET")
+	api.HandleFunc("/admin/settings/tickets", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(ticketSettingsHandler.SaveSettings)))).Methods("PUT")
 
 	// --- Tickets: attachments, canned responses, notifications ---
-	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(ticketAttachmentsHandler.UploadAttachment))))).Methods("POST")
-	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(ticketAttachmentsHandler.ListAttachments))).Methods("GET")
-	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketAttachmentsHandler.DownloadAttachment)))).Methods("GET")
-	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketAttachmentsHandler.DeleteAttachment)))).Methods("DELETE")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(gates.RequireCoreStorageConfigured(gates.RequireCoreStorageReachable(ticketAttachmentsHandler.UploadAttachment))))).Methods("POST")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(ticketAttachmentsHandler.ListAttachments))).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}/download", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(gates.RequireCoreStorageReachable(ticketAttachmentsHandler.DownloadAttachment)))).Methods("GET")
+	api.HandleFunc("/tickets/{id:[0-9]+}/attachments/{aid:[0-9]+}", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(gates.RequireCoreStorageReachable(ticketAttachmentsHandler.DeleteAttachment)))).Methods("DELETE")
 
 	// Canned responses: support sees the read list (authed-exempt - its own
 	// in-handler support-or-admin check is the boundary and is unchanged),
 	// admin manages (RequireCap-gated, IsAdmin gate removed).
-	api.HandleFunc("/ticket-canned-responses", authHandler.AuthMiddleware(appState.RequireTicketsEnabled(cannedResponsesHandler.ListForSupport))).Methods("GET")
-	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(cannedResponsesHandler.AdminList)))).Methods("GET")
-	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(cannedResponsesHandler.Create)))).Methods("POST")
-	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(cannedResponsesHandler.Update)))).Methods("PATCH")
-	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.delete")(appState.RequireTicketsEnabled(cannedResponsesHandler.Delete)))).Methods("DELETE")
+	api.HandleFunc("/ticket-canned-responses", authHandler.AuthMiddleware(gates.RequireTicketsEnabled(cannedResponsesHandler.ListForSupport))).Methods("GET")
+	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(gates.RequireTicketsEnabled(cannedResponsesHandler.AdminList)))).Methods("GET")
+	api.HandleFunc("/admin/ticket-canned-responses", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(cannedResponsesHandler.Create)))).Methods("POST")
+	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(cannedResponsesHandler.Update)))).Methods("PATCH")
+	api.HandleFunc("/admin/ticket-canned-responses/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.delete")(gates.RequireTicketsEnabled(cannedResponsesHandler.Delete)))).Methods("DELETE")
 
 	// Notifications: the caller's own in-app inbox. NOT gated on the ticket
 	// feature, though it was: the inbox started out ticket-driven and inherited
@@ -1405,24 +1416,24 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// GET reads map to tickets.read; every mutation (including the backup
 	// delete and the restore Danger Zone, which keep their own 2FA/cooldown/
 	// typed-phrase checks in-handler) maps to tickets.write.
-	api.HandleFunc("/admin/tickets/migration/status", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketMigrationHandler.GetStatus)))).Methods("GET")
-	api.HandleFunc("/admin/tickets/migration/test-connection", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.TestExternalConnection)))).Methods("POST")
-	api.HandleFunc("/admin/tickets/migration/dry-run", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.DryRunMigration)))).Methods("POST")
-	api.HandleFunc("/admin/tickets/migration/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(ticketMigrationHandler.ExecuteMigration)))).Methods("POST")
+	api.HandleFunc("/admin/tickets/migration/status", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(gates.RequireTicketsEnabled(ticketMigrationHandler.GetStatus)))).Methods("GET")
+	api.HandleFunc("/admin/tickets/migration/test-connection", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(ticketMigrationHandler.TestExternalConnection)))).Methods("POST")
+	api.HandleFunc("/admin/tickets/migration/dry-run", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(ticketMigrationHandler.DryRunMigration)))).Methods("POST")
+	api.HandleFunc("/admin/tickets/migration/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(ticketMigrationHandler.ExecuteMigration)))).Methods("POST")
 	// Backups: create, list, download, delete.
-	api.HandleFunc("/admin/tickets/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageConfigured(appState.RequireCoreStorageReachable(ticketMigrationHandler.CreateBackup)))))).Methods("POST")
-	api.HandleFunc("/admin/tickets/backups", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.ListBackups))))).Methods("GET")
-	api.HandleFunc("/admin/tickets/backups/{name}/download", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.DownloadBackup))))).Methods("GET")
-	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.DeleteBackup))))).Methods("DELETE")
+	api.HandleFunc("/admin/tickets/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(gates.RequireCoreStorageConfigured(gates.RequireCoreStorageReachable(ticketMigrationHandler.CreateBackup)))))).Methods("POST")
+	api.HandleFunc("/admin/tickets/backups", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(gates.RequireTicketsEnabled(gates.RequireCoreStorageReachable(ticketMigrationHandler.ListBackups))))).Methods("GET")
+	api.HandleFunc("/admin/tickets/backups/{name}/download", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(gates.RequireTicketsEnabled(gates.RequireCoreStorageReachable(ticketMigrationHandler.DownloadBackup))))).Methods("GET")
+	api.HandleFunc("/admin/tickets/backups/{name}", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(gates.RequireCoreStorageReachable(ticketMigrationHandler.DeleteBackup))))).Methods("DELETE")
 	// Restore: two-step Danger Zone (init + execute) - 2FA + 15s timer + typed phrase.
-	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.InitRestore))))).Methods("POST")
-	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(appState.RequireTicketsEnabled(appState.RequireCoreStorageReachable(ticketMigrationHandler.ExecuteRestore))))).Methods("POST")
+	api.HandleFunc("/admin/tickets/restore/init", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(gates.RequireCoreStorageReachable(ticketMigrationHandler.InitRestore))))).Methods("POST")
+	api.HandleFunc("/admin/tickets/restore/execute", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.write")(gates.RequireTicketsEnabled(gates.RequireCoreStorageReachable(ticketMigrationHandler.ExecuteRestore))))).Methods("POST")
 	// Deletion audit log (admin management -> PANEL tickets.read). Note: the
 	// DELETE /tickets/{id} handler itself (ticket_deletions.go) stays
 	// authed-exempt with its in-handler IsAdmin gate untouched - that route
 	// is shared with the user-facing GET /tickets/{id} template and is
 	// listed as authed-exempt in the batch brief, so it is NOT RequireCap'd.
-	api.HandleFunc("/admin/tickets/deletion-log", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(appState.RequireTicketsEnabled(ticketDeletionsHandler.ListDeletions)))).Methods("GET")
+	api.HandleFunc("/admin/tickets/deletion-log", authHandler.AuthMiddleware(appState.Authz.RequireCap("tickets.read")(gates.RequireTicketsEnabled(ticketDeletionsHandler.ListDeletions)))).Methods("GET")
 	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.read")(userHandler.GetUserRouteLimit))).Methods("GET")
 	api.HandleFunc("/users/{id:[0-9a-f-]{36}}/route-limit", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(userHandler.SetUserRouteLimit))).Methods("PUT")
 
@@ -1562,11 +1573,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 
 	// User endpoints (per-server routes, identified by domain)
 	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gatewayHandler.GetServerRoutes))).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(appState.RequireGatewayEnabled(gatewayHandler.CreateServerRoute)))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gates.RequireGatewayEnabled(gatewayHandler.CreateServerRoute)))).Methods("POST")
 	api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.DeleteServerRoute))).Methods("DELETE")
-	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(appState.RequireGatewayEnabled(gatewayHandler.SetServerProxyProtocol)))).Methods("PATCH")
-	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(appState.RequireGatewayEnabled(gatewayHandler.GetServerProxyProtocol)))).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/voice", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(appState.RequireGatewayEnabled(gatewayHandler.GetServerVoice)))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gates.RequireGatewayEnabled(gatewayHandler.SetServerProxyProtocol)))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gates.RequireGatewayEnabled(gatewayHandler.GetServerProxyProtocol)))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/voice", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gates.RequireGatewayEnabled(gatewayHandler.GetServerVoice)))).Methods("GET")
 	// No RequireGatewayEnabled: turning voice off must work with the gateway
 	// off; SetServerVoice gates the enable itself.
 	api.HandleFunc("/servers/{id:[0-9]+}/voice/switch", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.SetServerVoice))).Methods("PUT")
@@ -1612,8 +1623,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		authLimiter.Limit(20, authHandler.AuthMiddleware(customDomainHandler.VerifyTXT))).Methods("POST")
 
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gatewayHandler.ListLinkRoutes)).Methods("GET")
-	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.CreateLinkRoute))).Methods("POST")
-	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/proxy-protocol", authHandler.AuthMiddleware(appState.RequireGatewayEnabled(gatewayHandler.SetLinkRouteProxyProtocol))).Methods("PATCH")
+	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gates.RequireGatewayEnabled(gatewayHandler.CreateLinkRoute))).Methods("POST")
+	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/proxy-protocol", authHandler.AuthMiddleware(gates.RequireGatewayEnabled(gatewayHandler.SetLinkRouteProxyProtocol))).Methods("PATCH")
 	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/voice", authHandler.AuthMiddleware(gatewayHandler.SetLinkRouteVoice)).Methods("PUT")
 	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/bedrock", authHandler.AuthMiddleware(gatewayHandler.SetLinkRouteBedrock)).Methods("PUT")
 	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/floodgate-key", authHandler.AuthMiddleware(gatewayHandler.GetLinkRouteFloodgateKey)).Methods("GET")
@@ -1698,7 +1709,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/gateway-bandwidth/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetHistory))).Methods("GET")
 	api.HandleFunc("/gateway-bandwidth/rebalance", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetRebalance))).Methods("GET")
 	api.HandleFunc("/gateway-bandwidth/rebalance", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayBandwidthHandler.SetRebalanceMode))).Methods("POST")
-	api.HandleFunc("/voice/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(appState.RequireGatewayEnabled(voiceStatsHandler.GetOverview)))).Methods("GET")
+	api.HandleFunc("/voice/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gates.RequireGatewayEnabled(voiceStatsHandler.GetOverview)))).Methods("GET")
 
 	// Placement / Scheduling. /placement/pick + /tags + /regions stay authed-exempt
 	// (Phase 4 Task 13): they are node-picking helper reads/preview any authed user
@@ -1711,17 +1722,17 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/nodes/{id:[0-9]+}/placement", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(placementHandler.SetNodePlacement))).Methods("PUT")
 
 	// Server auto-move toggle - gated on the feature flag AND active gateway.
-	api.HandleFunc("/servers/{id:[0-9]+}/automove", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(appState.RequireAutoMoveEnabled(serverHandler.SetServerAutoMove)))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/automove", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(gates.RequireAutoMoveEnabled(serverHandler.SetServerAutoMove)))).Methods("PATCH")
 	// Manual node-to-node move (admin oversight) - gateway-only; enqueues onto the orchestrator.
-	api.HandleFunc("/admin/servers/{id:[0-9]+}/move", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.write")(appState.RequireGatewayEnabled(serverHandler.MoveServer)))).Methods("POST")
+	api.HandleFunc("/admin/servers/{id:[0-9]+}/move", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.write")(gates.RequireGatewayEnabled(serverHandler.MoveServer)))).Methods("POST")
 	// Tenant-facing transfer (BYON) - gateway-only; owner-or-admin + placement authz inside.
-	api.HandleFunc("/servers/{id:[0-9]+}/transfer", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(appState.RequireGatewayEnabled(serverHandler.TransferServer)))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/transfer", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(gates.RequireGatewayEnabled(serverHandler.TransferServer)))).Methods("POST")
 	// Per-server edge transitional-MOTD: GET current config, PATCH mode/text.
 	// PATCH publishes to Redis for the gateway edge (auto/custom/off).
 	api.HandleFunc("/servers/{id:[0-9]+}/edge-motd", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetServerEdgeMotd))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/edge-motd", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.SetServerEdgeMotd))).Methods("PATCH")
 	// Admin cancel of an in-flight migration (pre-cutover rollback to the source node) - gateway-only.
-	api.HandleFunc("/admin/servers/{id:[0-9]+}/migration/cancel", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.write")(appState.RequireGatewayEnabled(serverHandler.CancelMigration)))).Methods("POST")
+	api.HandleFunc("/admin/servers/{id:[0-9]+}/migration/cancel", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.write")(gates.RequireGatewayEnabled(serverHandler.CancelMigration)))).Methods("POST")
 	// Demo flag (admin, PANEL settings.write) - mark a normal server as a public
 	// read-only showcase. The StoreEnabled guard inside SetServerDemo stays: it is
 	// feature availability (hosted-build-only), not authorization.

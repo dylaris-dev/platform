@@ -515,7 +515,7 @@ func (h *HealthHandler) nodesComponent() healthComponent {
 // subsystem is intentionally dormant ("disabled"), which is not a fault.
 func (h *HealthHandler) gatewayComponent(ctx context.Context) healthComponent {
 	comp := healthComponent{Key: "gateway", Name: "Gateway"}
-	if !h.state.gatewayEnabled() {
+	if !services.GatewayRoutingEnabled(h.state.Store) {
 		comp.Status = "disabled"
 		comp.Detail = "Routing mode is ip_port"
 		comp.Reason = "gateway subsystem is dormant; servers are reached via direct host ports"
@@ -559,7 +559,7 @@ const voicePoolWarnPct = 80
 // voiceComponent reports the voice relays and each region's port pool.
 func (h *HealthHandler) voiceComponent(ctx context.Context) healthComponent {
 	comp := healthComponent{Key: "voice", Name: "Voice chat"}
-	if !h.state.gatewayEnabled() || h.state.Redis == nil || h.state.Store == nil {
+	if !services.GatewayRoutingEnabled(h.state.Store) || h.state.Redis == nil || h.state.Store == nil {
 		comp.Status, comp.Detail = "disabled", "Voice needs gateway routing"
 		return comp
 	}
@@ -588,7 +588,7 @@ func (h *HealthHandler) voiceComponent(ctx context.Context) healthComponent {
 // server also has a live Bedrock entry. No enabled server is not a fault.
 func (h *HealthHandler) bedrockComponent(ctx context.Context) healthComponent {
 	comp := healthComponent{Key: "bedrock", Name: "Bedrock"}
-	if !h.state.gatewayEnabled() || h.state.Redis == nil || h.state.Store == nil {
+	if !services.GatewayRoutingEnabled(h.state.Store) || h.state.Redis == nil || h.state.Store == nil {
 		comp.Status, comp.Detail = "disabled", "Bedrock needs gateway routing"
 		return comp
 	}

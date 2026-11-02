@@ -1,4 +1,4 @@
-package handlers
+package gate
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ import (
 )
 
 func TestRequireCoreStorageReachable_PassesWhenHealthy(t *testing.T) {
-	s := &AppState{CoreStorage: &corestorage.Manager{Reach: storagereach.NewService(storagereach.ServiceDeps{CoreID: "core-a"})}}
+	s := Gates{CoreStorage: &corestorage.Manager{Reach: storagereach.NewService(storagereach.ServiceDeps{CoreID: "core-a"})}}
 	called := false
 	h := s.RequireCoreStorageReachable(func(http.ResponseWriter, *http.Request) { called = true })
 
@@ -28,10 +28,10 @@ func TestRequireCoreStorageReachable_PassesWhenHealthy(t *testing.T) {
 }
 
 func TestRequireCoreStorageReachable_PassesWhenTheVerifierIsAbsent(t *testing.T) {
-	// Tooling and tests build an AppState without the verifier. That must
+	// Tooling and tests build Gates without the verifier. That must
 	// behave exactly as it did before this feature existed, not deny
 	// everything.
-	s := &AppState{CoreStorage: &corestorage.Manager{}}
+	s := Gates{CoreStorage: &corestorage.Manager{}}
 	called := false
 	h := s.RequireCoreStorageReachable(func(http.ResponseWriter, *http.Request) { called = true })
 
@@ -49,7 +49,7 @@ func TestRequireCoreStorageReachable_503sWithTheTaxonomyReason(t *testing.T) {
 	// string must never reach the response body (see the assertion below).
 	const rawDetail = "/mnt/nfs/dylaris-data: permission denied"
 	svc.Status().Set(storagereach.StatusNotShared, rawDetail)
-	s := &AppState{CoreStorage: &corestorage.Manager{Reach: svc}}
+	s := Gates{CoreStorage: &corestorage.Manager{Reach: svc}}
 
 	called := false
 	h := s.RequireCoreStorageReachable(func(http.ResponseWriter, *http.Request) { called = true })

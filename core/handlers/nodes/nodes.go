@@ -271,7 +271,7 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	// external/home node only routes via gateway+beam, so while the platform
 	// is in ip_port mode it has no reachable path. Panel uses this to show a
 	// "requires gateway" badge instead of letting admins place servers there.
-	gatewayOn := h.state.GatewayEnabled()
+	gatewayOn := services.GatewayRoutingEnabled(h.state.Store)
 	for i := range nodes {
 		if nodes[i].IsExternal() && !gatewayOn {
 			nodes[i].Unusable = true

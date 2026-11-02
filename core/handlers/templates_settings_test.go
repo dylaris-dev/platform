@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -45,30 +44,6 @@ func (f *templatesFlagStore) UpdateModuleStatus(_ int, on bool) error {
 func (f *templatesFlagStore) SetModuleAccessRole(_ int, role string) error {
 	f.module.AccessRole = role
 	return nil
-}
-
-func TestRequireTemplatesAudience(t *testing.T) {
-	tests := []struct {
-		audience string
-		admin    bool
-		want     int
-	}{
-		{"off", true, 200}, {"off", false, 403},
-		{"admin", true, 200}, {"admin", false, 403},
-		{"all", true, 200}, {"all", false, 200},
-	}
-	for _, tc := range tests {
-		st := &templatesFlagStore{settings: map[string]string{services.TemplatesSettingKey: tc.audience}}
-		state := withCoreStorage(&AppState{Store: st, FeatureFlags: services.NewFeatureFlags(st)})
-		h := state.RequireTemplatesAudience(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
-		req := httptest.NewRequest("GET", "/api/templates", nil)
-		req = req.WithContext(context.WithValue(req.Context(), "isAdmin", tc.admin))
-		rec := httptest.NewRecorder()
-		h(rec, req)
-		if rec.Code != tc.want {
-			t.Errorf("audience=%s admin=%v: got %d, want %d", tc.audience, tc.admin, rec.Code, tc.want)
-		}
-	}
 }
 
 // The seven settings are validated as a whole, saved partially, and the module

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/services/corestorage"
 	"dylaris-core/services/storagereach"
 )
@@ -27,7 +28,7 @@ func TestRequireCoreStorageReachable_GatesListBackups(t *testing.T) {
 	s := &handlers.AppState{CoreStorage: &corestorage.Manager{Reach: svc}}
 	h := NewTicketMigrationHandler(s)
 
-	gated := s.RequireCoreStorageReachable(h.ListBackups)
+	gated := gate.Gates{CoreStorage: s.CoreStorage}.RequireCoreStorageReachable(h.ListBackups)
 	rec := httptest.NewRecorder()
 	gated(rec, httptest.NewRequest("GET", "/api/admin/tickets/backups", nil))
 

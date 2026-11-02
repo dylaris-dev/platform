@@ -100,7 +100,7 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 	// front of the validation would let a malformed body buy CPU time - the
 	// same order the API key mint gives its own reasons for. A save that
 	// changes nothing returned above without asking at all.
-	if !reauth.RequireAdminReauth(w, r, h.state.Store, reauthCodeVerifier(h.state), req.AdminReauthRequest) {
+	if !reauth.RequireAdminReauth(w, r, h.state.Store, ReauthCodeVerifier(h.state), req.AdminReauthRequest) {
 		return
 	}
 
@@ -135,6 +135,14 @@ func (h *UserEmailHandler) SetEmail(w http.ResponseWriter, r *http.Request) {
 // notices send without an SMTP server.
 var sendAccountMail = services.SendMail
 
+// SetAccountMailSender replaces the account notice sender for a test and
+// returns the restore func. Production never calls it.
+func SetAccountMailSender(fn func(services.MailStore, string, string, string, map[string]string) error) (restore func()) {
+	prev := sendAccountMail
+	sendAccountMail = fn
+	return func() { sendAccountMail = prev }
+}
+
 // notifyAddressChanged tells the PREVIOUS address that the account's address
 // changed. It used to hear nothing: whoever changed it - an attacker holding
 // the session and the password, or a compromised operator account - also
@@ -157,8 +165,8 @@ func notifyAddressChanged(state *AppState, oldEmail, newEmail, username string) 
 	}()
 }
 
-// notifyPasswordChanged tells the account's address that its password changed.
-func notifyPasswordChanged(state *AppState, email, username string) {
+// NotifyPasswordChanged tells the account's address that its password changed.
+func NotifyPasswordChanged(state *AppState, email, username string) {
 	if strings.TrimSpace(email) == "" {
 		return
 	}

@@ -92,7 +92,7 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 	// routing in ip_port mode there is nothing to enroll into. Refuse here so
 	// home nodes don't enroll into a dormant overlay (matches the panel, which
 	// only offers the mint-key button when routing is gateway+beam).
-	if !h.state.GatewayEnabled() {
+	if !services.GatewayRoutingEnabled(h.state.Store) {
 		httpx.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode before enrolling warp peers.", http.StatusConflict)
 		return
 	}
@@ -351,7 +351,7 @@ func (h *WarpHandler) MintExternalNodeKey(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Only an admin can add an External node", http.StatusForbidden)
 		return
 	}
-	if !h.state.GatewayEnabled() || h.state.Gateway == nil {
+	if !services.GatewayRoutingEnabled(h.state.Store) || h.state.Gateway == nil {
 		httpx.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
 		return
 	}
@@ -650,7 +650,7 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 	}
 	// Route-only needs the gateway: routes and link tunnels only exist in
 	// gateway/both routing mode. Match LinkBoot, which refuses otherwise.
-	if !h.state.GatewayEnabled() || h.state.Gateway == nil {
+	if !services.GatewayRoutingEnabled(h.state.Store) || h.state.Gateway == nil {
 		httpx.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
 		return
 	}
@@ -766,7 +766,7 @@ func (h *WarpHandler) LinkBoot(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Not a route-only link key", http.StatusForbidden)
 		return
 	}
-	if !h.state.GatewayEnabled() || h.state.Gateway == nil {
+	if !services.GatewayRoutingEnabled(h.state.Store) || h.state.Gateway == nil {
 		httpx.SendJSONError(w, "Gateway routing is disabled", http.StatusConflict)
 		return
 	}
@@ -1345,7 +1345,7 @@ func (h *WarpHandler) MintNodeWarpKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The overlay only exists in gateway/both routing mode; matches Enroll.
-	if !h.state.GatewayEnabled() || h.state.Gateway == nil {
+	if !services.GatewayRoutingEnabled(h.state.Store) || h.state.Gateway == nil {
 		httpx.SendJSONError(w, "Gateway routing is disabled; enable gateway or both mode first.", http.StatusConflict)
 		return
 	}

@@ -163,7 +163,7 @@ func (h *SettingsHandler) GetUserLimits(w http.ResponseWriter, r *http.Request) 
 
 // FeatureSettings carries only the MC-proxy toggle. There is deliberately no
 // gateway flag here: the gateway is on exactly when routing_mode is gateway or
-// both (see AppState.gatewayEnabled), which is what every gateway gate checks.
+// both (see services.GatewayRoutingEnabled), which is what every gateway gate checks.
 // A second stored flag could only ever disagree with it.
 type FeatureSettings struct {
 	ProxyEnabled bool `json:"proxyEnabled"`
@@ -529,7 +529,7 @@ type PlacementSettings struct {
 	RAMPaddingMB int `json:"ramPaddingMb"`
 }
 
-var defaultPlacementSettings = PlacementSettings{
+var DefaultPlacementSettings = PlacementSettings{
 	CPUOvercommitDefault: 2.0, // CPU is time-shared, 2.0x = 200% is conservative
 	RAMOvercommitDefault: 1.0, // RAM has no default overcommit (safer); 100%
 	DiskBufferGB:         services.DefaultDiskHeadroomGB,
@@ -666,7 +666,7 @@ func (h *SettingsHandler) SavePlacementSettings(w http.ResponseWriter, r *http.R
 
 // LoadPlacementSettings reads placement settings with sensible defaults.
 func (h *SettingsHandler) LoadPlacementSettings() PlacementSettings {
-	s := defaultPlacementSettings
+	s := DefaultPlacementSettings
 
 	getStr := func(k string) string { v, _ := h.state.Store.GetSetting(k); return v }
 

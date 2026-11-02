@@ -70,9 +70,9 @@ func TestSystemEventsAccountScope(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := h.mayReceive(eventScopeRequest(tt.userID, tt.isAdmin), tt.payload)
+			got := h.MayReceive(eventScopeRequest(tt.userID, tt.isAdmin), tt.payload)
 			if got != tt.want {
-				t.Errorf("mayReceive = %v, want %v: %s", got, tt.want, tt.why)
+				t.Errorf("MayReceive = %v, want %v: %s", got, tt.want, tt.why)
 			}
 		})
 	}

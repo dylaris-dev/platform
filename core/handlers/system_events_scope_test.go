@@ -129,8 +129,8 @@ func TestSystemEventsScope(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := &SystemEventsHandler{state: &AppState{Authz: authz.NewResolver(tt.store)}}
-			if got := h.mayReceive(eventScopeRequest(tt.userID, tt.isAdmin), tt.payload); got != tt.want {
-				t.Errorf("mayReceive = %v, want %v: %s", got, tt.want, tt.why)
+			if got := h.MayReceive(eventScopeRequest(tt.userID, tt.isAdmin), tt.payload); got != tt.want {
+				t.Errorf("MayReceive = %v, want %v: %s", got, tt.want, tt.why)
 			}
 		})
 	}
@@ -140,7 +140,7 @@ func TestSystemEventsScope(t *testing.T) {
 // keep working rather than go quiet.
 func TestSystemEventsScopeWithoutAResolver(t *testing.T) {
 	h := &SystemEventsHandler{state: &AppState{}}
-	if !h.mayReceive(eventScopeRequest("stranger", false), `{"type":"x","payload":{"serverId":7}}`) {
+	if !h.MayReceive(eventScopeRequest("stranger", false), `{"type":"x","payload":{"serverId":7}}`) {
 		t.Error("a missing resolver silenced the event stream")
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/models"
 )
 
@@ -57,7 +57,7 @@ func TestNotificationsAreNotGatedOnTheTicketFeature(t *testing.T) {
 	}
 	gated := func(rec *httptest.ResponseRecorder) bool {
 		return rec.Code == http.StatusServiceUnavailable &&
-			rec.Header().Get("X-Feature-Disabled") == handlers.FeatureTickets
+			rec.Header().Get("X-Feature-Disabled") == gate.FeatureTickets
 	}
 
 	for _, tc := range []struct{ method, path string }{

@@ -7,7 +7,7 @@ import (
 	"dylaris-core/services"
 )
 
-// sendConnTestFailure answers a failed "Test connection" with the stage
+// SendConnTestFailure answers a failed "Test connection" with the stage
 // attached.
 //
 // The status stays 502 and `success` stays false, because that is what every
@@ -15,7 +15,7 @@ import (
 // the panel words its heading from it, so "nothing answered on that address"
 // and "answered, then refused" stop arriving as the same red box. See
 // services/conncheck.go for why that distinction is the whole feature.
-func sendConnTestFailure(w http.ResponseWriter, check services.ConnCheck) {
+func SendConnTestFailure(w http.ResponseWriter, check services.ConnCheck) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadGateway)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{

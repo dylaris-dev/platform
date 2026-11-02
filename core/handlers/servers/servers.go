@@ -262,7 +262,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	// never resolves. Costs nothing when no server is installing.
 	nodeops.AnnotateStalledInstallsFor(r.Context(), h.state.Redis, h.state.GRPCRegistry, servers)
 
-	access.RedactNodeAddress(h.state.Store, h.state.GatewayEnabled, servers, isAdmin, userID)
+	access.RedactNodeAddress(h.state.Store, func() bool { return services.GatewayRoutingEnabled(h.state.Store) }, servers, isAdmin, userID)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

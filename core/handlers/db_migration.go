@@ -123,7 +123,7 @@ func (h *DBMigrationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 	// hostname that does not resolve and a password that was refused, which are
 	// fixed in different places by different people - see services/conncheck.go.
 	if reach := services.Reachable(r.Context(), params.Host, params.Port); !reach.OK {
-		sendConnTestFailure(w, reach)
+		SendConnTestFailure(w, reach)
 		return
 	}
 
@@ -131,14 +131,14 @@ func (h *DBMigrationHandler) TestConnection(w http.ResponseWriter, r *http.Reque
 	defer cancel()
 	db, err := params.Open(ctx, 6*time.Second)
 	if err != nil {
-		sendConnTestFailure(w, services.Rejected(services.DescribePostgresError(err)))
+		SendConnTestFailure(w, services.Rejected(services.DescribePostgresError(err)))
 		return
 	}
 	defer db.Close()
 
 	var version string
 	if err := db.QueryRowContext(ctx, "SELECT version()").Scan(&version); err != nil {
-		sendConnTestFailure(w, services.Rejected("Connected and authenticated, but the first query failed: "+
+		SendConnTestFailure(w, services.Rejected("Connected and authenticated, but the first query failed: "+
 			services.DescribePostgresError(err)))
 		return
 	}
