@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/corestorage"
 
 	"dylaris-core/services"
@@ -86,7 +85,7 @@ func (f *nodeEnrollFakeStore) CreateNodeEnrollToken(userID, plaintext, label str
 // newNodeEnrollState builds an AppState with a real *services.FeatureFlags
 // backed by the fake store (feature_byon_enabled drives byonActive), plus
 // the GRPC TLS fields MintToken's fingerprint-disclosure gate reads.
-func newNodeEnrollState(fs *nodeEnrollFakeStore, byonEnabled, grpcTLSEnabled bool, grpcFingerprint string) *handlers.AppState {
+func newNodeEnrollState(fs *nodeEnrollFakeStore, byonEnabled, grpcTLSEnabled bool, grpcFingerprint string) Deps {
 	if fs.settings == nil {
 		fs.settings = map[string]string{}
 	}
@@ -94,7 +93,7 @@ func newNodeEnrollState(fs *nodeEnrollFakeStore, byonEnabled, grpcTLSEnabled boo
 	if byonEnabled {
 		fs.settings["feature_byon_enabled"] = "true"
 	}
-	return &handlers.AppState{
+	return Deps{
 		Store:              fs,
 		FeatureFlags:       services.NewFeatureFlags(fs),
 		GRPCTLSEnabled:     grpcTLSEnabled,
@@ -369,7 +368,7 @@ func TestMintToken_HonorsTheNodeCap(t *testing.T) {
 				pendingTokens: tt.pendingTokens,
 				warpNodeKeys:  tt.warpNodeKeys,
 			}
-			h := &NodeEnrollHandler{state: newNodeEnrollState(fs, true, false, "")}
+			h := &NodeEnrollHandler{d: newNodeEnrollState(fs, true, false, "")}
 
 			req := httptest.NewRequest(http.MethodPost, "/api/nodes/enroll-token", nil)
 			req = req.WithContext(context.WithValue(req.Context(), "userID", "u1"))

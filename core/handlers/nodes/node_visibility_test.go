@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/models"
@@ -28,8 +27,8 @@ import (
 
 // visState builds handler state around the shared fake, with BYON switched on
 // so ownership is in force. server and serverErr are what GetServerByUUID answers.
-func visState(node *models.Node, server *models.Server, serverErr error) *handlers.AppState {
-	return withCoreStorage(&handlers.AppState{
+func visState(node *models.Node, server *models.Server, serverErr error) Deps {
+	return testDeps(Deps{
 		Store:        &orphanAssignFakeStore{node: node, server: server, err: serverErr},
 		FeatureFlags: tenancyFeatureFlags(true),
 	})
@@ -66,7 +65,7 @@ func TestDiskToolsDoNotOpenACustomersMachineToAnAdmin(t *testing.T) {
 
 	for _, rt := range routes {
 		t.Run(rt.name+"/a user's machine is not found", func(t *testing.T) {
-			h := &NodeHandler{state: visState(handlertest.OwnedNode(), nil, sql.ErrNoRows)}
+			h := &NodeHandler{d: visState(handlertest.OwnedNode(), nil, sql.ErrNoRows)}
 			rw := httptest.NewRecorder()
 			rt.call(h, rw)
 			if rw.Code != http.StatusNotFound {
@@ -74,7 +73,7 @@ func TestDiskToolsDoNotOpenACustomersMachineToAnAdmin(t *testing.T) {
 			}
 		})
 		t.Run(rt.name+"/a platform machine is still the operator's", func(t *testing.T) {
-			h := &NodeHandler{state: visState(handlertest.PlatformNode(), nil, sql.ErrNoRows)}
+			h := &NodeHandler{d: visState(handlertest.PlatformNode(), nil, sql.ErrNoRows)}
 			rw := httptest.NewRecorder()
 			rt.call(h, rw)
 			if rw.Code != rt.passCode {
@@ -106,7 +105,7 @@ func TestOrphanRoutesRefuseALiveServer(t *testing.T) {
 	}
 	for name, call := range calls {
 		t.Run(name+"/a server row means it is not an orphan", func(t *testing.T) {
-			h := &NodeHandler{state: visState(handlertest.PlatformNode(), &models.Server{ID: 3, UUID: "live-1"}, nil)}
+			h := &NodeHandler{d: visState(handlertest.PlatformNode(), &models.Server{ID: 3, UUID: "live-1"}, nil)}
 			rw := httptest.NewRecorder()
 			call(h, rw)
 			if rw.Code != http.StatusBadRequest {
@@ -116,7 +115,7 @@ func TestOrphanRoutesRefuseALiveServer(t *testing.T) {
 		// A store that cannot answer is not "no such server". The delete route
 		// used to discard this error and delete the folder anyway.
 		t.Run(name+"/a database fault is not an orphan", func(t *testing.T) {
-			h := &NodeHandler{state: visState(handlertest.PlatformNode(), nil, errors.New("connection refused"))}
+			h := &NodeHandler{d: visState(handlertest.PlatformNode(), nil, errors.New("connection refused"))}
 			rw := httptest.NewRecorder()
 			call(h, rw)
 			if rw.Code != http.StatusInternalServerError {
@@ -129,7 +128,7 @@ func TestOrphanRoutesRefuseALiveServer(t *testing.T) {
 // TestAdoptingAnOrphanOnACustomersMachineIsRefused: adopting inspects the folder
 // and writes a server row onto that hardware for an owner of the admin's choice.
 func TestAdoptingAnOrphanOnACustomersMachineIsRefused(t *testing.T) {
-	h := &NodeHandler{state: visState(handlertest.OwnedNode(), nil, sql.ErrNoRows)}
+	h := &NodeHandler{d: visState(handlertest.OwnedNode(), nil, sql.ErrNoRows)}
 	rw := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/disk/orphans/assign", bytes.NewReader(orphanAssignBody()))
 	req = req.WithContext(handlertest.VisAdminRequest(http.MethodPost, "/x", nil).Context())
@@ -160,7 +159,7 @@ func TestForceDeleteNeverTouchesACustomersMachine(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			st := visState(c.node, nil, sql.ErrNoRows)
 			st.FeatureFlags = tenancyFeatureFlags(c.byon)
-			h := &NodeHandler{state: st}
+			h := &NodeHandler{d: st}
 			rw := httptest.NewRecorder()
 			h.ForceDeleteNode(rw, handlertest.VisAdminRequest("DELETE", "/x", map[string]string{"id": "7"}))
 			if rw.Code != c.want {

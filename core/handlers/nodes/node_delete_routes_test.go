@@ -8,8 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
@@ -115,7 +113,7 @@ func nodeDeleteFixture(t *testing.T, node *models.Node) (*NodeHandler, *nodeDele
 		t.Fatal(err)
 	}
 
-	return NewNodeHandler(withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb, Gateway: gw})), fs, gw, rdb
+	return NewNodeHandler(testDeps(Deps{Store: fs, Redis: rdb, Gateway: gw})), fs, gw, rdb
 }
 
 func assertNodeRoutesGone(t *testing.T, rdb *redis.Client, gw *nodeDeleteGateway) {

@@ -659,7 +659,6 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// Initialize handlers
 	serverHandler := servers.NewServerHandler(appState)
 	portsAdminHandler := servers.NewPortsAdminHandler(appState)
-	nodeHandler := nodes.NewNodeHandler(appState)
 	panelRolesHandler := handlers.NewPanelRolesHandler(appState)
 	serverRolesHandler := servers.NewServerRolesHandler(appState)
 	moduleHandler := handlers.NewModuleHandler(appState)
@@ -713,6 +712,23 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		},
 	}
 	userHandler := users.NewUserHandler(usersDeps)
+	// Also after WarpPeers: a node delete drops the node's overlay peers.
+	nodesDeps := nodes.Deps{
+		Store:              appState.Store,
+		Redis:              appState.Redis,
+		FeatureFlags:       appState.FeatureFlags,
+		GRPCRegistry:       appState.GRPCRegistry,
+		Gateway:            appState.Gateway,
+		WarpPeers:          appState.WarpPeers,
+		CoreStorage:        appState.CoreStorage,
+		StoreEnabled:       appState.StoreEnabled,
+		StoreURL:           appState.StoreURL,
+		StoreSharedKey:     appState.StoreSharedKey,
+		GRPCTLSEnabled:     appState.GRPCTLSEnabled,
+		GRPCTLSFingerprint: appState.GRPCTLSFingerprint,
+		ClusterSecret:      appState.ClusterSecret,
+	}
+	nodeHandler := nodes.NewNodeHandler(nodesDeps)
 
 	placementHandler := servers.NewPlacementHandler(appState)
 	consoleHandler := handlers.NewConsoleHandler(appState)
@@ -773,8 +789,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	dbMigrationHandler := handlers.NewDBMigrationHandler(appState)
 	storageMigrationHandler := storageapi.NewStorageMigrationHandler(appState)
 	cpuPinningHandler := handlers.NewCPUPinningHandler(appState)
-	nodeEnrollHandler := nodes.NewNodeEnrollHandler(appState)
-	nodeAdmissionHandler := nodes.NewNodeAdmissionHandler(appState)
+	nodeEnrollHandler := nodes.NewNodeEnrollHandler(nodesDeps)
+	nodeAdmissionHandler := nodes.NewNodeAdmissionHandler(nodesDeps)
 	gatewayDNSHandler := gateway.NewGatewayDNSHandler(appState)
 	gatewayBandwidthHandler := gateway.NewGatewayBandwidthHandler(appState)
 	voiceStatsHandler := handlers.NewVoiceStatsHandler(appState)

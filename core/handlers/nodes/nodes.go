@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/nodeops"
 
@@ -43,11 +42,11 @@ func isSafeOrphanName(name string) bool {
 }
 
 type NodeHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewNodeHandler(state *handlers.AppState) *NodeHandler {
-	return &NodeHandler{state: state}
+func NewNodeHandler(d Deps) *NodeHandler {
+	return &NodeHandler{d: d}
 }
 
 // diskToolNode answers whether the disk tools (disk analysis, the orphan file
@@ -66,14 +65,14 @@ func NewNodeHandler(state *handlers.AppState) *NodeHandler {
 // customer's own disk. The same "Node not found" as a missing node, not a 403,
 // so the answer does not confirm that the machine exists.
 func (h *NodeHandler) diskToolNode(r *http.Request, nodeID int) bool {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		return false
 	}
-	node, err := h.state.Store.GetNodeByID(nodeID)
+	node, err := h.d.Store.GetNodeByID(nodeID)
 	if err != nil || node == nil {
 		return false
 	}
-	return !access.OwnedByOther(h.state.FeatureFlags, r, node)
+	return !access.OwnedByOther(h.d.FeatureFlags, r, node)
 }
 
 // requireOrphan writes an error and returns false unless uuid has NO server row,
@@ -95,7 +94,7 @@ func (h *NodeHandler) diskToolNode(r *http.Request, nodeID int) bool {
 // A database fault is not "no row": answering it as one would read or delete a
 // folder the store could not vouch for. Same distinction AssignOrphan makes.
 func (h *NodeHandler) requireOrphan(w http.ResponseWriter, uuid string) bool {
-	existing, err := h.state.Store.GetServerByUUID(uuid)
+	existing, err := h.d.Store.GetServerByUUID(uuid)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		httpx.SendJSONError(w, "database error checking existing server", 500)
 		return false
@@ -161,20 +160,20 @@ func filterNodes(nodes []models.Node, keep func(models.Node) bool) []models.Node
 // a tab a non-admin can reach by editing the URL is not admin-only in any
 // sense that matters.
 func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "DB error", 503)
 		return
 	}
 	// Node list is admin-only today. In BYON mode a non-admin tenant may list
 	// THEIR OWN nodes; everything else stays admin-only.
 	admin := reqctx.IsAdmin(r)
-	byon := access.ByonActive(h.state.FeatureFlags, r)
+	byon := access.ByonActive(h.d.FeatureFlags, r)
 	if !admin && !byon {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 
-	nodes, err := h.state.Store.ListNodes()
+	nodes, err := h.d.Store.ListNodes()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load nodes", 500)
 		return
@@ -261,17 +260,17 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	// Shared with the infrastructure page and the metrics collector rather than
 	// done a third way here - that function exists because the first two had
 	// already drifted.
-	services.EnrichNodesWithLiveStats(r.Context(), h.state.Store, h.state.Redis, nodes)
+	services.EnrichNodesWithLiveStats(r.Context(), h.d.Store, h.d.Redis, nodes)
 
 	// One round trip for the whole list, after the scope filter, so it covers
 	// exactly the rows being returned.
-	nodeops.SetNodesLinkOnline(r.Context(), h.state.Redis, h.state.ClusterSecret, nodes)
+	nodeops.SetNodesLinkOnline(r.Context(), h.d.Redis, h.d.ClusterSecret, nodes)
 
 	// Derive the unusable flag at response time (no DB column needed): an
 	// external/home node only routes via gateway+beam, so while the platform
 	// is in ip_port mode it has no reachable path. Panel uses this to show a
 	// "requires gateway" badge instead of letting admins place servers there.
-	gatewayOn := services.GatewayRoutingEnabled(h.state.Store)
+	gatewayOn := services.GatewayRoutingEnabled(h.d.Store)
 	for i := range nodes {
 		if nodes[i].IsExternal() && !gatewayOn {
 			nodes[i].Unusable = true
@@ -295,7 +294,7 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 // CreateNode POST /api/nodes - registers a node and mints its token. An
 // omitted address defaults to 0.0.0.0.
 func (h *NodeHandler) CreateNode(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "DB error", 503)
 		return
 	}
@@ -310,7 +309,7 @@ func (h *NodeHandler) CreateNode(w http.ResponseWriter, r *http.Request) {
 	req.Status = "offline"
 	req.CreatedAt = time.Now()
 
-	if err := h.state.Store.CreateNode(&req); err != nil {
+	if err := h.d.Store.CreateNode(&req); err != nil {
 		httpx.SendJSONError(w, "Failed to create node", 500)
 		return
 	}
@@ -323,7 +322,7 @@ func (h *NodeHandler) CreateNode(w http.ResponseWriter, r *http.Request) {
 // UpdateNode PUT /api/nodes/{id} - edits a node. Today that is cpusetCpus
 // alone, the CPU pinning mask.
 func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "DB error", 503)
 		return
 	}
@@ -331,7 +330,7 @@ func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 	// The CPU pool of a customer's machine is theirs to set.
-	if access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, id) {
+	if access.ForeignToCaller(h.d.Store, h.d.FeatureFlags, r, id) {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
@@ -342,7 +341,7 @@ func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 
 	if req.CpusetCpus != nil {
-		if err := h.state.Store.UpdateNodeCpusetCpus(id, *req.CpusetCpus); err != nil {
+		if err := h.d.Store.UpdateNodeCpusetCpus(id, *req.CpusetCpus); err != nil {
 			httpx.SendJSONError(w, "Failed to update node", 500)
 			return
 		}
@@ -358,7 +357,7 @@ func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 // which is why the row is read before it is deleted; if that read fails the
 // row still goes and the leftovers are logged rather than silently abandoned.
 func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "DB error", 503)
 		return
 	}
@@ -367,13 +366,13 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(vars["id"])
 
 	// Read the node BEFORE the row goes: everything below is keyed by its token.
-	node, nodeErr := h.state.Store.GetNodeByID(id)
+	node, nodeErr := h.d.Store.GetNodeByID(id)
 	var warpKeys []int
 	if nodeErr == nil {
 		warpKeys = h.boundWarpKeys(node)
 	}
 
-	if err := h.state.Store.DeleteNode(id); err != nil {
+	if err := h.d.Store.DeleteNode(id); err != nil {
 		// Not a fault, the current state of the data: say what to do about it.
 		// Collapsing it into a 500 left an admin with a button that does nothing
 		// and no hint that the servers have to go first.
@@ -412,13 +411,13 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 // a Redis hiccup here must not turn a completed delete into a 500.
 func (h *NodeHandler) cleanupDeletedNode(r *http.Request, node *models.Node, warpKeys []int) {
 	h.releaseNodeWarpKeys(r.Context(), node, warpKeys)
-	if h.state.Redis == nil || node == nil || node.Token == "" {
+	if h.d.Redis == nil || node == nil || node.Token == "" {
 		return
 	}
 	// One implementation, because there are two callers: this, and the account
 	// teardown that removes the nodes a departing tenant brought. A second
 	// copy of the key list is how one of them ends up missing a key.
-	services.RemoveNodeRedisState(r.Context(), h.state.Redis, redisacl.NewProvisioner(h.state.Redis), node.Token)
+	services.RemoveNodeRedisState(r.Context(), h.d.Redis, redisacl.NewProvisioner(h.d.Redis), node.Token)
 	// The machine's Link keeps its edge tunnels for as long as its token is
 	// valid, which is up to 24h after the last refresh. Nothing refreshes it
 	// once the node is gone, and nothing should still route to it.
@@ -429,8 +428,8 @@ func (h *NodeHandler) cleanupDeletedNode(r *http.Request, node *models.Node, war
 	if node.Kind() == models.NodeKindPlatform {
 		return
 	}
-	if tok := services.EffectiveLinkToken(node, h.state.ClusterSecret); tok != "" {
-		if err := h.state.Redis.Del(r.Context(), "link:"+tok, "online_link:"+tok).Err(); err != nil {
+	if tok := services.EffectiveLinkToken(node, h.d.ClusterSecret); tok != "" {
+		if err := h.d.Redis.Del(r.Context(), "link:"+tok, "online_link:"+tok).Err(); err != nil {
 			log.Printf("node delete: the Link token of node %d could not be dropped: %v", node.ID, err)
 		}
 	}
@@ -442,7 +441,7 @@ func (h *NodeHandler) boundWarpKeys(node *models.Node) []int {
 	if node == nil {
 		return nil
 	}
-	ids, err := h.state.Store.ListWarpKeyIDsBoundToNode(node.ID)
+	ids, err := h.d.Store.ListWarpKeyIDsBoundToNode(node.ID)
 	if err != nil {
 		log.Printf("node delete: the overlay keys of node %d could not be read, so they stay live: %v", node.ID, err)
 	}
@@ -456,13 +455,13 @@ func (h *NodeHandler) boundWarpKeys(node *models.Node) []int {
 // Revoke first, so a failed disconnect cannot leave a key that re-enrolls.
 func (h *NodeHandler) releaseNodeWarpKeys(ctx context.Context, node *models.Node, ids []int) {
 	for _, id := range ids {
-		if err := h.state.Store.RevokeWarpAPIKeyByID(id); err != nil {
+		if err := h.d.Store.RevokeWarpAPIKeyByID(id); err != nil {
 			log.Printf("node delete: overlay key %d of node %d could not be revoked: %v", id, node.ID, err)
 			continue
 		}
-		if h.state.WarpPeers != nil {
+		if h.d.WarpPeers != nil {
 			dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			n := h.state.WarpPeers.DisconnectKeyPeers(dctx, id)
+			n := h.d.WarpPeers.DisconnectKeyPeers(dctx, id)
 			cancel()
 			log.Printf("node delete: revoked overlay key %d of node %d, disconnected %d peer(s)", id, node.ID, n)
 		}
@@ -474,17 +473,17 @@ func (h *NodeHandler) GetNodeServers(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 
-	node, err := h.state.Store.GetNodeByID(id)
+	node, err := h.d.Store.GetNodeByID(id)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !access.CanManageNode(h.state.FeatureFlags, r, node) {
+	if !access.CanManageNode(h.d.FeatureFlags, r, node) {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 
-	servers, err := h.state.Store.ListServersByNode(id)
+	servers, err := h.d.Store.ListServersByNode(id)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load servers", 500)
 		return
@@ -494,7 +493,7 @@ func (h *NodeHandler) GetNodeServers(w http.ResponseWriter, r *http.Request) {
 	}
 	// This is the view an operator opens when a node looks wrong, so it is the
 	// one place a stalled install most needs to be visible.
-	nodeops.AnnotateStalledInstallsFor(r.Context(), h.state.Redis, h.state.GRPCRegistry, servers)
+	nodeops.AnnotateStalledInstallsFor(r.Context(), h.d.Redis, h.d.GRPCRegistry, servers)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"servers": servers,
@@ -506,7 +505,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 
-	node, err := h.state.Store.GetNodeByID(id)
+	node, err := h.d.Store.GetNodeByID(id)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
@@ -518,7 +517,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	// them in one call. Decommissioning a customer's machine is the plain
 	// DELETE /api/nodes/{id}, which is refused while servers remain and names
 	// none. Its owner removes their own through /api/me/nodes/{id}.
-	if node.OwnerID != nil && access.OwnershipInForce(h.state.FeatureFlags, r) {
+	if node.OwnerID != nil && access.OwnershipInForce(h.d.FeatureFlags, r) {
 		httpx.SendJSONError(w, "This machine belongs to a user, and its servers are theirs. Remove the node once they are gone.", http.StatusConflict)
 		return
 	}
@@ -530,7 +529,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 
 	// The uuids are what names the routes and keys of these servers once the rows
 	// are gone, so a failed read here is a silent leak, not a cosmetic one.
-	servers, err := h.state.Store.ListServersByNode(id)
+	servers, err := h.d.Store.ListServersByNode(id)
 	if err != nil {
 		log.Printf("ForceDeleteNode: listing the servers of node %d failed, their addresses and Redis keys cannot be cleaned up: %v", id, err)
 	}
@@ -539,15 +538,15 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 
 	// Before the rows: their backup archives are named by run rows that cascade
 	// away with the servers.
-	h.state.CoreStorage.PurgeBackupArchivesForServers(services.ServerIDs(servers))
+	h.d.CoreStorage.PurgeBackupArchivesForServers(services.ServerIDs(servers))
 
 	// Delete all servers on this node first (FK constraint)
-	if err := h.state.Store.DeleteServersByNode(id); err != nil {
+	if err := h.d.Store.DeleteServersByNode(id); err != nil {
 		httpx.SendJSONError(w, "Failed to delete servers on node", 500)
 		return
 	}
 
-	if err := h.state.Store.DeleteNode(id); err != nil {
+	if err := h.d.Store.DeleteNode(id); err != nil {
 		httpx.SendJSONError(w, "Failed to delete node", 500)
 		return
 	}
@@ -560,8 +559,8 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	//
 	// Background, not the request context: an operator who hung up must not be
 	// the reason a deleted machine's addresses keep resolving.
-	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, services.ServerUUIDs(servers))
-	demo.DropServers(h.state.Store, h.state.StoreEnabled, services.ServerUUIDs(servers))
+	matched := services.RemoveDeletedServers(context.Background(), h.d.Gateway, h.d.Redis, services.ServerUUIDs(servers))
+	demo.DropServers(h.d.Store, h.d.StoreEnabled, services.ServerUUIDs(servers))
 	log.Printf("ForceDeleteNode: node %d — cleaned up %d route(s) across %d server(s)", id, matched, len(servers))
 	h.cleanupDeletedNode(r, node, warpKeys)
 
@@ -582,17 +581,17 @@ func (h *NodeHandler) GetNodeStorage(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 
-	node, err := h.state.Store.GetNodeByID(id)
+	node, err := h.d.Store.GetNodeByID(id)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !access.CanManageNode(h.state.FeatureFlags, r, node) {
+	if !access.CanManageNode(h.d.FeatureFlags, r, node) {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
 
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"storage": []interface{}{},
@@ -601,7 +600,7 @@ func (h *NodeHandler) GetNodeStorage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := "dylaris:discovery:" + node.Token
-	val, err := h.state.Redis.Get(r.Context(), key).Result()
+	val, err := h.d.Redis.Get(r.Context(), key).Result()
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -634,23 +633,23 @@ func (h *NodeHandler) GetNodeStorage(w http.ResponseWriter, r *http.Request) {
 // much of it is already promised to existing servers, and what that leaves.
 // Empty when the node is offline or reported no storage.
 func (h *NodeHandler) storageCapacity(r *http.Request, node *models.Node) []services.DiskPathStatus {
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		return []services.DiskPathStatus{}
 	}
-	hb := services.LoadHeartbeat(r.Context(), h.state.Redis, node.Token)
+	hb := services.LoadHeartbeat(r.Context(), h.d.Redis, node.Token)
 	if hb == nil || len(hb.Storage) == 0 {
 		return []services.DiskPathStatus{}
 	}
-	limits, err := h.state.Store.ServerDiskLimitsByNode(node.ID)
+	limits, err := h.d.Store.ServerDiskLimitsByNode(node.ID)
 	if err != nil {
 		limits = nil
 	}
-	warn, critical := services.DiskThresholds(h.state.Store)
+	warn, critical := services.DiskThresholds(h.d.Store)
 	return services.PathStatuses(
 		hb.Storage,
 		services.CommittedBytesByPath(hb.Storage, limits),
-		services.UnwrittenBytesByPath(hb.Storage, limits, services.LoadServerDiskUsage(r.Context(), h.state.Redis, hb.Storage)),
-		services.DiskHeadroomGB(h.state.Store),
+		services.UnwrittenBytesByPath(hb.Storage, limits, services.LoadServerDiskUsage(r.Context(), h.d.Redis, hb.Storage)),
+		services.DiskHeadroomGB(h.d.Store),
 		warn, critical,
 	)
 }
@@ -673,10 +672,10 @@ type storagePlacement struct {
 // or unreadable key is not an error: auto is what the node does anyway.
 func (h *NodeHandler) readStoragePlacement(r *http.Request, nodeToken string) storagePlacement {
 	out := storagePlacement{Mode: "auto", Order: []string{}}
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		return out
 	}
-	val, err := h.state.Redis.Get(r.Context(), storagePlacementKey(nodeToken)).Result()
+	val, err := h.d.Redis.Get(r.Context(), storagePlacementKey(nodeToken)).Result()
 	if err != nil || val == "" {
 		return out
 	}
@@ -700,16 +699,16 @@ func (h *NodeHandler) SetNodeStoragePlacement(w http.ResponseWriter, r *http.Req
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 
-	node, err := h.state.Store.GetNodeByID(id)
+	node, err := h.d.Store.GetNodeByID(id)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !access.CanManageNode(h.state.FeatureFlags, r, node) {
+	if !access.CanManageNode(h.d.FeatureFlags, r, node) {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		httpx.SendJSONError(w, "Redis unavailable", 503)
 		return
 	}
@@ -751,7 +750,7 @@ func (h *NodeHandler) SetNodeStoragePlacement(w http.ResponseWriter, r *http.Req
 	// No TTL: this is configuration, and the node re-reads it on every settings
 	// poll. It survives a node restart but not a Redis flush - same as the other
 	// dylaris:placement:* settings.
-	if err := h.state.Redis.Set(r.Context(), storagePlacementKey(node.Token), payload, 0).Err(); err != nil {
+	if err := h.d.Redis.Set(r.Context(), storagePlacementKey(node.Token), payload, 0).Err(); err != nil {
 		httpx.SendJSONError(w, "Failed to store placement", 500)
 		return
 	}
@@ -767,14 +766,14 @@ func (h *NodeHandler) SetNodeStoragePlacement(w http.ResponseWriter, r *http.Req
 // every storage path any node currently reports (no single node's list
 // describes the fleet).
 func (h *NodeHandler) GetFleetStoragePlacement(w http.ResponseWriter, r *http.Request) {
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		httpx.SendJSONError(w, "Redis unavailable", 503)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":   true,
-		"placement": services.LoadFleetPlacement(r.Context(), h.state.Redis),
-		"paths":     services.FleetStoragePaths(r.Context(), h.state.Redis),
+		"placement": services.LoadFleetPlacement(r.Context(), h.d.Redis),
+		"paths":     services.FleetStoragePaths(r.Context(), h.d.Redis),
 	})
 }
 
@@ -782,7 +781,7 @@ func (h *NodeHandler) GetFleetStoragePlacement(w http.ResponseWriter, r *http.Re
 // wide storage placement to auto or manual, manual carrying an explicit node
 // order. Stored in Redis, not in the database.
 func (h *NodeHandler) SetFleetStoragePlacement(w http.ResponseWriter, r *http.Request) {
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		httpx.SendJSONError(w, "Redis unavailable", 503)
 		return
 	}
@@ -810,7 +809,7 @@ func (h *NodeHandler) SetFleetStoragePlacement(w http.ResponseWriter, r *http.Re
 	}
 
 	next := services.NodePlacement{Mode: req.Mode, Order: order}
-	if err := services.SaveFleetPlacement(r.Context(), h.state.Redis, next); err != nil {
+	if err := services.SaveFleetPlacement(r.Context(), h.d.Redis, next); err != nil {
 		httpx.SendJSONError(w, "Failed to store placement", 500)
 		return
 	}
@@ -821,10 +820,10 @@ func (h *NodeHandler) SetFleetStoragePlacement(w http.ResponseWriter, r *http.Re
 // when it is offline or has not reported any.
 func (h *NodeHandler) nodeStoragePaths(r *http.Request, nodeToken string) map[string]bool {
 	out := map[string]bool{}
-	if h.state.Redis == nil {
+	if h.d.Redis == nil {
 		return out
 	}
-	val, err := h.state.Redis.Get(r.Context(), "dylaris:discovery:"+nodeToken).Result()
+	val, err := h.d.Redis.Get(r.Context(), "dylaris:discovery:"+nodeToken).Result()
 	if err != nil {
 		return out
 	}
@@ -853,12 +852,12 @@ func (h *NodeHandler) GetDeployBundle(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 
-	node, err := h.state.Store.GetNodeByID(id)
+	node, err := h.d.Store.GetNodeByID(id)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
-	if !access.CanManageNode(h.state.FeatureFlags, r, node) {
+	if !access.CanManageNode(h.d.FeatureFlags, r, node) {
 		httpx.SendJSONError(w, "Forbidden", 403)
 		return
 	}
@@ -867,8 +866,8 @@ func (h *NodeHandler) GetDeployBundle(w http.ResponseWriter, r *http.Request) {
 	// on; showing it while GRPC_TLS_ENABLED=false would suggest a pin the
 	// control channel never enforces.
 	fingerprint := ""
-	if h.state.GRPCTLSEnabled {
-		fingerprint = h.state.GRPCTLSFingerprint
+	if h.d.GRPCTLSEnabled {
+		fingerprint = h.d.GRPCTLSFingerprint
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":            true,
@@ -889,14 +888,14 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	id, _ := strconv.Atoi(vars["id"])
 
-	node, err := h.state.Store.GetNodeByID(id)
-	if err != nil || node == nil || access.OwnedByOther(h.state.FeatureFlags, r, node) {
+	node, err := h.d.Store.GetNodeByID(id)
+	if err != nil || node == nil || access.OwnedByOther(h.d.FeatureFlags, r, node) {
 		// Every server's name and owner is in this answer. See diskToolNode.
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
 
-	dbServers, err := h.state.Store.ListServersByNode(id)
+	dbServers, err := h.d.Store.ListServersByNode(id)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load servers", 500)
 		return
@@ -909,9 +908,9 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 
 	diskUUIDs := make(map[string]bool)
 	nodeOnline := false
-	if h.state.Redis != nil {
+	if h.d.Redis != nil {
 		key := "dylaris:discovery:" + node.Token
-		if val, redisErr := h.state.Redis.Get(r.Context(), key).Result(); redisErr == nil {
+		if val, redisErr := h.d.Redis.Get(r.Context(), key).Result(); redisErr == nil {
 			nodeOnline = true
 			var hb struct {
 				Storage []storageHeartbeatEntry `json:"storage"`
@@ -1002,12 +1001,12 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if h.state.GRPCRegistry == nil {
+	if h.d.GRPCRegistry == nil {
 		httpx.SendJSONError(w, "gRPC not available", 503)
 		return
 	}
 
-	resp, err := h.state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
+	resp, err := h.d.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
 		RequestId:  fmt.Sprintf("orphan-del-%s", orphanUUID),
 		ServerUuid: orphanUUID,
 		Payload:    &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: "."}},
@@ -1058,12 +1057,12 @@ func (h *NodeHandler) ListOrphanFiles(w http.ResponseWriter, r *http.Request) {
 		pathParam = "/"
 	}
 
-	if h.state.GRPCRegistry == nil {
+	if h.d.GRPCRegistry == nil {
 		httpx.SendJSONError(w, "gRPC not available", 503)
 		return
 	}
 
-	resp, err := h.state.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
+	resp, err := h.d.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
 		RequestId:  uuid.NewString(),
 		ServerUuid: orphanUUID,
 		Payload:    &pb.NodeMessage_ListReq{ListReq: &pb.ListFilesReq{Path: pathParam}},
@@ -1129,7 +1128,7 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if h.state.GRPCRegistry == nil {
+	if h.d.GRPCRegistry == nil {
 		httpx.SendJSONError(w, "gRPC not available", 503)
 		return
 	}
@@ -1143,12 +1142,12 @@ func (h *NodeHandler) GetOrphanFileContent(w http.ResponseWriter, r *http.Reques
 		},
 	}
 
-	ch, err := h.state.GRPCRegistry.SendRequestStreaming(nodeID, msg)
+	ch, err := h.d.GRPCRegistry.SendRequestStreaming(nodeID, msg)
 	if err != nil {
 		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
 		return
 	}
-	defer h.state.GRPCRegistry.CleanupRequest(nodeID, reqID)
+	defer h.d.GRPCRegistry.CleanupRequest(nodeID, reqID)
 
 	data, errResp, rerr := nodeops.CollectNodeFile(ch, nodeops.MaxOpenFileBytes)
 	if errResp != nil {
@@ -1201,12 +1200,12 @@ func (h *NodeHandler) InspectOrphan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.state.GRPCRegistry == nil {
+	if h.d.GRPCRegistry == nil {
 		httpx.SendJSONError(w, "gRPC not available", 503)
 		return
 	}
 
-	orphanInfo, err := nodeops.InspectOrphanOnNode(h.state.GRPCRegistry, nodeID, orphanUUID)
+	orphanInfo, err := nodeops.InspectOrphanOnNode(h.d.GRPCRegistry, nodeID, orphanUUID)
 	if err != nil {
 		httpx.SendJSONError(w, err.Error(), 502)
 		return
@@ -1259,7 +1258,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Only an administrator can adopt an orphaned server", http.StatusForbidden)
 		return
 	}
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "DB error", 503)
 		return
 	}
@@ -1323,7 +1322,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	// would let an adopt proceed against a database that could not answer, on
 	// a UUID that might well already have a row. Same distinction
 	// AuthMiddleware makes between a deleted account and an unreachable store.
-	existing, err := h.state.Store.GetServerByUUID(req.UUID)
+	existing, err := h.d.Store.GetServerByUUID(req.UUID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		httpx.SendJSONError(w, "database error checking existing server", 500)
 		return
@@ -1334,7 +1333,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- gRPC availability check (before any user creation) ---
-	if h.state.GRPCRegistry == nil {
+	if h.d.GRPCRegistry == nil {
 		httpx.SendJSONError(w, "gRPC not available", 503)
 		return
 	}
@@ -1342,7 +1341,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	// --- Resolve owner ---
 	ownerID := ""
 	if req.OwnerUserID != nil {
-		user, err := h.state.Store.GetUserByID(*req.OwnerUserID)
+		user, err := h.d.Store.GetUserByID(*req.OwnerUserID)
 		if err != nil || user == nil {
 			httpx.SendJSONError(w, fmt.Sprintf("User with id %s not found", *req.OwnerUserID), 400)
 			return
@@ -1364,7 +1363,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 			IsAdmin:         false,
 			EmailVerifiedAt: &verifiedAt,
 		}
-		if err := h.state.Store.CreateUser(newUser); err != nil {
+		if err := h.d.Store.CreateUser(newUser); err != nil {
 			log.Printf("AssignOrphan: CreateUser failed for username=%q: %v", req.NewUser.Username, err)
 			httpx.SendJSONError(w, "Failed to create user (username may already exist)", 409)
 			return
@@ -1373,7 +1372,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Inspect the orphan on the node ---
-	orphanInfo, err := nodeops.InspectOrphanOnNode(h.state.GRPCRegistry, req.NodeID, req.UUID)
+	orphanInfo, err := nodeops.InspectOrphanOnNode(h.d.GRPCRegistry, req.NodeID, req.UUID)
 	if err != nil {
 		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
 		return
@@ -1410,7 +1409,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 		ServerType:      "game",
 	}
 
-	newID, err := h.state.Store.CreateServer(srv)
+	newID, err := h.d.Store.CreateServer(srv)
 	if err != nil {
 		log.Printf("AssignOrphan: CreateServer failed (uuid=%s, owner=%s): %v", req.UUID, ownerID, err)
 		if req.NewUser != nil {
@@ -1424,7 +1423,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	// Persist installer_type, minecraft_version, active_sub_server, build via UpdateServerSetup.
 	// game_image and start_command are empty for adopted servers — the node already
 	// knows the real command from its own .dylaris.json / active-server file.
-	if err := h.state.Store.UpdateServerSetup(srv.ID, "", "", activeSubServer, "", installerType, minecraftVersion, buildNumber); err != nil {
+	if err := h.d.Store.UpdateServerSetup(srv.ID, "", "", activeSubServer, "", installerType, minecraftVersion, buildNumber); err != nil {
 		log.Printf("AssignOrphan: UpdateServerSetup failed (id=%d): %v", srv.ID, err)
 		// Non-fatal: the row exists; setup fields just remain empty.
 	}

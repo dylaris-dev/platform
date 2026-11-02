@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/guard"
 
 	"dylaris-core/services"
@@ -55,12 +54,12 @@ func (f *entGateStore) CreateNodeEnrollToken(string, string, string, *time.Time,
 // newEntGateState builds a BYON-on state. storeEnabled is what separates a
 // hosted install (entitlement required) from a self-host one (everything
 // allowed), and getting it wrong in either direction is the whole risk here.
-func newEntGateState(billing *store.UserBilling, storeEnabled bool) *handlers.AppState {
+func newEntGateState(billing *store.UserBilling, storeEnabled bool) Deps {
 	fs := &entGateStore{
 		settings: map[string]string{"feature_byon_enabled": "true"},
 		billing:  billing,
 	}
-	return withCoreStorage(&handlers.AppState{
+	return testDeps(Deps{
 		Store:        fs,
 		FeatureFlags: services.NewFeatureFlags(fs),
 		StoreEnabled: storeEnabled,
@@ -71,8 +70,8 @@ func newEntGateState(billing *store.UserBilling, storeEnabled bool) *handlers.Ap
 	})
 }
 
-func mintEnrollToken(state *handlers.AppState, userID string) *httptest.ResponseRecorder {
-	h := NewNodeEnrollHandler(state)
+func mintEnrollToken(d Deps, userID string) *httptest.ResponseRecorder {
+	h := NewNodeEnrollHandler(d)
 	rec := httptest.NewRecorder()
 	h.MintToken(rec, nodeEnrollMintReq(userID, map[string]interface{}{}))
 	return rec

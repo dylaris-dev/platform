@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
@@ -48,7 +46,7 @@ func pairingPost(target, userID, body string) *http.Request {
 // but the fleet operator could, and they were refused on a customer's machine.
 func TestResetMyNodePairingIsTheOwnersOnly(t *testing.T) {
 	fs := &pairingStore{selfNodeStore: selfNodeStore{node: ownedBy("me")}}
-	h := &NodeHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
+	h := &NodeHandler{d: testDeps(Deps{Store: fs})}
 
 	w := httptest.NewRecorder()
 	h.ResetMyNodePairing(w, pairingPost("/api/me/nodes/7/reset-pairing", "stranger", ""))
@@ -84,7 +82,7 @@ func TestAdmitMyNodeTakesTheFingerprintFromTheOwner(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &pairingStore{selfNodeStore: selfNodeStore{node: ownedBy("me")}}
-			h := &NodeHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
+			h := &NodeHandler{d: testDeps(Deps{Store: fs})}
 			w := httptest.NewRecorder()
 			h.AdmitMyNode(w, pairingPost("/api/me/nodes/7/admit", "me", c.body))
 			if w.Code != c.wantCode || fs.armedFor != c.wantArmed {
@@ -98,7 +96,7 @@ func TestAdmitMyNodeTakesTheFingerprintFromTheOwner(t *testing.T) {
 
 	t.Run("a stranger", func(t *testing.T) {
 		fs := &pairingStore{selfNodeStore: selfNodeStore{node: ownedBy("me")}}
-		h := &NodeHandler{state: withCoreStorage(&handlers.AppState{Store: fs})}
+		h := &NodeHandler{d: testDeps(Deps{Store: fs})}
 		w := httptest.NewRecorder()
 		h.AdmitMyNode(w, pairingPost("/api/me/nodes/7/admit", "stranger", `{"fingerprint":"abcd-ef01-2345-6789"}`))
 		if w.Code != 404 || fs.armedFor != "" {

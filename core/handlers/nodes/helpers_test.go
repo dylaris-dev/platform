@@ -8,8 +8,6 @@ import (
 	"runtime/debug"
 	"testing"
 
-	"dylaris-core/authz"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -19,13 +17,11 @@ import (
 // Copies of handlers test fixtures the node tests use. Test files cannot be
 // imported across packages; each keeps its original name.
 
-// foreignState builds the state the way main does: the resolver asks the same
-// predicate the handlers ask.
-func foreignState(node *models.Node) *handlers.AppState {
+// foreignState: a customer's (BYON) machine, with the flag read the handlers
+// ask. The node handlers hold no resolver; they ask access directly.
+func foreignState(node *models.Node) Deps {
 	st := &handlertest.ForeignStore{Node: node, Byon: "true"}
-	s := withCoreStorage(&handlers.AppState{Store: st, Authz: authz.NewResolver(st), FeatureFlags: services.NewFeatureFlags(st)})
-	s.Authz.SetForeignNode(s.NodeOwnedByOther)
-	return s
+	return testDeps(Deps{Store: st, FeatureFlags: services.NewFeatureFlags(st)})
 }
 
 // The node half of handlers' TestPlacementAndForceDeleteFailClosed: a failed
@@ -36,7 +32,7 @@ func TestForceDeleteFailsClosedOnACustomersMachine(t *testing.T) {
 	t.Run("force delete a customer's machine", func(t *testing.T) {
 		st := &orphanAssignFakeStore{node: handlertest.OwnedNode()}
 		flags := &handlertest.ForeignStore{SettingErr: fault}
-		h := &NodeHandler{state: withCoreStorage(&handlers.AppState{Store: st, FeatureFlags: services.NewFeatureFlags(flags)})}
+		h := &NodeHandler{d: testDeps(Deps{Store: st, FeatureFlags: services.NewFeatureFlags(flags)})}
 		rec := httptest.NewRecorder()
 		h.ForceDeleteNode(rec, handlertest.VisAdminRequest("DELETE", "/x", map[string]string{"id": "7"}))
 		if rec.Code != http.StatusConflict {
@@ -50,16 +46,16 @@ func TestNodeWritesOnACustomersMachineAreNotFound(t *testing.T) {
 	id := map[string]string{"id": "7"}
 	routes := []struct {
 		name string
-		call func(t *testing.T, s *handlers.AppState, w http.ResponseWriter)
+		call func(t *testing.T, s Deps, w http.ResponseWriter)
 	}{
-		{"reset pairing", func(t *testing.T, s *handlers.AppState, w http.ResponseWriter) {
-			(&NodeAdmissionHandler{state: s}).ResetPairing(w, handlertest.AdminRequest("POST", id, ""))
+		{"reset pairing", func(t *testing.T, s Deps, w http.ResponseWriter) {
+			(&NodeAdmissionHandler{d: s}).ResetPairing(w, handlertest.AdminRequest("POST", id, ""))
 		}},
-		{"roll the key", func(t *testing.T, s *handlers.AppState, w http.ResponseWriter) {
-			(&NodeAdmissionHandler{state: s}).RollSecret(w, handlertest.AdminRequest("POST", id, ""))
+		{"roll the key", func(t *testing.T, s Deps, w http.ResponseWriter) {
+			(&NodeAdmissionHandler{d: s}).RollSecret(w, handlertest.AdminRequest("POST", id, ""))
 		}},
-		{"set the CPU pool", func(t *testing.T, s *handlers.AppState, w http.ResponseWriter) {
-			(&NodeHandler{state: s}).UpdateNode(w, handlertest.AdminRequest("PUT", id, `{}`))
+		{"set the CPU pool", func(t *testing.T, s Deps, w http.ResponseWriter) {
+			(&NodeHandler{d: s}).UpdateNode(w, handlertest.AdminRequest("PUT", id, `{}`))
 		}},
 	}
 	for _, rt := range routes {
@@ -107,10 +103,9 @@ type tenancyFlagStore struct {
 
 func (f tenancyFlagStore) GetSetting(string) (string, error) { return f.val, nil }
 
-// withCoreStorage gives a test state the core storage it implicitly was before
-// S12 (the AppState methods ran over its own Store, Redis, Events, ...): a
-// Manager over the very same objects.
-func withCoreStorage(s *handlers.AppState) *handlers.AppState {
-	s.CoreStorage = &corestorage.Manager{Store: s.Store, Redis: s.Redis, Events: s.Events, ClusterSecret: s.ClusterSecret, Registry: s.GRPCRegistry}
-	return s
+// testDeps is routes.go's nodesDeps for tests: a core storage Manager over
+// the same objects, as the AppState methods ran over them before S12.
+func testDeps(d Deps) Deps {
+	d.CoreStorage = &corestorage.Manager{Store: d.Store, Redis: d.Redis, ClusterSecret: d.ClusterSecret, Registry: d.GRPCRegistry}
+	return d
 }

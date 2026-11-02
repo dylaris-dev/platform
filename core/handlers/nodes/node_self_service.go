@@ -63,7 +63,7 @@ type nodeServerContents struct {
 // the fleet". Here the only question is whether this row belongs to the person
 // asking.
 func (h *NodeHandler) myNode(w http.ResponseWriter, r *http.Request) (*models.Node, bool) {
-	if h.state.Store == nil {
+	if h.d.Store == nil {
 		httpx.SendJSONError(w, "DB error", 503)
 		return nil, false
 	}
@@ -72,7 +72,7 @@ func (h *NodeHandler) myNode(w http.ResponseWriter, r *http.Request) (*models.No
 		httpx.SendJSONError(w, "Invalid node id", 400)
 		return nil, false
 	}
-	node, err := h.state.Store.GetNodeByID(id)
+	node, err := h.d.Store.GetNodeByID(id)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return nil, false
@@ -100,7 +100,7 @@ func (h *NodeHandler) GetMyNodeContents(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	servers, err := h.state.Store.ListServersByNode(node.ID)
+	servers, err := h.d.Store.ListServersByNode(node.ID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load servers", 500)
 		return
@@ -115,7 +115,7 @@ func (h *NodeHandler) GetMyNodeContents(w http.ResponseWriter, r *http.Request) 
 		// A failure here must not hide the server itself. The list is a
 		// courtesy; the server going away is the fact, and dropping the row
 		// because its installs could not be read would understate the loss.
-		installs, ierr := h.state.Store.ListSubServerInstalls(s.ID)
+		installs, ierr := h.d.Store.ListSubServerInstalls(s.ID)
 		if ierr != nil {
 			log.Printf("node contents: installs for server %d: %v", s.ID, ierr)
 		}
@@ -160,17 +160,17 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 	var servers []models.Server
 	if withServers {
 		var lerr error
-		if servers, lerr = h.state.Store.ListServersByNode(node.ID); lerr != nil {
+		if servers, lerr = h.d.Store.ListServersByNode(node.ID); lerr != nil {
 			log.Printf("DeleteMyNode: listing the servers of node %d failed, their addresses and Redis keys cannot be cleaned up: %v", node.ID, lerr)
 		}
-		h.state.CoreStorage.PurgeBackupArchivesForServers(services.ServerIDs(servers))
-		if err := h.state.Store.DeleteServersByNode(node.ID); err != nil {
+		h.d.CoreStorage.PurgeBackupArchivesForServers(services.ServerIDs(servers))
+		if err := h.d.Store.DeleteServersByNode(node.ID); err != nil {
 			httpx.SendJSONError(w, "Failed to delete the servers on this machine", 500)
 			return
 		}
 	}
 
-	if err := h.state.Store.DeleteNode(node.ID); err != nil {
+	if err := h.d.Store.DeleteNode(node.ID); err != nil {
 		if errors.Is(err, store.ErrNodeHasServers) {
 			httpx.SendJSONError(w, "This machine still has servers on it. Delete them with it, or move them to another machine first.", 409)
 			return
@@ -185,8 +185,8 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 	//
 	// Background, not the request context: a browser that timed out must not be
 	// the reason an address outlives the machine behind it.
-	matched := services.RemoveDeletedServers(context.Background(), h.state.Gateway, h.state.Redis, services.ServerUUIDs(servers))
-	demo.DropServers(h.state.Store, h.state.StoreEnabled, services.ServerUUIDs(servers))
+	matched := services.RemoveDeletedServers(context.Background(), h.d.Gateway, h.d.Redis, services.ServerUUIDs(servers))
+	demo.DropServers(h.d.Store, h.d.StoreEnabled, services.ServerUUIDs(servers))
 	log.Printf("DeleteMyNode: node %d — cleaned up %d route(s) across %d server(s)", node.ID, matched, len(servers))
 
 	// The Redis ACL user and the node's keys are all keyed by its token, which
@@ -210,7 +210,7 @@ func (h *NodeHandler) ResetMyNodePairing(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if err := resetNodePairing(r.Context(), h.state, node, reqctx.ByonCallerID(r)); err != nil {
+	if err := resetNodePairing(r.Context(), h.d, node, reqctx.ByonCallerID(r)); err != nil {
 		log.Printf("reset-my-pairing: %v", err)
 		httpx.SendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
 		return
@@ -230,7 +230,7 @@ func (h *NodeHandler) GetMyNodeJoinAttempt(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	a, err := h.state.Store.GetNodeJoinAttempt(node.Token)
+	a, err := h.d.Store.GetNodeJoinAttempt(node.Token)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
@@ -289,16 +289,16 @@ func (h *NodeHandler) AdmitMyNode(w http.ResponseWriter, r *http.Request) {
 	}
 	// Same order as the operator's Admit: take the current login away first, or
 	// the next connect is answered with a challenge and never reaches the check.
-	if err := (&NodeAdmissionHandler{state: h.state}).revokeNodeLogin(node.ID, false); err != nil {
+	if err := (&NodeAdmissionHandler{d: h.d}).revokeNodeLogin(node.ID, false); err != nil {
 		log.Printf("admit-my-node: %v", err)
 		httpx.SendJSONError(w, "Failed to admit the machine", http.StatusInternalServerError)
 		return
 	}
-	if h.state.Redis != nil {
-		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
+	if h.d.Redis != nil {
+		redisacl.NewProvisioner(h.d.Redis).RemoveNodeACL(r.Context(), node.Token)
 	}
 	uid := reqctx.ByonCallerID(r)
-	armed, err := h.state.Store.ApproveNodeJoinAttemptForKey(node.Token, fp, uid)
+	armed, err := h.d.Store.ApproveNodeJoinAttemptForKey(node.Token, fp, uid)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
@@ -307,7 +307,7 @@ func (h *NodeHandler) AdmitMyNode(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "The admission could not be armed. Try again.", http.StatusInternalServerError)
 		return
 	}
-	_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
+	_ = h.d.Store.InsertAuditIdentity(&models.AuditEventIdentity{
 		EventType:   "node.join_approved",
 		ActorUserID: &uid,
 		Metadata:    map[string]interface{}{"nodeId": node.ID, "nodeToken": node.Token, "keyFingerprint": fp, "by": "owner"},

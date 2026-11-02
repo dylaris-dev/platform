@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/services/corestorage"
 
 	"github.com/alicebob/miniredis/v2"
@@ -39,7 +38,7 @@ func listNodesFor(t *testing.T, rdb *redis.Client, nodes []models.Node) map[stri
 		settings: map[string]string{"routing_mode": "gateway", "feature_byon_enabled": "true"},
 		nodes:    nodes,
 	}
-	state := &handlers.AppState{
+	state := Deps{
 		Store:         fs,
 		FeatureFlags:  services.NewFeatureFlags(fs),
 		Redis:         rdb,

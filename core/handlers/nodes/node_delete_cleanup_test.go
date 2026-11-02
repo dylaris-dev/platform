@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"testing"
 
-	"dylaris-core/handlers"
-
 	"dylaris-core/models"
 	"dylaris-core/store"
 
@@ -65,7 +63,7 @@ func TestDeleteNode_ReleasesTheMachinesOverlayKeyAndLink(t *testing.T) {
 			rdb.Set(ctx, "online_link:"+tok, "1", 0)
 			fs := &nodeDeleteFakeStore{node: c.node, boundKeys: []int{41}}
 			peers := &recordingPeerDisconnector{}
-			h := &NodeHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb, WarpPeers: peers})}
+			h := &NodeHandler{d: testDeps(Deps{Store: fs, Redis: rdb, WarpPeers: peers})}
 
 			id := strconv.Itoa(c.node.ID)
 			rw := httptest.NewRecorder()
@@ -141,7 +139,7 @@ func TestDeleteNode_RemovesTheNodesRedisState(t *testing.T) {
 	rdb.Set(ctx, other, "x", 0)
 
 	fs := &nodeDeleteFakeStore{node: &models.Node{ID: 7, Token: token}}
-	h := &NodeHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb})}
+	h := &NodeHandler{d: testDeps(Deps{Store: fs, Redis: rdb})}
 
 	rw := httptest.NewRecorder()
 	req := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/api/nodes/7", nil), map[string]string{"id": "7"})
@@ -171,7 +169,7 @@ func TestDeleteNode_StillSucceedsWhenTheNodeCannotBeRead(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 
 	fs := &nodeDeleteFakeStore{node: nil} // GetNodeByID returns (nil, nil)
-	h := &NodeHandler{state: withCoreStorage(&handlers.AppState{Store: fs, Redis: rdb})}
+	h := &NodeHandler{d: testDeps(Deps{Store: fs, Redis: rdb})}
 
 	rw := httptest.NewRecorder()
 	req := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/api/nodes/9", nil), map[string]string{"id": "9"})

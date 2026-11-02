@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 
 	"dylaris-core/handlers/httpx"
@@ -26,11 +25,11 @@ import (
 // and the per-node reset-pairing and roll-secret actions. All endpoints are
 // admin-only.
 type NodeAdmissionHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewNodeAdmissionHandler(state *handlers.AppState) *NodeAdmissionHandler {
-	return &NodeAdmissionHandler{state: state}
+func NewNodeAdmissionHandler(d Deps) *NodeAdmissionHandler {
+	return &NodeAdmissionHandler{d: d}
 }
 
 // admissionPayload is the wire shape for GET/PUT of the join + IP mode.
@@ -41,15 +40,15 @@ type admissionPayload struct {
 
 // GetAdmission GET /api/admin/settings/node-admission — current modes + CIDRs.
 func (h *NodeAdmissionHandler) GetAdmission(w http.ResponseWriter, r *http.Request) {
-	joinMode, err := h.state.Store.GetSetting("node_join_mode")
+	joinMode, err := h.d.Store.GetSetting("node_join_mode")
 	if err != nil || joinMode == "" {
 		joinMode = "open"
 	}
-	ipMode, err := h.state.Store.GetSetting("node_admission_ip_mode")
+	ipMode, err := h.d.Store.GetSetting("node_admission_ip_mode")
 	if err != nil || ipMode == "" {
 		ipMode = "allow"
 	}
-	cidrs, err := h.state.Store.ListAdmissionCIDRs()
+	cidrs, err := h.d.Store.ListAdmissionCIDRs()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load CIDRs", http.StatusInternalServerError)
 		return
@@ -78,16 +77,16 @@ func (h *NodeAdmissionHandler) SetAdmission(w http.ResponseWriter, r *http.Reque
 		httpx.SendJSONError(w, "Invalid joinMode or ipMode", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.SetSetting("node_join_mode", req.JoinMode); err != nil {
+	if err := h.d.Store.SetSetting("node_join_mode", req.JoinMode); err != nil {
 		httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := h.state.Store.SetSetting("node_admission_ip_mode", req.IPMode); err != nil {
+	if err := h.d.Store.SetSetting("node_admission_ip_mode", req.IPMode); err != nil {
 		httpx.SendJSONError(w, "Save failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if uid := reqctx.ByonCallerID(r); uid != "" {
-		_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
+		_ = h.d.Store.InsertAuditIdentity(&models.AuditEventIdentity{
 			EventType:   "node.admission_changed",
 			ActorUserID: &uid,
 			Metadata:    map[string]interface{}{"joinMode": req.JoinMode, "ipMode": req.IPMode},
@@ -115,7 +114,7 @@ func (h *NodeAdmissionHandler) AddCIDR(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid CIDR", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.AddAdmissionCIDR(netw.String(), strings.TrimSpace(req.Label)); err != nil {
+	if err := h.d.Store.AddAdmissionCIDR(netw.String(), strings.TrimSpace(req.Label)); err != nil {
 		httpx.SendJSONError(w, "Failed to add CIDR", http.StatusInternalServerError)
 		return
 	}
@@ -126,7 +125,7 @@ func (h *NodeAdmissionHandler) AddCIDR(w http.ResponseWriter, r *http.Request) {
 // entry from the node admission allowlist.
 func (h *NodeAdmissionHandler) DeleteCIDR(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
-	if err := h.state.Store.DeleteAdmissionCIDR(id); err != nil {
+	if err := h.d.Store.DeleteAdmissionCIDR(id); err != nil {
 		httpx.SendJSONError(w, "Failed to delete CIDR", http.StatusInternalServerError)
 		return
 	}
@@ -158,17 +157,17 @@ func (h *NodeAdmissionHandler) DeleteCIDR(w http.ResponseWriter, r *http.Request
 // aside, so the only write that changes its row is the clear.
 func (h *NodeAdmissionHandler) revokeNodeLogin(nodeID int, rotate bool) error {
 	if rotate {
-		if err := h.state.Store.ResetNodeLogin(nodeID); err != nil {
+		if err := h.d.Store.ResetNodeLogin(nodeID); err != nil {
 			return fmt.Errorf("reset login of node %d: %w", nodeID, err)
 		}
 		return nil
 	}
-	keyNode, err := h.state.Store.RejectNodePublicKey(nodeID)
+	keyNode, err := h.d.Store.RejectNodePublicKey(nodeID)
 	if err != nil {
 		return fmt.Errorf("reject key of node %d: %w", nodeID, err)
 	}
 	if !keyNode {
-		if err := h.state.Store.SetNodeSecretEnc(nodeID, ""); err != nil {
+		if err := h.d.Store.SetNodeSecretEnc(nodeID, ""); err != nil {
 			return fmt.Errorf("clear secret of node %d: %w", nodeID, err)
 		}
 	}
@@ -197,14 +196,14 @@ func (h *NodeAdmissionHandler) revokeNodeLogin(nodeID int, rotate bool) error {
 // ApproveJoinAttempt below.
 func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
-	node, err := h.state.Store.GetNodeByID(id)
+	node, err := h.d.Store.GetNodeByID(id)
 	// A customer re-pairs their own machine (scope=own); resetting it from the
 	// fleet routes restarts their game servers.
-	if err != nil || node == nil || access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, node.ID) {
+	if err != nil || node == nil || access.ForeignToCaller(h.d.Store, h.d.FeatureFlags, r, node.ID) {
 		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
-	if err := resetNodePairing(r.Context(), h.state, node, reqctx.ByonCallerID(r)); err != nil {
+	if err := resetNodePairing(r.Context(), h.d, node, reqctx.ByonCallerID(r)); err != nil {
 		log.Printf("reset-pairing: %v", err)
 		httpx.SendJSONError(w, "Failed to reset pairing", http.StatusInternalServerError)
 		return
@@ -218,21 +217,21 @@ func (h *NodeAdmissionHandler) ResetPairing(w http.ResponseWriter, r *http.Reque
 // resetNodePairing is Reset pairing itself, shared by the operator's route and
 // the owner's own (/api/me/nodes/{id}/reset-pairing): the caller has already
 // decided the node is theirs to reset.
-func resetNodePairing(ctx context.Context, state *handlers.AppState, node *models.Node, uid string) error {
+func resetNodePairing(ctx context.Context, d Deps, node *models.Node, uid string) error {
 	// Revoke the login: the next reconnect goes down the branch that accepts a
 	// cluster proof or an admission.
-	if err := (&NodeAdmissionHandler{state: state}).revokeNodeLogin(node.ID, true); err != nil {
+	if err := (&NodeAdmissionHandler{d: d}).revokeNodeLogin(node.ID, true); err != nil {
 		return err
 	}
 	// Hard-cut the live Redis ACL so a possibly-compromised node loses access at
 	// once (ACL DELUSER disconnects live clients) instead of only at its next
 	// reconnect. Best-effort. Recovery re-provisions all three users under the new
 	// secret via EnsureNodeACL when the node re-pairs.
-	if state.Redis != nil {
-		redisacl.NewProvisioner(state.Redis).RemoveNodeACL(ctx, node.Token)
+	if d.Redis != nil {
+		redisacl.NewProvisioner(d.Redis).RemoveNodeACL(ctx, node.Token)
 	}
 	if uid != "" {
-		_ = state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
+		_ = d.Store.InsertAuditIdentity(&models.AuditEventIdentity{
 			EventType:   "node.pairing_reset",
 			ActorUserID: &uid,
 			Metadata:    map[string]interface{}{"nodeId": node.ID, "nodeToken": node.Token},
@@ -263,12 +262,12 @@ func resetNodePairing(ctx context.Context, state *handlers.AppState, node *model
 // without one is what Reset pairing already offers.
 func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(mux.Vars(r)["id"])
-	node, err := h.state.Store.GetNodeByID(id)
-	if err != nil || node == nil || access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, node.ID) {
+	node, err := h.d.Store.GetNodeByID(id)
+	if err != nil || node == nil || access.ForeignToCaller(h.d.Store, h.d.FeatureFlags, r, node.ID) {
 		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
-	fromIP, err := h.state.Store.GetNodeLastAuthPeerIP(node.ID)
+	fromIP, err := h.d.Store.GetNodeLastAuthPeerIP(node.ID)
 	if err != nil {
 		log.Printf("roll-secret: node %d: read last auth address: %v", node.ID, err)
 		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
@@ -288,19 +287,19 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Failed to revoke the node's key", http.StatusInternalServerError)
 		return
 	}
-	if h.state.Redis != nil {
-		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
+	if h.d.Redis != nil {
+		redisacl.NewProvisioner(h.d.Redis).RemoveNodeACL(r.Context(), node.Token)
 	}
 	// Audited once the login is gone, before arming: the revocation has
 	// happened whether or not the admission below lands.
 	if uid != "" {
-		_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
+		_ = h.d.Store.InsertAuditIdentity(&models.AuditEventIdentity{
 			EventType:   "node.secret_rolled",
 			ActorUserID: &uid,
 			Metadata:    map[string]interface{}{"nodeId": node.ID, "nodeToken": node.Token},
 		})
 	}
-	armed, err := h.state.Store.ArmNodeJoinApproval(node.Token, fromIP, uid)
+	armed, err := h.d.Store.ArmNodeJoinApproval(node.Token, fromIP, uid)
 	if err != nil || !armed {
 		// The login is already gone by this point, so the node has changed
 		// state either way - log why arming failed, or this 500 explains
@@ -322,7 +321,7 @@ func (h *NodeAdmissionHandler) RollSecret(w http.ResponseWriter, r *http.Request
 // any proof is checked. The panel labels them as reported for that reason; the
 // address is the one thing on the row that cannot be chosen by the caller.
 func (h *NodeAdmissionHandler) ListJoinAttempts(w http.ResponseWriter, r *http.Request) {
-	attempts, err := h.state.Store.ListNodeJoinAttempts()
+	attempts, err := h.d.Store.ListNodeJoinAttempts()
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
@@ -345,7 +344,7 @@ func (h *NodeAdmissionHandler) ListJoinAttempts(w http.ResponseWriter, r *http.R
 // would be an invitation to whoever knocks next.
 func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http.Request) {
 	token := mux.Vars(r)["token"]
-	node, err := h.state.Store.GetNodeByToken(token)
+	node, err := h.d.Store.GetNodeByToken(token)
 	// A customer's machine is admitted by its owner, who can compare the key
 	// with their machine's log (AdmitMyNode). The same rule Reset pairing and
 	// Roll key already follow: an operator must not be able to let a different
@@ -354,7 +353,7 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 		httpx.SendJSONError(w, "No node with that identity", http.StatusNotFound)
 		return
 	}
-	if access.ForeignToCaller(h.state.Store, h.state.FeatureFlags, r, node.ID) {
+	if access.ForeignToCaller(h.d.Store, h.d.FeatureFlags, r, node.ID) {
 		httpx.SendJSONError(w, "This machine belongs to a customer. They admit it themselves under My infrastructure, with the fingerprint their machine logs.", http.StatusConflict)
 		return
 	}
@@ -370,7 +369,7 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 		return
 	}
 	staleView := "That attempt changed since the list was loaded. Reload it and check the address and key again."
-	if cur, err := h.state.Store.GetNodeJoinAttempt(token); err != nil || cur == nil ||
+	if cur, err := h.d.Store.GetNodeJoinAttempt(token); err != nil || cur == nil ||
 		cur.PeerIP != seen.PeerIP || cur.PresentedKey != seen.PresentedKey {
 		httpx.SendJSONError(w, staleView, http.StatusConflict)
 		return
@@ -380,11 +379,11 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 		httpx.SendJSONError(w, "Failed to revoke the node's key", http.StatusInternalServerError)
 		return
 	}
-	if h.state.Redis != nil {
-		redisacl.NewProvisioner(h.state.Redis).RemoveNodeACL(r.Context(), node.Token)
+	if h.d.Redis != nil {
+		redisacl.NewProvisioner(h.d.Redis).RemoveNodeACL(r.Context(), node.Token)
 	}
 	uid := reqctx.ByonCallerID(r)
-	armed, err := h.state.Store.ApproveNodeJoinAttempt(token, seen.PeerIP, seen.PresentedKey, uid)
+	armed, err := h.d.Store.ApproveNodeJoinAttempt(token, seen.PeerIP, seen.PresentedKey, uid)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
@@ -397,7 +396,7 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 		return
 	}
 	if uid != "" {
-		_ = h.state.Store.InsertAuditIdentity(&models.AuditEventIdentity{
+		_ = h.d.Store.InsertAuditIdentity(&models.AuditEventIdentity{
 			EventType:   "node.join_approved",
 			ActorUserID: &uid,
 			Metadata:    map[string]interface{}{"nodeId": node.ID, "nodeToken": node.Token},
@@ -413,7 +412,7 @@ func (h *NodeAdmissionHandler) ApproveJoinAttempt(w http.ResponseWriter, r *http
 // an operator has decided is not theirs to act on. It comes back if the machine
 // keeps trying, which is the point: dismissing is not blocking.
 func (h *NodeAdmissionHandler) DismissJoinAttempt(w http.ResponseWriter, r *http.Request) {
-	if err := h.state.Store.DeleteNodeJoinAttempt(mux.Vars(r)["token"]); err != nil {
+	if err := h.d.Store.DeleteNodeJoinAttempt(mux.Vars(r)["token"]); err != nil {
 		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
 	}

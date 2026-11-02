@@ -12,7 +12,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/services/storeclient"
@@ -30,11 +29,11 @@ import (
 // NODE_ENROLL_TOKEN; on first heartbeat the node is bound to that user (wired in
 // the discovery binding chunk). All endpoints require feature_byon_enabled.
 type NodeEnrollHandler struct {
-	state *handlers.AppState
+	d Deps
 }
 
-func NewNodeEnrollHandler(state *handlers.AppState) *NodeEnrollHandler {
-	return &NodeEnrollHandler{state: state}
+func NewNodeEnrollHandler(d Deps) *NodeEnrollHandler {
+	return &NodeEnrollHandler{d: d}
 }
 
 // maxNodeEnrollTokenExpiryDays caps a tenant-supplied expiresDays so a leaked
@@ -44,7 +43,7 @@ const maxNodeEnrollTokenExpiryDays = 30
 // MintToken POST /api/nodes/enroll-token — generate a new enroll token for the
 // calling user. The plaintext is returned ONCE; only its hash is stored.
 func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
-	if !access.ByonActive(h.state.FeatureFlags, r) {
+	if !access.ByonActive(h.d.FeatureFlags, r) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
@@ -57,7 +56,7 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// itself at zero, which is exactly the value an account that bought nothing
 	// carries; without this a fresh registration could mint enroll tokens
 	// forever. See entitlement_gate.go.
-	if !guard.RequireEntitlement(r, w, guard.Entitlement{Store: h.state.Store, Flags: h.state.FeatureFlags, StoreEnabled: h.state.StoreEnabled, Storefront: storeclient.Client{URL: h.state.StoreURL, SharedKey: h.state.StoreSharedKey}}, userID, services.EntitlementByon) {
+	if !guard.RequireEntitlement(r, w, guard.Entitlement{Store: h.d.Store, Flags: h.d.FeatureFlags, StoreEnabled: h.d.StoreEnabled, Storefront: storeclient.Client{URL: h.d.StoreURL, SharedKey: h.d.StoreSharedKey}}, userID, services.EntitlementByon) {
 		return
 	}
 	var req struct {
@@ -83,7 +82,7 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// not confirm that key exists.
 	warpKeyNodeID := strings.TrimSpace(req.WarpKeyNodeID)
 	if warpKeyNodeID != "" {
-		key, _, msg := access.OwnNodeKey(h.state.Store, warpKeyNodeID, userID)
+		key, _, msg := access.OwnNodeKey(h.d.Store, warpKeyNodeID, userID)
 		if key == nil {
 			httpx.SendJSONError(w, msg, http.StatusBadRequest)
 			return
@@ -122,13 +121,13 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	//
 	// A failed read refuses. It used to skip the check, so a database hiccup was
 	// a way past the cap.
-	lim, lerr := services.EffectiveLimits(h.state.Store, userID)
+	lim, lerr := services.EffectiveLimits(h.d.Store, userID)
 	if lerr != nil {
 		httpx.SendJSONError(w, "Could not check your node limit right now", http.StatusServiceUnavailable)
 		return
 	}
 	if lim.MaxNodes != nil {
-		slots, serr := services.CountNodeSlots(h.state.Store, userID)
+		slots, serr := services.CountNodeSlots(h.d.Store, userID)
 		if serr != nil {
 			httpx.SendJSONError(w, "Could not check your node limit right now", http.StatusServiceUnavailable)
 			return
@@ -168,7 +167,7 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "The name may be at most 64 characters, on one line.", http.StatusBadRequest)
 		return
 	}
-	if err := h.state.Store.CreateNodeEnrollToken(userID, token, label, exp, warpKeyNodeID); err != nil {
+	if err := h.d.Store.CreateNodeEnrollToken(userID, token, label, exp, warpKeyNodeID); err != nil {
 		httpx.SendJSONError(w, "Failed to create token", http.StatusInternalServerError)
 		return
 	}
@@ -176,8 +175,8 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 	// on; showing it while GRPC_TLS_ENABLED=false would suggest a pin the
 	// control channel never enforces.
 	fingerprint := ""
-	if h.state.GRPCTLSEnabled {
-		fingerprint = h.state.GRPCTLSFingerprint
+	if h.d.GRPCTLSEnabled {
+		fingerprint = h.d.GRPCTLSFingerprint
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":            true,
@@ -189,7 +188,7 @@ func (h *NodeEnrollHandler) MintToken(w http.ResponseWriter, r *http.Request) {
 
 // ListTokens GET /api/nodes/enroll-token — the caller's tokens (metadata only).
 func (h *NodeEnrollHandler) ListTokens(w http.ResponseWriter, r *http.Request) {
-	if !access.ByonActive(h.state.FeatureFlags, r) {
+	if !access.ByonActive(h.d.FeatureFlags, r) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
@@ -198,7 +197,7 @@ func (h *NodeEnrollHandler) ListTokens(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	tokens, err := h.state.Store.ListNodeEnrollTokens(userID)
+	tokens, err := h.d.Store.ListNodeEnrollTokens(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load tokens", http.StatusInternalServerError)
 		return
@@ -212,7 +211,7 @@ func (h *NodeEnrollHandler) ListTokens(w http.ResponseWriter, r *http.Request) {
 // RevokeToken DELETE /api/nodes/enroll-token/{id} — revoke one of the caller's
 // tokens (scoped to owner).
 func (h *NodeEnrollHandler) RevokeToken(w http.ResponseWriter, r *http.Request) {
-	if !access.ByonActive(h.state.FeatureFlags, r) {
+	if !access.ByonActive(h.d.FeatureFlags, r) {
 		httpx.SendJSONError(w, "BYON is not enabled", http.StatusForbidden)
 		return
 	}
@@ -222,7 +221,7 @@ func (h *NodeEnrollHandler) RevokeToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := mux.Vars(r)["id"]
-	removed, err := h.state.Store.DeleteNodeEnrollToken(id, userID)
+	removed, err := h.d.Store.DeleteNodeEnrollToken(id, userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to revoke token", http.StatusInternalServerError)
 		return
