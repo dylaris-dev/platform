@@ -15,7 +15,7 @@ import (
 // docs/superpowers/specs/2026-11-02-core-handlers-step2-design.md, section 5):
 //
 //	layer 2  handlers/<domain>          layer 0-1, services/**, store, models, authz, grpc, storage/**, pkg/**,
-//	                                    and layer2Lower (database, updates, mailer)
+//	                                    and layer2Lower (database, updates, mailer, metrics)
 //	layer 1  guard access audit reauth  layer 0, services/**, store, models, authz, grpc, storage/**, pkg/**
 //	         nodeops gate               (no lateral imports inside layer 1)
 //	layer 0  httpx reqctx validate      stdlib, models, mux, google/uuid, pkg/** only
@@ -29,13 +29,7 @@ import (
 // layeringAllowed lists the edges that break these rules today. A refactor
 // stage deletes the entries it made obsolete and never adds one; an entry no
 // longer needed fails the test, so the list cannot outlive the edges.
-var layeringAllowed = map[string]bool{
-	// stats is the long-term statistics read API and queries metrics (Query,
-	// Catalog, SeriesQuery, ReadCoverage) directly. metrics imports no core
-	// package and services already imports it, the same case as layer2Lower;
-	// kept as the one named edge rather than widening that rule (step 2, F).
-	"handlers/stats -> metrics": true,
-}
+var layeringAllowed = map[string]bool{}
 
 var (
 	layer0Pkgs = map[string]bool{"handlers/httpx": true, "handlers/reqctx": true, "handlers/validate": true}
@@ -168,8 +162,9 @@ func layeringViolation(from, to string, internal bool) string {
 // gains nothing services could not reach; they were root imports until the root
 // files moved out (Phase 5): database for the Redis error classifier the health
 // view reports, updates for the embedded release notes, mailer for the mail
-// provider settings the settings handler reads and writes.
-var layer2Lower = map[string]bool{"database": true, "updates": true, "mailer": true}
+// provider settings the settings handler reads and writes, metrics for the
+// long-term statistics queries of the stats read API.
+var layer2Lower = map[string]bool{"database": true, "updates": true, "mailer": true, "metrics": true}
 
 // lowerShared reports whether a module-relative package is one every handler
 // layer above 0 may use.
