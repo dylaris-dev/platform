@@ -211,7 +211,7 @@ func sftpLoginAllowed(u models.User, p sftpAuthPolicy) bool {
 }
 
 // sftpAuthPolicy is the part of the panel's sign-in policy SFTP has to follow.
-// Read from the same settings handlers.LoadAuthPolicy reads.
+// Read from the same settings LoadAuthPolicy reads.
 type sftpAuthPolicy struct {
 	require2FAForAll, require2FAForAdmins, emailVerifyRequired bool
 }

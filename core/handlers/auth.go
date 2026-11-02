@@ -16,9 +16,9 @@ import (
 
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
-	"dylaris-core/handlers/settings"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/demo"
@@ -657,7 +657,7 @@ func (h *AuthHandler) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	// the UI can offer a "resend verification email" button instead of a
 	// generic auth error. Admins still get to log in even when unverified —
 	// otherwise a misconfigured SMTP would lock everyone out.
-	policy := settings.LoadAuthPolicy(h.state.Store)
+	policy := services.LoadAuthPolicy(h.state.Store)
 	if policy.EmailVerifyRequired && !user.IsAdmin && user.EmailVerifiedAt == nil {
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -853,7 +853,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			if newEmail == "" {
 				// Removing the address would lock the account out at its next
 				// sign-in with nowhere to send the confirmation it then needs.
-				if settings.LoadAuthPolicy(h.state.Store).EmailVerifyRequired && !isAdmin {
+				if services.LoadAuthPolicy(h.state.Store).EmailVerifyRequired && !isAdmin {
 					httpx.SendJSONError(w, "An email address is required on this platform", http.StatusBadRequest)
 					return
 				}
@@ -873,7 +873,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			// One address change per verification-mail window. Each change
 			// mails the new address, and switching between two strangers'
 			// addresses in a loop sent them mail from this domain without end.
-			if !verificationResendAllowed(user.EmailVerificationSentAt, time.Now(), resendVerificationCooldown) {
+			if !auth.VerificationResendAllowed(user.EmailVerificationSentAt, time.Now(), auth.ResendVerificationCooldown) {
 				httpx.SendJSONError(w, "Please wait a minute before changing your address again", http.StatusTooManyRequests)
 				return
 			}
@@ -928,7 +928,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	if req.NewPassword != nil && *req.NewPassword != "" {
 		// Enforce the same length policy the register + reset paths apply; this
 		// self-service field previously accepted any non-empty password.
-		if min := settings.LoadAuthPolicy(h.state.Store).PasswordMinLength; len(*req.NewPassword) < min {
+		if min := services.LoadAuthPolicy(h.state.Store).PasswordMinLength; len(*req.NewPassword) < min {
 			httpx.SendJSONError(w, fmt.Sprintf("Password must be at least %d characters", min), http.StatusBadRequest)
 			return
 		}
@@ -970,8 +970,8 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 	// at its next sign-in by any typo, with the link on its way to a mailbox
 	// nobody reads and only an admin able to help.
 	pendingSet := false
-	if emailChanged && newEmail != "" && settings.LoadAuthPolicy(h.state.Store).EmailVerifyRequired {
-		token, terr := randomToken(32)
+	if emailChanged && newEmail != "" && services.LoadAuthPolicy(h.state.Store).EmailVerifyRequired {
+		token, terr := auth.RandomToken(32)
 		if terr != nil {
 			httpx.SendJSONError(w, "Update failed", 500)
 			return
@@ -981,7 +981,7 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		audit.LogIdentity(h.state.Store, r, "user_email_change_requested", user.ID, user.ID, nil)
-		if err := sendEmailChangeConfirmation(h.state, newEmail, user.Username, token); err != nil {
+		if err := auth.SendEmailChangeConfirmation(h.state.Store, h.state.FrontendURL, newEmail, user.Username, token); err != nil {
 			services.ReportOperatorError("profile-email-change", "verification mail to %s failed: %v", newEmail, err)
 			// Withdrawn: a pending address nobody was told about would only read
 			// as "waiting for confirmation" with nothing on its way.
@@ -1060,14 +1060,14 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		audit.LogIdentity(h.state.Store, r, audit.AuditEventUserEmailChanged, user.ID, user.ID, nil)
-		notifyAddressChanged(h.state, oldEmail, newEmail, user.Username)
-		emailVerifySent = sendChangedEmailVerification(h.state, user.ID, newEmail, user.Username, "profile-email-change")
+		auth.NotifyAddressChanged(h.state.Store, h.state.FrontendURL, oldEmail, newEmail, user.Username)
+		emailVerifySent = auth.SendChangedEmailVerification(h.state.Store, h.state.FrontendURL, user.ID, newEmail, user.Username, "profile-email-change")
 	}
 	if passwordChanged {
 		// To the address the account had BEFORE this save: when one save
 		// changes both, the new address is the one that cannot be trusted
 		// to tell the owner anything.
-		NotifyPasswordChanged(h.state, oldEmail, user.Username)
+		auth.NotifyPasswordChanged(h.state.Store, h.state.FrontendURL, oldEmail, user.Username)
 	}
 
 	// A password change invalidates every session issued against the old one -

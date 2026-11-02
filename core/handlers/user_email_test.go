@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -88,7 +89,7 @@ const emailTestUserID = "11111111-1111-1111-1111-111111111111"
 
 func emailReq(t *testing.T, st *emailFakeStore, body string) (*httptest.ResponseRecorder, map[string]interface{}) {
 	t.Helper()
-	h := NewUserEmailHandler(&AppState{Store: st})
+	h := auth.NewUserEmailHandler(auth.Deps{Store: st})
 	r := httptest.NewRequest(http.MethodPatch, "/api/admin/users/"+emailTestUserID+"/email", bytes.NewReader([]byte(withReauthJSON(body))))
 	r = mux.SetURLVars(r, map[string]string{"id": emailTestUserID})
 	ctx := context.WithValue(r.Context(), "userID", "admin-1")

@@ -12,7 +12,6 @@ import (
 
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
@@ -30,13 +29,6 @@ func foreignState(node *models.Node) Deps {
 	s := testDeps(Deps{Store: st, Authz: authz.NewResolver(st), FeatureFlags: services.NewFeatureFlags(st)})
 	s.Authz.SetForeignNode(foreignNodeOf(s))
 	return s
-}
-
-// rootState is the root-package state for the API-key handler
-// these tests drive alongside the server ones (it moves in R6).
-func rootState(d Deps) *handlers.AppState {
-	d = testDeps(d)
-	return &handlers.AppState{Store: d.Store, Redis: d.Redis, Events: d.Events, Authz: d.Authz, GRPCRegistry: d.GRPCRegistry, CoreStorage: d.CoreStorage}
 }
 
 // foreignNodeOf is main's SetForeignNode predicate over a test Deps.

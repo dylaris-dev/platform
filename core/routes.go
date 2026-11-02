@@ -9,6 +9,7 @@ import (
 	"dylaris-core/handlers"
 	"dylaris-core/handlers/admin"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/backup"
 	"dylaris-core/handlers/beam"
 	"dylaris-core/handlers/billing"
@@ -754,6 +755,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		StoreEnabled: appState.StoreEnabled,
 		SuspendGrace: appState.SuspendGrace,
 	}
+	authDeps := auth.Deps{
+		Store:        appState.Store,
+		Redis:        appState.Redis,
+		Authz:        appState.Authz,
+		FeatureFlags: appState.FeatureFlags,
+		FrontendURL:  appState.FrontendURL,
+		StoreEnabled: appState.StoreEnabled,
+		StoreURL:     appState.StoreURL,
+		ReauthCodes:  handlers.ReauthCodeVerifier(appState),
+	}
 	adminDeps := admin.Deps{
 		Store:        appState.Store,
 		Authz:        appState.Authz,
@@ -782,7 +793,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	fileHandler := files.NewFileHandler(filesDeps)
 	settingsHandler := settings.NewSettingsHandler(settingsDeps)
 	authzHandler := admin.NewAuthzHandler()
-	avatarHandler := handlers.NewAvatarHandler()
+	avatarHandler := auth.NewAvatarHandler()
 	permissionsModeHandler := settings.NewPermissionsModeHandler(settingsDeps)
 	coreStorageHandler := storageapi.NewCoreStorageHandler(storageapiDeps)
 	storageConnectionHandler := storageapi.NewStorageConnectionHandler(storageapiDeps)
@@ -821,10 +832,10 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 		WarpPeers:   appState.WarpPeers,
 		ReauthCodes: handlers.ReauthCodeVerifier(appState),
 		PasswordMinLength: func() int {
-			return settings.LoadAuthPolicy(appState.Store).PasswordMinLength
+			return services.LoadAuthPolicy(appState.Store).PasswordMinLength
 		},
 		NotifyPasswordChanged: func(email, username string) {
-			handlers.NotifyPasswordChanged(appState, email, username)
+			auth.NotifyPasswordChanged(appState.Store, appState.FrontendURL, email, username)
 		},
 	}
 	userHandler := users.NewUserHandler(usersDeps)
@@ -857,9 +868,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	storageConnectionsHandler := storageapi.NewStorageConnectionsHandler(storageapiDeps)
 	regionsHandler := settings.NewRegionsHandler(settingsDeps)
 	authSettingsHandler := settings.NewAuthSettingsHandler(settingsDeps)
-	registrationHandler := handlers.NewRegistrationHandler(appState)
-	passwordResetHandler := handlers.NewPasswordResetHandler(appState)
-	securityQuestionsHandler := handlers.NewSecurityQuestionsHandler(appState)
+	registrationHandler := auth.NewRegistrationHandler(authDeps)
+	passwordResetHandler := auth.NewPasswordResetHandler(authDeps)
+	securityQuestionsHandler := auth.NewSecurityQuestionsHandler(authDeps)
 	maintenanceHandler := settings.NewMaintenanceHandler(settingsDeps)
 	ticketCategoriesHandler := tickets.NewTicketCategoriesHandler(ticketsDeps)
 	ticketsHandler := tickets.NewTicketsHandler(ticketsDeps)
@@ -873,7 +884,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	ticketMigrationHandler := tickets.NewTicketMigrationHandler(ticketsDeps)
 	systemEventsHandler := health.NewSystemEventsHandler(healthDeps)
 	scheduledTasksHandler := console.NewScheduledTasksHandler(consoleDeps)
-	apiKeysHandler := handlers.NewAPIKeysHandler(appState)
+	apiKeysHandler := auth.NewAPIKeysHandler(authDeps)
 	modrinthHandler := mods.NewModrinthHandler(modsDeps)
 	sparkHandler := tabs.NewSparkHandler(tabsDeps)
 	serverTabsHandler := tabs.NewServerTabsHandler(tabsDeps)
@@ -1103,7 +1114,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	// --- External API surface: Authorization: Bearer dyl_<key> ---
 	//
 	// A separate surface from the panel routes above, addressing servers by
-	// UUID rather than by the sequential id (see handlers/external_api.go).
+	// UUID rather than by the sequential id (see handlers/auth/external_api.go).
 	// APIKeyServerRoute / APIKeyOwnerRoute declare the shape: which one is used
 	// decides whether the SERVER capabilities of the key count at all, and it
 	// is never inferred from the path.
@@ -1347,8 +1358,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *handlers.AuthHandl
 	api.HandleFunc("/me/username-history", authHandler.AuthMiddleware(usernameHistoryHandler.Me)).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username-history", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.read")(usernameHistoryHandler.Admin))).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/username", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(usernameHistoryHandler.AdminRename))).Methods("PATCH")
-	// The address, which nothing could change before - see handlers/user_email.go.
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/email", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(handlers.NewUserEmailHandler(appState).SetEmail))).Methods("PATCH")
+	// The address, which nothing could change before - see handlers/auth/user_email.go.
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/email", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(auth.NewUserEmailHandler(authDeps).SetEmail))).Methods("PATCH")
 	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(accountPolicyHandler.Get))).Methods("GET")
 	api.HandleFunc("/admin/settings/users", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(accountPolicyHandler.Set))).Methods("PUT")
 	// --- Modpack settings + system feature flags (PANEL settings.*; Phase 4 Task 17) ---

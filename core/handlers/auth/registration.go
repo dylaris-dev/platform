@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"crypto/rand"
@@ -14,21 +14,21 @@ import (
 
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
-	"dylaris-core/handlers/settings"
 	"dylaris-core/mailer"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/store"
 	"dylaris-pkg/validate"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 type RegistrationHandler struct {
-	state *AppState
+	d Deps
 }
 
-func NewRegistrationHandler(state *AppState) *RegistrationHandler {
-	return &RegistrationHandler{state: state}
+func NewRegistrationHandler(d Deps) *RegistrationHandler {
+	return &RegistrationHandler{d: d}
 }
 
 // emailRegex is intentionally cheap — full RFC 5322 validation is a rabbit
@@ -50,7 +50,7 @@ type registerRequest struct {
 // the register page render the picker step inline instead of forcing the user
 // through a second visit.
 func (h *RegistrationHandler) RegistrationStatus(w http.ResponseWriter, r *http.Request) {
-	p := settings.LoadAuthPolicy(h.state.Store)
+	p := services.LoadAuthPolicy(h.d.Store)
 	out := map[string]interface{}{
 		"success":             true,
 		"registrationEnabled": p.RegistrationEnabled,
@@ -60,13 +60,13 @@ func (h *RegistrationHandler) RegistrationStatus(w http.ResponseWriter, r *http.
 	// Where the panel links its imprint, privacy policy and terms: the hosted
 	// panel is the one connected to the dylaris.com store, and those pages are
 	// the operator's. A self-hosted panel gets none - our imprint is not theirs.
-	if h.state.StoreEnabled {
-		out["legalBaseUrl"] = strings.TrimRight(h.state.StoreURL, "/")
+	if h.d.StoreEnabled {
+		out["legalBaseUrl"] = strings.TrimRight(h.d.StoreURL, "/")
 	}
 	if p.SecurityQuestionsEnabled && p.SecurityQuestionsRequiredAtSignup {
 		out["securityQuestionsRequired"] = true
 		out["securityQuestionsCount"] = p.SecurityQuestionsCount
-		out["securityQuestionsPool"] = LoadSecurityQuestionPool(h.state)
+		out["securityQuestionsPool"] = LoadSecurityQuestionPool(h.d.Store)
 	} else {
 		out["securityQuestionsRequired"] = false
 	}
@@ -78,7 +78,7 @@ func (h *RegistrationHandler) RegistrationStatus(w http.ResponseWriter, r *http.
 // account enumeration — the legitimate user will discover the conflict via
 // their existing account or via the verification email never arriving.
 func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
-	policy := settings.LoadAuthPolicy(h.state.Store)
+	policy := services.LoadAuthPolicy(h.d.Store)
 	if !policy.RegistrationEnabled {
 		httpx.SendJSONError(w, "Registration is disabled", http.StatusForbidden)
 		return
@@ -111,7 +111,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	// Case-INSENSITIVE, so `NewComer` cannot be claimed beside an existing
 	// `newcomer`. The database has the last word (unique index on
 	// LOWER(username)); this is the friendly message.
-	if taken, _ := h.state.Store.UsernameTaken(username, ""); taken {
+	if taken, _ := h.d.Store.UsernameTaken(username, ""); taken {
 		httpx.SendJSONError(w, "Username is taken", http.StatusConflict)
 		return
 	}
@@ -119,7 +119,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	// Email enumeration mitigation: if the email already exists, return the
 	// same success response a fresh registration would, so an attacker
 	// can't probe which addresses are signed up. We log it though.
-	if existing, err := h.state.Store.GetUserByEmail(email); err == nil && existing != nil {
+	if existing, err := h.d.Store.GetUserByEmail(email); err == nil && existing != nil {
 		log.Printf("registration: email %q already in use (silent-success)", email)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":         true,
@@ -143,7 +143,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Password: string(hashed),
 		IsAdmin:  false,
 	}
-	if err := h.state.Store.CreateUser(user); err != nil {
+	if err := h.d.Store.CreateUser(user); err != nil {
 		log.Printf("registration: CreateUser failed for username=%q: %v", username, err)
 		httpx.SendJSONError(w, "Failed to create account", http.StatusInternalServerError)
 		return
@@ -157,27 +157,27 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 			// Roll back the user since the policy requirement wasn't met.
 			// In practice the frontend should never submit without questions
 			// when the status endpoint reports required=true.
-			if derr := h.state.Store.DeleteUser(user.ID); derr != nil {
+			if derr := h.d.Store.DeleteUser(user.ID); derr != nil {
 				log.Printf("registration: rollback of half-created user %s failed; the row is now orphaned and holds the username: %v", user.ID, derr)
 			}
 			httpx.SendJSONError(w, "Security questions are required for registration", http.StatusBadRequest)
 			return
 		}
 		if len(req.SecurityQuestions) > 0 {
-			hashedJSON, err := buildHashedQAJSON(req.SecurityQuestions, LoadSecurityQuestionPool(h.state), policy.SecurityQuestionsCount)
+			hashedJSON, err := buildHashedQAJSON(req.SecurityQuestions, LoadSecurityQuestionPool(h.d.Store), policy.SecurityQuestionsCount)
 			if err != nil {
-				if derr := h.state.Store.DeleteUser(user.ID); derr != nil {
+				if derr := h.d.Store.DeleteUser(user.ID); derr != nil {
 					log.Printf("registration: rollback of half-created user %s failed; the row is now orphaned and holds the username: %v", user.ID, derr)
 				}
 				httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			if err := h.state.Store.SetUserSecurityQuestions(user.ID, hashedJSON); err != nil {
+			if err := h.d.Store.SetUserSecurityQuestions(user.ID, hashedJSON); err != nil {
 				log.Printf("registration: SetUserSecurityQuestions failed for userID=%s: %v", user.ID, err)
 				if policy.SecurityQuestionsRequiredAtSignup {
 					// Required by policy — don't leave a half-created account
 					// without the questions it must have; roll back instead.
-					if derr := h.state.Store.DeleteUser(user.ID); derr != nil {
+					if derr := h.d.Store.DeleteUser(user.ID); derr != nil {
 						log.Printf("registration: rollback of half-created user %s failed; the row is now orphaned and holds the username: %v", user.ID, derr)
 					}
 					httpx.SendJSONError(w, "Failed to save security questions", http.StatusInternalServerError)
@@ -189,12 +189,12 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if policy.EmailVerifyRequired {
-		token, err := randomToken(32)
+		token, err := RandomToken(32)
 		if err != nil {
 			httpx.SendJSONError(w, "Failed to generate verification token", http.StatusInternalServerError)
 			return
 		}
-		if err := h.state.Store.SetEmailVerificationToken(user.ID, token); err != nil {
+		if err := h.d.Store.SetEmailVerificationToken(user.ID, token); err != nil {
 			log.Printf("registration: SetEmailVerificationToken failed: %v", err)
 			httpx.SendJSONError(w, "Failed to persist verification token", http.StatusInternalServerError)
 			return
@@ -203,7 +203,7 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 		// never shown (the account exists either way and the user can resend),
 		// and waiting for the relay only made the request hang with it.
 		go func(email, username string) {
-			if err := sendVerificationEmail(h.state, email, username, token); err != nil {
+			if err := sendVerificationEmail(h.d.Store, h.d.FrontendURL, email, username, token); err != nil {
 				services.ReportOperatorError("registration", "send verification email to %s failed: %v", email, err)
 			}
 		}(user.Email, user.Username)
@@ -217,12 +217,12 @@ func (h *RegistrationHandler) Register(w http.ResponseWriter, r *http.Request) {
 		// policy ON later: this account would then be treated as unverified and
 		// never received a verification mail, because none was sent. Not worth
 		// failing the registration over, very much worth being able to find.
-		if err := h.state.Store.MarkEmailVerified(user.ID); err != nil {
+		if err := h.d.Store.MarkEmailVerified(user.ID); err != nil {
 			log.Printf("registration: could not mark %s (userID=%s) verified while verification is disabled; they will be locked out if the policy is enabled later: %v", user.Username, user.ID, err)
 		}
 	}
 
-	audit.LogIdentity(h.state.Store, r, "user_registered", "", user.ID, map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, "user_registered", "", user.ID, map[string]interface{}{
 		"username": user.Username,
 		"email":    user.Email,
 	})
@@ -252,7 +252,7 @@ func (h *RegistrationHandler) VerifyEmail(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	user, err := h.state.Store.GetUserByEmailVerificationToken(req.Token)
+	user, err := h.d.Store.GetUserByEmailVerificationToken(req.Token)
 	if err == sql.ErrNoRows || user == nil {
 		// Token gone — could be already verified or expired.
 		httpx.SendJSONError(w, "Verification link is invalid or already used", http.StatusGone)
@@ -266,27 +266,27 @@ func (h *RegistrationHandler) VerifyEmail(w http.ResponseWriter, r *http.Request
 	// A link for an address change the user asked for: it becomes the
 	// account's address now, unless another account took it in the meantime.
 	if user.PendingEmail != "" {
-		if other, oerr := h.state.Store.GetUserByEmail(user.PendingEmail); oerr == nil && other != nil && other.ID != user.ID {
+		if other, oerr := h.d.Store.GetUserByEmail(user.PendingEmail); oerr == nil && other != nil && other.ID != user.ID {
 			httpx.SendJSONError(w, "That email address is already in use by another account", http.StatusConflict)
 			return
 		}
-		oldEmail, newEmail, ok, cerr := h.state.Store.ConfirmPendingEmail(user.ID)
+		oldEmail, newEmail, ok, cerr := h.d.Store.ConfirmPendingEmail(user.ID)
 		if cerr != nil {
 			httpx.SendJSONError(w, "Failed to verify email", http.StatusInternalServerError)
 			return
 		}
 		if ok {
-			audit.LogIdentity(h.state.Store, r, audit.AuditEventUserEmailChanged, user.ID, user.ID, nil)
-			notifyAddressChanged(h.state, oldEmail, newEmail, user.Username)
+			audit.LogIdentity(h.d.Store, r, audit.AuditEventUserEmailChanged, user.ID, user.ID, nil)
+			NotifyAddressChanged(h.d.Store, h.d.FrontendURL, oldEmail, newEmail, user.Username)
 			json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": user.Username})
 			return
 		}
 	}
-	if err := h.state.Store.MarkEmailVerified(user.ID); err != nil {
+	if err := h.d.Store.MarkEmailVerified(user.ID); err != nil {
 		httpx.SendJSONError(w, "Failed to verify email", http.StatusInternalServerError)
 		return
 	}
-	audit.LogIdentity(h.state.Store, r, "email_verified", "", user.ID, nil)
+	audit.LogIdentity(h.d.Store, r, "email_verified", "", user.ID, nil)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
@@ -303,7 +303,7 @@ type resendVerificationRequest struct {
 // is already verified. The legitimate user gets the email; an attacker
 // gets the same response either way.
 func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.Request) {
-	policy := settings.LoadAuthPolicy(h.state.Store)
+	policy := services.LoadAuthPolicy(h.d.Store)
 	if !policy.EmailVerifyRequired {
 		// If verification isn't required, the endpoint is meaningless. Be
 		// explicit so the UI can hide the button accordingly.
@@ -322,7 +322,7 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 		return
 	}
 
-	user, err := h.state.Store.GetUserByEmail(email)
+	user, err := h.d.Store.GetUserByEmail(email)
 	if err != nil || user == nil || user.EmailVerifiedAt != nil {
 		// Silent success in all "no-op" branches.
 		json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -337,7 +337,7 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 	//
 	// email_verification_sent_at has been written on every token issue and
 	// loaded onto the user since the column was added. Nothing had ever read it.
-	if !verificationResendAllowed(user.EmailVerificationSentAt, time.Now(), resendVerificationCooldown) {
+	if !VerificationResendAllowed(user.EmailVerificationSentAt, time.Now(), ResendVerificationCooldown) {
 		// Same silent success as the other no-op branches: answering
 		// differently here would turn this endpoint into an oracle for which
 		// addresses are registered and still unverified.
@@ -345,12 +345,12 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 		return
 	}
 
-	token, err := randomToken(32)
+	token, err := RandomToken(32)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
-	if err := h.state.Store.SetEmailVerificationToken(user.ID, token); err != nil {
+	if err := h.d.Store.SetEmailVerificationToken(user.ID, token); err != nil {
 		httpx.SendJSONError(w, "Failed to persist token", http.StatusInternalServerError)
 		return
 	}
@@ -358,34 +358,34 @@ func (h *RegistrationHandler) ResendVerification(w http.ResponseWriter, r *http.
 	// trip and every other case at once, which told a caller measuring time
 	// which addresses are registered and still unverified.
 	go func(email, username string) {
-		if err := sendVerificationEmail(h.state, email, username, token); err != nil {
+		if err := sendVerificationEmail(h.d.Store, h.d.FrontendURL, email, username, token); err != nil {
 			services.ReportOperatorError("registration", "resend verification to %s failed: %v", email, err)
 		}
 	}(user.Email, user.Username)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
-// resendVerificationCooldown is the minimum gap between two verification
+// ResendVerificationCooldown is the minimum gap between two verification
 // emails to ONE address. It matches the per-IP limiter's window, so a caller
 // who is inside the route limit is still inside this one.
-const resendVerificationCooldown = 60 * time.Second
+const ResendVerificationCooldown = 60 * time.Second
 
-// verificationResendAllowed reports whether another verification email may go
+// VerificationResendAllowed reports whether another verification email may go
 // out, given when the last one did. A nil lastSentAt means none was ever sent.
 //
 // A lastSentAt in the future (clock skew, or a row written by a host running
 // ahead) yields a negative difference and so refuses - erring towards not
 // sending, which is the safe direction for a mail the user can request again.
-func verificationResendAllowed(lastSentAt *time.Time, now time.Time, cooldown time.Duration) bool {
+func VerificationResendAllowed(lastSentAt *time.Time, now time.Time, cooldown time.Duration) bool {
 	if lastSentAt == nil {
 		return true
 	}
 	return now.Sub(*lastSentAt) >= cooldown
 }
 
-// randomToken returns a hex-encoded cryptographically random token.
+// RandomToken returns a hex-encoded cryptographically random token.
 // 32 bytes → 64-hex-char string, fits VARCHAR(64) on email_verification_token.
-func randomToken(nBytes int) (string, error) {
+func RandomToken(nBytes int) (string, error) {
 	b := make([]byte, nBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -396,24 +396,24 @@ func randomToken(nBytes int) (string, error) {
 // sendVerificationEmail builds and sends the verification email.
 // Pure helper so the test endpoint and the production flow can be kept in
 // sync (both go through mailer.Send).
-// sendEmailChangeConfirmation mails the link that makes a pending address the
+// SendEmailChangeConfirmation mails the link that makes a pending address the
 // account's. Not the registration mail: that one welcomes a new account, and a
 // stranger receiving it would read a sign-up instead of somebody asking to put
 // their address on an existing one.
-func sendEmailChangeConfirmation(state *AppState, to, username, token string) error {
-	link := strings.TrimRight(state.FrontendURL, "/") + "/verify-email?token=" + token
-	return sendAccountMail(state.Store, mailer.KeyConfirmEmailChange, to, state.FrontendURL, map[string]string{
+func SendEmailChangeConfirmation(st store.Store, frontendURL string, to, username, token string) error {
+	link := strings.TrimRight(frontendURL, "/") + "/verify-email?token=" + token
+	return sendAccountMail(st, mailer.KeyConfirmEmailChange, to, frontendURL, map[string]string{
 		"username":     username,
 		"confirm_link": link,
 	})
 }
 
-func sendVerificationEmail(state *AppState, to, username, token string) error {
-	link := strings.TrimRight(state.FrontendURL, "/") + "/verify-email?token=" + token
+func sendVerificationEmail(st store.Store, frontendURL string, to, username, token string) error {
+	link := strings.TrimRight(frontendURL, "/") + "/verify-email?token=" + token
 	// Wording lives in the template now, so an operator can change it without a
 	// deploy. An install that has never edited it sends the built-in default,
 	// which is this text.
-	return sendAccountMail(state.Store, mailer.KeyVerifyEmail, to, state.FrontendURL, map[string]string{
+	return sendAccountMail(st, mailer.KeyVerifyEmail, to, frontendURL, map[string]string{
 		"username":    username,
 		"verify_link": link,
 	})

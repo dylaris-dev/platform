@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"bytes"
@@ -135,7 +135,7 @@ func (f *apiKeysAuthFakeStore) GetInvite(serverID int, userID string) (*models.S
 	return nil, errors.New("no invite")
 }
 
-// The methods below satisfy authz.Store so h.state.Authz.Resolve does not
+// The methods below satisfy authz.Store so h.d.Authz.Resolve does not
 // panic on the embedded nil store.Store. Deny-by-default except GetServerByID
 // (backed by the same `servers` map keyed by UUID, looked up by ID here) and
 // GetServerGrant (backed by the configurable `grants` map).
@@ -197,7 +197,7 @@ func newAPIKeysAuthHandler(fs *apiKeysAuthFakeStore) *APIKeysHandler {
 	if _, set := fs.settings["apikeys_user_enabled"]; !set {
 		fs.settings["apikeys_user_enabled"] = "true"
 	}
-	return NewAPIKeysHandler(&AppState{
+	return NewAPIKeysHandler(Deps{
 		Store:        fs,
 		Authz:        authz.NewResolver(fs),
 		FeatureFlags: services.NewFeatureFlags(fs),

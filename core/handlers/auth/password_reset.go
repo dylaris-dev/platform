@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"database/sql"
@@ -12,20 +12,20 @@ import (
 
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
-	"dylaris-core/handlers/settings"
 	"dylaris-core/mailer"
 	"dylaris-core/services"
 	"dylaris-core/services/beamaccess"
+	"dylaris-core/store"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 type PasswordResetHandler struct {
-	state *AppState
+	d Deps
 }
 
-func NewPasswordResetHandler(state *AppState) *PasswordResetHandler {
-	return &PasswordResetHandler{state: state}
+func NewPasswordResetHandler(d Deps) *PasswordResetHandler {
+	return &PasswordResetHandler{d: d}
 }
 
 type forgotPasswordRequest struct {
@@ -56,7 +56,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	user, err := h.state.Store.GetUserByEmail(email)
+	user, err := h.d.Store.GetUserByEmail(email)
 	if err != nil || user == nil {
 		if err != nil && err != sql.ErrNoRows {
 			log.Printf("forgot-password: lookup error for %s: %v", email, err)
@@ -65,8 +65,8 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	policy := settings.LoadAuthPolicy(h.state.Store)
-	token, err := randomToken(32)
+	policy := services.LoadAuthPolicy(h.d.Store)
+	token, err := RandomToken(32)
 	if err != nil {
 		// Token gen really shouldn't fail — log it for ops, return silent success.
 		log.Printf("forgot-password: token generation failed: %v", err)
@@ -87,7 +87,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 	// TTL, so subtracting the cooldown from the expiry being written gives the
 	// boundary the store compares against, atomically inside the UPDATE.
 	expires := time.Now().Add(time.Duration(policy.PasswordResetLinkTTLMinutes) * time.Minute)
-	issued, err := h.state.Store.SetPasswordResetToken(user.ID, token, expires, expires.Add(-passwordResetCooldown))
+	issued, err := h.d.Store.SetPasswordResetToken(user.ID, token, expires, expires.Add(-passwordResetCooldown))
 	if err != nil {
 		log.Printf("forgot-password: SetPasswordResetToken for userID=%s: %v", user.ID, err)
 		json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -112,12 +112,12 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 	// only to the log - the requester is told nothing by design, so the
 	// operator is the only one left who can learn that resets are dead.
 	go func(email, username string, ttl int) {
-		if err := sendPasswordResetEmail(h.state, email, username, token, ttl); err != nil {
+		if err := sendPasswordResetEmail(h.d.Store, h.d.FrontendURL, email, username, token, ttl); err != nil {
 			services.ReportOperatorError("password-reset", "send to %s failed: %v", email, err)
 		}
 	}(user.Email, user.Username, policy.PasswordResetLinkTTLMinutes)
 
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventPasswordResetRequested, "", user.ID, map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventPasswordResetRequested, "", user.ID, map[string]interface{}{
 		"email":       user.Email,
 		"ttl_minutes": policy.PasswordResetLinkTTLMinutes,
 	})
@@ -126,7 +126,7 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 }
 
 // passwordResetCooldown is the minimum gap between two reset emails to ONE
-// address. Deliberately the same 60 seconds as resendVerificationCooldown: both
+// address. Deliberately the same 60 seconds as ResendVerificationCooldown: both
 // endpoints send mail on an anonymous request, both replace the token they just
 // sent, and a caller inside the per-IP route limit is inside this one too.
 const passwordResetCooldown = 60 * time.Second
@@ -154,7 +154,7 @@ func (h *PasswordResetHandler) ValidateResetToken(w http.ResponseWriter, r *http
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "valid": false})
 		return
 	}
-	user, err := h.state.Store.GetUserByPasswordResetToken(req.Token)
+	user, err := h.d.Store.GetUserByPasswordResetToken(req.Token)
 	if err != nil || user == nil {
 		// Token not found / expired — both look the same to the caller.
 		// Don't 4xx; the page renders an "invalid or expired" panel.
@@ -172,9 +172,9 @@ func (h *PasswordResetHandler) ValidateResetToken(w http.ResponseWriter, r *http
 	// demands answers at reset AND the user actually has questions set up.
 	// Users without questions get a free pass: reset works without a
 	// verification step (otherwise the policy locks them out forever).
-	policy := settings.LoadAuthPolicy(h.state.Store)
+	policy := services.LoadAuthPolicy(h.d.Store)
 	if policy.SecurityQuestionsEnabled && policy.SecurityQuestionsRequiredAtReset {
-		qs, _ := h.state.Store.GetUserSecurityQuestions(user.ID)
+		qs, _ := h.d.Store.GetUserSecurityQuestions(user.ID)
 		if len(qs) > 0 {
 			out["requiresSecurityQuestions"] = true
 			out["questions"] = qs
@@ -203,13 +203,13 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "Invalid token", http.StatusBadRequest)
 		return
 	}
-	policy := settings.LoadAuthPolicy(h.state.Store)
+	policy := services.LoadAuthPolicy(h.d.Store)
 	if len(req.Password) < policy.PasswordMinLength {
 		httpx.SendJSONError(w, fmt.Sprintf("Password must be at least %d characters", policy.PasswordMinLength), http.StatusBadRequest)
 		return
 	}
 
-	user, err := h.state.Store.GetUserByPasswordResetToken(req.Token)
+	user, err := h.d.Store.GetUserByPasswordResetToken(req.Token)
 	if err != nil || user == nil {
 		// Same response shape as the verify-email gone branch — caller-side
 		// renders "your link expired, request a new one".
@@ -222,10 +222,10 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	// none on file is intentional: matches ValidateResetToken's behavior and
 	// avoids permanently locking out users created before the policy flipped on.
 	if policy.SecurityQuestionsEnabled && policy.SecurityQuestionsRequiredAtReset {
-		stored, _ := h.state.Store.GetUserSecurityQuestionsRaw(user.ID)
+		stored, _ := h.d.Store.GetUserSecurityQuestionsRaw(user.ID)
 		if stored != "" && stored != "[]" {
 			if !verifySecurityAnswersAgainstStored(stored, req.SecurityAnswers) {
-				audit.LogIdentity(h.state.Store, r, audit.AuditEventSecurityAnswersFailedAtReset, "", user.ID, nil)
+				audit.LogIdentity(h.d.Store, r, audit.AuditEventSecurityAnswersFailedAtReset, "", user.ID, nil)
 				httpx.SendJSONError(w, "Security answers did not match", http.StatusUnauthorized)
 				return
 			}
@@ -243,7 +243,7 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	// password lands. This used to be two calls, ordered so a crash between
 	// them left the token consumable - which also meant a failed clear left a
 	// live link behind. Atomic is both simpler and stricter.
-	ok, err := h.state.Store.ResetPasswordWithToken(user.ID, req.Token, string(hashed))
+	ok, err := h.d.Store.ResetPasswordWithToken(user.ID, req.Token, string(hashed))
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to update password", http.StatusInternalServerError)
 		return
@@ -258,10 +258,10 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	// Recovering an account by mail is what someone does after losing it. The
 	// sessions ended with the password; the API keys did not, so a key minted
 	// by whoever had the account kept working.
-	revoked := services.RevokeAllAPIKeys(h.state.Store, user.ID, "password reset")
-	beamaccess.StampForUser(r.Context(), h.state.Store, h.state.Redis, user.ID)
-	sshRevoked := services.RevokeAllSSHKeys(h.state.Store, user.ID, "password reset")
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventPasswordResetCompleted, "", user.ID, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
+	revoked := services.RevokeAllAPIKeys(h.d.Store, user.ID, "password reset")
+	beamaccess.StampForUser(r.Context(), h.d.Store, h.d.Redis, user.ID)
+	sshRevoked := services.RevokeAllSSHKeys(h.d.Store, user.ID, "password reset")
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventPasswordResetCompleted, "", user.ID, map[string]interface{}{"api_keys_revoked": revoked, "ssh_keys_removed": sshRevoked})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
@@ -275,9 +275,9 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 // is what makes it editable without a deploy. Kept separate from the
 // verification mail on purpose: they are two definitions with two variable
 // sets, and ttl_minutes only makes sense on this one.
-func sendPasswordResetEmail(state *AppState, to, username, token string, ttlMinutes int) error {
-	link := strings.TrimRight(state.FrontendURL, "/") + "/reset-password?token=" + token
-	return services.SendMail(state.Store, mailer.KeyPasswordReset, to, state.FrontendURL, map[string]string{
+func sendPasswordResetEmail(st store.Store, frontendURL string, to, username, token string, ttlMinutes int) error {
+	link := strings.TrimRight(frontendURL, "/") + "/reset-password?token=" + token
+	return services.SendMail(st, mailer.KeyPasswordReset, to, frontendURL, map[string]string{
 		"username":    username,
 		"reset_link":  link,
 		"ttl_minutes": strconv.Itoa(ttlMinutes),

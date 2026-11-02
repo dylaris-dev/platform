@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"encoding/json"
@@ -94,7 +94,7 @@ func TestKeyWriteIsRecordedWithTheKeyAndSwitchesAuditingOn(t *testing.T) {
 func TestKeyActionAHandlerDescribesIsRecordedOnce(t *testing.T) {
 	fs, h := keyAuditFixture([]string{"power.start"})
 	inner := func(w http.ResponseWriter, r *http.Request) {
-		audit.LogServer(h.state.Store, r, 10, audit.ServerAuditEventPowerAction, "owner-1", "", map[string]interface{}{"action": "start"})
+		audit.LogServer(h.d.Store, r, 10, audit.ServerAuditEventPowerAction, "owner-1", "", map[string]interface{}{"action": "start"})
 		w.WriteHeader(http.StatusOK)
 	}
 	if code := serve(h.APIKeyServerRoute("")(inner), "POST", "uuid-a"); code != http.StatusOK {
@@ -108,7 +108,7 @@ func TestKeyActionAHandlerDescribesIsRecordedOnce(t *testing.T) {
 
 func TestPanelActionOnAServerWithAuditingOffStaysUnrecorded(t *testing.T) {
 	fs, h := keyAuditFixture(nil)
-	audit.LogServer(h.state.Store, httptest.NewRequest("POST", "/x", nil), 10, "console.send", "owner-1", "", nil)
+	audit.LogServer(h.d.Store, httptest.NewRequest("POST", "/x", nil), 10, "console.send", "owner-1", "", nil)
 	if len(fs.serverAudits) != 0 || fs.auditOn[10] {
 		t.Fatalf("rows %+v auditOn %v; a request without a key must not switch auditing on", fs.serverAudits, fs.auditOn[10])
 	}
@@ -116,7 +116,7 @@ func TestPanelActionOnAServerWithAuditingOffStaysUnrecorded(t *testing.T) {
 
 func withRedis(t *testing.T, h *APIKeysHandler) *miniredis.Miniredis {
 	mr := miniredis.RunT(t)
-	h.state.Redis = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	h.d.Redis = redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	return mr
 }
 

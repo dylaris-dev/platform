@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"encoding/json"
@@ -10,15 +10,16 @@ import (
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reauth"
-	"dylaris-core/handlers/settings"
+	"dylaris-core/services"
+	"dylaris-core/store"
 )
 
 type SecurityQuestionsHandler struct {
-	state *AppState
+	d Deps
 }
 
-func NewSecurityQuestionsHandler(state *AppState) *SecurityQuestionsHandler {
-	return &SecurityQuestionsHandler{state: state}
+func NewSecurityQuestionsHandler(d Deps) *SecurityQuestionsHandler {
+	return &SecurityQuestionsHandler{d: d}
 }
 
 // defaultSecurityQuestionPool is what every new install starts with. Admins
@@ -40,8 +41,8 @@ var defaultSecurityQuestionPool = []string{
 // LoadSecurityQuestionPool reads the admin-managed pool, falling back to
 // defaults when the setting hasn't been customized yet. Returned slice is
 // never nil and never empty (defaults always provide at least 10 entries).
-func LoadSecurityQuestionPool(state *AppState) []string {
-	raw, _ := state.Store.GetSetting("auth.security_questions_pool")
+func LoadSecurityQuestionPool(st store.Store) []string {
+	raw, _ := st.GetSetting("auth.security_questions_pool")
 	if raw == "" {
 		return append([]string(nil), defaultSecurityQuestionPool...)
 	}
@@ -65,7 +66,7 @@ type securityQARequest struct {
 // Returns the question strings only. Frontend uses this on /register and
 // /reset-password to render the pickers.
 func (h *SecurityQuestionsHandler) GetPool(w http.ResponseWriter, r *http.Request) {
-	policy := settings.LoadAuthPolicy(h.state.Store)
+	policy := services.LoadAuthPolicy(h.d.Store)
 	if !policy.SecurityQuestionsEnabled {
 		// Feature off — return empty pool so the frontend can simply skip
 		// the picker without a hard error.
@@ -80,7 +81,7 @@ func (h *SecurityQuestionsHandler) GetPool(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"enabled":  true,
-		"pool":     LoadSecurityQuestionPool(h.state),
+		"pool":     LoadSecurityQuestionPool(h.d.Store),
 		"required": policy.SecurityQuestionsCount,
 	})
 }
@@ -94,7 +95,7 @@ func (h *SecurityQuestionsHandler) GetMyQuestions(w http.ResponseWriter, r *http
 		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
-	questions, err := h.state.Store.GetUserSecurityQuestions(userID)
+	questions, err := h.d.Store.GetUserSecurityQuestions(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to load questions", http.StatusInternalServerError)
 		return
@@ -125,7 +126,7 @@ func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http
 		httpx.SendJSONError(w, "Unauthenticated", http.StatusUnauthorized)
 		return
 	}
-	policy := settings.LoadAuthPolicy(h.state.Store)
+	policy := services.LoadAuthPolicy(h.d.Store)
 	if !policy.SecurityQuestionsEnabled {
 		httpx.SendJSONError(w, "Security questions are disabled by the administrator", http.StatusForbidden)
 		return
@@ -136,7 +137,7 @@ func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	hashedJSON, err := buildHashedQAJSON(req.Items, LoadSecurityQuestionPool(h.state), policy.SecurityQuestionsCount)
+	hashedJSON, err := buildHashedQAJSON(req.Items, LoadSecurityQuestionPool(h.d.Store), policy.SecurityQuestionsCount)
 	if err != nil {
 		httpx.SendJSONError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -148,16 +149,16 @@ func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http
 	// Last rather than first for the same reason as APIKeysHandler.Create: a
 	// bcrypt comparison ahead of the request validation would let a malformed
 	// body buy CPU time, and nothing above this line writes anything.
-	if rerr := reauth.RequireReauth(h.state.Store, ReauthCodeVerifier(h.state), userID, req.Password, req.Code); rerr != nil {
+	if rerr := reauth.RequireReauth(h.d.Store, h.d.ReauthCodes, userID, req.Password, req.Code); rerr != nil {
 		reauth.WriteReauthError(w, rerr)
 		return
 	}
-	if err := h.state.Store.SetUserSecurityQuestions(userID, hashedJSON); err != nil {
+	if err := h.d.Store.SetUserSecurityQuestions(userID, hashedJSON); err != nil {
 		httpx.SendJSONError(w, "Failed to save", http.StatusInternalServerError)
 		return
 	}
 
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventSecurityQuestionsSet, userID, userID, map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventSecurityQuestionsSet, userID, userID, map[string]interface{}{
 		"count": len(req.Items),
 	})
 
@@ -169,7 +170,7 @@ func (h *SecurityQuestionsHandler) SetMyQuestions(w http.ResponseWriter, r *http
 func (h *SecurityQuestionsHandler) GetAdminPool(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"pool":    LoadSecurityQuestionPool(h.state),
+		"pool":    LoadSecurityQuestionPool(h.d.Store),
 	})
 }
 
@@ -207,12 +208,12 @@ func (h *SecurityQuestionsHandler) SetAdminPool(w http.ResponseWriter, r *http.R
 
 	payload, _ := json.Marshal(cleaned)
 	actorID, _ := r.Context().Value("userID").(string)
-	if err := h.state.Store.SetSettingBy("auth.security_questions_pool", string(payload), actorID); err != nil {
+	if err := h.d.Store.SetSettingBy("auth.security_questions_pool", string(payload), actorID); err != nil {
 		httpx.SendJSONError(w, "Failed to save pool", http.StatusInternalServerError)
 		return
 	}
 
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventSecurityQuestionsPoolUpdated, actorID, "", map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventSecurityQuestionsPoolUpdated, actorID, "", map[string]interface{}{
 		"count": len(cleaned),
 	})
 

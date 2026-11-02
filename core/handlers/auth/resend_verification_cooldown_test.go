@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"os"
@@ -22,8 +22,8 @@ func TestVerificationResendAllowed(t *testing.T) {
 	}{
 		{"never sent before", nil, true},
 		{"sent a moment ago", ago(time.Second), false},
-		{"sent just inside the window", ago(resendVerificationCooldown - time.Millisecond), false},
-		{"sent exactly at the window", ago(resendVerificationCooldown), true},
+		{"sent just inside the window", ago(ResendVerificationCooldown - time.Millisecond), false},
+		{"sent exactly at the window", ago(ResendVerificationCooldown), true},
 		{"sent long ago", ago(time.Hour), true},
 		// A row stamped by a host running ahead: refusing is the safe
 		// direction, since the user can simply ask again.
@@ -31,8 +31,8 @@ func TestVerificationResendAllowed(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := verificationResendAllowed(tt.lastSentAt, now, resendVerificationCooldown); got != tt.want {
-				t.Errorf("verificationResendAllowed = %v, want %v", got, tt.want)
+			if got := VerificationResendAllowed(tt.lastSentAt, now, ResendVerificationCooldown); got != tt.want {
+				t.Errorf("VerificationResendAllowed = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -46,7 +46,7 @@ func TestVerificationResendAllowed(t *testing.T) {
 // Reads routes.go rather than standing up the router: the handlers package has
 // no store fake, and the point is the wiring, which is what drifts.
 func TestPublicAuthPostRoutesAreRateLimited(t *testing.T) {
-	src, err := os.ReadFile("../routes.go")
+	src, err := os.ReadFile("../../routes.go")
 	if err != nil {
 		t.Fatalf("read routes.go: %v", err)
 	}

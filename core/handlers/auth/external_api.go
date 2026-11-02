@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"bytes"
@@ -56,7 +56,7 @@ func (h *APIKeysHandler) keyOwnerContext(w http.ResponseWriter, r *http.Request)
 		httpx.SendJSONError(w, "Route misconfigured: external adapter without key auth", http.StatusInternalServerError)
 		return nil, false
 	}
-	owner, err := h.state.Store.GetUserByID(key.UserID)
+	owner, err := h.d.Store.GetUserByID(key.UserID)
 	if err != nil || owner == nil {
 		httpx.SendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
 		return nil, false
@@ -72,7 +72,7 @@ func (h *APIKeysHandler) keyOwnerContext(w http.ResponseWriter, r *http.Request)
 // handler the {id} and identity it expects.
 func (h *APIKeysHandler) ExternalServerRoute(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		srv, err := h.state.Store.GetServerByUUID(mux.Vars(r)["uuid"])
+		srv, err := h.d.Store.GetServerByUUID(mux.Vars(r)["uuid"])
 		if err != nil || srv == nil {
 			httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 			return
@@ -122,12 +122,12 @@ func (h *APIKeysHandler) ExternalJobInServer(next http.HandlerFunc) http.Handler
 			httpx.SendJSONError(w, "Invalid job ID", http.StatusBadRequest)
 			return
 		}
-		job, err := h.state.Store.GetBackupJob(jobID)
+		job, err := h.d.Store.GetBackupJob(jobID)
 		if err != nil || job == nil {
 			httpx.SendJSONError(w, "Job not found", http.StatusNotFound)
 			return
 		}
-		srv, err := h.state.Store.GetServerByUUID(mux.Vars(r)["uuid"])
+		srv, err := h.d.Store.GetServerByUUID(mux.Vars(r)["uuid"])
 		if err != nil || srv == nil {
 			httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 			return
@@ -233,12 +233,12 @@ func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Requ
 	for _, u := range allowed {
 		inScope[u] = true
 	}
-	owner, err := h.state.Store.GetUserByID(ownerID)
+	owner, err := h.d.Store.GetUserByID(ownerID)
 	if err != nil || owner == nil {
 		httpx.SendJSONError(w, "Key owner is no longer valid", http.StatusUnauthorized)
 		return
 	}
-	servers, err := h.state.Store.ListServersForUser(ownerID, owner.IsAdmin)
+	servers, err := h.d.Store.ListServersForUser(ownerID, owner.IsAdmin)
 	if err != nil {
 		httpx.SendJSONError(w, "Database error", http.StatusInternalServerError)
 		return
@@ -247,14 +247,14 @@ func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Requ
 	// that carries no capability - an invite with nothing ticked - still put
 	// the full server record (start command, JVM flags, ports, node) in front
 	// of a key that only had to name the server.
-	servers = access.ApplyResolvedTabPermissions(h.state.Authz, servers, ownerID, owner.Username)
+	servers = access.ApplyResolvedTabPermissions(h.d.Authz, servers, ownerID, owner.Username)
 	out := make([]models.Server, 0, len(allowed))
 	for _, s := range servers {
 		if inScope[s.UUID] {
 			out = append(out, s)
 		}
 	}
-	access.RedactNodeAddress(h.state.Store, func() bool { return services.GatewayRoutingEnabled(h.state.Store) }, out, owner.IsAdmin, ownerID)
+	access.RedactNodeAddress(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, out, owner.IsAdmin, ownerID)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "servers": out})
 }
 
@@ -262,21 +262,21 @@ func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Requ
 // server. The allowlist of the key and the live overview.read of its owner were
 // both checked by the middleware, so this only has to load and answer.
 func (h *APIKeysHandler) GetExternalServer(w http.ResponseWriter, r *http.Request) {
-	srv, err := h.state.Store.GetServerByUUID(mux.Vars(r)["uuid"])
+	srv, err := h.d.Store.GetServerByUUID(mux.Vars(r)["uuid"])
 	if err != nil || srv == nil {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
 	ownerID := APIKeyCallerID(r)
-	owner, oerr := h.state.Store.GetUserByID(ownerID)
+	owner, oerr := h.d.Store.GetUserByID(ownerID)
 	isAdmin := oerr == nil && owner != nil && owner.IsAdmin
-	access.RedactNodeAddressOne(h.state.Store, func() bool { return services.GatewayRoutingEnabled(h.state.Store) }, srv, isAdmin, ownerID)
+	access.RedactNodeAddressOne(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, srv, isAdmin, ownerID)
 	// Not short-cut on isAdmin: on a customer's machine the resolver treats an
 	// admin as a guest with whatever the owner granted.
 	if srv.OwnerID != ownerID {
-		if h.state.Authz == nil {
+		if h.d.Authz == nil {
 			access.RedactSettingsFields(srv)
-		} else if res, rerr := h.state.Authz.Resolve(authz.Identity{UserID: ownerID, IsAdmin: isAdmin}, srv.ID); rerr != nil || !res.HasCap(access.SettingsFieldsCap) {
+		} else if res, rerr := h.d.Authz.Resolve(authz.Identity{UserID: ownerID, IsAdmin: isAdmin}, srv.ID); rerr != nil || !res.HasCap(access.SettingsFieldsCap) {
 			access.RedactSettingsFields(srv)
 		}
 	}

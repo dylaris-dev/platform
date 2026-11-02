@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"bytes"
@@ -57,7 +57,7 @@ func secQHandler(fs *secQFakeStore) *SecurityQuestionsHandler {
 	fs.settings["auth.security_questions_enabled"] = "true"
 	fs.settings["auth.security_questions_count"] = "1"
 	fs.settings["auth.security_questions_pool"] = `["What was your first pet?"]`
-	return NewSecurityQuestionsHandler(&AppState{Store: fs})
+	return NewSecurityQuestionsHandler(Deps{Store: fs})
 }
 
 func TestSetMyQuestionsRefusesTheWrongAccountPassword(t *testing.T) {

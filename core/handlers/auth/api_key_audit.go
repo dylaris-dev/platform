@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"context"
@@ -47,7 +47,7 @@ func keyRefusal(status int) bool {
 // like an invite). Otherwise the identity log: a refusal on a server the owner
 // lost, or never had, must neither write into nor switch on that server's log.
 func (h *APIKeysHandler) auditKeyRequest(r *http.Request, key *models.APIKey, shape keyRouteShape, serverUUID, requiredPerm string, status int) {
-	if h.state == nil || h.state.Store == nil {
+	if h.d.Store == nil {
 		return
 	}
 	if status == 0 {
@@ -59,7 +59,7 @@ func (h *APIKeysHandler) auditKeyRequest(r *http.Request, key *models.APIKey, sh
 	}
 	serverID := 0
 	if shape == keyRouteServer && serverUUID != "" && key.Scope.AllowsServer(serverUUID) {
-		if srv, err := h.state.Store.GetServerByUUID(serverUUID); err == nil && srv != nil {
+		if srv, err := h.d.Store.GetServerByUUID(serverUUID); err == nil && srv != nil {
 			serverID = srv.ID
 		}
 	}
@@ -92,10 +92,10 @@ func (h *APIKeysHandler) auditKeyRequest(r *http.Request, key *models.APIKey, sh
 			return // the handler wrote its own entry, which carries the key
 		}
 		if serverID > 0 {
-			audit.LogServerAs(h.state.Store, r, key, serverID, kind, key.UserID, "", meta)
+			audit.LogServerAs(h.d.Store, r, key, serverID, kind, key.UserID, "", meta)
 		} else {
 			meta["capability"] = requiredPerm
-			audit.LogIdentityAs(h.state.Store, r, key, audit.AuditEventAPIKeyUsed, key.UserID, key.UserID, meta)
+			audit.LogIdentityAs(h.d.Store, r, key, audit.AuditEventAPIKeyUsed, key.UserID, key.UserID, meta)
 		}
 	}
 }
@@ -103,14 +103,14 @@ func (h *APIKeysHandler) auditKeyRequest(r *http.Request, key *models.APIKey, sh
 // ownerReaches reports whether the key's owner still holds anything on the
 // server. Fails closed: an error reads as no.
 func (h *APIKeysHandler) ownerReaches(key *models.APIKey, serverID int) bool {
-	if h.state.Authz == nil {
+	if h.d.Authz == nil {
 		return false
 	}
-	owner, err := h.state.Store.GetUserByID(key.UserID)
+	owner, err := h.d.Store.GetUserByID(key.UserID)
 	if err != nil || owner == nil {
 		return false
 	}
-	res, err := h.state.Authz.Resolve(authz.Identity{UserID: owner.ID, Username: owner.Username, IsAdmin: owner.IsAdmin}, serverID)
+	res, err := h.d.Authz.Resolve(authz.Identity{UserID: owner.ID, Username: owner.Username, IsAdmin: owner.IsAdmin}, serverID)
 	return err == nil && res.HasAnyServerCap()
 }
 
@@ -120,7 +120,7 @@ func (h *APIKeysHandler) ownerReaches(key *models.APIKey, serverID int) bool {
 func (h *APIKeysHandler) auditBundled(r *http.Request, key *models.APIKey, serverID int, eventType, kind string, meta map[string]interface{}) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	rdb := h.state.Redis
+	rdb := h.d.Redis
 	n := int64(1)
 	counter := fmt.Sprintf("audit:apikey:%d:%d:%s", key.ID, serverID, kind)
 	if rdb != nil {
@@ -143,9 +143,9 @@ func (h *APIKeysHandler) auditBundled(r *http.Request, key *models.APIKey, serve
 			if id, gerr := rdb.Get(ctx, counter+":row").Int64(); gerr == nil {
 				var uerr error
 				if serverID > 0 {
-					uerr = h.state.Store.SetServerAuditCount(id, n)
+					uerr = h.d.Store.SetServerAuditCount(id, n)
 				} else {
-					uerr = h.state.Store.SetAuditIdentityCount(id, n)
+					uerr = h.d.Store.SetAuditIdentityCount(id, n)
 				}
 				if uerr != nil {
 					log.Printf("api-key audit: count entry %d: %v", id, uerr)
@@ -158,9 +158,9 @@ func (h *APIKeysHandler) auditBundled(r *http.Request, key *models.APIKey, serve
 	meta["windowMinutes"] = int(keyAuditWindow / time.Minute)
 	var id int64
 	if serverID > 0 {
-		id = audit.LogServerAs(h.state.Store, r, key, serverID, eventType, key.UserID, "", meta)
+		id = audit.LogServerAs(h.d.Store, r, key, serverID, eventType, key.UserID, "", meta)
 	} else {
-		id = audit.LogIdentityAs(h.state.Store, r, key, eventType, key.UserID, key.UserID, meta)
+		id = audit.LogIdentityAs(h.d.Store, r, key, eventType, key.UserID, key.UserID, meta)
 	}
 	if rdb != nil && id > 0 {
 		rdb.Set(ctx, counter+":row", id, keyAuditWindow)

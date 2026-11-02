@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
+	"dylaris-core/handlers/auth"
 	"dylaris-core/mailer"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -25,12 +26,10 @@ type sentMail struct{ key, to string }
 func captureAccountMail(t *testing.T) <-chan sentMail {
 	t.Helper()
 	ch := make(chan sentMail, 8)
-	orig := sendAccountMail
-	sendAccountMail = func(_ services.MailStore, key, to, _ string, _ map[string]string) error {
+	t.Cleanup(auth.SetAccountMailSender(func(_ services.MailStore, key, to, _ string, _ map[string]string) error {
 		ch <- sentMail{key, to}
 		return nil
-	}
-	t.Cleanup(func() { sendAccountMail = orig })
+	}))
 	return ch
 }
 

@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"context"
@@ -70,7 +70,7 @@ func TestAKeyActionIsOnTheServerAuditTrail(t *testing.T) {
 	})
 	fs := &auditingKeyStore{apiKeysAuthFakeStore: base}
 	h := newAPIKeysAuthHandler(base)
-	h.state.Store = fs
+	h.d.Store = fs
 	rec := httptest.NewRecorder()
 	h.APIKeyServerRoute("console.send")(reachedInner)(rec, externalRequest("POST", "/api/external/servers/uuid-a/console/command",
 		map[string]string{"uuid": "uuid-a"}, `{"command":"list"}`))
@@ -91,7 +91,7 @@ func TestADemoAccountKeyCannotWrite(t *testing.T) {
 	})
 	fs.settings = map[string]string{demo.AccountUUIDSetting: "owner-1"}
 	h := newAPIKeysAuthHandler(fs)
-	h.state.StoreEnabled = true
+	h.d.StoreEnabled = true
 	rec := httptest.NewRecorder()
 	h.APIKeyServerRoute("console.send")(reachedInner)(rec, externalRequest("POST", "/api/external/servers/uuid-a/console/command",
 		map[string]string{"uuid": "uuid-a"}, `{"command":"stop"}`))
@@ -145,7 +145,7 @@ func (f *resetRevokeStore) InsertAuditIdentity(*models.AuditEventIdentity) error
 // working - a key minted by whoever had the account was the way back in.
 func TestAPasswordResetByLinkRevokesTheAccountsKeys(t *testing.T) {
 	fs := &resetRevokeStore{}
-	h := NewPasswordResetHandler(&AppState{Store: fs})
+	h := NewPasswordResetHandler(Deps{Store: fs})
 	rec := httptest.NewRecorder()
 	h.ResetPassword(rec, httptest.NewRequest("POST", "/api/auth/reset-password",
 		strings.NewReader(`{"token":"abcdefghijklmnopqrstuvwxyz","password":"a-long-new-password"}`)))

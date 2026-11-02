@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"dylaris-core/handlers"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/handlertest"
 
 	"dylaris-core/authz"
@@ -77,7 +77,7 @@ func TestExternalServerBlanksSettingsFieldsWithoutTheSettingsCap(t *testing.T) {
 	}})
 	get := func(caller string) models.Server {
 		t.Helper()
-		h := handlers.NewAPIKeysHandler(rootState(Deps{Store: externalServerStore{}, Authz: resolver}))
+		h := auth.NewAPIKeysHandler(auth.Deps{Store: externalServerStore{}, Authz: resolver})
 		r := httptest.NewRequest("GET", "/api/external/servers/u", nil)
 		r = mux.SetURLVars(r, map[string]string{"uuid": "u"})
 		r = r.WithContext(reqctx.WithAPIKey(r.Context(), &models.APIKey{ID: 1, UserID: caller}, false))
@@ -131,7 +131,7 @@ func TestAdminOnACustomersMachineSeesSettingsFieldsOnlyWhenGranted(t *testing.T)
 		t.Error("an admin's row on a platform node was redacted")
 	}
 
-	h := handlers.NewAPIKeysHandler(rootState(Deps{Store: externalServerStore{}, Authz: resolver}))
+	h := auth.NewAPIKeysHandler(auth.Deps{Store: externalServerStore{}, Authz: resolver})
 	r := httptest.NewRequest("GET", "/api/external/servers/u", nil)
 	r = mux.SetURLVars(r, map[string]string{"uuid": "u"})
 	r = r.WithContext(reqctx.WithAPIKey(r.Context(), &models.APIKey{ID: 1, UserID: "admin-1"}, false))

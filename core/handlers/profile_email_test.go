@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/handlers/auth"
 	"dylaris-core/mailer"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -135,11 +136,9 @@ func TestAProfileAddressWaitsForItsConfirmation(t *testing.T) {
 
 // A confirmation that never left leaves nothing pending behind it.
 func TestAnUnsentConfirmationWithdrawsThePendingAddress(t *testing.T) {
-	orig := sendAccountMail
-	sendAccountMail = func(services.MailStore, string, string, string, map[string]string) error {
+	t.Cleanup(auth.SetAccountMailSender(func(services.MailStore, string, string, string, map[string]string) error {
 		return errors.New("relay refused")
-	}
-	t.Cleanup(func() { sendAccountMail = orig })
+	}))
 	st := newProfileStore(t, true)
 	// The same save also changes the password and the name: refused whole, not
 	// after half of it was written and the session already invalidated.
@@ -197,7 +196,7 @@ func TestAPendingAddressTakenMeanwhileIsRefused(t *testing.T) {
 
 func verifyEmail(t *testing.T, st *profileFakeStore) *httptest.ResponseRecorder {
 	t.Helper()
-	h := NewRegistrationHandler(&AppState{Store: st})
+	h := auth.NewRegistrationHandler(auth.Deps{Store: st})
 	r := httptest.NewRequest(http.MethodPost, "/api/auth/verify-email", strings.NewReader(`{"token":"0123456789abcdef0123"}`))
 	w := httptest.NewRecorder()
 	h.VerifyEmail(w, r)

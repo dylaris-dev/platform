@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"encoding/json"
@@ -28,7 +28,7 @@ import (
 // validates Authorization: Bearer <key> against this store.
 
 type APIKeysHandler struct {
-	state *AppState
+	d Deps
 	// rateLimiter is a per-key sliding-window counter, in-memory. Acceptable
 	// for V1 — Multi-Core deployments share the lease but not the limiter;
 	// the only real risk is "2x burst" if a script flaps between Cores. A
@@ -39,8 +39,8 @@ type APIKeysHandler struct {
 	ipLimiter *httpx.IPRateLimiter
 }
 
-func NewAPIKeysHandler(state *AppState) *APIKeysHandler {
-	return &APIKeysHandler{state: state, rateLimiter: newAPIKeyRateLimiter(), ipLimiter: httpx.NewIPRateLimiter()}
+func NewAPIKeysHandler(d Deps) *APIKeysHandler {
+	return &APIKeysHandler{d: d, rateLimiter: newAPIKeyRateLimiter(), ipLimiter: httpx.NewIPRateLimiter()}
 }
 
 type createAPIKeyRequest struct {
@@ -140,12 +140,12 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, serverUUID := range req.Servers {
-			srv, err := h.state.Store.GetServerByUUID(serverUUID)
+			srv, err := h.d.Store.GetServerByUUID(serverUUID)
 			if err != nil {
 				httpx.SendJSONError(w, "Server not found: "+serverUUID, http.StatusBadRequest)
 				return
 			}
-			res, rerr := h.state.Authz.Resolve(identity, srv.ID)
+			res, rerr := h.d.Authz.Resolve(identity, srv.ID)
 			// Resolve answers "no capabilities", not an error, for a server the
 			// caller cannot reach, so the error alone let any server's uuid into
 			// a key's scope. Holding something on the server is the floor for naming it.
@@ -164,7 +164,7 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// The name is what the audit log shows for everything the key does, so two
 	// live keys of one account must not share it.
-	existing, err := h.state.Store.ListAPIKeysByUser(userID)
+	existing, err := h.d.Store.ListAPIKeysByUser(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to check existing keys", http.StatusInternalServerError)
 		return
@@ -185,7 +185,7 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Last rather than first on purpose: nothing above this line writes anything,
 	// and a bcrypt comparison in front of the request validation would let a
 	// malformed body buy CPU time. Nothing is persisted before it either way.
-	if rerr := reauth.RequireReauth(h.state.Store, ReauthCodeVerifier(h.state), userID, req.Password, req.Code); rerr != nil {
+	if rerr := reauth.RequireReauth(h.d.Store, h.d.ReauthCodes, userID, req.Password, req.Code); rerr != nil {
 		reauth.WriteReauthError(w, rerr)
 		return
 	}
@@ -220,7 +220,7 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		exp := time.Now().Add(time.Duration(req.ExpiresInDays) * 24 * time.Hour)
 		k.ExpiresAt = &exp
 	}
-	id, err := h.state.Store.CreateAPIKey(k)
+	id, err := h.d.Store.CreateAPIKey(k)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to save key", http.StatusInternalServerError)
 		return
@@ -230,11 +230,11 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// auditing on from the moment it exists, so the owner sees it switched on
 	// before the key is first used.
 	for _, u := range req.Servers {
-		if srv, serr := h.state.Store.GetServerByUUID(u); serr == nil && srv != nil {
-			audit.EnableServerAuditIfNeeded(h.state.Store, srv.ID)
+		if srv, serr := h.d.Store.GetServerByUUID(u); serr == nil && srv != nil {
+			audit.EnableServerAuditIfNeeded(h.d.Store, srv.ID)
 		}
 	}
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventAPIKeyCreated, userID, userID, map[string]interface{}{
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventAPIKeyCreated, userID, userID, map[string]interface{}{
 		"keyId":       id,
 		"name":        k.Name,
 		"servers":     req.Servers,
@@ -272,15 +272,15 @@ func (h *APIKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	keys, err := h.state.Store.ListAPIKeysByUser(userID)
+	keys, err := h.d.Store.ListAPIKeysByUser(userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list keys", http.StatusInternalServerError)
 		return
 	}
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
 	opts := apiKeyOptions{Enabled: isAdmin || h.userKeysAllowed(r), KeyCaps: authz.KeyCaps()}
-	if !isAdmin && h.state != nil && h.state.FeatureFlags != nil {
-		opts.AllowedCaps = h.state.FeatureFlags.UserAPIKeyAllowedCaps(r.Context())
+	if !isAdmin && h.d.FeatureFlags != nil {
+		opts.AllowedCaps = h.d.FeatureFlags.UserAPIKeyAllowedCaps(r.Context())
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
@@ -299,19 +299,19 @@ func (h *APIKeysHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keyID, _ := strconv.Atoi(mux.Vars(r)["id"])
-	if err := h.state.Store.RevokeAPIKey(keyID, userID); err != nil {
+	if err := h.d.Store.RevokeAPIKey(keyID, userID); err != nil {
 		httpx.SendJSONError(w, "Key not found", http.StatusNotFound)
 		return
 	}
 	meta := map[string]interface{}{"keyId": keyID}
-	if keys, lerr := h.state.Store.ListAPIKeysByUser(userID); lerr == nil {
+	if keys, lerr := h.d.Store.ListAPIKeysByUser(userID); lerr == nil {
 		for _, k := range keys {
 			if k.ID == keyID {
 				meta["name"] = k.Name
 			}
 		}
 	}
-	audit.LogIdentity(h.state.Store, r, audit.AuditEventAPIKeyRevoked, userID, userID, meta)
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventAPIKeyRevoked, userID, userID, meta)
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
@@ -373,20 +373,20 @@ func APIKeyAllowedServers(r *http.Request) []string {
 // Nil flags mean "not configured", which reads as the default (off) rather than
 // as permission - a missing dependency must never open a gate.
 func (h *APIKeysHandler) userKeysAllowed(r *http.Request) bool {
-	if h.state == nil || h.state.FeatureFlags == nil {
+	if h.d.FeatureFlags == nil {
 		return false
 	}
-	return h.state.FeatureFlags.UserAPIKeysEnabled(r.Context())
+	return h.d.FeatureFlags.UserAPIKeysEnabled(r.Context())
 }
 
 // allowedUserKeyCaps is the operator's capability whitelist for user keys, or
 // nil when they have not set one. Nil is "no extra restriction", NOT "none":
 // see UserAPIKeyAllowedCaps.
 func (h *APIKeysHandler) allowedUserKeyCaps(r *http.Request) map[string]bool {
-	if h.state == nil || h.state.FeatureFlags == nil {
+	if h.d.FeatureFlags == nil {
 		return nil
 	}
-	list := h.state.FeatureFlags.UserAPIKeyAllowedCaps(r.Context())
+	list := h.d.FeatureFlags.UserAPIKeyAllowedCaps(r.Context())
 	if len(list) == 0 {
 		return nil
 	}
@@ -435,7 +435,7 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 				httpx.SendJSONError(w, "Too many requests", http.StatusTooManyRequests)
 				return
 			}
-			key, err := h.state.Store.GetAPIKeyByHash(services.HashAPIKey(plaintext))
+			key, err := h.d.Store.GetAPIKeyByHash(services.HashAPIKey(plaintext))
 			if err != nil {
 				h.ipLimiter.Allow(ip, keyFailuresPerMin)
 				httpx.SendJSONError(w, "Invalid key", http.StatusUnauthorized)
@@ -517,7 +517,7 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 			// Best-effort last-used stamp, throttled to ~once/min/key so a
 			// hammered key can't spawn an unbounded goroutine fan-out.
 			if h.rateLimiter.shouldTouch(key.ID) {
-				go h.state.Store.TouchAPIKey(key.ID)
+				go h.d.Store.TouchAPIKey(key.ID)
 			}
 			// Inject the key so an owner-scoped handler can bind its query to
 			// the key's realm and allowlist. Without this the handler has no way
@@ -527,7 +527,7 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 			// The demo account is read-only, and AuthMiddleware is where that is
 			// enforced - which a key request never passes through.
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
-				if demo, derr := demo.IsAccountChecked(h.state.Store, h.state.StoreEnabled, key.UserID); derr != nil || demo {
+				if demo, derr := demo.IsAccountChecked(h.d.Store, h.d.StoreEnabled, key.UserID); derr != nil || demo {
 					httpx.SendJSONError(w, "This account is read-only", http.StatusForbidden)
 					return
 				}
@@ -562,10 +562,10 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 // AuthMiddleware: a vanished account or server is a 401, and a database fault
 // is a 503 rather than a 403 that would read as a permissions problem.
 func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request, key *models.APIKey, serverUUID, requiredPerm string) bool {
-	if h.state == nil || h.state.Authz == nil || h.state.Store == nil {
+	if h.d.Authz == nil || h.d.Store == nil {
 		return true
 	}
-	owner, err := h.state.Store.GetUserByID(key.UserID)
+	owner, err := h.d.Store.GetUserByID(key.UserID)
 	// An anonymized account's keys are revoked with it (AnonymizeUser); this
 	// covers a key that slipped past that, or an account anonymized before.
 	if err != nil || owner == nil || owner.DeletionStatus == "anonymized" {
@@ -584,8 +584,8 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 	// member must not be anonymized for not signing in. After the gate: a key
 	// the platform refuses is not in use.
 	if owner.DeletionStatus == "pending_deletion" {
-		if err := h.state.Store.CancelUserDeletion(owner.ID); err == nil {
-			audit.LogIdentityAs(h.state.Store, r, key, audit.AuditEventDeletionCancelledByAPIKey, owner.ID, owner.ID, nil)
+		if err := h.d.Store.CancelUserDeletion(owner.ID); err == nil {
+			audit.LogIdentityAs(h.d.Store, r, key, audit.AuditEventDeletionCancelledByAPIKey, owner.ID, owner.ID, nil)
 		}
 	}
 
@@ -611,7 +611,7 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 	// shapes resolve; only the scope differs.
 	serverID := 0
 	if serverUUID != "" {
-		srv, serr := h.state.Store.GetServerByUUID(serverUUID)
+		srv, serr := h.d.Store.GetServerByUUID(serverUUID)
 		if serr != nil || srv == nil {
 			httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 			return false
@@ -619,7 +619,7 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 		serverID = srv.ID
 	}
 
-	res, err := h.state.Authz.Resolve(authz.Identity{
+	res, err := h.d.Authz.Resolve(authz.Identity{
 		UserID:   owner.ID,
 		Username: owner.Username,
 		IsAdmin:  owner.IsAdmin,

@@ -17,8 +17,8 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/handlertest"
-	"dylaris-core/handlers/settings"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/corestorage"
@@ -242,7 +242,7 @@ func (f *emailFakeStore) MarkEmailVerified(string) error { return nil }
 
 func emailReq(t *testing.T, st *emailFakeStore, body string) (*httptest.ResponseRecorder, map[string]interface{}) {
 	t.Helper()
-	h := handlers.NewUserEmailHandler(&handlers.AppState{Store: st, CoreStorage: &corestorage.Manager{Store: st}})
+	h := auth.NewUserEmailHandler(auth.Deps{Store: st, ReauthCodes: handlers.ReauthCodeVerifier(&handlers.AppState{Store: st})})
 	r := httptest.NewRequest(http.MethodPatch, "/api/admin/users/"+emailTestUserID+"/email", bytes.NewReader([]byte(withReauthJSON(body))))
 	r = mux.SetURLVars(r, map[string]string{"id": emailTestUserID})
 	ctx := context.WithValue(r.Context(), "userID", "admin-1")
@@ -290,12 +290,12 @@ func nextMail(t *testing.T, ch <-chan sentMail) sentMail {
 }
 
 // captureAccountMail records the account notices; a copy of
-// handlers/account_change_notice_test.go's, swapping handlers' mail sender
+// handlers/account_change_notice_test.go's, swapping the auth package's mail sender
 // through SetAccountMailSender because the notices go out from there.
 func captureAccountMail(t *testing.T) <-chan sentMail {
 	t.Helper()
 	ch := make(chan sentMail, 8)
-	t.Cleanup(handlers.SetAccountMailSender(func(_ services.MailStore, key, to, _ string, _ map[string]string) error {
+	t.Cleanup(auth.SetAccountMailSender(func(_ services.MailStore, key, to, _ string, _ map[string]string) error {
 		ch <- sentMail{key, to}
 		return nil
 	}))
@@ -337,7 +337,7 @@ func testDeps(d Deps) Deps {
 	}
 	s := &handlers.AppState{Store: d.Store, Redis: d.Redis, Authz: d.Authz, Events: d.Events}
 	d.ReauthCodes = handlers.ReauthCodeVerifier(s)
-	d.PasswordMinLength = func() int { return settings.LoadAuthPolicy(s.Store).PasswordMinLength }
-	d.NotifyPasswordChanged = func(email, username string) { handlers.NotifyPasswordChanged(s, email, username) }
+	d.PasswordMinLength = func() int { return services.LoadAuthPolicy(s.Store).PasswordMinLength }
+	d.NotifyPasswordChanged = func(email, username string) { auth.NotifyPasswordChanged(s.Store, s.FrontendURL, email, username) }
 	return d
 }

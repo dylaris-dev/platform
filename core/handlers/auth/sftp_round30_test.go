@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"context"
@@ -38,7 +38,7 @@ func TestAPasswordResetEndsTheAccountsBeamTickets(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
 	fs := &beamStampUserStore{resetRevokeStore: &resetRevokeStore{}}
-	h := NewPasswordResetHandler(&AppState{Store: fs, Redis: rdb})
+	h := NewPasswordResetHandler(Deps{Store: fs, Redis: rdb})
 	rec := httptest.NewRecorder()
 	h.ResetPassword(rec, httptest.NewRequest("POST", "/api/auth/reset-password",
 		strings.NewReader(`{"token":"abcdefghijklmnopqrstuvwxyz","password":"a-long-new-password"}`)))

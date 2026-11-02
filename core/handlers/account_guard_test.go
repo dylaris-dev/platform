@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/auth"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -149,7 +150,7 @@ func TestStaffCannotTakeOverAStrongerAccount(t *testing.T) {
 			(&AuthHandler{state: st}).AdminResetTOTPHandler(w, r)
 		}, ``},
 		{"change email", func(st *AppState, r *http.Request, w http.ResponseWriter) {
-			NewUserEmailHandler(st).SetEmail(w, r)
+			auth.NewUserEmailHandler(authDepsFor(st)).SetEmail(w, r)
 		}, `{"email":"attacker@example.com"}`},
 	}
 	for _, rt := range routes {
@@ -203,7 +204,7 @@ func TestAdminAccountActionsRefuseWithoutTheirPassword(t *testing.T) {
 			(&AuthHandler{state: st}).AdminResetTOTPHandler(w, r)
 		}, ``},
 		{"change email", func(st *AppState, r *http.Request, w http.ResponseWriter) {
-			NewUserEmailHandler(st).SetEmail(w, r)
+			auth.NewUserEmailHandler(authDepsFor(st)).SetEmail(w, r)
 		}, `{"email":"attacker@example.com"}`},
 	}
 	for _, rt := range routes {
@@ -316,5 +317,20 @@ func TestTheLegacyRightsGuardTheAccount(t *testing.T) {
 				t.Fatalf("MayManageAccount = %v, want %v", got, c.want)
 			}
 		})
+	}
+}
+
+// authDepsFor mirrors the auth.Deps routes.go builds from the state, so a root
+// test reaches a moved handler the way the router does.
+func authDepsFor(st *AppState) auth.Deps {
+	return auth.Deps{
+		Store:        st.Store,
+		Redis:        st.Redis,
+		Authz:        st.Authz,
+		FeatureFlags: st.FeatureFlags,
+		FrontendURL:  st.FrontendURL,
+		StoreEnabled: st.StoreEnabled,
+		StoreURL:     st.StoreURL,
+		ReauthCodes:  ReauthCodeVerifier(st),
 	}
 }

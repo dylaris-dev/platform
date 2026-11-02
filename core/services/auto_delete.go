@@ -80,7 +80,7 @@ func (s *AutoDeleteService) SetLinkACL(gw GatewayProvider, rdb *redis.Client, pr
 }
 
 // policySnapshot is what the service reads from the settings store on each
-// tick. Mirrors a subset of handlers.AuthPolicy — duplicated here on purpose
+// tick. Mirrors a subset of AuthPolicy — duplicated here on purpose
 // to avoid a services→handlers import cycle. The setting keys are the
 // stable contract between the two.
 type policySnapshot struct {

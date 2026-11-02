@@ -1,4 +1,4 @@
-package handlers
+package auth
 
 import (
 	"net"
@@ -53,7 +53,7 @@ func TestForgotPasswordDoesNotWaitForTheMail(t *testing.T) {
 		"smtp.default.encryption": "none",
 		"smtp.default.from_email": "noreply@example.test",
 	}}
-	h := NewPasswordResetHandler(&AppState{Store: fs})
+	h := NewPasswordResetHandler(Deps{Store: fs})
 
 	start := time.Now()
 	rec := httptest.NewRecorder()
