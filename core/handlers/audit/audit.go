@@ -15,12 +15,6 @@ import (
 // (user_registered, login_failed, password_reset_requested, …)
 // should be appended here so there's one canonical list.
 const (
-	AuditEventRegionCreated        = "region_created"
-	AuditEventRegionUpdated        = "region_updated"
-	AuditEventRegionDeleted        = "region_deleted"
-	AuditEventUserRegionsChanged   = "user_regions_changed"
-	AuditEventUserAllRegionsToggle = "user_all_regions_toggled"
-
 	// Manual entitlement grants. Audited because a grant hands out paid capability
 	// for free, with an expiry an operator will not remember setting - "who gave
 	// this tenant BYON, when, and for how long" has to be answerable later.

@@ -350,7 +350,7 @@ function RestoreDangerModal({ backup, onClose, onDone }: { backup: BackupSummary
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+        <div className="modal-overlay">
             <ModalPanel className="card w-full max-w-lg mx-4 border-2 border-(--error)/30">
                 <div className="modal-header flex items-center justify-between bg-(--error-ghost) text-(--error-light) rounded-t-md">
                     <h3 className="modal-title flex items-center gap-2"><ShieldAlert size={18} /> Danger Zone — Restore</h3>

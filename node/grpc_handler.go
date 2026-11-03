@@ -343,7 +343,7 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 	// goroutine per folder made the walks contend in the kernel, and a listing
 	// of 50 folders cost twice the CPU for barely less wall time (measured,
 	// BenchmarkHandleList).
-	if len(dirs) > 0 {
+	if len(dirs) > 0 && !req.GetNamesOnly() {
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, 4)
 		for _, de := range dirs {

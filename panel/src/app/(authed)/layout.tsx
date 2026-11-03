@@ -119,13 +119,13 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
     return (
         <SidebarCollapseProvider>
         <ModrinthLibraryProvider>
-        {/* min-w-[1024px] is a deliberate floor, not an oversight. Below it the
+        {/* The width floor is a deliberate one, not an oversight. Below it the
             file browser, the console, the routes table and the module strip stop
             being usable at any font size, and a horizontal scrollbar is the
             honest answer - better than a layout that renders and does not work.
             It also bounds the testing surface to two bands instead of a
             continuum. Phones are not a target: they get their own app. */}
-        <div className="flex flex-col h-screen min-w-[1024px] bg-(--base-00) text-(--base-09) font-body overflow-hidden">
+        <div className="flex flex-col h-screen min-w-(--app-min-width) bg-(--base-00) text-(--base-09) font-body overflow-hidden">
             {/* Single host for confirmDialog(). Mounted here so every authed
                 screen can ask without threading a node through its own JSX. */}
             <ConfirmDialogRoot />
@@ -167,6 +167,9 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                     {canSeeMyInfra && (
                         <GuardedLink
                             href="/nodes"
+                            // The label is hidden below xl, so the name has to come from here.
+                            aria-label="My infrastructure"
+                            title="My infrastructure"
                             className={`flex items-center space-x-2 px-3 py-1.5 rounded-md transition-colors font-medium border mr-2 ${
                                 pathname?.startsWith('/nodes')
                                     ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border)'
@@ -174,13 +177,15 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                             }`}
                         >
                             <HardDrive size={20} />
-                            <span className="text-sm hidden md:block">My infrastructure</span>
+                            <span className="text-sm hidden xl:block">My infrastructure</span>
                         </GuardedLink>
                     )}
 
                     {canAccess && (
                         <GuardedLink
                             href="/access"
+                            aria-label="Access"
+                            title="Access"
                             className={`flex items-center space-x-2 px-3 py-1.5 rounded-md transition-colors font-medium border mr-2 ${
                                 accessActive
                                     ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border)'
@@ -188,13 +193,15 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                             }`}
                         >
                             <ShieldCheck size={20} />
-                            <span className="text-sm hidden md:block">Access</span>
+                            <span className="text-sm hidden xl:block">Access</span>
                         </GuardedLink>
                     )}
 
                     {user.isAdmin && (
                         <GuardedLink
                             href="/settings"
+                            aria-label="Settings"
+                            title="Settings"
                             className={`flex items-center space-x-2 px-3 py-1.5 rounded-md transition-colors font-medium border mr-2 ${
                                 settingsActive
                                     ? 'bg-(--accent-ghost) text-(--accent-light) border-(--accent-border)'
@@ -202,7 +209,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                             }`}
                         >
                             <Wrench size={20} />
-                            <span className="text-sm hidden md:block">Settings</span>
+                            <span className="text-sm hidden xl:block">Settings</span>
                         </GuardedLink>
                     )}
 
@@ -219,7 +226,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                                     user.username.charAt(0).toUpperCase()
                                 )}
                             </div>
-                            <span className="font-medium hidden md:block text-sm max-w-[120px] truncate text-(--base-09)">{user.username}</span>
+                            <span className="font-medium hidden xl:block text-sm max-w-[120px] truncate text-(--base-09)">{user.username}</span>
                             <ChevronDown size={18} className="text-(--base-06) transition-transform duration-200 shrink-0" style={{ transform: isProfileDropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)' }} />
                         </button>
 

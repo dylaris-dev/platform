@@ -21,13 +21,23 @@ import (
 // one thing two different handlers have to agree on, and they belong to
 // different types. ServerModsHandler.listServerDir delegates to it.
 func ListServerDirFor(reg *nodegrpc.Registry, nodeID int, serverUUID, dir string) ([]*pb.FileInfo, error) {
+	return listServerDir(reg, nodeID, serverUUID, &pb.ListFilesReq{Path: dir})
+}
+
+// ListServerRootNames lists a server's root without folder sizes: what counting
+// sub-servers needs, and computing the sizes walks every world on the server.
+func ListServerRootNames(reg *nodegrpc.Registry, nodeID int, serverUUID string) ([]*pb.FileInfo, error) {
+	return listServerDir(reg, nodeID, serverUUID, &pb.ListFilesReq{NamesOnly: true})
+}
+
+func listServerDir(reg *nodegrpc.Registry, nodeID int, serverUUID string, req *pb.ListFilesReq) ([]*pb.FileInfo, error) {
 	if reg == nil {
 		return nil, fmt.Errorf("node connection not available")
 	}
 	resp, err := reg.SendRequest(nodeID, &pb.NodeMessage{
 		RequestId:  uuid.NewString(),
 		ServerUuid: serverUUID,
-		Payload:    &pb.NodeMessage_ListReq{ListReq: &pb.ListFilesReq{Path: dir}},
+		Payload:    &pb.NodeMessage_ListReq{ListReq: req},
 	}, 30*time.Second)
 	if err != nil {
 		return nil, err
@@ -127,7 +137,7 @@ func RefuseIfSubServerLimitReached(w http.ResponseWriter, st store.Store, reg *n
 	if limit == nil {
 		return false
 	}
-	entries, err := ListServerDirFor(reg, nodeID, serverUUID, "")
+	entries, err := ListServerRootNames(reg, nodeID, serverUUID)
 	if err != nil {
 		httpx.SendJSONError(w, "The node did not answer, so the number of sub-servers is not known: "+err.Error(),
 			http.StatusBadGateway)

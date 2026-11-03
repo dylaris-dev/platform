@@ -773,7 +773,9 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                     );
                 })()}
                 {/* Row 1: Server Name + Actions */}
-                <div className="flex items-center justify-between mb-2">
+                {/* Wraps: name, badges and the power buttons together are wider
+                    than the column at the app's minimum width. */}
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-2">
                     <div className="flex items-center space-x-2">
                         {(() => {
                             const { tier } = nodeConnectivity(selectedServer.nodeStatus, selectedServer.nodeLastSeenAt, now);

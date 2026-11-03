@@ -593,7 +593,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
             {/* User Settings Modal */}
             {settingsUser && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+                <div className="modal-overlay">
                     <ModalPanel className="card w-full max-w-lg flex flex-col max-h-[80vh]">
                         {/* Header */}
                         <div className="flex items-center justify-between p-5 border-b border-(--base-03)">

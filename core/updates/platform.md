@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.03.5
+
+### Features
+- Settings, Status counts cluster nodes and external nodes as two separate entries, each with
+  its own online count. Customer machines stay out of it, as before. `core` `panel`
+- The panel and the Beam app work down to 1024 px wide (Beam: 1024x576), so the window fits
+  a screen corner. Below 1280 px the top bar shows icons without labels. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Dialogs no longer slide under the top bar or the sidebar in a narrow window, and a dialog
+  taller than the window scrolls instead of losing its header. `panel`
+- Checking the sub-server limit no longer makes the node add up every folder size on the
+  server first, which was slow on servers with large worlds. `core` `node`
+
 ## 2026.11.03.4
 
 ### Features

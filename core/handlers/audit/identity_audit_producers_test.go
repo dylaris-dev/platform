@@ -90,16 +90,10 @@ var identityEventPins = []identityEventPin{
 	{"node.join_approved", `"node.join_approved"`, []string{"handlers/nodes/node_admission.go", "handlers/nodes/node_self_service.go"}},
 }
 
-// identityNoProducer: declared in the catalog, written by nothing. A known gap,
-// kept visible here rather than silently passing: region changes are not on
-// the identity record today.
-var identityNoProducer = map[string]string{
-	"AuditEventRegionCreated":        "region CRUD does not audit yet",
-	"AuditEventRegionUpdated":        "region CRUD does not audit yet",
-	"AuditEventRegionDeleted":        "region CRUD does not audit yet",
-	"AuditEventUserRegionsChanged":   "user region assignment does not audit yet",
-	"AuditEventUserAllRegionsToggle": "user region assignment does not audit yet",
-}
+// identityNoProducer: declared in the catalog, written by nothing. A known gap
+// is listed here with its reason rather than silently passing. Empty since the
+// region admin routes were removed and their five event types with them.
+var identityNoProducer = map[string]string{}
 
 // declaration matches `Name = "value"` (or `Name = value`) at the start of a
 // line, which is a definition, not a producer.

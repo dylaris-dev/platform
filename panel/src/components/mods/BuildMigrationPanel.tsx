@@ -192,7 +192,7 @@ function MigrateDialog({
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="modal-overlay">
             <ModalPanel className="card w-full max-w-lg max-h-[90vh] flex flex-col">
                 <div className="modal-header flex items-center justify-between">
                     <h3 className="modal-title">Create a build for Minecraft {target.minecraft}</h3>

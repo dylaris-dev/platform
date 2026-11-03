@@ -54,15 +54,17 @@ interface ChartCardProps {
 function ChartCard({ icon, label, currentValue, accentColor, legend, children }: ChartCardProps) {
   return (
     <div className="rounded-xl bg-(--base-01) border border-(--base-03) overflow-hidden">
-      <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-1">
-        <div className="flex items-center gap-2 min-w-0">
+      {/* Wraps rather than shrinking the label: a long value (heap plus
+          process) on a half-width card used to slide over it. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 pt-3.5 pb-1">
+        <div className="flex items-center gap-2 shrink-0">
           <div className="w-7 h-7 rounded-md bg-(--base-03) flex items-center justify-center shrink-0">
             {icon}
           </div>
           <span className="input-label text-[11px]">{label}</span>
         </div>
         <span
-          className="font-display text-xl font-bold tabular-nums whitespace-nowrap"
+          className="ml-auto font-display text-xl font-bold tabular-nums whitespace-nowrap"
           style={{ color: accentColor }}
         >
           {currentValue}

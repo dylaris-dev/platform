@@ -712,7 +712,7 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	//
 	// A node that cannot be reached is a refusal rather than an assumption. The
 	// whole point of the check is that the answer is not knowable from here.
-	entries, lerr := h.listServerDir(srv.NodeID, srv.UUID, "")
+	entries, lerr := guard.ListServerRootNames(h.d.GRPCRegistry, srv.NodeID, srv.UUID)
 	if lerr != nil {
 		httpx.SendJSONError(w, "The node did not answer, so it is not known whether that name is already taken: "+lerr.Error(), http.StatusBadGateway)
 		return

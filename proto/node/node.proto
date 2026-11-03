@@ -282,6 +282,10 @@ message NodeIPs {
 // ─── File Operations ─────────────────────────────────────────────────
 message ListFilesReq {
   string path = 1;
+  // Skip the recursive folder sizes. A caller that only needs the names (the
+  // sub-server count) would otherwise walk every world on the server. An older
+  // node ignores the field and answers with sizes, which is slower, not wrong.
+  bool names_only = 2;
 }
 
 message ListFilesResp {

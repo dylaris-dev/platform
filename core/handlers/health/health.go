@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-core/database"
+	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/redisacl"
 	"dylaris-core/services/storeclient"
@@ -23,7 +24,7 @@ import (
 //
 // Most checks run per request behind healthCheckTimeout so a hung dependency
 // cannot block the response. Two do not, and saying "every check" here was
-// wrong: nodesComponent calls Store.ListNodes, which takes no context at all,
+// wrong: nodeComponents calls Store.ListNodes, which takes no context at all,
 // so a wedged database blocks it for as long as the driver allows; and
 // storageComponent takes no timeout because it needs none, reading only
 // atomics that the storage layer's own background watchers maintain.
@@ -83,7 +84,7 @@ func (h *HealthHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	components = append(components, h.metricsComponent(r.Context(), dbUp))
 	redisUp := false
 	components = append(components, h.redisComponent(r.Context(), &redisUp))
-	components = append(components, h.nodesComponent())
+	components = append(components, h.nodeComponents()...)
 	components = append(components, h.gatewayComponent(r.Context()))
 	components = append(components, h.voiceComponent(r.Context()))
 	components = append(components, h.bedrockComponent(r.Context()))
@@ -207,7 +208,7 @@ func (h *HealthHandler) redisComponent(ctx context.Context, up *bool) healthComp
 	return comp
 }
 
-// nodesComponent reports node fleet health from the persisted node.Status,
+// nodeComponents reports node fleet health from the persisted node.Status,
 // which the discovery service keeps current from heartbeats.
 // nodeSelfReportedFailureMaxAge bounds how old a node's own report may be
 // before the status page stops repeating it.
@@ -418,7 +419,7 @@ func (h *HealthHandler) redisACLComponent(ctx context.Context, redisUp bool) hea
 	return comp
 }
 
-// nodesComponent covers OUR nodes only: the cluster and the external machines
+// nodeComponents covers OUR nodes only: the cluster and the external machines
 // the operator registered. A customer's BYON node is excluded, and that is the
 // point of this page rather than an omission - it reports whether THIS platform
 // is healthy, and a tenant who unplugs their own hardware has not made it
@@ -427,25 +428,47 @@ func (h *HealthHandler) redisACLComponent(ctx context.Context, redisUp bool) hea
 //
 // Their machines are not invisible: Infrastructure tracks them with totals and
 // an online count, without a severity attached.
-func (h *HealthHandler) nodesComponent() healthComponent {
-	comp := healthComponent{Key: "nodes", Name: "Nodes"}
+//
+// Cluster and external nodes are two components, each counted on its own, so
+// "1/2 online" cannot hide which kind of machine is the missing one.
+func (h *HealthHandler) nodeComponents() []healthComponent {
 	all, err := h.d.Store.ListNodes()
 	if err != nil {
-		comp.Status = "down"
-		comp.Detail = "Could not list nodes"
-		comp.Reason = err.Error()
-		return comp
+		return []healthComponent{{Key: "nodes", Name: "Cluster nodes", Status: "down",
+			Detail: "Could not list nodes", Reason: err.Error()}}
 	}
-	nodes, customer := services.SplitNodes(all)
-	if len(nodes) == 0 {
-		comp.Status = "degraded"
-		comp.Detail = "No nodes registered"
-		comp.Reason = "no compute nodes are registered; servers cannot be placed until a node joins"
+	ours, customer := services.SplitNodes(all)
+	var cluster, external []models.Node
+	for i := range ours {
+		if ours[i].Kind() == models.NodeKindExternal {
+			external = append(external, ours[i])
+		} else {
+			cluster = append(cluster, ours[i])
+		}
+	}
+	clusterComp := fleetComponent("nodes", "Cluster nodes", cluster, h.nodeSelfReportedFailure)
+	externalComp := fleetComponent("external_nodes", "External nodes", external, h.nodeSelfReportedFailure)
+	if len(ours) == 0 {
+		clusterComp.Status = "degraded"
+		clusterComp.Detail = "No nodes registered"
+		clusterComp.Reason = "no compute nodes are registered; servers cannot be placed until a node joins"
 		if len(customer) > 0 {
 			// Worth saying, because the operator can SEE nodes in the panel and
 			// would otherwise read this as simply wrong.
-			comp.Reason += fmt.Sprintf(" (%d customer node(s) are not counted here)", len(customer))
+			clusterComp.Reason += fmt.Sprintf(" (%d customer node(s) are not counted here)", len(customer))
 		}
+	}
+	return []healthComponent{clusterComp, externalComp}
+}
+
+// fleetComponent is the verdict for one kind of node. An empty kind is not a
+// fault on its own: a platform can run on cluster nodes alone, or on external
+// ones alone.
+func fleetComponent(key, name string, nodes []models.Node, selfReported func(token string) string) healthComponent {
+	comp := healthComponent{Key: key, Name: name}
+	if len(nodes) == 0 {
+		comp.Status = "disabled"
+		comp.Detail = "None registered"
 		return comp
 	}
 
@@ -458,7 +481,7 @@ func (h *HealthHandler) nodesComponent() healthComponent {
 		// the channel it would learn from is the one that failed. The node writes
 		// it to its Redis error stream over separate credentials, which is the
 		// only path that survives a broken control plane.
-		why := h.nodeSelfReportedFailure(n.Token)
+		why := selfReported(n.Token)
 		switch {
 		case n.Status == "online" && why != "":
 			// The case that made this necessary. `status` is driven by the node's
@@ -775,7 +798,7 @@ func gatewayVerdict(onlineEdges, totalEdges, onlineLinks, totalLinks int, routes
 // claiming it "reads atomics only" was wrong: CoreStorage.LoadConfig below
 // issues several settings reads, and Store.GetSetting takes no context, so a
 // wedged Postgres blocks this component for as long as the driver allows. That
-// is the same hole nodesComponent has and the handler comment above names.
+// is the same hole nodeComponents has and the handler comment above names.
 // Reading the config is unavoidable here - which backend is configured decides
 // which of the two mechanisms to report - so the honest statement is that this
 // component is bounded against a storage outage and not against a database one.

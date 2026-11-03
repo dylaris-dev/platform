@@ -131,8 +131,9 @@
      this width the navigation starts folding entries into "More" and the
      denser tables stop being readable, and a horizontal scrollbar is the
      honest outcome rather than a layout that technically fits. One place, so
-     the number is arguable in exactly one file. */
-  --app-min-width: 1100px;
+     the number is arguable in exactly one file. 1024 is also the Beam window's
+     floor (beam/app/main.go); the navbar drops its labels below xl to fit it. */
+  --app-min-width: 1024px;
 }
 
 /* ── Base Styles ── */
@@ -705,14 +706,28 @@ input[type="number"] {
   backdrop-filter: blur(4px);
   z-index: 50;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  /* safe: a dialog taller than the window scrolls from its top instead of
+     being centred past the top edge, where nothing can reach its header. */
+  align-items: safe center;
+  justify-content: safe center;
+  padding: 16px;
+  overflow-y: auto;
+}
+/* Every page column is a <main class="relative z-10">, which makes it its own
+   stacking context: an overlay inside it, z-50 or not, still painted UNDER the
+   navbar (z-30) and the sidebar (z-20), and a narrow window put the dialog's
+   header behind them. While a dialog is open its column is lifted above both. */
+main:has(.modal-overlay, [aria-modal="true"]) {
+  z-index: 40;
 }
 .modal-panel {
   background: var(--base-02);
   border: 1px solid var(--base-03);
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-xl);
+  /* A flex item will not shrink below its content otherwise, and a wide
+     dialog then runs off a narrow window instead of fitting it. */
+  min-width: 0;
 }
 .modal-header {
   padding: 22px 24px 18px;

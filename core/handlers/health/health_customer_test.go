@@ -10,6 +10,16 @@ import (
 
 func ptr(s string) *string { return &s }
 
+// fleet returns the cluster and the external component, in that order.
+func fleet(t *testing.T, h *HealthHandler) (cluster, external healthComponent) {
+	t.Helper()
+	comps := h.nodeComponents()
+	if len(comps) != 2 || comps[0].Key != "nodes" || comps[1].Key != "external_nodes" {
+		t.Fatalf("components = %+v, want nodes then external_nodes", comps)
+	}
+	return comps[0], comps[1]
+}
+
 // customerHealthStore serves nodes and the route-only link rows.
 type customerHealthStore struct {
 	store.Store
@@ -35,16 +45,15 @@ func TestTheStatusPageIgnoresCustomerNodes(t *testing.T) {
 		{ID: 4, Name: "byon-b", Token: "t4", Status: "offline", OwnerID: ptr("u-2")},
 	}}})
 
-	comp := h.nodesComponent()
-	if comp.Status != "up" {
-		t.Fatalf("status = %q with only a CUSTOMER node offline; want up", comp.Status)
-	}
-	if comp.Detail != "2/2 online" {
-		t.Fatalf("detail = %q; want 2/2 online (cluster + external, no BYON)", comp.Detail)
-	}
-	for _, item := range comp.Items {
-		if strings.HasPrefix(item.Name, "byon") {
-			t.Errorf("customer node %q was listed on the status page", item.Name)
+	cluster, external := fleet(t, h)
+	for _, comp := range []healthComponent{cluster, external} {
+		if comp.Status != "up" || comp.Detail != "1/1 online" {
+			t.Errorf("%s = %q %q with only a CUSTOMER node offline; want up 1/1 online", comp.Key, comp.Status, comp.Detail)
+		}
+		for _, item := range comp.Items {
+			if strings.HasPrefix(item.Name, "byon") {
+				t.Errorf("customer node %q was listed on the status page", item.Name)
+			}
 		}
 	}
 }
@@ -57,12 +66,12 @@ func TestTheStatusPageStillCountsExternalNodes(t *testing.T) {
 		{ID: 2, Name: "external-a", Token: "t2", Status: "offline", Tags: "external"},
 	}}})
 
-	comp := h.nodesComponent()
-	if comp.Status != "degraded" {
-		t.Fatalf("status = %q with an EXTERNAL node offline; want degraded", comp.Status)
+	cluster, external := fleet(t, h)
+	if cluster.Status != "up" || cluster.Detail != "1/1 online" {
+		t.Fatalf("cluster = %q %q; the external node's outage leaked into it", cluster.Status, cluster.Detail)
 	}
-	if comp.Detail != "1/2 online" {
-		t.Fatalf("detail = %q; want 1/2 online", comp.Detail)
+	if external.Status != "down" || external.Detail != "0/1 online" {
+		t.Fatalf("external = %q %q with its only node offline; want down 0/1 online", external.Status, external.Detail)
 	}
 }
 
@@ -74,11 +83,29 @@ func TestAFleetOfOnlyCustomerNodesSaysWhyItLooksEmpty(t *testing.T) {
 		{ID: 1, Name: "byon-a", Token: "t1", Status: "online", OwnerID: ptr("u-1")},
 	}}})
 
-	comp := h.nodesComponent()
+	comp, external := fleet(t, h)
+	if external.Status != "disabled" {
+		t.Fatalf("external = %q with none registered; want disabled", external.Status)
+	}
 	if comp.Status != "degraded" {
 		t.Fatalf("status = %q, want degraded", comp.Status)
 	}
 	if !strings.Contains(comp.Reason, "customer node") {
 		t.Fatalf("reason %q does not explain that customer nodes are excluded", comp.Reason)
+	}
+}
+
+// A platform that runs only on external machines is not missing anything: an
+// empty cluster is not a fault while external nodes carry the servers.
+func TestAnEmptyClusterIsFineWhenExternalNodesExist(t *testing.T) {
+	h := NewHealthHandler(Deps{Store: &customerHealthStore{nodes: []models.Node{
+		{ID: 1, Name: "external-a", Token: "t1", Status: "online", Tags: "external"},
+	}}})
+	cluster, external := fleet(t, h)
+	if cluster.Status != "disabled" {
+		t.Fatalf("cluster = %q with external nodes carrying the load; want disabled", cluster.Status)
+	}
+	if external.Status != "up" {
+		t.Fatalf("external = %q; want up", external.Status)
 	}
 }

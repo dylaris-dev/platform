@@ -52,7 +52,7 @@ export default function BeamDownloadButton() {
                        disabled:opacity-50 disabled:cursor-not-allowed"
         >
             {downloading ? <Loader2 size={20} className="animate-spin" /> : <Download size={20} />}
-            <span className="text-sm hidden lg:block">Beam app</span>
+            <span className="text-sm hidden xl:block">Beam app</span>
         </button>
     );
 }

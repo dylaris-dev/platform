@@ -60,7 +60,7 @@ func TestNodesComponentFlagsAHeartbeatingNodeWithADeadControlChannel(t *testing.
 	h := nodesHealthHandler(t, onlineNode, "tok-a", "ERROR",
 		`cannot open the control stream: error reading server preface: EOF [TLS mismatch...]`, time.Minute)
 
-	comp := h.nodesComponent()
+	comp := h.nodeComponents()[0]
 	if len(comp.Items) != 1 {
 		t.Fatalf("got %d items, want 1", len(comp.Items))
 	}
@@ -80,7 +80,7 @@ func TestNodesComponentFlagsAHeartbeatingNodeWithADeadControlChannel(t *testing.
 // No report means nothing to say. A healthy node must stay plainly "up".
 func TestNodesComponentLeavesAHealthyNodeAlone(t *testing.T) {
 	h := nodesHealthHandler(t, onlineNode, "tok-a", "", "", 0)
-	comp := h.nodesComponent()
+	comp := h.nodeComponents()[0]
 	if comp.Status != "up" || comp.Items[0].Status != "up" {
 		t.Fatalf("component = %s, item = %s; want both up", comp.Status, comp.Items[0].Status)
 	}
@@ -93,7 +93,7 @@ func TestNodesComponentLeavesAHealthyNodeAlone(t *testing.T) {
 // as a failure regardless of level would keep a solved problem on screen.
 func TestNodesComponentIgnoresARecoveryEntry(t *testing.T) {
 	h := nodesHealthHandler(t, onlineNode, "tok-a", "INFO", "control channel to Core core-1 is back", time.Minute)
-	if comp := h.nodesComponent(); comp.Items[0].Status != "up" {
+	if comp := h.nodeComponents()[0]; comp.Items[0].Status != "up" {
 		t.Errorf("item status = %q, want up - the newest entry says it recovered", comp.Items[0].Status)
 	}
 }
@@ -103,7 +103,7 @@ func TestNodesComponentIgnoresARecoveryEntry(t *testing.T) {
 // outage would be reported next to that node forever.
 func TestNodesComponentDropsAStaleReport(t *testing.T) {
 	h := nodesHealthHandler(t, onlineNode, "tok-a", "ERROR", "something old", nodeSelfReportedFailureMaxAge+time.Minute)
-	if comp := h.nodesComponent(); comp.Items[0].Status != "up" {
+	if comp := h.nodeComponents()[0]; comp.Items[0].Status != "up" {
 		t.Errorf("item status = %q, want up - the report is older than the bound", comp.Items[0].Status)
 	}
 }
@@ -115,7 +115,7 @@ func TestNodesComponentExplainsAnOfflineNode(t *testing.T) {
 	nodes := []models.Node{{ID: 1, Name: "node-a", Token: "tok-a", Status: "offline", LastSeenAt: &seen}}
 	h := nodesHealthHandler(t, nodes, "tok-a", "ERROR", "certificate fingerprint mismatch", time.Minute)
 
-	comp := h.nodesComponent()
+	comp := h.nodeComponents()[0]
 	if comp.Items[0].Status != "down" {
 		t.Fatalf("item status = %q, want down", comp.Items[0].Status)
 	}

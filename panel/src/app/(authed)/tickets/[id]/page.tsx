@@ -594,7 +594,7 @@ export default function TicketDetailPage() {
                 inherits the layout context but uses a fixed overlay to sit
                 above the rest of the page. */}
             {confirmDelete && user?.isAdmin && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-(--base-00)/70 backdrop-blur-sm">
+                <div className="modal-overlay">
                     <ModalPanel className="card max-w-md w-full p-6 border border-(--base-03)">
                         <div className="flex items-start gap-3">
                             <div className="w-10 h-10 rounded-md bg-(--error-ghost) flex items-center justify-center shrink-0">

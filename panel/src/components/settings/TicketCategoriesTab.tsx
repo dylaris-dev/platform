@@ -224,7 +224,7 @@ export default function TicketCategoriesTab() {
             </div>
 
             {modal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+                <div className="modal-overlay">
                     <ModalPanel as="form" onSubmit={handleSubmit} className="card w-full max-w-md mx-4 max-h-[90vh] flex flex-col">
                         <div className="modal-header flex items-center justify-between">
                             <h3 className="modal-title">{modal.mode === 'create' ? 'Add category' : `Edit ${modal.original?.name}`}</h3>

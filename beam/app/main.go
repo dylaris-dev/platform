@@ -68,11 +68,11 @@ func main() {
 		Title:  "Dylaris Beam",
 		Width:  1400,
 		Height: 900,
-		// Below ~1280 wide the Panel's server-tab bar wraps in a way that
-		// hides labels behind the right edge; below ~720 tall the bottom
-		// console gets squashed. Pin a floor that keeps everything usable.
-		MinWidth:  1280,
-		MinHeight: 720,
+		// The panel's own width floor (--app-min-width in globals.css): below
+		// it the page scrolls sideways. 1024x576 is small enough to tile the
+		// window into a screen corner and still leaves the console usable.
+		MinWidth:  1024,
+		MinHeight: 576,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 			// Turns the window into a transparent shell around the

@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.03.5
+
+### Features
+- The panel and the Beam app work down to 1024 px wide, so the Beam window fits a screen
+  corner. In a narrow window the top bar shows icons without labels.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Dialogs no longer slide under the top bar or the sidebar in a narrow window, and a dialog
+  taller than the window scrolls instead of losing its header.
+- Creating or copying a sub-server on a server with large worlds answers faster.
+
 ## 2026.11.03.4
 
 ### Features

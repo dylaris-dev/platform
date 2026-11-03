@@ -288,7 +288,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
 
             {/* Delete confirm modal */}
             {deleteModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+                <div className="modal-overlay">
                     <ModalPanel className="card w-full max-w-sm p-6 flex flex-col gap-4">
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">

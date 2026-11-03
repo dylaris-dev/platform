@@ -1400,8 +1400,12 @@ func (x *NodeIPs) GetPrivate() []string {
 
 // ─── File Operations ─────────────────────────────────────────────────
 type ListFilesReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Path  string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	// Skip the recursive folder sizes. A caller that only needs the names (the
+	// sub-server count) would otherwise walk every world on the server. An older
+	// node ignores the field and answers with sizes, which is slower, not wrong.
+	NamesOnly     bool `protobuf:"varint,2,opt,name=names_only,json=namesOnly,proto3" json:"names_only,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1441,6 +1445,13 @@ func (x *ListFilesReq) GetPath() string {
 		return x.Path
 	}
 	return ""
+}
+
+func (x *ListFilesReq) GetNamesOnly() bool {
+	if x != nil {
+		return x.NamesOnly
+	}
+	return false
 }
 
 type ListFilesResp struct {
@@ -3865,9 +3876,11 @@ const file_node_node_proto_rawDesc = "" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\";\n" +
 	"\aNodeIPs\x12\x16\n" +
 	"\x06public\x18\x01 \x01(\tR\x06public\x12\x18\n" +
-	"\aprivate\x18\x02 \x03(\tR\aprivate\"\"\n" +
+	"\aprivate\x18\x02 \x03(\tR\aprivate\"A\n" +
 	"\fListFilesReq\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\"=\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1d\n" +
+	"\n" +
+	"names_only\x18\x02 \x01(\bR\tnamesOnly\"=\n" +
 	"\rListFilesResp\x12,\n" +
 	"\x05files\x18\x01 \x03(\v2\x16.dylaris.node.FileInfoR\x05files\"I\n" +
 	"\bFileInfo\x12\x12\n" +
