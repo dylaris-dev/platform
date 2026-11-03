@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.03.2
+
+### Features
+- Downloads have a manager in the top bar: several at once, each with percent, speed and time
+  left, and they keep running while you move to other pages. `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Folder downloads over Beam were held near 40 MB/s even on a fast LAN: the node sent the zip in
+  4 KB pieces. It now sends full chunks and stores already-compressed files as they are. `node`
+- A folder download shows a real percentage; the bar used to sit at a third. `node` `panel`
+
 ## 2026.11.03
 
 ### Features
