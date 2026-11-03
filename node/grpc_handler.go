@@ -339,13 +339,18 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 		files = append(files, f)
 	}
 
-	// Calculate directory sizes concurrently
+	// Calculate directory sizes concurrently, but at most four at a time: one
+	// goroutine per folder made the walks contend in the kernel, and a listing
+	// of 50 folders cost twice the CPU for barely less wall time (measured,
+	// BenchmarkHandleList).
 	if len(dirs) > 0 {
 		var wg sync.WaitGroup
+		sem := make(chan struct{}, 4)
 		for _, de := range dirs {
 			wg.Add(1)
+			sem <- struct{}{}
 			go func(f *pb.FileInfo, name string) {
-				defer wg.Done()
+				defer func() { <-sem; wg.Done() }()
 				f.Size = dirSizeIn(root, name)
 			}(de.info, de.name)
 		}
@@ -364,16 +369,38 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 // absolute path, which a directory swapped for a link would have pointed at a
 // tree outside the server. Links are counted as themselves, as du -P does.
 func dirSizeIn(root *os.Root, name string) int64 {
+	sub, err := root.OpenRoot(name)
+	if err != nil {
+		return 0
+	}
+	defer sub.Close()
+	return treeSize(sub)
+}
+
+// treeSize walks r one directory handle at a time. fs.WalkDir over root.FS()
+// re-resolved every directory from the server root, component by component,
+// and sorted each directory it read; a size needs neither.
+func treeSize(r *os.Root) int64 {
+	f, err := r.Open(".")
+	if err != nil {
+		return 0
+	}
+	entries, _ := f.ReadDir(-1)
+	f.Close()
 	var size int64
-	fs.WalkDir(root.FS(), name, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
+	for _, e := range entries {
+		if e.IsDir() {
+			if sub, err := r.OpenRoot(e.Name()); err == nil {
+				size += treeSize(sub)
+				sub.Close()
+			}
+			continue
 		}
-		if info, err := d.Info(); err == nil {
+		// A ReadDir in a Root has already lstat'ed the entry, so Info is free.
+		if info, err := e.Info(); err == nil {
 			size += info.Size()
 		}
-		return nil
-	})
+	}
 	return size
 }
 

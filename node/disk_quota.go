@@ -355,16 +355,27 @@ func (qp *QuotaProvider) xfsGetUsageAndLimit(uuid string, pid uint32) (int64, in
 // ext4GetUsageAndLimit parses repquota output for usage and hard limit in one call.
 // Returns (usedBytes, limitBytes). usedBytes=-1 on error, limitBytes=0 means unlimited.
 func (qp *QuotaProvider) ext4GetUsageAndLimit(pid uint32) (int64, int64) {
-	out, err := exec.Command("repquota", "-Ps", qp.mountPoint).Output()
+	// Not -s: that prints the block columns in human units ("1024M") that do
+	// not parse as numbers. Without it they are 1 KiB quota blocks. -n prints
+	// every project as "#<id>"; by default repquota prints the name from
+	// /etc/projid (the server UUID), so a bare id never matched any line.
+	out, err := exec.Command("repquota", "-P", "-n", qp.mountPoint).Output()
 	if err != nil {
 		return -1, 0
 	}
+	return parseRepquota(string(out), pid)
+}
 
-	pidStr := fmt.Sprintf("%d", pid)
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+// parseRepquota reads one project's line from `repquota -P -n` output.
+// Returns (usedBytes, limitBytes) like ext4GetUsageAndLimit.
+func parseRepquota(out string, pid uint32) (int64, int64) {
+	pidStr := fmt.Sprintf("#%d", pid)
+	scanner := bufio.NewScanner(strings.NewReader(out))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		// Fields: projid status used soft hard ...
+		// Fields: #projid flags used soft hard [grace] files ... The grace
+		// column is empty under the soft limit, so it comes after the
+		// columns read here and shifts none of them.
 		if len(fields) >= 5 && fields[0] == pidStr {
 			var used, limit int64
 			if kb, err := strconv.ParseInt(fields[2], 10, 64); err == nil {
