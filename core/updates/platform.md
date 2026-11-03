@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.03.6
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Installing or updating a plugin or mod no longer picks a build the server's Java cannot
+  load; it takes the newest build that fits, or says which Java the build needs. `core` `panel`
+- Invited users see only the power actions they hold, and the Content tab follows the
+  view-mods permission instead of the configuration one. `core` `panel`
+- The file editor and the file dialogs are real dialogs for keyboard and screen readers, and
+  Escape no longer throws away unsaved edits. `panel`
+
 ## 2026.11.03.5
 
 ### Features

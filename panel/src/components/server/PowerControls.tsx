@@ -105,7 +105,7 @@ export default function PowerControls({
                     type="button"
                     onClick={() => onAction('restart')}
                     disabled={m.restartDisabled}
-                    title={m.restartDisabled && !m.busy ? p.title : 'Restart server'}
+                    title={m.restartTitle}
                     className={`${BASE} ${GHOST}`}
                 >
                     <RotateCcw size={14} />
@@ -129,26 +129,28 @@ export default function PowerControls({
             )}
             {menuOpen && (
                 <div ref={menuRef} role="menu" aria-label="More actions" className="dropdown-menu right-0 top-full mt-1.5 w-64 animate-fade-in motion-reduce:animate-none">
-                    <button
-                        type="button"
-                        role="menuitem"
-                        disabled={m.killDisabled}
-                        onClick={() => { setMenuOpen(false); onAction('kill'); }}
-                        className={`${ITEM} hover:bg-(--error-ghost) active:bg-(--error-ghost)`}
-                    >
-                        <Zap size={15} className="mt-0.5 shrink-0 text-(--error-light) group-disabled:text-(--base-05)" />
-                        <span className="min-w-0">
-                            <span className="block text-sm font-medium text-(--error-light) group-disabled:text-(--base-05)">Force kill</span>
-                            <span className="block text-xs text-(--base-06) leading-snug">
-                                {m.killDisabled && gates.killCooldown
-                                    ? 'Available again a minute after the last kill'
-                                    : 'Stops the server immediately without saving'}
+                    {m.showKill && (
+                        <button
+                            type="button"
+                            role="menuitem"
+                            disabled={m.killDisabled}
+                            onClick={() => { setMenuOpen(false); onAction('kill'); }}
+                            className={`${ITEM} hover:bg-(--error-ghost) active:bg-(--error-ghost)`}
+                        >
+                            <Zap size={15} className="mt-0.5 shrink-0 text-(--error-light) group-disabled:text-(--base-05)" />
+                            <span className="min-w-0">
+                                <span className="block text-sm font-medium text-(--error-light) group-disabled:text-(--base-05)">Force kill</span>
+                                <span className="block text-xs text-(--base-06) leading-snug">
+                                    {m.killDisabled && gates.killCooldown
+                                        ? 'Available again a minute after the last kill'
+                                        : 'Stops the server immediately without saving'}
+                                </span>
                             </span>
-                        </span>
-                    </button>
+                        </button>
+                    )}
                     {onDelete && (
                         <>
-                            <div role="separator" className="my-1.5 h-px bg-(--base-03)" />
+                            {m.showKill && <div role="separator" className="my-1.5 h-px bg-(--base-03)" />}
                             <button
                                 type="button"
                                 role="menuitem"

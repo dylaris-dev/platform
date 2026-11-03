@@ -3,6 +3,7 @@ import { Folder, File as FileIcon, Download, X, ChevronRight, ChevronDown } from
 import type { FileEntry } from './types';
 import { formatBytes } from './utils';
 import { isPathChecked, MAX_DOWNLOAD_PATHS, overPathLimit, selectedPaths, TOO_MANY_PATHS_MESSAGE } from './selection';
+import ModalPanel from './ModalPanel';
 
 export interface SelectiveTreeProps {
   tree: Record<string, FileEntry[]>;
@@ -116,7 +117,8 @@ const SelectiveDownloadModal: React.FC<SelectiveDownloadModalProps> = ({ target,
   const tooMany = !treeProps.selectAll && overPathLimit(selectedPaths(treeProps.tree, treeProps.checked, false), MAX_DOWNLOAD_PATHS);
   return (
   <div className="modal-overlay animate-fade-in">
-    <div className="modal-panel w-full max-w-lg">
+    {/* No onClose: it never closed on Escape or a click outside. */}
+    <ModalPanel className="modal-panel w-full max-w-lg">
       <div className="modal-header">
         <h2 className="modal-title">Download: {target.name}/</h2>
         <button onClick={onClose} aria-label="Close" className="text-(--base-06) hover:text-(--base-09)"><X size={18} /></button>
@@ -135,7 +137,7 @@ const SelectiveDownloadModal: React.FC<SelectiveDownloadModalProps> = ({ target,
           {downloading ? 'Downloading...' : 'Download .zip'}
         </button>
       </div>
-    </div>
+    </ModalPanel>
   </div>
   );
 };

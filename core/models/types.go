@@ -579,10 +579,19 @@ type TabPermissions struct {
 	// players.manage, so the panel can grey them out instead of answering 403.
 	// Never part of the invite vocabulary; omitted when false.
 	PlayersManage bool `json:"playersManage,omitempty"`
-	Members       bool `json:"members"`
-	Network       bool `json:"network"`
-	Backups       bool `json:"backups"`
-	Inherit       bool `json:"inherit"`
+	// Mods, PowerStop, PowerRestart and PowerKill are the same kind of bit as
+	// PlayersManage: resolved-only, never part of the invite vocabulary. Power
+	// above is power.start alone, so a member granted Start but not Stop was
+	// offered a Stop button that answered 403, and the Content tab keyed off
+	// Config although its routes require mods.read.
+	Mods         bool `json:"mods,omitempty"`
+	PowerStop    bool `json:"powerStop,omitempty"`
+	PowerRestart bool `json:"powerRestart,omitempty"`
+	PowerKill    bool `json:"powerKill,omitempty"`
+	Members      bool `json:"members"`
+	Network      bool `json:"network"`
+	Backups      bool `json:"backups"`
+	Inherit      bool `json:"inherit"`
 }
 
 // ServerInvite represents an invitation for a user to access a server

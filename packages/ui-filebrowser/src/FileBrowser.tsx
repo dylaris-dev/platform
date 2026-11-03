@@ -12,6 +12,7 @@ import Breadcrumbs from './Breadcrumbs';
 import DownloadProgress from './DownloadProgress';
 import { DownloadTrackerContext, type DownloadProgressFn } from './downloadTracker';
 import SelectiveDownloadModal from './SelectiveDownloadModal';
+import ModalPanel from './ModalPanel';
 import { useSelectionTree } from './useSelectionTree';
 import { selectedPaths } from './selection';
 
@@ -324,28 +325,6 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     };
   }, []);
 
-  const closeAllPopups = useCallback(() => {
-    setShowEditPopup(false);
-    // Same reset as closeEditPopup, or the next file opened in edit mode.
-    setIsEditingEnabled(false);
-    setSearchTerm('');
-    setIsRenaming(false);
-    setShowUploadPopup(false);
-    setShowDeleteConfirm(false);
-    setPopupMode(null);
-  }, []);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') {
-            closeAllPopups();
-        }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [closeAllPopups]);
-
     // Cap depth + result count so a broad global search can't fan out into an
     // unbounded client-driven crawl of the whole tree.
     const handleRecursiveSearch = useCallback(async (path: string, term: string, depth = 0): Promise<FileEntry[]> => {
@@ -489,6 +468,8 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
       fetchFiles(parentPath);
     }
   };
+
+  const editorDirty = isEditingEnabled && fileContent !== originalFileContent;
 
   const closeEditPopup = () => {
       setShowEditPopup(false);
@@ -991,7 +972,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
       {popupMode && (
         <div className="modal-overlay animate-fade-in">
-          <div className="modal-panel w-full max-w-sm">
+          <ModalPanel onClose={closePopup} className="modal-panel w-full max-w-sm">
             <div className="modal-header">
               <h2 className="modal-title">{getPopupTitle()}</h2>
             </div>
@@ -1017,13 +998,13 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                 </div>
               </form>
             </div>
-          </div>
+          </ModalPanel>
         </div>
       )}
 
       {showDeleteConfirm && (
         <div className="modal-overlay animate-fade-in">
-          <div className="modal-panel w-full max-w-md">
+          <ModalPanel onClose={() => setShowDeleteConfirm(false)} role="alertdialog" className="modal-panel w-full max-w-md">
             <div className="modal-header">
               <h2 className="modal-title text-(--error-light)">Confirm Deletion</h2>
             </div>
@@ -1034,13 +1015,15 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
               <button onClick={() => setShowDeleteConfirm(false)} className="btn btn-secondary px-5 py-2 text-sm">Cancel</button>
               <button onClick={handleConfirmDelete} className="btn btn-danger px-5 py-2 text-sm">Delete</button>
             </div>
-          </div>
+          </ModalPanel>
         </div>
       )}
 
       {showUploadPopup && (
         <div className="modal-overlay animate-fade-in">
-          <div className="modal-panel w-full max-w-2xl">
+          {/* Hides without resetting, as Escape always did here: an upload in
+              progress keeps running and its progress stays on reopen. */}
+          <ModalPanel onClose={() => setShowUploadPopup(false)} className="modal-panel w-full max-w-2xl">
             <div className="modal-header">
               <h2 className="modal-title">Upload</h2>
             </div>
@@ -1144,13 +1127,15 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
             )}
 
             </div>
-          </div>
+          </ModalPanel>
         </div>
       )}
 
       {showEditPopup && (
         <div className="modal-overlay animate-fade-in">
-          <div style={editorPopupStyle} className="modal-panel relative h-[85vh] flex flex-col p-0 overflow-hidden">
+          {/* Escape closes only while nothing is unsaved: it used to discard
+              edits silently. The X button stays the explicit way out. */}
+          <ModalPanel onClose={closeEditPopup} dismissible={!editorDirty} style={editorPopupStyle} className="modal-panel relative h-[85vh] flex flex-col p-0 overflow-hidden">
             {/* Header */}
             <div className="modal-header flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -1164,28 +1149,29 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                         onKeyDown={(e) => e.key === 'Enter' && handleRenameSubmit()}
                         className="input-field text-base"
                     />
-                    <button onClick={handleRenameSubmit} className="p-2 flex items-center justify-center rounded-md text-(--success) hover:bg-(--base-04)"><Check size={20} /></button>
-                    <button onClick={() => setIsRenaming(false)} className="p-2 flex items-center justify-center rounded-md text-(--error) hover:bg-(--base-04)"><X size={20} /></button>
+                    <button onClick={handleRenameSubmit} aria-label="Save new name" title="Save new name" className="p-2 flex items-center justify-center rounded-md text-(--success) hover:bg-(--base-04)"><Check size={20} /></button>
+                    <button onClick={() => setIsRenaming(false)} aria-label="Cancel rename" title="Cancel rename" className="p-2 flex items-center justify-center rounded-md text-(--error) hover:bg-(--base-04)"><X size={20} /></button>
                    </>
                  ) : (
                     <h2 className="modal-title truncate">{editingFile}</h2>
                  )}
-                {!isRenaming && <button onClick={handleRenameClick} className="p-1 rounded-md hover:bg-(--base-04) text-(--base-06)"><Pencil size={18} /></button>}
+                {!isRenaming && <button onClick={handleRenameClick} aria-label={`Rename ${editingFile}`} title="Rename" className="p-1 rounded-md hover:bg-(--base-04) text-(--base-06)"><Pencil size={18} /></button>}
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
                    <div className="flex items-center gap-1 bg-(--base-03) p-1 rounded-md">
                        <input
                           type="text"
                           placeholder="Search..."
+                          aria-label="Search in file"
                           value={searchTerm}
                           onChange={handleSearchChange}
                           className="input-field h-7 px-2 text-xs"
                        />
-                       <button onClick={() => goToMatch(-1)} disabled={searchMatches.length === 0} className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-(--base-04) disabled:opacity-40 text-(--base-07)"><ArrowUp size={16} /></button>
-                       <button onClick={() => goToMatch(1)} disabled={searchMatches.length === 0} className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-(--base-04) disabled:opacity-40 text-(--base-07)"><ArrowDown size={16} /></button>
+                       <button onClick={() => goToMatch(-1)} aria-label="Previous match" title="Previous match" disabled={searchMatches.length === 0} className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-(--base-04) disabled:opacity-40 text-(--base-07)"><ArrowUp size={16} /></button>
+                       <button onClick={() => goToMatch(1)} aria-label="Next match" title="Next match" disabled={searchMatches.length === 0} className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-(--base-04) disabled:opacity-40 text-(--base-07)"><ArrowDown size={16} /></button>
                        <span className="text-xs text-(--base-06) px-1.5 font-mono">{searchMatches.length > 0 ? `${currentMatchIndex + 1}/${searchMatches.length}` : '0/0'}</span>
                    </div>
-                   <button onClick={closeEditPopup} className="w-8 h-8 flex items-center justify-center bg-(--base-03) hover:bg-(--base-04) transition-colors rounded-md text-(--base-07)">
+                   <button onClick={closeEditPopup} aria-label="Close editor" title="Close" className="w-8 h-8 flex items-center justify-center bg-(--base-03) hover:bg-(--base-04) transition-colors rounded-md text-(--base-07)">
                      <X size={18} />
                    </button>
               </div>
@@ -1223,7 +1209,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                 </>
               )}
             </div>
-          </div>
+          </ModalPanel>
         </div>
       )}
 

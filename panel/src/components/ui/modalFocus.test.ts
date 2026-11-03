@@ -41,4 +41,11 @@ describe('ownsKey', () => {
         expect(ownsKey(true, false)).toBe(true);
         expect(ownsKey(false, true)).toBe(true);
     });
+
+    // CodeMirror's Tab-to-indent calls preventDefault; trapping it too would
+    // move focus out of the editor after every indent.
+    it('leaves a key a widget inside already handled', () => {
+        expect(ownsKey(true, false, true)).toBe(false);
+        expect(ownsKey(false, true, true)).toBe(false);
+    });
 });

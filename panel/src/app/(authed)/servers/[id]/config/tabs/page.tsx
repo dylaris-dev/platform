@@ -340,13 +340,16 @@ export default function ServerConfigTabsPage() {
                                     )}
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
-                                    <button onClick={() => handleToggleEnabled(t)} className="btn btn-secondary btn-sm">
+                                    <button onClick={() => handleToggleEnabled(t)} className="btn btn-secondary btn-sm"
+                                        aria-label={`${t.enabled ? 'Disable' : 'Enable'} tab ${t.name}`} title={`${t.enabled ? 'Disable' : 'Enable'} tab ${t.name}`}>
                                         {t.enabled ? <Square size={12} /> : <Play size={12} />}
                                     </button>
-                                    <button onClick={() => openEdit(t)} className="btn btn-secondary btn-sm">
+                                    <button onClick={() => openEdit(t)} className="btn btn-secondary btn-sm"
+                                        aria-label={`Edit tab ${t.name}`} title={`Edit tab ${t.name}`}>
                                         <Pencil size={12} />
                                     </button>
-                                    <button onClick={() => setDeletePrompt(t)} className="btn btn-secondary btn-sm">
+                                    <button onClick={() => setDeletePrompt(t)} className="btn btn-secondary btn-sm"
+                                        aria-label={`Delete tab ${t.name}`} title={`Delete tab ${t.name}`}>
                                         <Trash2 size={12} className="text-(--error-light)" />
                                     </button>
                                 </div>
@@ -482,7 +485,7 @@ export default function ServerConfigTabsPage() {
                                 <LayoutGrid size={16} />
                                 {editing.isNew ? 'New tab' : 'Edit tab'}
                             </h3>
-                            <button onClick={() => setEditing(null)} className="text-(--base-06)"><X size={16} /></button>
+                            <button onClick={() => setEditing(null)} aria-label="Close" title="Close" className="text-(--base-06)"><X size={16} /></button>
                         </div>
                         <div className="modal-body space-y-4">
                             <div>
@@ -707,7 +710,7 @@ export default function ServerConfigTabsPage() {
                                         <div className="text-sm font-medium text-(--base-09)">Open in panel</div>
                                         <p className="text-xs text-(--base-06)">Off -&gt; clicking the tab opens the URL in a new browser window.</p>
                                     </div>
-                                    <button type="button" role="switch" aria-checked={editing.openInPanel ?? true}
+                                    <button type="button" role="switch" aria-checked={editing.openInPanel ?? true} aria-label="Open in panel"
                                         onClick={() => setEditing({ ...editing, openInPanel: !(editing.openInPanel ?? true) })}
                                         className={`toggle-track ${(editing.openInPanel ?? true) ? 'toggle-track-on' : 'toggle-track-off'}`}>
                                         <span className={`toggle-knob ${(editing.openInPanel ?? true) ? 'toggle-knob-on' : 'toggle-knob-off'}`} />
@@ -719,7 +722,7 @@ export default function ServerConfigTabsPage() {
                                     <div className="text-sm font-medium text-(--base-09)">Enabled</div>
                                     <p className="text-xs text-(--base-06)">Disabled tabs disappear from the nav strip.</p>
                                 </div>
-                                <button type="button" role="switch" aria-checked={editing.enabled ?? true}
+                                <button type="button" role="switch" aria-checked={editing.enabled ?? true} aria-label="Enabled"
                                     onClick={() => setEditing({ ...editing, enabled: !(editing.enabled ?? true) })}
                                     className={`toggle-track ${(editing.enabled ?? true) ? 'toggle-track-on' : 'toggle-track-off'}`}>
                                     <span className={`toggle-knob ${(editing.enabled ?? true) ? 'toggle-knob-on' : 'toggle-knob-off'}`} />

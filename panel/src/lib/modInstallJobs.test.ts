@@ -27,6 +27,11 @@ describe('afterPost', () => {
     it('follows an older Core that sends no status, bounded by the timeout', () => {
         expect(afterPost(job({ state: 'sending' }), { success: true }, 2000).state).toBe('installing');
     });
+    it('follows the build Core actually queued', () => {
+        const j = afterPost(job({ state: 'sending' }), { success: true, status: 'installing', versionId: 'older' }, 2000);
+        expect(j.versionId).toBe('older');
+        expect(afterPost(job({ state: 'sending' }), { success: true, status: 'installing' }, 2000).versionId).toBe(job().versionId);
+    });
     it('fails with Core\'s reason', () => {
         const j = afterPost(job({ state: 'sending' }), { success: false, message: 'Server is suspended' }, 2000);
         expect(j).toMatchObject({ state: 'failed', message: 'Server is suspended', finishedAt: 2000 });

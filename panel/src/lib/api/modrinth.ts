@@ -329,7 +329,7 @@ export interface InstallModPayload {
 
 // status is what Core recorded: "installing" when the node will report the
 // outcome, "installed" when it is too old to, and absent from an older Core.
-export async function installMod(serverId: number, payload: InstallModPayload): Promise<{ success: boolean; message?: string; status?: 'installing' | 'installed' }> {
+export async function installMod(serverId: number, payload: InstallModPayload): Promise<{ success: boolean; message?: string; status?: 'installing' | 'installed'; versionId?: string }> {
     try {
         const res = await fetch(`${API_URL}/servers/${serverId}/mods`, {
             method: 'POST',

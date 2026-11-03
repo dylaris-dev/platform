@@ -71,6 +71,14 @@ func TestMergeResolvedTabPermissions(t *testing.T) {
 			want: models.TabPermissions{Players: true, PlayersManage: true},
 		},
 		{
+			// Measured live: Start without Stop showed a Stop button that
+			// answered 403, and mods.read without config.read greyed Content.
+			name: "power is per action and mods.read lights Content",
+			base: nil,
+			caps: capSet("overview.read", "power.start", "power.restart", "mods.read", "mods.write"),
+			want: models.TabPermissions{Overview: true, Power: true, PowerRestart: true, Mods: true},
+		},
+		{
 			name: "a nil resolver leaves the blob untouched",
 			base: &models.TabPermissions{Overview: true},
 			caps: nil,

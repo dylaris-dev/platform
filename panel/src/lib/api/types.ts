@@ -134,6 +134,12 @@ export interface TabPermissions {
     // Resolved players.manage: whether the Players page actions are accepted.
     // Not a tab, and absent (false) when the member does not hold it.
     playersManage?: boolean;
+    // Resolved-only like playersManage. `power` is power.start alone; the other
+    // three actions and the Content tab (mods.read) have their own bits.
+    mods?: boolean;
+    powerStop?: boolean;
+    powerRestart?: boolean;
+    powerKill?: boolean;
     members: boolean;
     network: boolean;
     backups: boolean;

@@ -38,7 +38,7 @@ export function isPending(job: InstallJob): boolean {
 /** Applies Core's reply to the POST. */
 export function afterPost(
     job: InstallJob,
-    res: { success: boolean; message?: string; status?: string },
+    res: { success: boolean; message?: string; status?: string; versionId?: string },
     now: number,
 ): InstallJob {
     if (job.state !== 'sending') return job;
@@ -48,8 +48,11 @@ export function afterPost(
     // "installed" in the reply means Core recorded it as a fact at dispatch,
     // which it only does for a node that never reports. An absent status is an
     // older Core: follow it, the timeout bounds the wait.
-    if (res.status === 'installed') return { ...job, state: 'sent', finishedAt: now };
-    return { ...job, state: 'installing' };
+    // Core may queue an older build than the one asked for (the requested jar
+    // needs a newer Java than the server runs); the row to follow is that one.
+    const versionId = res.versionId || job.versionId;
+    if (res.status === 'installed') return { ...job, versionId, state: 'sent', finishedAt: now };
+    return { ...job, versionId, state: 'installing' };
 }
 
 /**

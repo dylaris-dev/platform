@@ -33,6 +33,10 @@ var tabPermissionCaps = []struct {
 	// all. It has its own routes now, so it gets its own bit.
 	{"players.read", func(p *models.TabPermissions) { p.Players = true }},
 	{"players.manage", func(p *models.TabPermissions) { p.PlayersManage = true }},
+	{"mods.read", func(p *models.TabPermissions) { p.Mods = true }},
+	{"power.stop", func(p *models.TabPermissions) { p.PowerStop = true }},
+	{"power.restart", func(p *models.TabPermissions) { p.PowerRestart = true }},
+	{"power.kill", func(p *models.TabPermissions) { p.PowerKill = true }},
 	{"network.read", func(p *models.TabPermissions) { p.Network = true }},
 	{"overview.read", func(p *models.TabPermissions) { p.Overview = true }},
 	{"members.read", func(p *models.TabPermissions) { p.Members = true }},

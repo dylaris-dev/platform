@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -101,6 +102,14 @@ var fetchModProjects = services.FetchProjects
 
 // fetchInstallVersion is a variable so tests can stand in for Modrinth.
 var fetchInstallVersion = services.FetchModrinthVersionPaced
+
+// javaFit is a variable so tests can stand in for the jar downloads.
+var javaFit = services.JavaFit
+
+// modJavaWait bounds the Java check: one jar download, more only when the
+// requested build does not load and older ones are tried. The reader is
+// waiting on the click, so it stays well short of a hung request.
+const modJavaWait = 60 * time.Second
 
 // modMetaWait bounds the lookup: it sits on the mod list, which used to be a
 // database read, and a slow Modrinth must not hold the Content tab open.
@@ -213,6 +222,7 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	// jar on a NeoForge server, or a 26.3 build on 1.21.1, installs fine and
 	// then fails at boot. An imported server that has declared neither keeps
 	// the unchecked install.
+	substituted := ""
 	if services.ModFitKnown(srv.InstallerType, srv.MinecraftVersion) {
 		ctx, cancel := context.WithTimeout(r.Context(), modPlanWait)
 		v, err := fetchInstallVersion(ctx, req.VersionID)
@@ -238,6 +248,28 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		if ok, reason := services.ModVersionFits(srv.InstallerType, srv.MinecraftVersion, v.Loaders, v.GameVersions); !ok {
 			httpx.SendJSONError(w, reason, http.StatusConflict)
 			return
+		}
+		// Every install path ends here (one click, Update all, single update,
+		// dependencies), so this is the one place a jar the server's Java cannot
+		// load is caught. Core reads the jar itself: nothing new goes on the
+		// wire, so it holds against any node version.
+		if java := services.JavaFromImage(srv.GameImage); java > 0 {
+			installedID := ""
+			if prev, err := h.d.Store.GetServerModByProject(serverID, srv.ActiveSubServer, req.ProjectID); err == nil && prev != nil {
+				installedID = prev.ModrinthVersionID
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), modJavaWait)
+			picked, err := javaFit(ctx, v, req.Title, srv.InstallerType, srv.MinecraftVersion, java, installedID)
+			cancel()
+			if err != nil {
+				httpx.SendJSONError(w, err.Error(), http.StatusConflict)
+				return
+			}
+			if picked.ID != v.ID {
+				substituted = strings.TrimSpace(fmt.Sprintf("%s %s needs a newer Java than this server runs, so %s was queued instead.", req.Title, v.VersionNum, picked.VersionNum))
+			}
+			v = picked
+			req.VersionID = v.ID
 		}
 		f := v.PrimaryFile()
 		req.FileName, req.DownloadURL, req.SHA512 = f.Filename, f.URL, f.Hashes["sha512"]
@@ -404,10 +436,13 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	// status tells the panel whether to wait for the node's answer: "installing"
 	// means a report will arrive, "installed" means this node is too old to send
 	// one and there is nothing to wait for.
+	// versionId is the build actually queued, which the Java check may have
+	// moved to an older one; the panel follows that row, not the one it asked for.
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"message": "Mod install queued. Restart the server to apply.",
-		"status":  mod.Status,
+		"success":   true,
+		"message":   strings.TrimSpace(substituted + " Mod install queued. Restart the server to apply."),
+		"status":    mod.Status,
+		"versionId": req.VersionID,
 	})
 }
 

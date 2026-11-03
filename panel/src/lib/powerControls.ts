@@ -54,6 +54,9 @@ export interface PowerGates {
     cooldownUntil?: number;
     // Admin-only Delete entry in the overflow menu.
     canDelete?: boolean;
+    // Per-action capability (power.start, power.stop, ...). canPower says the
+    // member holds at least one; an action missing here counts as allowed.
+    allow?: Partial<Record<PowerAction, boolean>>;
 }
 
 export const POWER_COOLDOWN_MS = 5_000;
@@ -76,6 +79,9 @@ export interface PowerModel {
     // Delete, so a stopped server can still be deleted.
     showMenu: boolean;
     restartDisabled: boolean;
+    restartTitle: string;
+    // Force kill is left out of the menu, not greyed, when it is not granted.
+    showKill: boolean;
     menuDisabled: boolean;
     killDisabled: boolean;
     deleteDisabled: boolean;
@@ -113,15 +119,36 @@ function blockedReason(status: string, g: PowerGates): string {
     return '';
 }
 
-type BaseModel = Omit<PowerModel, 'showMenu' | 'deleteDisabled'>;
+const NO_PERMISSION: Record<PowerAction, string> = {
+    start: 'No permission to start this server',
+    stop: 'No permission to stop this server',
+    restart: 'No permission to restart this server',
+    kill: 'No permission to kill this server',
+};
+
+type BaseModel = Omit<PowerModel, 'showMenu' | 'deleteDisabled' | 'showKill' | 'restartTitle'>;
 
 export function powerModel(status: string, pending: PendingPower | null, now: number, g: PowerGates): PowerModel {
+    const allowed = (a: PowerAction) => g.allow?.[a] !== false;
     const m = baseModel(status, pending, now, g);
     const deleteDisabled = !g.canDelete || g.uploadLocked;
+    const showKill = allowed('kill');
+    const killDisabled = m.killDisabled || !showKill;
+    let primary = m.primary;
+    if (primary.action && !allowed(primary.action) && !primary.disabled) {
+        primary = { ...primary, disabled: true, title: NO_PERMISSION[primary.action] };
+    }
+    const restartBlocked = !m.restartDisabled && !allowed('restart');
     return {
         ...m,
-        showMenu: m.showSecondary || !!g.canDelete,
-        menuDisabled: m.menuDisabled && deleteDisabled,
+        primary,
+        restartDisabled: m.restartDisabled || restartBlocked,
+        restartTitle: restartBlocked ? NO_PERMISSION.restart
+            : m.restartDisabled && !m.busy ? m.primary.title : 'Restart server',
+        killDisabled,
+        showKill,
+        showMenu: (m.showSecondary && showKill) || !!g.canDelete,
+        menuDisabled: (m.menuDisabled || !showKill) && deleteDisabled,
         deleteDisabled,
     };
 }

@@ -726,7 +726,11 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         ? 'Auto-Move is disabled platform-wide. An admin can enable it in Settings → Features.'
         : 'Requires gateway routing. Auto-Move is unavailable while Game Traffic is on IP:Port.';
     const tabDisabled = (perm: keyof TabPermissions) => isPendingSetup || (!isOwner && !!perms && !perms[perm]);
-    const canPower = isOwner || (perms?.power ?? false);
+    // `perms.power` is power.start alone; each other action has its own bit.
+    const powerAllow = isOwner ? undefined : {
+        start: !!perms?.power, stop: !!perms?.powerStop, restart: !!perms?.powerRestart, kill: !!perms?.powerKill,
+    };
+    const canPower = !powerAllow || Object.values(powerAllow).some(Boolean);
 
     // Tabs (path segments). When an upload is active for this server the
     // Configuration tab is locked — editing properties / JVM flags while
@@ -738,8 +742,8 @@ export default function ServerShell({ children }: { children: React.ReactNode })
         { slug: 'console', icon: 'square-terminal', label: 'Console',       disabled: tabDisabled('console') },
         { slug: 'files',   icon: 'folder-open',     label: 'Files',         disabled: tabDisabled('files') },
         { slug: 'config',  icon: 'settings',        label: 'Configuration', disabled: tabDisabled('config') || uploadLocked },
-        // Modrinth-driven mod/plugin browser.
-        { slug: 'content', icon: 'package',         label: 'Content',       disabled: tabDisabled('config') },
+        // Modrinth-driven mod/plugin browser. Its routes require mods.read, not config.read.
+        { slug: 'content', icon: 'package',         label: 'Content',       disabled: tabDisabled('mods') },
         { slug: 'network', icon: 'network',         label: 'Network',       disabled: tabDisabled('network') },
         // Players tab. RCON-driven (online list + ban/kick/op/whitelist).
         // Power-class permission since every action mutates server state.
@@ -902,6 +906,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                 pending={pendingPower[selectedServer.id] ?? null}
                                 gates={{
                                     canPower,
+                                    allow: powerAllow,
                                     uploadLocked,
                                     cooldownSeconds: powerCooldownActive ? cooldownSecondsLeft : 0,
                                     killCooldown,

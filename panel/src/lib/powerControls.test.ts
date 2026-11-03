@@ -177,3 +177,41 @@ describe('powerModel', () => {
         expect(m.primary.disabled).toBe(false);
     });
 });
+
+// Measured live: a member granted Start and Restart but not Stop or Kill was
+// offered both, and the node answered each with 403.
+describe('powerModel per-action permissions', () => {
+    const member: PowerGates = { ...open, allow: { start: true, stop: false, restart: true, kill: false } };
+
+    it('owner (no allow map) gets Stop, Restart and Force kill', () => {
+        const m = powerModel('online', null, T0, open);
+        expect(m.primary).toMatchObject({ action: 'stop', disabled: false });
+        expect(m).toMatchObject({ restartDisabled: false, showKill: true, showMenu: true, killDisabled: false });
+    });
+
+    it('member without power.stop: Stop locked with the reason, no Force kill, no menu', () => {
+        const m = powerModel('online', null, T0, member);
+        expect(m.primary).toMatchObject({ action: 'stop', disabled: true, title: 'No permission to stop this server' });
+        expect(m).toMatchObject({ restartDisabled: false, restartTitle: 'Restart server', showKill: false, showMenu: false, killDisabled: true });
+    });
+
+    it('member with power.start can start a stopped server', () => {
+        expect(powerModel('stopped', null, T0, member).primary).toMatchObject({ action: 'start', disabled: false });
+    });
+
+    it('restart not granted: Restart locked with its own reason', () => {
+        const m = powerModel('online', null, T0, { ...open, allow: { restart: false } });
+        expect(m).toMatchObject({ restartDisabled: true, restartTitle: 'No permission to restart this server' });
+        expect(m.primary.disabled).toBe(false);
+    });
+
+    it('a stop someone else sent: Force kill stays out of reach without power.kill', () => {
+        const m = powerModel('stopping', null, T0, member);
+        expect(m).toMatchObject({ busy: true, showKill: false, showMenu: false, killDisabled: true });
+    });
+
+    it('admin Delete keeps the menu even without power.kill', () => {
+        const m = powerModel('online', null, T0, { ...member, canDelete: true });
+        expect(m).toMatchObject({ showMenu: true, menuDisabled: false, showKill: false });
+    });
+});
