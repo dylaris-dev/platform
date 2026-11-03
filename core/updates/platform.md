@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.03
+
+### Features
+- Folder listings in the file browser cost the node about a third less CPU; folder sizes are
+  still shown in full. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- The installer's closing firewall hint no longer tells you to open port 25500 when the panel
+  runs behind TLS or a proxy: that port is plain HTTP. It now also lists SFTP on 25520.
+
+### Fixes
+- On ext4 hosts the node reads disk usage from the quota instead of falling back to a
+  full directory scan. `node`
+- What's New fetches the release notes from the repository's current address. `core`
+
 ## 2026.11.02.4
 
 ### Features
