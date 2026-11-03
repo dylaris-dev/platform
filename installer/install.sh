@@ -869,9 +869,17 @@ summary_done() {
   [[ ${A[tls]} == proxy ]] && say "  Proxy:      point https://${A[host]} at http://127.0.0.1:25500 (WebSocket upgrade on)."
   say "  Files:      $OUT_DIR (.env holds the secrets, mode 600)"
   say "  Data:       Docker volumes ${PROJECT}_dylaris_data, ${PROJECT}_core_data$( [[ ${A[db]} == bundled ]] && echo ", ${PROJECT}_timescaledb_data")"
-  local pp=25500; [[ ${A[tls]} == self-signed || ${A[tls]} == files ]] && pp=25443
-  say "  Firewall:   open $pp (panel), 25600-25699 (Minecraft servers, direct routing) and 25700-25799 TCP+UDP (extra ports such as voice chat); keep 25501 private."
+  # 25500 is plain HTTP and published on every interface; with TLS or a proxy
+  # in front, opening it would put the login on the network unencrypted.
+  local pp="25500 (panel)"
+  case ${A[tls]} in
+    self-signed|files) pp="25443 (panel; 25500 is plain HTTP, keep it private)" ;;
+    proxy) pp="443 on your proxy (keep 25500 private)" ;;
+  esac
+  say "  Firewall:   open $pp, 25520 (SFTP), 25600-25699 (Minecraft servers, direct routing)"
+  say "              and 25700-25799 TCP+UDP (extra ports such as voice chat); keep 25501 private."
   if [[ ${A[topology]} == swarm ]]; then
+    say "              Core's ports are published on every Swarm machine (routing mesh): apply this on each."
     say "              Between the Swarm machines only: 2377/tcp, 7946/tcp+udp, 4789/udp and IP protocol 50"
     say "              (ESP; the overlay network is encrypted). Without ESP a node on another machine cannot reach Core."
   fi

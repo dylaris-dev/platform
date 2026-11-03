@@ -330,8 +330,8 @@ func LoadConfig() (Config, error) {
 		// Platform defaults to its own public repo's raw feed (works once the repo
 		// is public + the feed is populated); gateway stays empty until the feed is
 		// cross-pushed there. Override both via env for a self-hosted mirror.
-		UpdatesURLPlatform: getEnv("UPDATES_URL_PLATFORM", "https://raw.githubusercontent.com/Bartis-Dev/dylaris-platform/main/core/updates/platform.md"),
-		UpdatesURLHosted:   getEnv("UPDATES_URL_HOSTED", "https://raw.githubusercontent.com/Bartis-Dev/dylaris-platform/main/core/updates/hosted.md"),
+		UpdatesURLPlatform: getEnv("UPDATES_URL_PLATFORM", "https://raw.githubusercontent.com/dylaris-dev/platform/main/core/updates/platform.md"),
+		UpdatesURLHosted:   getEnv("UPDATES_URL_HOSTED", "https://raw.githubusercontent.com/dylaris-dev/platform/main/core/updates/hosted.md"),
 
 		TrustedProxyCIDRs: ParseTrustedProxyCIDRs(getEnv("TRUSTED_PROXY_CIDRS", "")),
 	}

@@ -293,6 +293,22 @@ installer's overlay network is encrypted, and a firewall that drops ESP leaves
 a node on another machine unable to reach Core. Keep these ports closed to the
 internet. Every machine that joins runs the node (it is a global service).
 
+What the installer publishes, and which side of the firewall it belongs on:
+
+| Port | Published by | Open to |
+|---|---|---|
+| `25443` | core | public when the panel uses HTTPS from DYLARIS (self-signed or your own files) |
+| `25500` | core | public only for plain HTTP in a private network; with HTTPS or a reverse proxy keep it private (the proxy reaches it on `127.0.0.1`) |
+| `25501` | core | private: node to Core gRPC; nodes from the installer reach it over the Docker network |
+| `25520` | node | public if server owners use SFTP |
+| `25523` | node | your LAN only (Beam LAN fast path) |
+| `25600-25699` | game servers | public (Minecraft, direct routing), on every machine that runs a node |
+| `25700-25799` | game servers | public, TCP and UDP (extra ports such as voice chat), on every machine that runs a node |
+
+The bundled PostgreSQL and Valkey publish no port. In a Swarm, Core's ports
+use the routing mesh and answer on every machine, so apply the same rules to
+each one; the node's ports are published in host mode, on its own machine only.
+
 Moving a single-machine install to Swarm: rerun `install.sh` and choose
 several machines. It sees the running Compose install, asks, stops the node
 and its game servers, runs `docker compose down` (volumes are kept), removes
@@ -300,6 +316,23 @@ the Compose network and `docker-compose.yml`, and deploys the stack on the same
 volumes and secrets. Servers are offline for those few minutes. The reverse
 move is not automated: on a Swarm install the installer refuses the
 single-machine choice before changing anything.
+
+In detail, the move keeps the `.env` (its secrets become Docker secrets named
+`dylaris_<name>`), the volumes `dylaris_core_data`, `dylaris_dylaris_data` and,
+with the bundled database, `dylaris_timescaledb_data`, and the `valkey-acl`
+directory. It removes the game server containers (`mc_*` on the DYLARIS
+network); their files stay in `dylaris_dylaris_data`. Core, the bundled
+database and Valkey are pinned to the manager. It stops with nothing deployed
+when another container still uses the old network. Check afterwards:
+
+- `docker service ls`: core, node and the bundled services show their replicas.
+- The panel shows the node online, and every server that was running is
+  running again; start the ones that are not.
+- The game host ports (`25600-25699`, extra ports `25700-25799`) are bound on
+  the machine whose node runs the server, so a server placed on a new machine
+  needs those ports open there, and players need that machine's address.
+- The firewall: the Swarm ports above between the machines, and the published
+  ports in the table on every machine.
 
 After installing: extra ports (voice chat and the like) come from
 `25700-25799` by default, so open that range for TCP and UDP. A node uses the
@@ -898,11 +931,33 @@ docker service update --with-registry-auth --force --image ghcr.io/dylaris-dev/p
 docker compose logs -f core                            # single host
 docker service logs -f dylaris_core                    # swarm
 
-# Backups (most important: the database)
-docker compose exec timescaledb sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > dylaris-backup.sql
+# Backups (most important: the database). Custom format, as the built-in platform backup writes it
+docker compose exec -T timescaledb sh -c 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" "$POSTGRES_DB"' > dylaris-backup.dump
 ```
 
-The single quotes matter: the variables are expanded inside the container, where they are set, not on the host. Restoring the dump needs a superuser on the target database, because it contains TimescaleDB extension objects.
+The single quotes matter: the variables are expanded inside the container, where they are set, not on the host. `-T` matters too: without it the binary dump passes through a terminal and is damaged.
+
+Restore into a NEW database, never over the one Core is running on, and as a superuser, because the dump contains TimescaleDB extension objects that an ordinary role cannot recreate. The bundled image's `POSTGRES_USER` is a superuser:
+
+```bash
+docker compose exec -T timescaledb sh -c 'createdb -U "$POSTGRES_USER" dylaris_restored'
+docker compose exec -T timescaledb sh -c 'pg_restore -U "$POSTGRES_USER" --no-owner --no-acl --single-transaction -d dylaris_restored' < dylaris-backup.dump
+# Check it, then point Core at it: DB_NAME=dylaris_restored in .env, and
+docker compose up -d core
+```
+
+This is the restore Core itself runs (`--single-transaction`: either all of it applies or nothing does; never `-j`). With an external database and a non-superuser application role, restore as a superuser and then hand the database over: `ALTER DATABASE ... OWNER TO ...; REASSIGN OWNED BY ... TO ...`.
+
+### Platform backup and restore
+
+Built in, under Settings, Platform Backups. A job has a schedule (the grammar under [Backup schedules](#backup-schedules)), a selection, a destination and a retention count:
+
+- **Selection**: the platform database (`database.dump`, a `pg_dump` custom-format dump), the statistics database when one is configured (`metrics.dump`), the Core storage of published modpacks, and servers. A selected server is not copied into the bundle: the run asks that server's own backup job to run, and records the reference.
+- **Destination**: the job's backup storage, else the default backup storage (add one under Settings, Server Backups first). Bundles land under `platform-backups/<job id>/` as `.dylaris-bundle` files.
+- **Retention**: the newest N bundles of a job are kept and older ones deleted; 0 keeps everything.
+- **Encryption**: one passphrase for all jobs (Settings, Platform Backups), stored encrypted at rest. A run without it is refused. The bundle is encrypted under a key derived from the passphrase; only a two-line header (format version, creation time, source release) is readable without it. The bundle also carries the source's `CLUSTER_SECRET`, so keep the passphrase outside DYLARIS: without it a bundle cannot be opened.
+
+A bundle is restored through the panel (Settings, Platform Backups, restore card) or the API: `POST /api/platform-backups/inspect` reads a bundle's header (and its contents with the passphrase), `POST /api/platform-backups/restore` takes an uploaded bundle, `POST /api/platform-backups/runs/{id}/restore` one from its storage. The database goes into a NEW database you name, never one this Core runs on; a target that already holds tables is refused unless you confirm overwriting. The restore runs `pg_restore --clean --if-exists --no-owner --no-acl --single-transaction` with the client matching the target server. On a server with TimescaleDB the target role must be a superuser, or the restore stops with nothing written. Credentials in the restored database are re-encrypted from the bundle's `CLUSTER_SECRET` to this Core's. Core keeps running on its own database: check the result, then restart Core with the new `DB_*` values. The statistics database needs a second, empty database and its own procedure, under Backup schedules below.
 
 Server files live on the Node host under the `dylaris_data` volume; back that up alongside the database.
 
