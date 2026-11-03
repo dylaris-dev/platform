@@ -11,6 +11,18 @@
 
 import { API_URL, getAuthHeader } from '@/lib/api/core';
 import { handleUnauthorized } from '@/lib/api/session';
+import { getWailsApp, wailsAPIBase } from '@/lib/adapters/wailsBeamAdapter';
+
+// Where a stream is opened. Inside Beam the page is served by the app's asset
+// server, which hands the webview a response only once it is complete - so a
+// stream through it never arrives: the console sat on "Connecting" and the
+// graphs stayed empty. There the stream goes straight to Core, which allows the
+// webview origin for ticketed streams. The ticket is still minted through the
+// app, like every other call.
+export async function streamBase(): Promise<string> {
+    const app = getWailsApp();
+    return app ? wailsAPIBase(app) : API_URL;
+}
 
 /**
  * Mint an SSE ticket and open an EventSource for `path` (e.g.
@@ -35,7 +47,7 @@ export async function createEventSource(path: string): Promise<EventSource> {
         throw new Error('sse-ticket mint returned no ticket');
     }
     const sep = path.includes('?') ? '&' : '?';
-    return new EventSource(`${API_URL}${path}${sep}ticket=${encodeURIComponent(ticket)}`);
+    return new EventSource(`${await streamBase()}${path}${sep}ticket=${encodeURIComponent(ticket)}`);
 }
 
 const RETRY_START_MS = 1000;

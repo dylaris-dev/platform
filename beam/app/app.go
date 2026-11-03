@@ -174,6 +174,11 @@ func settingsPath() string {
 	return filepath.Join(dir, "dylaris-beam", "config.json")
 }
 
+// webviewDataPath is the WebView2 profile folder, beside config.json.
+func webviewDataPath() string {
+	return filepath.Join(filepath.Dir(settingsPath()), "webview")
+}
+
 func loadSettings() userSettings {
 	var s userSettings
 	data, err := os.ReadFile(settingsPath())
@@ -1631,6 +1636,13 @@ func (a *App) SwitchPanel(token, panelURL string) error {
 	if !a.checkShellToken(token) {
 		return fmt.Errorf("unauthorized")
 	}
+	return switchToSavedPanel(panelURL)
+}
+
+// switchToSavedPanel makes a panel from the saved list the active one. Anything
+// not in the list is refused, which is what lets the launcher route do without
+// the shell token.
+func switchToSavedPanel(panelURL string) error {
 	target := strings.TrimRight(strings.TrimSpace(panelURL), "/")
 	s := loadSettings()
 	for _, p := range s.panelList() {

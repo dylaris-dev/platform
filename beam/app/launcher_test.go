@@ -11,7 +11,7 @@ import (
 // dangerous.
 func TestLauncherTag(t *testing.T) {
 	t.Run("it is stamped with the page's nonce", func(t *testing.T) {
-		got := launcherTag("abc123", false)
+		got := launcherTag("abc123", launcherState{})
 		if !strings.HasPrefix(got, `<script nonce="abc123">`) {
 			t.Errorf("un-nonced under a strict policy the browser drops it: %.60s", got)
 		}
@@ -21,13 +21,13 @@ func TestLauncherTag(t *testing.T) {
 	// a nonce attribute with an empty value would be worse than none: it opts
 	// the tag into nonce checking that nothing can satisfy.
 	t.Run("no nonce means no attribute", func(t *testing.T) {
-		if got := launcherTag("", false); !strings.HasPrefix(got, "<script>") {
+		if got := launcherTag("", launcherState{}); !strings.HasPrefix(got, "<script>") {
 			t.Errorf("an empty nonce was stamped anyway: %.60s", got)
 		}
 	})
 
 	t.Run("it opens the app-shell settings route", func(t *testing.T) {
-		if got := launcherTag("", false); !strings.Contains(got, beamSettingsRoute) {
+		if got := launcherTag("", launcherState{}); !strings.Contains(got, beamSettingsRoute) {
 			t.Error("the button navigates nowhere")
 		}
 	})
@@ -76,15 +76,15 @@ func TestTheLauncherIsInjectedIntoProxiedPages(t *testing.T) {
 // panel, so it has to be stamped into the tag rather than fetched by the script -
 // which runs inside somebody else's application and must not make calls.
 func TestLauncherStampsTheUpdateFlag(t *testing.T) {
-	if got := launcherTag("", true); !strings.Contains(got, "var hasUpdate = true") {
+	if got := launcherTag("", launcherState{Update: "9.9.9"}); !strings.Contains(got, "var hasUpdate = true") {
 		t.Error("an available update was not stamped into the launcher")
 	}
-	if got := launcherTag("", false); !strings.Contains(got, "var hasUpdate = false") {
+	if got := launcherTag("", launcherState{}); !strings.Contains(got, "var hasUpdate = false") {
 		t.Error("the flag must always be a literal, or the script has an undefined name in it")
 	}
 	// The placeholder must never survive: it is not valid JavaScript, so a
 	// missed substitution takes the whole button out rather than degrading.
-	if got := launcherTag("", true); strings.Contains(got, "__HAS_UPDATE__") {
+	if got := launcherTag("", launcherState{Update: "9.9.9"}); strings.Contains(got, "__HAS_UPDATE__") {
 		t.Error("the placeholder was left in the script")
 	}
 }
@@ -96,7 +96,7 @@ func TestLauncherStampsTheUpdateFlag(t *testing.T) {
 // the one corner where a stray click costs something. The default is the right
 // edge now, and it stays there through a resize until the user drags it.
 func TestLauncherDefaultsToTheBottomRight(t *testing.T) {
-	got := launcherTag("", false)
+	got := launcherTag("", launcherState{})
 	if !strings.Contains(got, "var DEFAULT_F = 1") {
 		t.Error("the default is not the right edge")
 	}
@@ -112,7 +112,7 @@ func TestLauncherDefaultsToTheBottomRight(t *testing.T) {
 // a user could pick that stayed where they put it. A fraction of the travel
 // keeps right at the right and middle in the middle at every window size.
 func TestLauncherRemembersAFractionNotPixels(t *testing.T) {
-	got := launcherTag("", false)
+	got := launcherTag("", launcherState{})
 	if strings.Contains(got, "parseInt(localStorage.getItem(KEY)") {
 		t.Error("the position is still read as an integer pixel offset")
 	}
@@ -145,7 +145,7 @@ func TestLauncherRemembersAFractionNotPixels(t *testing.T) {
 // inside body, the only way this node can really disappear, reached the observer
 // never, and the button stayed gone until a full page load.
 func TestLauncherReattachWatchesTheSubtree(t *testing.T) {
-	got := launcherTag("", false)
+	got := launcherTag("", launcherState{})
 	if strings.Contains(got, "subtree: false") {
 		t.Error("the observer still ignores everything inside body, where the button is")
 	}
@@ -167,7 +167,7 @@ func TestLauncherReattachWatchesTheSubtree(t *testing.T) {
 // takes the window white. The cap turns that back into a missing button, which
 // is a bug rather than a hang.
 func TestLauncherReattachIsBounded(t *testing.T) {
-	got := launcherTag("", false)
+	got := launcherTag("", launcherState{})
 	if !strings.Contains(got, "MAX_ATTACHES") {
 		t.Fatal("the re-attach has no ceiling; a page that removes the node loops forever")
 	}

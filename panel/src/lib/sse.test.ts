@@ -205,3 +205,22 @@ describe('subscribeEventSource pauseWhenHidden', () => {
         sub();
     });
 });
+
+// Beam's asset server cannot pass a stream through, so inside the app the
+// stream has to be opened against Core itself.
+describe('streamBase', () => {
+    afterEach(() => { vi.unstubAllGlobals(); });
+
+    it('goes straight to the panel Core inside Beam', async () => {
+        const { streamBase } = await import('./sse');
+        vi.stubGlobal('window', { go: { main: { App: { GetPanelURL: async () => 'https://panel.example.com/' } } }, location: { origin: 'http://wails.localhost' } });
+        expect(await streamBase()).toBe('https://panel.example.com/api');
+    });
+
+    it('stays on the API base in a browser', async () => {
+        const { streamBase } = await import('./sse');
+        const { API_URL } = await import('./api/core');
+        vi.stubGlobal('window', { location: { origin: 'https://panel.example.com' } });
+        expect(await streamBase()).toBe(API_URL);
+    });
+});

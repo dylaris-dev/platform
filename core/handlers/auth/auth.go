@@ -290,6 +290,16 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 					username, ticketFp, ticketSID, legacy := parseSSETicket(stored)
 					w.Header().Set("Referrer-Policy", "no-referrer")
 					w.Header().Set("Cache-Control", "no-store")
+					// Beam opens these streams straight against Core: its asset
+					// server hands the webview a response only once it is
+					// complete, so a stream proxied through it never arrives.
+					// That makes them cross-origin reads, allowed for the
+					// webview's origin only and without credentials - the ticket
+					// in the URL is the whole authorization, as it already was.
+					if origin := r.Header.Get("Origin"); origin != "" && isWailsWebviewOrigin(origin) {
+						w.Header().Set("Access-Control-Allow-Origin", origin)
+						w.Header().Add("Vary", "Origin")
+					}
 					// Checked before the slide: a stream reconnecting every few
 					// minutes kept a signed-out session's ticket alive for good.
 					if sessionRevoked(r.Context(), h.d.Store, h.d.Redis, ticketSID) {

@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.03.4
+
+### Features
+- Beam app 0.9.15 checks for updates at start and every full hour and asks in a popup, and
+  switches between saved panels from a button beside its settings button. `panel`
+- The server audit log shows new entries as they are written, without a reload. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Console, CPU and memory graphs and live updates work in the Beam app: streams now go to Core
+  directly, which allows the Beam origin on ticketed streams. `core` `panel`
+- Beam app 0.9.15 keeps its web profile in one fixed folder, so a renamed download no longer
+  signs the user out, and the panel asks Core before showing the login form. `panel`
+- Favorites and Help left the module bar; their icons on the right remain. `panel`
+
 ## 2026.11.03.3
 
 ### Features

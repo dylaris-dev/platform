@@ -128,20 +128,20 @@ export default function DownloadManagerWidget() {
                                 <button
                                     type="button"
                                     onClick={downloadStore.clearFinished}
-                                    className="text-(--base-06) hover:text-(--base-09) active:text-(--base-07) p-1 rounded"
+                                    className="text-(--base-06) hover:text-(--base-09) active:text-(--base-07) hover:bg-(--base-02) active:bg-(--base-03) focus-visible:outline-2 focus-visible:outline-(--accent) p-1.5 rounded-md transition-colors"
                                     title="Clear finished downloads"
                                     aria-label="Clear finished downloads"
                                 >
-                                    <Trash2 size={11} />
+                                    <Trash2 size={16} />
                                 </button>
                             )}
                             <button
                                 type="button"
                                 onClick={() => { setOpen(false); buttonRef.current?.focus(); }}
-                                className="text-(--base-06) hover:text-(--base-09) active:text-(--base-07) p-1 rounded"
+                                className="text-(--base-06) hover:text-(--base-09) active:text-(--base-07) hover:bg-(--base-02) active:bg-(--base-03) focus-visible:outline-2 focus-visible:outline-(--accent) p-1.5 rounded-md transition-colors"
                                 aria-label="Close"
                             >
-                                <X size={12} />
+                                <X size={16} />
                             </button>
                         </div>
                     </div>
@@ -201,40 +201,40 @@ function DownloadRow({ entry: e, now, revealable, cancellable }: { entry: Downlo
                 <div className="min-w-0 flex-1 text-sm text-(--base-09) truncate" title={e.savePath ?? e.filename}>
                     {e.filename}
                 </div>
-                <div className="shrink-0 flex items-center gap-1">
-                    {e.state === 'done' && <CircleCheck size={14} className="text-(--success-light)" aria-hidden />}
-                    {e.state === 'failed' && <CircleAlert size={14} className="text-(--error-light)" aria-hidden />}
+                <div className="shrink-0 flex items-center gap-1.5">
+                    {e.state === 'done' && <CircleCheck size={16} className="text-(--success-light)" aria-hidden />}
+                    {e.state === 'failed' && <CircleAlert size={16} className="text-(--error-light)" aria-hidden />}
                     {cancellable && (
                         <button
                             type="button"
                             onClick={() => downloadStore.cancel(e.id)}
-                            className="text-(--base-06) hover:text-(--error-light) active:text-(--base-07) p-1 rounded"
+                            className="text-(--base-06) hover:text-(--error-light) active:text-(--base-07) hover:bg-(--base-02) active:bg-(--base-03) focus-visible:outline-2 focus-visible:outline-(--accent) p-1.5 rounded-md transition-colors"
                             title="Cancel download"
                             aria-label={`Cancel download of ${e.filename}`}
                         >
-                            <CircleStop size={12} />
+                            <CircleStop size={16} />
                         </button>
                     )}
                     {revealable && (
                         <button
                             type="button"
                             onClick={reveal}
-                            className="text-(--base-06) hover:text-(--base-09) active:text-(--base-07) p-1 rounded"
+                            className="text-(--base-06) hover:text-(--base-09) active:text-(--base-07) hover:bg-(--base-02) active:bg-(--base-03) focus-visible:outline-2 focus-visible:outline-(--accent) p-1.5 rounded-md transition-colors"
                             title="Show in folder"
                             aria-label={`Show ${e.filename} in folder`}
                         >
-                            <FolderOpen size={12} />
+                            <FolderOpen size={16} />
                         </button>
                     )}
                     {!running && (
                         <button
                             type="button"
                             onClick={() => downloadStore.remove(e.id)}
-                            className="text-(--base-06) hover:text-(--base-09) active:text-(--base-07) p-1 rounded"
+                            className="text-(--base-06) hover:text-(--base-09) active:text-(--base-07) hover:bg-(--base-02) active:bg-(--base-03) focus-visible:outline-2 focus-visible:outline-(--accent) p-1.5 rounded-md transition-colors"
                             title="Dismiss"
                             aria-label={`Dismiss ${e.filename}`}
                         >
-                            <X size={12} />
+                            <X size={16} />
                         </button>
                     )}
                 </div>

@@ -6,7 +6,7 @@
 // fallback shown when the configured Panel can't be reached, and hosts the
 // Phase 3 self-update flow (mandatory + optional).
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 type UpdateInfo = {
   current: string;
@@ -110,6 +110,17 @@ export default function App() {
   const [editingUrl, setEditingUrl] = useState('');
 
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  // The launcher's update prompt lands here with ?update=1. The click on
+  // "Update now" still has to happen on this page: only the shell may start the
+  // self-update, so the prompt can bring the user here but not press the button.
+  const updateButtonRef = useRef<HTMLButtonElement>(null);
+  const cameForUpdate = new URLSearchParams(window.location.search).has('update');
+  useEffect(() => {
+    if (cameForUpdate && update?.updateAvailable) {
+      updateButtonRef.current?.scrollIntoView({ block: 'center' });
+      updateButtonRef.current?.focus();
+    }
+  }, [cameForUpdate, update?.updateAvailable]);
   const [gate, setGate] = useState<UpdateGate | null>(null);
 
   // Self-update flow state (Phase 3). updateState is one of the update:status
@@ -409,7 +420,7 @@ export default function App() {
           </div>
           {!updating && (
             <div className="settings-actions">
-              <button type="button" className="btn btn-primary" onClick={startUpdate}>
+              <button type="button" className="btn btn-primary" ref={updateButtonRef} onClick={startUpdate}>
                 Update now
               </button>
             </div>

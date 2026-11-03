@@ -36,6 +36,7 @@ import { Skeleton, SkeletonCircle, SkeletonText } from '@/components/Skeleton';
 import { hasSession, purgeLegacyTokens } from '@/lib/api/sessionState';
 import { followSignOuts, markSessionSeen } from '@/lib/api/session';
 import { getProfile } from '@/lib/api/auth';
+import { isWails } from '@/lib/adapters/wailsBeamAdapter';
 import PlayerHead from '@/components/PlayerHead';
 
 
@@ -436,7 +437,11 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
             // The session cookie is HttpOnly, so this asks Core's readable
             // companion flag instead. A hint, never authorization: every request
             // below is still decided by the server.
-            if (!hasSession()) {
+            // Inside Beam the hint lives in the webview's cookie store, which a
+            // fresh webview profile does not have, while the session itself sits
+            // in the app and is still good. Ask Core once there before sending
+            // a signed-in user to the login form.
+            if (!hasSession() && !(isWails() && await getProfile().then(() => true, () => false))) {
                 const target = window.location.pathname + window.location.search;
                 sessionStorage.setItem('postLoginRedirect', target);
                 router.push('/login');

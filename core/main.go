@@ -440,6 +440,7 @@ func main() {
 	// without polling. Construction is cheap — wired before any handler so
 	// every code path can call h.state.Events.Publish unconditionally.
 	appState.Events = services.NewSystemEventsPublisher(redisClient)
+	audit.Events = appState.Events
 	appState.CoreStorage.Events = appState.Events
 
 	// In-panel blob storage migration (ticket-attachments, ticket-backups,

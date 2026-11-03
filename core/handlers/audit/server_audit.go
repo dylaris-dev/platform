@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
+	"dylaris-core/services"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -67,6 +69,10 @@ func LogServer(st store.Store, r *http.Request, serverID int, eventType string, 
 
 // LogServerAs is LogServer with the acting key named explicitly (nil
 // for none). It returns the new row's id, or 0 when nothing was written.
+// Events tells open audit views that a row was written, so they reload instead
+// of waiting for the next visit. Set in main; nil (tests) publishes nothing.
+var Events *services.SystemEventsPublisher
+
 func LogServerAs(st store.Store, r *http.Request, key *models.APIKey, serverID int, eventType string, actorID, targetID string, metadata map[string]interface{}) int64 {
 	if st == nil || serverID <= 0 {
 		return 0
@@ -111,6 +117,11 @@ func LogServerAs(st store.Store, r *http.Request, key *models.APIKey, serverID i
 		log.Printf("server-audit: insert %s for %d: %v", eventType, serverID, err)
 		return 0
 	}
+	ctx := context.Background()
+	if r != nil {
+		ctx = r.Context()
+	}
+	Events.Publish(ctx, "server_audit.changed", map[string]interface{}{"serverId": serverID})
 	// This handler has said what happened, in its own words and with its own
 	// metadata. RecordServerWrite then stays quiet rather than adding a second,
 	// blunter row for the same action.

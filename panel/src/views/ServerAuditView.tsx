@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { FileText, Filter, Loader2, ShieldCheck, ShieldOff, AlertTriangle, ChevronLeft, ChevronRight, ChevronDown, Copy, Check, X } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
+import { systemEvents } from '@/lib/systemEvents';
 import { listServerAudit, getServerAuditStatus, setServerAuditForce, ServerAuditEvent, ServerAuditState } from '@/lib/api/serverAudit';
 import { Skeleton, SkeletonText, SkeletonList } from '@/components/Skeleton';
 import { useRouteId } from '@/lib/routeParams';
@@ -90,6 +91,33 @@ export default function ServerAuditView() {
     }, [serverId, filter, events]);
 
     useEffect(() => { reload(); }, [reload]);
+
+    // Core announces every row it writes. The newest page is fetched again and
+    // only what is new goes on top, so pages already loaded and an open entry
+    // stay where they are.
+    const eventsRef = useRef(events);
+    eventsRef.current = events;
+    useEffect(() => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const refreshHead = async () => {
+            const seq = reqSeq.current;
+            const e = await listServerAudit(serverId, { eventType: filter || undefined, limit: PAGE_SIZE, offset: 0 });
+            if (seq !== reqSeq.current || !e.success) return;
+            const seen = new Set(eventsRef.current.map(x => x.id));
+            const fresh = ((e.events || []) as ServerAuditEvent[]).filter(x => !seen.has(x.id));
+            setTotal(e.total || 0);
+            if (!fresh.length) return;
+            setEvents(prev => [...fresh, ...prev]);
+            setOpenIndex(i => i === null ? null : i + fresh.length);
+        };
+        const unsub = systemEvents.on('server_audit.changed', evt => {
+            if ((evt.payload as { serverId?: number } | undefined)?.serverId !== serverId) return;
+            // One action can write several rows; one fetch covers them.
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => { timer = null; void refreshHead(); }, 400);
+        });
+        return () => { unsub(); if (timer) clearTimeout(timer); };
+    }, [serverId, filter]);
 
     const step = async (delta: -1 | 1) => {
         if (openIndex === null) return;

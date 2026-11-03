@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.03.4
+
+### Features
+- Beam app 0.9.15 checks for updates at start and every full hour and asks in a popup, and
+  switches between saved panels from a button beside its settings button.
+- The server audit log shows new entries as they are written, without a reload.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Console, CPU and memory graphs and live updates now work inside the Beam app.
+- Beam app 0.9.15 no longer signs you out after an update that was downloaded under a new
+  file name.
+- Favorites and Help left the module bar; their icons on the right remain.
+
 ## 2026.11.03.3
 
 ### Features

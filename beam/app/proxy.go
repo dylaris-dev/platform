@@ -173,6 +173,12 @@ func injectWailsRuntime(html []byte, nonce string) []byte {
 // under /wails/) is reverse-proxied to the configured Panel.
 const beamSettingsRoute = "/__beam/"
 
+// beamSwitchRoute switches to another SAVED panel and reloads. It is what the
+// launcher's panel menu navigates to. No token: the page could only ever ask for
+// a panel the user already put in the list, which is the same thing the menu
+// offers, and nothing about a session changes.
+const beamSwitchRoute = "/__beam/switch"
+
 // resolvePanelTarget parses the configured Panel URL into a proxy
 // target. Read straight from the persisted settings on every call -
 // it's a tiny local file, and keeping no cached state means a URL
@@ -291,7 +297,7 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 				}
 				// The only route into Beam's own settings while the panel is
 				// reachable; see launcher.go.
-				body = injectBeforeBodyEnd(body, launcherTag(nonce, app.updates.get()))
+				body = injectBeforeBodyEnd(body, launcherTag(nonce, app.launcherState()))
 				resp.Body = io.NopCloser(bytes.NewReader(body))
 				resp.ContentLength = int64(len(body))
 				resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
@@ -315,6 +321,12 @@ func newPanelMiddleware(app *App, next http.Handler) http.Handler {
 			// Normalize to the trailing-slash form so the settings
 			// page's relative ./assets/* references resolve correctly.
 			http.Redirect(w, r, beamSettingsRoute, http.StatusFound)
+		case r.URL.Path == beamSwitchRoute:
+			if err := switchToSavedPanel(r.URL.Query().Get("to")); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			http.Redirect(w, r, "/", http.StatusFound)
 		case r.URL.Path == beamSettingsRoute:
 			// The settings-page HTML entry point. Served through the Wails
 			// asset server (which auto-injects /wails/runtime.js +

@@ -85,6 +85,12 @@ func main() {
 			// Show the branded titlebar icon. Windows-window-chrome only; does
 			// not touch the BC3-patched webview dispatcher or asset server.
 			DisableWindowIcon: false,
+			// A fixed profile folder. WebView2 otherwise names it after the
+			// executable, and a downloaded update arrives as "DylarisBeam(2).exe":
+			// every rename started an empty profile, without the signed-in hint,
+			// and the panel showed its login form to a user whose session the
+			// app still held.
+			WebviewUserDataPath: webviewDataPath(),
 		},
 		OnStartup: app.startup,
 		Bind: []interface{}{

@@ -159,3 +159,31 @@ func TestStreamsEndBeforeTheirTicket(t *testing.T) {
 		t.Fatalf("httpx.SSERetryLine = %q", httpx.SSERetryLine)
 	}
 }
+
+// Beam reads the streams cross-origin, because its asset server cannot pass a
+// stream through. The allowance is for the webview origin on a valid ticket
+// only: any other origin, or no ticket, gets no CORS header to read with.
+func TestSSETicketAllowsOnlyTheBeamOrigin(t *testing.T) {
+	user := &models.User{ID: "u1", Username: "alice", Password: "hash-1"}
+	h, _ := ticketFixture(t, user)
+	tk := mintTicket(t, h, "alice")
+
+	get := func(path, origin string) string {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Origin", origin)
+		rec := httptest.NewRecorder()
+		h.AuthMiddleware(func(http.ResponseWriter, *http.Request) {})(rec, req)
+		return rec.Header().Get("Access-Control-Allow-Origin")
+	}
+	for _, origin := range []string{"http://wails.localhost", "wails://wails"} {
+		if got := get("/api/system/events?ticket="+tk, origin); got != origin {
+			t.Errorf("%s: Allow-Origin = %q, want the webview origin", origin, got)
+		}
+	}
+	if got := get("/api/system/events?ticket="+tk, "https://evil.example"); got != "" {
+		t.Errorf("a foreign origin was allowed: %q", got)
+	}
+	if got := get("/api/system/events?ticket=bogus", "http://wails.localhost"); got != "" {
+		t.Errorf("an invalid ticket still got a CORS allowance: %q", got)
+	}
+}
