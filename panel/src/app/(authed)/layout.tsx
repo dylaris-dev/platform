@@ -22,6 +22,8 @@ import { ReauthDialogRoot } from '@/components/ui/ReauthDialog';
 import { ToastRoot } from '@/components/ui/Toast';
 import GuardedLink from '@/components/GuardedLink';
 import UploadManagerWidget from '@/components/UploadManagerWidget';
+import DownloadManagerWidget, { downloadStore } from '@/components/DownloadManagerWidget';
+import { DownloadTrackerContext } from '@dylaris/ui-filebrowser';
 import ModInstallWidget from '@/components/ModInstallWidget';
 import BeamDownloadButton from '@/components/BeamDownloadButton';
 import LegalFooter from '@/components/LegalFooter';
@@ -152,6 +154,7 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
                 <Navbar brand={<SidebarBrand />}>
                     <UtilityCluster>
                     <BeamDownloadButton />
+                    <DownloadManagerWidget />
                     <UploadManagerWidget />
                     <ModInstallWidget />
                     {/* UpdatesBell is for everyone now: an admin sees the platform notes and
@@ -496,7 +499,11 @@ export default function AuthedLayout({ children }: { children: React.ReactNode }
                 <UploadManagerProvider>
                     <UploadManagerBridge />
                     <ModInstallProvider>
-                        <AuthedShell>{children}</AuthedShell>
+                        {/* Downloads from the file browser go to the header list,
+                            so they keep running across page changes. */}
+                        <DownloadTrackerContext.Provider value={downloadStore}>
+                            <AuthedShell>{children}</AuthedShell>
+                        </DownloadTrackerContext.Provider>
                     </ModInstallProvider>
                 </UploadManagerProvider>
             </UnsavedChangesProvider>

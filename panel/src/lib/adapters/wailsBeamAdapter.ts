@@ -7,7 +7,7 @@
 // `const adapter = useMemo(() => createBeamAdapter(...))` call and never
 // have to know which transport is active.
 
-import type { FileBrowserAdapter, FileEntry } from '@dylaris/ui-filebrowser';
+import type { FileBrowserAdapter, FileEntry, DownloadProgressFn } from '@dylaris/ui-filebrowser';
 import { uploadFiles as apiUploadFiles, getUserLimits as apiGetUserLimits } from '@/lib/api';
 import { isFatalBeamUploadError, cleanBeamGrpcMessage } from './beamUploadErrors';
 import { devLog } from '@/lib/devLog';
@@ -77,7 +77,9 @@ export interface WailsAppBindings {
     CopyFile(srcPath: string, dstPath: string, serverUUID: string): Promise<void>;
     DownloadFile(path: string, serverUUID: string, isDir: boolean): Promise<void>;
     SelectiveDownload(basePath: string, selected: string[], selectAll: boolean, serverUUID: string): Promise<void>;
-    RevealInExplorer?(localPath: string): Promise<void>;
+    // Takes no path on purpose (app.go): it opens the folder of the LAST
+    // download the app itself saved, never a path the page names.
+    RevealInExplorer?(): Promise<void>;
     // Chunked upload: open a stream, send N chunks (base64-encoded
     // bytes), close. Each call references an opaque uploadID minted
     // by the JS side. Optional on the typing because older app builds
@@ -107,20 +109,71 @@ declare global {
 // "0 B" for the whole transfer of a 36 GB world while the bytes were
 // arriving. name is the file the user picked in the save dialog; an app
 // build that does not send it leaves the browser's own guess in place.
+//
+// Several downloads can run at once, and every event reaches one shared
+// listener, so each is routed to its call. A current app tags every event
+// with `path`, the save path, unique per download: a call takes the first
+// path no other call holds (save dialogs are modal, so calls start one at a
+// time), then gets only that path's events. An older app sends no path; its
+// events go to the most recently started call.
+type NativeSink = { path?: string; onProgress: DownloadProgressFn };
+const nativeSinks: NativeSink[] = [];
+// Paths of just-finished calls: a late event of one must not be taken as the
+// first event of the next download. Only for a moment, because downloading the
+// same file to the same place again is ordinary, and that call needs the path.
+const retiredPaths = new Set<string>();
+let nativeOff: (() => void) | undefined;
+
+// routeNativeProgress picks the call an event belongs to, claiming its path on
+// first sight. Exported for the tests.
+export function routeNativeProgress(sinks: NativeSink[], path: string | undefined, retired: Set<string>): NativeSink | undefined {
+    if (!path) return sinks[sinks.length - 1];
+    const owner = sinks.find(s => s.path === path);
+    if (owner || retired.has(path)) return owner;
+    for (let i = sinks.length - 1; i >= 0; i--) {
+        if (sinks[i].path === undefined) {
+            sinks[i].path = path;
+            return sinks[i];
+        }
+    }
+    return undefined;
+}
+
+function dispatchNativeProgress(data: unknown) {
+    const d = (data ?? {}) as { loaded?: number; total?: number; name?: string; path?: string };
+    const path = typeof d.path === 'string' && d.path ? d.path : undefined;
+    routeNativeProgress(nativeSinks, path, retiredPaths)?.onProgress(
+        Number(d.loaded) || 0,
+        Number(d.total) || 0,
+        typeof d.name === 'string' && d.name ? d.name : undefined,
+        path,
+    );
+}
+
 export async function withNativeProgress(
-    onProgress: ((loaded: number, total: number, filename?: string) => void) | undefined,
+    onProgress: DownloadProgressFn | undefined,
     run: () => Promise<void>,
 ): Promise<void> {
-    const off = onProgress && typeof window.runtime?.EventsOn === 'function'
-        ? window.runtime.EventsOn('download:progress', (data) => {
-            const d = (data ?? {}) as { loaded?: number; total?: number; name?: string };
-            onProgress(Number(d.loaded) || 0, Number(d.total) || 0, typeof d.name === 'string' && d.name ? d.name : undefined);
-        })
-        : undefined;
+    const sink: NativeSink | undefined = onProgress && typeof window.runtime?.EventsOn === 'function' ? { onProgress } : undefined;
+    if (sink) {
+        nativeSinks.push(sink);
+        nativeOff ??= window.runtime!.EventsOn!('download:progress', dispatchNativeProgress);
+    }
     try {
         await run();
     } finally {
-        off?.();
+        if (sink) {
+            nativeSinks.splice(nativeSinks.indexOf(sink), 1);
+            const done = sink.path;
+            if (done) {
+                retiredPaths.add(done);
+                setTimeout(() => retiredPaths.delete(done), 1000);
+            }
+            if (nativeSinks.length === 0) {
+                nativeOff?.();
+                nativeOff = undefined;
+            }
+        }
     }
 }
 

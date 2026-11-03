@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { BeamConnectionMode } from './connectionMode';
+import type { DownloadProgressFn } from './downloadTracker';
 
 export interface FileEntry {
   name: string;
@@ -29,9 +30,10 @@ export interface FileBrowserAdapter {
     mergeConflict?: string,
     serverUuid?: string
   ): Promise<{ success: boolean; message?: string }>;
-  // onProgress may name the file: a native save dialog lets the user pick one.
-  downloadFile(path: string, serverUuid?: string, isDir?: boolean, onProgress?: (loaded: number, total: number, filename?: string) => void): Promise<void> | void;
-  selectiveDownload(basePath: string, selected: string[], selectAll: boolean, serverUuid?: string, onProgress?: (loaded: number, total: number, filename?: string) => void): Promise<void> | void;
+  // onProgress may name the file: a native save dialog lets the user pick one,
+  // and may say where it was saved.
+  downloadFile(path: string, serverUuid?: string, isDir?: boolean, onProgress?: DownloadProgressFn): Promise<void> | void;
+  selectiveDownload(basePath: string, selected: string[], selectAll: boolean, serverUuid?: string, onProgress?: DownloadProgressFn): Promise<void> | void;
   getUserLimits(): Promise<{ success: boolean; uploadLimit: number; downloadLimit: number }>;
 }
 

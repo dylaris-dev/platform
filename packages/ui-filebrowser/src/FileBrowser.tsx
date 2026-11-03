@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, useContext, lazy, Suspense } from 'react';
 import JSZip from 'jszip';
 import { Folder, FileText, File as FileIcon, Search, Upload, Plus, CornerDownLeft, ExternalLink, FilePen, Pencil, Copy, Download, Trash2, Check, X, ArrowUp, ArrowDown } from 'lucide-react';
 import type { FileEntry, FileBrowserProps } from './types';
@@ -10,6 +10,7 @@ import { beamConnectionModeMeta } from './connectionMode';
 import Toast from './Toast';
 import Breadcrumbs from './Breadcrumbs';
 import DownloadProgress from './DownloadProgress';
+import { DownloadTrackerContext, type DownloadProgressFn } from './downloadTracker';
 import SelectiveDownloadModal from './SelectiveDownloadModal';
 import { useSelectionTree } from './useSelectionTree';
 import { selectedPaths } from './selection';
@@ -83,6 +84,40 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
 
   // Download progress
   const [downloadProgress, setDownloadProgress] = useState<{ filename: string; loaded: number; total: number } | null>(null);
+  // A host with a global download manager takes every download, so several
+  // can run at once and survive leaving this page. Without one, the browser
+  // keeps its own single-flight card.
+  const downloadTracker = useContext(DownloadTrackerContext);
+  const downloadBusy = !downloadTracker && !!downloadProgress;
+  // With the manager, only the SAME target is single-flight, so a double-click
+  // cannot start one file twice.
+  const downloadsInFlight = useRef(new Set<string>());
+
+  // Resolves true when the file arrived.
+  const runDownload = async (key: string, filename: string, total: number, run: (onProgress: DownloadProgressFn) => Promise<void> | void): Promise<boolean> => {
+    if (downloadTracker) {
+      if (downloadsInFlight.current.has(key)) return false;
+      downloadsInFlight.current.add(key);
+      try {
+        return await downloadTracker.track(filename, total, run);
+      } finally {
+        downloadsInFlight.current.delete(key);
+      }
+    }
+    if (downloadProgress) return false;
+    setDownloadProgress({ filename, loaded: 0, total });
+    try {
+      await run((loaded, total, name) =>
+        setDownloadProgress(prev => prev ? { ...prev, filename: name || prev.filename, loaded, total: total || prev.total } : null));
+      return true;
+    } catch (err) {
+      console.error('Download failed:', err);
+      showToast('Download failed.', 'error');
+      return false;
+    } finally {
+      setDownloadProgress(null);
+    }
+  };
 
   // Selective download popup
   const [selectiveDownloadTarget, setSelectiveDownloadTarget] = useState<FileEntry | null>(null);
@@ -157,20 +192,11 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
     const folderName = selectiveDownloadTarget.name;
     const basePath = currentPath ? `${currentPath}/${folderName}` : folderName;
     const filename = `${folderName}.zip`;
-    setDownloadProgress({ filename, loaded: 0, total: 0 });
-    try {
-      const onProgress = (loaded: number, total: number, filename?: string) =>
-        setDownloadProgress(prev => prev ? { ...prev, filename: filename || prev.filename, loaded, total: total || prev.total } : null);
-      if (selective.selectAll) {
-        await adapter.selectiveDownload(basePath, [], true, serverUuid, onProgress);
-      } else {
-        await adapter.selectiveDownload(basePath, selectedPaths(selective.tree, selective.checked, false), false, serverUuid, onProgress);
-      }
-    } catch (err) {
-      console.error('Selective download failed:', err);
-      showToast('Download failed.', 'error');
-    }
-    setDownloadProgress(null);
+    // Read now: the modal state is reused by the next folder while this runs.
+    const picked = selective.selectAll ? [] : selectedPaths(selective.tree, selective.checked, false);
+    const all = selective.selectAll;
+    await runDownload(`zip:${basePath}`, filename, 0, onProgress =>
+      adapter.selectiveDownload(basePath, picked, all, serverUuid, onProgress));
     setSelectiveDownloading(false);
   };
 
@@ -206,19 +232,11 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
   // endpoint (base_path = current folder, selected = checked names). Selection
   // is only cleared on success so a failed transfer can be retried.
   const downloadSelectedAsZip = async () => {
-    if (selected.size === 0 || downloadProgress) return;
+    if (selected.size === 0 || downloadBusy) return;
     const names = Array.from(selected);
-    setDownloadProgress({ filename: 'selection.zip', loaded: 0, total: 0 });
-    try {
-      const onProgress = (loaded: number, total: number, filename?: string) =>
-        setDownloadProgress(prev => prev ? { ...prev, filename: filename || prev.filename, loaded, total: total || prev.total } : null);
-      await adapter.selectiveDownload(currentPath, names, false, serverUuid, onProgress);
-      setSelected(new Set());
-    } catch (err) {
-      console.error('Zip download failed:', err);
-      showToast('Download failed.', 'error');
-    }
-    setDownloadProgress(null);
+    const ok = await runDownload(`sel:${currentPath}:${names.join('/')}`, 'selection.zip', 0, onProgress =>
+      adapter.selectiveDownload(currentPath, names, false, serverUuid, onProgress));
+    if (ok) setSelected(new Set());
   };
 
   useEffect(() => {
@@ -886,7 +904,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
             <button onClick={() => setSelected(new Set())} className="btn btn-secondary btn-sm">Clear</button>
             <button
               onClick={downloadSelectedAsZip}
-              disabled={!!downloadProgress}
+              disabled={downloadBusy}
               className="btn btn-primary btn-sm disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Download size={14} /> Download as ZIP
@@ -936,12 +954,12 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
               <button title="Copy" disabled={picking} onClick={(e) => { e.stopPropagation(); if (blockReadOnly()) return; setActionTarget(file); setNewName(getCopyName(file.name, file.is_dir, files)); setPopupMode('copy'); setPopupError(''); }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--primary-light)">
                 <Copy size={18} />
               </button>
-              <button title="Download" disabled={picking || !!downloadProgress} onClick={async (e) => {
+              <button title="Download" disabled={picking || downloadBusy} onClick={async (e) => {
                 e.stopPropagation();
                 if (readOnly && !allowReadOnlyDownloads && blockReadOnly()) return;
                 // Single-flight: ignore clicks while a download is already
                 // running so a double-click can't launch overlapping downloads.
-                if (downloadProgress) return;
+                if (downloadBusy) return;
                 if (downloadLimit > 0 && file.size > downloadLimit) {
                   const limitStr = downloadLimit >= 1024 * 1024 * 1024 ? `${(downloadLimit / (1024 * 1024 * 1024)).toFixed(1)} GB` : `${Math.round(downloadLimit / (1024 * 1024))} MB`;
                   showToast(`File size exceeds download limit of ${limitStr}.`, 'error'); return;
@@ -950,16 +968,8 @@ const FileBrowser: React.FC<FileBrowserProps> = ({ currentServerPath, serverUuid
                   openSelectiveDownload(file);
                 } else {
                   const filePath = `${currentPath ? `${currentPath}/` : ''}${file.name}`;
-                  setDownloadProgress({ filename: file.name, loaded: 0, total: file.size });
-                  try {
-                    await adapter.downloadFile(filePath, serverUuid, false, (loaded, total, filename) =>
-                      setDownloadProgress(prev => prev ? { ...prev, filename: filename || prev.filename, loaded, total: total || prev.total } : null)
-                    );
-                  } catch (err) {
-                    console.error('Download failed:', err);
-                    showToast('Download failed.', 'error');
-                  }
-                  setDownloadProgress(null);
+                  await runDownload(`file:${filePath}`, file.name, file.size, onProgress =>
+                    adapter.downloadFile(filePath, serverUuid, false, onProgress));
                 }
               }} className="p-2 flex items-center justify-center text-(--primary-light) rounded-md transition-colors hover:bg-(--accent) hover:text-white disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-(--primary-light)">
                 <Download size={18} />

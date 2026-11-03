@@ -790,6 +790,21 @@ input[type="number"] {
   .toast-dismissable { animation: none; }
 }
 
+/* ── Indeterminate progress ── */
+/* For a transfer whose size is unknown: a segment that keeps moving, so it can
+   not be read as a percentage. Reduced motion gets a full, faint bar. */
+.progress-indeterminate {
+  width: 40%;
+  animation: progress-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes progress-indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-indeterminate { width: 100%; opacity: 0.4; animation: none; }
+}
+
 /* ── Dropdowns ── */
 .dropdown-menu {
   position: absolute;

@@ -8,3 +8,5 @@ export { default as CodeMirrorEditor, detectLanguage } from './CodeMirrorEditor'
 export type { FileLanguage } from './CodeMirrorEditor';
 export { beamConnectionModeMeta } from './connectionMode';
 export type { BeamConnectionMode, BeamConnectionModeMeta } from './connectionMode';
+export { DownloadTrackerContext } from './downloadTracker';
+export type { DownloadTracker, DownloadProgressFn } from './downloadTracker';

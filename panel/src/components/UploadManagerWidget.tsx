@@ -57,7 +57,7 @@ interface RingProps {
     children?: React.ReactNode;
 }
 
-function ProgressRing({ progress, size = 24, stroke = 2.5, children }: RingProps) {
+export function ProgressRing({ progress, size = 24, stroke = 2.5, children }: RingProps) {
     const r = (size - stroke) / 2;
     const circumference = 2 * Math.PI * r;
     const offset = circumference * (1 - Math.max(0, Math.min(1, progress)));
