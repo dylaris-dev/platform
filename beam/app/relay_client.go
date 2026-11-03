@@ -52,6 +52,24 @@ var alreadyCompressed = map[string]bool{
 	".webm": true,
 	".mp3":  true,
 	".ogg":  true,
+	// Minecraft's own: region files hold zlib chunks, NBT and schematics are
+	// gzip.
+	".mca":       true,
+	".mcr":       true,
+	".dat":       true,
+	".nbt":       true,
+	".schem":     true,
+	".schematic": true,
+	".litematic": true,
+}
+
+// downloadCallOpts picks the compression for one download: none for a folder
+// (the node zips it), none on the LAN fast path, else by extension.
+func downloadCallOpts(name string, isDir, lan bool) []grpc.CallOption {
+	if isDir || lan {
+		return nil
+	}
+	return compressorForPath(name)
 }
 
 // compressorForPath returns the gRPC call options to use for downloading
@@ -71,6 +89,10 @@ type BeamNodeClient struct {
 	conn       *grpc.ClientConn
 	svc        pb.BeamNodeServiceClient
 	ServerUUID string
+	// lan is set for the LAN fast path. There bandwidth is not the limit and
+	// gzip is: one core compressing on the node capped a 10 Gbit LAN at about
+	// 40 MB/s, so downloads go uncompressed.
+	lan bool
 }
 
 // ConnectBeamNode dials the relay, authenticates with the JWT ticket, and
@@ -524,11 +546,7 @@ func (c *BeamNodeClient) DownloadFile(path string, isDir bool, savePath string, 
 	// Directory downloads are server-zipped — already compressed by the time
 	// they hit the wire — so skip gzip there. Single files get the
 	// extension-based heuristic.
-	var opts []grpc.CallOption
-	if !isDir {
-		opts = compressorForPath(path)
-	}
-	stream, err := c.svc.DownloadFile(ctx, &pb.BeamDownloadReq{Path: path, ZipIfDir: isDir}, opts...)
+	stream, err := c.svc.DownloadFile(ctx, &pb.BeamDownloadReq{Path: path, ZipIfDir: isDir}, downloadCallOpts(path, isDir, c.lan)...)
 	if err != nil {
 		return err
 	}

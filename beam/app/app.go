@@ -953,6 +953,7 @@ func (a *App) dialLANFastpath(ticket *BeamTicket) (*BeamNodeClient, bool) {
 		fmt.Fprintf(os.Stderr, "beam-app: direct LAN dial to %s failed: %v\n", addr, derr)
 		return nil, false
 	}
+	rc.lan = true
 	return rc, true
 }
 
@@ -1122,6 +1123,8 @@ func (a *App) downloadProgress(savePath string) func(loaded, total int64) {
 			"loaded": loaded,
 			"total":  total,
 			"name":   name,
+			// Unique per download: lets the page tell concurrent downloads apart.
+			"path": savePath,
 		})
 	}
 	emit(0, 0)

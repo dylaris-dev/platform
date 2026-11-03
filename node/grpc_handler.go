@@ -539,6 +539,25 @@ func (h *StreamHandler) streamDirAsZip(reqID string, root *os.Root, dirName, fil
 	})
 }
 
+// zipDeflate lists the extensions worth compressing in an archive: text. The
+// bulk of a server folder is region files, jars and images that are already
+// compressed, and deflating them anyway made a world download CPU-bound on one
+// core at about 40 MB/s, also on a 10 Gbit LAN. Everything else is stored.
+var zipDeflate = map[string]bool{
+	".json": true, ".json5": true, ".yml": true, ".yaml": true, ".toml": true,
+	".properties": true, ".cfg": true, ".conf": true, ".ini": true, ".txt": true,
+	".log": true, ".csv": true, ".xml": true, ".md": true, ".js": true,
+	".mcmeta": true, ".mcfunction": true, ".snbt": true, ".lang": true, ".sk": true,
+	".sh": true, ".bat": true, ".html": true, ".css": true,
+}
+
+func zipMethodFor(name string) uint16 {
+	if zipDeflate[strings.ToLower(path.Ext(name))] {
+		return zip.Deflate
+	}
+	return zip.Store
+}
+
 // addZipEntry writes one walked entry into zw under relPath, reading the
 // file through the Root. The node's own files are left out, by name and, for
 // one reached through a link, by identity (see nodeOwnedIdentities). That
@@ -558,7 +577,7 @@ func addZipEntry(zw *zip.Writer, root *os.Root, name, relPath string, info fs.Fi
 	if info.IsDir() {
 		header.Name += "/"
 	} else {
-		header.Method = zip.Deflate
+		header.Method = zipMethodFor(relPath)
 	}
 	writer, err := zw.CreateHeader(header)
 	if err != nil || info.IsDir() {

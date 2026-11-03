@@ -35,7 +35,9 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const beamChunkSize = 64 * 1024 // 64KB
+// 256 KiB: a quarter of the per-message overhead of 64 KiB on a fast LAN,
+// well under gRPC's 4 MiB default receive limit on every client.
+const beamChunkSize = 256 * 1024
 
 // beamServer implements the BeamNodeService gRPC interface.
 // It listens on BEAM_GRPC_PORT (default :25521), reachable on the container's
@@ -1091,7 +1093,7 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 			return status.Error(codes.InvalidArgument, "path is a directory; set zip_if_dir to download it as an archive")
 		}
 		display := filepath.Join(s.storageMgr.GetServerDir(serverUUID), filepath.FromSlash(name))
-		return s.streamZip(stream, zipNameFor(display), func(zw *zip.Writer) error {
+		return s.streamZip(stream, zipNameFor(display), dirSizeIn(root, name), func(zw *zip.Writer) error {
 			return addTreeToZip(zw, root, name, name)
 		})
 	}
@@ -1492,7 +1494,7 @@ func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.Ser
 	serverDir := s.storageMgr.GetServerDir(serverUUID)
 	basePath := filepath.Join(serverDir, filepath.FromSlash(baseName))
 
-	return s.streamZip(stream, zipNameFor(basePath), func(zw *zip.Writer) error {
+	return s.streamZip(stream, zipNameFor(basePath), selectionSize(root, serverDir, basePath, baseName, req), func(zw *zip.Writer) error {
 		if req.SelectAll {
 			return addTreeToZip(zw, root, baseName, baseName)
 		}
@@ -1515,6 +1517,35 @@ func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.Ser
 		}
 		return nil
 	})
+}
+
+// selectionSize is the content size of what DownloadSelective will archive,
+// resolved the same way, for the progress estimate.
+func selectionSize(root *os.Root, serverDir, basePath, baseName string, req *pb.BeamSelectiveReq) int64 {
+	if req.SelectAll {
+		return dirSizeIn(root, baseName)
+	}
+	var total int64
+	for _, sel := range req.Selected {
+		selPath, err := resolveWithinDir(basePath, sel)
+		if err != nil {
+			continue
+		}
+		selName, err := rootName(serverDir, selPath)
+		if err != nil {
+			continue
+		}
+		info, err := root.Lstat(selName)
+		if err != nil {
+			continue
+		}
+		if info.IsDir() {
+			total += dirSizeIn(root, selName)
+		} else {
+			total += info.Size()
+		}
+	}
+	return total
 }
 
 // zipNameFor derives the archive name the client saves under, matching the
@@ -1544,10 +1575,11 @@ func addTreeToZip(zw *zip.Writer, root *os.Root, nameBase, target string) error 
 // streamZip builds an archive with writeEntries and streams it out in chunks.
 //
 // The zip is produced through an io.Pipe and forwarded as it is written, so a
-// multi-gigabyte world folder never lands in memory or in a temp file. TotalSize
-// stays 0 because a streamed archive has no known length up front; the client
-// treats 0 as "unknown" and reports bytes-loaded only.
-func (s *beamServer) streamZip(stream grpc.ServerStreamingServer[pb.BeamChunk], filename string, writeEntries func(*zip.Writer) error) error {
+// multi-gigabyte world folder never lands in memory or in a temp file. The
+// archive's length is not known up front, so TotalSize carries estimate, the
+// size of the files going in: most entries are stored, so the archive ends
+// close to it. 0 means unknown and the client reports bytes loaded only.
+func (s *beamServer) streamZip(stream grpc.ServerStreamingServer[pb.BeamChunk], filename string, estimate int64, writeEntries func(*zip.Writer) error) error {
 	ctx := stream.Context()
 	pr, pw := io.Pipe()
 
@@ -1571,7 +1603,13 @@ func (s *beamServer) streamZip(stream grpc.ServerStreamingServer[pb.BeamChunk], 
 	first := true
 
 	for {
-		n, readErr := pr.Read(buf)
+		// ReadFull, not Read: a pipe Read returns what one write delivered, and
+		// the zip writer delivers ~4 KiB at a time, so each gRPC message carried
+		// 4 KiB and the per-message cost capped a LAN download near 40 MB/s.
+		n, readErr := io.ReadFull(pr, buf)
+		if readErr == io.ErrUnexpectedEOF {
+			readErr = io.EOF
+		}
 		if n > 0 {
 			if err := s.throttle.WaitN(ctx, DirectionDown, n); err != nil {
 				return status.Errorf(codes.Canceled, "throttle: %v", err)
@@ -1582,6 +1620,7 @@ func (s *beamServer) streamZip(stream grpc.ServerStreamingServer[pb.BeamChunk], 
 			chunk := &pb.BeamChunk{Data: buf[:n], Offset: offset}
 			if first {
 				chunk.Filename = filename
+				chunk.TotalSize = estimate
 				first = false
 			}
 			if err := stream.Send(chunk); err != nil {

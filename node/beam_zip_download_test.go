@@ -121,9 +121,50 @@ func TestDownloadFile_ZipsDirectory(t *testing.T) {
 	if len(st.chunks) == 0 || st.chunks[0].Filename != "plugins.zip" {
 		t.Errorf("first chunk filename = %q, want plugins.zip", st.chunks[0].Filename)
 	}
-	// A streamed archive has no length up front; 0 is the client's "unknown".
-	if st.chunks[0].TotalSize != 0 {
-		t.Errorf("TotalSize = %d, want 0 (unknown for a streamed zip)", st.chunks[0].TotalSize)
+	// A streamed archive has no length up front, so the first chunk carries the
+	// size of the files going in: "we: yes" + "JAR".
+	if st.chunks[0].TotalSize != 10 {
+		t.Errorf("TotalSize = %d, want 10 (content size estimate)", st.chunks[0].TotalSize)
+	}
+	// Already-compressed content is stored, text is deflated: deflating jars and
+	// region files made a world download CPU-bound at ~40 MB/s on a 10 Gbit LAN.
+	zr, err := zip.NewReader(bytes.NewReader(st.buf.Bytes()), int64(st.buf.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	methods := map[string]uint16{}
+	for _, f := range zr.File {
+		methods[f.Name] = f.Method
+	}
+	if methods["other.jar"] != zip.Store {
+		t.Errorf("other.jar method = %d, want Store", methods["other.jar"])
+	}
+	if methods["WorldEdit/config.yml"] != zip.Deflate {
+		t.Errorf("config.yml method = %d, want Deflate", methods["WorldEdit/config.yml"])
+	}
+}
+
+func TestDownloadSelective_SendsContentSizeEstimate(t *testing.T) {
+	bs, serverUUID, ctx := newTestBeamServer(t)
+	seedTree(t, bs, serverUUID)
+	for _, tc := range []struct {
+		name      string
+		selected  []string
+		selectAll bool
+		want      int64
+	}{
+		{"folder and file", []string{"WorldEdit", "other.jar"}, false, 10},
+		{"one file", []string{"other.jar"}, false, 3},
+		{"select all", nil, true, 10},
+		{"traversal counts nothing", []string{"../../../../etc/passwd", "other.jar"}, false, 3},
+	} {
+		st := &fakeBeamDownloadStream{ctx: ctx}
+		if err := bs.DownloadSelective(&pb.BeamSelectiveReq{BasePath: "plugins", Selected: tc.selected, SelectAll: tc.selectAll}, st); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(st.chunks) == 0 || st.chunks[0].TotalSize != tc.want {
+			t.Errorf("%s: TotalSize = %v, want %d", tc.name, st.chunks, tc.want)
+		}
 	}
 }
 
