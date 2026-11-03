@@ -40,6 +40,16 @@ describe('withNativeProgress', () => {
         expect(seen).toEqual([undefined]);
     });
 
+    it('passes the retry note of the app through', async () => {
+        const rt = fakeRuntime();
+        const seen: (string | undefined)[] = [];
+        await withNativeProgress((_l, _t, _n, _p, note) => seen.push(note), async () => {
+            rt.emit({ loaded: 0, total: 0, path: '/w.zip', note: 'Connection lost, retrying (attempt 2)' });
+            rt.emit({ loaded: 9, total: 0, path: '/w.zip' });
+        });
+        expect(seen).toEqual(['Connection lost, retrying (attempt 2)', undefined]);
+    });
+
     it('stops listening when the download fails', async () => {
         const rt = fakeRuntime();
         await expect(withNativeProgress(() => {}, async () => { throw new Error('stalled'); })).rejects.toThrow('stalled');

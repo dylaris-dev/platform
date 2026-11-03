@@ -80,6 +80,8 @@ export interface WailsAppBindings {
     // Takes no path on purpose (app.go): it opens the folder of the LAST
     // download the app itself saved, never a path the page names.
     RevealInExplorer?(): Promise<void>;
+    // Stops the beam download saving to savePath (app 0.9.14+).
+    CancelDownload?(savePath: string): Promise<void>;
     // Chunked upload: open a stream, send N chunks (base64-encoded
     // bytes), close. Each call references an opaque uploadID minted
     // by the JS side. Optional on the typing because older app builds
@@ -140,13 +142,14 @@ export function routeNativeProgress(sinks: NativeSink[], path: string | undefine
 }
 
 function dispatchNativeProgress(data: unknown) {
-    const d = (data ?? {}) as { loaded?: number; total?: number; name?: string; path?: string };
+    const d = (data ?? {}) as { loaded?: number; total?: number; name?: string; path?: string; note?: string };
     const path = typeof d.path === 'string' && d.path ? d.path : undefined;
     routeNativeProgress(nativeSinks, path, retiredPaths)?.onProgress(
         Number(d.loaded) || 0,
         Number(d.total) || 0,
         typeof d.name === 'string' && d.name ? d.name : undefined,
         path,
+        typeof d.note === 'string' && d.note ? d.note : undefined,
     );
 }
 

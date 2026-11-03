@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.03.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Beam downloads survive a lost connection: Beam app 0.9.14 retries with a growing pause and
+  starts the file over, and gives up only after 15 minutes without progress.
+- A running Beam download can be cancelled from the download manager (Beam app 0.9.14).
+- Beam app 0.9.14 downloads faster over a direct or LAN connection.
+
 ## 2026.11.03.2
 
 ### Features

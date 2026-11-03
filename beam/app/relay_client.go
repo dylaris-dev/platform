@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -224,6 +225,13 @@ func ConnectBeamNodeDirect(addr, ticket, fingerprint string) (*BeamNodeClient, e
 			d := &net.Dialer{Timeout: 3 * time.Second}
 			return d.DialContext(ctx, "tcp", addr)
 		}),
+		// A fixed 16 MiB receive window instead of gRPC's BDP-estimated one,
+		// which starts at 64 KiB. A download is one stream on one connection,
+		// so the window is what paces it; over TLS on loopback this took a
+		// 2 GiB stream from ~0.95 to ~1.2 GB/s. 16 MiB is also the ceiling the
+		// estimator grows to, so the memory a stream may pin is unchanged.
+		grpc.WithInitialWindowSize(16<<20),
+		grpc.WithInitialConnWindowSize(16<<20),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("grpc: %w", err)
@@ -539,8 +547,12 @@ func (s *UploadSession) Cancel() {
 // session from the other end on the same principle.
 const beamDownloadIdleTimeout = 5 * time.Minute
 
-func (c *BeamNodeClient) DownloadFile(path string, isDir bool, savePath string, onProgress func(loaded, total int64)) error {
-	ctx, cancel := context.WithCancel(context.Background())
+// errDownloadStalled is what writeChunksToFile returns when its idle watchdog
+// ended the call, so the retry loop can tell it from a refusal.
+var errDownloadStalled = errors.New("download stalled")
+
+func (c *BeamNodeClient) DownloadFile(ctx context.Context, path string, isDir bool, savePath string, onProgress func(loaded, total int64)) error {
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// Directory downloads are server-zipped — already compressed by the time
@@ -553,8 +565,8 @@ func (c *BeamNodeClient) DownloadFile(path string, isDir bool, savePath string, 
 	return writeChunksToFile(cancel, beamDownloadIdleTimeout, stream, savePath, onProgress)
 }
 
-func (c *BeamNodeClient) SelectiveDownload(basePath string, selected []string, selectAll bool, savePath string, onProgress func(loaded, total int64)) error {
-	ctx, cancel := context.WithCancel(context.Background())
+func (c *BeamNodeClient) SelectiveDownload(ctx context.Context, basePath string, selected []string, selectAll bool, savePath string, onProgress func(loaded, total int64)) error {
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// Selective downloads always produce a zip on the server side — no point
@@ -627,7 +639,7 @@ func writeChunksToFile(cancel context.CancelFunc, idle time.Duration, stream chu
 		}
 		if err != nil {
 			if stalled.Load() {
-				return fmt.Errorf("download stalled: no data received for %s", idle)
+				return fmt.Errorf("%w: no data received for %s", errDownloadStalled, idle)
 			}
 			return err
 		}

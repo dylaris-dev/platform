@@ -49,6 +49,10 @@ type App struct {
 	uploadsMu sync.Mutex
 	uploads   map[string]*UploadSession
 
+	// Running beam downloads by save path, so CancelDownload can stop one.
+	downloadsMu sync.Mutex
+	downloads   map[string]context.CancelFunc
+
 	// cookies is the shell's cookie jar for the proxied Panel. The session is
 	// an HttpOnly cookie and Beam keeps it here rather than in the webview;
 	// see applyShellCookies in proxy.go.
@@ -858,41 +862,7 @@ func (a *App) ConnectToServer(serverUUID string) error {
 	if err != nil {
 		return fmt.Errorf("beam config: %w", err)
 	}
-	relayAddr := strings.TrimSpace(config.RelayAddress)
-
-	// Preference chain: LAN fast-path first (even with a relay), then the IP-hiding
-	// relay, then a public-direct dial. The pure beamConnectPlan decides the order and
-	// gating; this loop performs the actual dials and records the winning transport.
-	plan := beamConnectPlan(ticket.LANFingerprint != "", ticket.LANIPs, relayAddr, ticket.PublicAddr)
-	var (
-		rc      *BeamNodeClient
-		mode    string
-		lastErr error
-	)
-	for _, step := range plan {
-		switch step {
-		case "lan":
-			if c, ok := a.dialLANFastpath(ticket); ok {
-				rc, mode = c, "lan-fastpath"
-			}
-		case "relay":
-			// ConnectBeamNode already returns a self-descriptive English message.
-			if c, derr := ConnectBeamNode(relayAddr, ticket.Ticket); derr != nil {
-				lastErr = derr
-			} else {
-				rc, mode = c, "relay"
-			}
-		case "public":
-			if c, derr := a.dialPublicDirect(ticket); derr != nil {
-				lastErr = derr
-			} else {
-				rc, mode = c, "direct"
-			}
-		}
-		if rc != nil {
-			break
-		}
-	}
+	rc, mode, lastErr := a.dialBeamPlan(ticket, strings.TrimSpace(config.RelayAddress))
 
 	if rc == nil {
 		// A failed switch must not leave the previous server's tunnel and badge
@@ -922,6 +892,66 @@ func (a *App) ConnectToServer(serverUUID string) error {
 	}
 	a.startHealthCheck(serverUUID)
 	return nil
+}
+
+// dialBeamPlan walks the preference chain: LAN fast-path first (even with a
+// relay), then the IP-hiding relay, then a public-direct dial. The pure
+// beamConnectPlan decides the order and gating; this performs the dials and
+// returns the first that worked with its transport, or nil and the last error.
+func (a *App) dialBeamPlan(ticket *BeamTicket, relayAddr string) (rc *BeamNodeClient, mode string, lastErr error) {
+	plan := beamConnectPlan(ticket.LANFingerprint != "", ticket.LANIPs, relayAddr, ticket.PublicAddr)
+	for _, step := range plan {
+		switch step {
+		case "lan":
+			if c, ok := a.dialLANFastpath(ticket); ok {
+				rc, mode = c, "lan-fastpath"
+			}
+		case "relay":
+			// ConnectBeamNode already returns a self-descriptive English message.
+			if c, derr := ConnectBeamNode(relayAddr, ticket.Ticket); derr != nil {
+				lastErr = derr
+			} else {
+				rc, mode = c, "relay"
+			}
+		case "public":
+			if c, derr := a.dialPublicDirect(ticket); derr != nil {
+				lastErr = derr
+			} else {
+				rc, mode = c, "direct"
+			}
+		}
+		if rc != nil {
+			break
+		}
+	}
+
+	return rc, mode, lastErr
+}
+
+// dialServer opens a connection of its own to serverUUID, the same way
+// ConnectToServer does, without installing it as the app's tunnel. The caller
+// closes it.
+func (a *App) dialServer(serverUUID string) (*BeamNodeClient, error) {
+	client := a.getClient()
+	if client == nil {
+		return nil, fmt.Errorf("not logged in")
+	}
+	ticket, err := client.GetBeamTicket(serverUUID)
+	if err != nil {
+		return nil, fmt.Errorf("ticket: %w", err)
+	}
+	config, err := client.GetBeamConfig()
+	if err != nil {
+		return nil, fmt.Errorf("beam config: %w", err)
+	}
+	rc, _, err := a.dialBeamPlan(ticket, strings.TrimSpace(config.RelayAddress))
+	if rc == nil {
+		if err == nil {
+			err = fmt.Errorf("no transport to the node")
+		}
+		return nil, err
+	}
+	return rc, nil
 }
 
 // dialLANFastpath probes the ticket's LAN IPs and, on the first reachable one, opens a
@@ -1080,11 +1110,9 @@ func (a *App) DownloadFile(path string, serverUUID string, isDir bool) error {
 	}
 
 	if relay := a.getRelay(); relay != nil {
-		if err := relay.DownloadFile(path, isDir, savePath, a.downloadProgress(savePath)); err != nil {
-			return err
-		}
-		a.setLastDownloadPath(savePath)
-		return nil
+		return a.relayDownload(relay, serverUUID, savePath, func(ctx context.Context, rc *BeamNodeClient, onProgress func(loaded, total int64)) error {
+			return rc.DownloadFile(ctx, path, isDir, savePath, onProgress)
+		})
 	}
 
 	rc, err := client.DownloadFile(path, serverUUID)
@@ -1138,6 +1166,84 @@ func (a *App) downloadProgress(savePath string) func(loaded, total int64) {
 	}
 }
 
+// relayDownload runs a download over the beam tunnel, retrying through a lost
+// connection (see downloadRetry) and stoppable with CancelDownload. A file
+// that did not arrive whole is removed.
+//
+// The first attempt uses the app's tunnel. A retry dials one of its own and
+// closes it afterwards: the app's tunnel follows the server the page shows NOW,
+// which may not be this download's any more, and reconnecting it from here
+// would also cut every other running download. Each attempt starts the file
+// over, because a folder is a zip built while it is sent and the node cannot
+// resume one at an offset.
+func (a *App) relayDownload(relay *BeamNodeClient, serverUUID, savePath string, fetch func(ctx context.Context, rc *BeamNodeClient, onProgress func(loaded, total int64)) error) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a.downloadsMu.Lock()
+	if a.downloads == nil {
+		a.downloads = map[string]context.CancelFunc{}
+	}
+	a.downloads[savePath] = cancel
+	a.downloadsMu.Unlock()
+	defer func() {
+		a.downloadsMu.Lock()
+		delete(a.downloads, savePath)
+		a.downloadsMu.Unlock()
+	}()
+
+	progress := a.downloadProgress(savePath)
+	err := defaultDownloadRetry.run(ctx, func(ctx context.Context, n int) (bool, error) {
+		rc := relay
+		if n > 1 {
+			if serverUUID == "" {
+				rc = a.getRelay()
+				if rc == nil {
+					return false, &downloadDialError{errors.New("not connected")}
+				}
+			} else {
+				c, err := a.dialServer(serverUUID)
+				if err != nil {
+					return false, &downloadDialError{err}
+				}
+				defer c.Close()
+				rc = c
+			}
+		}
+		moved := false
+		err := fetch(ctx, rc, func(loaded, total int64) {
+			moved = moved || loaded > 0
+			progress(loaded, total)
+		})
+		return moved, err
+	}, func(n int, err error) {
+		fmt.Fprintf(os.Stderr, "beam-app: download %s lost its connection, attempt %d: %v\n", filepath.Base(savePath), n, err)
+		runtime.EventsEmit(a.ctx, "download:progress", map[string]interface{}{
+			"loaded": 0,
+			"total":  0,
+			"name":   filepath.Base(savePath),
+			"path":   savePath,
+			"note":   fmt.Sprintf("Connection lost, retrying (attempt %d)", n),
+		})
+	})
+	if err != nil {
+		os.Remove(savePath)
+		return err
+	}
+	a.setLastDownloadPath(savePath)
+	return nil
+}
+
+// CancelDownload stops the beam download saving to savePath. It returns at
+// once; the download's own call then fails with "cancelled".
+func (a *App) CancelDownload(savePath string) {
+	a.downloadsMu.Lock()
+	cancel := a.downloads[savePath]
+	a.downloadsMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
 // SelectiveDownload downloads selected files/folders as a zip.
 // Opens a native save dialog so the user picks where to save it.
 func (a *App) SelectiveDownload(basePath string, selected []string, selectAll bool, serverUUID string) error {
@@ -1155,11 +1261,9 @@ func (a *App) SelectiveDownload(basePath string, selected []string, selectAll bo
 	}
 
 	if relay := a.getRelay(); relay != nil {
-		if err := relay.SelectiveDownload(basePath, selected, selectAll, savePath, a.downloadProgress(savePath)); err != nil {
-			return err
-		}
-		a.setLastDownloadPath(savePath)
-		return nil
+		return a.relayDownload(relay, serverUUID, savePath, func(ctx context.Context, rc *BeamNodeClient, onProgress func(loaded, total int64)) error {
+			return rc.SelectiveDownload(ctx, basePath, selected, selectAll, savePath, onProgress)
+		})
 	}
 
 	rc, err := client.SelectiveDownload(basePath, selected, selectAll, serverUUID)

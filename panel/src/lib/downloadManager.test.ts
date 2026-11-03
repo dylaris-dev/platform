@@ -12,7 +12,7 @@ function clockStore() {
 function deferredRun() {
     let resolve!: () => void;
     let reject!: (e: unknown) => void;
-    let report!: (loaded: number, total: number, name?: string, path?: string) => void;
+    let report!: (loaded: number, total: number, name?: string, path?: string, note?: string) => void;
     const run = (onProgress: typeof report) => {
         report = onProgress;
         return new Promise<void>((res, rej) => { resolve = res; reject = rej; });
@@ -126,5 +126,56 @@ describe('download store', () => {
         await p;
         d.report(5, 100);
         expect(store.getSnapshot()[0].loaded).toBe(100);
+    });
+
+    it('cancels through the app by save path and ends as cancelled, not failed', async () => {
+        const cancel = vi.fn();
+        const notify = vi.fn();
+        const store = createDownloadStore({ notify, cancel });
+        const d = deferredRun();
+        const p = store.track('world.zip', 0, d.run);
+        // Not cancellable before the app said where the file goes.
+        expect(store.canCancel(store.getSnapshot()[0])).toBe(false);
+        d.report(10, 100, 'world.zip', 'C:/dl/world.zip');
+        const id = store.getSnapshot()[0].id;
+        store.cancel(id);
+        expect(cancel).toHaveBeenCalledWith('C:/dl/world.zip');
+        expect(store.canCancel(store.getSnapshot()[0])).toBe(false);
+        store.cancel(id);
+        expect(cancel).toHaveBeenCalledTimes(1);
+        d.reject(new Error('cancelled'));
+        expect(await p).toBe(false);
+        expect(store.getSnapshot()[0].state).toBe('cancelled');
+        expect(notify).not.toHaveBeenCalled();
+    });
+
+    it('cannot cancel without an app that can', () => {
+        const store = createDownloadStore();
+        const d = deferredRun();
+        void store.track('a', 0, d.run);
+        d.report(1, 10, 'a', '/a');
+        expect(store.canCancel(store.getSnapshot()[0])).toBe(false);
+    });
+
+    it('shows the retry note and restarts the speed when the app starts over', () => {
+        const { store, advance } = clockStore();
+        const d = deferredRun();
+        void store.track('w.zip', 1000, d.run);
+        d.report(0, 1000, 'w.zip', '/w.zip');
+        advance(1000);
+        d.report(500, 1000);
+        expect(store.getSnapshot()[0].speed).toBeGreaterThan(0);
+        advance(1000);
+        d.report(0, 0, 'w.zip', '/w.zip', 'Connection lost, retrying (attempt 2)');
+        const e = store.getSnapshot()[0];
+        expect(e.note).toBe('Connection lost, retrying (attempt 2)');
+        expect(e.loaded).toBe(0);
+        expect(e.total).toBe(1000);
+        expect(e.speed).toBe(0);
+        advance(1000);
+        d.report(300, 1000);
+        const after = store.getSnapshot()[0];
+        expect(after.note).toBeUndefined();
+        expect(after.speed).toBeGreaterThan(0);
     });
 });

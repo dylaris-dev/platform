@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Download, X, CircleCheck, CircleAlert, Trash2, Loader2, FolderOpen } from 'lucide-react';
+import { Download, X, CircleCheck, CircleAlert, CircleStop, Trash2, Loader2, FolderOpen } from 'lucide-react';
 import { toast } from '@/components/ui/Toast';
 import { ProgressRing } from '@/components/UploadManagerWidget';
 import { formatBytes } from '@/lib/format';
@@ -18,7 +18,10 @@ import {
 // The one download list of the panel. The authed layout hands it to the file
 // browser through DownloadTrackerContext, so downloads outlive the page that
 // started them.
-export const downloadStore = createDownloadStore({ notify: (message, ok) => toast(message, ok) });
+export const downloadStore = createDownloadStore({
+    notify: (message, ok) => toast(message, ok),
+    cancel: savePath => { void getWailsApp()?.CancelDownload?.(savePath).catch(() => {}); },
+});
 
 const noEntries: DownloadEntry[] = [];
 
@@ -159,10 +162,12 @@ function DownloadList({ entries }: { entries: DownloadEntry[] }) {
     }, []);
     const lastDone = downloadStore.lastDoneId();
     const canReveal = typeof getWailsApp()?.RevealInExplorer === 'function';
+    // An app older than 0.9.14 has no CancelDownload; its rows show no button.
+    const canCancel = typeof getWailsApp()?.CancelDownload === 'function';
     return (
         <ul className="max-h-[60vh] overflow-y-auto">
             {[...entries].reverse().map(e => (
-                <DownloadRow key={e.id} entry={e} now={now} revealable={canReveal && e.id === lastDone} />
+                <DownloadRow key={e.id} entry={e} now={now} revealable={canReveal && e.id === lastDone} cancellable={canCancel && downloadStore.canCancel(e)} />
             ))}
         </ul>
     );
@@ -176,14 +181,15 @@ async function reveal() {
     }
 }
 
-function DownloadRow({ entry: e, now, revealable }: { entry: DownloadEntry; now: number; revealable: boolean }) {
+function DownloadRow({ entry: e, now, revealable, cancellable }: { entry: DownloadEntry; now: number; revealable: boolean; cancellable: boolean }) {
     const pct = downloadPercent(e);
     const running = e.state === 'running';
     const speed = downloadSpeed(e, now);
     const eta = downloadEta(e, now);
     const barColor = e.state === 'failed'
         ? 'bg-(--error-light)'
-        : e.state === 'done' ? 'bg-(--success-light)' : 'bg-(--accent-light)';
+        : e.state === 'done' ? 'bg-(--success-light)'
+            : e.state === 'cancelled' ? 'bg-(--base-05)' : 'bg-(--accent-light)';
 
     const sizes = e.total > 0 && running
         ? `${formatBytes(e.loaded)} / ${formatBytes(e.total)}`
@@ -198,6 +204,17 @@ function DownloadRow({ entry: e, now, revealable }: { entry: DownloadEntry; now:
                 <div className="shrink-0 flex items-center gap-1">
                     {e.state === 'done' && <CircleCheck size={14} className="text-(--success-light)" aria-hidden />}
                     {e.state === 'failed' && <CircleAlert size={14} className="text-(--error-light)" aria-hidden />}
+                    {cancellable && (
+                        <button
+                            type="button"
+                            onClick={() => downloadStore.cancel(e.id)}
+                            className="text-(--base-06) hover:text-(--error-light) active:text-(--base-07) p-1 rounded"
+                            title="Cancel download"
+                            aria-label={`Cancel download of ${e.filename}`}
+                        >
+                            <CircleStop size={12} />
+                        </button>
+                    )}
                     {revealable && (
                         <button
                             type="button"
@@ -246,14 +263,23 @@ function DownloadRow({ entry: e, now, revealable }: { entry: DownloadEntry; now:
                 <span className="shrink-0">
                     {pct !== null && running ? `${pct}% · ${sizes}` : sizes}
                 </span>
-                <span className={`truncate text-right ${e.state === 'failed' ? 'text-(--error-light)' : ''}`} title={e.error}>
+                <span
+                    className={`truncate text-right ${e.state === 'failed' ? 'text-(--error-light)' : e.note ? 'text-(--warning-light)' : ''}`}
+                    title={e.error ?? e.note}
+                >
                     {running
-                        ? speed > 0
-                            ? `${formatBytes(speed)}/s${eta !== null ? ` · ${formatEta(eta)}` : ''}`
-                            : e.reported ? 'Waiting for data' : 'Starting'
+                        ? e.cancelling
+                            ? 'Cancelling'
+                            : e.note
+                                ? e.note
+                                : speed > 0
+                                    ? `${formatBytes(speed)}/s${eta !== null ? ` · ${formatEta(eta)}` : ''}`
+                                    : e.reported ? 'Waiting for data' : 'Starting'
                         : e.state === 'done'
                             ? 'Completed'
-                            : `Failed: ${e.error}`}
+                            : e.state === 'cancelled'
+                                ? 'Cancelled'
+                                : `Failed: ${e.error}`}
                 </span>
             </div>
         </li>

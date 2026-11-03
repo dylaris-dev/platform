@@ -7,7 +7,7 @@ import type { DownloadProgressFn, DownloadTracker } from '@dylaris/ui-filebrowse
 // can run at once. The file browser reaches it through DownloadTrackerContext
 // (mounted in the authed layout); without that provider it keeps its own card.
 
-export type DownloadState = 'running' | 'done' | 'failed';
+export type DownloadState = 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface DownloadEntry {
     id: number;
@@ -18,8 +18,12 @@ export interface DownloadEntry {
     total: number;
     state: DownloadState;
     error?: string;
+    // A passing status from the app, shown instead of the speed.
+    note?: string;
     // Where a native save dialog put the file. A browser download has none.
     savePath?: string;
+    // The user pressed cancel; the failure that follows is not an error.
+    cancelling?: boolean;
     startedAt: number;
     finishedAt?: number;
     // Smoothed bytes/second, and the sample it was last computed from.
@@ -47,6 +51,9 @@ export interface DownloadStoreOptions {
     now?: () => number;
     // Short message on completion or failure (the panel's toast).
     notify?: (message: string, ok: boolean) => void;
+    // Stops the native download saving to savePath. Without it, or for a
+    // download whose save path is not known yet, nothing can be cancelled.
+    cancel?: (savePath: string) => void;
 }
 
 export function createDownloadStore(opts: DownloadStoreOptions = {}) {
@@ -81,7 +88,7 @@ export function createDownloadStore(opts: DownloadStoreOptions = {}) {
         return id;
     };
 
-    const progress = (id: number, loaded: number, total: number, filename?: string, savePath?: string) => {
+    const progress = (id: number, loaded: number, total: number, filename?: string, savePath?: string, note?: string) => {
         const t = now();
         patch(id, e => {
             if (e.state !== 'running') return e;
@@ -92,11 +99,17 @@ export function createDownloadStore(opts: DownloadStoreOptions = {}) {
                 total: total > 0 ? total : e.total,
                 filename: filename || e.filename,
                 savePath: savePath || e.savePath,
+                note,
                 lastEventAt: t,
                 reported: true,
             };
             const dt = t - e.sampleAt;
-            if (e.sampleLoaded === 0 && loaded === 0) {
+            if (loaded < e.sampleLoaded) {
+                // The app started the file over after a lost connection.
+                next.sampleAt = t;
+                next.sampleLoaded = loaded;
+                next.speed = 0;
+            } else if (e.sampleLoaded === 0 && loaded === 0) {
                 // Nothing moved yet (a save dialog, a zip being built): the
                 // first real sample must not average that wait in.
                 next.sampleAt = t;
@@ -120,7 +133,7 @@ export function createDownloadStore(opts: DownloadStoreOptions = {}) {
             remove(id);
             return;
         }
-        patch(id, x => ({ ...x, state: 'done', finishedAt: now(), loaded: Math.max(x.loaded, x.total), total: Math.max(x.loaded, x.total) }));
+        patch(id, x => ({ ...x, state: 'done', note: undefined, finishedAt: now(), loaded: Math.max(x.loaded, x.total), total: Math.max(x.loaded, x.total) }));
         lastDoneId = id;
         emit();
         opts.notify?.(`Downloaded ${e.filename}.`, true);
@@ -129,9 +142,24 @@ export function createDownloadStore(opts: DownloadStoreOptions = {}) {
     const fail = (id: number, message: string) => {
         const e = entries.find(x => x.id === id);
         if (!e || e.state !== 'running') return;
-        patch(id, x => ({ ...x, state: 'failed', error: message, finishedAt: now() }));
+        if (e.cancelling) {
+            patch(id, x => ({ ...x, state: 'cancelled', note: undefined, finishedAt: now() }));
+            emit();
+            return;
+        }
+        patch(id, x => ({ ...x, state: 'failed', error: message, note: undefined, finishedAt: now() }));
         emit();
         opts.notify?.(`Download of ${e.filename} failed: ${message}`, false);
+    };
+
+    const canCancel = (e: DownloadEntry) => !!opts.cancel && e.state === 'running' && !!e.savePath && !e.cancelling;
+
+    const cancel = (id: number) => {
+        const e = entries.find(x => x.id === id);
+        if (!e || !canCancel(e)) return;
+        patch(id, x => ({ ...x, cancelling: true }));
+        emit();
+        opts.cancel!(e.savePath!);
     };
 
     const remove = (id: number) => {
@@ -148,7 +176,7 @@ export function createDownloadStore(opts: DownloadStoreOptions = {}) {
 
     const track: DownloadTracker['track'] = async (filename, total, run) => {
         const id = start(filename, total);
-        const onProgress: DownloadProgressFn = (loaded, t, name, savePath) => progress(id, loaded, t, name, savePath);
+        const onProgress: DownloadProgressFn = (loaded, t, name, savePath, note) => progress(id, loaded, t, name, savePath, note);
         try {
             await run(onProgress);
             finish(id);
@@ -166,7 +194,7 @@ export function createDownloadStore(opts: DownloadStoreOptions = {}) {
         },
         getSnapshot: () => entries,
         lastDoneId: () => lastDoneId,
-        start, progress, finish, fail, remove, clearFinished, track,
+        start, progress, finish, fail, remove, clearFinished, track, cancel, canCancel,
     };
 }
 
