@@ -1,0 +1,46 @@
+name: uptime
+
+# Probes the public endpoints from outside every 5 minutes and posts to the
+# ops Discord channel when one stays down. Added after 2026-11-04, when Core and
+# Hub were down for an hour and nothing noticed. Not the updates webhook: that
+# channel is public. No DISCORD_OPS_WEBHOOK means the run just fails, which
+# GitHub still mails to the repo watchers.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Probe
+        env:
+          DISCORD_OPS_WEBHOOK: ${{ secrets.DISCORD_OPS_WEBHOOK }}
+        run: |
+          down=""
+          for url in https://panel.dylaris.com/healthz https://dylaris.com/; do
+            ok=""
+            # Three tries 20s apart: one blip or a rolling deploy is not an outage.
+            for try in 1 2 3; do
+              code=$(curl -s -o /dev/null -m 15 -w '%{http_code}' "$url" || true)
+              if [ "$code" = "200" ]; then ok=1; break; fi
+              sleep 20
+            done
+            [ -n "$ok" ] || down="$down $url ($code)"
+          done
+          [ -z "$down" ] && { echo "all up"; exit 0; }
+          echo "DOWN:$down"
+          if [ -n "$DISCORD_OPS_WEBHOOK" ]; then
+            jq -n --arg c "DYLARIS down:$down" '{content: $c}' |
+              curl -s -m 15 -H 'Content-Type: application/json' -d @- "$DISCORD_OPS_WEBHOOK" >/dev/null || true
+          fi
+          exit 1
