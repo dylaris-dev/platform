@@ -86,7 +86,7 @@ func TestParseBackupPolicyOldCore(t *testing.T) {
 func TestBackupPacerSwitchesLive(t *testing.T) {
 	players := false
 	now := time.Unix(1_000_000, 0)
-	b := newBackupPacer()
+	b := newBackupPacer(0)
 	b.inputs = func() (*backupPolicy, int64, bool, int64, time.Time) {
 		return &backupPolicy{UplinkMbit: i64(80), ReadMBps: i64(10), HeadroomPct: i64(50)}, 0, players, 0, now
 	}
@@ -133,7 +133,7 @@ func TestNodeLoad(t *testing.T) {
 
 // slowPacer paces upload bytes past the first burst to 1 KB/s.
 func slowPacer() *backupPacer {
-	b := newBackupPacer()
+	b := newBackupPacer(0)
 	b.inputs = func() (*backupPolicy, int64, bool, int64, time.Time) {
 		return nil, 0, false, 0, time.Now()
 	}
@@ -312,5 +312,64 @@ func TestRunBackupWithoutSpoolResumesSavingAfterUpload(t *testing.T) {
 	}
 	if partsAtSaveOn < 1 {
 		t.Fatalf("saving resumed after %d parts, want after the upload", partsAtSaveOn)
+	}
+}
+
+// The storage's own cap holds whether anyone plays or not, past the save-off
+// ceiling, and for a LAN destination too; with players the lower of the two.
+func TestBackupPacerStorageCap(t *testing.T) {
+	players := false
+	now := time.Unix(2_000_000, 0)
+	b := newBackupPacer(80) // 10 MB/s
+	b.inputs = func() (*backupPolicy, int64, bool, int64, time.Time) {
+		return &backupPolicy{UplinkMbit: i64(1000), HeadroomPct: i64(30), SaveOffMaxMin: i64(20)}, 0, players, 0, now
+	}
+	b.savesPaused(now)
+	steps := []struct {
+		name          string
+		players       bool
+		saveOff       time.Duration
+		wantUp, wantL rate.Limit
+	}{
+		{"nobody online: the cap", false, 0, 10_000_000, 10_000_000},
+		{"players: lower of budget (87.5 MB/s) and cap", true, 0, 10_000_000, 10_000_000},
+		{"ceiling reached: the cap still holds", true, 25 * time.Minute, 10_000_000, 10_000_000},
+	}
+	for _, s := range steps {
+		players = s.players
+		now = time.Unix(2_000_000, 0).Add(s.saveOff)
+		b.refresh(true)
+		if b.up.Limit() != s.wantUp || b.upLAN.Limit() != s.wantL {
+			t.Fatalf("%s: up=%v lan=%v, want %v %v", s.name, b.up.Limit(), b.upLAN.Limit(), s.wantUp, s.wantL)
+		}
+	}
+
+	// A budget below the cap wins.
+	small := newBackupPacer(800)
+	small.inputs = func() (*backupPolicy, int64, bool, int64, time.Time) {
+		return &backupPolicy{UplinkMbit: i64(40), HeadroomPct: i64(30)}, 0, true, 0, time.Now()
+	}
+	small.refresh(true)
+	if small.up.Limit() != rate.Limit(28*1_000_000/8) || small.upLAN.Limit() != rate.Limit(100_000_000) {
+		t.Fatalf("budget below cap: up=%v lan=%v", small.up.Limit(), small.upLAN.Limit())
+	}
+
+	if newBackupPacer(0).capReader(context.Background(), bytes.NewReader(nil)) == nil {
+		t.Fatal("capReader returned nil")
+	}
+}
+
+// A LAN upload ignores the players but not the storage's cap.
+func TestPutToLANIsPacedByStorageCap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+	}))
+	defer srv.Close()
+	b := newBackupPacer(1) // 125 KB/s
+	u := &partUploader{client: srv.Client(), pace: b}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := u.put(ctx, srv.URL, bytes.Repeat([]byte{1}, 4<<20)); err == nil {
+		t.Fatal("4 MiB to a LAN storage capped at 1 Mbit/s finished within a second")
 	}
 }

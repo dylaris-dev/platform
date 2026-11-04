@@ -36,6 +36,10 @@ func createBackupTables(db *sql.DB) error {
 		// PLATFORM storage - visible to admins and offerable as a default.
 		`ALTER TABLE backup_storages ADD COLUMN IF NOT EXISTS owner_id UUID REFERENCES users(id) ON DELETE CASCADE`,
 		`CREATE INDEX IF NOT EXISTS idx_backup_storages_owner ON backup_storages(owner_id) WHERE owner_id IS NOT NULL`,
+		// The most a backup may upload to this storage, in Mbit/s, from any
+		// node and whether or not anyone is playing: a slow NAS or a metered
+		// link. NULL is no cap. Never 0, which would hang every run.
+		`ALTER TABLE backup_storages ADD COLUMN IF NOT EXISTS upload_cap_mbit INTEGER CHECK (upload_cap_mbit IS NULL OR upload_cap_mbit > 0)`,
 		// The name is unique WITHIN a scope, not globally. A column-level UNIQUE
 		// would let one tenant's "Backblaze" block every other tenant's, and a
 		// plain UNIQUE (owner_id, name) would do the opposite: Postgres treats

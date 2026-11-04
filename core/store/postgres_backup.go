@@ -14,15 +14,20 @@ import (
 
 // backupStorageCols is the read shape. owner_id is last so the existing scans
 // stay readable; every read goes through scanBackupStorage.
-const backupStorageCols = `id, name, provider, config, secret_enc, is_default, created_at, owner_id`
+const backupStorageCols = `id, name, provider, config, secret_enc, is_default, created_at, owner_id, upload_cap_mbit`
 
 func (s *PostgresStore) scanBackupStorage(row interface{ Scan(...interface{}) error }) (*models.BackupStorage, string, error) {
 	var bs models.BackupStorage
 	var cfg []byte
 	var secretEnc string
 	var owner sql.NullString
-	if err := row.Scan(&bs.ID, &bs.Name, &bs.Provider, &cfg, &secretEnc, &bs.IsDefault, &bs.CreatedAt, &owner); err != nil {
+	var capMbit sql.NullInt64
+	if err := row.Scan(&bs.ID, &bs.Name, &bs.Provider, &cfg, &secretEnc, &bs.IsDefault, &bs.CreatedAt, &owner, &capMbit); err != nil {
 		return nil, "", err
+	}
+	if capMbit.Valid {
+		v := capMbit.Int64
+		bs.UploadCapMbit = &v
 	}
 	bs.Config = json.RawMessage(cfg)
 	if owner.Valid {
@@ -166,8 +171,8 @@ func (s *PostgresStore) CreateBackupStorage(bs *models.BackupStorage) (int, erro
 	}
 	var id int
 	err = tx.QueryRow(
-		`INSERT INTO backup_storages (name, provider, config, secret_enc, is_default, owner_id) VALUES ($1, $2, $3::jsonb, $4, $5, $6) RETURNING id`,
-		bs.Name, bs.Provider, string(cfg), enc, bs.IsDefault, nullableString(bs.OwnerID),
+		`INSERT INTO backup_storages (name, provider, config, secret_enc, is_default, owner_id, upload_cap_mbit) VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7) RETURNING id`,
+		bs.Name, bs.Provider, string(cfg), enc, bs.IsDefault, nullableString(bs.OwnerID), nullableCap(bs.UploadCapMbit),
 	).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -208,8 +213,8 @@ func (s *PostgresStore) UpdateBackupStorage(bs *models.BackupStorage) error {
 	// to the platform or the platform's to a tenant, and neither is a thing an
 	// edit form should be able to do.
 	res, err := tx.Exec(
-		`UPDATE backup_storages SET name = $1, provider = $2, config = $3::jsonb, secret_enc = $4, is_default = $5 WHERE id = $6`,
-		bs.Name, bs.Provider, string(cfg), enc, bs.IsDefault, bs.ID,
+		`UPDATE backup_storages SET name = $1, provider = $2, config = $3::jsonb, secret_enc = $4, is_default = $5, upload_cap_mbit = $6 WHERE id = $7`,
+		bs.Name, bs.Provider, string(cfg), enc, bs.IsDefault, nullableCap(bs.UploadCapMbit), bs.ID,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -953,4 +958,12 @@ func backupJobZone(tz string) string {
 		return "UTC"
 	}
 	return tz
+}
+
+// nullableCap stores a nil cap as NULL (no cap).
+func nullableCap(v *int64) interface{} {
+	if v == nil {
+		return nil
+	}
+	return *v
 }

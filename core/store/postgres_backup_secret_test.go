@@ -149,8 +149,8 @@ func TestCreateBackupStorage_EncryptsSecretAndStripsConfig(t *testing.T) {
 
 	// The config the store persists must NOT contain the secret.
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO backup_storages (name, provider, config, secret_enc, is_default, owner_id) VALUES ($1, $2, $3::jsonb, $4, $5, $6) RETURNING id`)).
-		WithArgs("nas", "s3", `{"bucket":"b"}`, sqlmock.AnyArg(), false, nil).
+	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO backup_storages (name, provider, config, secret_enc, is_default, owner_id, upload_cap_mbit) VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7) RETURNING id`)).
+		WithArgs("nas", "s3", `{"bucket":"b"}`, sqlmock.AnyArg(), false, nil, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(7))
 	mock.ExpectCommit()
 
@@ -199,8 +199,8 @@ func TestCreateBackupStorage_NonS3NeedsNoKey(t *testing.T) {
 	s := NewPostgresStore(db) // no key, but a non-s3 provider has no secret
 
 	mock.ExpectBegin()
-	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO backup_storages (name, provider, config, secret_enc, is_default, owner_id) VALUES ($1, $2, $3::jsonb, $4, $5, $6) RETURNING id`)).
-		WithArgs("disk", "local", `{"basePath":"/data"}`, "", false, nil).
+	mock.ExpectQuery(regexp.QuoteMeta(`INSERT INTO backup_storages (name, provider, config, secret_enc, is_default, owner_id, upload_cap_mbit) VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7) RETURNING id`)).
+		WithArgs("disk", "local", `{"basePath":"/data"}`, "", false, nil, nil).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(3))
 	mock.ExpectCommit()
 
@@ -230,8 +230,8 @@ func TestGetBackupStorage_DecryptsAndInjectsSecret(t *testing.T) {
 	now := time.Now()
 	mock.ExpectQuery(regexp.QuoteMeta("FROM backup_storages WHERE id = $1")).
 		WithArgs(3).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "provider", "config", "secret_enc", "is_default", "created_at", "owner_id"}).
-			AddRow(3, "nas", "s3", []byte(`{"bucket":"b"}`), enc, false, now, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "provider", "config", "secret_enc", "is_default", "created_at", "owner_id", "upload_cap_mbit"}).
+			AddRow(3, "nas", "s3", []byte(`{"bucket":"b"}`), enc, false, now, nil, nil))
 
 	got, err := s.GetBackupStorage(3)
 	if err != nil {
@@ -266,8 +266,8 @@ func TestGetBackupStorage_LegacyPlaintextInConfig(t *testing.T) {
 	now := time.Now()
 	mock.ExpectQuery(regexp.QuoteMeta("FROM backup_storages WHERE id = $1")).
 		WithArgs(4).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "provider", "config", "secret_enc", "is_default", "created_at", "owner_id"}).
-			AddRow(4, "legacy", "s3", []byte(`{"bucket":"b","secretAccessKey":"legacy-plain"}`), "", false, now, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "provider", "config", "secret_enc", "is_default", "created_at", "owner_id", "upload_cap_mbit"}).
+			AddRow(4, "legacy", "s3", []byte(`{"bucket":"b","secretAccessKey":"legacy-plain"}`), "", false, now, nil, nil))
 
 	got, err := s.GetBackupStorage(4)
 	if err != nil {
@@ -304,10 +304,10 @@ func TestListBackupStorages_StripsSecretAndReportsSet(t *testing.T) {
 	}
 	now := time.Now()
 	mock.ExpectQuery(regexp.QuoteMeta("FROM backup_storages WHERE owner_id IS NULL ORDER BY id")).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "provider", "config", "secret_enc", "is_default", "created_at", "owner_id"}).
-			AddRow(1, "encrypted", "s3", []byte(`{"bucket":"b"}`), enc, false, now, nil).
-			AddRow(2, "legacy", "s3", []byte(`{"bucket":"b","secretAccessKey":"legacy-plain"}`), "", false, now, nil).
-			AddRow(3, "disk", "local", []byte(`{"basePath":"/x"}`), "", false, now, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "provider", "config", "secret_enc", "is_default", "created_at", "owner_id", "upload_cap_mbit"}).
+			AddRow(1, "encrypted", "s3", []byte(`{"bucket":"b"}`), enc, false, now, nil, nil).
+			AddRow(2, "legacy", "s3", []byte(`{"bucket":"b","secretAccessKey":"legacy-plain"}`), "", false, now, nil, nil).
+			AddRow(3, "disk", "local", []byte(`{"basePath":"/x"}`), "", false, now, nil, nil))
 
 	got, err := s.ListBackupStorages()
 	if err != nil {
@@ -339,8 +339,8 @@ func TestUpdateBackupStorage_EncryptsSecretAndStripsConfig(t *testing.T) {
 	s := keyedBackupStore(db)
 
 	mock.ExpectBegin()
-	mock.ExpectExec(regexp.QuoteMeta(`UPDATE backup_storages SET name = $1, provider = $2, config = $3::jsonb, secret_enc = $4, is_default = $5 WHERE id = $6`)).
-		WithArgs("nas", "s3", `{"bucket":"b"}`, sqlmock.AnyArg(), false, 5).
+	mock.ExpectExec(regexp.QuoteMeta(`UPDATE backup_storages SET name = $1, provider = $2, config = $3::jsonb, secret_enc = $4, is_default = $5, upload_cap_mbit = $6 WHERE id = $7`)).
+		WithArgs("nas", "s3", `{"bucket":"b"}`, sqlmock.AnyArg(), false, nil, 5).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

@@ -18,6 +18,8 @@ Newest release first. The format is fixed and checked in CI - see the
   your players do not need while anyone is playing. Your node updates itself. `node`
 - BYON: your machine can pack each backup to its own disk first, so the world saves again
   sooner; it needs free space the size of the backup. `node`
+- Your own backup bucket can have an upload cap, and a speed test shows how fast the node of one
+  of your servers reaches it (Account, Storage).
 
 ### Breaking
 - Nothing.

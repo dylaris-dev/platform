@@ -19,6 +19,8 @@ export interface OwnBackupStorage {
     /** True when a secret is stored. The secret itself never leaves Core. */
     secretSet?: boolean;
     createdAt: string;
+    /** Most a backup may upload to it, in Mbit/s; null is no cap. */
+    uploadCapMbit?: number | null;
 }
 
 export interface S3Config {
@@ -41,6 +43,8 @@ export interface OwnStorageInput {
      * on an edit that does not carry it, so a stale form cannot move them.
      */
     isDefault?: boolean;
+    /** Sent on every save: Core reads an absent cap as "no cap". */
+    uploadCapMbit: number | null;
 }
 
 export async function listOwnBackupStorages(): Promise<{ success: boolean; status?: number; storages?: OwnBackupStorage[]; message?: string }> {
@@ -92,7 +96,7 @@ async function send(method: 'POST' | 'PATCH', url: string, input: OwnStorageInpu
         const res = await fetch(url, {
             method,
             headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: input.name, provider: 's3', config: input.config, isDefault: input.isDefault }),
+            body: JSON.stringify({ name: input.name, provider: 's3', config: input.config, isDefault: input.isDefault, uploadCapMbit: input.uploadCapMbit }),
         });
         return await handleResponse(res);
     } catch (e) {

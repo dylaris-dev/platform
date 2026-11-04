@@ -62,6 +62,12 @@ func redactBackupStorageSecret(bs models.BackupStorage) models.BackupStorage {
 // A non-s3 provider has no endpoint to check, and an unparseable config is left
 // to the provider factory to reject with a better message.
 func validateBackupStorageEndpoint(bs models.BackupStorage) error {
+	// Every create and update of a storage, admin or tenant, passes here, so
+	// the upload cap is checked once. A 0 Mbit/s cap is not a cap: it would
+	// hang every run with world saving off.
+	if c := bs.UploadCapMbit; c != nil && (*c < 1 || *c > maxUploadCapMbit) {
+		return fmt.Errorf("upload cap must be 1 to %d Mbit/s, or unset for none", maxUploadCapMbit)
+	}
 	if bs.Provider != "s3" || len(bs.Config) == 0 {
 		return nil
 	}
@@ -203,3 +209,6 @@ func jsonString(raw json.RawMessage) string {
 	}
 	return s
 }
+
+// maxUploadCapMbit is 1 Tbit/s, past any real link.
+const maxUploadCapMbit = 1_000_000

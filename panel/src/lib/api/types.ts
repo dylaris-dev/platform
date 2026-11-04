@@ -559,6 +559,11 @@ export interface BackupStorage {
      * and leaving it blank keeps the stored secret.
      */
     secretSet?: boolean;
+    /**
+     * Most a backup may upload to this storage, in Mbit/s, from any node and
+     * whether anyone plays or not. null is no cap; never 0 (it would hang).
+     */
+    uploadCapMbit?: number | null;
 }
 
 // Global backup-mode + quota config (persisted server-side under

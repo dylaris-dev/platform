@@ -24,6 +24,7 @@ import SettingsCard, { type SavableForm } from '@/components/settings/SettingsCa
 import { readConnTest, CONN_TEST_TIMEOUT_MS, type ConnTestResult } from '@/lib/connectionTest';
 import { ConnectionTestNote } from '@/components/ui/ConnectionTest';
 import ModalPanel from '@/components/ui/ModalPanel';
+import StorageUploadCap from '@/components/settings/StorageUploadCap';
 import StorageMaintenance from '@/components/settings/StorageMaintenance';
 import { supportsStorageMaintenance } from '@/lib/storageOrphans';
 
@@ -784,6 +785,17 @@ export default function BackupsTab() {
                                     <p className="text-xs text-(--base-06)">Hetzner Object Storage needs path-style ON. AWS S3 / Cloudflare R2 typically OFF.</p>
                                 </>
                             )}
+
+                            <div className="pt-2 border-t border-(--base-03)">
+                                <StorageUploadCap
+                                    value={editing.uploadCapMbit ?? null}
+                                    onChange={uploadCapMbit => setEditing({ ...editing, uploadCapMbit })}
+                                    // The test signs an upload with the STORED credentials, so it
+                                    // needs a saved row of a kind that has object storage behind it.
+                                    storageId={editing.id && ['s3', 'connection', 'core-storage'].includes(editing.provider) ? editing.id : undefined}
+                                    mine={false}
+                                />
+                            </div>
 
                             <div className="flex items-center justify-between pt-2 border-t border-(--base-03)">
                                 <label className="input-label flex items-center gap-1.5">

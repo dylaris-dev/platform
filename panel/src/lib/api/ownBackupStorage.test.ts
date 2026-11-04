@@ -4,6 +4,7 @@ import { ownStorageIncomplete, storageTargetUsage, type OwnStorageInput } from '
 const full = (over: Partial<OwnStorageInput['config']> = {}): OwnStorageInput => ({
     name: 'Backblaze',
     isDefault: false,
+    uploadCapMbit: null,
     config: {
         endpoint: 'https://s3.eu-central-003.backblazeb2.com',
         bucket: 'my-backups',

@@ -58,6 +58,9 @@ type BackupRunCommand struct {
 	// manifest, which every reader must already handle - archives written before
 	// this existed have none either.
 	Manifest json.RawMessage `json:"manifest"`
+	// UploadCapMbit is the storage's own cap on what this run sends it, players
+	// or not. 0 (an older Core, or no cap) is none.
+	UploadCapMbit int64 `json:"uploadCapMbit"`
 }
 
 // manifestEntryName is where the archive description lives inside the archive.
@@ -385,7 +388,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 
 	// Spool or not is decided before saving pauses: measuring the server's
 	// size is a walk of its own and must not lengthen the window.
-	pacer := newBackupPacer()
+	pacer := newBackupPacer(cmd.UploadCapMbit)
 	spoolPath, spoolMax := "", int64(0)
 	if cmd.Upload == modeUploadMultipart {
 		if p := backupPolicyNow.Load(); p != nil && p.SpoolEnabled && globalSpoolDir != "" {
@@ -489,7 +492,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 			return nil
 		}, pacer)
 	default:
-		upErr = uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, src)
+		upErr = uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, pacer.capReader(ctx, src))
 	}
 	if errors.Is(upErr, errNothingArchived) {
 		reportBackup(ctx, rdb, cmd.RunID, "failed", upErr.Error(), 0)

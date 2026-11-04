@@ -139,10 +139,10 @@ can still show what exists.
 
 ## At a glance
 
-- **618 routes** in 53 sections: 267 GET, 178 POST, 63 PUT, 41 PATCH, 70 DELETE.
+- **622 routes** in 53 sections: 269 GET, 180 POST, 63 PUT, 41 PATCH, 70 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **407** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **153** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **46** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **411** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **153** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **49** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -153,7 +153,7 @@ can still show what exists.
 - [/api/backup-jobs](#apibackup-jobs) (4)
 - [/api/backup-runs](#apibackup-runs) (3)
 - [/api/backup-schedules](#apibackup-schedules) (1)
-- [/api/backup-storages](#apibackup-storages) (5)
+- [/api/backup-storages](#apibackup-storages) (7)
 - [/api/beam](#apibeam) (4)
 - [/api/disk](#apidisk) (4)
 - [/api/external](#apiexternal) (10)
@@ -163,7 +163,7 @@ can still show what exists.
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (45)
+- [/api/me](#apime) (47)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (16)
@@ -424,6 +424,8 @@ can still show what exists.
 | POST | `/api/backup-storages` | session | `settings.write` | - | `BackupHandler.CreateStorage` | adds a backup target. |
 | PATCH | `/api/backup-storages/{id:[0-9]+}` | session | `settings.write` | - | `BackupHandler.UpdateStorage` | edits a backup target; an unknown id is 404. |
 | DELETE | `/api/backup-storages/{id:[0-9]+}` | session | `settings.write` | - | `BackupHandler.DeleteStorage` | removes a backup target. |
+| POST | `/api/backup-storages/{id:[0-9]+}/speedtest` | session | `settings.write` | - | `BackupHandler.SpeedTestStorage` | - |
+| GET | `/api/backup-storages/{id:[0-9]+}/speedtest-nodes` | session | `settings.write` | - | `BackupHandler.SpeedTestNodes` | the nodes an operator may test a platform storage from: the platform's, never a tenant's machine (that is their uplink). |
 | POST | `/api/backup-storages/{id:[0-9]+}/test` | session | `settings.write` | - | `BackupHandler.TestStorage` | round-trip put/get/delete a tiny object to confirm credentials and bucket access, then, on object storage, a multipart upload through presigned part URLs, the way nodes upload. |
 
 ## /api/beam
@@ -546,6 +548,8 @@ can still show what exists.
 | POST | `/api/me/backup-storages` | session | `backupstorage.write` | - | `BackupHandler.CreateOwnStorage` | connects a bucket of the caller's own. |
 | PATCH | `/api/me/backup-storages/{id:[0-9]+}` | session | `backupstorage.write` | - | `BackupHandler.UpdateOwnStorage` | - |
 | DELETE | `/api/me/backup-storages/{id:[0-9]+}` | session | `backupstorage.delete` | - | `BackupHandler.DeleteOwnStorage` | Refused while a backup, a schedule, a storage choice or a template still names it (store.ErrStorageInUse): the reference would fall back to the platform default, so the tenant's archives would be billed as ours and a restore would fetch from a bucket that never held them. |
+| POST | `/api/me/backup-storages/{id:[0-9]+}/speedtest` | session | `backupstorage.write` | - | `BackupHandler.SpeedTestOwnStorage` | - |
+| GET | `/api/me/backup-storages/{id:[0-9]+}/speedtest-nodes` | session | `backupstorage.write` | - | `BackupHandler.SpeedTestOwnNodes` | - |
 | POST | `/api/me/backup-storages/{id:[0-9]+}/test` | session | `backupstorage.write` | - | `BackupHandler.TestOwnStorage` | the same round trip the admin path runs, against the caller's own storage only. |
 | GET | `/api/me/billing` | session | _no capability_ | - | `BillingHandler.GetMyBilling` | the caller's lifecycle state for the banner. |
 | GET | `/api/me/entitlement` | session | _no capability_ | - | `EntitlementHandler.GetMine` | the caller's own entitlement. |

@@ -239,7 +239,13 @@ func backupPolicyIsSet(p *backupPolicy) bool { return p.HeadroomPct != nil }
 // second from the current policy and load, so a player joining or leaving
 // mid-run changes the pace within the stats collector's ping interval.
 type backupPacer struct {
-	up, read *rate.Limiter
+	// up paces uploads that share the uplink with the players, upLAN the rest.
+	// Both carry the storage's own cap; up also the players' budget.
+	up, upLAN, read *rate.Limiter
+	// storageCap is the destination's upload cap (rate.Inf for none). It holds
+	// whether or not anyone is online and past the save-off ceiling: it is a
+	// property of where the bytes go, a slow NAS or a metered link.
+	storageCap rate.Limit
 	// pausedSince is when world saving was paused, unix nanoseconds; 0 while
 	// it is not.
 	pausedSince atomic.Int64
@@ -250,10 +256,16 @@ type backupPacer struct {
 	last time.Time
 }
 
-func newBackupPacer() *backupPacer {
+func newBackupPacer(storageCapMbit int64) *backupPacer {
+	storageCap := rate.Inf
+	if storageCapMbit > 0 {
+		storageCap = rate.Limit(storageCapMbit * 1_000_000 / 8)
+	}
 	return &backupPacer{
-		up:   rate.NewLimiter(rate.Inf, backupPaceBurst),
-		read: rate.NewLimiter(rate.Inf, backupPaceBurst),
+		up:         rate.NewLimiter(storageCap, backupPaceBurst),
+		upLAN:      rate.NewLimiter(storageCap, backupPaceBurst),
+		read:       rate.NewLimiter(rate.Inf, backupPaceBurst),
+		storageCap: storageCap,
 		inputs: func() (*backupPolicy, int64, bool, int64, time.Time) {
 			players, tx := nodeLoad()
 			return backupPolicyNow.Load(), nodeEnvUplinkMbit, players, tx, time.Now()
@@ -278,6 +290,7 @@ func (b *backupPacer) refresh(force bool) {
 		saveOffFor = now.Sub(time.Unix(0, since))
 	}
 	up, read := backupRates(p, env, players, tx, since != 0, saveOffFor)
+	up = min(up, b.storageCap)
 	if b.up.Limit() != up {
 		b.up.SetLimitAt(now, up)
 	}
@@ -309,15 +322,27 @@ func (b *backupPacer) reader(ctx context.Context, r io.Reader) io.Reader {
 	return &pacedReader{r: r, wait: func(n int) error { return b.wait(ctx, b.read, n) }}
 }
 
-// uploadWait paces upload bytes; a LAN destination is never paced, it does not
-// share the uplink with the players.
+// uploadWait paces upload bytes. A LAN destination does not share the uplink
+// with the players, so only the storage's own cap applies to it.
 func (b *backupPacer) uploadWait(ctx context.Context, lan func() bool) func(int) error {
 	return func(n int) error {
-		if b == nil || lan() {
+		if b == nil {
 			return nil
+		}
+		if lan() {
+			return b.wait(ctx, b.upLAN, n)
 		}
 		return b.wait(ctx, b.up, n)
 	}
+}
+
+// capReader paces a filesystem destination (shared, local, node-local) to the
+// storage's cap alone: those writes do not leave through the uplink.
+func (b *backupPacer) capReader(ctx context.Context, r io.Reader) io.Reader {
+	if b == nil || b.storageCap == rate.Inf {
+		return r
+	}
+	return &pacedReader{r: r, wait: func(n int) error { return b.wait(ctx, b.upLAN, n) }}
 }
 
 // pacedReader waits for the bytes it has just read before handing them on.
@@ -345,7 +370,8 @@ func logBackupPace(runID int, b *backupPacer) {
 	if up == rate.Inf && read == rate.Inf {
 		return
 	}
-	log.Printf("backup %d: players online, pacing upload %s, read %s", runID, fmtRate(up), fmtRate(read))
+	players, _ := nodeLoad()
+	log.Printf("backup %d: pacing upload %s (storage cap %s), read %s, players online: %v", runID, fmtRate(up), fmtRate(b.storageCap), fmtRate(read), players)
 }
 
 func fmtRate(l rate.Limit) string {

@@ -1839,6 +1839,25 @@
     },
     {
       "method": "POST",
+      "path": "/api/backup-storages/{id:[0-9]+}/speedtest",
+      "auth": "session",
+      "authorization": "settings.write",
+      "handler": "BackupHandler.SpeedTestStorage",
+      "group": "backup-storages",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/backup-storages/{id:[0-9]+}/speedtest-nodes",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "the nodes an operator may test a platform storage from: the platform's, never a tenant's machine (that is their uplink).",
+      "handler": "BackupHandler.SpeedTestNodes",
+      "group": "backup-storages",
+      "external": false
+    },
+    {
+      "method": "POST",
       "path": "/api/backup-storages/{id:[0-9]+}/test",
       "auth": "session",
       "authorization": "settings.write",
@@ -2572,6 +2591,24 @@
       "auth": "session",
       "authorization": "backupstorage.write",
       "handler": "BackupHandler.UpdateOwnStorage",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/backup-storages/{id:[0-9]+}/speedtest",
+      "auth": "session",
+      "authorization": "backupstorage.write",
+      "handler": "BackupHandler.SpeedTestOwnStorage",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/backup-storages/{id:[0-9]+}/speedtest-nodes",
+      "auth": "session",
+      "authorization": "backupstorage.write",
+      "handler": "BackupHandler.SpeedTestOwnNodes",
       "group": "me",
       "external": false
     },
@@ -6146,10 +6183,10 @@
     }
   ],
   "counts": {
-    "total": 619,
+    "total": 623,
     "byAuth": {
       "none": 30,
-      "session": 571,
+      "session": 575,
       "user API key": 10,
       "warp key": 8
     },
@@ -6161,7 +6198,7 @@
       "backup-jobs": 4,
       "backup-runs": 3,
       "backup-schedules": 1,
-      "backup-storages": 5,
+      "backup-storages": 7,
       "beam": 5,
       "disk": 4,
       "external": 10,
@@ -6172,7 +6209,7 @@
       "healthz": 1,
       "infrastructure": 3,
       "maintenance": 1,
-      "me": 45,
+      "me": 47,
       "mirror": 1,
       "modrinth": 9,
       "modules": 6,

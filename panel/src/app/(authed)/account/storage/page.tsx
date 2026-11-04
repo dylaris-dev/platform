@@ -12,6 +12,7 @@ import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
 import { toast } from '@/components/ui/Toast';
 import ModalPanel from '@/components/ui/ModalPanel';
+import StorageUploadCap from '@/components/settings/StorageUploadCap';
 import { useAppData } from '@/lib/AppDataContext';
 import { templatesVisible } from '@/lib/templates';
 
@@ -29,6 +30,7 @@ import { templatesVisible } from '@/lib/templates';
 
 const emptyForm = (): OwnStorageInput => ({
     name: '',
+    uploadCapMbit: null,
     config: { endpoint: '', region: '', bucket: '', prefix: '', accessKeyId: '', secretAccessKey: '', forcePathStyle: false },
 });
 
@@ -88,6 +90,7 @@ export default function StoragePage() {
         setEditing(s);
         setForm({
             name: s.name,
+            uploadCapMbit: s.uploadCapMbit ?? null,
             // The secret is deliberately blank: Core never returns it, and an
             // empty field on save means "keep the stored one".
             config: { ...s.config, secretAccessKey: '' },
@@ -291,6 +294,7 @@ export default function StoragePage() {
                     form={form}
                     setForm={setForm}
                     isEdit={!!editing}
+                    storageId={editing?.id}
                     saving={saving}
                     onCancel={() => { setForm(null); setEditing(null); }}
                     onSave={save}
@@ -323,11 +327,12 @@ export default function StoragePage() {
 }
 
 function StorageDialog({
-    form, setForm, isEdit, saving, onCancel, onSave,
+    form, setForm, isEdit, storageId, saving, onCancel, onSave,
 }: {
     form: OwnStorageInput;
     setForm: (f: OwnStorageInput) => void;
     isEdit: boolean;
+    storageId?: number;
     saving: boolean;
     onCancel: () => void;
     onSave: () => void;
@@ -397,6 +402,15 @@ function StorageDialog({
                             </span>
                         </span>
                     </label>
+
+                    <div className="border-t border-(--base-04) pt-3">
+                        <StorageUploadCap
+                            value={form.uploadCapMbit}
+                            onChange={uploadCapMbit => set({ uploadCapMbit })}
+                            storageId={storageId}
+                            mine
+                        />
+                    </div>
 
                     {!isEdit && (
                         <p className="text-xs text-(--base-06)">

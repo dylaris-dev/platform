@@ -231,16 +231,20 @@ var requiredCaps = map[string]string{
 	// server from the job/run row, not a path {id}/{uuid} -> in-handler only
 	// (Rule R5), deliberately NOT listed here (they go into
 	// authz.InHandlerAuthzRoutes in Task 22).
-	"/api/backup-storages":                  "settings.read",
-	"/api/backup-storages/{id:[0-9]+}":      "settings.write",
-	"/api/backup-storages/{id:[0-9]+}/test": "settings.write",
+	"/api/backup-storages":                             "settings.read",
+	"/api/backup-storages/{id:[0-9]+}":                 "settings.write",
+	"/api/backup-storages/{id:[0-9]+}/test":            "settings.write",
+	"/api/backup-storages/{id:[0-9]+}/speedtest":       "settings.write",
+	"/api/backup-storages/{id:[0-9]+}/speedtest-nodes": "settings.write",
 	// A TENANT's own bucket, which is a different thing from the platform's:
 	// owner-scoped capabilities, and every handler is anchored to the caller's
 	// own id rather than filtering an all-rows read.
-	"/api/me/backup-storages":                  "backupstorage.read",
-	"/api/me/backup-storages/{id:[0-9]+}":      "backupstorage.write",
-	"/api/me/backup-storages/{id:[0-9]+}/test": "backupstorage.write",
-	"/api/me/storage-prefs":                    "backupstorage.read",
+	"/api/me/backup-storages":                             "backupstorage.read",
+	"/api/me/backup-storages/{id:[0-9]+}":                 "backupstorage.write",
+	"/api/me/backup-storages/{id:[0-9]+}/test":            "backupstorage.write",
+	"/api/me/backup-storages/{id:[0-9]+}/speedtest":       "backupstorage.write",
+	"/api/me/backup-storages/{id:[0-9]+}/speedtest-nodes": "backupstorage.write",
+	"/api/me/storage-prefs":                               "backupstorage.read",
 	// storage-connections are the named, shared storage-provider configs that
 	// generalize backup-storages -> same PANEL settings.read/write treatment.
 	"/api/storage-connections":                  "settings.read",
@@ -2231,6 +2235,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.UpdateStorage))).Methods("PATCH")
 	api.HandleFunc("/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.DeleteStorage))).Methods("DELETE")
 	api.HandleFunc("/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.TestStorage))).Methods("POST")
+	api.HandleFunc("/backup-storages/{id:[0-9]+}/speedtest", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.SpeedTestStorage))).Methods("POST")
+	api.HandleFunc("/backup-storages/{id:[0-9]+}/speedtest-nodes", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.SpeedTestNodes))).Methods("GET")
 	api.HandleFunc("/admin/storage/{id:[0-9]+}/orphans", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.ScanOrphans))).Methods("GET")
 	api.HandleFunc("/admin/storage/{id:[0-9]+}/orphans/delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.DeleteOrphans))).Methods("POST")
 	api.HandleFunc("/admin/storage/{id:[0-9]+}/lifecycle", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(backupHandler.GetLifecycle))).Methods("GET")
@@ -2244,6 +2250,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/me/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.UpdateOwnStorage))).Methods("PATCH")
 	api.HandleFunc("/me/backup-storages/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.delete")(backupHandler.DeleteOwnStorage))).Methods("DELETE")
 	api.HandleFunc("/me/backup-storages/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.TestOwnStorage))).Methods("POST")
+	api.HandleFunc("/me/backup-storages/{id:[0-9]+}/speedtest", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.SpeedTestOwnStorage))).Methods("POST")
+	api.HandleFunc("/me/backup-storages/{id:[0-9]+}/speedtest-nodes", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.write")(backupHandler.SpeedTestOwnNodes))).Methods("GET")
 	api.HandleFunc("/me/storage-prefs", authHandler.AuthMiddleware(appState.Authz.RequireCap("backupstorage.read")(backupHandler.GetStoragePrefs))).Methods("GET")
 	// An admin's view of a user's own storage targets. Never the credentials.
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/storage-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.read")(backupHandler.AdminListUserStorages))).Methods("GET")

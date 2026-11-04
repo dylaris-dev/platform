@@ -1282,6 +1282,11 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	if objectStorage {
 		payload["upload"] = services.BackupUploadMultipart
 	}
+	// The storage's own cap, applied by the node to every byte it sends there,
+	// players or not. An older node ignores the field.
+	if storage.UploadCapMbit != nil {
+		payload["uploadCapMbit"] = *storage.UploadCapMbit
+	}
 	// A tenant's own bucket: the presigned URLs point wherever they said, so
 	// the node refuses non-public addresses for them. An older node ignores
 	// the field.

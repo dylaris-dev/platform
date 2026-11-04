@@ -22,6 +22,9 @@ type BackupStorage struct {
 	// wins over the platform's for their jobs.
 	IsDefault bool      `json:"isDefault"`
 	CreatedAt time.Time `json:"createdAt"`
+	// UploadCapMbit caps every backup upload to this storage, players or not.
+	// nil is no cap; there is no 0 (it would hang the run).
+	UploadCapMbit *int64 `json:"uploadCapMbit"`
 
 	// SecretSet reports, on a read response, that an s3 secret is stored
 	// WITHOUT returning it. It is transient: set by the store on read from the
