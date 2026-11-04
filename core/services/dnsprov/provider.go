@@ -18,9 +18,14 @@ import (
 // node's IP, and a long TTL would keep players on the old address after a move.
 const recordTTL = 60 * time.Second
 
-// srvWeight is the value the spec fixes; priority stays 0 because there is only
-// ever one target per name.
-const srvWeight = 5
+// srvWeight is the value the spec fixes. With only ever one target per name the
+// priority means nothing, but it must not be 0: libdns/cloudflare v0.2.2 tags it
+// omitempty, so a 0 is never sent and Cloudflare rejects the SRV with "priority
+// is a required data field" (found in a live test, 2026-11-04).
+const (
+	srvWeight   = 5
+	srvPriority = 1
+)
 
 // ErrNoZoneListing is returned by ListZones when the provider package has no
 // ZoneLister. The caller falls back to asking the user for the zone.
@@ -108,7 +113,7 @@ func (a *adapter) DeleteRecords(ctx context.Context, zone string, recs []Record)
 	// provider may store another TTL than the 60s we wrote (minimum-TTL providers),
 	// which would make an exact match silently delete nothing. An SRV value is one
 	// string ("priority weight port target") with no per-field wildcard, so it
-	// stays exact; it is the 0/5 we wrote ourselves.
+	// stays exact; it is the priority/weight we wrote ourselves.
 	in, err := toLibdnsAll(recs, 0)
 	if err != nil {
 		return err
@@ -147,7 +152,7 @@ func toLibdns(r Record, ttl time.Duration) (libdns.Record, error) {
 			Transport: "tcp",
 			Name:      r.Name,
 			TTL:       ttl,
-			Priority:  0,
+			Priority:  srvPriority,
 			Weight:    srvWeight,
 			Port:      r.Port,
 			// The trailing dot makes the target absolute; without it some providers

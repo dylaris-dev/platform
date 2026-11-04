@@ -21,7 +21,7 @@ func TestToLibdnsSRV(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := libdns.SRV{Service: "minecraft", Transport: "tcp", Name: "survival", Target: "survival.example.com.",
-		Port: 25650, Priority: 0, Weight: 5, TTL: 60 * time.Second}
+		Port: 25650, Priority: 1, Weight: 5, TTL: 60 * time.Second}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
@@ -196,7 +196,7 @@ func TestDeleteInputUsesWildcardTTL(t *testing.T) {
 			t.Errorf("%s delete input TTL = %v, want 0", r.RR().Type, ttl)
 		}
 	}
-	if got := in[1].RR().Data; got != "0 5 25650 play.example.com." {
+	if got := in[1].RR().Data; got != "1 5 25650 play.example.com." {
 		t.Errorf("SRV value = %q", got)
 	}
 }

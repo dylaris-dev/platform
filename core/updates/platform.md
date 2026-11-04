@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.04.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The DNS updater could not create the SRV record for a server on a non-default port with
+  Cloudflare, which rejected it; the A record was written, the SRV was not. `core`
+
 ## 2026.11.04.2
 
 ### Features
