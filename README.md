@@ -552,7 +552,7 @@ secrets:
 | `JWT_SECRET` | `change-this-secret` (rejected) | **Yes** | Signing key for panel auth tokens. Must be a strong random value — boot fails on empty/placeholder. Hand it to no other service. |
 | `BEAM_JWT_SECRET` | *(empty: falls back to `JWT_SECRET`, with a warning)* | Recommended | Signing key for Beam tickets, shared with the gateway beam relay and cluster nodes. A value of its own; never `JWT_SECRET`. |
 | `CLUSTER_SECRET` | `dylaris-cluster-secret` (rejected) | **Yes** | Shared secret authenticating Core ↔ Node ↔ Link ↔ Warp and deriving service keys. Same value across the whole cluster. Boot fails on empty/placeholder. |
-| `GATEWAY_HUB_URL` | *(empty)* | No | The gateway Hub's internal base URL (e.g. `http://hub:25530`), which lets the panel's DNS form reach it. Core stores **no** DNS credential of its own: the Hub owns that row and is the only writer of records. Empty means no gateway, and the panel's DNS card says so instead of offering a form that cannot work. The Hub must share this `CLUSTER_SECRET` — that is what authenticates the hop. |
+| `GATEWAY_HUB_URL` | *(empty)* | No | The gateway Hub's internal base URL (e.g. `http://hub:25530`), which lets the panel's DNS form reach it. Core stores no credential for the gateway's records: the Hub owns that row and is the only writer of them (Core's own direct-mode DNS accounts are separate, see below). Empty means no gateway, and the panel's DNS card says so instead of offering a form that cannot work. The Hub must share this `CLUSTER_SECRET` — that is what authenticates the hop. |
 | `DB_USER` | `postgres` | **Yes** | Postgres user. |
 | `DB_PASSWORD` | *(empty)* | **Yes** | Postgres password. |
 | `DB_NAME` | `dylaris` | Recommended | Postgres database name. |
@@ -592,11 +592,16 @@ secrets:
 | `BEAM_MANIFEST_URL` | *(GitHub Releases feed)* | No | **Is** the compiled-in fallback for the Beam desktop-client update manifest, read once at startup — the `beam.release_manifest` admin setting takes precedence when it is non-empty. Set this so a fork points at its OWN releases repo without a rebuild. |
 | `CLAMAV_ADDR` | *(empty, scanning off)* | No | `host:port` of a `clamd` instance. When set, every ticket attachment is streamed through ClamAV (INSTREAM) and rejected on a hit before it is ever stored. Empty means uploads are accepted unscanned. |
 
-#### DNS records are written by the gateway Hub
+#### Who writes DNS records
 
-Core writes no DNS records. The edge wildcards and the Beam relay names are
-gateway names, so the gateway Hub owns the provider credential and is the only
-writer of records. Set `GATEWAY_HUB_URL` on Core so the panel's DNS form reaches
+The edge wildcards and the Beam relay names are gateway names, so the gateway Hub
+owns that provider credential and is the only writer of those records.
+
+Core writes records in exactly one case: direct-mode server domains (managed
+mode), when an admin has enabled the DNS updater under Features and connected a
+provider account under Settings > DNS. Those credentials are stored encrypted in
+Core's database, not in env vars, and Core only changes or deletes records whose
+name, type and value it wrote itself. Nothing else in Core touches DNS. Set `GATEWAY_HUB_URL` on Core so the panel's DNS form reaches
 the Hub. `DNS_UPDATER_ENABLED`, `DNS_PROVIDER`, `DNS_API_TOKEN`, `DNS_ZONE` and
 `DNS_ZONES` are ignored on Core; if any of them is still set, Core logs at boot
 which ones and that they belong on the hub service instead (see the
