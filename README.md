@@ -67,7 +67,7 @@ Said plainly, because it is the first question anyone asks:
 
 A web **Panel** (Next.js) drives a Go **Core** API, which orchestrates one or more Go **Node** agents. Each Node talks to its local Docker daemon to create, start, stop, and manage Minecraft server containers — so a "server" in DYLARIS is just a managed Docker container with persistent data, networking, and lifecycle handled for you. State lives in **PostgreSQL/TimescaleDB**; **Redis/Valkey** is the coordination bus (queues, pub/sub, discovery, settings).
 
-It runs anywhere from a **single VPS** (everything on one host) up to a **Docker Swarm fleet** spanning multiple data-centre hosts and even NAT'd home/off-site machines (via the optional WireGuard bridge, *Warp*). Public domain-without-`ip:port` ingress is provided by a separate, optional **Gateway** repo (`dylaris-gateway`); without it, DYLARIS runs standalone in `ip_port` routing mode.
+It runs anywhere from a **single VPS** (everything on one host) up to a **Docker Swarm fleet** spanning multiple data-centre hosts, whose nodes must reach each other directly. Public domain-without-`ip:port` ingress is provided by a separate, optional **Gateway** repo (`dylaris-gateway`); without it, DYLARIS runs standalone in `ip_port` routing mode.
 
 Everything is self-hosted: your servers, your data, your infrastructure.
 
@@ -106,7 +106,7 @@ what any serious panel needs.
 - **Live events** — Server-Sent Events over Redis Pub/Sub for real-time status (no polling).
 - **Multi-tenant user management** — UUID users, roles and per-server grants, username history + cooldowns, admin controls, API keys.
 - **First-run setup wizard** — browser-driven first-admin creation, plus lost-admin recovery.
-- **Warp** - pull external/home nodes behind NAT into the overlay network over an encrypted WireGuard tunnel (the machine joins the overlay, not the Swarm), and run servers on them as if they were in your DC. The panel generates the deploy kit for such a machine; see `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference).
+- **Warp** - pull external/home nodes behind NAT into the overlay network over an encrypted WireGuard tunnel (the machine joins the overlay, not the Swarm), and run servers on them as if they were in your DC. The panel generates the deploy kit for such a machine; see `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference). **Needs the Gateway** (the Warp leader and the edge live there), which DYLARIS currently runs only as a managed service, so a self-hosted install without it cannot use Warp.
 - **Optional Gateway stack** — public ingress/proxy (edge), hub and link services for routing player traffic without exposing node IPs. Lives in a separate repo (`dylaris-gateway`).
 
 ## Architecture
@@ -438,7 +438,7 @@ docker service scale dylaris_core=3                # more API replicas (leader e
 
 In the stack, the `node` service is **global**: exactly one Node task runs on every swarm host. Each one pairs on first boot and Core assigns it its own id, which the node caches in `.node_id`; `NODE_HOSTNAME` is templated from the Swarm hostname (`{{.Node.Hostname}}`) and only names it, so every host becomes a distinct, recognisable Node automatically.
 
-**External / home nodes (Warp):** a NAT'd home machine is not deployed through this stack and never joins the Swarm. Add it in the panel, which generates a compose kit for that machine: a `warp` WireGuard client, the `node` (with `NODE_EXTERNAL=true` and a single-use enroll token), a `link` beside it and `watchtower` for updates. Run it with `docker compose up -d` on the machine; warp joins the overlay over an encrypted WireGuard tunnel, and the node forces gateway+beam locally (no exposed ports/SFTP). See `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference).
+**External / home nodes (Warp, needs the Gateway):** a NAT'd home machine is not deployed through this stack and never joins the Swarm. Add it in the panel, which generates a compose kit for that machine: a `warp` WireGuard client, the `node` (with `NODE_EXTERNAL=true` and a single-use enroll token), a `link` beside it and `watchtower` for updates. Run it with `docker compose up -d` on the machine; warp joins the overlay over an encrypted WireGuard tunnel, and the node forces gateway+beam locally (no exposed ports/SFTP). See `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference).
 
 ### The compose files explained
 
@@ -908,7 +908,7 @@ DYLARIS scales on three axes:
 
 - **More API throughput → scale Core.** Run N Core replicas behind a load balancer. Redis leader election keeps singleton jobs (discovery, Warp resync) on one replica while all replicas serve traffic. `docker service scale dylaris_core=N`.
 - **More server capacity → add Nodes.** Every Docker host you join to the swarm becomes a Node (global service) and a scheduling target. Use **regions** + **tags** to steer placement; the scheduler picks a node by region/tag/capacity.
-- **Reach beyond the DC → Warp.** Pull NAT'd home/off-site machines into the overlay over WireGuard (with a panel-generated compose kit; they never join the Swarm) and run servers on them; player traffic is routed back through the DC edge.
+- **Reach beyond the DC → Warp.** Pull NAT'd home/off-site machines into the overlay over WireGuard (with a panel-generated compose kit; they never join the Swarm) and run servers on them; player traffic is routed back through the DC edge. Requires the Gateway, which is currently managed-only.
 
 **State & HA notes**
 
