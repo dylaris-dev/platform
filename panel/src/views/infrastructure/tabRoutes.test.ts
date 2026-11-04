@@ -80,8 +80,8 @@ describe('infrastructure tab routes', () => {
     });
 
     it('routes live under admin and still refuse without a gateway', () => {
-        // The tab bar is a static list there, so the page is the only thing
-        // that can tell an operator why the screen is empty.
+        // The tab is hidden without a gateway, but a bookmarked link still lands
+        // on the page, so the page must still say why the screen is empty.
         const page = readFileSync(join(__dirname, '../../app/(authed)/admin/routes/page.tsx'), 'utf8');
         expect(page).toContain('RoutesPanel');
         expect(page, 'the admin routes page lists nothing and explains nothing without a gateway')
@@ -89,6 +89,9 @@ describe('infrastructure tab routes', () => {
 
         const layout = readFileSync(join(__dirname, '../../app/(authed)/admin/layout.tsx'), 'utf8');
         expect(layout, 'the Routes tab is not in the admin tab bar').toContain("slug: 'routes'");
+        // Without a gateway the tab only led to that hint; it is shown with one.
+        expect(layout, 'the Routes tab is not marked gateway-only').toContain("slug: 'routes', label: 'Routes', gatewayOnly: true");
+        expect(layout, 'the admin tab bar does not drop gateway-only tabs').toContain('TABS.filter(t => !t.gatewayOnly || gatewayEnabled)');
     });
 
     it('the index redirects rather than becoming an address of its own', () => {

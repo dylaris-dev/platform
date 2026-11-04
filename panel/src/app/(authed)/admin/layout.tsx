@@ -5,17 +5,20 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAppData } from '@/lib/AppDataContext';
 
+// Routes are gateway records only; direct-mode server domains live on each
+// server's Network tab. Without gateway routing the tab led to an empty hint, so
+// it is hidden. The page keeps its own explanation for a bookmarked link.
 const TABS = [
     { slug: 'servers', label: 'Servers' },
     { slug: 'users', label: 'Users' },
-    { slug: 'routes', label: 'Routes' },
+    { slug: 'routes', label: 'Routes', gatewayOnly: true },
     { slug: 'disk', label: 'Disk Analysis' },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
     const pathname = usePathname();
     const router = useRouter();
-    const { user, ready } = useAppData();
+    const { user, ready, gatewayEnabled } = useAppData();
 
     useEffect(() => {
         if (!ready) return;
@@ -41,7 +44,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </div>
 
             <div className="flex gap-1 mb-4 border-b border-(--base-03) pb-0">
-                {TABS.map(t => {
+                {TABS.filter(t => !t.gatewayOnly || gatewayEnabled).map(t => {
                     const href = `/admin/${t.slug}`;
                     const isActive = pathname === href || pathname.startsWith(href + '/');
                     return (

@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.04.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Without gateway routing, Admin no longer shows a Routes tab and the navbar no longer shows
+  My infrastructure; both only led to empty pages. External nodes stay under Infrastructure
+  and Settings, Nodes. `panel`
+
 ## 2026.11.04.3
 
 ### Features

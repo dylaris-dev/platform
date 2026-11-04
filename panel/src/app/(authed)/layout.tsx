@@ -105,16 +105,17 @@ function AuthedShell({ children }: { children: React.ReactNode }) {
     // otherwise have no way in at all, now that protected addresses no longer
     // hang off the account dropdown.
     //
-    // Admins ALWAYS, and not only for that reason: the page's third tab is the
-    // operator's own external machines, which exist whether or not either
-    // feature is on. Gating an admin on featureFlags.byon || gatewayEnabled left
-    // that tab reachable only by typing the URL.
+    // Only where BYON or route-only is usable. External nodes cannot be given to
+    // a user (owner_id is set only by BYON enroll), and an admin has them under
+    // Infrastructure > External nodes and Settings > Nodes, so on a self-hosted
+    // install without the gateway this entry was a duplicate of those. The page
+    // itself still opens for an admin by URL.
     //
     // Shown without an entitlement as well, since the page explains what is
     // missing - more use than a link that silently is not there.
     // Each product's own usable flag: the page opened on gatewayEnabled alone
     // and then showed a route-only tab its gate had closed.
-    const canSeeMyInfra = user.isAdmin || byonEnabled || routeOnlyEnabled;
+    const canSeeMyInfra = byonEnabled || routeOnlyEnabled;
 
     return (
         <SidebarCollapseProvider>

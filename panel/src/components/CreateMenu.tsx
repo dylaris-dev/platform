@@ -184,7 +184,7 @@ export default function CreateMenu({ onNewServer, compact = false }: { onNewServ
                                 ? 'How to join a machine to the fleet.'
                                 : 'Run servers on your own hardware, connected through the overlay.'}
                             option={node}
-                            onClick={() => navigate(isAdmin ? '/nodes?tab=external' : '/nodes?tab=machines')}
+                            onClick={() => navigate(isAdmin ? '/settings/nodes?tab=external' : '/nodes?tab=machines')}
                             onNavigate={navigate}
                         />
                     )}
