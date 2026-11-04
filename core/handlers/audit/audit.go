@@ -106,6 +106,14 @@ const (
 	// A key used by an account scheduled for auto-delete: in use, like a login.
 	AuditEventDeletionCancelledByAPIKey = "deletion_cancelled_by_api_key"
 
+	// Direct-mode DNS provider accounts. Metadata is the name and provider
+	// only, never a credential.
+	AuditEventDNSAccountCreated = "dns_account.created"
+	AuditEventDNSAccountUpdated = "dns_account.updated"
+	AuditEventDNSAccountDeleted = "dns_account.deleted"
+	// Interval, limits and the feature flag of direct-mode DNS.
+	AuditEventDNSSettingsUpdated = "dns_settings.updated"
+
 	// Tickets (ticket-scoped audit, written to ticket_audit_events
 	// rather than audit_events_identity).
 	TicketEventCreated         = "ticket_created"

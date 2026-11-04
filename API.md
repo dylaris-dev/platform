@@ -139,14 +139,14 @@ can still show what exists.
 
 ## At a glance
 
-- **602 routes** in 53 sections: 263 GET, 173 POST, 58 PUT, 41 PATCH, 68 DELETE.
+- **614 routes** in 53 sections: 265 GET, 178 POST, 61 PUT, 41 PATCH, 70 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **393** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **151** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **41** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **405** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **151** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **42** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (137)
+- [/api/admin](#apiadmin) (146)
 - [/api/auth](#apiauth) (23)
 - [/api/authz](#apiauthz) (3)
 - [/api/avatar](#apiavatar) (1)
@@ -174,7 +174,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (93)
+- [/api/servers](#apiservers) (96)
 - [/api/settings](#apisettings) (28)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -211,6 +211,15 @@ can still show what exists.
 | POST | `/api/admin/db/migration` | session | `settings.write` | - | `DBMigrationHandler.StartMigration` | start a migration to the target. |
 | POST | `/api/admin/db/migration/test-connection` | session | `settings.write` | - | `DBMigrationHandler.TestConnection` | open the target and return its server version, so admins confirm they hit the right database. |
 | POST | `/api/admin/db/migration/verify` | session | `settings.write` | - | `DBMigrationHandler.VerifyMigration` | run the source-vs-target comparison on demand (the manual "Verify / Test" button). |
+| GET | `/api/admin/dns` | session | `settings.read` | - | `DomainsHandler.AdminGet` | Answers while the flag is off too (enabled false), so the screen that turns it on can render. |
+| POST | `/api/admin/dns/accounts` | session | `settings.write` | AdminGate | `DomainsHandler.CreateAccount` | {name, provider, credentials}. |
+| PUT | `/api/admin/dns/accounts/{id:[0-9]+}` | session | `settings.write` | AdminGate | `DomainsHandler.UpdateAccount` | A blank credential field keeps the stored one. |
+| DELETE | `/api/admin/dns/accounts/{id:[0-9]+}` | session | `settings.write` | AdminGate | `DomainsHandler.DeleteAccount` | Core's records go first, through the provider; what it cannot reach is named in orphanedNames (and in the audit event, the only place it outlives the response) for the admin to remove by hand. |
+| POST | `/api/admin/dns/accounts/{id:[0-9]+}/test` | session | `settings.write` | AdminGate | `DomainsHandler.TestAccount` | lists the zones, or where the provider cannot, reads the first zone's records. |
+| POST | `/api/admin/dns/accounts/{id:[0-9]+}/zones` | session | `settings.write` | AdminGate | `DomainsHandler.AddZone` | {name}. |
+| POST | `/api/admin/dns/accounts/{id:[0-9]+}/zones/refresh` | session | `settings.write` | AdminGate | `DomainsHandler.RefreshZones` | the zones the provider lists replace the listed ones; zones added by hand stay. |
+| PUT | `/api/admin/dns/settings` | session | `settings.write` | - | `DomainsHandler.SetSettings` | {enabled?, intervalSeconds?, perUser?, perServer?}. |
+| PUT | `/api/admin/dns/zones/{zoneId:[0-9]+}/access` | session | `settings.write` | AdminGate | `DomainsHandler.SetZoneAccess` | {principals:[]}, each "user:<id>" or "role:<id>". |
 | GET | `/api/admin/health` | session | `settings.read` | - | `HealthHandler.GetStatus` | Aggregated platform health, PANEL settings.read (RequireCap at the route). |
 | GET | `/api/admin/mail/templates` | session | `settings.write` | - | `MailTemplatesHandler.List` | - |
 | GET | `/api/admin/mail/templates/{key}` | session | `settings.write` | - | `MailTemplatesHandler.Get` | - |
@@ -734,6 +743,9 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/console/history` | session | `console.read` | - | `ConsoleHandler.GetHistory` | Returns up to ?count= (default and max 1000) log lines from the Redis Stream, oldest first, with their stream IDs. |
 | GET | `/api/servers/{id:[0-9]+}/console/stream` | session | `console.read` | - | `ConsoleHandler.StreamConsole` | Streams live server logs via SSE (Server-Sent Events). |
 | POST | `/api/servers/{id:[0-9]+}/copy-sub-server` | session | `server.settings.write` | - | `ServerModsHandler.CopySubServer` | Duplicates the active sub-server so a version move can be tried on the copy while the original stays as it is. |
+| GET | `/api/servers/{id:[0-9]+}/domains` | session | `domains.read` | ServerGate | `DomainsHandler.List` | - |
+| POST | `/api/servers/{id:[0-9]+}/domains` | session | `domains.write` | ServerGate | `DomainsHandler.Create` | {mode:"manual", fqdn} or {mode:"managed", zoneId, label}. |
+| DELETE | `/api/servers/{id:[0-9]+}/domains/{domainId:[0-9]+}` | session | `domains.write` | ServerGate | `DomainsHandler.Delete` | Core's records for it are removed by the reconciler's next pass (the ledger row loses its domain). |
 | GET | `/api/servers/{id:[0-9]+}/edge-motd` | session | `overview.read` | - | `ServerHandler.GetServerEdgeMotd` | Returns the per-server edge transitional-MOTD config (mode + custom text). |
 | PATCH | `/api/servers/{id:[0-9]+}/edge-motd` | session | `server.settings.write` | - | `ServerHandler.SetServerEdgeMotd` | Updates the per-server edge transitional-MOTD mode/text and publishes it to Redis so the gateway edge picks it up (auto/custom/off; see the edge's handleSpliceServerStatus). |
 | GET | `/api/servers/{id:[0-9]+}/install-cooldown` | session | `overview.read` | - | `ServerHandler.GetInstallCooldown` | returns how many seconds remain on the post-install cooldown for a server, so the UI can disable power actions and show a countdown instead of letting the user click and get a 429. |

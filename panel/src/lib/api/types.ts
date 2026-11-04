@@ -140,6 +140,9 @@ export interface TabPermissions {
     powerStop?: boolean;
     powerRestart?: boolean;
     powerKill?: boolean;
+    // Resolved domains.read / domains.write, same kind of bit.
+    domains?: boolean;
+    domainsWrite?: boolean;
     members: boolean;
     network: boolean;
     backups: boolean;

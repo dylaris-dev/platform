@@ -88,6 +88,15 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 		t.Fatalf("SetUserTOTP: %v", err)
 	}
 
+	dnsCT, err := crypto.Encrypt(crypto.DeriveKey(secretBefore, "dns-account-credential"), []byte(`{"api_token":"DNS-SECRET"}`))
+	if err != nil {
+		t.Fatalf("encrypt DNS credentials: %v", err)
+	}
+	dnsID, err := before.CreateDNSAccount(store.DNSAccount{Name: "reseal-dns", Provider: "cloudflare", EncCredentials: dnsCT})
+	if err != nil {
+		t.Fatalf("CreateDNSAccount: %v", err)
+	}
+
 	rep, err := before.ResealAtRest(secretBefore, secretAfter)
 	if err != nil {
 		t.Fatalf("ResealAtRest: %v", err)
@@ -95,8 +104,8 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	if rep.Unreadable() != 0 {
 		t.Fatalf("report = %+v; every value was sealed under the source secret", rep.Buckets)
 	}
-	if len(rep.Buckets) != 8 {
-		t.Fatalf("got %d buckets, want 8: %+v", len(rep.Buckets), rep.Buckets)
+	if len(rep.Buckets) != 9 {
+		t.Fatalf("got %d buckets, want 9: %+v", len(rep.Buckets), rep.Buckets)
 	}
 	for _, b := range rep.Buckets {
 		if b.Moved < 1 {
@@ -151,6 +160,13 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	pt, err := crypto.Decrypt(crypto.DeriveKey(secretAfter, "modrinth-pat"), pat.Ciphertext)
 	if err != nil || string(pt) != "mrp_TOKEN" {
 		t.Errorf("PAT under the new key = %q (%v), want mrp_TOKEN", pt, err)
+	}
+
+	if acc, err := after.GetDNSAccount(dnsID); err != nil || acc == nil {
+		t.Errorf("GetDNSAccount: %v", err)
+	} else if pt, err := crypto.Decrypt(crypto.DeriveKey(secretAfter, "dns-account-credential"), acc.EncCredentials); err != nil ||
+		string(pt) != `{"api_token":"DNS-SECRET"}` {
+		t.Errorf("DNS credentials under the new key = %q (%v)", pt, err)
 	}
 
 	mail, err := after.GetSetting(mailKey)

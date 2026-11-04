@@ -43,6 +43,9 @@ const (
 	ServerAuditEventForceOnChanged         = "audit_force_on_changed"
 	ServerAuditEventLoaderMetadataDeclared = "loader_metadata_declared"
 	ServerAuditEventTimezoneChanged        = "timezone_changed"
+	// Direct-mode domains attached to or removed from the server.
+	ServerAuditEventDomainAdded   = "server_domain.added"
+	ServerAuditEventDomainRemoved = "server_domain.removed"
 	// A request with a valid API key that was refused (401/403).
 	ServerAuditEventAPIKeyDenied = "api_key_denied"
 )

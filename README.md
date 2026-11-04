@@ -93,6 +93,7 @@ what any serious panel needs.
   manage daily availability alerts and explore safe examples for creation, BYON,
   route-only and authoring without making real changes. See [panel help](PANEL-HELP.md).
 - **Modrinth integration** — in-panel mod browser, install mods into a server, plus a modpack **builder + publisher** (publish your own modpacks to Modrinth).
+- **Server domains (direct mode)** - give a server its own domain, either manual (you create the DNS record, DYLARIS checks it) or managed (DYLARIS writes the A and, for ports other than 25565, SRV record at your DNS provider). Off by default under Settings, Features. Needs no new environment variables. See the networking docs.
 - **Templates** - save a server or proxy as a reusable starting point and install it in setup; personal, shared by username, or platform-wide. See [Templates](#templates).
 - **Sub-servers** — several installs on one server slot, switched from the panel. Keep a vanilla world, a modded world and next season's pack side by side without a second slot.
 - **Spark profiler** — start/stop profiling and capture results from the panel, so a lagging world is diagnosed where it runs.

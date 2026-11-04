@@ -588,6 +588,11 @@ type TabPermissions struct {
 	PowerStop    bool `json:"powerStop,omitempty"`
 	PowerRestart bool `json:"powerRestart,omitempty"`
 	PowerKill    bool `json:"powerKill,omitempty"`
+	// Domains and DomainsWrite are the resolved domains.read / domains.write,
+	// the same kind of bit: the Domains card shows on the first and its add and
+	// remove controls follow the second.
+	Domains      bool `json:"domains,omitempty"`
+	DomainsWrite bool `json:"domainsWrite,omitempty"`
 	Members      bool `json:"members"`
 	Network      bool `json:"network"`
 	Backups      bool `json:"backups"`

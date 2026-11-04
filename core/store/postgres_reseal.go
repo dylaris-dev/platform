@@ -43,6 +43,9 @@ import (
 const (
 	nodeSecretPurpose  = "node-redis-secret"
 	modrinthPATPurpose = "modrinth-pat"
+	// dnsCredentialPurpose seals dns_accounts.enc_credentials; the services
+	// constant of the same name is what writes it.
+	dnsCredentialPurpose = "dns-account-credential"
 )
 
 // mrpackPathPurpose is listed so the coverage test below can account for it by
@@ -132,6 +135,7 @@ func (s *PostgresStore) ResealAtRest(fromSecret, toSecret string) (*ResealReport
 		{modrinthPATPurpose, "modrinth_pats", "user_id", "ciphertext"},
 		{bedrockFloodgatePurpose, "bedrock_servers", "server_id", "floodgate_key_enc"},
 		{bedrockFloodgatePurpose, "link_route_editions", "domain", "floodgate_key_enc"},
+		{dnsCredentialPurpose, "dns_accounts", "id", "enc_credentials"},
 	}
 	for _, c := range columns {
 		b, err := resealColumn(tx, c.table, c.idCol, c.valCol,

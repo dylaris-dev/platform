@@ -578,6 +578,29 @@ type Store interface {
 	SetCustomDomainTXTToken(id int, token string) error
 	ListClaimsDueRecheck(every time.Duration, limit int) ([]CustomDomainClaim, error)
 	RecheckFailedCustomDomainClaim(id int) (time.Time, error)
+	// Direct-mode server domains and the DNS accounts behind them.
+	CreateDNSAccount(a DNSAccount) (int, error)
+	UpdateDNSAccount(a DNSAccount) error
+	DeleteDNSAccount(id int) error
+	ListDNSAccounts() ([]DNSAccount, error)
+	GetDNSAccount(id int) (*DNSAccount, error)
+	SetDNSAccountError(id int, msg string) error
+	ReplaceDNSZones(accountID int, names []string, manual bool) error
+	AddDNSZone(accountID int, name string) error
+	ListDNSZones() ([]DNSZone, error)
+	SetDNSZoneAccess(zoneID int, principals []string) error
+	ListDNSZoneAccess() ([]DNSZoneAccess, error)
+	CreateServerDomain(d ServerDomain) (int, error)
+	DeleteServerDomain(id int) error
+	ListServerDomains() ([]ServerDomain, error)
+	ListServerDomainsByServer(serverID int) ([]ServerDomain, error)
+	CountServerDomainsByOwner(ownerID string) (int, error)
+	SetServerDomainState(id int, state string, problems []string, at time.Time) error
+	AddDNSOwnedRecord(r DNSOwnedRecord) error
+	ListDNSOwnedRecords() ([]DNSOwnedRecord, error)
+	DeleteDNSOwnedRecord(id int) error
+	GetDNSSubdomainLimit(scope string) (*DNSSubdomainLimit, error)
+	SetDNSSubdomainLimit(scope string, max *int64) error
 	LapseCustomDomainClaim(id int, grace time.Duration) error
 
 	ListWarpPeersByRegion(region string) ([]WarpPeer, error)

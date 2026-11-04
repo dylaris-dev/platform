@@ -79,6 +79,18 @@ func TestMergeResolvedTabPermissions(t *testing.T) {
 			want: models.TabPermissions{Overview: true, Power: true, PowerRestart: true, Mods: true},
 		},
 		{
+			name: "domains.read shows the card, domains.write unlocks its controls",
+			base: nil,
+			caps: capSet("domains.read"),
+			want: models.TabPermissions{Domains: true},
+		},
+		{
+			name: "domains.write lights the write bit",
+			base: nil,
+			caps: capSet("domains.read", "domains.write"),
+			want: models.TabPermissions{Domains: true, DomainsWrite: true},
+		},
+		{
 			name: "a nil resolver leaves the blob untouched",
 			base: &models.TabPermissions{Overview: true},
 			caps: nil,

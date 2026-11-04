@@ -61,6 +61,7 @@ var presets = []Preset{
 			"mods.read", "mods.write", "mods.delete",
 			"backups.read", "backups.create", "backups.delete", "backups.restore",
 			"network.read", "network.write",
+			"domains.read", "domains.write",
 			"tabs.read", "tabs.write",
 			"schedule.read", "schedule.write", "schedule.delete",
 			"stats.read", "spark.use",

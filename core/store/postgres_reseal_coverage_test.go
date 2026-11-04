@@ -29,6 +29,7 @@ var resealedPurposes = map[string]bool{
 	bedrockFloodgatePurpose:    true,
 	settingsSecretPurpose:      true,
 	totpSecretPurpose:          true,
+	dnsCredentialPurpose:       true,
 }
 
 // unresealablePurposes are the derivations that are NOT stored ciphertext, with
@@ -51,6 +52,7 @@ var knownPurposeIdents = map[string]string{
 	"storageConnSecretPurpose":   storageConnSecretPurpose,
 	"settingsSecretPurpose":      settingsSecretPurpose,
 	"totpSecretPurpose":          totpSecretPurpose,
+	"dnsCredentialPurpose":       dnsCredentialPurpose,
 }
 
 var deriveKeyCall = regexp.MustCompile(`crypto\.DeriveKey\(\s*[^,()]+,\s*([^)]+)\)`)

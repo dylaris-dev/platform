@@ -49,6 +49,8 @@ import { advancePending, startPending, POWER_COOLDOWN_MS, type PendingPower, typ
 import { fmtDateTime } from '@/lib/time';
 import { pinMismatch } from '@/lib/cpuset';
 import { loaderName } from '@/lib/modFit';
+import { domainAccess, primaryAddress } from '@/lib/serverDomainStatus';
+import { trustedDomains, useServerDomains } from '@/lib/serverDomainsStore';
 
 // The server detail chrome: the header, the power controls, the tab strip and
 // every dialog hanging off them. It WAS layout.tsx, and moved here so that
@@ -66,6 +68,12 @@ export default function ServerShell({ children }: { children: React.ReactNode })
 
     const serverId = Number(paramId);
     const selectedServer = servers.find(s => s.id === serverId);
+
+    // Shares the Domains card's poller; it runs only while the shell is mounted and the tab is visible.
+    const canReadDomains = !!selectedServer && domainAccess(selectedServer).read && routingMode !== 'gateway';
+    const domainsState = useServerDomains(String(serverId), canReadDomains);
+    const directIpPort = selectedServer ? `${selectedServer.nodeAddress}:${selectedServer.hostPort}` : '';
+    const directDomain = primaryAddress(trustedDomains(domainsState, now), directIpPort);
 
     const [isEditingName, setIsEditingName] = useState(false);
     const [savingResources, runSaveResources] = useBusy();
@@ -1000,11 +1008,20 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                         {routingMode !== 'gateway' && selectedServer.nodeAddress && (selectedServer.hostPort ?? 0) > 0 && (
                             <div className="flex items-center gap-2">
                                 <span className="mono-label text-(--base-05)">Direct</span>
+                                {/* A green domain is what players should type; the IP:port stays as a secondary chip. */}
+                                {directDomain !== directIpPort && (
+                                    <CopyText
+                                        value={directDomain}
+                                        bubble
+                                        label={<span className="inline-flex items-center gap-1.5"><Globe size={11} className="text-(--accent-light) shrink-0" aria-hidden="true" />{directDomain}</span>}
+                                        className="bg-(--accent-ghost) border border-(--accent-border) hover:border-(--accent) rounded-md px-2.5 py-1 text-xs font-mono text-(--base-09) cursor-copy"
+                                    />
+                                )}
                                 <CopyText
-                                    value={`${selectedServer.nodeAddress}:${selectedServer.hostPort}`}
+                                    value={directIpPort}
                                     bubble
-                                    label={<span className="inline-flex items-center gap-1.5"><Link2 size={11} className="text-(--base-06) shrink-0" aria-hidden="true" />{selectedServer.nodeAddress}:{selectedServer.hostPort}</span>}
-                                    className="bg-(--base-03)/50 border border-(--base-04) hover:border-(--base-05) rounded-md px-2.5 py-1 text-xs font-mono text-(--base-07) cursor-copy"
+                                    label={<span className="inline-flex items-center gap-1.5"><Link2 size={11} className="text-(--base-06) shrink-0" aria-hidden="true" />{directIpPort}</span>}
+                                    className={`bg-(--base-03)/50 border border-(--base-04) hover:border-(--base-05) rounded-md px-2.5 py-1 text-xs font-mono cursor-copy ${directDomain !== directIpPort ? 'text-(--base-06)' : 'text-(--base-07)'}`}
                                 />
                                 {/* Extra ports exist only beside a direct address. Who may add,
                                     rename and remove comes from Core (network.write on this

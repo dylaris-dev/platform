@@ -79,6 +79,7 @@ const TAB_GROUPS: SettingsGroup[] = [
             // overlay for it to configure.
             { slug: 'warp', label: 'Warp', always: true, requiresGateway: true },
             { slug: 'beam', label: 'Beam', always: true },
+            { slug: 'dns', label: 'DNS', always: true },
         ],
     },
     {

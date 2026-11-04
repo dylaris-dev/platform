@@ -62,6 +62,10 @@ const LABELS: Record<string, string> = {
     server_role_created: 'Server role created',
     server_role_updated: 'Server role edited',
     server_role_deleted: 'Server role deleted',
+    'dns_account.created': 'DNS account added',
+    'dns_account.updated': 'DNS account edited',
+    'dns_account.deleted': 'DNS account deleted',
+    'dns_settings.updated': 'DNS settings changed',
     maintenance_toggled: 'Maintenance mode changed',
     // Moving the platform's own data. All five of these used to arrive as
     // maintenance_toggled, so this page said "Maintenance mode changed" for

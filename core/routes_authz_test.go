@@ -1562,3 +1562,49 @@ func TestCap_ApiKeysOwner(t *testing.T) {
 		t.Error("apikeys.delete must not 403 at the chokepoint for an authed user (handler scopes to self)")
 	}
 }
+
+// Direct-mode domains: domains.read lists, domains.write adds and removes. A
+// read-only member and a stranger are stopped at the chokepoint, before the
+// feature gate (the flag is off in this store, so a passed check answers 404).
+func TestServerDomainsRoutesNeedCaps(t *testing.T) {
+	fs := &authzFakeStore{}
+	fs.addUser("owner-id", "owner", false)
+	fs.addUser("reader-id", "reader", false)
+	fs.addUser("stranger-id", "stranger", false)
+	fs.servers = map[int]*models.Server{21: {ID: 21, OwnerID: "owner-id", OwnerName: "owner"}}
+	fs.serverRoles = map[int]*store.ServerRole{90: {ID: 90, Capabilities: []string{"domains.read"}}}
+	fs.serverGrants = map[string]*store.ServerGrant{skey(21, "reader-id"): {UserID: "reader-id", ServerRoleID: intPtr(90)}}
+	srv := newAuthzTestServer(t, fs)
+	reader := testIdentity{UserID: "reader-id", Username: "reader"}
+	stranger := testIdentity{UserID: "stranger-id", Username: "stranger"}
+	owner := testIdentity{UserID: "owner-id", Username: "owner"}
+
+	if deniedAtChokepoint(t, srv, "GET", "/api/servers/21/domains", reader) {
+		t.Error("domains.read holder must list domains")
+	}
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/api/servers/21/domains"},
+		{"DELETE", "/api/servers/21/domains/3"},
+	} {
+		if !deniedAtChokepoint(t, srv, c.method, c.path, reader) {
+			t.Errorf("%s %s: domains.read-only holder must be 403 (needs domains.write)", c.method, c.path)
+		}
+		if deniedAtChokepoint(t, srv, c.method, c.path, owner) {
+			t.Errorf("%s %s: the owner must pass", c.method, c.path)
+		}
+	}
+	if !deniedAtChokepoint(t, srv, "GET", "/api/servers/21/domains", stranger) {
+		t.Error("a stranger must be 403 on the domain list")
+	}
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/admin/dns"},
+		{"PUT", "/api/admin/dns/settings"},
+		{"POST", "/api/admin/dns/accounts"},
+		{"DELETE", "/api/admin/dns/accounts/1"},
+		{"PUT", "/api/admin/dns/zones/1/access"},
+	} {
+		if !deniedAtChokepoint(t, srv, c.method, c.path, owner) {
+			t.Errorf("%s %s: a non-admin without settings caps must be 403", c.method, c.path)
+		}
+	}
+}

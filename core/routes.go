@@ -14,6 +14,7 @@ import (
 	"dylaris-core/handlers/beam"
 	"dylaris-core/handlers/billing"
 	"dylaris-core/handlers/console"
+	"dylaris-core/handlers/domains"
 	"dylaris-core/handlers/files"
 	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/gateway"
@@ -296,6 +297,20 @@ var requiredCaps = map[string]string{
 	"/api/admin/ports/nodes/{id:[0-9]+}/range":       "settings.write",
 	"/api/admin/port-permissions":                    "settings.read",
 	"/api/admin/port-limits":                         "settings.read",
+
+	// Direct-mode server domains. GET+POST /domains share the template ->
+	// domains.read is the representative; POST's domains.write lives at the
+	// RequireCap call. The DNS accounts behind them are platform settings.
+	"/api/servers/{id:[0-9]+}/domains":                   "domains.read",
+	"/api/servers/{id:[0-9]+}/domains/{domainId:[0-9]+}": "domains.write",
+	"/api/admin/dns":                                    "settings.read",
+	"/api/admin/dns/settings":                           "settings.write",
+	"/api/admin/dns/accounts":                           "settings.write",
+	"/api/admin/dns/accounts/{id:[0-9]+}":               "settings.write",
+	"/api/admin/dns/accounts/{id:[0-9]+}/test":          "settings.write",
+	"/api/admin/dns/accounts/{id:[0-9]+}/zones":         "settings.write",
+	"/api/admin/dns/accounts/{id:[0-9]+}/zones/refresh": "settings.write",
+	"/api/admin/dns/zones/{zoneId:[0-9]+}/access":       "settings.write",
 
 	// Phase 4 Task 12: users + roles + panel-roles + admin 2FA reset (PANEL
 	// users.*/panelroles.*). GET+POST /users share one template -> users.read
@@ -932,6 +947,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	}
 	serverHandler := servers.NewServerHandler(serversDeps)
 	portsAdminHandler := servers.NewPortsAdminHandler(serversDeps)
+	domainsHandler := domains.NewDomainsHandler(domains.Deps{
+		Store:         appState.Store,
+		FeatureFlags:  appState.FeatureFlags,
+		ClusterSecret: appState.ClusterSecret,
+	})
 	serverRolesHandler := servers.NewServerRolesHandler(serversDeps)
 	placementHandler := servers.NewPlacementHandler(serversDeps)
 	memberHandler := servers.NewMemberHandler(serversDeps)
@@ -1894,6 +1914,21 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/admin/port-limits", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(portsAdminHandler.ListLimits))).Methods("GET")
 	api.HandleFunc("/admin/port-limits", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(portsAdminHandler.SetLimit))).Methods("PUT")
 	api.HandleFunc("/admin/port-limits", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(portsAdminHandler.DeleteLimit))).Methods("DELETE")
+	// Direct-mode server domains. Every route 404s while the DNS updater flag
+	// is off, and the server ones also in gateway routing; GET /admin/dns and
+	// PUT /admin/dns/settings stay open so the flag can be turned on.
+	api.HandleFunc("/servers/{id:[0-9]+}/domains", authHandler.AuthMiddleware(appState.Authz.RequireCap("domains.read")(domainsHandler.ServerGate(domainsHandler.List)))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/domains", authHandler.AuthMiddleware(appState.Authz.RequireCap("domains.write")(domainsHandler.ServerGate(domainsHandler.Create)))).Methods("POST")
+	api.HandleFunc("/servers/{id:[0-9]+}/domains/{domainId:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("domains.write")(domainsHandler.ServerGate(domainsHandler.Delete)))).Methods("DELETE")
+	api.HandleFunc("/admin/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(domainsHandler.AdminGet))).Methods("GET")
+	api.HandleFunc("/admin/dns/settings", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(domainsHandler.SetSettings))).Methods("PUT")
+	api.HandleFunc("/admin/dns/accounts", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(domainsHandler.AdminGate(domainsHandler.CreateAccount)))).Methods("POST")
+	api.HandleFunc("/admin/dns/accounts/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(domainsHandler.AdminGate(domainsHandler.UpdateAccount)))).Methods("PUT")
+	api.HandleFunc("/admin/dns/accounts/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(domainsHandler.AdminGate(domainsHandler.DeleteAccount)))).Methods("DELETE")
+	api.HandleFunc("/admin/dns/accounts/{id:[0-9]+}/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(domainsHandler.AdminGate(domainsHandler.TestAccount)))).Methods("POST")
+	api.HandleFunc("/admin/dns/accounts/{id:[0-9]+}/zones/refresh", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(domainsHandler.AdminGate(domainsHandler.RefreshZones)))).Methods("POST")
+	api.HandleFunc("/admin/dns/accounts/{id:[0-9]+}/zones", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(domainsHandler.AdminGate(domainsHandler.AddZone)))).Methods("POST")
+	api.HandleFunc("/admin/dns/zones/{zoneId:[0-9]+}/access", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(domainsHandler.AdminGate(domainsHandler.SetZoneAccess)))).Methods("PUT")
 
 	// Route-only (external origin): a protected address pointed at a server the
 	// user already runs, no managed node. Owner-scoped; create is gateway-gated.

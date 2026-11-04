@@ -152,6 +152,9 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 	if err := createCustomDomainTables(db); err != nil {
 		return err
 	}
+	if err := createServerDomainTables(db); err != nil {
+		return err
+	}
 	if err := createBackupTables(db); err != nil {
 		return err
 	}

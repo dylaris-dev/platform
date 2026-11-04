@@ -76,6 +76,10 @@ var identityEventPins = []identityEventPin{
 	{"api_key_read", "AuditEventAPIKeyRead", []string{"handlers/auth/api_key_audit.go"}},
 	{"api_key_rate_limited", "AuditEventAPIKeyRateLimited", []string{"handlers/auth/api_key_audit.go"}},
 	{"deletion_cancelled_by_api_key", "AuditEventDeletionCancelledByAPIKey", []string{"handlers/auth/api_keys.go"}},
+	{"dns_account.created", "AuditEventDNSAccountCreated", []string{"handlers/domains/admin.go"}},
+	{"dns_account.updated", "AuditEventDNSAccountUpdated", []string{"handlers/domains/admin.go"}},
+	{"dns_account.deleted", "AuditEventDNSAccountDeleted", []string{"handlers/domains/admin.go"}},
+	{"dns_settings.updated", "AuditEventDNSSettingsUpdated", []string{"handlers/domains/admin.go"}},
 
 	// Written with a literal or a constant outside this package's catalog.
 	{"user_registered", `"user_registered"`, []string{"handlers/auth/registration.go"}},

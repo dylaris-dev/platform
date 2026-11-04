@@ -855,6 +855,21 @@ func main() {
 		customDomainVerifier.SetLeader(coreLeader)
 		customDomainVerifier.Start(context.Background())
 	}
+	// Direct-mode server domains: writes A/SRV records into the zones of the
+	// DNS accounts an admin connected, and records what DNS answers. Leader-
+	// gated per pass for the same reason as the verifier above; idle while
+	// feature_dns_updater_enabled is off.
+	{
+		domainReconciler := services.NewServerDomainReconciler(pgStore, services.NewNetServerDomainResolver(), cfg.ClusterSecret)
+		// The actor column is a user UUID, so a system event leaves it empty and
+		// says who acted in the metadata.
+		domainReconciler.SetAudit(func(serverID int, event string, details map[string]any) {
+			details["actor"] = "system"
+			audit.LogServerAs(pgStore, nil, nil, serverID, event, "", "", details)
+		})
+		domainReconciler.SetLeader(coreLeader)
+		domainReconciler.Start(context.Background())
+	}
 	// Publish the spoke firewall allowlist to the central Redis key the warp
 	// leaders read and poll, so a freshly (re)started leader gets the admin value
 	// rather than only its compiled-in fail-closed default. Always write (even

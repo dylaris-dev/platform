@@ -19,6 +19,7 @@ import { useUnsavedChanges } from '@/components/settings/UnsavedChanges';
 import SettingsPage from '@/components/settings/SettingsPage';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
 import MetricsDatabaseCard from '@/components/settings/MetricsDatabaseCard';
+import DnsUpdaterFlagCard from '@/components/settings/DnsUpdaterFlagCard';
 import VoiceAccessCard from '@/components/settings/VoiceAccessCard';
 import ExtraPortsCard from '@/components/settings/ExtraPortsCard';
 import { SwitchRow } from '@/components/ui/Switch';
@@ -663,6 +664,7 @@ export default function FeaturesTab() {
                             {!gatewayOff && <VoiceAccessCard />}
                             {/* Extra ports are direct routing only (ip_port or both). */}
                             {routingMode !== 'gateway' && <ExtraPortsCard />}
+                            {routingMode !== 'gateway' && <DnsUpdaterFlagCard />}
                             <MetricsDatabaseCard />
                         </>
                     )}

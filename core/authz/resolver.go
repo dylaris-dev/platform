@@ -105,6 +105,9 @@ var demoReadDeny = map[string]bool{
 	// the whole world, unredacted - server.properties, plugin configs and
 	// their credentials - which is exactly what files.read is kept from.
 	"backups.read": true,
+	// domains.read answers with the node's direct address, the same endpoint
+	// disclosure network.read is kept from.
+	"domains.read": true,
 }
 
 // HasCap reports whether the resolution grants capID. An unknown capability is

@@ -8,6 +8,7 @@
 // An unknown type still reads as words, never as JSON, so a server-side
 // addition shows up before the panel learns its wording.
 
+
 export interface AuditSentenceEvent {
     eventType: string;
     actorUserId?: string;
@@ -245,6 +246,22 @@ function predicate(ev: AuditSentenceEvent): string | null {
             const to = str(m, 'to');
             if (from && to) return `switched the sub-server from ${quoted(from)} to ${quoted(to)}`;
             return to ? `switched to the sub-server ${quoted(to)}` : 'switched the sub-server';
+        }
+        case 'server_domain.added':
+            return `added the domain ${quoted(str(m, 'fqdn') || 'unknown')}`;
+        case 'server_domain.removed': {
+            const why = str(m, 'reason') === 'dns_account_deleted' ? ' with the DNS account behind it' : '';
+            return `removed the domain ${quoted(str(m, 'fqdn') || 'unknown')}${why}`;
+        }
+        case 'server_domain.status_changed': {
+            const d = quoted(str(m, 'fqdn') || 'unknown');
+            switch (str(m, 'state')) {
+                case 'green': return `recorded that the domain ${d} is now ready`;
+                case 'yellow': return `recorded that the domain ${d} now needs attention`;
+                case 'paused': return `recorded that the domain ${d} is paused`;
+                case 'grey': return `recorded that the domain ${d} does not resolve yet`;
+                default: return `recorded a status change for the domain ${d}`;
+            }
         }
         case 'deleted':
             return 'deleted the server';

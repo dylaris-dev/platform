@@ -88,6 +88,11 @@ var catalog = []Capability{
 	{ID: "mods.write", Label: "Install/update mods", Category: "Mods", Scope: ScopeServer, Verb: VerbWrite},
 	{ID: "mods.delete", Label: "Remove mods", Category: "Mods", Scope: ScopeServer, Verb: VerbDelete},
 
+	// Direct-mode domains of a server. write adds and removes them; a managed
+	// subdomain also needs the creator's own access to the zone.
+	{ID: "domains.read", Label: "View domains", Category: "Domains", Scope: ScopeServer, Verb: VerbRead},
+	{ID: "domains.write", Label: "Manage domains", Category: "Domains", Scope: ScopeServer, Verb: VerbWrite},
+
 	{ID: "backups.read", Label: "View backups", Category: "Backups", Scope: ScopeServer, Verb: VerbRead},
 	{ID: "backups.create", Label: "Create backup", Category: "Backups", Scope: ScopeServer, Verb: VerbCreate},
 	{ID: "backups.delete", Label: "Delete backup", Category: "Backups", Scope: ScopeServer, Verb: VerbDelete},

@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.04
+
+### Features
+- Servers in direct routing can have domains: a manual one you point yourself, or a managed one
+  where Core writes the A and SRV records at your DNS provider. Off by default under
+  Settings, Features; no new environment variables. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.03.6
 
 ### Features

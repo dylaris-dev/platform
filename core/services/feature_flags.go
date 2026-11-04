@@ -265,6 +265,12 @@ func (f *FeatureFlags) IsTabProxyEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_tab_proxy_enabled", false)
 }
 
+// IsDNSUpdaterEnabled gates the direct-mode domain reconciler. Default false:
+// nothing is written to anyone's DNS until an admin turns it on.
+func (f *FeatureFlags) IsDNSUpdaterEnabled(ctx context.Context) bool {
+	return f.Get(ctx, "feature_dns_updater_enabled", false)
+}
+
 // TabProxyAllowPublicLinks gates anonymous public share links. Default false.
 func (f *FeatureFlags) TabProxyAllowPublicLinks(ctx context.Context) bool {
 	return f.Get(ctx, "tab_proxy_allow_public_links", false)
