@@ -1109,6 +1109,14 @@ type BackupConfig struct {
 	// could open, while the guard reading it ran on every backup.
 	// Administrators are exempt from it - see services.BackupAllowanceGB.
 	DefaultUserQuotaGB *int64 `json:"defaultUserQuotaGb"`
+
+	// ThrottleHeadroomPct and ThrottleSaveOffMaxMin shape how every node's
+	// backups yield to players (services/backup_throttle.go): the share of the
+	// uplink kept for them, and how long saving may stay off before the pacing
+	// gives way. The ceiling is a limit: nil is none, 0 never paces while
+	// saving is off.
+	ThrottleHeadroomPct   int64  `json:"throttleHeadroomPct"`
+	ThrottleSaveOffMaxMin *int64 `json:"throttleSaveOffMaxMin"`
 }
 
 // Sourced from services, not literals, because the enforcement side has to
@@ -1120,8 +1128,10 @@ var defaultBackupConfig = BackupConfig{
 	// nil, so an install that never saved this form keeps the behaviour it had:
 	// no platform ceiling on a tenant without an entitlement. A default number
 	// here would start refusing backups on upgrade for everyone.
-	DefaultUserQuotaGB:   nil,
-	ShareQuotaWithServer: false,
+	DefaultUserQuotaGB:    nil,
+	ShareQuotaWithServer:  false,
+	ThrottleHeadroomPct:   services.DefaultBackupThrottleHeadroomPct,
+	ThrottleSaveOffMaxMin: services.LimitPtr(services.DefaultBackupThrottleSaveOffMax),
 }
 
 // validBackupMode keeps the accepted modes literal - adding a new one has to
@@ -1144,7 +1154,9 @@ func (h *SettingsHandler) GetBackupConfig(w http.ResponseWriter, r *http.Request
 
 // SaveBackupConfig POST /api/settings/backup - PANEL settings.write (RequireCap at the route).
 func (h *SettingsHandler) SaveBackupConfig(w http.ResponseWriter, r *http.Request) {
-	var req BackupConfig
+	// Decoded over the stored values, so a field the request leaves out keeps
+	// its value instead of becoming "no limit".
+	req := h.LoadBackupConfig()
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
@@ -1162,8 +1174,19 @@ func (h *SettingsHandler) SaveBackupConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if req.ThrottleHeadroomPct < 0 || req.ThrottleHeadroomPct > 90 {
+		httpx.SendJSONError(w, "Headroom must be 0 to 90 percent", http.StatusBadRequest)
+		return
+	}
+	if req.ThrottleSaveOffMaxMin != nil && *req.ThrottleSaveOffMaxMin < 0 {
+		httpx.SendJSONError(w, "The save-off ceiling must be 0 or more minutes, or unset for none", http.StatusBadRequest)
+		return
+	}
+
 	pairs := []struct{ k, v string }{
 		{"backup.mode", req.Mode},
+		{services.SettingBackupThrottleHeadroomPct, strconv.FormatInt(req.ThrottleHeadroomPct, 10)},
+		{services.SettingBackupThrottleSaveOffMax, services.FormatLimitSetting(req.ThrottleSaveOffMaxMin)},
 		{services.SettingBackupQuotaPerServer, services.FormatLimitSetting(req.QuotaPerServerGB)},
 		{services.SettingBackupDefaultUserQuota, services.FormatLimitSetting(req.DefaultUserQuotaGB)},
 		{"backup.share_quota_with_server", fmt.Sprintf("%t", req.ShareQuotaWithServer)},
@@ -1173,6 +1196,9 @@ func (h *SettingsHandler) SaveBackupConfig(w http.ResponseWriter, r *http.Reques
 			httpx.SendJSONError(w, "Failed to save setting: "+p.k, http.StatusInternalServerError)
 			return
 		}
+	}
+	if h.d.Redis != nil {
+		services.PublishBackupPolicies(r.Context(), h.d.Store, h.d.Redis)
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
@@ -1193,6 +1219,7 @@ func (h *SettingsHandler) LoadBackupConfig() BackupConfig {
 	if v, _ := h.d.Store.GetSetting("backup.share_quota_with_server"); v != "" {
 		cfg.ShareQuotaWithServer = v == "true"
 	}
+	cfg.ThrottleHeadroomPct, cfg.ThrottleSaveOffMaxMin = services.BackupThrottleGlobals(h.d.Store)
 	return cfg
 }
 

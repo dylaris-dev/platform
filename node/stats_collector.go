@@ -444,6 +444,9 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 
 func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManager, uuid, containerName string, bufferMaxLen int64, quota *QuotaSet, snap *containerSnapshot) {
 	log.Printf("stats: tracking %s", containerName)
+	// A stopped server holds no players; a stale count would pace backups
+	// for nobody.
+	defer forgetServerLoad(uuid)
 
 	liveTicker := time.NewTicker(liveInterval)
 	pingTicker := time.NewTicker(pingInterval)
@@ -636,6 +639,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			payload.MaxPlayers = ping.MaxPlayers
 			payload.MOTD = ping.MOTD
 		}
+		noteServerPlayers(uuid, payload.Players)
 
 		applyMemGuard(ctx, rdb, uuid, &memGuardState, stats.GuardMemMB, stats.MemLimitMB)
 		lastNet = publishNetTraffic(ctx, rdb, uuid, lastNet, netSample{containerID: stats.ID, rx: stats.NetRx, tx: stats.NetTx, at: time.Now()})

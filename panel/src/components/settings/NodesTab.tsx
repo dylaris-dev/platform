@@ -41,6 +41,7 @@ import {
 import HelpTip from '@/components/ui/HelpTip';
 import ExternalMachines from '@/components/settings/ExternalMachines';
 import ModalPanel from '@/components/ui/ModalPanel';
+import NodeBackupThrottle from '@/components/settings/NodeBackupThrottle';
 import { NO_MEMORY_LIMIT_MESSAGE, NO_MEMORY_LIMIT_SHORT } from '@/lib/memoryLimit';
 
 // Shape of GET /nodes/{id}/deploy-bundle — the secret-free node deploy ENV for
@@ -901,6 +902,9 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                 onSaved={onCpuPoolSaved}
                 onError={onError}
             />
+
+            {/* A customer's machine answers to its owner, on their Nodes page. */}
+            {!node.ownerId && <NodeBackupThrottle nodeId={node.id} />}
         </div>
     );
 }

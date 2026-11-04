@@ -139,10 +139,10 @@ can still show what exists.
 
 ## At a glance
 
-- **614 routes** in 53 sections: 265 GET, 178 POST, 61 PUT, 41 PATCH, 70 DELETE.
+- **618 routes** in 53 sections: 267 GET, 178 POST, 63 PUT, 41 PATCH, 70 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **405** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **151** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
-- **42** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
+- **407** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **153** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **46** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
@@ -163,10 +163,10 @@ can still show what exists.
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (43)
+- [/api/me](#apime) (45)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
-- [/api/nodes](#apinodes) (14)
+- [/api/nodes](#apinodes) (16)
 - [/api/notifications](#apinotifications) (5)
 - [/api/packs](#apipacks) (32)
 - [/api/placement](#apiplacement) (3)
@@ -563,6 +563,8 @@ can still show what exists.
 | POST | `/api/me/modrinth/projects/{projectId:[A-Za-z0-9]+}/import` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `PacksHandler.ImportModrinthProject` | creates (or finds) the caller's pack for a project they are a member of. |
 | DELETE | `/api/me/nodes/{id:[0-9]+}` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.DeleteMyNode` | removes the caller's own machine. |
 | POST | `/api/me/nodes/{id:[0-9]+}/admit` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.AdmitMyNode` | {fingerprint} - let this machine back in with the key its owner read off the machine's own log. |
+| GET | `/api/me/nodes/{id:[0-9]+}/backup-throttle` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeBackupThrottle` | - |
+| PUT | `/api/me/nodes/{id:[0-9]+}/backup-throttle` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.SetMyNodeBackupThrottle` | - |
 | GET | `/api/me/nodes/{id:[0-9]+}/contents` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeContents` | what removing this machine would destroy. |
 | GET | `/api/me/nodes/{id:[0-9]+}/join-attempt` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.GetMyNodeJoinAttempt` | the connection Core is refusing for this machine, if any, with the fingerprint of the key it presented. |
 | POST | `/api/me/nodes/{id:[0-9]+}/reset-pairing` | session | _no capability_ | RequireBYONEnabled | `NodeHandler.ResetMyNodePairing` | the owner's own Reset pairing, for a machine whose key is wedged or may have leaked. |
@@ -619,6 +621,8 @@ can still show what exists.
 | DELETE | `/api/nodes/enroll-token/{id}` | session | _no capability_ | - | `NodeEnrollHandler.RevokeToken` | revoke one of the caller's tokens (scoped to owner). |
 | PUT | `/api/nodes/{id:[0-9]+}` | session | `nodes.write` | - | `NodeHandler.UpdateNode` | edits a node. |
 | DELETE | `/api/nodes/{id:[0-9]+}` | session | `nodes.delete` | - | `NodeHandler.DeleteNode` | removes a node, then cleans up the Redis ACL user and keys that belong to it. |
+| GET | `/api/nodes/{id:[0-9]+}/backup-throttle` | session | `nodes.write` | - | `NodeHandler.GetNodeBackupThrottle` | - |
+| PUT | `/api/nodes/{id:[0-9]+}/backup-throttle` | session | `nodes.write` | - | `NodeHandler.SetNodeBackupThrottle` | - |
 | GET | `/api/nodes/{id:[0-9]+}/cpu` | session | _no capability_ | - | `CPUPinningHandler.GetNodeCPU` | the host CPU topology a node reported plus the per-core pinning load (how many servers are pinned to each core). |
 | GET | `/api/nodes/{id:[0-9]+}/deploy-bundle` | session | _no capability_ | - | `NodeHandler.GetDeployBundle` | returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint. |
 | DELETE | `/api/nodes/{id:[0-9]+}/force` | session | `nodes.delete` | - | `NodeHandler.ForceDeleteNode` | deletes an offline node and all its servers |

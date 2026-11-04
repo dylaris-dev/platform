@@ -309,6 +309,10 @@ func pauseWorldSaves(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 	return g
 }
 
+// pauseSaves is pauseWorldSaves, a variable so a test can stand in for a
+// running server.
+var pauseSaves = pauseWorldSaves
+
 // resume re-enables saving, once, however many times it is called.
 //
 // The command goes out on a background context on purpose: the caller's may
@@ -379,11 +383,35 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		return
 	}
 
+	// Spool or not is decided before saving pauses: measuring the server's
+	// size is a walk of its own and must not lengthen the window.
+	pacer := newBackupPacer()
+	spoolPath, spoolMax := "", int64(0)
+	if cmd.Upload == modeUploadMultipart {
+		if p := backupPolicyNow.Load(); p != nil && p.SpoolEnabled && globalSpoolDir != "" {
+			_, free := getDiskSpace(globalSpoolDir)
+			var why string
+			spoolMax, why = spoolBudget(p, dirSize(rootDir), free)
+			if spoolMax > 0 {
+				spoolPath = filepath.Join(globalSpoolDir, spoolFileName(cmd.RunID))
+			} else {
+				log.Printf("backup %d: uploading directly, not spooling: %s", cmd.RunID, why)
+			}
+		}
+	}
+
 	// Everything that could refuse this run has now refused it, so this is the
 	// last point at which pausing saves would be wasted. From here the guard
 	// covers every exit, including the panic paths.
-	saves := pauseWorldSaves(ctx, rdb, dm, cmd.ServerUUID)
+	saves := pauseSaves(ctx, rdb, dm, cmd.ServerUUID)
 	defer saves.resume()
+	if saves.send != nil {
+		pacer.savesPaused(time.Now())
+	} else {
+		// A stopped server has no save-off window to shorten.
+		spoolPath = ""
+	}
+	logBackupPace(cmd.RunID, pacer)
 
 	// For node-local storage the destination is on the same disk we're
 	// reading from — no pipe/uploader is needed. We still want to keep
@@ -391,29 +419,58 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	// so we use the same io.Pipe + uploader plumbing and let
 	// uploadBackup() switch on storage.Provider to do the right thing
 	// (io.Copy to a hidden .dylaris-backups/<id>.tar.gz on the Node).
-	pr, pw := io.Pipe()
-	// counting writer wraps the pipe writer so we can report the archived
-	// size without waiting for the upload to complete.
+	// counting writer wraps the archive's output so we can report the
+	// archived size without waiting for the upload to complete.
 	counter := &countingWriter{}
-	mw := io.MultiWriter(pw, counter)
 
 	stopProgress := reportBackupProgress(ctx, rdb, cmd.RunID, counter)
 	defer stopProgress()
 
 	addedAny := false
+	paceRead := func(r io.Reader) io.Reader { return pacer.reader(ctx, r) }
 
-	go func() {
-		// The goroutine is the source side of the pipe. Any error we hit
-		// has to propagate to the reader by closing the pipe with that
-		// error so the uploader sees it and aborts cleanly.
-		added, err := writeServerArchive(mw, serverRoot, rootDir, cmd.IncludePatterns, cmd.ExcludePatterns, cmd.Manifest)
-		addedAny = added
+	// src is what the upload reads; abortSrc unblocks its writer on failure.
+	var src io.Reader
+	abortSrc := func(error) {}
+	if spoolPath != "" {
+		f, added, err := spoolArchive(spoolPath, spoolMax, counter, func(w io.Writer) (bool, error) {
+			return writeServerArchivePaced(w, serverRoot, rootDir, cmd.IncludePatterns, cmd.ExcludePatterns, cmd.Manifest, paceRead)
+		})
+		if f != nil {
+			defer func() {
+				f.Close()
+				os.Remove(spoolPath)
+			}()
+		}
 		if err != nil {
-			pw.CloseWithError(err)
+			reportBackup(ctx, rdb, cmd.RunID, "failed", "spool the archive: "+err.Error(), 0)
 			return
 		}
-		pw.Close()
-	}()
+		addedAny = added
+		// The archive is complete on disk: the world may save again while the
+		// upload takes as long as the players need it to.
+		saves.resume()
+		pacer.savesResumed()
+		log.Printf("backup %d: archive spooled (%.2f MB), saving resumed, uploading", cmd.RunID, float64(counter.Total())/1024/1024)
+		src = f
+	} else {
+		pr, pw := io.Pipe()
+		mw := io.MultiWriter(pw, counter)
+		go func() {
+			// The goroutine is the source side of the pipe. Any error we hit
+			// has to propagate to the reader by closing the pipe with that
+			// error so the uploader sees it and aborts cleanly.
+			added, err := writeServerArchivePaced(mw, serverRoot, rootDir, cmd.IncludePatterns, cmd.ExcludePatterns, cmd.Manifest, paceRead)
+			addedAny = added
+			if err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+			pw.Close()
+		}()
+		src = pr
+		abortSrc = func(err error) { pr.CloseWithError(err) }
+	}
 
 	// Upload reads from the pipe. Returns once EOF (or pipe error) reached.
 	// Object storage goes through Core's multipart upload; the filesystem
@@ -425,14 +482,14 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		// Checked before Complete, which is the point: an archive that matched
 		// nothing is never completed, so there is no object to clean up and
 		// Core aborts the parts when the run is reported failed.
-		multipartSize, upErr = uploadMultipart(ctx, coreMultipartAPI(cmd.RunID), transferClient(cmd.GuardedTransfer, cmd.AllowPrivate), pr, func() error {
+		multipartSize, upErr = uploadMultipartPaced(ctx, coreMultipartAPI(cmd.RunID), transferClient(cmd.GuardedTransfer, cmd.AllowPrivate), src, func() error {
 			if !addedAny {
 				return errNothingArchived
 			}
 			return nil
-		})
+		}, pacer)
 	default:
-		upErr = uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, pr)
+		upErr = uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, src)
 	}
 	if errors.Is(upErr, errNothingArchived) {
 		reportBackup(ctx, rdb, cmd.RunID, "failed", upErr.Error(), 0)
@@ -441,7 +498,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	if upErr != nil {
 		// Drain any remaining bytes so the writer goroutine doesn't block on
 		// a full pipe; CloseWithError unblocks the writer immediately.
-		pr.CloseWithError(upErr)
+		abortSrc(upErr)
 		// Remove what was half-written, which for the file-backed providers is
 		// a real archive-shaped file: local, shared and node-local all io.Copy
 		// straight into the destination, so an upload that dies partway leaves
@@ -498,6 +555,15 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 // Split out of RunBackup so the walk can be driven without Redis, a storage
 // manager or a live provider.
 func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclude []string, manifest []byte) (bool, error) {
+	return writeServerArchivePaced(w, serverRoot, rootDir, include, exclude, manifest, nil)
+}
+
+// writeServerArchivePaced is writeServerArchive with every file's bytes read
+// through pace, which paces the disk read and gzip together. nil is unpaced.
+func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, exclude []string, manifest []byte, pace func(io.Reader) io.Reader) (bool, error) {
+	if pace == nil {
+		pace = func(r io.Reader) io.Reader { return r }
+	}
 	root, err := os.OpenRoot(serverRoot)
 	if err != nil {
 		return false, err
@@ -594,7 +660,7 @@ func writeServerArchive(w io.Writer, serverRoot, rootDir string, include, exclud
 			if err != nil {
 				return err
 			}
-			copyErr := copyExactly(tw, f, hdr.Size)
+			copyErr := copyExactly(tw, pace(f), hdr.Size)
 			f.Close()
 			if copyErr != nil {
 				return copyErr

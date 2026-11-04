@@ -471,6 +471,9 @@ func main() {
 	go runCoreLoadPublisher(ctx, rdb, nodeID)
 	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
 	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
+	globalSpoolDir = backupSpoolDir(storageMgr.Paths())
+	clearBackupSpool(globalSpoolDir)
+	go watchBackupPolicy(ctx, rdb, nodeID, globalSpoolDir)
 	go startVoiceForwarder(ctx, rdb, dockerMgr, nodeID)
 	// Caps and TTLs on the keys a server's own shipper credential can write.
 	startShipperKeyGuard(ctx, dockerMgr, rdb)

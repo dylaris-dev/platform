@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.04.2
+
+### Features
+- Backups yield to players: while anyone plays on a node, a backup uploads only what the uplink
+  spares, and runs at full speed again when nobody is online. Set each node's upload speed
+  under Settings, Nodes, or with NODE_UPLINK_MBIT; with neither, nothing changes. `node` `core` `panel`
+- A node can pack a backup to its own disk first, so the world saves again before the slow
+  upload; off by default, with a size limit and a free-space check. `node` `core` `panel`
+- Pacing gives way after 20 minutes of world saving being off (Settings, Backups), so a slow
+  backup cannot leave a world unsaved for hours. `node` `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.04
 
 ### Features

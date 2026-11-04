@@ -355,6 +355,7 @@ var requiredCaps = map[string]string{
 	"/api/admin/settings/node-admission/cidrs/{id}":    "nodes.delete",
 	"/api/nodes/{id:[0-9]+}":                           "nodes.write",
 	"/api/nodes/{id:[0-9]+}/storage-placement":         "nodes.write",
+	"/api/nodes/{id:[0-9]+}/backup-throttle":           "nodes.write",
 	"/api/settings/storage-placement":                  "settings.read",
 	"/api/nodes/{id:[0-9]+}/force":                     "nodes.delete",
 	"/api/nodes/{id:[0-9]+}/placement":                 "nodes.write",
@@ -1366,6 +1367,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/me/nodes/{id:[0-9]+}/contents", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.GetMyNodeContents))).Methods("GET")
 	api.HandleFunc("/me/nodes/{id:[0-9]+}", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.DeleteMyNode))).Methods("DELETE")
 	api.HandleFunc("/me/nodes/{id:[0-9]+}/reset-pairing", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.ResetMyNodePairing))).Methods("POST")
+	api.HandleFunc("/me/nodes/{id:[0-9]+}/backup-throttle", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.GetMyNodeBackupThrottle))).Methods("GET")
+	api.HandleFunc("/me/nodes/{id:[0-9]+}/backup-throttle", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.SetMyNodeBackupThrottle))).Methods("PUT")
 	api.HandleFunc("/me/nodes/{id:[0-9]+}/join-attempt", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.GetMyNodeJoinAttempt))).Methods("GET")
 	api.HandleFunc("/me/nodes/{id:[0-9]+}/admit", authHandler.AuthMiddleware(gates.RequireBYONEnabled(nodeHandler.AdmitMyNode))).Methods("POST")
 	// Own entitlement: what the caller may use. Deliberately NOT gated on
@@ -1781,6 +1784,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/nodes/{id:[0-9]+}/force", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.delete")(nodeHandler.ForceDeleteNode))).Methods("DELETE")
 	api.HandleFunc("/nodes/{id:[0-9]+}/storage", authHandler.AuthMiddleware(nodeHandler.GetNodeStorage)).Methods("GET")
 	api.HandleFunc("/nodes/{id:[0-9]+}/storage-placement", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.SetNodeStoragePlacement))).Methods("PUT")
+	api.HandleFunc("/nodes/{id:[0-9]+}/backup-throttle", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.GetNodeBackupThrottle))).Methods("GET")
+	api.HandleFunc("/nodes/{id:[0-9]+}/backup-throttle", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.SetNodeBackupThrottle))).Methods("PUT")
 	api.HandleFunc("/settings/storage-placement", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(nodeHandler.GetFleetStoragePlacement))).Methods("GET")
 	api.HandleFunc("/settings/storage-placement", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(nodeHandler.SetFleetStoragePlacement))).Methods("PUT")
 	api.HandleFunc("/nodes/{id:[0-9]+}/deploy-bundle", authHandler.AuthMiddleware(nodeHandler.GetDeployBundle)).Methods("GET")

@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.04.2
+
+### Features
+- BYON: set your machine's upload speed under Nodes, and backups of your servers take only what
+  your players do not need while anyone is playing. Your node updates itself. `node`
+- BYON: your machine can pack each backup to its own disk first, so the world saves again
+  sooner; it needs free space the size of the backup. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.03.6
 
 ### Features

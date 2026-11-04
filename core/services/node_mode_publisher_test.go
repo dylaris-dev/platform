@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/models"
 	"dylaris-core/store"
 )
 
@@ -29,6 +30,17 @@ import (
 type settingsStub struct {
 	store.Store
 	values map[string]string
+	nodes  []models.Node
+}
+
+func (s *settingsStub) ListNodes() ([]models.Node, error) { return s.nodes, nil }
+
+func (s *settingsStub) SetSetting(key, value string) error {
+	if s.values == nil {
+		s.values = map[string]string{}
+	}
+	s.values[key] = value
+	return nil
 }
 
 func (s *settingsStub) GetSetting(key string) (string, error) {

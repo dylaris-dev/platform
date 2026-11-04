@@ -2745,6 +2745,24 @@
     },
     {
       "method": "GET",
+      "path": "/api/me/nodes/{id:[0-9]+}/backup-throttle",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "NodeHandler.GetMyNodeBackupThrottle",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/me/nodes/{id:[0-9]+}/backup-throttle",
+      "auth": "session",
+      "authorization": "no capability",
+      "handler": "NodeHandler.SetMyNodeBackupThrottle",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/me/nodes/{id:[0-9]+}/contents",
       "auth": "session",
       "authorization": "no capability",
@@ -3156,6 +3174,24 @@
       "authorization": "nodes.write",
       "description": "edits a node.",
       "handler": "NodeHandler.UpdateNode",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/nodes/{id:[0-9]+}/backup-throttle",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "handler": "NodeHandler.GetNodeBackupThrottle",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/nodes/{id:[0-9]+}/backup-throttle",
+      "auth": "session",
+      "authorization": "nodes.write",
+      "handler": "NodeHandler.SetNodeBackupThrottle",
       "group": "nodes",
       "external": false
     },
@@ -6110,10 +6146,10 @@
     }
   ],
   "counts": {
-    "total": 615,
+    "total": 619,
     "byAuth": {
       "none": 30,
-      "session": 567,
+      "session": 571,
       "user API key": 10,
       "warp key": 8
     },
@@ -6136,11 +6172,11 @@
       "healthz": 1,
       "infrastructure": 3,
       "maintenance": 1,
-      "me": 43,
+      "me": 45,
       "mirror": 1,
       "modrinth": 9,
       "modules": 6,
-      "nodes": 14,
+      "nodes": 16,
       "notifications": 5,
       "packs": 32,
       "placement": 3,

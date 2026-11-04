@@ -396,6 +396,34 @@ export const getNodeServers = (id: number) => fetchAPI(`/nodes/${id}/servers`);
 export const forceDeleteNode = (id: number) => fetchAPI(`/nodes/${id}/force`, { method: 'DELETE' });
 export const setNodeStoragePlacement = (id: number, placement: StoragePlacement) =>
     fetchAPI(`/nodes/${id}/storage-placement`, { method: 'PUT', body: JSON.stringify(placement) });
+
+// How a node's backups yield to players. null = not set: no uplink means the
+// node's NODE_UPLINK_MBIT, else no slowing down; no read cap means none.
+// None of them is ever 0 - a zero rate would hang the backup.
+export interface NodeBackupThrottle {
+    uplinkMbit: number | null;
+    readMBps: number | null;
+    spoolEnabled: boolean;
+    /** Largest server, uncompressed, that is spooled; larger ones upload directly. */
+    spoolMaxGB: number;
+}
+/** What the node reports about itself; all null for an older or offline node. */
+export interface NodeBackupEnv {
+    uplinkMbit: number | null;
+    spoolDir: string | null;
+    spoolFreeBytes: number | null;
+}
+export interface NodeBackupThrottleResponse {
+    success: boolean;
+    message?: string;
+    throttle?: NodeBackupThrottle;
+    node?: NodeBackupEnv;
+}
+// mine: the caller's own BYON machine, through /me, which answers to its owner.
+export const getNodeBackupThrottle = (id: number, mine = false): Promise<NodeBackupThrottleResponse> =>
+    fetchAPI(`${mine ? '/me' : ''}/nodes/${id}/backup-throttle`);
+export const setNodeBackupThrottle = (id: number, t: NodeBackupThrottle, mine = false): Promise<NodeBackupThrottleResponse> =>
+    fetchAPI(`${mine ? '/me' : ''}/nodes/${id}/backup-throttle`, { method: 'PUT', body: JSON.stringify(t) });
 // The fleet-wide default a node uses when it has no policy of its own. Returns
 // { success, placement, paths } - paths is every path ANY node reports, since
 // no single node's list describes the fleet.
@@ -546,6 +574,12 @@ export interface BackupConfig {
     // folder on one node's disk.
     defaultUserQuotaGb: number | null;
     shareQuotaWithServer: boolean;
+    // How backups yield to players, on every node: the share of a node's
+    // uplink kept for players (0-90), and how many minutes world saving may
+    // stay off before the pacing gives way (null = no ceiling, 0 = never pace
+    // while saving is off).
+    throttleHeadroomPct: number;
+    throttleSaveOffMaxMin: number | null;
 }
 
 export const getBackupConfig = (): Promise<{ success: boolean; settings?: BackupConfig }> =>

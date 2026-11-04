@@ -57,6 +57,7 @@ func publishNetTraffic(ctx context.Context, rdb *redis.Client, uuid string, last
 	if last.containerID == cur.containerID && !last.at.IsZero() {
 		d := cur.at.Sub(last.at)
 		rxBps, txBps = netRate(last.rx, cur.rx, d), netRate(last.tx, cur.tx, d)
+		noteServerTx(uuid, txBps)
 	}
 	key := netTrafficKey(uuid)
 	pipe := rdb.Pipeline()

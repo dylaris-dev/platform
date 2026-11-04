@@ -159,7 +159,82 @@ function StorageModeCard({
                     />
                 </div>
             </div>
+
+            <BackupPacingFields config={config} onChange={onChange} />
         </SettingsCard>
+    );
+}
+
+// How every node's backups yield to players. The uplink itself is per node
+// (Settings, Nodes); these two shape what is done with it.
+function BackupPacingFields({ config, onChange }: { config: BackupConfig; onChange: (next: BackupConfig) => void }) {
+    return (
+        <div className="mt-4 border-t border-(--base-04) pt-4 space-y-4">
+            <div>
+                <h3 className="text-sm font-medium text-(--base-09)">While players are online</h3>
+                <p className="text-xs text-(--base-06) mt-1 max-w-xl">
+                    A backup slows its upload down while anyone plays on its node, so the uplink never fills up
+                    and the players&apos; ping stays steady. It only does that on nodes whose uplink is known: set it
+                    per node under Settings, Nodes, or with NODE_UPLINK_MBIT on the node.
+                </p>
+            </div>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0 max-w-md">
+                    <label className="input-label" htmlFor="backup-throttle-headroom">Uplink kept for players</label>
+                    <p id="backup-throttle-headroom-hint" className="text-xs text-(--base-06) mt-1">
+                        A share of the uplink the backup never uses, on top of what the servers are measured sending.
+                        Never below 10% of the uplink, so a backup always finishes.
+                    </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                    <input
+                        id="backup-throttle-headroom"
+                        type="number"
+                        min={0}
+                        max={90}
+                        step={1}
+                        value={config.throttleHeadroomPct}
+                        aria-describedby="backup-throttle-headroom-hint"
+                        onChange={e => {
+                            if (e.target.value === '') return;
+                            const n = Math.trunc(Number(e.target.value));
+                            if (Number.isFinite(n)) onChange({ ...config, throttleHeadroomPct: Math.min(90, Math.max(0, n)) });
+                        }}
+                        className="input-mono w-20 text-center"
+                    />
+                    <span className="text-xs text-(--base-06) font-mono">%</span>
+                </div>
+            </div>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0 max-w-md">
+                    <label className="input-label flex items-center gap-1.5" htmlFor="backup-throttle-saveoff">
+                        Stop slowing down after
+                        <HelpTip label="About the save-off ceiling">
+                            <p className="mb-2">
+                                While a running server is backed up, it does not save its world, so the archive is
+                                consistent. A slower backup keeps saving off for longer, and a crash in that time
+                                loses everything since the backup started.
+                            </p>
+                            <p className="mb-2">
+                                After this many minutes the backup runs at full speed for the rest of the run.
+                                0 never slows down while saving is off; no limit slows down for as long as it takes.
+                            </p>
+                            <p>
+                                A node that spools its backups (Settings, Nodes) saves again as soon as the archive is
+                                packed, and only the upload is slowed.
+                            </p>
+                        </HelpTip>
+                    </label>
+                    <p className="text-xs text-(--base-06) mt-1">Minutes of world saving being off.</p>
+                </div>
+                <LimitField
+                    id="backup-throttle-saveoff"
+                    unit="min"
+                    value={config.throttleSaveOffMaxMin}
+                    onChange={throttleSaveOffMaxMin => onChange({ ...config, throttleSaveOffMaxMin })}
+                />
+            </div>
+        </div>
     );
 }
 

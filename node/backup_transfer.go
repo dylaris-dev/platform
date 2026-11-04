@@ -10,11 +10,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -263,6 +265,12 @@ func coreMultipartAPI(runID int) multipartAPI {
 // Part 1's URLs are asked for before the first byte is read, because that
 // answer is where the part size comes from.
 func uploadMultipart(ctx context.Context, api multipartAPI, client *http.Client, r io.Reader, beforeComplete func() error) (int64, error) {
+	return uploadMultipartPaced(ctx, api, client, r, beforeComplete, nil)
+}
+
+// uploadMultipartPaced is uploadMultipart with the part bodies paced by pace
+// (nil is unpaced).
+func uploadMultipartPaced(ctx context.Context, api multipartAPI, client *http.Client, r io.Reader, beforeComplete func() error, pace *backupPacer) (int64, error) {
 	partSize, urls, err := api.partURLs(ctx, partBatch(1))
 	if err != nil {
 		return 0, err
@@ -273,7 +281,7 @@ func uploadMultipart(ctx context.Context, api multipartAPI, client *http.Client,
 	if urls == nil {
 		urls = map[int32]string{}
 	}
-	u := &partUploader{api: api, client: client, partSize: partSize, urls: urls}
+	u := &partUploader{api: api, client: client, partSize: partSize, urls: urls, pace: pace}
 	if err := u.uploadParts(ctx, r); err != nil {
 		return 0, err
 	}
@@ -297,6 +305,7 @@ type partUploader struct {
 	api      multipartAPI
 	client   *http.Client
 	partSize int64
+	pace     *backupPacer
 
 	mu   sync.Mutex
 	urls map[int32]string // signed but not yet used
@@ -454,8 +463,18 @@ func (u *partUploader) put(ctx context.Context, target string, data []byte) erro
 	defer cancel()
 	stall := time.AfterFunc(partStallTimeout, cancel)
 	defer stall.Stop()
+	// Where the bytes go decides whether they are paced: an address in the
+	// LAN does not share the uplink with the players. Read off the connection
+	// actually used, so a name resolving differently later cannot be misjudged.
+	var lan atomic.Bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+		if a, ok := info.Conn.RemoteAddr().(*net.TCPAddr); ok {
+			lan.Store(!isPublicUnicast(a.IP))
+		}
+	}})
+	wait := u.pace.uploadWait(ctx, lan.Load)
 	body := func() io.ReadCloser {
-		return io.NopCloser(&stallReader{r: bytes.NewReader(data), t: stall, d: partStallTimeout})
+		return io.NopCloser(&stallReader{r: &pacedReader{r: bytes.NewReader(data), wait: wait}, t: stall, d: partStallTimeout})
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, target, body())
 	if err != nil {

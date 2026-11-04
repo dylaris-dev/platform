@@ -35,6 +35,7 @@ import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
 import ExternalNodesPanel from '@/components/infra/ExternalNodesPanel';
 import TrafficPools from '@/components/infra/TrafficPools';
 import RemoveMachineDialog from '@/components/infra/RemoveMachineDialog';
+import NodeBackupThrottle from '@/components/settings/NodeBackupThrottle';
 import { fmtDate } from '@/lib/time';
 
 // ---------------------------------------------------------------------------
@@ -753,6 +754,8 @@ function MyNodesInner() {
                                         {/* Only while it is not connected: a machine that is up
                                             has nothing waiting to be admitted. */}
                                         {tier !== 'ok' && <PendingAdmission nodeId={n.id} onDone={pairingDone} />}
+                                        {/* The owner's uplink, so theirs to set. */}
+                                        <NodeBackupThrottle nodeId={n.id} mine />
                                         </div>
                                     );
                                 })
