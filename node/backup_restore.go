@@ -86,18 +86,23 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		return
 	}
 	defer restoresInFlight.leave(key)
-	if !restoreServersInFlight.enter(cmd.ServerUUID) {
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "another restore of this server is still running on its node")
-		return
-	}
-	defer restoreServersInFlight.leave(cmd.ServerUUID)
 	// Not while a backup of the server is archiving it: the backup walks the
 	// tree this renames and then deletes, so it failed - and the backup's
 	// save-on at the end could land on the restored world mid-swap.
-	if backupsInFlight.has("server:" + cmd.ServerUUID) {
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "a backup of this server is running on its node; restore once it has finished")
+	if reason := enterRestoreOfServer(cmd.ServerUUID); reason != "" {
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", reason)
 		return
 	}
+	defer restoreServersInFlight.leave(cmd.ServerUUID)
+	// Same interlock as setup/reinstall/migrate_storage, and for the same
+	// reason: the restore stops a container whose desired_state is still
+	// "online" and then renames its whole directory away. Without this the
+	// reconciler starts the server back up mid-restore, against the very
+	// directory the swap is about to replace. Taken only once this restore
+	// holds the server: a refused duplicate that held it too deleted the
+	// running restore's node_busy on its way out.
+	releaseBusy := holdBusyStatus(rdb, cmd.ServerUUID, "restarting", busyStatusTTL)
+	defer releaseBusy()
 
 	started := time.Now()
 	storage := storageInfo{}

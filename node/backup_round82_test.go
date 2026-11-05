@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -58,6 +59,43 @@ func TestARestoreGivesUpOnAStalledDownload(t *testing.T) {
 	})
 	if report["status"] != "failed" {
 		t.Fatalf("report = %v, want failed", report)
+	}
+}
+
+// A restore holds node_busy while it runs, and a second restore of the same
+// server refused on the node leaves the first one's hold alone: the dispatcher
+// took the hold before the server was claimed, so two restores at once both
+// took it and the refused one deleted the running one's on its way out.
+func TestARestoreHoldsNodeBusyOnlyOnceItHoldsTheServer(t *testing.T) {
+	prevNode, prevReq := nodeID, coreRequest
+	t.Cleanup(func() { nodeID, coreRequest = prevNode, prevReq })
+	nodeID = "node-busy"
+	rdb := newMiniRedis(t)
+	busyDuringRun := false
+	coreRequest = func(ctx context.Context, _ *pb.NodeMessage, _ time.Duration) (*pb.NodeMessage, error) {
+		busyDuringRun = rdb.Exists(ctx, nodeBusyKey("srv-busy")).Val() == 1
+		return nil, errors.New("no url")
+	}
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "srv-busy"), 0o755)
+	blob, _ := json.Marshal(storageInfo{ID: 1, Provider: "s3"})
+	cmd := BackupRestoreCommand{RunID: 1, RestoreID: 83, ServerUUID: "srv-busy", StorageKey: "k", Storage: blob, Download: modeDownloadPresigned}
+	terminalReport(t, rdb, queue.BackupRestoresChannel(nodeID), func() {
+		RunRestore(context.Background(), rdb, &StorageManager{paths: []string{root}}, nil, cmd)
+	})
+	if !busyDuringRun {
+		t.Fatal("the restore ran without holding node_busy")
+	}
+
+	restoreServersInFlight.enter(cmd.ServerUUID)
+	defer restoreServersInFlight.leave(cmd.ServerUUID)
+	rdb.Set(context.Background(), nodeBusyKey(cmd.ServerUUID), "restarting", time.Minute)
+	cmd.RestoreID = 84
+	terminalReport(t, rdb, queue.BackupRestoresChannel(nodeID), func() {
+		RunRestore(context.Background(), rdb, &StorageManager{paths: []string{root}}, nil, cmd)
+	})
+	if rdb.Exists(context.Background(), nodeBusyKey(cmd.ServerUUID)).Val() != 1 {
+		t.Fatal("a refused second restore deleted the running restore's node_busy")
 	}
 }
 

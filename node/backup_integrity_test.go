@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,7 +78,7 @@ func TestBackupAndRestoreWiring(t *testing.T) {
 		}
 		return strings.ReplaceAll(string(b), "\r\n", "\n")
 	}
-	worker, restore, mainSrc := read("backup_worker.go"), read("backup_restore.go"), read("main.go")
+	worker, restore := read("backup_worker.go"), read("backup_restore.go")
 	if strings.Contains(worker, "time.Sleep(saveFlushWait)") || !strings.Contains(worker, "waitForSaveConfirmation(ctx, rdb, logKey, from, saveFlushTimeout)") {
 		t.Error("the backup no longer waits for the save confirmation")
 	}
@@ -93,9 +94,6 @@ func TestBackupAndRestoreWiring(t *testing.T) {
 	if !strings.Contains(restore, "budget := restoreDiskBudget(filepath.Dir(stageDir)) - inflightWrites.Load()") ||
 		!strings.Contains(restore, "inflightWrites.Add(n)") {
 		t.Error("a restore no longer shares the disk with the other writes")
-	}
-	if !strings.Contains(mainSrc, "if !restoreServersInFlight.has(rcmd.ServerUUID) {\n\t\t\treleaseRestoreBusy := holdBusyStatus(") {
-		t.Error("a refused second restore releases the running restore's interlock")
 	}
 }
 
@@ -122,20 +120,43 @@ func TestSaveConfirmationAcrossVersions(t *testing.T) {
 	}
 }
 
-// A restore does not run while a backup of the same server archives it.
-func TestARestoreWaitsForABackupOfTheServer(t *testing.T) {
-	b, err := os.ReadFile("backup_restore.go")
-	if err != nil {
-		t.Fatal(err)
+// A backup and a restore of one server exclude each other, also when both
+// start in the same instant: each used to check the other's set and then mark
+// its own, so both could pass the check before either marked itself.
+func TestABackupAndARestoreOfOneServerExcludeEachOther(t *testing.T) {
+	for _, c := range []struct {
+		name          string
+		first, second func(string) string
+	}{
+		{"restore then backup", enterRestoreOfServer, enterBackupOfServer},
+		{"backup then restore", enterBackupOfServer, enterRestoreOfServer},
+		{"two backups", enterBackupOfServer, enterBackupOfServer},
+		{"two restores", enterRestoreOfServer, enterRestoreOfServer},
+	} {
+		uuid := "excl-" + c.name
+		if r := c.first(uuid); r != "" {
+			t.Fatalf("%s: the first was refused: %s", c.name, r)
+		}
+		if r := c.second(uuid); r == "" {
+			t.Errorf("%s: the second ran beside the first", c.name)
+		}
+		backupsInFlight.leave("server:" + uuid)
+		restoreServersInFlight.leave(uuid)
 	}
-	if !strings.Contains(string(b), `if backupsInFlight.has("server:" + cmd.ServerUUID) {`) {
-		t.Error("a restore runs beside a backup of the same server")
-	}
-	w, err := os.ReadFile("backup_worker.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(w), "if restoreServersInFlight.has(cmd.ServerUUID) {") {
-		t.Error("a backup runs beside a restore of the same server")
+
+	for i := 0; i < 2000; i++ {
+		uuid := fmt.Sprintf("excl-race-%d", i)
+		start := make(chan struct{})
+		got := make(chan string, 2)
+		for _, enter := range []func(string) string{enterBackupOfServer, enterRestoreOfServer} {
+			enter := enter
+			go func() { <-start; got <- enter(uuid) }()
+		}
+		close(start)
+		if a, b := <-got, <-got; a == "" && b == "" {
+			t.Fatalf("round %d: a backup and a restore of one server both started", i)
+		}
+		backupsInFlight.leave("server:" + uuid)
+		restoreServersInFlight.leave(uuid)
 	}
 }

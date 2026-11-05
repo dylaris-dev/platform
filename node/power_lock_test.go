@@ -17,12 +17,12 @@ import (
 // removed the container while the stop was still saving. They now queue on the
 // server's lock; another server is not held up, and kill never waits.
 func TestPowerActionsForOneServerRunInTurn(t *testing.T) {
-	release, _ := lockServerPower("a")
+	release, _ := lockServerPower("a", "start")
 	if !serverPowerActive("a") || serverPowerActive("b") {
 		t.Fatal("active flag wrong while a holds the lock")
 	}
 	otherDone := make(chan struct{})
-	go func() { r, _ := lockServerPower("b"); r(); close(otherDone) }()
+	go func() { r, _ := lockServerPower("b", "start"); r(); close(otherDone) }()
 	select {
 	case <-otherDone:
 	case <-time.After(time.Second):
@@ -30,15 +30,16 @@ func TestPowerActionsForOneServerRunInTurn(t *testing.T) {
 	}
 
 	second := make(chan struct{})
-	go func() { r, _ := lockServerPower("a"); r(); close(second) }()
+	go func() { r, _ := lockServerPower("a", "update_resources"); r(); close(second) }()
 	select {
 	case <-second:
 		t.Fatal("a second action on a ran while the first held its lock")
 	case <-time.After(100 * time.Millisecond):
 	}
-	// One waits; a third is dropped rather than taking another command slot.
-	if _, ok := lockServerPower("a"); ok {
-		t.Fatal("a third action queued behind a running and a waiting one")
+	// One config change waits; a second is dropped rather than taking another
+	// command slot.
+	if _, ok := lockServerPower("a", "reconfigure"); ok {
+		t.Fatal("a second config change queued behind a running and a waiting one")
 	}
 	release()
 	select {
@@ -51,6 +52,85 @@ func TestPowerActionsForOneServerRunInTurn(t *testing.T) {
 	}
 	if serialisedActions["kill"] || !serialisedActions["stop"] || !serialisedActions["switch_server"] {
 		t.Fatal("kill must not wait behind a hanging stop; stop and switch must take the lock")
+	}
+}
+
+// The user's last click wins: a stop behind a running action and a waiting
+// start was refused and acked, and the start then brought the server up.
+func TestTheNewestPowerActionReplacesTheWaitingOne(t *testing.T) {
+	for i, c := range []struct{ running, waiting, newest string }{
+		{"restart", "start", "stop"},
+		{"update_resources", "start", "stop"},
+		{"restart", "stop", "start"},
+		{"reconfigure", "restart", "stop"},
+	} {
+		uuid := fmt.Sprintf("newest-%d", i)
+		release, ok := lockServerPower(uuid, c.running)
+		if !ok {
+			t.Fatalf("%v: the first action did not get the lock", c)
+		}
+		waiter := make(chan bool, 1)
+		go func() {
+			r, ok := lockServerPower(uuid, c.waiting)
+			if ok {
+				r()
+			}
+			waiter <- ok
+		}()
+		time.Sleep(50 * time.Millisecond)
+		newest := make(chan bool, 1)
+		go func() {
+			r, ok := lockServerPower(uuid, c.newest)
+			if ok {
+				r()
+			}
+			newest <- ok
+		}()
+		select {
+		case ok := <-waiter:
+			if ok {
+				t.Fatalf("%v: the replaced %s still ran", c, c.waiting)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("%v: the replaced %s still holds a command slot", c, c.waiting)
+		}
+		release()
+		select {
+		case ok := <-newest:
+			if !ok {
+				t.Fatalf("%v: the newest %s was dropped", c, c.newest)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("%v: the newest %s never ran", c, c.newest)
+		}
+	}
+}
+
+// A config change waiting is not replaced by a power action: both run.
+func TestAPowerActionDoesNotReplaceAWaitingConfigChange(t *testing.T) {
+	release, _ := lockServerPower("cfg", "restart")
+	done := make(chan bool, 2)
+	for _, a := range []string{"update_resources", "stop"} {
+		a := a
+		go func() {
+			r, ok := lockServerPower("cfg", a)
+			if ok {
+				r()
+			}
+			done <- ok
+		}()
+		time.Sleep(50 * time.Millisecond)
+	}
+	release()
+	for i := 0; i < 2; i++ {
+		select {
+		case ok := <-done:
+			if !ok {
+				t.Fatal("an action was dropped although it had nothing to repeat")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("an action never ran")
+		}
 	}
 }
 
@@ -111,7 +191,7 @@ func TestPowerWiringIsInPlace(t *testing.T) {
 	}
 	mainSrc, rec, dmSrc := read("main.go"), read("reconciler.go"), read("docker_mgr.go")
 	proc := between(t, mainSrc, "func processCommand(", "case \"switch_server\":")
-	if !strings.Contains(proc, "lockServerPower(cmd.Config.UUID)") {
+	if !strings.Contains(proc, "lockServerPower(cmd.Config.UUID, cmd.Action)") {
 		t.Error("processCommand does not take the server's power lock")
 	}
 	sw := between(t, mainSrc, "Switching server %s to sub-server", "case \"start\":")

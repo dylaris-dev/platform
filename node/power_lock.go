@@ -23,10 +23,13 @@ var nodeStartedAt = time.Now()
 var serverPowerLocks sync.Map // uuid -> *serverPowerLock
 
 type serverPowerLock struct {
-	mu      sync.Mutex
-	held    sync.Mutex // guards active and waiting
-	active  bool
-	waiting int
+	turn chan struct{} // capacity 1: whoever holds it runs
+	held sync.Mutex    // guards active, intent and configWaiting
+	// active is true while an action runs.
+	active bool
+	// intent is the waiting start, stop or restart, closed to send it away.
+	intent        chan struct{}
+	configWaiting bool
 }
 
 // serialisedActions are the commands that stop, start or recreate a server's
@@ -37,34 +40,64 @@ var serialisedActions = map[string]bool{
 }
 
 func powerLockFor(uuid string) *serverPowerLock {
-	l, _ := serverPowerLocks.LoadOrStore(uuid, &serverPowerLock{})
+	l, _ := serverPowerLocks.LoadOrStore(uuid, &serverPowerLock{turn: make(chan struct{}, 1)})
 	return l.(*serverPowerLock)
 }
 
 // lockServerPower takes the server's lock and returns its release, or reports
-// false when an action is already running and another already waits. A waiter
-// sits in one of the node's eight command slots, so without a bound a burst of
-// clicks on one server could fill them all and stall every other server's
-// commands, kill included. The dropped action is a repeat of what is queued;
-// the panel shows the outcome and it can be sent again.
-func lockServerPower(uuid string) (func(), bool) {
+// false when the action is not to run. A waiter sits in one of the node's
+// command slots, so without a bound a burst of clicks on one server could fill
+// them all and stall every other server's commands, kill included.
+//
+// The bound keeps one waiting start/stop/restart and one waiting config change
+// (switch, resources, reconfigure). A newer start, stop or restart REPLACES
+// the waiting one: refusing the newcomer instead dropped and acked a user's
+// stop behind a waiting start, which then brought the server up against the
+// last click. A config change is not replaced - each carries a change the
+// server would otherwise never get - so a second one while one waits is
+// dropped as before.
+func lockServerPower(uuid, action string) (func(), bool) {
 	l := powerLockFor(uuid)
+	var kick chan struct{}
 	l.held.Lock()
-	if l.active && l.waiting > 0 {
-		l.held.Unlock()
-		return nil, false
+	if powerActions[action] {
+		if l.intent != nil {
+			close(l.intent)
+		}
+		kick = make(chan struct{})
+		l.intent = kick
+	} else {
+		if l.active && l.configWaiting {
+			l.held.Unlock()
+			return nil, false
+		}
+		l.configWaiting = true
 	}
-	l.waiting++
 	l.held.Unlock()
 
-	l.mu.Lock()
+	select {
+	case l.turn <- struct{}{}:
+	case <-kick: // nil for a config change, which is never sent away
+		return nil, false
+	}
 	l.held.Lock()
-	l.waiting--
+	if kick != nil {
+		select {
+		case <-kick: // replaced in the moment the turn came free
+			l.held.Unlock()
+			<-l.turn
+			return nil, false
+		default:
+		}
+		l.intent = nil
+	} else {
+		l.configWaiting = false
+	}
 	l.active = true
 	l.held.Unlock()
 	return func() {
 		l.setActive(false)
-		l.mu.Unlock()
+		<-l.turn
 	}, true
 }
 

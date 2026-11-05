@@ -24,7 +24,9 @@ import (
 //
 // This reads the source rather than driving the command, because RunRestore
 // needs a DockerManager and real storage. What it pins is the thing that was
-// missing: the interlock is taken on that path at all.
+// missing: the interlock is taken on that path at all. backup_restore takes it
+// inside RunRestore, once the server is claimed, and is driven by
+// TestARestoreHoldsNodeBusyOnlyOnceItHoldsTheServer instead.
 func TestDestructiveCommandsHoldTheBusyInterlock(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {
@@ -32,7 +34,7 @@ func TestDestructiveCommandsHoldTheBusyInterlock(t *testing.T) {
 	}
 	text := string(src)
 
-	for _, action := range []string{"setup", "reinstall", "migrate_storage", "backup_restore"} {
+	for _, action := range []string{"setup", "reinstall", "migrate_storage"} {
 		t.Run(action, func(t *testing.T) {
 			caseRe := regexp.MustCompile(`(?s)case "` + action + `":(.*?)\n\tcase "`)
 			m := caseRe.FindStringSubmatch(text)

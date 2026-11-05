@@ -1351,12 +1351,18 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	}
 
 	if serialisedActions[cmd.Action] && cmd.Config.UUID != "" {
-		release, ok := lockServerPower(cmd.Config.UUID)
+		release, ok := lockServerPower(cmd.Config.UUID, cmd.Action)
 		if !ok {
-			log.Printf("%s for %s dropped: an action on this server is running and another is already waiting", cmd.Action, cmd.Config.UUID)
+			log.Printf("%s for %s dropped: replaced by a newer power action, or another change already waits", cmd.Action, cmd.Config.UUID)
 			return
 		}
 		defer release()
+		// Again after the wait: a stop that began while this waited for the
+		// lock is newer than it, and checked before the wait it did not exist.
+		if overtakenByStop(cmd.Action, cmd.Config.UUID, cmd.IssuedAt) {
+			log.Printf("%s for %s dropped: a stop queued after it ran while it waited", cmd.Action, cmd.Config.UUID)
+			return
+		}
 	}
 
 	// Apply node-level default cpuset if not set by core
@@ -2198,21 +2204,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		log.Printf("backup_restore: starting run=%d server=%s sub=%s", rcmd.RunID, rcmd.ServerUUID, rcmd.SubServer)
-		// Same interlock as setup/reinstall/migrate_storage, and for the same
-		// reason: the restore stops a container whose desired_state is still
-		// "online" and then renames its whole directory away. Without this the
-		// reconciler starts the server back up mid-restore, against the very
-		// directory the swap is about to replace. Caught live on the testbed
-		// with a 646MB archive - the window there is only ~2s and the
-		// reconciler still hit it; on remote storage it is minutes wide.
-		// A second restore of a server already restoring is refused inside
-		// RunRestore, and must not touch the interlock on its way out: its
-		// release used to delete the running restore's node_busy, and the
-		// reconciler could then start the server mid-restore.
-		if !restoreServersInFlight.has(rcmd.ServerUUID) {
-			releaseRestoreBusy := holdBusyStatus(rdb, rcmd.ServerUUID, "restarting", busyStatusTTL)
-			defer releaseRestoreBusy()
-		}
+		// RunRestore holds the server's node_busy interlock itself, once it has
+		// claimed the server (caught live on the testbed: without it the
+		// reconciler restarted the server mid-restore).
 		RunRestore(ctx, rdb, storage, dm, rcmd)
 
 	case "install_mod":

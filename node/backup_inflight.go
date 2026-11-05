@@ -41,6 +41,40 @@ func (s *inflightSet) enter(id string) bool {
 	return true
 }
 
+// serverWorkMu makes "is the other kind running, then mark mine" one step for
+// a server's backup and restore. Each set locks on its own, so a backup and a
+// restore starting together could each check before the other marked itself,
+// and both ran: the restore swapped the tree the backup was archiving.
+var serverWorkMu sync.Mutex
+
+// enterBackupOfServer marks a backup of the server as running, or returns why
+// it must not start. On "" the caller leaves backupsInFlight "server:<uuid>".
+func enterBackupOfServer(uuid string) string {
+	serverWorkMu.Lock()
+	defer serverWorkMu.Unlock()
+	if restoreServersInFlight.has(uuid) {
+		return "a restore of this server was running on the node"
+	}
+	if !backupsInFlight.enter("server:" + uuid) {
+		return "another backup of this server was still running on the node"
+	}
+	return ""
+}
+
+// enterRestoreOfServer is the same for a restore. On "" the caller leaves
+// restoreServersInFlight.
+func enterRestoreOfServer(uuid string) string {
+	serverWorkMu.Lock()
+	defer serverWorkMu.Unlock()
+	if backupsInFlight.has("server:" + uuid) {
+		return "a backup of this server is running on its node; restore once it has finished"
+	}
+	if !restoreServersInFlight.enter(uuid) {
+		return "another restore of this server is still running on its node"
+	}
+	return ""
+}
+
 func (s *inflightSet) leave(id string) {
 	s.mu.Lock()
 	delete(s.ids, id)
