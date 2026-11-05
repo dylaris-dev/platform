@@ -434,3 +434,18 @@ func TestSendCommand_StampsIssuedAt(t *testing.T) {
 		t.Fatalf("issuedAt = %v, want the time it was queued", payload["issuedAt"])
 	}
 }
+
+// H59: a migrate_out is stamped too, so a node can drop one Core gave up on.
+func TestSendMigrateOutCommand_StampsIssuedAt(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	svc := NewQueueService(rdb)
+	before := time.Now().Unix()
+	if err := svc.SendMigrateOutCommand(context.Background(), "tok-1", "srv-1", "a1"); err != nil {
+		t.Fatalf("SendMigrateOutCommand: %v", err)
+	}
+	payload := readStreamPayload(t, rdb, "dylaris:node:tok-1:cmds")
+	at, ok := payload["issuedAt"].(float64)
+	if !ok || int64(at) < before || int64(at) > time.Now().Unix() {
+		t.Fatalf("issuedAt = %v, want the time it was queued", payload["issuedAt"])
+	}
+}

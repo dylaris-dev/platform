@@ -132,7 +132,9 @@ var MaxArchiveEntries = 2_000_000
 // budget caps the bytes written. The archive comes from the source node, and a
 // customer's node can send one that unpacks to far more than its compressed
 // size; the target's disk is shared with every other server on it.
-func Extract(zipPath, destDir string, budget int64) error {
+//
+// onWrite, if not nil, is told the bytes of every file written.
+func Extract(zipPath, destDir string, budget int64, onWrite func(int64)) error {
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return err
@@ -185,6 +187,9 @@ func Extract(zipPath, destDir string, budget int64) error {
 			return err
 		}
 		n, err := extractOne(f, target, budget)
+		if onWrite != nil {
+			onWrite(n)
+		}
 		if err != nil {
 			return err
 		}

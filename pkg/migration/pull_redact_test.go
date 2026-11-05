@@ -24,7 +24,7 @@ func TestPresignedURLQueryNeverReachesTheError(t *testing.T) {
 		name string
 		err  error
 	}{
-		{"PullURL", PullURL(context.Background(), rawURL, "00", filepath.Join(t.TempDir(), "out.zip"), 0, 0)},
+		{"PullURL", PullURL(context.Background(), rawURL, "00", filepath.Join(t.TempDir(), "out.zip"), 0, 0, nil)},
 		{"withoutURL", withoutURL(&url.Error{Op: "Put", URL: rawURL, Err: errors.New("dial tcp: refused")})},
 	}
 	for _, c := range cases {

@@ -64,8 +64,11 @@ var pullStallTimeout = 2 * time.Minute
 // transport error or hash mismatch it retries the WHOLE download up to
 // maxRetries additional times (so total attempts = maxRetries+1). Returns nil
 // only when the bytes on disk hash to the expected value.
-func Pull(ctx context.Context, rawURL, token, expectedSha256, destPath string, maxRetries int, maxBytes int64) error {
-	return pull(ctx, pullClient, rawURL, token, expectedSha256, destPath, maxRetries, maxBytes)
+//
+// onWrite, if not nil, is told every write to disk, across all attempts: the
+// caller's proof to whoever waits on it that the download is still moving.
+func Pull(ctx context.Context, rawURL, token, expectedSha256, destPath string, maxRetries int, maxBytes int64, onWrite func(int64)) error {
+	return pull(ctx, pullClient, rawURL, token, expectedSha256, destPath, maxRetries, maxBytes, onWrite)
 }
 
 // PullURL is Pull for a pre-signed URL (S3/R2): the URL itself carries the
@@ -73,11 +76,11 @@ func Pull(ctx context.Context, rawURL, token, expectedSha256, destPath string, m
 // can conflict with SigV4 query-string signing). Used by the migration R2
 // fallback path — the same streaming download + sha256 verification as Pull, so
 // a corrupted transfer never reaches Extract.
-func PullURL(ctx context.Context, rawURL, expectedSha256, destPath string, maxRetries int, maxBytes int64) error {
-	return pull(ctx, presignedClient, rawURL, "", expectedSha256, destPath, maxRetries, maxBytes)
+func PullURL(ctx context.Context, rawURL, expectedSha256, destPath string, maxRetries int, maxBytes int64, onWrite func(int64)) error {
+	return pull(ctx, presignedClient, rawURL, "", expectedSha256, destPath, maxRetries, maxBytes, onWrite)
 }
 
-func pull(ctx context.Context, client *http.Client, rawURL, token, expectedSha256, destPath string, maxRetries int, maxBytes int64) error {
+func pull(ctx context.Context, client *http.Client, rawURL, token, expectedSha256, destPath string, maxRetries int, maxBytes int64, onWrite func(int64)) error {
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
@@ -85,7 +88,7 @@ func pull(ctx context.Context, client *http.Client, rawURL, token, expectedSha25
 
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		got, err := pullOnce(ctx, client, rawURL, token, destPath, maxBytes)
+		got, err := pullOnce(ctx, client, rawURL, token, destPath, maxBytes, onWrite)
 		if err != nil {
 			lastErr = err
 			// Context cancellation is terminal — retrying won't help.
@@ -116,7 +119,7 @@ func pull(ctx context.Context, client *http.Client, rawURL, token, expectedSha25
 // side that decides how many bytes to send - so the announced size has to be
 // enforced rather than trusted. Content-Length is not the bound either: it is
 // the sender's claim about the same stream.
-func pullOnce(ctx context.Context, client *http.Client, rawURL, token, destPath string, maxBytes int64) (string, error) {
+func pullOnce(ctx context.Context, client *http.Client, rawURL, token, destPath string, maxBytes int64, onWrite func(int64)) (string, error) {
 	tmp, err := os.CreateTemp(filepath.Dir(destPath), ".migration-pull-*")
 	if err != nil {
 		return "", err
@@ -160,7 +163,11 @@ func pullOnce(ctx context.Context, client *http.Client, rawURL, token, destPath 
 	if maxBytes > 0 {
 		body = io.LimitReader(body, maxBytes+1)
 	}
-	n, err := io.Copy(io.MultiWriter(tmp, h), body)
+	var dst io.Writer = io.MultiWriter(tmp, h)
+	if onWrite != nil {
+		dst = writeNotifier{dst, onWrite}
+	}
+	n, err := io.Copy(dst, body)
 	if err != nil {
 		return "", err
 	}
@@ -174,6 +181,18 @@ func pullOnce(ctx context.Context, client *http.Client, rawURL, token, destPath 
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// writeNotifier reports each write's byte count to fn.
+type writeNotifier struct {
+	w  io.Writer
+	fn func(int64)
+}
+
+func (w writeNotifier) Write(p []byte) (int, error) {
+	n, err := w.w.Write(p)
+	w.fn(int64(n))
+	return n, err
 }
 
 // stallReader re-arms the stall timer on every read that returned data.

@@ -151,17 +151,19 @@ const (
 	migrationStopTimeout   = 90 * time.Second
 	// migrationStageTimeout is the stage wait with no word from the source; each
 	// report of the archive growing restarts it, up to migrationProgressMaxWait.
+	// The transfer waits below work the same way, each capped on its own.
 	migrationStageTimeout    = 5 * time.Minute
 	migrationProgressMaxWait = 6 * time.Hour
 	migrationTransferTimeout = 30 * time.Minute // multi-GB transfer to target
 	// migrationR2PhaseTimeout bounds each leg (upload, then download) of the
-	// cross-LAN BYON R2 fallback. Longer than the LAN/overlay transfer because a
-	// BYON home uplink is slow; still capped so one stuck transfer can't block the
-	// serialized migration queue indefinitely. Within the BYON presign TTL (6h).
+	// cross-LAN BYON R2 fallback while the node reports no progress (a node
+	// older than the report never does). Longer than the LAN/overlay transfer
+	// because a BYON home uplink is slow. Each leg's URLs are signed for the
+	// BYON presign TTL (6h by default, the progress cap) as it starts.
 	migrationR2PhaseTimeout    = 1 * time.Hour
 	migrationStartTimeout      = 90 * time.Second // best-effort online confirm
 	migrationPollInterval      = 2 * time.Second
-	migrationTokenTTL          = migrationTransferTimeout // checked on every pull attempt, so it must last the whole wait
+	migrationTokenTTL          = migrationProgressMaxWait // checked on every pull attempt, so it must last the whole wait
 	migrationQueueBlockTimeout = 5 * time.Second          // BLPOP timeout; not a hot spin
 )
 
@@ -286,10 +288,11 @@ func (o *MigrationOrchestrator) EnqueueMigration(ctx context.Context, serverID, 
 // ErrMigrationQueued refuses a second request for a server that has one.
 var ErrMigrationQueued = errors.New("a move of this server is already queued or running")
 
-// migrationQueuedTTL outlives the longest migration (two R2 legs of an hour
-// each plus staging and stop), so the marker cannot lapse under a live one; a
-// Core that died with it set frees it at the latest then.
-const migrationQueuedTTL = 3 * time.Hour
+// migrationQueuedTTL outlives the longest migration (the stop, staging, the
+// migrate_in wait and two R2 legs, each grown by progress up to its cap), so
+// the marker cannot lapse under a live one; a Core that died with it set frees
+// it at the latest then.
+const migrationQueuedTTL = 20 * time.Hour
 
 // migrationAttemptSince is the node release that reports move progress per
 // attempt. Moves were broken before it in any case: Core named the source by
@@ -1118,60 +1121,7 @@ func (o *MigrationOrchestrator) pollDBStatus(ctx context.Context, serverID int, 
 // node in the fleet could write - and "transferred" here is what makes the
 // caller flip node_id and delete the source copy. See queue.MigrationStatusKey.
 func (o *MigrationOrchestrator) waitForNodePhase(ctx context.Context, nodeToken, progressID, wantPhase string, timeout time.Duration) (string, string) {
-	key := queue.MigrationStatusKey(nodeToken, progressID)
-	serverUUID := queue.MigrationProgressServer(progressID)
-	start := time.Now()
-	deadline := start.Add(timeout)
-	ticker := time.NewTicker(migrationPollInterval)
-	defer ticker.Stop()
-
-	lastPhase := ""
-	var lastBytes int64
-	for {
-		raw, err := o.redis.Get(ctx, key).Result()
-		if err == nil && raw != "" {
-			var st struct {
-				Phase string `json:"phase"`
-				Error string `json:"error,omitempty"`
-				Bytes int64  `json:"bytes,omitempty"`
-			}
-			if json.Unmarshal([]byte(raw), &st) == nil {
-				lastPhase = st.Phase
-				// A node that reports work growing (migrate_out's archive)
-				// gets the timeout again from now: a fixed wait failed every
-				// move of a server too large to archive in it. Capped, so a
-				// customer's node counting up forever cannot hold the
-				// serialized migration queue.
-				if st.Bytes > lastBytes {
-					lastBytes = st.Bytes
-					next := time.Now().Add(timeout)
-					if limit := start.Add(migrationProgressMaxWait); next.After(limit) {
-						next = limit
-					}
-					if next.After(deadline) {
-						deadline = next
-					}
-				}
-				if st.Phase == wantPhase {
-					return st.Phase, ""
-				}
-				if st.Phase == "error" {
-					return st.Phase, st.Error
-				}
-			}
-		}
-		if o.cancelRequested(ctx, serverUUID) {
-			return lastPhase, "cancelled by admin"
-		}
-		if time.Now().After(deadline) {
-			return lastPhase, o.timeoutReason(ctx, lastPhase, serverUUID)
-		}
-		select {
-		case <-ctx.Done():
-			return lastPhase, "context cancelled"
-		case <-ticker.C:
-		}
-	}
+	return o.waitForNodePhaseAny(ctx, nodeToken, progressID, map[string]bool{wantPhase: true}, timeout)
 }
 
 // timeoutReason names the ONE cause an operator cannot guess: a node old enough
@@ -1201,20 +1151,38 @@ func (o *MigrationOrchestrator) timeoutReason(ctx context.Context, lastPhase, se
 func (o *MigrationOrchestrator) waitForNodePhaseAny(ctx context.Context, nodeToken, progressID string, accept map[string]bool, timeout time.Duration) (string, string) {
 	key := queue.MigrationStatusKey(nodeToken, progressID)
 	serverUUID := queue.MigrationProgressServer(progressID)
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline := start.Add(timeout)
 	ticker := time.NewTicker(migrationPollInterval)
 	defer ticker.Stop()
 
 	lastPhase := ""
+	var lastBytes int64
 	for {
 		raw, err := o.redis.Get(ctx, key).Result()
 		if err == nil && raw != "" {
 			var st struct {
 				Phase string `json:"phase"`
 				Error string `json:"error,omitempty"`
+				Bytes int64  `json:"bytes,omitempty"`
 			}
 			if json.Unmarshal([]byte(raw), &st) == nil {
 				lastPhase = st.Phase
+				// A node that reports work growing (an archive written, bytes
+				// sent or received) gets the timeout again from now: a fixed
+				// wait failed every move too large to stage or transfer in it.
+				// Capped, so a customer's node counting up forever cannot hold
+				// the serialized migration queue.
+				if st.Bytes > lastBytes {
+					lastBytes = st.Bytes
+					next := time.Now().Add(timeout)
+					if limit := start.Add(migrationProgressMaxWait); next.After(limit) {
+						next = limit
+					}
+					if next.After(deadline) {
+						deadline = next
+					}
+				}
 				if accept[st.Phase] {
 					return st.Phase, ""
 				}
@@ -1273,10 +1241,6 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 	if err != nil || putURL == "" {
 		return fmt.Errorf("presign put url: %v", err)
 	}
-	getURL, err := prov.DownloadURL(ctx, key, ttl)
-	if err != nil || getURL == "" {
-		return fmt.Errorf("presign get url: %v", err)
-	}
 	// Always remove the temporary transfer object — on success it's redundant once
 	// the target has it, on failure we must not leak it. Background ctx so a
 	// cancelled migration still cleans up.
@@ -1314,6 +1278,18 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 			return fmt.Errorf("complete transfer upload: %w", err)
 		}
 		completed = true
+	}
+
+	// Signed only now: the upload may have taken up to its cap, and the
+	// download gets the same. The sweep waits for this URL as well.
+	if err := o.redis.ZAdd(ctx, migrationR2SweepKey, redis.Z{
+		Score: float64(time.Now().Add(ttl + time.Minute).Unix()), Member: key,
+	}).Err(); err != nil {
+		return fmt.Errorf("record transfer object for cleanup: %w", err)
+	}
+	getURL, err := prov.DownloadURL(ctx, key, ttl)
+	if err != nil || getURL == "" {
+		return fmt.Errorf("presign get url: %v", err)
 	}
 
 	// Target downloads from R2, verifies the hash, extracts. Reports "transferred".

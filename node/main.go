@@ -2264,6 +2264,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "migrate_out":
 		// Source side: stage the (already-stopped) server dir as a zip.
+		if staleMigrateOut(cmd.IssuedAt, heartbeatClock(rdb, id).now(ctx)) {
+			log.Printf("migrate_out for %s dropped: queued too long ago, Core has given up on that move", cmd.Config.UUID)
+			break
+		}
 		handleMigrateOut(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt))
 
 	case "migrate_in":

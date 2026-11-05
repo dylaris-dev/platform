@@ -29,7 +29,7 @@ func TestPullFollowsNoRedirect(t *testing.T) {
 	}))
 	defer src.Close()
 
-	err := Pull(context.Background(), src.URL, "tok", strings.Repeat("0", 64), filepath.Join(t.TempDir(), "o.zip"), 0, 1<<20)
+	err := Pull(context.Background(), src.URL, "tok", strings.Repeat("0", 64), filepath.Join(t.TempDir(), "o.zip"), 0, 1<<20, nil)
 	if err == nil || reached.Load() != 0 {
 		t.Fatalf("err = %v, redirect target reached %d times", err, reached.Load())
 	}
@@ -56,7 +56,7 @@ func TestPullGivesUpOnAStalledBody(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- Pull(context.Background(), src.URL, "tok", strings.Repeat("0", 64), filepath.Join(t.TempDir(), "o.zip"), 0, 1<<20)
+		done <- Pull(context.Background(), src.URL, "tok", strings.Repeat("0", 64), filepath.Join(t.TempDir(), "o.zip"), 0, 1<<20, nil)
 	}()
 	select {
 	case err := <-done:
@@ -99,7 +99,7 @@ func TestPullGivesUpWhenTheBodyNeverStarts(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- Pull(context.Background(), src.URL, "tok", strings.Repeat("0", 64), filepath.Join(t.TempDir(), "o.zip"), 0, 1<<20)
+		done <- Pull(context.Background(), src.URL, "tok", strings.Repeat("0", 64), filepath.Join(t.TempDir(), "o.zip"), 0, 1<<20, nil)
 	}()
 	select {
 	case err := <-done:
@@ -127,7 +127,7 @@ func TestPullKeepsASlowButMovingDownload(t *testing.T) {
 	defer src.Close()
 
 	sum := sha256.Sum256([]byte("xxxxxxxx"))
-	err := Pull(context.Background(), src.URL, "tok", hex.EncodeToString(sum[:]), filepath.Join(t.TempDir(), "o.zip"), 0, 1<<20)
+	err := Pull(context.Background(), src.URL, "tok", hex.EncodeToString(sum[:]), filepath.Join(t.TempDir(), "o.zip"), 0, 1<<20, nil)
 	if err != nil {
 		t.Fatalf("a moving download was cut off: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestExtractRefusesTooManyEntries(t *testing.T) {
 	f.Close()
 
 	dest := filepath.Join(dir, "out")
-	if err := Extract(zp, dest, 1<<20); err == nil {
+	if err := Extract(zp, dest, 1<<20, nil); err == nil {
 		t.Fatal("an archive over the entry limit was extracted")
 	}
 	if _, err := os.Stat(filepath.Join(dest, "a")); err == nil {

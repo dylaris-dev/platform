@@ -31,7 +31,7 @@ func TestExtractDropsSpecialModeBits(t *testing.T) {
 	f.Close()
 
 	dest := t.TempDir()
-	if err := Extract(p, dest, math.MaxInt64); err != nil {
+	if err := Extract(p, dest, math.MaxInt64, nil); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(filepath.Join(dest, "bin", "x"))

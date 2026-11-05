@@ -125,19 +125,19 @@ func TestTransport_RoundTrip(t *testing.T) {
 	pulledZip := filepath.Join(dest, "pulled.zip")
 
 	// Correct sha → passes.
-	if err := Pull(context.Background(), srv.URL+"/migration", tok, sum, pulledZip, 2, size); err != nil {
+	if err := Pull(context.Background(), srv.URL+"/migration", tok, sum, pulledZip, 2, size, nil); err != nil {
 		t.Fatalf("pull (good sha): %v", err)
 	}
 
 	// Wrong sha → fails after retries.
 	wrong := strings.Repeat("0", 64)
-	if err := Pull(context.Background(), srv.URL+"/migration", tok, wrong, pulledZip, 2, size); err == nil {
+	if err := Pull(context.Background(), srv.URL+"/migration", tok, wrong, pulledZip, 2, size, nil); err == nil {
 		t.Fatal("pull (wrong sha): expected failure, got nil")
 	}
 
 	// Extract and assert the tree byte-matches the original.
 	out := t.TempDir()
-	if err := Extract(pulledZip, out, math.MaxInt64); err != nil {
+	if err := Extract(pulledZip, out, math.MaxInt64, nil); err != nil {
 		t.Fatalf("extract: %v", err)
 	}
 	assertTreesEqual(t, src, out)
@@ -165,7 +165,7 @@ func TestTransport_BadTokenRejected(t *testing.T) {
 
 	dest := filepath.Join(t.TempDir(), "out.zip")
 	// Forged token → server returns 401 → Pull never matches the hash.
-	if err := Pull(context.Background(), srv.URL+"/migration", "garbage.token", sum, dest, 1, 0); err == nil {
+	if err := Pull(context.Background(), srv.URL+"/migration", "garbage.token", sum, dest, 1, 0, nil); err == nil {
 		t.Fatal("expected pull to fail with a bad token")
 	}
 }

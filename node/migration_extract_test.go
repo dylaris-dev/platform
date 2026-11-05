@@ -50,7 +50,7 @@ func TestAMovedServerArrivesWithoutTheSourcesNodeFiles(t *testing.T) {
 	})
 	storage := t.TempDir()
 	dir := filepath.Join(storage, "srv")
-	if err := extractMovedServer(zipPath, storage, dir); err != nil {
+	if err := extractMovedServer(zipPath, storage, dir, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, gone := range []string{".node_config.json", ".dylaris.json"} {
@@ -73,11 +73,11 @@ func TestAMovedServerIsUnpackedWithinTheDiskBudget(t *testing.T) {
 
 	storage := t.TempDir()
 	zipPath := writeMoveZip(t, map[string]string{"survival/a": "12345", "survival/b": "6789"})
-	if err := extractMovedServer(zipPath, storage, filepath.Join(storage, "srv")); !errors.Is(err, migration.ErrExtractBudget) {
+	if err := extractMovedServer(zipPath, storage, filepath.Join(storage, "srv"), nil); !errors.Is(err, migration.ErrExtractBudget) {
 		t.Fatalf("err = %v, want the budget refusal", err)
 	}
 	zipPath = writeMoveZip(t, map[string]string{"survival/a": "1234", "survival/b": "5678"})
-	if err := extractMovedServer(zipPath, storage, filepath.Join(storage, "srv2")); err != nil {
+	if err := extractMovedServer(zipPath, storage, filepath.Join(storage, "srv2"), nil); err != nil {
 		t.Fatalf("an archive that fits exactly was refused: %v", err)
 	}
 }

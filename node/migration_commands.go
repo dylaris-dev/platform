@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"dylaris-pkg/migration"
@@ -53,8 +54,10 @@ type migrationMeta struct {
 type migrationStatus struct {
 	Phase string `json:"phase"`
 	Error string `json:"error,omitempty"` // populated only on phase=error
-	// Bytes is how far the staged archive has grown, on phase=staging. Core
-	// extends its stage wait while it grows; an older Core ignores both.
+	// Bytes is how far the work has got: the staged archive's size on
+	// phase=staging, the bytes sent on pushing, the bytes written on
+	// transferring. Core extends its wait while it grows; an older Core ignores
+	// both.
 	Bytes int64 `json:"bytes,omitempty"`
 }
 
@@ -150,6 +153,7 @@ func writeMigrationStatus(ctx context.Context, rdb *redis.Client, nodeToken, ser
 // and publishes its hash. The orchestrator guarantees the server is already
 // stopped before this runs, so we archive the dir as-is.
 func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID string) {
+	aborts := migrateAbortCount(serverUUID)
 	storagePath := storage.GetServerPath(serverUUID)
 	if storagePath == "" {
 		log.Printf("migrate_out %s: no storage path found", serverUUID)
@@ -196,12 +200,21 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	destZip := stagedArchivePath(storagePath, serverUUID)
 	log.Printf("migrate_out %s: archiving %s → %s", serverUUID, srcDir, destZip)
 	stopProgress := reportStagingProgress(ctx, rdb, nodeToken, progressID, destZip)
-	sha, size, err := migration.Archive(srcDir, destZip)
+	sha, size, err := migrateOutArchive(srcDir, destZip)
 	stopProgress()
 	if err != nil {
 		log.Printf("migrate_out %s: archive failed: %v", serverUUID, err)
 		os.Remove(destZip) // partial archive is useless
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("archive failed: %v", err))
+		return
+	}
+	// Core gave up on this attempt while it was archiving: its abort found
+	// nothing to remove, and the copy would sit outside the quota and keep
+	// the reconciler off the server Core has started again.
+	if migrateAbortCount(serverUUID) != aborts {
+		log.Printf("migrate_out %s: the move was aborted while staging, dropping the archive", serverUUID)
+		os.Remove(destZip)
+		os.Remove(migrationOriginPath(storagePath, serverUUID))
 		return
 	}
 
@@ -228,6 +241,17 @@ var stagingProgressInterval = 20 * time.Second
 // That func returns only once no further write can happen, so the caller's
 // final phase is never overwritten by a late "staging".
 func reportStagingProgress(ctx context.Context, rdb *redis.Client, nodeToken, progressID, zipPath string) func() {
+	return reportMigrationProgress(ctx, rdb, nodeToken, progressID, "staging", func() int64 {
+		if fi, err := os.Stat(zipPath); err == nil {
+			return fi.Size()
+		}
+		return 0
+	})
+}
+
+// reportMigrationProgress is reportStagingProgress for any phase, with the
+// byte count read from bytes.
+func reportMigrationProgress(ctx context.Context, rdb *redis.Client, nodeToken, progressID, phase string, bytes func() int64) func() {
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
@@ -235,11 +259,7 @@ func reportStagingProgress(ctx context.Context, rdb *redis.Client, nodeToken, pr
 		t := time.NewTicker(stagingProgressInterval)
 		defer t.Stop()
 		for {
-			var n int64
-			if fi, err := os.Stat(zipPath); err == nil {
-				n = fi.Size()
-			}
-			writeMigrationStatus(ctx, rdb, nodeToken, progressID, migrationStatus{Phase: "staging", Bytes: n})
+			writeMigrationStatus(ctx, rdb, nodeToken, progressID, migrationStatus{Phase: phase, Bytes: bytes()})
 			select {
 			case <-stop:
 				return
@@ -335,18 +355,49 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 	markMovedIn(targetPath, serverUUID, progressID)
 
 	url := fmt.Sprintf("http://%s/migration", chosen)
-	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
 	log.Printf("migrate_in %s: pulling from %s", serverUUID, url)
-	if err := migration.Pull(ctx, url, token, expectedSha256, tmpZip, 3, pullCap(expectedSize, targetPath)); err != nil {
-		log.Printf("migrate_in %s: pull failed: %v", serverUUID, err)
-		os.Remove(tmpZip)
-		// Hash mismatch after retries aborts before extract — never write
-		// unverified bytes into the live server directory.
-		// The detail stays in this log. The address came from the source node,
-		// and the error text (refused, timed out, a status code, the first
-		// bytes of a non-HTTP reply) reaches the server's owner through the
-		// move status: a customer's node could map what this node can reach.
-		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "pull from the source node failed")
+	// The pull's detail stays in the log. The address came from the source
+	// node, and the error text (refused, timed out, a status code, the first
+	// bytes of a non-HTTP reply) reaches the server's owner through the move
+	// status: a customer's node could map what this node can reach.
+	// SelectStoragePath already persisted node:<nodeID>:server:<uuid>:storage,
+	// so the node knows where the server lives for the follow-up start.
+	receiveMovedServer(ctx, rdb, nodeToken, serverUUID, progressID, targetPath, expectedSize, "migrate_in", "pull from the source node failed",
+		func(dest string, maxBytes int64, onWrite func(int64)) error {
+			return migration.Pull(ctx, url, token, expectedSha256, dest, 3, maxBytes, onWrite)
+		})
+}
+
+// receiveMovedServer is the target's half of a move over either transport:
+// download the archive with pull, unpack it onto an empty server directory,
+// and report "transferred" - or "error", with pullFailed when the download
+// fails, so the transport's detail stays in the log. A hash mismatch after
+// the retries fails the pull, so unverified bytes never reach the directory.
+//
+// Both halves are large writes on the storage path every server here shares,
+// so they budget against the free space the other writes running here have not
+// already claimed, and claim their own while they run: the pull its cap, the
+// unpack what it has written (as backup_restore does). Both report their
+// bytes, which is what keeps Core waiting on a long transfer.
+func receiveMovedServer(ctx context.Context, rdb *redis.Client, nodeToken, serverUUID, progressID, targetPath string, expectedSize int64, cmd, pullFailed string, pull func(dest string, maxBytes int64, onWrite func(int64)) error) {
+	var moved atomic.Int64
+	stopProgress := reportMigrationProgress(ctx, rdb, nodeToken, progressID, "transferring", moved.Load)
+	phase, msg := "transferred", ""
+	defer func() {
+		stopProgress()
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, phase, msg)
+	}()
+	fail := func(m string) { phase, msg = "error", m }
+
+	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
+	defer os.Remove(tmpZip)
+	maxBytes := pullCap(expectedSize, targetPath)
+	inflightWrites.Add(maxBytes)
+	err := pull(tmpZip, maxBytes, func(n int64) { moved.Add(n) })
+	inflightWrites.Add(-maxBytes)
+	if err != nil {
+		log.Printf("%s %s: pull failed: %v", cmd, serverUUID, err)
+		fail(pullFailed)
 		return
 	}
 
@@ -355,24 +406,22 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 	// the new one: files deleted on the source since came back. Core never
 	// sends this to the node the server currently lives on.
 	if err := resetMigrationTarget(targetDir); err != nil {
-		os.Remove(tmpZip)
-		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("cannot clear the target directory: %v", err))
+		fail(fmt.Sprintf("cannot clear the target directory: %v", err))
 		return
 	}
-	if err := extractMovedServer(tmpZip, targetPath, targetDir); err != nil {
-		log.Printf("migrate_in %s: extract failed: %v", serverUUID, err)
-		os.Remove(tmpZip)
+	var written int64
+	defer func() { inflightWrites.Add(-written) }()
+	if err := extractMovedServer(tmpZip, targetPath, targetDir, func(n int64) {
+		moved.Add(n)
+		inflightWrites.Add(n)
+		written += n
+	}); err != nil {
+		log.Printf("%s %s: extract failed: %v", cmd, serverUUID, err)
 		os.RemoveAll(targetDir)
-		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("extract failed: %v", err))
+		fail(fmt.Sprintf("extract failed: %v", err))
 		return
 	}
-	os.Remove(tmpZip)
-
-	// SelectStoragePath already persisted node:<nodeID>:server:<uuid>:storage,
-	// so the node knows where the server lives for the follow-up start.
-
-	setMigrationStatus(ctx, rdb, nodeToken, progressID, "transferred", "")
-	log.Printf("migrate_in %s: transferred into %s", serverUUID, targetDir)
+	log.Printf("%s %s: transferred into %s", cmd, serverUUID, targetDir)
 }
 
 // pullCap bounds a download by the free space as well as the announced size.
@@ -381,7 +430,7 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 // the temp file lands on the storage path every server here shares. 0 from an
 // older Core means "not announced", never "no bound".
 func pullCap(announced int64, storagePath string) int64 {
-	budget := restoreDiskBudget(storagePath)
+	budget := restoreDiskBudget(storagePath) - inflightWrites.Load()
 	if budget < 1 {
 		budget = 1 // no room at all: any byte overflows rather than 0 = unbounded
 	}
@@ -417,8 +466,8 @@ func pullableEndpoint(endpoint string) bool {
 // Core sends its own config after the cutover (migrationTargetSince).
 // .active_server is not read to start anything and the backups are the
 // tenant's, so both stay.
-func extractMovedServer(zipPath, storagePath, targetDir string) error {
-	if err := migration.Extract(zipPath, targetDir, restoreDiskBudget(storagePath)); err != nil {
+func extractMovedServer(zipPath, storagePath, targetDir string, onWrite func(int64)) error {
+	if err := migration.Extract(zipPath, targetDir, restoreDiskBudget(storagePath)-inflightWrites.Load(), onWrite); err != nil {
 		return err
 	}
 	for _, name := range []string{".node_config.json", ".dylaris.json"} {
@@ -538,8 +587,10 @@ func migrationInFlight(storage *StorageManager, serverUUID string) bool {
 	return err == nil && time.Since(st.ModTime()) < stagedArchiveMaxAge
 }
 
-// stagedArchiveMaxAge outlives the longest move (Core's migrationQueuedTTL).
-const stagedArchiveMaxAge = 3 * time.Hour
+// stagedArchiveMaxAge outlives the longest wait that still reads the archive:
+// Core's migrate_in wait, then a push, each extended by progress up to its
+// migrationProgressMaxWait (6h).
+const stagedArchiveMaxAge = 7 * time.Hour
 
 // sweepStaleMigrationArchives removes staged archives and origin stamps older
 // than any move: copies of servers left by moves that never finished, each a
@@ -569,6 +620,8 @@ func sweepStaleMigrationArchives(storage *StorageManager) {
 // node. The archive is a full copy of the server outside its disk quota, and
 // only the successful path's cleanup used to remove it.
 func handleMigrateAbort(storage *StorageManager, serverUUID string) {
+	c, _ := migrateAborts.LoadOrStore(serverUUID, new(atomic.Int64))
+	c.(*atomic.Int64).Add(1)
 	storagePath := storage.GetServerPath(serverUUID)
 	if storagePath == "" {
 		return
@@ -578,6 +631,32 @@ func handleMigrateAbort(storage *StorageManager, serverUUID string) {
 			log.Printf("migrate_abort %s: could not remove %s: %v", serverUUID, p, err)
 		}
 	}
+}
+
+// migrateAborts counts the aborts this node has run per server (uuid ->
+// *atomic.Int64). The abort carries no attempt, so a migrate_out tells one
+// that arrived while it ran by the count changing.
+var migrateAborts sync.Map
+
+func migrateAbortCount(uuid string) int64 {
+	if c, ok := migrateAborts.Load(uuid); ok {
+		return c.(*atomic.Int64).Load()
+	}
+	return 0
+}
+
+// migrateOutArchive is migration.Archive; a variable for tests.
+var migrateOutArchive = migration.Archive
+
+// migrateOutMaxAge mirrors Core's migrationStageTimeout: a migrate_out still
+// unstarted this long after Core queued it is one Core has given up on and
+// aborted - the abort is sent no sooner than that. Staging it anyway left a
+// full copy of a server Core had started again.
+const migrateOutMaxAge = 5 * time.Minute
+
+// staleMigrateOut reports such a migrate_out. 0 is a Core that stamps none.
+func staleMigrateOut(issuedAt int64, now time.Time) bool {
+	return issuedAt != 0 && now.Sub(time.Unix(issuedAt, 0)) > migrateOutMaxAge
 }
 
 // movedInMarker sits beside a server directory a move brought here, and names
@@ -741,12 +820,15 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 	}
 
 	log.Printf("migrate_push_r2 %s: uploading staged archive to R2 (%d parts)", serverUUID, len(partURLs))
+	var sent countingWriter
+	stopProgress := reportMigrationProgress(ctx, rdb, nodeToken, progressID, "pushing", sent.Total)
 	var err error
 	if len(partURLs) > 0 {
-		err = putFileMultipart(ctx, zipPath, partURLs, partSize)
+		err = putFileMultipart(ctx, zipPath, partURLs, partSize, &sent)
 	} else {
-		err = putFilePresigned(ctx, putURL, zipPath)
+		err = putFilePresigned(ctx, putURL, zipPath, &sent)
 	}
+	stopProgress()
 	if err != nil {
 		log.Printf("migrate_push_r2 %s: upload failed: %v", serverUUID, err)
 		// The detail stays in this log: the move status is served to the
@@ -802,35 +884,11 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 
 	markMovedIn(targetPath, serverUUID, progressID)
 
-	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
 	log.Printf("migrate_pull_r2 %s: downloading from R2", serverUUID)
-	if err := migration.PullURL(ctx, getURL, expectedSha256, tmpZip, 3, pullCap(expectedSize, targetPath)); err != nil {
-		log.Printf("migrate_pull_r2 %s: download failed: %v", serverUUID, err)
-		os.Remove(tmpZip)
-		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "download from transfer storage failed")
-		return
-	}
-
-	targetDir := filepath.Join(targetPath, serverUUID)
-	// Onto an empty directory. A copy left here by an earlier move merged with
-	// the new one: files deleted on the source since came back. Core never
-	// sends this to the node the server currently lives on.
-	if err := resetMigrationTarget(targetDir); err != nil {
-		os.Remove(tmpZip)
-		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("cannot clear the target directory: %v", err))
-		return
-	}
-	if err := extractMovedServer(tmpZip, targetPath, targetDir); err != nil {
-		log.Printf("migrate_pull_r2 %s: extract failed: %v", serverUUID, err)
-		os.Remove(tmpZip)
-		os.RemoveAll(targetDir)
-		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("extract failed: %v", err))
-		return
-	}
-	os.Remove(tmpZip)
-
-	setMigrationStatus(ctx, rdb, nodeToken, progressID, "transferred", "")
-	log.Printf("migrate_pull_r2 %s: transferred into %s", serverUUID, targetDir)
+	receiveMovedServer(ctx, rdb, nodeToken, serverUUID, progressID, targetPath, expectedSize, "migrate_pull_r2", "download from transfer storage failed",
+		func(dest string, maxBytes int64, onWrite func(int64)) error {
+			return migration.PullURL(ctx, getURL, expectedSha256, dest, 3, maxBytes, onWrite)
+		})
 }
 
 // presignedPutMaxSize is the S3/R2 single-PUT object limit. A variable for
@@ -844,7 +902,8 @@ var errArchiveOverSinglePut = errors.New("staged archive exceeds the 5 GiB singl
 // putFileMultipart uploads a local file through the part URLs Core signed, one
 // per partSize piece in order, with the backup uploader's buffering and
 // per-part retries. Core completes the upload, so nothing is completed here.
-func putFileMultipart(ctx context.Context, filePath string, partURLs []string, partSize int64) error {
+// What is read from the file is copied to read.
+func putFileMultipart(ctx context.Context, filePath string, partURLs []string, partSize int64, read io.Writer) error {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open staged archive: %w", err)
@@ -872,7 +931,7 @@ func putFileMultipart(ctx context.Context, filePath string, partURLs []string, p
 		},
 		complete: func(context.Context) (int64, error) { return size, nil },
 	}
-	_, err = uploadMultipart(ctx, api, objectTransferClient, f, nil)
+	_, err = uploadMultipart(ctx, api, objectTransferClient, io.TeeReader(f, read), nil)
 	return err
 }
 
@@ -880,7 +939,7 @@ func putFileMultipart(ctx context.Context, filePath string, partURLs []string, p
 // already on disk so its size is known up front (no temp re-staging like the
 // backup path). The single-PUT 5 GiB cap (S3/R2 limit) is enforced clearly
 // rather than silently truncating; larger transfers need multipart-presigned.
-func putFilePresigned(ctx context.Context, url, filePath string) error {
+func putFilePresigned(ctx context.Context, url, filePath string, read io.Writer) error {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open staged archive: %w", err)
@@ -895,7 +954,7 @@ func putFilePresigned(ctx context.Context, url, filePath string) error {
 		return fmt.Errorf("%w (%d bytes)", errArchiveOverSinglePut, size)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, f)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, io.TeeReader(f, read))
 	if err != nil {
 		return err
 	}

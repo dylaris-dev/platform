@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -40,7 +41,7 @@ func TestR2TransferFailureLeaksNoSignedURL(t *testing.T) {
 	leaks := func(s string) bool { return strings.Contains(s, "X-Amz") || strings.Contains(s, "deadbeef") }
 
 	t.Run("putFilePresigned", func(t *testing.T) {
-		err := putFilePresigned(ctx, signed, stagedArchivePath(root, uuid))
+		err := putFilePresigned(ctx, signed, stagedArchivePath(root, uuid), io.Discard)
 		if err == nil {
 			t.Fatal("put to a closed port succeeded")
 		}

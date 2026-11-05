@@ -379,3 +379,45 @@ func TestWaitForNodePhaseProgressExtendsDeadline(t *testing.T) {
 		t.Fatalf("waitForNodePhase = (%q, %q), want (staged, \"\")", phase, errMsg)
 	}
 }
+
+// H57/H60: the R2 legs and the LAN pull waited a fixed time, and only the
+// stage wait grew with progress, so every transfer longer than the wait failed.
+// The target's pull reports its bytes under "transferring", and the wait for
+// "transferred" or "need_remote" grows with them.
+func TestWaitForNodePhaseAnyProgressExtendsDeadline(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	ctx := context.Background()
+	o := &MigrationOrchestrator{redis: rdb}
+	key := queue.MigrationStatusKey("node-b", "srv-t")
+	set := func(v string) {
+		if err := rdb.Set(ctx, key, v, 0).Err(); err != nil {
+			t.Error(err)
+		}
+	}
+	set(`{"phase":"transferring","bytes":1}`)
+	go func() {
+		time.Sleep(time.Second)
+		set(`{"phase":"transferring","bytes":2}`)
+		time.Sleep(2 * time.Second)
+		set(`{"phase":"transferred"}`)
+	}()
+
+	phase, errMsg := o.waitForNodePhaseAny(ctx, "node-b", "srv-t", map[string]bool{"transferred": true, "need_remote": true}, 100*time.Millisecond)
+	if phase != "transferred" || errMsg != "" {
+		t.Fatalf("waitForNodePhaseAny = (%q, %q), want (transferred, \"\")", phase, errMsg)
+	}
+}
+
+// H60/H62: the waits now grow with progress, so everything sized against the
+// fixed waits must outlast the longest a move can now take.
+func TestMigrationLifetimesOutlastTheLongestWait(t *testing.T) {
+	// migrate_in, or need_remote then two R2 legs, after staging and the stop.
+	longest := migrationStopTimeout + migrationProgressMaxWait + migrationTransferTimeout + 2*migrationProgressMaxWait + migrationStartTimeout
+	if migrationQueuedTTL <= longest {
+		t.Errorf("migrationQueuedTTL = %s, the longest move runs %s: a second request is accepted under a live one", migrationQueuedTTL, longest)
+	}
+	// The pull token is checked on every attempt of the LAN pull.
+	if migrationTokenTTL < migrationProgressMaxWait {
+		t.Errorf("migrationTokenTTL = %s, the LAN pull may run %s: its retries are refused", migrationTokenTTL, migrationProgressMaxWait)
+	}
+}

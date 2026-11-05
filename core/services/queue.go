@@ -175,14 +175,16 @@ func (q *QueueService) sendAttemptCommand(ctx context.Context, nodeToken, action
 	stream := nodeCmdStream(nodeToken)
 
 	type migrateOutCmd struct {
-		Action  string                 `json:"action"`
-		Config  map[string]interface{} `json:"config"`
-		Attempt string                 `json:"attempt,omitempty"`
+		Action   string                 `json:"action"`
+		IssuedAt int64                  `json:"issuedAt"`
+		Config   map[string]interface{} `json:"config"`
+		Attempt  string                 `json:"attempt,omitempty"`
 	}
 	cmd := migrateOutCmd{
-		Action:  action,
-		Config:  map[string]interface{}{"uuid": serverUUID},
-		Attempt: attempt,
+		Action:   action,
+		IssuedAt: time.Now().Unix(),
+		Config:   map[string]interface{}{"uuid": serverUUID},
+		Attempt:  attempt,
 	}
 
 	jsonData, err := json.Marshal(cmd)

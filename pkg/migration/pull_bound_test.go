@@ -42,7 +42,7 @@ func TestPullRefusesMoreThanTheAnnouncedSize(t *testing.T) {
 	defer srv.Close()
 
 	dest := filepath.Join(t.TempDir(), "out.zip")
-	err := PullURL(context.Background(), srv.URL, strings.Repeat("0", 64), dest, 0, announced)
+	err := PullURL(context.Background(), srv.URL, strings.Repeat("0", 64), dest, 0, announced, nil)
 	if err == nil {
 		t.Fatal("an endless response was accepted")
 	}
@@ -89,7 +89,7 @@ func TestPullAcceptsExactlyTheAnnouncedSize(t *testing.T) {
 	defer srv2.Close()
 
 	dest := filepath.Join(t.TempDir(), "out.zip")
-	if err := PullURL(context.Background(), srv2.URL, sum, dest, 0, size); err != nil {
+	if err := PullURL(context.Background(), srv2.URL, sum, dest, 0, size, nil); err != nil {
 		t.Fatalf("a correctly sized archive was refused: %v", err)
 	}
 }
@@ -106,7 +106,7 @@ func TestPullWithoutAnAnnouncedSizeIsUnbounded(t *testing.T) {
 	dest := filepath.Join(t.TempDir(), "out.zip")
 	// A deliberately wrong hash, so the only thing under test is that the copy
 	// itself is not refused for its size.
-	err := PullURL(context.Background(), srv.URL, strings.Repeat("0", 64), dest, 0, 0)
+	err := PullURL(context.Background(), srv.URL, strings.Repeat("0", 64), dest, 0, 0, nil)
 	if err == nil || !strings.Contains(err.Error(), "sha256 mismatch") {
 		t.Fatalf("want a hash mismatch (i.e. the body was read in full), got %v", err)
 	}
@@ -137,7 +137,7 @@ func TestExtractRefusesToWriteThroughAPlantedDirectorySymlink(t *testing.T) {
 		t.Skipf("cannot create symlinks here: %v", err)
 	}
 
-	err := Extract(zipPath, dest, math.MaxInt64)
+	err := Extract(zipPath, dest, math.MaxInt64, nil)
 	if err == nil {
 		t.Fatal("extract followed a planted directory symlink")
 	}
@@ -162,8 +162,51 @@ func TestExtractStillWritesAnOrdinaryTree(t *testing.T) {
 	}
 
 	dest := t.TempDir()
-	if err := Extract(zipPath, dest, math.MaxInt64); err != nil {
+	if err := Extract(zipPath, dest, math.MaxInt64, nil); err != nil {
 		t.Fatalf("extract: %v", err)
 	}
 	assertTreesEqual(t, srcDir, dest)
+}
+
+// H57: the target's wait had no signal that a long download or unpack was still
+// moving, so a large move timed out mid-transfer. Every byte written is told,
+// across retries: the second attempt here starts after a short body.
+func TestPullAndExtractReportEveryWrite(t *testing.T) {
+	srcDir := t.TempDir()
+	writeFile(t, filepath.Join(srcDir, "a"), []byte(strings.Repeat("a", 3000)))
+	writeFile(t, filepath.Join(srcDir, "w", "b"), []byte(strings.Repeat("b", 2000)))
+	zipPath := filepath.Join(t.TempDir(), "s.zip")
+	sum, size, err := Archive(srcDir, zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zipped, err := os.ReadFile(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Write(zipped[:10]) // hash mismatch: retried
+			return
+		}
+		w.Write(zipped)
+	}))
+	defer srv.Close()
+
+	var pulled int64
+	dest := filepath.Join(t.TempDir(), "out.zip")
+	if err := PullURL(context.Background(), srv.URL, sum, dest, 1, size, func(n int64) { pulled += n }); err != nil {
+		t.Fatal(err)
+	}
+	if want := 10 + size; pulled != want {
+		t.Errorf("pull reported %d bytes, want %d", pulled, want)
+	}
+	var extracted int64
+	if err := Extract(dest, t.TempDir(), math.MaxInt64, func(n int64) { extracted += n }); err != nil {
+		t.Fatal(err)
+	}
+	if extracted != 5000 {
+		t.Errorf("extract reported %d bytes, want 5000", extracted)
+	}
 }
