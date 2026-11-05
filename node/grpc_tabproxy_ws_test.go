@@ -94,7 +94,7 @@ func TestRouteWSInboundBuffering(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m := &MeshManager{wsBridges: make(map[string]*wsBridge)}
-			cc := &coreConnection{}
+			cc := &coreConnection{stream: &fakeCoreStream{}}
 			bridge := newTestBridge(cc, c.cap)
 			m.wsBridges["r1"] = bridge
 			for i := 0; i < c.preFill; i++ {

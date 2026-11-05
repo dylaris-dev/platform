@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -189,8 +190,11 @@ func (h *StreamHandler) streamProxyResponse(reqID string, resp *http.Response, s
 			break
 		}
 		if readErr != nil {
-			// Head already sent; a mid-body error just ends the stream.
-			break
+			// Head already sent. An error, not TransferDone: Core reads a
+			// TransferDone as the whole body and would end the browser's
+			// response cleanly, truncated.
+			send(errorMsg(reqID, 502, fmt.Sprintf("read: %v", readErr)))
+			return
 		}
 	}
 	send(&pb.NodeMessage{

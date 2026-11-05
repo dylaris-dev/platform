@@ -326,16 +326,23 @@ func (m *MeshManager) routeWSInbound(reqID string, msg *pb.NodeMessage) {
 		// same atomic lookup-delete-under-wsMu + sync.Once close as every
 		// other teardown path (see below), so this can never double-close a
 		// bridge that a pump is concurrently tearing down itself.
-		m.closeWSBridge(reqID)
+		if m.closeWSBridge(reqID) && bridge.owner != nil {
+			// Still dialling: no pump exists to send its deferred WsClose, and
+			// Core would wait on this request until the browser left.
+			bridge.owner.send(&pb.NodeMessage{RequestId: reqID, Payload: &pb.NodeMessage_WsClose{WsClose: &pb.WsClose{Code: 1013, Reason: "ws bridge inbound buffer full"}}})
+		}
 	}
 }
 
-// closeWSBridge tears down and unregisters a bridge (idempotent).
-func (m *MeshManager) closeWSBridge(reqID string) {
+// closeWSBridge tears down and unregisters a bridge (idempotent). It reports
+// whether this call removed a bridge whose dial had not finished: decided under
+// wsMu, so dialWSBridge then finds it gone and starts no pumps.
+func (m *MeshManager) closeWSBridge(reqID string) (pending bool) {
 	m.wsMu.Lock()
 	bridge, ok := m.wsBridges[reqID]
 	if ok {
 		delete(m.wsBridges, reqID)
+		pending = bridge.conn == nil
 	}
 	m.wsMu.Unlock()
 	if ok {
@@ -344,6 +351,7 @@ func (m *MeshManager) closeWSBridge(reqID string) {
 			bridge.owner.closeFlow(reqID)
 		}
 	}
+	return pending
 }
 
 // closeWSBridgesForConn closes and unregisters every bridge owned by cc

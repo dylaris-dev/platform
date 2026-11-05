@@ -10,9 +10,11 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	pb "dylaris-proto/node"
 
@@ -20,6 +22,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 // CoreInfo is the heartbeat payload written by each Core instance to Redis.
@@ -82,11 +85,54 @@ const coreMaxMessage = 120 * 1024
 // node with it. A container that answered a tab request with 200 KB of headers
 // - or an error text quoting them - did exactly that, as often as it liked.
 func boundForCore(msg *pb.NodeMessage) *pb.NodeMessage {
+	// Before the size check: a replaced byte grows to three.
+	validUTF8(msg.ProtoReflect())
 	if n := proto.Size(msg); n > coreMaxMessage {
 		log.Printf("gRPC Mesh: a reply of %d bytes for %s is over Core's limit, sending an error instead", n, msg.GetRequestId())
 		return errorMsg(msg.GetRequestId(), 502, fmt.Sprintf("the reply was too large to forward (%d bytes)", n))
 	}
 	return msg
+}
+
+// validUTF8 replaces invalid UTF-8 in every string field, in place. proto3
+// refuses to marshal such a string, and grpc-go ends the whole stream on a
+// marshal error, so one file name or response header a tenant chose (a CP437
+// zip, a plugin) cut every transfer, console and tab of every tenant on this
+// node, again on each listing. Size alone does not catch it.
+//
+// ponytail: no map fields in node.proto; walk them here if one is added.
+func validUTF8(m protoreflect.Message) {
+	m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		switch {
+		case fd.IsMap():
+		case fd.IsList():
+			l := v.List()
+			for i := 0; i < l.Len(); i++ {
+				if fd.Kind() == protoreflect.StringKind {
+					if s := l.Get(i).String(); !utf8.ValidString(s) {
+						l.Set(i, protoreflect.ValueOfString(strings.ToValidUTF8(s, "�")))
+					}
+				} else if fd.Message() != nil {
+					validUTF8(l.Get(i).Message())
+				}
+			}
+		case fd.Kind() == protoreflect.StringKind:
+			if s := v.String(); !utf8.ValidString(s) {
+				m.Set(fd, protoreflect.ValueOfString(strings.ToValidUTF8(s, "�")))
+			}
+		case fd.Message() != nil:
+			validUTF8(v.Message())
+		}
+		return true
+	})
+}
+
+// uploadTempRefusal answers a WriteReq whose staging file could not be created.
+func uploadTempRefusal(reqID string, err error) *pb.NodeMessage {
+	if errors.Is(err, syscall.EDQUOT) {
+		return errorMsg(reqID, 413, "Storage quota exceeded")
+	}
+	return errorMsg(reqID, 500, "Failed to create the upload file on disk")
 }
 
 // pendingWrite tracks an in-flight file write operation (WriteReq → Chunks → TransferDone).
@@ -223,10 +269,14 @@ func (m *MeshManager) scanCores(ctx context.Context) {
 	}
 
 	activeCores := make(map[string]bool)
+	unsure := false
 
 	for _, key := range keys {
 		val, err := m.rdb.Get(ctx, key).Result()
 		if err != nil {
+			// Only a missing key says the Core is gone. A failed read says
+			// nothing, and dropping its connection cuts every transfer on it.
+			unsure = unsure || !errors.Is(err, redis.Nil)
 			continue
 		}
 
@@ -240,6 +290,11 @@ func (m *MeshManager) scanCores(ctx context.Context) {
 		if m.claimConnect(info.ID) {
 			go m.connectToCore(ctx, info)
 		}
+	}
+
+	if unsure {
+		log.Printf("gRPC Mesh: a Core heartbeat could not be read, keeping every connection this scan")
+		return
 	}
 
 	// Remove connections to Cores that are no longer active
@@ -560,7 +615,15 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		tempFile, tempName, err := m.handler.createUploadTemp(msg.ServerUuid, writeReq.Path)
 		if err != nil {
 			log.Printf("gRPC Mesh: Failed to create temp file (request_id=%s): %v", msg.RequestId, err)
-			// Still let Handle() process to send error response
+			// handleWrite maps the checks it shares with createUploadTemp; past
+			// them (the create itself) it answers "ready for chunks", and every
+			// chunk would be dropped while Core waited out its confirm.
+			reply := m.handler.handleWrite(msg.RequestId, msg.ServerUuid, writeReq)
+			if reply.GetError() == nil {
+				reply = uploadTempRefusal(msg.RequestId, err)
+			}
+			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{reply})
+			return
 		} else {
 			m.writeMu.Lock()
 			m.pendingWrites[msg.RequestId] = &pendingWrite{
