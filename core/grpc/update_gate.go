@@ -16,8 +16,8 @@ import (
 // update: warn it, or refuse it.
 //
 // It lives here rather than in services because services imports this package;
-// it is also purely an auth-path concern, and the panel answers the same
-// question for itself from the notes it fetched.
+// it is also purely an auth-path concern. The panel's Required line answers the
+// same question from the same embedded set (updates.Requirements).
 //
 // It reads the release notes EMBEDDED in this Core build, never the remote copy.
 // That is deliberate and load-bearing: this sits in the node authentication
@@ -30,7 +30,8 @@ type UpdateGate struct {
 	now      func() time.Time
 }
 
-// NewUpdateGate builds the gate from the embedded customer-facing notes.
+// NewUpdateGate builds the gate from the requirements of both embedded notes
+// files, the same set the panel's Required line shows.
 //
 // RELEASE_ENFORCE_MIN_VERSION=false disables the REFUSE stage while leaving the
 // warnings in place. This is a gate in the auth path: it gets an off switch that
@@ -38,7 +39,7 @@ type UpdateGate struct {
 // mis-stamped image is locking paying customers out of their own hardware.
 func NewUpdateGate() *UpdateGate {
 	return &UpdateGate{
-		releases: updates.Hosted(),
+		releases: updates.Requirements(),
 		enforce:  os.Getenv("RELEASE_ENFORCE_MIN_VERSION") != "false",
 		now:      time.Now,
 	}

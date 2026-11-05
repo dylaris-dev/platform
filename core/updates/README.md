@@ -46,11 +46,14 @@ malformed file fails the build before any image is built.
   `core`, `node`, `log-shipper` (the panel ships inside `core`). A push that
   newly names a service without rebuilding it fails CI.
 - A wrapped line must be indented; an unindented line inside a release is an
-  error.
+  error. Nested bullets are not supported: an indented line starting with `- `,
+  `### ` or `**Update required` is an error rather than a continuation.
 - The optional required-update line goes directly under the version heading:
   `**Update required now**` or `**Update required by <when>**`, where `<when>`
   is `YYYY-MM-DD`, optionally followed by `HH:MM UTC`. A bare date means the end
-  of that day. A reason may follow after ` - `.
+  of that day. A reason may follow after ` - `. Core reads the requirements of
+  BOTH files as one set (earliest deadline wins): a node requirement in either
+  file is enforced at connect and shown in the admin's Required line alike.
 
 Validate before pushing:
 

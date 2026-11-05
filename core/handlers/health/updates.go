@@ -161,7 +161,11 @@ func (h *UpdatesHandler) GetUpdates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp.Components = append(resp.Components, h.components(r, releases, userID, isAdmin)...)
-	resp.Required = requiredBlocks(resp.Components, releases, time.Now())
+	// Required mirrors the connect gate, so it reads the gate's set (both
+	// embedded files), not this reader's feed: a requirement in the other file,
+	// or one published after this Core was built, would otherwise be shown and
+	// enforced differently.
+	resp.Required = requiredBlocks(resp.Components, updates.Requirements(), time.Now())
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)

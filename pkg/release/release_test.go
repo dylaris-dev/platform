@@ -243,6 +243,21 @@ func TestParseRejects(t *testing.T) {
 			"## 2026.08.28\n### Features\n**Update required now**\n- Nothing.\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
 			"directly under the version heading",
 		},
+		{
+			"a nested bullet",
+			"## 2026.08.28\n### Features\n- Faster backups. `core`\n  - Node side streams now. `node`\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
+			"nested bullets are not supported",
+		},
+		{
+			"an indented section heading",
+			"## 2026.08.28\n### Features\n- One thing. `core`\n  ### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
+			"cannot continue the bullet above",
+		},
+		{
+			"an indented required line",
+			"## 2026.08.28\n### Features\n- One thing. `core`\n  **Update required now**\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
+			"cannot continue the bullet above",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -532,5 +547,54 @@ func TestRequiredDeadlineMustBeUTC(t *testing.T) {
 	}
 	if want := time.Date(2026, 9, 5, 14, 0, 0, 0, time.UTC); !rs[0].Required.Deadline.Equal(want) {
 		t.Errorf("deadline = %v, want %v", rs[0].Required.Deadline, want)
+	}
+}
+
+// The connect gate and the panel's Required line read the two notes files as
+// ONE set. A node requirement written into only one file must still bind, with
+// the earliest deadline across both, exactly as within one file.
+func TestRequirementAcrossMergedFiles(t *testing.T) {
+	block := func(v, req, svc string) string {
+		return "## " + v + "\n" + req + "\n### Features\n- x `" + svc + "`\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n"
+	}
+	parse := func(src string) []Release {
+		rs, err := Parse([]byte(src))
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		return rs
+	}
+	platform := parse(block("2026.11.20", "**Update required by 2026-12-01**", "node") + block("2026.11.05", "", "core"))
+	hosted := parse(block("2026.11.10", "**Update required by 2026-11-12**", "node"))
+	cases := []struct {
+		name         string
+		sets         [][]Release
+		cur, wantMin string
+		wantDeadline time.Time
+	}{
+		{"only in hosted", [][]Release{nil, hosted}, "2026.11.01", "2026.11.10", time.Date(2026, 11, 12, 23, 59, 59, 0, time.UTC)},
+		{"only in platform", [][]Release{platform, nil}, "2026.11.01", "2026.11.20", time.Date(2026, 12, 1, 23, 59, 59, 0, time.UTC)},
+		{"both: newest floor, earliest deadline", [][]Release{platform, hosted}, "2026.11.01", "2026.11.20", time.Date(2026, 11, 12, 23, 59, 59, 0, time.UTC)},
+		{"both: hosted already satisfied", [][]Release{platform, hosted}, "2026.11.10", "2026.11.20", time.Date(2026, 12, 1, 23, 59, 59, 0, time.UTC)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			merged := Merge(c.sets...)
+			for i := 1; i < len(merged); i++ {
+				if merged[i-1].Version.Compare(merged[i].Version) < 0 {
+					t.Fatalf("merged not newest first: %s before %s", merged[i-1].Version, merged[i].Version)
+				}
+			}
+			req, min, ok := Requirement(merged, "node", mustVersion(t, c.cur))
+			if !ok {
+				t.Fatal("no requirement")
+			}
+			if min.String() != c.wantMin {
+				t.Errorf("min = %s, want %s", min, c.wantMin)
+			}
+			if !req.Deadline.Equal(c.wantDeadline) {
+				t.Errorf("deadline = %v, want %v", req.Deadline, c.wantDeadline)
+			}
+		})
 	}
 }

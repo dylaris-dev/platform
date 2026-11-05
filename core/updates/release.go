@@ -63,6 +63,15 @@ func Hosted() []release.Release {
 	return hosted
 }
 
+// Requirements returns both embedded files as one list, newest first. It is the
+// ONE source of mandatory-update deadlines: the connect gate enforces it and the
+// panel's Required line shows it, so a requirement written into either file is
+// enforced and shown alike, and "passed" only appears when this Core refuses.
+func Requirements() []release.Release {
+	parse()
+	return release.Merge(platform, hosted)
+}
+
 // ParseError reports a malformed embedded file, so the handler can log it once
 // instead of silently serving nothing.
 func ParseError() error {

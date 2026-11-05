@@ -311,6 +311,15 @@ func Parse(src []byte) ([]Release, error) {
 		// sentence is still an error, so a line that was supposed to be its own
 		// entry cannot silently attach itself to the previous one.
 		if pendingOpen && raw != line && strings.HasPrefix(raw, " ") {
+			// Joining these would swallow a nested entry (and the services of
+			// the one above it, which are read only off the trailing code run)
+			// or a heading into prose that still validates.
+			if strings.HasPrefix(line, "- ") {
+				return nil, fmt.Errorf("line %d: an indented %q cannot continue the bullet above; nested bullets are not supported, make it its own unindented entry", ln, line)
+			}
+			if strings.HasPrefix(line, "### ") || strings.HasPrefix(line, "**Update required") {
+				return nil, fmt.Errorf("line %d: an indented %q cannot continue the bullet above; remove the indent", ln, line)
+			}
 			pending += " " + line
 			continue
 		}
@@ -481,6 +490,15 @@ func Outdated(rs []Release, service string, cur Version) bool {
 		}
 	}
 	return false
+}
+
+// Merge joins several notes files into one list, newest first, so Requirement
+// can answer across all of them. The same version may appear in more than one
+// file; Requirement handles that like any other stacked requirement.
+func Merge(sets ...[]Release) []Release {
+	out := slices.Concat(sets...)
+	slices.SortStableFunc(out, func(a, b Release) int { return b.Version.Compare(a.Version) })
+	return out
 }
 
 // Requirement returns the mandatory-update requirement a component is subject
