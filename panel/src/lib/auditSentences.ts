@@ -59,6 +59,8 @@ export function auditActor(ev: AuditSentenceEvent): string {
     const m = ev.metadata ?? {};
     if (ev.eventType === 'memory_guard') return 'Memory guard';
     if ((ev.eventType === 'sftp.changes' || ev.eventType === 'beam.changes') && str(m, 'username')) {
+        // A customer's machine names the user itself; Core does not vouch for it.
+        if (str(m, 'reported_by') === 'external-node') return `${str(m, 'username')} (reported by an external node)`;
         return str(m, 'username');
     }
     return ev.actorUserId ? 'A removed user' : 'System';

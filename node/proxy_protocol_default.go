@@ -191,7 +191,7 @@ func paperExpectsProxy(b []byte) bool {
 // Any other config.yml is the operator's (or BungeeCord's own, saved from
 // ours) and is only read: a yes when every listener already expects it.
 func addBungeeProxyProtocol(sub *os.Root) (bool, error) {
-	f, err := sub.OpenFile("config.yml", os.O_RDWR, 0)
+	f, err := openWriteIn(sub, "config.yml", os.O_RDWR, 0)
 	if err != nil {
 		return false, err
 	}
@@ -206,7 +206,7 @@ func addBungeeProxyProtocol(sub *os.Root) (bool, error) {
 	}
 	if werr != nil {
 		// Back to the listener alone: half a key is worse than none.
-		if t, terr := sub.OpenFile("config.yml", os.O_WRONLY|os.O_TRUNC, 0); terr == nil {
+		if t, terr := openWriteIn(sub, "config.yml", os.O_WRONLY|os.O_TRUNC, 0); terr == nil {
 			t.Write(b)
 			t.Close()
 		}

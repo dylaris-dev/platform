@@ -107,6 +107,63 @@ type beamServer struct {
 	// booking happens when an upload finishes - so N uploads started at once
 	// each saw the whole remaining allowance.
 	inflight sync.Map // map[string]*atomic.Int64
+
+	// uploadTemps are the upload temps streams have open, by server uuid +
+	// "/" + temp name. A second stream with the same upload id adopted a live
+	// one as already charged, renamed it into place, and neither the quota nor
+	// the gauge ever saw those bytes. Now the newest stream owns the temp and
+	// is charged from what was really charged; the one it replaced stops.
+	tempsMu     sync.Mutex
+	uploadTemps map[string]*uploadClaim
+}
+
+// uploadClaim is one upload temp and the streams that opened it.
+type uploadClaim struct {
+	owner   uint64 // the stream that may write, rename and be charged for it
+	charged int64  // how much of the temp was charged to the quota and gauge
+	refs    int
+}
+
+var uploadStreamSeq atomic.Uint64
+
+// claimUploadTemp makes stream me the owner of the temp name and returns how
+// much of it is already charged. A temp nobody holds was charged in full by
+// the stream that left it.
+func (s *beamServer) claimUploadTemp(root *os.Root, key, name string, me uint64) (*uploadClaim, int64) {
+	s.tempsMu.Lock()
+	defer s.tempsMu.Unlock()
+	var size int64
+	if info, err := root.Lstat(name); err == nil && info.Mode().IsRegular() {
+		size = info.Size()
+	}
+	if s.uploadTemps == nil {
+		s.uploadTemps = map[string]*uploadClaim{}
+	}
+	c := s.uploadTemps[key]
+	if c == nil {
+		c = &uploadClaim{charged: size}
+		s.uploadTemps[key] = c
+	}
+	c.refs++
+	c.owner = me
+	return c, min(c.charged, size)
+}
+
+func (s *beamServer) ownsUploadTemp(c *uploadClaim, me uint64) bool {
+	s.tempsMu.Lock()
+	defer s.tempsMu.Unlock()
+	return c.owner == me
+}
+
+func (s *beamServer) releaseUploadTemp(key string, c *uploadClaim, me uint64) {
+	s.tempsMu.Lock()
+	defer s.tempsMu.Unlock()
+	if c.owner == me {
+		c.owner = 0
+	}
+	if c.refs--; c.refs == 0 {
+		delete(s.uploadTemps, key)
+	}
 }
 
 // maxBeamReadContent is the largest file ReadFileContent returns.
@@ -132,7 +189,10 @@ func (s *beamServer) auditBeam(ctx context.Context, serverUUID, kind, rel string
 // total and a release. A nil release is never returned.
 func (s *beamServer) reserveUpload(key string, n int64) (int64, func()) {
 	v, _ := s.inflight.LoadOrStore(key, &atomic.Int64{})
-	c := v.(*atomic.Int64)
+	return reserveOn(v.(*atomic.Int64), n)
+}
+
+func reserveOn(c *atomic.Int64, n int64) (int64, func()) {
 	total := c.Add(n)
 	var once sync.Once
 	return total, func() { once.Do(func() { c.Add(-n) }) }
@@ -919,7 +979,7 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	if st, err := root.Lstat(name); err == nil && st.Mode().IsRegular() {
 		prior = st.Size()
 	}
-	if err := root.WriteFile(name, []byte(req.Content), 0644); err != nil {
+	if err := writeFileIn(root, name, []byte(req.Content), 0644); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 	// A NEW file is the node's (root) and the running server could not write
@@ -1230,24 +1290,35 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	// follow-up BeamUploadStart with the same id. The 15s sweeper removes
 	// abandoned temps anyway.
 	completed := false
+	// claim is the temp's entry in uploadTemps. superseded is set when a newer
+	// stream took the temp over: this one then neither renames, charges nor
+	// removes it.
+	var claim *uploadClaim
+	me := uploadStreamSeq.Add(1)
+	superseded := false
 	// resumedAt is the size the resumable temp already had at Start. Those
 	// bytes were counted when the stream that wrote them ended, so this one
 	// reserves and is charged only for what it adds.
 	var resumedAt int64
 	// Released only after the kept bytes are noted, so no Start in between
 	// sees the headroom without them.
-	releaseServer, releaseUser, releaseBudget := func() {}, func() {}, func() {}
+	releaseServer, releaseUser, releaseBudget, releaseTemp := func() {}, func() {}, func() {}, func() {}
 
 	defer func() {
 		defer func() {
 			releaseServer()
 			releaseUser()
 			releaseBudget()
+			releaseTemp()
 			if upRoot != nil {
 				upRoot.Close()
 			}
 		}()
 		if tmpFile == nil {
+			return
+		}
+		if superseded || (claim != nil && !s.ownsUploadTemp(claim, me)) {
+			tmpFile.Close()
 			return
 		}
 		if completed {
@@ -1262,10 +1333,17 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// otherwise the next upload under a fresh id sees the whole disk
 			// headroom and daily quota again. The stream context is already
 			// cancelled here, so the Redis writes must not use it.
-			if info, err := tmpFile.Stat(); err == nil && info.Size() > resumedAt {
+			var add int64
+			s.tempsMu.Lock()
+			if info, err := tmpFile.Stat(); err == nil && claim.owner == me {
+				add = info.Size() - resumedAt
+				claim.charged = info.Size()
+			}
+			s.tempsMu.Unlock()
+			if add > 0 {
 				bg := context.WithoutCancel(ctx)
-				s.recordBeamDailyUsage(bg, username, info.Size()-resumedAt)
-				noteDiskWrite(bg, s.rdb, serverUUID, info.Size()-resumedAt)
+				s.recordBeamDailyUsage(bg, username, add)
+				noteDiskWrite(bg, s.rdb, serverUUID, add)
 			}
 			tmpFile.Close()
 			log.Printf("beam-server: upload %s interrupted, keeping partial temp %s for resume", uploadID, path.Base(tmpName))
@@ -1287,6 +1365,16 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// defer above either drops the temp (no id) or keeps it for
 			// resume (with id).
 			return err
+		}
+
+		// Access revoked while the stream runs - member removed, password
+		// reset - ends it here; the check at its start was the only one.
+		if err := s.requireFilePerm(ctx, canWrite, "upload"); err != nil {
+			return err
+		}
+		if claim != nil && !s.ownsUploadTemp(claim, me) {
+			superseded = true
+			return status.Error(codes.Aborted, "this upload was resumed on another connection")
 		}
 
 		switch p := msg.Payload.(type) {
@@ -1322,9 +1410,10 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			}
 			if uploadID != "" {
 				tmpName = path.Join(path.Dir(destName), ".beam-upload-"+uploadID)
-				if info, err := upRoot.Lstat(tmpName); err == nil && info.Mode().IsRegular() {
-					resumedAt = info.Size()
-				}
+				key := serverUUID + "/" + tmpName
+				claim, resumedAt = s.claimUploadTemp(upRoot, key, tmpName, me)
+				c := claim
+				releaseTemp = func() { s.releaseUploadTemp(key, c, me) }
 			}
 			need := max(p.Start.TotalSize-resumedAt, 0)
 
@@ -1333,7 +1422,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// Reserved before checking, so two Starts at once cannot both see
 			// room that only one of them has.
 			var serverTotal, userTotal int64
-			serverTotal, releaseServer = s.reserveUpload("s:"+serverUUID, need)
+			serverTotal, releaseServer = reserveOn(uploadServerInflight(serverUUID), need)
 			userTotal, releaseUser = s.reserveUpload("u:"+username, need)
 
 			// The node's own free space, less its reserve and what other writes
@@ -1371,9 +1460,16 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				// reattaches to the same file. RDWR so we don't truncate
 				// what previous chunks already wrote; O_CREATE so the
 				// very first Start makes it.
-				f, err := upRoot.OpenFile(tmpName, os.O_RDWR|os.O_CREATE, 0644)
+				f, err := openWriteIn(upRoot, tmpName, os.O_RDWR|os.O_CREATE, 0644)
 				if err != nil {
 					return status.Errorf(codes.Internal, "open temp: %v", err)
+				}
+				// A second name for a node file, linked in by the tenant on a
+				// host without fs.protected_hardlinks: resuming would write
+				// into that file and hand it to the container.
+				if info, err := f.Stat(); err != nil || multiplyLinkedInfo(info) {
+					f.Close()
+					return status.Error(codes.FailedPrecondition, "the partial upload cannot be resumed; start it again under a new id")
 				}
 				tmpFile = f
 				if info, statErr := f.Stat(); statErr == nil && info.Size() > 0 {
@@ -1388,6 +1484,11 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				}
 				tmpFile = f
 				tmpName = name
+				// Claimed too: an upload id may spell this random name.
+				key := serverUUID + "/" + tmpName
+				claim, _ = s.claimUploadTemp(upRoot, key, tmpName, me)
+				c := claim
+				releaseTemp = func() { s.releaseUploadTemp(key, c, me) }
 			}
 
 		case *pb.BeamUploadMsg_Chunk:
@@ -1424,14 +1525,13 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 
 	// EOF reached cleanly — promote temp to final.
 	if tmpFile != nil && destName != "" {
-		// Same reason as the SFTP write: handed to the container's uid so a file
-		// uploaded into a running server is one that server can modify. On the
-		// open file, not by name.
-		if mcUser() != 0 {
-			if err := tmpFile.Chown(mcUser(), mcUser()); err != nil {
-				log.Printf("mc-user: cannot hand %s to uid %d: %v", tmpName, mcUser(), err)
-			}
+		if err := s.requireFilePerm(ctx, canWrite, "upload"); err != nil {
+			completed = false // the defer keeps or drops the temp as on any abort
+			return err
 		}
+		// Same reason as the SFTP write: handed to the container's uid so a file
+		// uploaded into a running server is one that server can modify.
+		chownOpenForMC(tmpFile, tmpName)
 		// Close before rename so Windows doesn't reject (no-op on Linux).
 		tmpFile.Close()
 		tmpFile = nil // skip the defer's removal — rename consumed it
@@ -1439,7 +1539,16 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		if st, err := upRoot.Lstat(destName); err == nil && st.Mode().IsRegular() {
 			prior = st.Size()
 		}
-		if err := upRoot.Rename(tmpName, destName); err != nil {
+		// Owner checked and renamed under one lock, so a takeover lands
+		// either before (this stream stops) or after (the temp is gone).
+		s.tempsMu.Lock()
+		if claim.owner != me {
+			s.tempsMu.Unlock()
+			return status.Error(codes.Aborted, "this upload was resumed on another connection")
+		}
+		err := upRoot.Rename(tmpName, destName)
+		s.tempsMu.Unlock()
+		if err != nil {
 			upRoot.Remove(tmpName)
 			return stream.SendAndClose(&pb.BeamOpResp{Success: false, Message: err.Error()})
 		}

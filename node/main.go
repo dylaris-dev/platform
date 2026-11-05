@@ -1594,8 +1594,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 
 		// Track the active sub-server on disk
-		activeFile := filepath.Join(serverPath, ".active_server")
-		if err := os.WriteFile(activeFile, []byte(subName), nodeOwnedFileMode); err != nil {
+		if err := writeServerRootFile(serverPath, ".active_server", []byte(subName)); err != nil {
 			log.Printf("Failed to write .active_server for %s: %v", cmd.Config.UUID, err)
 		}
 
@@ -1692,7 +1691,6 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
-		activeFile := filepath.Join(serverPath, ".active_server")
 
 		// Build the start command for the target sub-server.
 		// ExtraJvmFlags is passed directly from Core as a dedicated field.
@@ -1710,7 +1708,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if err := dm.RecreateWithCommand(cmd.Config); err != nil {
 			log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
 		} else {
-			if err := os.WriteFile(activeFile, []byte(subName), nodeOwnedFileMode); err != nil {
+			if err := writeServerRootFile(serverPath, ".active_server", []byte(subName)); err != nil {
 				log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
 			}
 			log.Printf("Server %s switched to sub-server %s", cmd.Config.UUID, subName)
@@ -1986,7 +1984,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 				}
 			}
 			if newActive != "" {
-				os.WriteFile(activeFile, []byte(newActive), nodeOwnedFileMode)
+				if err := writeServerRootFile(serverPath, ".active_server", []byte(newActive)); err != nil {
+					log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
+				}
 				log.Printf("Activated sub-server %s for %s", newActive, cmd.Config.UUID)
 				delFinalActive = newActive
 			} else {

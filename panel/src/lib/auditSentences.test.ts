@@ -65,6 +65,8 @@ describe('auditSentence: named server events', () => {
         ['domain grey', 'server_domain.status_changed', { fqdn: 'a.io', state: 'grey' }, { actorName: undefined, actorUserId: undefined }, 'System recorded that the domain "a.io" does not resolve yet'],
         ['domain paused', 'server_domain.status_changed', { fqdn: 'a.io', state: 'paused' }, { actorName: undefined, actorUserId: undefined }, 'System recorded that the domain "a.io" is paused'],
         ['beam', 'beam.changes', { username: 'dave', writes: 1 }, {}, 'BartisD changed files over Beam: 1 write'],
+        ['beam from an external node', 'beam.changes', { username: 'dave', writes: 1, reported_by: 'external-node' }, { actorName: undefined, actorUserId: undefined },
+            'dave (reported by an external node) changed files over Beam: 1 write'],
         ['cap', 'files.delete', { method: 'DELETE', path: '/api/x' }, {}, 'BartisD deleted files'],
         ['cap by key', 'console.send', { method: 'POST', path: '/x', apiKey: 'k1' }, {}, 'BartisD sent a console command with an API key'],
     ];

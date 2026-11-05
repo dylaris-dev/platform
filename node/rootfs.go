@@ -213,6 +213,21 @@ func chownForMCIn(root *os.Root, name string) {
 	}
 }
 
+// chownOpenForMC is chownForMCIn for a file the caller holds open: on the fd,
+// so the name cannot change under it, with the same hard-link refusal.
+func chownOpenForMC(f *os.File, name string) {
+	if mcUser() == 0 {
+		return
+	}
+	if fi, err := f.Stat(); err == nil && multiplyLinkedInfo(fi) {
+		log.Printf("mc-user: not handing %s over: more than one hard link", name)
+		return
+	}
+	if err := f.Chown(mcUser(), mcUser()); err != nil {
+		log.Printf("mc-user: cannot hand %s to uid %d: %v", name, mcUser(), err)
+	}
+}
+
 // copyFileIn copies srcName in src to dstName in dst, creating dst's parents.
 // A nil budget copies unbounded: only a whole-server move does that.
 func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string, deny map[fileIdentity]bool, budget *writeBudget) error {

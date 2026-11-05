@@ -805,7 +805,7 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	if st, err := root.Lstat(leaf); err == nil && st.Mode().IsRegular() {
 		prior = st.Size()
 	}
-	f, err := root.OpenFile(leaf, flags, 0644)
+	f, err := openWriteIn(root, leaf, flags, 0644)
 	if err != nil {
 		return nil, err
 	}
@@ -814,12 +814,7 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	// uploaded into a RUNNING server would be one the server can read and not
 	// modify - which surfaces days later as a plugin that cannot save its own
 	// config. The start-time pass repairs this, but only at the next start.
-	// On the open file, not by name.
-	if mcUser() != 0 {
-		if err := f.Chown(mcUser(), mcUser()); err != nil {
-			log.Printf("mc-user: cannot hand %s to uid %d: %v", rel, mcUser(), err)
-		}
-	}
+	chownOpenForMC(f, rel)
 	// SFTP is a streaming protocol with no declared size, so the upload limits
 	// are enforced per write against a ceiling computed once here, and the
 	// written bytes count toward the user's daily quota on close.
@@ -839,17 +834,19 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 		baseline: baseline, maxEnd: baseline, rdb: v.rdb, username: v.username, pending: v.pending,
 		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write })}
 	if lim.disk >= 0 {
-		w.srv, w.uuid = sftpServerInflight(ref.UUID), ref.UUID
+		w.srv, w.uuid = uploadServerInflight(ref.UUID), ref.UUID
 	}
 	return w, nil
 }
 
-// sftpInflight is, per server, what open SFTP handles have written and not
-// yet closed (uuid -> *atomic.Int64).
-var sftpInflight sync.Map
+// uploadInflight is, per server, what open SFTP handles have written and Beam
+// uploads have reserved, and neither has noted into the gauge yet (uuid ->
+// *atomic.Int64). One count for both: each path held only its own, so a Beam
+// upload and an SFTP handle at once each had the whole headroom.
+var uploadInflight sync.Map
 
-func sftpServerInflight(uuid string) *atomic.Int64 {
-	c, _ := sftpInflight.LoadOrStore(uuid, new(atomic.Int64))
+func uploadServerInflight(uuid string) *atomic.Int64 {
+	c, _ := uploadInflight.LoadOrStore(uuid, new(atomic.Int64))
 	return c.(*atomic.Int64)
 }
 
@@ -906,7 +903,8 @@ type meteredSFTPWriter struct {
 	baseline, maxEnd int64
 	rdb              *redis.Client
 	username         string
-	// srv is what every open SFTP handle is writing into this server, held
+	// srv is what every open SFTP handle is writing into this server, and
+	// every running Beam upload has reserved (uploadServerInflight), held
 	// against ceil: each handle had the whole headroom, so twenty at once wrote
 	// twenty times past the limit. Not shared with copies: those measure the
 	// disk live, which already holds these bytes. nil = no disk limit.
@@ -1106,7 +1104,7 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 			return err
 		}
 		defer root.Close()
-		f, err := root.OpenFile(leaf, os.O_WRONLY, 0)
+		f, err := openWriteIn(root, leaf, os.O_WRONLY, 0)
 		if err != nil {
 			return err
 		}

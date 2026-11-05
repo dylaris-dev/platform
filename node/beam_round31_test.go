@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -176,7 +175,7 @@ func TestABeamUploadCannotDeclareANegativeSize(t *testing.T) {
 	if err := bs.UploadFile(stream); err == nil {
 		t.Fatal("a negative upload size was accepted")
 	}
-	if v, ok := bs.inflight.Load("s:11111111-1111-1111-1111-111111111111"); ok && v.(*atomic.Int64).Load() != 0 {
+	if uploadServerInflight("11111111-1111-1111-1111-111111111111").Load() != 0 {
 		t.Fatal("the negative size was counted")
 	}
 }

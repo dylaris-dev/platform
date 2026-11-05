@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -43,11 +45,30 @@ func writeServerMetadata(serverDir string, m ServerMetadata) error {
 	if err != nil {
 		return err
 	}
-	tmp := metadataPath(serverDir) + ".tmp"
-	if err := os.WriteFile(tmp, data, nodeOwnedFileMode); err != nil {
+	// serverDir is the tenant's /data, so the temp name may be a planted link.
+	// Through os.Root it cannot lead out of the directory, and removed and
+	// created exclusively it cannot lead to another file in it either.
+	root, err := os.OpenRoot(serverDir)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, metadataPath(serverDir))
+	defer root.Close()
+	const tmp = ".dylaris.json.tmp"
+	if err := root.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	f, err := openWriteIn(root, tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, nodeOwnedFileMode)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return root.Rename(tmp, filepath.Base(metadataPath(serverDir)))
 }
 
 func readServerMetadata(serverDir string) (ServerMetadata, error) {

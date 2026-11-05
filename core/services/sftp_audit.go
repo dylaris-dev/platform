@@ -104,7 +104,12 @@ func (s *SFTPAuditService) apply(channel string, rec queue.SFTPAuditRecord) {
 			"renames": rec.Renames, "mkdirs": rec.Mkdirs, "paths": rec.Paths, "truncated": rec.Truncated,
 		},
 	}
-	if u, err := s.store.GetUserByUsername(rec.Username); err == nil && u != nil {
+	// A customer's machine checks the Beam ticket itself, so the name in its
+	// record is its own claim: kept as the node's report, never resolved to a
+	// platform user it could otherwise put on any change.
+	if node.IsExternal() {
+		ev.Metadata["reported_by"] = "external-node"
+	} else if u, err := s.store.GetUserByUsername(rec.Username); err == nil && u != nil {
 		id := u.ID
 		ev.ActorUserID = &id
 	}

@@ -73,3 +73,32 @@ func TestABeamRecordIsWrittenAsABeamChange(t *testing.T) {
 		}
 	}
 }
+
+// G32: a customer's machine names the user in its own Beam records. It was
+// resolved to the actor like a record from one of ours, so a BYON node could
+// put any platform user's name on a change. Kept, but as the node's claim.
+func TestABeamRecordFromACustomersMachineIsMarkedAsItsClaim(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		node     models.Node
+		actor    bool
+		reported any
+	}{
+		{"its own node", models.Node{Token: "n1"}, true, nil},
+		{"a customer's machine", models.Node{Token: "n1", Tags: "external"}, false, "external-node"},
+	} {
+		fs := &sftpAuditFakeStore{node: tc.node}
+		NewSFTPAuditService(fs, nil, nil).apply(queue.SFTPAuditChannel("n1"),
+			queue.SFTPAuditRecord{ServerUUID: "srv", Username: "bob", Writes: 1, Via: "beam"})
+		if len(fs.written) != 1 {
+			t.Fatalf("%s: %d rows", tc.name, len(fs.written))
+		}
+		ev := fs.written[0]
+		if (ev.ActorUserID != nil) != tc.actor {
+			t.Errorf("%s: actor = %v, want set=%v", tc.name, ev.ActorUserID, tc.actor)
+		}
+		if got := ev.Metadata["reported_by"]; got != tc.reported {
+			t.Errorf("%s: reported_by = %v, want %v", tc.name, got, tc.reported)
+		}
+	}
+}

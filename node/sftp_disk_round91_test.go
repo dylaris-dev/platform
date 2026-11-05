@@ -75,7 +75,7 @@ func TestSFTPHandlesShareTheServersDiskHeadroom(t *testing.T) {
 		t.Errorf("a fresh handle was refused the headroom that is left: %v", err)
 	}
 	closeW(d)
-	if n := sftpServerInflight(uuid).Load(); n != 0 {
+	if n := uploadServerInflight(uuid).Load(); n != 0 {
 		t.Errorf("%d bytes left counted after every handle closed", n)
 	}
 }
