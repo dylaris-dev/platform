@@ -1838,6 +1838,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		toreDown := false
 		teardown := func() {
 			toreDown = true
+			if owner, _ := dm.foreignContainer(mcName); owner != "" {
+				log.Printf("delete_sub_server %s: %s belongs to node %s on this Docker daemon, leaving it alone", cmd.Config.UUID, mcName, owner)
+				return
+			}
 			killCtx, killCancel := context.WithTimeout(ctx, 15*time.Second)
 			defer killCancel()
 			if killErr := dm.cli.ContainerKill(killCtx, mcName, "SIGKILL"); killErr != nil {
@@ -2129,7 +2133,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// ContainerRemove rather than PowerAction("delete") because that also
 		// releases the host port, and the server keeps its port across a move.
 		mcName := "mc_" + cmd.Config.UUID
-		if rmErr := dm.cli.ContainerRemove(ctx, mcName, container.RemoveOptions{Force: true}); rmErr != nil {
+		if owner, _ := dm.foreignContainer(mcName); owner != "" {
+			log.Printf("migrate_storage %s: %s belongs to node %s on this Docker daemon, leaving it alone", cmd.Config.UUID, mcName, owner)
+		} else if rmErr := dm.cli.ContainerRemove(ctx, mcName, container.RemoveOptions{Force: true}); rmErr != nil {
 			log.Printf("migrate_storage %s: ContainerRemove: %v (probably gone already - the next start recreates it)", cmd.Config.UUID, rmErr)
 		}
 
@@ -2363,6 +2369,12 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
 	info, err := dm.cli.ContainerInspect(ctx, mcName)
 	if err != nil || !info.State.Running {
 		log.Printf("Server %s container not running, skipping graceful stop", uuid)
+		return
+	}
+	// Another node's server on a shared Docker daemon (see foreignContainer):
+	// the console stop below would reach it by uuid just as the docker stop would.
+	if info.Config != nil && !ownsContainer(info.Config.Labels, nodeIdentities(nodeSecretDir)) {
+		log.Printf("Server %s: %s belongs to node %s on this Docker daemon, not stopping it", uuid, mcName, info.Config.Labels[ownerLabel])
 		return
 	}
 

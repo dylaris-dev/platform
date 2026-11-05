@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -107,4 +108,37 @@ func ownsContainer(labels map[string]string, self []string) bool {
 		}
 	}
 	return false
+}
+
+// foreignContainer names the node that owns the container called name, or ""
+// when it is ours, absent, or could not be inspected.
+//
+// Container names are global per daemon, so a by-name action on mc_<uuid> can
+// reach a container another node on the same docker.sock created. A move
+// between two such nodes is the measured case: the target replaces the source's
+// stopped leftover with its own mc_<uuid> and starts it, and the source's
+// migrate_cleanup then force-removed that LIVE container by name. The listers
+// filter on the label; this applies the same rule to single-container actions.
+//
+// The fallbacks are ownsContainer's: an unlabelled container (created before
+// the label existed, or on the usual one-node daemon) is ours, and so is one
+// the inspect could not read, which keeps the old behaviour.
+func (dm *DockerManager) foreignContainer(name string) (owner string, running bool) {
+	info, err := dm.cli.ContainerInspect(dm.ctx, name)
+	if err != nil || info.Config == nil || ownsContainer(info.Config.Labels, nodeIdentities(nodeSecretDir)) {
+		return "", false
+	}
+	return info.Config.Labels[ownerLabel], info.State != nil && info.State.Running
+}
+
+// refuseForeignRunning guards the remove-before-create paths. Replacing another
+// node's STOPPED mc_<uuid> stays allowed: Core sends create work only to the
+// node the server is assigned to, and on a shared daemon that is how a moved
+// server takes over its name from the source's leftover. A RUNNING one is a
+// live server somewhere else and is never stopped or removed from here.
+func (dm *DockerManager) refuseForeignRunning(name string) error {
+	if owner, running := dm.foreignContainer(name); owner != "" && running {
+		return fmt.Errorf("%s is running under node %s on this Docker daemon; not replacing it", name, owner)
+	}
+	return nil
 }

@@ -1043,6 +1043,9 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 
 	nc := serverEndpoints(netID, netName, validate.ServerHostname(config.UUID))
 
+	if err := dm.refuseForeignRunning(containerName); err != nil {
+		return err
+	}
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 
 	_, err = dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, containerName)
@@ -1092,6 +1095,9 @@ func (dm *DockerManager) recreate(config ServerConfig, start bool) error {
 	log.Printf("Recreating container %s with sub-server: %s", config.UUID, config.ActiveSubServer)
 
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
+	if err := dm.refuseForeignRunning(containerName); err != nil {
+		return err
+	}
 	if dm.stopGracefully != nil {
 		dm.stopGracefully(config.UUID)
 	}
@@ -1128,6 +1134,9 @@ func (dm *DockerManager) RecreateKeepingRunState(config ServerConfig) error {
 		return nil
 	}
 	wasRunning := info.State != nil && info.State.Running
+	if wasRunning && info.Config != nil && !ownsContainer(info.Config.Labels, nodeIdentities(nodeSecretDir)) {
+		return fmt.Errorf("%s is running under node %s on this Docker daemon; not replacing it", containerName, info.Config.Labels[ownerLabel])
+	}
 	if config.Docker.Timezone == "" {
 		config.Docker.Timezone = envValue(info.Config.Env, "TZ")
 	}
@@ -1152,6 +1161,20 @@ func (dm *DockerManager) RecreateKeepingRunState(config ServerConfig) error {
 
 func (dm *DockerManager) PowerAction(uuid string, action string) error {
 	mcName := fmt.Sprintf("mc_%s", uuid)
+
+	// On a shared docker.sock the name may be another node's container; see
+	// foreignContainer. The port ledger is this node's own, so a delete still
+	// frees it, and reports success: nothing of this node's is left there.
+	if owner, _ := dm.foreignContainer(mcName); owner != "" {
+		log.Printf("%s %s: the container belongs to node %s on this Docker daemon, leaving it alone", action, mcName, owner)
+		if action != "delete" {
+			return fmt.Errorf("%s belongs to node %s", mcName, owner)
+		}
+		if dm.portMgr != nil {
+			dm.portMgr.ReleasePort(uuid)
+		}
+		return nil
+	}
 
 	switch action {
 	case "start":
@@ -1377,11 +1400,26 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 
 	nc := serverEndpoints(netID, netName, validate.ServerHostname(config.UUID))
 
+	if err := dm.refuseForeignRunning(containerName); err != nil {
+		return "", err
+	}
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 
 	resp, err := dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, containerName)
 	if err != nil {
 		return "", fmt.Errorf("mc container create error: %v", err)
+	}
+	// Again, after the create: the check at the top is followed by the image
+	// pull, which can take minutes, and a delete does not wait for this work.
+	// The delete marks the tombstone before it removes the container, so a
+	// container created after that removal is seen here and removed, together
+	// with the port allocated above for a server that no longer exists.
+	if serverDeleted(config.UUID) {
+		dm.cli.ContainerRemove(dm.ctx, resp.ID, container.RemoveOptions{Force: true})
+		if dm.portMgr != nil {
+			dm.portMgr.ReleasePort(config.UUID)
+		}
+		return "", fmt.Errorf("server %s was deleted on this node while its container was being prepared", config.UUID)
 	}
 
 	if autoStart {

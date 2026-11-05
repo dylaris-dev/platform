@@ -565,7 +565,9 @@ func handleMigrateDiscard(storage *StorageManager, dm *DockerManager, serverUUID
 		}
 		defer migrateInFlight.Delete(serverUUID)
 		if dm != nil {
-			if _, err := dm.cli.ContainerInspect(dm.ctx, "mc_"+serverUUID); err == nil {
+			// Only a container of THIS node's: on a shared Docker daemon the
+			// source's mc_<uuid> is always there before cutover.
+			if info, err := dm.cli.ContainerInspect(dm.ctx, "mc_"+serverUUID); err == nil && (info.Config == nil || ownsContainer(info.Config.Labels, nodeIdentities(nodeSecretDir))) {
 				log.Printf("migrate_discard %s: a container exists for it here, keeping the directory", serverUUID)
 				return
 			}
