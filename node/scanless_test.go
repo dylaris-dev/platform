@@ -183,7 +183,7 @@ func TestAResolvedDiskHoldIsReleasedWithoutAWalk(t *testing.T) {
 	recordDiskLimit(ctx, rdb, held, 1) // 1 MB, the directory is empty
 	mr.Set(diskFullKey(held), "1")
 
-	releaseResolvedDiskHolds(ctx, rdb, NewQuotaSet(nil), nil)
+	releaseResolvedDiskHolds(ctx, rdb, NewQuotaSet(nil), map[string]bool{})
 	if mr.Exists(diskFullKey(held)) {
 		t.Fatal("a hold whose server is back under its limit was not released")
 	}

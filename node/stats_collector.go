@@ -421,7 +421,6 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			case <-t.C:
 				containers, err := dm.ListRunningMCContainers()
 				if err != nil {
-					releaseResolvedDiskHolds(ctx, rdb, quota, nil)
 					continue
 				}
 				running := make(map[string]bool, len(containers))
@@ -717,19 +716,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 						// started the server again ten seconds after each stop.
 						if !isDiskFull(ctx, rdb, uuid) {
 							log.Printf("Disk quota full for %s — stopping server", uuid)
-							// Set BEFORE the stop: gracefulStop takes seconds and the
-							// reconciler ticks during them.
-							rdb.Set(ctx, diskFullKey(uuid), "1", diskFullMarkerTTL)
-							gracefulStop(rdb, uuid, dm)
-							rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "disk_full", 30*time.Second)
-							// Publish disk_full event so panel reacts immediately
-							evt, _ := json.Marshal(map[string]interface{}{
-								"type":    "disk_warning",
-								"warning": "disk_full",
-								"total":   usage.Total,
-								"limit":   usage.Limit,
-							})
-							rdb.Publish(ctx, liveKey, string(evt))
+							holdForDiskFull(ctx, rdb, uuid, liveKey, usage, func() { gracefulStop(rdb, uuid, dm) })
 						}
 					} else {
 						// Push disk warning via live channel so panel reacts immediately
@@ -748,22 +735,54 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 						// key this used to read is drained by Core, so the branch almost
 						// never fired and a freed-up server could stay held.
 						if usage.Warning != "full" && isDiskFull(ctx, rdb, uuid) {
-							log.Printf("Disk quota resolved for %s — releasing the hold, setting status to stopped", uuid)
-							rdb.Del(ctx, diskFullKey(uuid))
-							rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
-							evt, _ := json.Marshal(map[string]interface{}{
-								"type":    "disk_warning",
-								"warning": "resolved",
-								"total":   usage.Total,
-								"limit":   usage.Limit,
-							})
-							rdb.Publish(ctx, liveKey, string(evt))
+							releaseDiskHold(ctx, rdb, uuid, liveKey, usage, containerRunning(dm, uuid))
 						}
 					}
 				}
 			}()
 		}
 	}
+}
+
+// holdForDiskFull trips the disk guard: marker, stop, then disk_full.
+func holdForDiskFull(ctx context.Context, rdb *redis.Client, uuid, liveKey string, usage *DiskUsagePayload, stop func()) {
+	// Set BEFORE the stop: gracefulStop takes seconds and the
+	// reconciler ticks during them.
+	rdb.Set(ctx, diskFullKey(uuid), "1", diskFullMarkerTTL)
+	stop()
+	// Not ctx: the scan cancels the collector as soon as the container is
+	// gone, which is right while the stop returns, and the lost write left
+	// Core at the "stopping" the stop announced.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "disk_full", 30*time.Second)
+	// Publish disk_full event so panel reacts immediately
+	evt, _ := json.Marshal(map[string]interface{}{
+		"type":    "disk_warning",
+		"warning": "disk_full",
+		"total":   usage.Total,
+		"limit":   usage.Limit,
+	})
+	rdb.Publish(ctx, liveKey, string(evt))
+}
+
+// releaseDiskHold lifts the hold from a server's collector. The collector can
+// outlive its container by one scan, so "stopped" is written only when the
+// container really stopped; a running one gets its real status from the
+// collector's next status write, now that the marker no longer holds it.
+func releaseDiskHold(ctx context.Context, rdb *redis.Client, uuid, liveKey string, usage *DiskUsagePayload, running bool) {
+	log.Printf("Disk quota resolved for %s — releasing the hold", uuid)
+	rdb.Del(ctx, diskFullKey(uuid))
+	if !running {
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
+	}
+	evt, _ := json.Marshal(map[string]interface{}{
+		"type":    "disk_warning",
+		"warning": "resolved",
+		"total":   usage.Total,
+		"limit":   usage.Limit,
+	})
+	rdb.Publish(ctx, liveKey, string(evt))
 }
 
 // getDiskUsage returns disk usage, from the quota system where the filesystem
@@ -1004,8 +1023,11 @@ func appendStatsSample(ctx context.Context, rdb *redis.Client, key string, maxLe
 // not take, or it was started past the hold. Its own collector releases it once
 // under, and refreshing the marker here kept that collector's trip, which only
 // fires without a marker, from ever stopping it again.
+//
+// A nil running is "not known" (the container list failed), not "none run":
+// read as the latter it refreshed the marker of a running held server too.
 func releaseResolvedDiskHolds(ctx context.Context, rdb *redis.Client, quota *QuotaSet, running map[string]bool) {
-	if rdb == nil || globalStorageMgr == nil {
+	if rdb == nil || globalStorageMgr == nil || running == nil {
 		return
 	}
 	// This node's own servers, from its storage paths, and not a walk over
@@ -1024,8 +1046,11 @@ func releaseResolvedDiskHolds(ctx context.Context, rdb *redis.Client, quota *Quo
 		}
 		// No limit any more (Limit 0) is resolved too. Still over: keep the
 		// marker alive, it is the only hold and would lapse after its TTL.
+		// disk_full is posted again because the trip's own write can be lost
+		// (Core down past the mailbox TTL), which left Core at "stopping".
 		if usage.Limit > 0 && usage.Total >= usage.Limit {
 			rdb.Expire(ctx, diskFullKey(uuid), diskFullMarkerTTL)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "disk_full", 30*time.Second)
 			continue
 		}
 		log.Printf("Disk quota resolved for %s while stopped — releasing the hold", uuid)

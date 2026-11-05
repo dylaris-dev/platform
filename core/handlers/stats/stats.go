@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"dylaris-core/authz"
@@ -14,6 +15,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/redis/go-redis/v9"
 )
@@ -69,8 +71,9 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 	watchKey := fmt.Sprintf("dylaris:server:%s:stats:watching", srv.UUID)
 
 	// Set watching key so the node knows to publish live updates
-	h.d.Redis.Set(r.Context(), watchKey, "1", 10*time.Second)
-	defer clearStatsWatch(h.d.Redis, watchKey)
+	viewer := uuid.NewString()
+	markStatsWatch(r.Context(), h.d.Redis, watchKey, viewer)
+	defer clearStatsWatch(h.d.Redis, watchKey, viewer)
 
 	// Refresh watching key in background
 	watchDone := make(chan struct{})
@@ -82,7 +85,7 @@ func (h *StatsHandler) StreamStats(w http.ResponseWriter, r *http.Request) {
 			case <-watchDone:
 				return
 			case <-ticker.C:
-				h.d.Redis.Set(r.Context(), watchKey, "1", 10*time.Second)
+				markStatsWatch(r.Context(), h.d.Redis, watchKey, viewer)
 			}
 		}
 	}()
@@ -346,8 +349,8 @@ func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(out)
 }
 
-// clearStatsWatch removes the watch key so the node stops publishing live stats
-// as soon as the last viewer leaves.
+// clearStatsWatch removes this viewer from the watch key, so the node stops
+// publishing live stats as soon as the last viewer leaves.
 //
 // It takes a DETACHED context on purpose. This runs from a deferred call in an
 // SSE handler whose normal exit is `<-r.Context().Done()` - the client
@@ -355,13 +358,30 @@ func (h *StatsHandler) GetCores(w http.ResponseWriter, r *http.Request) {
 // request context is already cancelled, go-redis checks ctx.Err() before it
 // dispatches, and the Del never reaches Redis at all. The key then lingers for
 // the rest of its 10s TTL and the node keeps publishing to nobody.
-func clearStatsWatch(rdb *redis.Client, watchKey string) {
+func clearStatsWatch(rdb *redis.Client, watchKey, viewer string) {
 	if rdb == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	rdb.Del(ctx, watchKey)
+	rdb.SRem(ctx, watchKey, viewer)
+}
+
+// markStatsWatch adds this viewer to the server's watch key, a SET of viewers
+// rather than one shared "1": a viewer leaving removes only itself, and Redis
+// drops the key with its last member. The node only asks EXISTS, so it reads
+// both shapes alike.
+func markStatsWatch(ctx context.Context, rdb *redis.Client, watchKey, viewer string) {
+	if rdb == nil {
+		return
+	}
+	pipe := rdb.TxPipeline()
+	pipe.SAdd(ctx, watchKey, viewer)
+	pipe.Expire(ctx, watchKey, 10*time.Second)
+	if _, err := pipe.Exec(ctx); err != nil && strings.HasPrefix(err.Error(), "WRONGTYPE") {
+		// A Core replica one deploy behind still writes the old string.
+		rdb.Set(ctx, watchKey, "1", 10*time.Second)
+	}
 }
 
 // statsReplayMax is how many buffered samples a new stream starts with: what

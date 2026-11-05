@@ -1898,6 +1898,21 @@ type ContainerStats struct {
 type PrevCPUStats struct {
 	TotalUsage  uint64
 	SystemUsage uint64
+	ContainerID string
+}
+
+// cpuPercentSince is the CPU use between two samples, 0 when they are not of
+// one container. A recreate keeps the name, so the collector hands in the old
+// container's counters; the new cgroup restarts near 0 and the unsigned
+// difference wrapped to ~1.8e19, which read as a 100% sample.
+func cpuPercentSince(prev *PrevCPUStats, cur PrevCPUStats, numCPUs float64) float64 {
+	if prev == nil || prev.ContainerID != cur.ContainerID ||
+		cur.TotalUsage < prev.TotalUsage || cur.SystemUsage <= prev.SystemUsage {
+		return 0
+	}
+	cpuDelta := float64(cur.TotalUsage - prev.TotalUsage)
+	systemDelta := float64(cur.SystemUsage - prev.SystemUsage)
+	return (cpuDelta / systemDelta) * numCPUs * 100.0
 }
 
 // GetContainerStats reads a one-shot stats snapshot from the Docker API.
@@ -1918,7 +1933,7 @@ func (dm *DockerManager) GetContainerStats(containerName string, prev *PrevCPUSt
 	// Save current CPU counters for next call
 	currentTotal := stats.CPUStats.CPUUsage.TotalUsage
 	currentSystem := stats.CPUStats.SystemUsage
-	newPrev := &PrevCPUStats{TotalUsage: currentTotal, SystemUsage: currentSystem}
+	newPrev := &PrevCPUStats{TotalUsage: currentTotal, SystemUsage: currentSystem, ContainerID: stats.ID}
 
 	// CPU calculation using our own delta (not Docker's PreCPUStats)
 	numCPUs := float64(stats.CPUStats.OnlineCPUs)
@@ -1926,14 +1941,7 @@ func (dm *DockerManager) GetContainerStats(containerName string, prev *PrevCPUSt
 		numCPUs = float64(len(stats.CPUStats.CPUUsage.PercpuUsage))
 	}
 
-	var cpuPercent float64
-	if prev != nil {
-		cpuDelta := float64(currentTotal - prev.TotalUsage)
-		systemDelta := float64(currentSystem - prev.SystemUsage)
-		if systemDelta > 0 && cpuDelta >= 0 {
-			cpuPercent = (cpuDelta / systemDelta) * numCPUs * 100.0
-		}
-	}
+	cpuPercent := cpuPercentSince(prev, *newPrev, numCPUs)
 
 	// Memory: subtract filesystem cache (like docker stats CLI).
 	// Different kernel/cgroup versions expose cache under different keys.

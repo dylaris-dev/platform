@@ -3,7 +3,6 @@ package stats
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -32,9 +31,7 @@ func TestClearStatsWatch_RunsWithACancelledRequestContext(t *testing.T) {
 	rdb := newWatchTestRedis(t)
 	const key = "dylaris:server:abc:stats:watching"
 
-	if err := rdb.Set(context.Background(), key, "1", 10*time.Second).Err(); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	markStatsWatch(context.Background(), rdb, key, "viewer")
 
 	// What the handler holds at defer time.
 	reqCtx, cancel := context.WithCancel(context.Background())
@@ -46,7 +43,7 @@ func TestClearStatsWatch_RunsWithACancelledRequestContext(t *testing.T) {
 		t.Fatal("the cancelled Del removed the key after all")
 	}
 
-	clearStatsWatch(rdb, key)
+	clearStatsWatch(rdb, key, "viewer")
 
 	n, err := rdb.Exists(context.Background(), key).Result()
 	if err != nil {
@@ -59,5 +56,44 @@ func TestClearStatsWatch_RunsWithACancelledRequestContext(t *testing.T) {
 
 // A nil Redis is the no-Redis deployment, not a crash.
 func TestClearStatsWatch_NilRedisIsANoOp(t *testing.T) {
-	clearStatsWatch(nil, "some:key")
+	clearStatsWatch(nil, "some:key", "viewer")
+}
+
+// H55: every viewer of a server shares one watch key. One leaving deleted it,
+// and the node stopped publishing to the viewers still watching until their
+// next refresh, freezing their live chart for up to ~7 s.
+func TestClearStatsWatch_OtherViewersKeepTheKey(t *testing.T) {
+	rdb := newWatchTestRedis(t)
+	ctx := context.Background()
+	const key = "dylaris:server:abc:stats:watching"
+
+	markStatsWatch(ctx, rdb, key, "viewer-a")
+	markStatsWatch(ctx, rdb, key, "viewer-b")
+
+	clearStatsWatch(rdb, key, "viewer-a")
+	if n, _ := rdb.Exists(ctx, key).Result(); n != 1 {
+		t.Fatal("one viewer leaving cleared the watch key for the other")
+	}
+	if ttl, _ := rdb.TTL(ctx, key).Result(); ttl <= 0 {
+		t.Fatalf("watch key has no TTL (%v)", ttl)
+	}
+
+	clearStatsWatch(rdb, key, "viewer-b")
+	if n, _ := rdb.Exists(ctx, key).Result(); n != 0 {
+		t.Fatal("the last viewer leaving did not clear the watch key")
+	}
+}
+
+// A Core one deploy behind writes the key as a string; a new viewer must still
+// keep it alive rather than fail on WRONGTYPE.
+func TestMarkStatsWatch_OldStringKeyStaysWatched(t *testing.T) {
+	rdb := newWatchTestRedis(t)
+	ctx := context.Background()
+	const key = "dylaris:server:abc:stats:watching"
+	rdb.Set(ctx, key, "1", 0)
+
+	markStatsWatch(ctx, rdb, key, "viewer-a")
+	if ttl, _ := rdb.TTL(ctx, key).Result(); ttl <= 0 {
+		t.Fatalf("old-shape key not refreshed (TTL %v)", ttl)
+	}
 }
