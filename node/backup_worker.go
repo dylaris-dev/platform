@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -133,6 +134,11 @@ func isBackupStoreEntry(rel string) bool {
 	return rel == backupDirName || strings.HasPrefix(rel, backupDirName+"/") ||
 		rel == manifestDirName || strings.HasPrefix(rel, manifestDirName+"/")
 }
+
+// archiveHiddenRootFiles are the node-owned files in a server root that no
+// archive carries. .active_server is not among them: the active sub-server is
+// no secret, and a restore onto an empty disk still learns it from the archive.
+var archiveHiddenRootFiles = []string{".node_config.json", ".dylaris.json", netGateFile}
 
 // RunBackup builds the archive and streams it directly to storage via an
 // io.Pipe — no buffering in RAM. The tar+gzip writer runs in a goroutine
@@ -265,8 +271,9 @@ type worldSaveGuard struct {
 }
 
 // pauseWorldSaves stops the server writing its world, flushes what it holds,
-// and returns the guard that puts it back.
-func pauseWorldSaves(ctx context.Context, rdb *redis.Client, dm *DockerManager, uuid string) *worldSaveGuard {
+// and returns the guard that puts it back. subServer is the one being archived,
+// "" for the whole server.
+func pauseWorldSaves(ctx context.Context, rdb *redis.Client, dm *DockerManager, uuid, subServer string) *worldSaveGuard {
 	g := &worldSaveGuard{uuid: uuid}
 	if rdb == nil || dm == nil {
 		return g
@@ -280,15 +287,20 @@ func pauseWorldSaves(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 	if err != nil || info.State == nil || !info.State.Running {
 		return g
 	}
-	inputKey := fmt.Sprintf("dylaris:server:%s:input", uuid)
-	g.send = func(command string) { rdb.RPush(context.Background(), inputKey, command) }
-
 	sub := ""
 	if info.Config != nil {
 		if s := strings.TrimPrefix(info.Config.WorkingDir, "/data/"); s != info.Config.WorkingDir {
 			sub = s
 		}
 	}
+	// The container runs one sub-server. A backup of another one has all its
+	// files on disk already, and save-off would land on the running one, which
+	// the archive never touches.
+	if subServer != "" && sub != "" && sub != subServer {
+		return g
+	}
+	inputKey := fmt.Sprintf("dylaris:server:%s:input", uuid)
+	g.send = func(command string) { rdb.RPush(context.Background(), inputKey, command) }
 	logKey := serverLogStreamKey(uuid, sub)
 	// From the newest line now, so an earlier save's confirmation is not read
 	// as this one's.
@@ -406,7 +418,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	// Everything that could refuse this run has now refused it, so this is the
 	// last point at which pausing saves would be wasted. From here the guard
 	// covers every exit, including the panic paths.
-	saves := pauseSaves(ctx, rdb, dm, cmd.ServerUUID)
+	saves := pauseSaves(ctx, rdb, dm, cmd.ServerUUID, cmd.SubServer)
 	defer saves.resume()
 	if saves.send != nil {
 		pacer.savesPaused(time.Now())
@@ -620,9 +632,25 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 		}
 		return nil
 	})
+	// The node's own files in the server root are hidden from the tenant (mode
+	// 0600, isProtectedFile): the start command and JVM flags among them are
+	// redacted for members without server.settings.write, and the archive was
+	// the one way to read them. Kept out by name at the root and by identity
+	// under any other name. A restore keeps the live copies (and drops what an
+	// older archive carried), so the archive never needed them.
+	for _, n := range archiveHiddenRootFiles {
+		if info, err := root.Lstat(n); err == nil && info.Mode().IsRegular() {
+			if id, ok := identityOf(info); ok {
+				stored[id] = true
+			}
+		}
+	}
 	walkErr := walkRoot(root, startName, func(name string, info fs.FileInfo) error {
 		rel := relTo(startName, name)
 		if rel == "." {
+			return nil
+		}
+		if startName == "." && slices.Contains(archiveHiddenRootFiles, rel) {
 			return nil
 		}
 		if isBackupStoreEntry(rel) {

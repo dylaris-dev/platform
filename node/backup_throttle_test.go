@@ -269,7 +269,7 @@ func TestRunBackupSpoolResumesSavingBeforeUpload(t *testing.T) {
 
 	core := newFakeCore(t, 1024)
 	partsAtSaveOn := -1
-	pauseSaves = func(_ context.Context, _ *redis.Client, _ *DockerManager, uuid string) *worldSaveGuard {
+	pauseSaves = func(_ context.Context, _ *redis.Client, _ *DockerManager, uuid, _ string) *worldSaveGuard {
 		return &worldSaveGuard{uuid: uuid, send: func(cmd string) {
 			if cmd == "save-on" && partsAtSaveOn < 0 {
 				core.bucket.mu.Lock()
@@ -299,7 +299,7 @@ func TestRunBackupWithoutSpoolResumesSavingAfterUpload(t *testing.T) {
 
 	core := newFakeCore(t, 1024)
 	partsAtSaveOn := -1
-	pauseSaves = func(_ context.Context, _ *redis.Client, _ *DockerManager, uuid string) *worldSaveGuard {
+	pauseSaves = func(_ context.Context, _ *redis.Client, _ *DockerManager, uuid, _ string) *worldSaveGuard {
 		return &worldSaveGuard{uuid: uuid, send: func(cmd string) {
 			if cmd == "save-on" {
 				core.bucket.mu.Lock()
@@ -469,7 +469,7 @@ func TestSpoolReservationEndsOnceTheArchiveIsOnDisk(t *testing.T) {
 
 	core := newFakeCore(t, 1024)
 	heldAtSaveOn := int64(-1)
-	pauseSaves = func(_ context.Context, _ *redis.Client, _ *DockerManager, uuid string) *worldSaveGuard {
+	pauseSaves = func(_ context.Context, _ *redis.Client, _ *DockerManager, uuid, _ string) *worldSaveGuard {
 		return &worldSaveGuard{uuid: uuid, send: func(cmd string) {
 			if cmd == "save-on" && heldAtSaveOn < 0 {
 				heldAtSaveOn = inflightWrites.Load()

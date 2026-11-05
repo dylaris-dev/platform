@@ -357,6 +357,16 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		return
 	}
 
+	// A delete of the server is not ordered against a restore and ran beside
+	// it: the stage sits outside the removed directory, and the swap below put
+	// the deleted server's world back on disk, quota project and all.
+	if serverDeleted(cmd.ServerUUID) {
+		stageCleanup()
+		wasRunning = false
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", errRestoreServerDeleted)
+		return
+	}
+
 	// Atomic-swap: move current targetDir aside, move stageDir into place,
 	// then remove the old contents in the background. The two renames are
 	// the only on-disk window where the world looks weird, and that's
@@ -377,6 +387,15 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		}
 		stageCleanup()
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "swap stage: "+err.Error())
+		return
+	}
+	// The delete can also land between the check above and the swap, after its
+	// RemoveAll already ran.
+	if serverDeleted(cmd.ServerUUID) {
+		os.RemoveAll(targetDir)
+		os.RemoveAll(backupDir)
+		wasRunning = false
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", errRestoreServerDeleted)
 		return
 	}
 	carried := true
@@ -403,6 +422,8 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "success", "")
 	log.Printf("Restore %d completed: %d files in %v", cmd.RunID, extracted, time.Since(started))
 }
+
+const errRestoreServerDeleted = "the server was deleted during the restore"
 
 // retagAfterRestore is a var so a test can see a full restore reach it. The
 // limit sits on the project id and did not move; it is lifted for the tag and
