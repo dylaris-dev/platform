@@ -8,7 +8,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -84,9 +83,8 @@ func applyFloodgateKey(serverDir string, fetch func() (string, bool, error)) {
 // active sub-server; empty falls back to .active_server on disk.
 func provisionFloodgateKey(ctx context.Context, rdb *redis.Client, serverPath, uuid, subName string) {
 	if !validActiveSubServer(subName) || subName == "" {
-		b, _ := os.ReadFile(filepath.Join(serverPath, ".active_server"))
-		subName = strings.TrimSpace(string(b))
-		if subName == "" || !validActiveSubServer(subName) {
+		subName = readActiveSubServer(serverPath)
+		if subName == "" {
 			return
 		}
 	}

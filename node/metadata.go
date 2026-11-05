@@ -73,7 +73,7 @@ func writeServerMetadata(serverDir string, m ServerMetadata) error {
 
 func readServerMetadata(serverDir string) (ServerMetadata, error) {
 	var m ServerMetadata
-	data, err := os.ReadFile(metadataPath(serverDir))
+	data, err := readServerRootFile(serverDir, filepath.Base(metadataPath(serverDir)))
 	if err != nil {
 		return m, err
 	}

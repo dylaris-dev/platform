@@ -31,7 +31,7 @@ func savedHostPorts(storagePaths []string, rangeStart, rangeEnd int) map[string]
 			if !e.IsDir() || e.Name() == "" || e.Name()[0] == '.' {
 				continue
 			}
-			data, err := os.ReadFile(filepath.Join(sp, e.Name(), ".node_config.json"))
+			data, err := readServerRootFile(filepath.Join(sp, e.Name()), ".node_config.json")
 			if err != nil {
 				continue
 			}
@@ -114,7 +114,7 @@ func (dm *DockerManager) rememberHostPort(uuid string, port int) {
 // not know survive. No saved config means nothing to update: a partial file
 // would read to the reconciler as a server it can rebuild.
 func setSavedDockerField(dir, field string, value any) {
-	data, err := os.ReadFile(filepath.Join(dir, ".node_config.json"))
+	data, err := readServerRootFile(dir, ".node_config.json")
 	if err != nil {
 		return
 	}

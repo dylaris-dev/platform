@@ -984,6 +984,49 @@ func writeServerRootFile(serverDir, name string, data []byte) error {
 	return writeFileIn(root, name, data, nodeOwnedFileMode)
 }
 
+// readServerRootFile is the read side of writeServerRootFile. A root container
+// (MC_RUN_AS=0 with a root image) can replace the file with a link, and the
+// node reads as root: ../.node_secret would come back and be copied into the
+// tenant-readable .dylaris.json. Only a regular file is read, through a Root.
+func readServerRootFile(serverDir, name string) ([]byte, error) {
+	root, err := os.OpenRoot(serverDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	if info, err := root.Lstat(name); err != nil {
+		return nil, err
+	} else if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", name)
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	// Re-checked on the open file: the name can be swapped between the two.
+	if info, err := f.Stat(); err != nil {
+		return nil, err
+	} else if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", name)
+	}
+	return io.ReadAll(f)
+}
+
+// readActiveSubServer returns the server's .active_server, or "" when it is
+// missing, unreadable or not one plain sub-server name.
+func readActiveSubServer(serverDir string) string {
+	b, err := readServerRootFile(serverDir, ".active_server")
+	if err != nil {
+		return ""
+	}
+	name := strings.TrimSpace(string(b))
+	if !validActiveSubServer(name) {
+		return ""
+	}
+	return name
+}
+
 // storageManager is set during init and used by heartbeat to publish storage info.
 var globalStorageMgr *StorageManager
 
@@ -1814,8 +1857,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			log.Printf("Server %s resources updated", cmd.Config.UUID)
 			resServerPath := storage.GetServerDir(cmd.Config.UUID)
 			saveNodeConfig(resServerPath, applied)
-			resActiveBytes, _ := os.ReadFile(filepath.Join(resServerPath, ".active_server"))
-			refreshServerMetadata(resServerPath, cmd.Config.UUID, "", applied.Docker.Image, applied.Docker.RAM, applied.Docker.CPULimit, strings.TrimSpace(string(resActiveBytes)))
+			refreshServerMetadata(resServerPath, cmd.Config.UUID, "", applied.Docker.Image, applied.Docker.RAM, applied.Docker.CPULimit, readActiveSubServer(resServerPath))
 		}
 		// Assigned again before the limit: a server that arrived by a move was
 		// never registered with this filesystem's quota, so a limit set on it
@@ -1999,8 +2041,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 		// Check if this was the active sub-server
 		activeFile := filepath.Join(serverPath, ".active_server")
-		activeBytes, _ := os.ReadFile(activeFile)
-		delFinalActive := strings.TrimSpace(string(activeBytes))
+		delFinalActive := readActiveSubServer(serverPath)
 		deletedActive := delFinalActive == subName
 		if delFinalActive == subName {
 			// Find another sub-server to activate

@@ -161,8 +161,7 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 			}
 
 			// Read the saved node config — if missing, we can't recreate.
-			configPath := filepath.Join(storagePath, uuid, ".node_config.json")
-			data, err := os.ReadFile(configPath)
+			data, err := readServerRootFile(filepath.Join(storagePath, uuid), ".node_config.json")
 			if err != nil {
 				// No config file: either a non-server directory or pre-existing server.
 				continue

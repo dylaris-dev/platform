@@ -1788,7 +1788,7 @@ func (dm *DockerManager) savedContainerPort(uuid string) int {
 }
 
 func savedContainerPortIn(serverDir string) int {
-	data, err := os.ReadFile(filepath.Join(serverDir, ".node_config.json"))
+	data, err := readServerRootFile(serverDir, ".node_config.json")
 	if err != nil {
 		return 0
 	}
@@ -1813,7 +1813,7 @@ func (dm *DockerManager) containerGone(uuid string) bool {
 func (dm *DockerManager) mergeIntoSavedConfig(change ServerConfig) ServerConfig {
 	serverDir := dm.resolveLocalServerPath(change.UUID)
 	merged := change
-	if data, err := os.ReadFile(filepath.Join(serverDir, ".node_config.json")); err == nil {
+	if data, err := readServerRootFile(serverDir, ".node_config.json"); err == nil {
 		var saved ServerConfig
 		if err := json.Unmarshal(data, &saved); err != nil {
 			log.Printf("update_resources %s: saved config unreadable (%v), replacing it with the change", change.UUID, err)

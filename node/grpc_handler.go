@@ -980,10 +980,7 @@ func (h *StreamHandler) handleInspectOrphan(reqID, serverUUID string) *pb.NodeMe
 	}
 
 	// Read .active_server — absent is fine, leave ActiveSubServer as "".
-	activeBytes, err := os.ReadFile(filepath.Join(serverDir, ".active_server"))
-	if err == nil {
-		resp.ActiveSubServer = strings.TrimSpace(string(activeBytes))
-	}
+	resp.ActiveSubServer = readActiveSubServer(serverDir)
 
 	// Scan sub-server directories.
 	// SubServerInfo intentionally carries only name + type; the full
