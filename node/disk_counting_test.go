@@ -45,11 +45,16 @@ type fakeQuota struct {
 	limitMB       int64
 	limitAtTag    int64
 	setLimits     []int64
+	// onTag runs inside the tag, where a node killed mid-walk stops.
+	onTag func()
 }
 
 func (f *fakeQuota) AssignQuota(string) error {
 	f.assigned = true
 	f.limitAtTag = f.limitMB
+	if f.onTag != nil {
+		f.onTag()
+	}
 	return nil
 }
 func (f *fakeQuota) GetDiskUsage(string) *DiskUsagePayload {
@@ -123,23 +128,29 @@ func TestCountDiskUsageGrantsGraceOnlyWhenTheRecountTipsIt(t *testing.T) {
 // A grace already granted survives a later recount under the same limit (a
 // storage move, a restore) with its ceiling, is not granted again, and ends
 // when the limit changes or usage is back under it.
+//
+// H39: a count that cannot be read after the tag is not the server getting
+// back under its limit; the real limit on the filesystem with the grace key
+// still in place had the guard let a server run that could not write.
 func TestCountDiskUsageKeepsAnExistingGraceOnlyUnderTheSameLimit(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		limitMB    int64
-		total      int64
+		after      *DiskUsagePayload
 		kept       bool
 		enforcedMB int64
 	}{
-		{"same limit, still over", 100, 150 * mib, true, 300},
-		{"limit raised", 200, 150 * mib, false, 200},
-		{"back under", 100, 90 * mib, false, 100},
+		{"same limit, still over", 100, usageOf(150*mib, 0), true, 300},
+		{"limit raised", 200, usageOf(150*mib, 0), false, 200},
+		{"back under", 100, usageOf(90*mib, 0), false, 100},
+		{"same limit, count unreadable", 100, nil, true, 300},
+		{"limit raised, count unreadable", 200, nil, false, 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rdb := newDiskGuardRedis(t)
 			ctx := context.Background()
 			saveDiskGrace(ctx, rdb, "srv", diskGrace{limit: 100 * mib, ceiling: 300 * mib})
-			q := &fakeQuota{after: usageOf(tc.total, 0)}
+			q := &fakeQuota{after: tc.after}
 			countDiskUsage(ctx, rdb, q, "srv", tc.limitMB, false)
 			if _, ok := loadDiskGrace(ctx, rdb, "srv"); ok != tc.kept {
 				t.Fatalf("grace kept = %v, want %v", ok, tc.kept)
@@ -153,6 +164,11 @@ func TestCountDiskUsageKeepsAnExistingGraceOnlyUnderTheSameLimit(t *testing.T) {
 
 // Grace holds only while the server is still over the SAME limit and inside
 // its headroom; once it ends the real limit goes back on the filesystem.
+//
+// H42: a grace whose limit CHANGED is obsolete, not used up. The new limit's
+// writer recounts and sets it; a tick inside that recount stopped the server
+// the owner had just given more disk, judged against the old limit, and put a
+// hard limit on mid-tag. H44: a limit that cannot be read is not "unlimited".
 func TestDiskGraced(t *testing.T) {
 	prevNodeID := nodeID
 	t.Cleanup(func() { nodeID = prevNodeID })
@@ -160,22 +176,30 @@ func TestDiskGraced(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		granted   bool
-		limitMB   int64
+		limitMB   int64 // -1: the cached limit cannot be read
 		total     int64
 		graced    bool
+		kept      bool
 		restoreMB int64 // limit put back when the grace ends, -1 for none
 	}{
-		{"granted, still over the same limit", true, 100, 150 * mib, true, -1},
-		{"granted, usage dropped below", true, 100, 90 * mib, false, 100},
-		{"granted, limit changed", true, 120, 150 * mib, false, 120},
-		{"granted, limit removed", true, 0, 150 * mib, false, 0},
-		{"granted, headroom used up", true, 100, 300 * mib, false, 100},
-		{"never granted", false, 100, 150 * mib, false, -1},
+		{"granted, still over the same limit", true, 100, 150 * mib, true, true, -1},
+		{"granted, usage dropped below", true, 100, 90 * mib, false, false, 100},
+		{"granted, limit changed", true, 120, 150 * mib, true, false, -1},
+		{"granted, limit removed", true, 0, 150 * mib, true, false, -1},
+		{"granted, headroom used up", true, 100, 300 * mib, false, false, 100},
+		{"granted, limit unreadable", true, -1, 150 * mib, true, true, -1},
+		{"never granted", false, 100, 150 * mib, false, false, -1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rdb := newDiskGuardRedis(t)
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 			ctx := context.Background()
-			recordDiskLimit(ctx, rdb, "srv", tc.limitMB)
+			if tc.limitMB < 0 {
+				// A WRONGTYPE reply: a GET that errors rather than misses.
+				mr.Lpush(diskLimitKey("srv"), "x")
+			} else {
+				recordDiskLimit(ctx, rdb, "srv", tc.limitMB)
+			}
 			if tc.granted {
 				saveDiskGrace(ctx, rdb, "srv", diskGrace{limit: 100 * mib, ceiling: 300 * mib})
 			}
@@ -183,8 +207,8 @@ func TestDiskGraced(t *testing.T) {
 			if got := diskGraced(ctx, rdb, q, "srv", usageOf(tc.total, 100*mib)); got != tc.graced {
 				t.Fatalf("graced = %v, want %v", got, tc.graced)
 			}
-			if _, ok := loadDiskGrace(ctx, rdb, "srv"); ok != tc.graced {
-				t.Fatalf("grace key kept = %v, want %v", ok, tc.graced)
+			if _, ok := loadDiskGrace(ctx, rdb, "srv"); ok != tc.kept {
+				t.Fatalf("grace key kept = %v, want %v", ok, tc.kept)
 			}
 			if q.limitMB != tc.restoreMB {
 				t.Fatalf("hard limit = %d MB, want %d", q.limitMB, tc.restoreMB)
@@ -200,9 +224,97 @@ func TestGracedUsageReportsTheServersLimit(t *testing.T) {
 	ctx := context.Background()
 	saveDiskGrace(ctx, rdb, "srv", diskGrace{limit: 100 * mib, ceiling: 300 * mib})
 	u := usageOf(150*mib, 300*mib)
+	recordDiskLimit(ctx, rdb, "srv", 100)
 	withGraceLimit(ctx, rdb, "srv", u)
 	if u.Limit != 100*mib {
 		t.Fatalf("limit = %d, want the granted %d", u.Limit, 100*mib)
+	}
+
+	// H42: once the limit changed the grace no longer speaks for the server;
+	// reporting the old limit read as "full" right after a raise.
+	recordDiskLimit(ctx, rdb, "srv", 200)
+	u = usageOf(150*mib, 0)
+	withGraceLimit(ctx, rdb, "srv", u)
+	if u.Limit != 0 {
+		t.Fatalf("limit = %d after the limit changed, want the filesystem's", u.Limit)
+	}
+}
+
+// H38/H44/H43: the hard limit is off while the tag runs. A node killed then
+// left it off for good when the limit lived only on the project (a server
+// from before the cache), and a server already counted was never looked at
+// again. The limit is cached and the lift marked before it is lifted; the
+// next boot recounts a marked server and puts the limit back.
+func TestARecountKilledMidTagGetsItsLimitBackOnBoot(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		cached  bool
+		counted bool
+	}{
+		{"server from before the cache, first boot", false, false},
+		{"counted server, recount for a resize", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newDiskGuardRedis(t)
+			ctx := context.Background()
+			if tc.cached {
+				recordDiskLimit(ctx, rdb, "srv", 100)
+			}
+			if tc.counted {
+				rdb.Set(ctx, diskCountedKey("srv"), 1, 0)
+			}
+			// The project holds the limit until the recount lifts it.
+			q := &fakeQuota{before: usageOf(10*mib, 100*mib), limitMB: 100,
+				onTag: func() { panic("killed") }}
+			func() {
+				defer func() { _ = recover() }()
+				countDiskUsage(ctx, rdb, q, "srv", knownDiskLimitMB(ctx, rdb, q, "srv"), !tc.counted)
+			}()
+			if q.limitMB != 0 {
+				t.Fatalf("hard limit during the tag = %d, want lifted", q.limitMB)
+			}
+
+			// Next boot: the project reads the lifted 0.
+			q2 := &fakeQuota{before: usageOf(10*mib, 0), after: usageOf(10*mib, 0)}
+			if done, _ := reconcileServer(ctx, rdb, q2, "srv"); !done {
+				t.Fatal("the boot skipped a server whose limit was left lifted")
+			}
+			if q2.limitMB != 100 {
+				t.Fatalf("hard limit after the boot = %d MB, want 100", q2.limitMB)
+			}
+			if got := loadDiskLimit(ctx, rdb, "srv"); got != 100 {
+				t.Fatalf("cached limit = %d, want 100 backfilled from the project", got)
+			}
+			q3 := &fakeQuota{after: usageOf(10*mib, 100*mib), limitMB: 100}
+			if done, _ := reconcileServer(ctx, rdb, q3, "srv"); done {
+				t.Fatal("a boot after a finished recount walked the server again")
+			}
+		})
+	}
+}
+
+// H45: the boot recount took every directory on a path for the server, so a
+// copy a storage move left behind was counted, set the once-marker, and the
+// real tree on the other path was skipped.
+func TestTheBootRecountCountsOnlyWhereTheServerLives(t *testing.T) {
+	prevNodeID := nodeID
+	t.Cleanup(func() { nodeID = prevNodeID })
+	nodeID = "node-1"
+	roots := []string{t.TempDir(), t.TempDir()}
+	rdb := newDiskGuardRedis(t)
+	sm := NewStorageManager(strings.Join(roots, ","), rdb)
+	const uuid = "b083ff0c-fc16-47c5-9700-7b16486583e7"
+	for _, r := range roots {
+		if err := os.MkdirAll(filepath.Join(r, uuid), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sm.setRedisPath(uuid, roots[1])
+	for i, r := range roots {
+		got := (&QuotaProvider{basePath: r}).serverDirs(sm)
+		if want := i == 1; (len(got) == 1 && got[0] == uuid) != want {
+			t.Fatalf("path %d lists %v, want the server only where it lives", i, got)
+		}
 	}
 }
 

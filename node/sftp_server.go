@@ -791,6 +791,14 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	if protectedRel(rel) {
 		return nil, os.ErrPermission
 	}
+	// A storage move refuses to start while this is held; see holdWriter.
+	release := v.storageMgr.holdWriter(ref.UUID)
+	held := false
+	defer func() {
+		if !held {
+			release()
+		}
+	}()
 	root, leaf, err := writeScope(v.storageMgr.GetServerDir(ref.UUID), filepath.ToSlash(rel), false)
 	if err != nil {
 		return nil, err
@@ -840,10 +848,11 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	lim := sftpWriteLimits(context.Background(), v.rdb, ref.UUID, v.username)
 	w := &meteredSFTPWriter{f: f, prior: prior, noted0: noted0, ceil: lim.disk, reason: "server disk limit", fileCap: lim.file, dailyCap: lim.daily,
 		baseline: baseline, maxEnd: baseline, rdb: v.rdb, username: v.username, pending: v.pending,
-		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write })}
+		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write }), release: release}
 	if lim.disk >= 0 {
 		w.srv, w.uuid = uploadServerInflight(ref.UUID), ref.UUID
 	}
+	held = true
 	return w, nil
 }
 
@@ -928,6 +937,8 @@ type meteredSFTPWriter struct {
 	pending *atomic.Int64
 	// allowed reports whether the session may still write to this server.
 	allowed func() bool
+	// release drops the handle's hold on the server (StorageManager.holdWriter).
+	release func()
 	mu      sync.Mutex
 }
 
@@ -997,7 +1008,11 @@ func (m *meteredSFTPWriter) Close() error {
 		noteDiskWrite(context.Background(), m.rdb, m.uuid, m.maxEnd-m.prior)
 		m.srv.Add(-m.added())
 	}
-	return m.f.Close()
+	err := m.f.Close()
+	if m.release != nil {
+		m.release()
+	}
+	return err
 }
 
 // --- sftp.FileCmder ---

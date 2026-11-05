@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
@@ -84,6 +85,14 @@ const diskCountedKeyFmt = "node:%s:server:%s:disk_counted"
 
 func diskCountedKey(uuid string) string { return fmt.Sprintf(diskCountedKeyFmt, nodeID, uuid) }
 
+// diskLiftedKeyFmt marks a server whose hard limit a recount took off and has
+// not put back yet. A node killed during the tag left the limit off for good:
+// the boot recount skips a counted server, and one limited before the cache
+// existed read the lifted 0 off its project as its limit.
+const diskLiftedKeyFmt = "node:%s:server:%s:disk_lifted"
+
+func diskLiftedKey(uuid string) string { return fmt.Sprintf(diskLiftedKeyFmt, nodeID, uuid) }
+
 type diskGrace struct{ limit, ceiling int64 }
 
 // holds reports whether the grace still applies: same limit, still over it,
@@ -147,6 +156,13 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 		before = q.GetDiskUsage(uuid)
 	}
 	if limitMB > 0 {
+		// Persisted before it comes off, so a node killed during the tag puts
+		// it back on its next boot. A server from before the cache had the
+		// limit only on the project, which reads 0 once lifted.
+		if rdb != nil {
+			recordDiskLimit(ctx, rdb, uuid, limitMB)
+			rdb.Set(ctx, diskLiftedKey(uuid), 1, 0)
+		}
 		if err := q.SetLimit(uuid, 0); err != nil {
 			log.Printf("quota: lift the limit of %s for the recount: %v", uuid, err)
 		}
@@ -154,42 +170,52 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 	err := q.AssignQuota(uuid)
 	after := q.GetDiskUsage(uuid)
 	enforceMB := limitMB
-	if rdb != nil && after != nil {
+	if rdb != nil {
 		if g, ok := loadDiskGrace(ctx, rdb, uuid); ok {
-			if g.holds(limit, after.Total) {
+			// A count that cannot be read is not the server back under its
+			// limit: the real limit with the grace key left in place had the
+			// guard let a server run that the filesystem no longer let write.
+			if g.limit == limit && (after == nil || g.holds(limit, after.Total)) {
 				enforceMB = g.ceiling >> 20
 			} else {
 				rdb.Del(ctx, diskGraceKey(uuid))
 			}
-		} else if allowGrace && limit > 0 && after.Total >= limit && (before == nil || before.Total < limit) {
+		} else if after != nil && allowGrace && limit > 0 && after.Total >= limit && (before == nil || before.Total < limit) {
 			// nil before with a working quota read after: the project was not
 			// in the report yet, which is a count of zero.
 			enforceMB = (after.Total + diskGraceHeadroom(limit) + 1<<20 - 1) >> 20
 			saveDiskGrace(ctx, rdb, uuid, diskGrace{limit: limit, ceiling: enforceMB << 20})
-			// The limit the grace ends on; a server from before the cache had
-			// it only on the project, which now holds the ceiling.
-			recordDiskLimit(ctx, rdb, uuid, limitMB)
 			log.Printf("quota: %s is over its limit now that its existing data is counted (%d of %d bytes) - warning, not stopping, with the hard limit lifted to %d MB until the limit changes or usage drops below it", uuid, after.Total, limit, enforceMB)
 		}
-		rdb.Set(ctx, diskCountedKey(uuid), 1, 0)
+		if after != nil {
+			rdb.Set(ctx, diskCountedKey(uuid), 1, 0)
+		}
 	}
 	if limitMB > 0 {
 		if serr := q.SetLimit(uuid, enforceMB); serr != nil {
 			log.Printf("quota: limit %s: %v", uuid, serr)
+		} else if rdb != nil {
+			rdb.Del(ctx, diskLiftedKey(uuid))
 		}
 	}
 	return err
 }
 
 // reconcileServer is the boot recount of one server, once per server on this
-// node. It reports whether it counted.
+// node, and again for one whose limit a recount left lifted. It reports
+// whether it counted.
 func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string) (bool, error) {
+	allowGrace := true
 	if rdb != nil {
 		if n, err := rdb.Exists(ctx, diskCountedKey(uuid)).Result(); err == nil && n == 1 {
-			return false, nil
+			if l, err := rdb.Exists(ctx, diskLiftedKey(uuid)).Result(); err != nil || l == 0 {
+				return false, nil
+			}
+			// Counted already: the grace stays once per server.
+			allowGrace = false
 		}
 	}
-	return true, countDiskUsage(ctx, rdb, q, uuid, knownDiskLimitMB(ctx, rdb, q, uuid), true)
+	return true, countDiskUsage(ctx, rdb, q, uuid, knownDiskLimitMB(ctx, rdb, q, uuid), allowGrace)
 }
 
 // knownDiskLimitMB is the limit Core last pushed, else the one on the project
@@ -205,9 +231,11 @@ func knownDiskLimitMB(ctx context.Context, rdb *redis.Client, q quotaAssigner, u
 }
 
 // withGraceLimit reports a graced server against its own limit rather than the
-// ceiling the filesystem holds meanwhile, so the owner sees it as full.
+// ceiling the filesystem holds meanwhile, so the owner sees it as full. Only
+// while that is still its limit: right after a raise it read as full against
+// the old one.
 func withGraceLimit(ctx context.Context, rdb *redis.Client, uuid string, usage *DiskUsagePayload) {
-	if g, ok := loadDiskGrace(ctx, rdb, uuid); ok {
+	if g, ok := loadDiskGrace(ctx, rdb, uuid); ok && g.limit == loadDiskLimit(ctx, rdb, uuid)<<20 {
 		usage.Limit = g.limit
 	}
 }
@@ -223,7 +251,20 @@ func diskGraced(ctx context.Context, rdb *redis.Client, q diskLimiter, uuid stri
 	if !ok {
 		return false
 	}
-	limitMB := loadDiskLimit(ctx, rdb, uuid)
+	limitMB, err := rdb.Get(ctx, diskLimitKey(uuid)).Int64()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		// Unreadable is not unlimited: SetLimit(0) here took the hard limit
+		// off. This tick passes; the next one reads again.
+		return true
+	}
+	if g.limit != limitMB<<20 {
+		// The limit changed, so the grace is obsolete rather than used up.
+		// Whoever set the new limit recounts and puts it on the filesystem;
+		// stopping here stopped the server the owner had just given more
+		// disk, and a SetLimit now would land in the middle of that tag.
+		rdb.Del(ctx, diskGraceKey(uuid))
+		return true
+	}
 	if g.holds(limitMB<<20, usage.Total) {
 		return true
 	}
@@ -243,7 +284,7 @@ func forgetDiskLimit(ctx context.Context, rdb *redis.Client, uuid string) {
 	if rdb == nil || uuid == "" {
 		return
 	}
-	rdb.Del(ctx, diskLimitKey(uuid), diskGraceKey(uuid), diskCountedKey(uuid))
+	rdb.Del(ctx, diskLimitKey(uuid), diskGraceKey(uuid), diskCountedKey(uuid), diskLiftedKey(uuid))
 }
 
 // loadDiskLimit returns the cached limit in MB, or 0 for "no limit known".

@@ -37,6 +37,9 @@ type StorageManager struct {
 	// closed once the move is done. See fenceMove.
 	movingMu sync.Mutex
 	moving   map[string]chan struct{}
+	// writers counts, per server, write handles that outlive one call (SFTP).
+	// Under movingMu with moving: see holdWriter.
+	writers map[string]int
 }
 
 // Placement modes for new-server assignment. Aliases of the shared constants so
@@ -442,9 +445,17 @@ func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (strin
 // func runs. During the copy the storage key still names the source, so a
 // write resolved then landed in the tree the move deletes afterwards. The old
 // manager-wide lock gave the same wait, for every server on the node.
-func (sm *StorageManager) fenceMove(serverUUID string) func() {
+//
+// A lookup made before the fence is past it: an open SFTP handle kept writing
+// into the source, the move deleted it, and the client saw a truncated upload
+// succeed. So the fence is refused while a writer holds the server.
+func (sm *StorageManager) fenceMove(serverUUID string) (func(), error) {
 	ch := make(chan struct{})
 	sm.movingMu.Lock()
+	if n := sm.writers[serverUUID]; n > 0 {
+		sm.movingMu.Unlock()
+		return nil, fmt.Errorf("server %s has %d file(s) open for writing over SFTP; close them and retry the move", serverUUID, n)
+	}
 	if sm.moving == nil {
 		sm.moving = map[string]chan struct{}{}
 	}
@@ -455,6 +466,29 @@ func (sm *StorageManager) fenceMove(serverUUID string) func() {
 		delete(sm.moving, serverUUID)
 		sm.movingMu.Unlock()
 		close(ch)
+	}, nil
+}
+
+// holdWriter registers a write handle for the server until the returned func
+// runs. Taken BEFORE the handle resolves the server's path: a move that fenced
+// first then makes that lookup wait for the move, and one that comes later
+// sees the writer and is refused.
+func (sm *StorageManager) holdWriter(serverUUID string) func() {
+	sm.movingMu.Lock()
+	if sm.writers == nil {
+		sm.writers = map[string]int{}
+	}
+	sm.writers[serverUUID]++
+	sm.movingMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			sm.movingMu.Lock()
+			if sm.writers[serverUUID]--; sm.writers[serverUUID] <= 0 {
+				delete(sm.writers, serverUUID)
+			}
+			sm.movingMu.Unlock()
+		})
 	}
 }
 
@@ -477,7 +511,11 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 		return err
 	}
 
-	defer sm.fenceMove(serverUUID)()
+	release, err := sm.fenceMove(serverUUID)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	srcDir := filepath.Join(currentPath, serverUUID)
 	dstDir := filepath.Join(targetPath, serverUUID)

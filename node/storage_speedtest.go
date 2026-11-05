@@ -69,10 +69,11 @@ func runSpeedTest(ctx context.Context, client *http.Client, url string, size int
 		return 0, 0, false, fmt.Errorf("upload: %w", withoutURL(err))
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	elapsed := time.Since(start)
+	// Before the drain: storageStatusError reads the S3 error code off the body.
 	if resp.StatusCode/100 != 2 {
 		return 0, 0, false, storageStatusError("put", resp)
 	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	elapsed := time.Since(start)
 	return size, elapsed, lan.Load(), nil
 }

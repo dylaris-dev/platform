@@ -167,20 +167,12 @@ func (qp *QuotaProvider) IsAvailable() bool {
 // reconcileExisting assigns quotas to all existing server directories that
 // were created before quota support was enabled, or whose data was never
 // counted (ext4 before the recursive tag). Once per server: see reconcileServer.
-func (qp *QuotaProvider) reconcileExisting(rdb *redis.Client) {
+func (qp *QuotaProvider) reconcileExisting(rdb *redis.Client, storage *StorageManager) {
 	if !qp.available {
 		return
 	}
-	entries, err := os.ReadDir(qp.basePath)
-	if err != nil {
-		return
-	}
 	var count int
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		uuid := e.Name()
+	for _, uuid := range qp.serverDirs(storage) {
 		if counted, err := reconcileServer(context.Background(), rdb, qp, uuid); err != nil {
 			log.Printf("quota: reconcile %s: %v", uuid, err)
 		} else if counted {
@@ -190,6 +182,27 @@ func (qp *QuotaProvider) reconcileExisting(rdb *redis.Client) {
 	if count > 0 {
 		log.Printf("quota: reconciled %d existing server(s)", count)
 	}
+}
+
+// serverDirs lists the servers that live on this provider's path. A copy a
+// storage move left on another path is not the server: counting it set the
+// once-marker, and the real tree was never counted.
+func (qp *QuotaProvider) serverDirs(storage *StorageManager) []string {
+	entries, err := os.ReadDir(qp.basePath)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if storage != nil && storage.GetServerPath(e.Name()) != qp.basePath {
+			continue
+		}
+		out = append(out, e.Name())
+	}
+	return out
 }
 
 // projectID generates a deterministic project ID from a server UUID using CRC32.

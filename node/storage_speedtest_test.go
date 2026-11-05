@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -51,6 +53,21 @@ func TestStorageSpeedTest(t *testing.T) {
 	status = http.StatusForbidden
 	if e := h.handleStorageSpeedTest("r", &pb.StorageSpeedTestReq{Url: srv.URL, SizeBytes: 10}).GetError(); e == nil {
 		t.Error("a refused PUT reported a speed")
+	}
+}
+
+// H41: the body was drained before the status check, so the S3 error code the
+// other storage paths report never reached the operator.
+func TestStorageSpeedTestReportsTheS3ErrorCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `<?xml version="1.0"?><Error><Code>SignatureDoesNotMatch</Code></Error>`)
+	}))
+	defer srv.Close()
+	_, _, _, err := runSpeedTest(context.Background(), srv.Client(), srv.URL, 10)
+	if err == nil || !strings.Contains(err.Error(), "SignatureDoesNotMatch") {
+		t.Fatalf("err = %v, want the S3 error code", err)
 	}
 }
 

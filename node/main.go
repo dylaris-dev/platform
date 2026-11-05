@@ -2225,6 +2225,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Stop the server first
 		gracefulStop(rdb, cmd.Config.UUID, dm)
 
+		// Read while the server still resolves to the source: a server
+		// limited before the cache existed has its limit only on the source's
+		// project, and Core sends none with a storage move.
+		limitMB := knownDiskLimitMB(ctx, rdb, quota, cmd.Config.UUID)
 		if err := storage.MigrateServerPath(cmd.Config.UUID, targetPath); err != nil {
 			log.Printf("Storage migration failed for %s: %v", cmd.Config.UUID, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
@@ -2252,8 +2256,8 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 
 		// The new path may be another filesystem with its own quota. The limit
-		// is the one this node already enforced, from its cache.
-		applyDiskLimit(ctx, rdb, quota, cmd.Config.UUID, loadDiskLimit(ctx, rdb, cmd.Config.UUID))
+		// is the one this node already enforced.
+		applyDiskLimit(ctx, rdb, quota, cmd.Config.UUID, limitMB)
 
 		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 		log.Printf("Migration complete for server %s → %s", cmd.Config.UUID, targetPath)
