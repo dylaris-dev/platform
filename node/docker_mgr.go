@@ -1383,6 +1383,12 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 	if getRoutingMode() != "gateway" && dm.portMgr != nil {
 		cPort := config.Docker.ContainerPort
 		if cPort == 0 {
+			// Only update_resources and a routing move carry the port. Every other
+			// rebuild (setup, reinstall, switch, reconfigure, version move) sends
+			// none, and the node default would drop a port an admin had set.
+			cPort = dm.savedContainerPort(config.UUID)
+		}
+		if cPort == 0 {
 			cPort = getContainerPort()
 		}
 		hostP := dm.portMgr.GetPort(config.UUID)
@@ -1776,10 +1782,13 @@ func boundPorts(pm nat.PortMap, extraLabel string) (host, cont int) {
 }
 
 // savedContainerPort is the container port in the server's .node_config.json,
-// or 0. Only for a container that publishes none, which carries no port to
-// read it from.
+// or 0: the admin-set port for a rebuild whose payload carries none.
 func (dm *DockerManager) savedContainerPort(uuid string) int {
-	data, err := os.ReadFile(filepath.Join(dm.resolveLocalServerPath(uuid), ".node_config.json"))
+	return savedContainerPortIn(dm.resolveLocalServerPath(uuid))
+}
+
+func savedContainerPortIn(serverDir string) int {
+	data, err := os.ReadFile(filepath.Join(serverDir, ".node_config.json"))
 	if err != nil {
 		return 0
 	}

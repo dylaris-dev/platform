@@ -957,6 +957,10 @@ func saveNodeConfig(serverDir string, config ServerConfig) {
 		// Core sends 0 for "the node picks one"; what it picked is what must be saved.
 		config.Docker.HostPort = ledgerHostPort(config.UUID)
 	}
+	if config.Docker.ContainerPort == 0 {
+		// Most payloads carry no container port; writing their 0 lost the admin-set one.
+		config.Docker.ContainerPort = savedContainerPortIn(serverDir)
+	}
 	data, err := json.Marshal(config)
 	if err != nil {
 		log.Printf("saveNodeConfig: marshal error for %s: %v", config.UUID, err)
