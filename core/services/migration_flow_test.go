@@ -34,6 +34,11 @@ type flowStore struct {
 	cutovers []int
 	// voiceRotations counts the voice keys the move replaced.
 	voiceRotations int
+	// mode is routing_mode; empty reads as "gateway", the mode these tests
+	// were written for.
+	mode string
+	// usedPorts is the host ports Core knows as taken, per node.
+	usedPorts map[int][]int
 }
 
 func (f *flowStore) GetServerByID(int) (*models.Server, error) {
@@ -52,6 +57,9 @@ func (f *flowStore) GetNodeByID(id int) (*models.Node, error) {
 }
 func (f *flowStore) GetSetting(key string) (string, error) {
 	if key == "routing_mode" {
+		if f.mode != "" {
+			return f.mode, nil
+		}
 		return "gateway", nil
 	}
 	return "", nil
@@ -77,6 +85,9 @@ func (f *flowStore) UpdateServerNode(_ int, node int) error {
 	return nil
 }
 func (f *flowStore) GetNodeSecretEnc(int) (string, error) { return f.enc, nil }
+func (f *flowStore) GetUsedHostPortsOnNode(id int) ([]int, error) {
+	return f.usedPorts[id], nil
+}
 
 func (f *flowStore) status() string {
 	f.mu.Lock()
@@ -84,9 +95,17 @@ func (f *flowStore) status() string {
 	return f.srv.Status
 }
 
-type flowGateway struct{ GatewayProvider }
+type flowGateway struct {
+	GatewayProvider
+	routeMoves *int
+}
 
-func (flowGateway) MigrateServerRoutes(uint, uint) error { return nil }
+func (g flowGateway) MigrateServerRoutes(uint, uint) error {
+	if g.routeMoves != nil {
+		*g.routeMoves++
+	}
+	return nil
+}
 
 // simNodes plays both nodes: it reads their command streams and answers the
 // way the real ones do, after a short delay so the orchestrator's first poll

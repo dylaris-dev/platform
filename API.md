@@ -255,8 +255,8 @@ can still show what exists.
 | PUT | `/api/admin/ports/settings` | session | `settings.write` | - | `PortsAdminHandler.SetSettings` | {enabled?, range?, maxPerUser?}. |
 | GET | `/api/admin/servers` | session | `servers.read` | - | `ServerHandler.GetAdminServers` | returns all DB servers with optional search filter |
 | PATCH | `/api/admin/servers/{id:[0-9]+}/demo` | session | `settings.write` | - | `ServerHandler.SetServerDemo` | PANEL settings.write (RequireCap at the route). |
-| POST | `/api/admin/servers/{id:[0-9]+}/migration/cancel` | session | `servers.write` | RequireGatewayEnabled | `ServerHandler.CancelMigration` | Admin oversight (PANEL servers.write, gateway-gated). |
-| POST | `/api/admin/servers/{id:[0-9]+}/move` | session | `servers.write` | RequireGatewayEnabled | `ServerHandler.MoveServer` | (admin oversight, PANEL servers.write) queues a manual node-to-node migration of a server to a target node. |
+| POST | `/api/admin/servers/{id:[0-9]+}/migration/cancel` | session | `servers.write` | - | `ServerHandler.CancelMigration` | Admin oversight (PANEL servers.write), either routing mode. |
+| POST | `/api/admin/servers/{id:[0-9]+}/move` | session | `servers.write` | - | `ServerHandler.MoveServer` | (admin oversight, PANEL servers.write) queues a manual node-to-node migration of a server to a target node. |
 | PATCH | `/api/admin/servers/{id:[0-9]+}/owner` | session | `servers.write` | - | `ServerHandler.AdminUpdateServerOwner` | reassigns a server to a different user |
 | GET | `/api/admin/settings/audit` | session | `settings.read` | - | `AuditSettingsHandler.GetPolicy` | PANEL settings.read (RequireCap at the route). |
 | PUT | `/api/admin/settings/audit` | session | `settings.write` | - | `AuditSettingsHandler.SavePolicy` | PANEL settings.write (RequireCap at the route). |

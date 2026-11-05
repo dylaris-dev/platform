@@ -2222,8 +2222,8 @@ func (h *ServerHandler) SetServerAutoMove(w http.ResponseWriter, r *http.Request
 // MoveServer (admin oversight, PANEL servers.write) queues a manual node-to-node
 // migration of a server to a target node. Async: it only enqueues; the
 // leader-elected Core runs the migration step machine and the panel polls the
-// orchestration status key. The route is gateway-gated (migration is
-// gateway-only) via RequireGatewayEnabled.
+// orchestration status key. It runs in either routing mode; without the
+// gateway the server takes the target node's address.
 func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
 	if h.d.Migration == nil {
 		httpx.SendJSONError(w, "Migration orchestrator not available", 503)
@@ -2272,7 +2272,7 @@ func (h *ServerHandler) MoveServer(w http.ResponseWriter, r *http.Request) {
 // stay admin-only (use MoveServer). The target picker is the tenant-scoped node
 // list, so in practice this covers moving between the user's own nodes (and
 // pulling a platform-hosted server onto their own hardware). Same orchestrator +
-// status as the admin move; gateway-gated (migration is gateway-only).
+// status as the admin move; gateway-gated, because BYON runs on the gateway.
 func (h *ServerHandler) TransferServer(w http.ResponseWriter, r *http.Request) {
 	if h.d.Migration == nil {
 		httpx.SendJSONError(w, "Migration orchestrator not available", 503)
@@ -2410,6 +2410,16 @@ func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, s
 				"link_without_client_addr", http.StatusConflict)
 			return
 		}
+	}
+	if problem := services.DirectMoveProblem(h.d.Store, srv); problem != "" {
+		httpx.SendJSONErrorCode(w, problem, "move_needs_gateway", http.StatusConflict)
+		return
+	}
+	// An External node only routes through the gateway (the rebalancer skips
+	// it the same way), so on IP:Port a server moved there is unreachable.
+	if target.IsExternal() && !services.GatewayRoutingEnabled(h.d.Store) {
+		httpx.SendJSONErrorCode(w, "External nodes need gateway routing; this server cannot be moved onto one on IP:Port.", "move_needs_gateway", http.StatusConflict)
+		return
 	}
 	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
 		return

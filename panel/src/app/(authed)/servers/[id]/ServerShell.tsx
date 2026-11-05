@@ -721,18 +721,14 @@ export default function ServerShell({ children }: { children: React.ReactNode })
     const isDemoView = selectedServer.role === 'demo';
     const perms = selectedServer.permissions;
 
-    // Who may move this server to another node. Admins always (any mode); a BYON
-    // server owner when tenancy is on. Migration is gateway-only, so hide the
-    // control entirely on ip_port instead of dangling a disabled picker.
-    const canTransfer = (!!user?.isAdmin || (featureFlags.byon && isOwner)) && routingMode !== 'ip_port';
+    // Who may move this server to another node. Admins in either routing mode;
+    // a BYON server owner when tenancy is on, which runs on the gateway.
+    const canTransfer = !!user?.isAdmin || (featureFlags.byon && isOwner && routingMode !== 'ip_port');
 
-    // Auto-move opt-in gating. The backend gates the PATCH on BOTH the platform
-    // feature flag AND active gateway routing (503 otherwise), so we mirror both
-    // here and surface the matching reason.
-    const autoMoveDisabled = !featureFlags.autoMove || routingMode === 'ip_port';
-    const autoMoveReason = !featureFlags.autoMove
-        ? 'Auto-Move is disabled platform-wide. An admin can enable it in Settings → Features.'
-        : 'Requires gateway routing. Auto-Move is unavailable while Game Traffic is on IP:Port.';
+    // Auto-move opt-in gating: the backend gates the PATCH on the platform
+    // feature flag (503 otherwise), in either routing mode.
+    const autoMoveDisabled = !featureFlags.autoMove;
+    const autoMoveReason = 'Auto-Move is disabled platform-wide. An admin can enable it in Settings → Features.';
     const tabDisabled = (perm: keyof TabPermissions) => isPendingSetup || (!isOwner && !!perms && !perms[perm]);
     // `perms.power` is power.start alone; each other action has its own bit.
     const powerAllow = isOwner ? undefined : {
@@ -1455,8 +1451,7 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                         </div>
                                     )}
                                     {/* Auto-move opt-in. Disabled when the platform feature
-                                        is off or routing is on IP:Port (gateway off) — the
-                                        backend would 503 either way. */}
+                                        is off - the backend would 503. */}
                                     <div className={`border-t border-(--base-03) pt-4 ${autoMoveDisabled ? 'opacity-60' : ''}`}>
                                         <div className="flex items-center justify-between gap-4">
                                             <div className="flex items-start gap-2.5 min-w-0">
@@ -1519,10 +1514,9 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                     </div>
                                     )}
 
-                                    {/* Node-to-node transfer. Admins move between any nodes;
-                                        a BYON owner transfers between their own nodes. Migration
-                                        is gateway-only — hide the control entirely on IP:Port
-                                        instead of dangling a disabled picker. */}
+                                    {/* Node-to-node transfer. Admins move between any nodes, in
+                                        either routing mode; a BYON owner transfers between their
+                                        own nodes. */}
                                     {canTransfer && (
                                         <div className="border-t border-(--base-03) pt-4 flex flex-col gap-3">
                                             <div className="flex items-center gap-2">
@@ -1547,7 +1541,11 @@ export default function ServerShell({ children }: { children: React.ReactNode })
                                                             {moveBusy ? <><RefreshCw size={14} className="animate-spin" /> Queuing...</> : <><Move size={14} /> Move</>}
                                                         </button>
                                                     </div>
-                                                    <p className="text-xs text-(--base-06)">Live migration to another node. The gateway keeps the player address stable; the server is moved while idle.</p>
+                                                    <p className="text-xs text-(--base-06)">
+                                                        {routingMode === 'ip_port'
+                                                            ? "Moves the server and its files to another node; it is stopped for the move. Players then connect to the new node's address, with the same port if that node's port range has it free. A server domain follows on its own; anyone using IP:port needs the new address."
+                                                            : 'Live migration to another node. The gateway keeps the player address stable; the server is moved while idle.'}
+                                                    </p>
                                                 </>
                                             )}
                                             {moveMsg && (

@@ -452,3 +452,30 @@ func TestRebalanceWorker_PickCandidate(t *testing.T) {
 		}
 	})
 }
+
+// Without the gateway the orchestrator refuses a proxy-bound server, so the
+// worker must not pick one: it would be picked again every tick and nothing
+// would ever move off the overloaded node.
+func TestRebalanceWorker_PickCandidateSkipsProxyBoundInDirectMode(t *testing.T) {
+	proxyID := 7
+	src := &models.Node{ID: 1}
+	for mode, want := range map[string]string{"ip_port": "srv-plain", "gateway": "srv-backend"} {
+		t.Run(mode, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			fs := &rebalanceFakeStore{
+				settings:      map[string]string{"routing_mode": mode},
+				serversByNode: map[int][]models.Server{1: {{ID: 20}, {ID: 21}, {ID: 22}}},
+				serversByID: map[int]*models.Server{
+					20: {ID: 20, UUID: "srv-backend", AutoMove: true, Memory: 8192, ProxyID: &proxyID},
+					21: {ID: 21, UUID: "srv-proxy", AutoMove: true, Memory: 4096, ServerType: "proxy"},
+					22: {ID: 22, UUID: "srv-plain", AutoMove: true, Memory: 1024},
+				},
+			}
+			w := &RebalanceWorker{store: fs, redis: rdb}
+			got := w.pickCandidate(context.Background(), src)
+			if got == nil || got.UUID != want {
+				t.Fatalf("pickCandidate = %+v, want %s", got, want)
+			}
+		})
+	}
+}

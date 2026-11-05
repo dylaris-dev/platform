@@ -18,7 +18,6 @@ import { toast } from '@/components/ui/Toast';
 import { checkDns, DnsCheckResult, DnsRecord, DnsRecordCategory, DnsRecordStatus } from '@/lib/api/dns';
 import GatewayDnsCard from '@/components/settings/GatewayDnsCard';
 import SettingsCard, { SettingsGroup } from '@/components/settings/SettingsCard';
-import { useAppData } from '@/lib/AppDataContext';
 import { useBusy } from '@/lib/useBusy';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
 import HelpTip from '@/components/ui/HelpTip';
@@ -301,10 +300,6 @@ function GatewayDisabledNotice() {
 }
 
 function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
-    // Auto-move is gateway-only; switching back to IP:Port force-disables it
-    // server-side. Surface that in the confirm step so the admin isn't
-    // surprised that every server's auto-move opt-in gets cleared.
-    const { featureFlags } = useAppData();
 
     const [settings, setSettings] = useState<GatewaySettings>({
         limits: {
@@ -946,12 +941,6 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                             )}
                             {fileMode !== origFileMode && (
                                 <p>File access mode is changing to <span className="text-(--base-09) font-medium">{FILE_OPTIONS.find(o => o.value === fileMode)?.label}</span>.</p>
-                            )}
-                            {routingMode === 'ip_port' && origRoutingMode !== 'ip_port' && featureFlags.autoMove && (
-                                <div className="alert alert-warning text-xs">
-                                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-                                    <span>Disabling the gateway will turn off Auto-Move and clear every server&apos;s auto-move opt-in.</span>
-                                </div>
                             )}
                             <p className="text-(--base-06) text-xs pt-1">Servers are redeployed in batches of 4 with 15s between batches. Each container has a 60s timeout before a force-kill is issued.</p>
                         </div>

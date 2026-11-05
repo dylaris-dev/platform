@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.05
+
+### Features
+- Servers can now move between nodes on IP:Port too, by hand or with auto-move; before, both needed
+  the gateway. A moved server takes the new node's address, keeps its port when that node's range has
+  it free, and its managed domain follows. Proxy networks are not moved yet. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.04.4
 
 ### Features

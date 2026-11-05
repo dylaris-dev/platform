@@ -59,7 +59,7 @@ func (h *ServerHandler) migrationPhase(ctx context.Context, uuid string) string 
 }
 
 // CancelMigration POST /api/admin/servers/{id}/migration/cancel
-// Admin oversight (PANEL servers.write, gateway-gated). Requests cancellation of
+// Admin oversight (PANEL servers.write), either routing mode. Requests cancellation of
 // an in-flight migration by setting a Redis flag the leader-elected orchestrator
 // checks in its pre-cutover poll loops and its pre-cutover guard; the migration
 // then rolls back to the source node, which is still authoritative before

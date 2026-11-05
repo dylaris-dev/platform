@@ -532,12 +532,11 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	attempt := newMigrationAttempt()
 	progress := queue.MigrationProgressID(srv.UUID, attempt)
 
-	// Migration is gateway-only: a server's reachable address is tied to its
-	// node unless the gateway re-points the route, so a move without it breaks
-	// the server.
-	if !o.gatewayEnabled() {
-		log.Printf("migration %s: gateway disabled, refusing", srv.UUID)
-		writeStatus("failed", "gateway routing disabled")
+	// Without the gateway a server simply takes its new node's address; what
+	// that cannot carry is refused here, before anything is stopped.
+	if problem := DirectMoveProblem(o.store, srv); problem != "" {
+		log.Printf("migration %s: refused in direct mode: %s", srv.UUID, problem)
+		writeStatus("failed", problem)
 		return
 	}
 	if targetNode.ID == sourceNode.ID {
@@ -714,6 +713,10 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		return
 	}
 
+	// Read before the cutover: after it the server counts as one of the
+	// target's own and its port as taken there.
+	keptPort := o.keptHostPort(ctx, srv, targetNode)
+
 	// --- (h) CUTOVER: flip node_id + re-point route. Target now authoritative. ---
 	if err := o.store.UpdateServerNode(srv.ID, targetNode.ID); err != nil {
 		log.Printf("migration %s: UpdateServerNode failed: %v", srv.UUID, err)
@@ -722,7 +725,11 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "node reassign failed")
 		return
 	}
-	if err := o.gateway.MigrateServerRoutes(uint(srv.ID), uint(targetNode.ID)); err != nil {
+	// Direct mode has no route: players reach the server at its new node's
+	// address, and a managed domain follows on the next DNS reconcile.
+	if !o.gatewayEnabled() {
+		// nothing to re-point
+	} else if err := o.gateway.MigrateServerRoutes(uint(srv.ID), uint(targetNode.ID)); err != nil {
 		// node_id already flipped; data is on the target. Route re-point failed,
 		// but reverting node_id would point the route back at data the source is
 		// about to be told to keep — and we have not sent cleanup yet. Surface
@@ -761,19 +768,23 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// flip and these sends left the server on the target with no config, and the
 	// retry refuses a server that is no longer on its source.
 	postCutover := context.Background()
+	docker := map[string]interface{}{
+		"image":         srv.GameImage,
+		"ram":           srv.Memory,
+		"ramPaddingMB":  EffectiveRAMPaddingMB(o.store, srv.RAMPaddingMB, targetNode.RAMPaddingMB),
+		"cpuLimit":      srv.CPULimit,
+		"cpusetCpus":    effCpuset,
+		"timezone":      srv.Timezone,
+		"extraJvmFlags": strings.TrimSpace(DefaultJvmFlags + " " + srv.ExtraJvmFlags),
+	}
+	if keptPort > 0 {
+		docker["hostPort"] = keptPort
+	}
 	confErr := o.queue.SendCommand(postCutover, targetNode.Token, "reconfigure", map[string]interface{}{
 		"uuid":            srv.UUID,
 		"ownerId":         srv.OwnerID,
 		"activeSubServer": srv.ActiveSubServer,
-		"docker": map[string]interface{}{
-			"image":         srv.GameImage,
-			"ram":           srv.Memory,
-			"ramPaddingMB":  EffectiveRAMPaddingMB(o.store, srv.RAMPaddingMB, targetNode.RAMPaddingMB),
-			"cpuLimit":      srv.CPULimit,
-			"cpusetCpus":    effCpuset,
-			"timezone":      srv.Timezone,
-			"extraJvmFlags": strings.TrimSpace(DefaultJvmFlags + " " + srv.ExtraJvmFlags),
-		},
+		"docker":          docker,
 	}, nil)
 
 	// --- (i) Start on target if it was running (best-effort) ---
@@ -965,6 +976,47 @@ func (o *MigrationOrchestrator) bumpBeamAccess(uuid string) {
 	if err := beamauth.BumpAccessEpoch(ctx, o.redis, uuid); err != nil {
 		log.Printf("migration %s: beam access stamp: %v", uuid, err)
 	}
+}
+
+// DirectMoveProblem says why srv cannot move between nodes under the current
+// routing mode, or "" when it can. Without the gateway a proxy reaches its
+// backends on its own node's network (servers_proxy.go), so moving either half
+// cuts them apart. Whether a Swarm overlay lifts that is still to be tested.
+func DirectMoveProblem(st interface {
+	GetSetting(key string) (string, error)
+}, srv *models.Server) string {
+	if GatewayRoutingEnabled(st) {
+		return ""
+	}
+	if srv.ServerType == "proxy" || srv.ProxyID != nil {
+		return "Proxies and the servers behind them cannot move between nodes without gateway routing yet."
+	}
+	return ""
+}
+
+// keptHostPort is the host port to pin on the target in direct mode: the one
+// the server has, if it lies in the target's game port range and Core knows no
+// server holding it there. 0 lets the target allocate. The range rule is what
+// keeps a home setup working that forwards one port range per machine: a port
+// from the old machine's range is forwarded to the old machine.
+func (o *MigrationOrchestrator) keptHostPort(ctx context.Context, srv *models.Server, target *models.Node) int {
+	if o.gatewayEnabled() || srv.HostPort <= 0 {
+		return 0
+	}
+	hb := LoadHeartbeat(ctx, o.redis, target.Token)
+	if hb == nil || !InPortRange(srv.HostPort, hb.PortRange) {
+		return 0
+	}
+	used, err := o.store.GetUsedHostPortsOnNode(target.ID)
+	if err != nil {
+		return 0
+	}
+	for _, p := range used {
+		if p == srv.HostPort {
+			return 0
+		}
+	}
+	return srv.HostPort
 }
 
 func (o *MigrationOrchestrator) gatewayEnabled() bool {

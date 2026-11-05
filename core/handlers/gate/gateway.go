@@ -22,12 +22,11 @@ func (s Gates) RequireGatewayEnabled(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // RequireAutoMoveEnabled blocks the request with 503 auto_move_disabled unless
-// auto-move is effective: the feature flag is on AND the gateway is routing.
-// Auto-move moves a server between nodes; without the gateway the server's
-// address is tied to its node, so a move would break it.
+// the auto-move feature flag is on. It runs in either routing mode: without the
+// gateway a moved server takes its new node's address.
 func (s Gates) RequireAutoMoveEnabled(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.FeatureFlags.IsAutoMoveEnabled(r.Context()) || !services.GatewayRoutingEnabled(s.Store) {
+		if !s.FeatureFlags.IsAutoMoveEnabled(r.Context()) {
 			autoMoveDisabledResponse(w)
 			return
 		}

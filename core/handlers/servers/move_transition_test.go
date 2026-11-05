@@ -66,3 +66,32 @@ func TestACopyWaitsForAPowerTransition(t *testing.T) {
 		}
 	}
 }
+
+// Without the gateway a proxy and its backends would be cut apart by a move,
+// and an External node is unreachable: both refused before anything queues.
+func TestADirectModeMoveRefusesWhatItCannotCarry(t *testing.T) {
+	proxyID := 3
+	cases := map[string]struct {
+		srv    models.Server
+		target models.Node
+	}{
+		"a proxy":               {srv: models.Server{ServerType: "proxy"}, target: models.Node{ID: 8, Status: "online"}},
+		"a server behind one":   {srv: models.Server{ProxyID: &proxyID}, target: models.Node{ID: 8, Status: "online"}},
+		"onto an External node": {target: models.Node{ID: 8, Status: "online", Tags: "external"}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			srv := c.srv
+			srv.ID, srv.UUID, srv.Status, srv.OwnerID, srv.NodeID = 1, "srv-uuid", "stopped", "u1", 7
+			fs := &serverPowerFakeStore{server: &srv, node: &models.Node{ID: 7, Token: "node-token-1", Status: "online"}}
+			rdb := handlertest.RedisClient(t)
+			h := newServerPowerHandler(fs, rdb)
+			h.d.Migration = services.NewMigrationOrchestrator(fs, rdb, nil, nil, "")
+			rec := httptest.NewRecorder()
+			h.queueMigration(rec, httptest.NewRequest("POST", "/x", nil), &srv, &c.target, "manual", "alice")
+			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "move_needs_gateway") {
+				t.Fatalf("status %d %s, want 409 move_needs_gateway", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}

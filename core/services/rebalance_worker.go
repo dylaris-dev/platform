@@ -86,8 +86,8 @@ func (w *RebalanceWorker) run(ctx context.Context) {
 	}
 }
 
-// gatewayEnabled mirrors the orchestrator/handler check: migration is only safe
-// while routing keeps a server's address stable across a node change.
+// gatewayEnabled reports gateway routing. Without it a moved server takes its
+// new node's address; it still decides whether an External node is a target.
 func (w *RebalanceWorker) gatewayEnabled() bool {
 	mode, _ := w.store.GetSetting("routing_mode")
 	if mode == "" {
@@ -109,9 +109,9 @@ func (w *RebalanceWorker) threshold() int {
 // tick is one evaluation pass. Guard → compute loads → for each overloaded node
 // pick one candidate + a target → enqueue. All decisions are logged.
 func (w *RebalanceWorker) tick(ctx context.Context) {
-	// (a) Guard: stay completely silent when the feature is off or gateway is
-	// inactive — no work, no log noise.
-	if !w.features.IsAutoMoveEnabled(ctx) || !w.gatewayEnabled() {
+	// (a) Guard: stay completely silent when the feature is off - no work, no
+	// log noise.
+	if !w.features.IsAutoMoveEnabled(ctx) {
 		return
 	}
 
@@ -222,6 +222,11 @@ func (w *RebalanceWorker) pickCandidate(ctx context.Context, src *models.Node) *
 		if unsettledForMove(srv.Status) {
 			continue
 		}
+		// The orchestrator would refuse it: picking it again every tick would
+		// keep the node overloaded with nothing ever moving.
+		if DirectMoveProblem(w.store, srv) != "" {
+			continue
+		}
 		if w.migrationLocked(ctx, srv.UUID) {
 			continue
 		}
@@ -277,8 +282,7 @@ func (w *RebalanceWorker) pickTarget(ctx context.Context, srv *models.Server, sr
 			continue
 		}
 		// External/home nodes only route via gateway+beam; never target one when
-		// the platform is ip_port (mirrors placement.go). gatewayOn is true here
-		// (we'd have bailed in tick otherwise) but keep the guard explicit.
+		// the platform is ip_port (mirrors placement.go).
 		if t.IsExternal() && !gatewayOn {
 			continue
 		}

@@ -109,10 +109,10 @@ func (f *FeatureFlags) IsTicketsEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_tickets_enabled", false)
 }
 
-// IsAutoMoveEnabled gates the gateway-only auto-move (server migration between
-// nodes) feature. Default = false (opt-in, and only meaningful while gateway
-// routing is active — the gateway is what lets a server keep its address after
-// it changes node). The handler layer ANDs this with the live routing mode.
+// IsAutoMoveEnabled gates auto-move (server migration between nodes when one is
+// overloaded). Default = false (opt-in). It runs in either routing mode: with
+// the gateway the route follows the server, without it the server takes its
+// new node's address.
 func (f *FeatureFlags) IsAutoMoveEnabled(ctx context.Context) bool {
 	return f.Get(ctx, "feature_auto_move_enabled", false)
 }

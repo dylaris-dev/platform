@@ -268,21 +268,6 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Auto-move only works while the gateway is routing (it's what keeps a
-	// server's address stable across a node change). Refuse the whole PUT
-	// rather than partially apply, so the admin gets a single clear error and
-	// no flag is half-written.
-	if req.AutoMove != nil && *req.AutoMove && !services.GatewayRoutingEnabled(h.d.Store) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": false,
-			"error":   "gateway_required",
-			"message": "Auto-move can only be enabled while gateway routing is active.",
-		})
-		return
-	}
-
 	// Enabling Tickets requires Core file storage (attachments + backups need a
 	// durable off-host home). Refuse the whole PUT so nothing is half-written.
 	if req.Tickets != nil && *req.Tickets && !h.d.CoreStorage.Configured() {

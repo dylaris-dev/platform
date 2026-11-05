@@ -506,7 +506,7 @@
       "path": "/api/admin/servers/{id:[0-9]+}/migration/cancel",
       "auth": "session",
       "authorization": "servers.write",
-      "description": "Admin oversight (PANEL servers.write, gateway-gated).",
+      "description": "Admin oversight (PANEL servers.write), either routing mode.",
       "handler": "ServerHandler.CancelMigration",
       "group": "admin",
       "external": false

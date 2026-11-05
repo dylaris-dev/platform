@@ -145,6 +145,7 @@ what any serious panel needs.
 - **Live events** — Server-Sent Events over Redis Pub/Sub for real-time status (no polling).
 - **Multi-tenant user management** — UUID users, roles and per-server grants, username history + cooldowns, admin controls, API keys.
 - **First-run setup wizard** — browser-driven first-admin creation, plus lost-admin recovery.
+- **Moving servers between nodes** - an admin moves a server to another node from its Resources dialog, and optional auto-move rebalances opted-in idle servers off an overloaded node. With the Gateway the player address stays the same. On IP:Port the server takes the new node's address and keeps its port when that node's port range has it free; a managed server domain (A and SRV) follows on the next DNS pass. Proxies and the servers behind them are not moved on IP:Port yet.
 - **Warp** - pull external/home nodes behind NAT into the overlay network over an encrypted WireGuard tunnel (the machine joins the overlay, not the Swarm), and run servers on them as if they were in your DC. The panel generates the deploy kit for such a machine; see `NODE_EXTERNAL` / `NODE_TAGS` in [Configuration reference](#configuration-reference). **Needs the Gateway** (the Warp leader and the edge live there), which DYLARIS currently runs only as a managed service, so a self-hosted install without it cannot use Warp.
 - **Optional Gateway stack** — public ingress/proxy (edge), hub and link services for routing player traffic without exposing node IPs. Lives in a separate repo (`dylaris-gateway`).
 

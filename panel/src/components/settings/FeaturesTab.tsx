@@ -35,9 +35,8 @@ const FEATURE_TABS: readonly FeatureTab[] = ['subsystems', 'infrastructure', 'ap
 
 export default function FeaturesTab() {
     const [tab, setTab] = useTabParam<FeatureTab>(FEATURE_TABS, 'subsystems');
-    // Auto-move is gateway-only — gate its toggle on the live routing mode.
-    // ip_port means the gateway is off, so enabling auto-move would 409 on the
-    // backend; we disable the control instead of letting that happen.
+    // BYON, route-only, real player IP, voice and Bedrock are gateway-only:
+    // their toggles follow the live routing mode. Auto-move runs in both.
     const { routingMode, coreInfo } = useAppData();
     const gatewayOff = routingMode === 'ip_port';
 
@@ -583,19 +582,19 @@ export default function FeaturesTab() {
                             {/* No Gateway toggle here: the gateway is on exactly when
                                 game traffic routes through it, so the routing-mode
                                 selector in the Gateway sub-tab is its only switch. */}
-                            <SettingsCard title="Gateway-dependent features" icon={Server} form={platformSubsetForm(INFRA_KEYS)}>
-                {/* Auto-move and BYON are gateway-only. Both toggles are hard
-                    disabled while routing is on IP:Port, since enabling either
-                    then would 409 on the backend. */}
-
-                <SettingsGroup title="Gateway-dependent">
+                            <SettingsCard title="Infrastructure features" icon={Server} form={platformSubsetForm(INFRA_KEYS)}>
+                <SettingsGroup title="Placement">
                     <SwitchRow
                         label="Auto-move"
-                        description="Lets the rebalance worker migrate opted-in servers to a less-loaded node when their current node is overloaded. Per-server opt-in lives in each server's resource settings. The route keeps the player address stable across the node change."
+                        description="Lets the rebalance worker migrate opted-in servers to a less-loaded node when their current node is overloaded. Per-server opt-in lives in each server's resource settings. With the gateway the player address stays the same; on IP:Port the server takes the new node's address, and a server domain follows it."
                         checked={!!platformFlags.autoMove}
-                        disabled={gatewayOff}
                         onChange={v => editPlatformFlag('autoMove', v)}
                     />
+                </SettingsGroup>
+
+                {/* These are gateway-only and hard disabled while routing is on
+                    IP:Port, since enabling one then would 409 on the backend. */}
+                <SettingsGroup title="Gateway-dependent">
                     {/* An external node FORCES gateway routing locally
                         (NODE_EXTERNAL), so with no gateway a tenant node has
                         nothing to join: the flag would switch on an enrolment
