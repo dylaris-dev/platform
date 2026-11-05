@@ -1,6 +1,9 @@
 package main
 
 import (
+	"log"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -17,6 +20,10 @@ import (
 //
 // A UUID is never reused, so a tombstone is final; it is only aged out so the
 // map stays small. Nothing that was already running lasts a day.
+//
+// The map alone forgot every delete on a restart, while the queue redelivers
+// the setup that was still running (it was never ACKed). So each tombstone is
+// also a <uuid>.deleted file beside the node secret, which survives it.
 var deletedServers = struct {
 	sync.Mutex
 	at map[string]time.Time
@@ -34,11 +41,36 @@ func markServerDeleted(uuid string) {
 		}
 	}
 	deletedServers.at[uuid] = now
+	if nodeSecretDir == "" {
+		return
+	}
+	if old, _ := filepath.Glob(filepath.Join(nodeSecretDir, "*.deleted")); len(old) > 0 {
+		for _, p := range old {
+			if fi, err := os.Stat(p); err == nil && now.Sub(fi.ModTime()) > deletedServerMemory {
+				os.Remove(p)
+			}
+		}
+	}
+	if err := os.WriteFile(tombstonePath(uuid), nil, 0o600); err != nil {
+		log.Printf("delete %s: tombstone not persisted, a restart forgets it: %v", uuid, err)
+	}
 }
 
 func serverDeleted(uuid string) bool {
 	deletedServers.Lock()
-	defer deletedServers.Unlock()
 	t, ok := deletedServers.at[uuid]
-	return ok && time.Since(t) <= deletedServerMemory
+	deletedServers.Unlock()
+	if ok {
+		return time.Since(t) <= deletedServerMemory
+	}
+	if nodeSecretDir == "" {
+		return false
+	}
+	fi, err := os.Stat(tombstonePath(uuid))
+	return err == nil && time.Since(fi.ModTime()) <= deletedServerMemory
 }
+
+// Beside the server directories rather than in a subdirectory: every sweep of
+// a storage root skips plain files, and a ".deleted" directory would be walked
+// as a server by the sweeps that do not skip dot names.
+func tombstonePath(uuid string) string { return filepath.Join(nodeSecretDir, uuid+".deleted") }

@@ -1412,6 +1412,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "create":
 		// Step 1: create a stopped container slot with no software installed.
 		log.Printf("Creating server slot for %s (pending setup)...", cmd.Config.UUID)
+		// A create and a delete queued together (node offline, restarting) run
+		// in parallel, and the delete usually finishes first.
+		if serverDeleted(cmd.Config.UUID) {
+			log.Printf("create %s: the server was already deleted on this node, not creating it", cmd.Config.UUID)
+			return
+		}
 
 		// Assign storage path: the one the create asked for, else balanced by
 		// free space. A path this node does not have (removed since the panel
@@ -1446,6 +1452,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 		if err := dm.CreateServerPodStopped(cmd.Config); err != nil {
 			log.Printf("Failed to create server pod %s: %v", cmd.Config.UUID, err)
+			if serverDeleted(cmd.Config.UUID) {
+				// The delete may have run before the quota and limit above.
+				if quota != nil {
+					quota.RemoveQuota(cmd.Config.UUID)
+				}
+				forgetDiskLimit(ctx, rdb, cmd.Config.UUID)
+			}
 		} else {
 			log.Printf("Server slot %s created (pending setup)", cmd.Config.UUID)
 			saveNodeConfig(serverPath, cmd.Config)

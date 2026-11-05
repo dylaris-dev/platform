@@ -1048,13 +1048,36 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	}
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 
-	_, err = dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, containerName)
+	resp, err := dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, containerName)
 	if err != nil {
 		return fmt.Errorf("container create error: %v", err)
+	}
+	// Same race as in startMinecraftContainer: a delete that ran between the
+	// caller's tombstone check and this create found nothing to remove.
+	if serverDeleted(config.UUID) {
+		dm.discardDeletedServer(config.UUID, resp.ID, localServerPath)
+		return fmt.Errorf("server %s was deleted on this node while its container was being created", config.UUID)
 	}
 
 	log.Printf("Container %s created (stopped, awaiting setup)", containerName)
 	return nil
+}
+
+// discardDeletedServer undoes what a container build did for a server deleted
+// under it. The delete may already have run its RemoveAll, so the directory
+// (and the storage key a path lookup re-registers on finding it) is removed
+// here too; nothing else would ever look at a directory without a config.
+func (dm *DockerManager) discardDeletedServer(uuid, containerID, localServerPath string) {
+	dm.cli.ContainerRemove(dm.ctx, containerID, container.RemoveOptions{Force: true})
+	if dm.portMgr != nil {
+		dm.portMgr.ReleasePort(uuid)
+	}
+	if localServerPath != "" {
+		os.RemoveAll(localServerPath)
+	}
+	if dm.storageMgr != nil {
+		dm.storageMgr.RemoveServerPath(uuid)
+	}
 }
 
 // applyPidsLimit sets the cgroup pids cap (anti fork-bomb / process exhaustion)
@@ -1263,6 +1286,11 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		config.Docker.Image = moved
 	}
 	dm.pullImage(config.Docker.Image)
+	// The pull can take minutes and a delete does not wait for it; checked
+	// before the MkdirAll below, which would recreate the directory it removed.
+	if serverDeleted(config.UUID) {
+		return "", fmt.Errorf("server %s was deleted on this node during its image pull", config.UUID)
+	}
 
 	// Create directory locally (via StorageManager or legacy path)
 	localServerPath := dm.resolveLocalServerPath(config.UUID)
@@ -1415,10 +1443,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 	// container created after that removal is seen here and removed, together
 	// with the port allocated above for a server that no longer exists.
 	if serverDeleted(config.UUID) {
-		dm.cli.ContainerRemove(dm.ctx, resp.ID, container.RemoveOptions{Force: true})
-		if dm.portMgr != nil {
-			dm.portMgr.ReleasePort(config.UUID)
-		}
+		dm.discardDeletedServer(config.UUID, resp.ID, localServerPath)
 		return "", fmt.Errorf("server %s was deleted on this node while its container was being prepared", config.UUID)
 	}
 
