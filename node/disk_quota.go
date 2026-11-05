@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"hash/crc32"
 	"log"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // QuotaProvider uses Linux filesystem project quotas (xfs or ext4) for
@@ -85,9 +88,6 @@ func NewQuotaProvider(basePath string) *QuotaProvider {
 
 	qp.available = true
 	log.Printf("quota: %s project quotas available and verified", qp.fsType)
-
-	// Reconcile: assign quotas to all existing server directories
-	qp.reconcileExisting()
 
 	return qp
 }
@@ -165,8 +165,12 @@ func (qp *QuotaProvider) IsAvailable() bool {
 }
 
 // reconcileExisting assigns quotas to all existing server directories that
-// were created before quota support was enabled.
-func (qp *QuotaProvider) reconcileExisting() {
+// were created before quota support was enabled, or whose data was never
+// counted (ext4 before the recursive tag).
+func (qp *QuotaProvider) reconcileExisting(rdb *redis.Client) {
+	if !qp.available {
+		return
+	}
 	entries, err := os.ReadDir(qp.basePath)
 	if err != nil {
 		return
@@ -177,7 +181,7 @@ func (qp *QuotaProvider) reconcileExisting() {
 			continue
 		}
 		uuid := e.Name()
-		if err := qp.AssignQuota(uuid); err != nil {
+		if err := assignQuotaCounted(context.Background(), rdb, qp, uuid); err != nil {
 			log.Printf("quota: reconcile %s: %v", uuid, err)
 		} else {
 			count++
@@ -210,20 +214,29 @@ func (qp *QuotaProvider) AssignQuota(uuid string) error {
 		return fmt.Errorf("quota: failed to write projid entry: %w", err)
 	}
 
-	switch qp.fsType {
-	case "xfs":
-		cmd := exec.Command("xfs_quota", "-x", "-c",
-			fmt.Sprintf("project -s -p %s %d", serverPath, pid), qp.mountPoint)
+	if cmd := projectAssignCmd(qp.fsType, serverPath, pid, qp.mountPoint); cmd != nil {
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("quota: xfs_quota project setup: %s: %w", string(out), err)
-		}
-	case "ext4":
-		cmd := exec.Command("chattr", "+P", "-p", fmt.Sprintf("%d", pid), serverPath)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("quota: chattr setup: %s: %w", string(out), err)
+			return fmt.Errorf("quota: project setup (%s): %s: %w", qp.fsType, strings.TrimSpace(string(out)), err)
 		}
 	}
 
+	return nil
+}
+
+// projectAssignCmd tags a server directory AND everything already in it with
+// its project id. ext4's chattr only touches the inodes it is named, so without
+// -R a directory that already held data (a move, a storage migration, a
+// restore, the first start with quotas) counted only bytes written afterwards.
+// chattr -R skips symlinks but exits 1 on them; the rest of the tree is still
+// tagged, so that exit is logged by the caller and not fatal.
+func projectAssignCmd(fsType, serverPath string, pid uint32, mountPoint string) *exec.Cmd {
+	switch fsType {
+	case "xfs":
+		return exec.Command("xfs_quota", "-x", "-c",
+			fmt.Sprintf("project -s -p %s %d", serverPath, pid), mountPoint)
+	case "ext4":
+		return exec.Command("chattr", "-R", "+P", "-p", fmt.Sprintf("%d", pid), serverPath)
+	}
 	return nil
 }
 

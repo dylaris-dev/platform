@@ -590,6 +590,8 @@ func handleMigrateDiscard(storage *StorageManager, dm *DockerManager, serverUUID
 		os.RemoveAll(dir)
 		os.Remove(marker)
 		storage.RemoveServerPath(serverUUID)
+		globalQuotaSet.RemoveQuota(serverUUID)
+		forgetDiskLimit(context.Background(), storage.rdb, serverUUID)
 	}()
 }
 
@@ -641,6 +643,10 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 	}
 
 	storage.RemoveServerPath(serverUUID)
+	// As the delete path does: the cached limit has no TTL, and a move back
+	// that carries "unlimited" (0) would fall back to this stale cap.
+	globalQuotaSet.RemoveQuota(serverUUID)
+	forgetDiskLimit(ctx, rdb, serverUUID)
 	log.Printf("migrate_cleanup %s: source data removed", serverUUID)
 }
 

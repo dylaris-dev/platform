@@ -705,7 +705,8 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 				if usage != nil {
 					publishDiskUsage(ctx, rdb, uuid, usage, measuredFrom, 10*time.Minute)
 
-					if usage.Warning == "full" {
+					graced := diskGraced(ctx, rdb, uuid, usage)
+					if usage.Warning == "full" && !graced {
 						// The marker, not the status key, decides whether this server is
 						// already being held down. The status key is a mailbox Core drains
 						// every 5s, so reading it here answered "not stopped yet" on nearly
@@ -743,7 +744,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 						// Keyed on the marker for the same reason the trip is: the status
 						// key this used to read is drained by Core, so the branch almost
 						// never fired and a freed-up server could stay held.
-						if isDiskFull(ctx, rdb, uuid) {
+						if usage.Warning != "full" && isDiskFull(ctx, rdb, uuid) {
 							log.Printf("Disk quota resolved for %s — releasing the hold, setting status to stopped", uuid)
 							rdb.Del(ctx, diskFullKey(uuid))
 							rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
@@ -989,11 +990,14 @@ func releaseResolvedDiskHolds(ctx context.Context, rdb *redis.Client, quota *Quo
 			continue
 		}
 		usage := getDiskUsage(ctx, rdb, uuid, quota)
-		if usage == nil || usage.Limit <= 0 {
+		if usage == nil {
 			continue
 		}
-		if usage.Total >= usage.Limit {
-			continue // still over: keep holding
+		// No limit any more (Limit 0) is resolved too. Still over: keep the
+		// marker alive, it is the only hold and would lapse after its TTL.
+		if usage.Limit > 0 && usage.Total >= usage.Limit {
+			rdb.Expire(ctx, diskFullKey(uuid), diskFullMarkerTTL)
+			continue
 		}
 		log.Printf("Disk quota resolved for %s while stopped — releasing the hold", uuid)
 		rdb.Del(ctx, diskFullKey(uuid))

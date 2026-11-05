@@ -391,9 +391,23 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	} else {
 		keepStash(cmd.RunID, backupDir)
 	}
+	if cmd.SubServer == "" {
+		// The stage was made in the storage root, outside any project, and is
+		// now the server root: re-tag it or the server counts ~0 and its limit
+		// caps nothing. A sub-server stage lives inside the root and inherits.
+		retagAfterRestore(ctx, rdb, cmd.ServerUUID)
+	}
 
 	reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "success", "")
 	log.Printf("Restore %d completed: %d files in %v", cmd.RunID, extracted, time.Since(started))
+}
+
+// retagAfterRestore is a var so a test can see a full restore reach it. Only
+// the tag, not the limit: the limit sits on the project id and did not move.
+var retagAfterRestore = func(ctx context.Context, rdb *redis.Client, uuid string) {
+	if err := assignQuotaCounted(ctx, rdb, globalQuotaSet, uuid); err != nil {
+		log.Printf("quota: re-tag %s after restore: %v", uuid, err)
+	}
 }
 
 // keepStash renames a stash that must survive out of the restore cleanup's

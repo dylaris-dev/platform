@@ -374,12 +374,14 @@ func (sm *StorageManager) LogStorageInfo() {
 	}
 }
 
-// MigrateServerPath moves a server's data directory from its current storage path
-// to targetPath. The server container must be stopped before calling this.
-// Steps: validate → find current → check space → copy → verify → delete old → update Redis.
-func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+// resolveMigration validates a storage move and finds the server's current
+// path. Only this part needs sm.mu: the copy in MigrateServerPath can take
+// minutes, and holding the write lock through it stalled the heartbeat and
+// every other server's path lookup on the node. migrate_storage of one server
+// is already serialised by the command in-flight guard.
+func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (string, error) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
 
 	// Validate target is in our configured paths
 	validTarget := false
@@ -390,7 +392,7 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 		}
 	}
 	if !validTarget {
-		return fmt.Errorf("target path %q is not a configured storage path", targetPath)
+		return "", fmt.Errorf("target path %q is not a configured storage path", targetPath)
 	}
 
 	// Find current path: Redis lookup first, then filesystem scan
@@ -415,10 +417,24 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 		}
 	}
 	if currentPath == "" {
-		return fmt.Errorf("server %s not found on any storage path", serverUUID)
+		return "", fmt.Errorf("server %s not found on any storage path", serverUUID)
 	}
 	if currentPath == targetPath {
-		return fmt.Errorf("server %s is already on path %q", serverUUID, targetPath)
+		return "", fmt.Errorf("server %s is already on path %q", serverUUID, targetPath)
+	}
+	return currentPath, nil
+}
+
+// migrateCopyTree is a var so a test can hold the copy open.
+var migrateCopyTree = copyTree
+
+// MigrateServerPath moves a server's data directory from its current storage path
+// to targetPath. The server container must be stopped before calling this.
+// Steps: validate → find current → check space → copy → verify → delete old → update Redis.
+func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error {
+	currentPath, err := sm.resolveMigration(serverUUID, targetPath)
+	if err != nil {
+		return err
 	}
 
 	srcDir := filepath.Join(currentPath, serverUUID)
@@ -440,7 +456,7 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 	// duplicate. With backups present copyDir loses enough bytes to fail the
 	// 90% check below; without them it passes and the source is deleted, taking
 	// .active_server and .node_config.json with it.
-	if err := copyTree(srcDir, dstDir); err != nil {
+	if err := migrateCopyTree(srcDir, dstDir); err != nil {
 		os.RemoveAll(dstDir)
 		return fmt.Errorf("copy failed: %v", err)
 	}

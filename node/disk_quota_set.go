@@ -27,7 +27,9 @@ func NewQuotaSet(storage *StorageManager) *QuotaSet {
 		return qs
 	}
 	for _, p := range storage.Paths() {
-		qs.providers[p] = NewQuotaProvider(p)
+		qp := NewQuotaProvider(p)
+		qp.reconcileExisting(storage.rdb)
+		qs.providers[p] = qp
 	}
 	return qs
 }
