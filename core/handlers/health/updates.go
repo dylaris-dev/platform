@@ -160,15 +160,30 @@ func (h *UpdatesHandler) GetUpdates(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// One requirement per SERVICE, not per row. The node rows are two views of
-	// one component, so a mandatory node update would otherwise be announced
-	// twice with identical text.
-	required := map[string]bool{}
-	for _, c := range h.components(r, releases, userID, isAdmin) {
-		resp.Components = append(resp.Components, c)
-		if required[c.Service] {
-			continue
-		}
+	resp.Components = append(resp.Components, h.components(r, releases, userID, isAdmin)...)
+	resp.Required = requiredBlocks(resp.Components, releases, time.Now())
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// requiredBlocks is one mandatory-update line per SERVICE, not per row. The node
+// rows are two views of one component, so a mandatory node update would
+// otherwise be announced twice with identical text.
+//
+// Requirement answers for ONE version, and instances on different versions get
+// different deadlines. The line takes the earliest deadline and the newest floor
+// across every instance of the service, because the connect gate judges each
+// node by its own version: the first instance found may be the most lenient one
+// while another is already being refused.
+func requiredBlocks(comps []componentBlock, releases []release.Release, now time.Time) []requiredBlock {
+	type pick struct {
+		req *release.Required
+		min release.Version
+	}
+	var order []string
+	picks := map[string]*pick{}
+	for _, c := range comps {
 		for _, inst := range c.Instances {
 			v, err := release.ParseVersion(inst.Version)
 			if err != nil {
@@ -178,20 +193,32 @@ func (h *UpdatesHandler) GetUpdates(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				continue
 			}
-			required[c.Service] = true
-			resp.Required = append(resp.Required, requiredBlock{
-				Service:    c.Service,
-				MinVersion: min.String(),
-				Deadline:   req.Deadline,
-				Passed:     time.Now().After(req.Deadline),
-				Note:       req.Note,
-			})
-			break // one line per component, not per instance
+			p := picks[c.Service]
+			if p == nil {
+				order = append(order, c.Service)
+				picks[c.Service] = &pick{req: req, min: min}
+				continue
+			}
+			if req.Deadline.Before(p.req.Deadline) {
+				p.req = req
+			}
+			if min.Compare(p.min) > 0 {
+				p.min = min
+			}
 		}
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	var out []requiredBlock
+	for _, svc := range order {
+		p := picks[svc]
+		out = append(out, requiredBlock{
+			Service:    svc,
+			MinVersion: p.min.String(),
+			Deadline:   p.req.Deadline,
+			Passed:     now.After(p.req.Deadline),
+			Note:       p.req.Note,
+		})
+	}
+	return out
 }
 
 // components builds the per-component picture for this reader.

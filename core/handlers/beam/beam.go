@@ -103,6 +103,31 @@ func (h *BeamHandler) canBeam(r *http.Request, serverID int) (bool, fileperms.Pe
 	}
 }
 
+// ticketPerms decides what a beam ticket for srv may do for this caller, or
+// writes the refusal and returns false. GetBeamTicket runs it before and again
+// after signing, so both decisions must come from this one place.
+func (h *BeamHandler) ticketPerms(w http.ResponseWriter, r *http.Request, srv *models.Server) (fileperms.Perms, bool) {
+	allowed, filePerms := h.canBeam(r, srv.ID)
+	if !allowed {
+		httpx.SendJSONError(w, "Access denied", http.StatusForbidden)
+		return fileperms.Perms{}, false
+	}
+	// A ticket is a working channel into the node, so it follows the same rule
+	// as everything else a cut-off tenant may not ask the node to do. Measured
+	// on production: a suspended account minted a ticket and the relay spliced
+	// it through to the node.
+	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
+		return fileperms.Perms{}, false
+	}
+	// Read-only while the server moves: the source copy is deleted after
+	// cutover, so a write landing meanwhile was lost. The move bumps the
+	// access stamp at both ends, so a session opened before reconnects to this.
+	if srv.Status == "migrating" {
+		filePerms.Write, filePerms.Delete = false, false
+	}
+	return filePerms, true
+}
+
 type BeamServerInfo struct {
 	ID              int    `json:"id"`
 	UUID            string `json:"uuid"`
@@ -252,9 +277,8 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// si.server_id = $1, so an ACCOUNT-wide grant (server_id IS NULL), which
 	// the resolver honours on every server of that owner, produced no row and
 	// was refused.
-	allowed, filePerms := h.canBeam(r, server.ID)
-	if !allowed {
-		httpx.SendJSONError(w, "Access denied", http.StatusForbidden)
+	filePerms, ok := h.ticketPerms(w, r, server)
+	if !ok {
 		return
 	}
 
@@ -270,20 +294,6 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	if demo {
 		httpx.SendJSONError(w, "Not available in the demo", http.StatusForbidden)
 		return
-	}
-
-	// A ticket is a working channel into the node, so it follows the same rule
-	// as everything else a cut-off tenant may not ask the node to do. Measured
-	// on production: a suspended account minted a ticket and the relay spliced
-	// it through to the node.
-	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, server) {
-		return
-	}
-	// Read-only while the server moves: the source copy is deleted after
-	// cutover, so a write landing meanwhile was lost. The move bumps the
-	// access stamp at both ends, so a session opened before reconnects to this.
-	if server.Status == "migrating" {
-		filePerms.Write, filePerms.Delete = false, false
 	}
 
 	// Resolve node discovery ID (Token field = the id Core assigned at enrolment) + direct-connect
@@ -389,26 +399,33 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, fmt.Sprintf("Failed to sign ticket: %v", err), http.StatusInternalServerError)
 		return
 	}
-	// Read the status again AFTER signing. A move writes 'migrating' and only
-	// then stamps the access epoch once; a ticket signed in a later second than
-	// that stamp passes it, so write rights decided from the read at the top
-	// survived the whole move. A read after signing that still sees no move
-	// means the stamp is no earlier than this ticket's iat, and the node refuses
-	// it - so only this read has to catch the move. Fail closed on an error.
-	if filePerms.Write || filePerms.Delete {
-		now, rerr := h.d.Store.GetServerByUUID(serverUUID)
-		if rerr != nil || now == nil {
-			httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
+	// Decide access again AFTER signing. Every access change (member removed,
+	// role changed, owner suspended, move started) commits first and then
+	// stamps the access epoch once; a ticket signed in a later second than that
+	// stamp passes it, so rights decided at the top survived the change. A
+	// decision after signing that still sees no change means the stamp is no
+	// earlier than this ticket's iat, and the node refuses it - so only this
+	// one has to catch it. Fail closed on an error.
+	now, rerr := h.d.Store.GetServerByUUID(serverUUID)
+	if rerr != nil || now == nil {
+		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	nowPerms, ok := h.ticketPerms(w, r, now)
+	if !ok {
+		return
+	}
+	if nowPerms != filePerms {
+		// Only ever narrowed: a right granted in the window waits for the next
+		// ticket rather than widening one decided before it.
+		filePerms.Read = filePerms.Read && nowPerms.Read
+		filePerms.Write = filePerms.Write && nowPerms.Write
+		filePerms.Delete = filePerms.Delete && nowPerms.Delete
+		ticketString, err = beamauth.SignBeamTicketWithNodeProof(
+			h.jwtSecret, claims, beamauth.BeamTicketTTL, nodeProofSecret)
+		if err != nil {
+			httpx.SendJSONError(w, fmt.Sprintf("Failed to sign ticket: %v", err), http.StatusInternalServerError)
 			return
-		}
-		if now.Status == "migrating" {
-			filePerms.Write, filePerms.Delete = false, false
-			ticketString, err = beamauth.SignBeamTicketWithNodeProof(
-				h.jwtSecret, claims, beamauth.BeamTicketTTL, nodeProofSecret)
-			if err != nil {
-				httpx.SendJSONError(w, fmt.Sprintf("Failed to sign ticket: %v", err), http.StatusInternalServerError)
-				return
-			}
 		}
 	}
 

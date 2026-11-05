@@ -77,8 +77,8 @@ func TestFailedDispatchesLeaveNothingBehind(t *testing.T) {
 // A Beam ticket minted while the server moves carries no write: the source copy
 // is deleted after cutover, so a write landing meanwhile was lost.
 func TestABeamTicketIsReadOnlyWhileTheServerMoves(t *testing.T) {
-	body := handlertest.FuncBody(t, "../beam/beam.go", "GetBeamTicket")
-	if !strings.Contains(body, `if server.Status == "migrating" {`) || !strings.Contains(body, "filePerms.Write, filePerms.Delete = false, false") {
+	body := handlertest.FuncBody(t, "../beam/beam.go", "ticketPerms")
+	if !strings.Contains(body, `if srv.Status == "migrating" {`) || !strings.Contains(body, "filePerms.Write, filePerms.Delete = false, false") {
 		t.Error("a ticket for a moving server still writes")
 	}
 }
