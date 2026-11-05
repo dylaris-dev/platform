@@ -44,6 +44,10 @@ func (f *installFakeStore) UpsertSubServerInstall(r models.SubServerInstall) err
 	f.installRow = r
 	return nil
 }
+func (f *installFakeStore) DeleteSubServerInstall(int, string) error {
+	f.installRow = models.SubServerInstall{}
+	return nil
+}
 func (f *installFakeStore) ReplaceServerModpackContents(int, string, []models.ServerModpackContent) error {
 	return nil
 }
@@ -142,5 +146,21 @@ func TestReinstallSendsWhatItValidated(t *testing.T) {
 	inst := queuedInstaller(t, rdb)
 	if len(inst) != 1 || inst[0]["type"] != "paper" || inst[0]["version"] != "1.21.1" {
 		t.Fatalf("queued installer = %v, want type paper version 1.21.1 from the server", inst)
+	}
+}
+
+// A version move queued but not yet started holds no busy key on the node, and
+// a reinstall let through beside it ran at the same time and deleted the jars
+// the move had set aside.
+func TestReinstallRefusesAServerBeingInstalled(t *testing.T) {
+	h, fs, rdb := newInstallTest(t)
+	fs.server.Status = "installing"
+	rec := httptest.NewRecorder()
+	h.ReinstallServer(rec, installRequest("reinstall", map[string]any{"javaImage": "ghcr.io/dylaris-dev/platform-mc-java21:latest"}, true))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409", rec.Code)
+	}
+	if n := len(queuedInstaller(t, rdb)); n != 0 {
+		t.Fatalf("%d reinstall(s) queued beside a running install", n)
 	}
 }

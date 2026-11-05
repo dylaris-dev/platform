@@ -57,8 +57,18 @@ func runCopySubServer(ctx context.Context, rdb *redis.Client, storage *StorageMa
 		log.Printf("copy_sub_server: storage lookup for %s returned empty path", pl.UUID)
 		return
 	}
+	// Two keys: a redelivery of the running copy is dropped quietly, but a
+	// copy to ANOTHER target is refused out loud, because Core wrote rows for
+	// that target when it queued it and only the report removes them.
+	targetKey := "copy_sub:" + pl.UUID + "/" + pl.TargetSubServer
+	if !commandsInFlight.enter(targetKey) {
+		log.Printf("copy_sub_server: a copy of %s to %q is already running on this node, ignoring the duplicate", pl.UUID, pl.TargetSubServer)
+		return
+	}
+	defer commandsInFlight.leave(targetKey)
 	if !commandsInFlight.enter("copy_sub:" + pl.UUID) {
-		log.Printf("copy_sub_server: a copy of %s is already running on this node, ignoring the duplicate", pl.UUID)
+		log.Printf("copy_sub_server: another copy of %s is running on this node, refusing the copy to %q", pl.UUID, pl.TargetSubServer)
+		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, "another copy of this server is running")
 		return
 	}
 	defer commandsInFlight.leave("copy_sub:" + pl.UUID)

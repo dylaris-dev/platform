@@ -97,6 +97,94 @@ func TestJarStashPutsTheOldServerBackOnFailure(t *testing.T) {
 	}
 }
 
+// A Forge/NeoForge server starts from the unix_args.txt under its launch dir,
+// and the loader install clears that dir before the installer runs. A failed
+// install has to put it back, or the "restored" server cannot start.
+func TestJarStashPutsTheOldLoaderLaunchDirBack(t *testing.T) {
+	const (
+		oldArgs = "libraries/net/minecraftforge/forge/47.2.0/unix_args.txt"
+		newArgs = "libraries/net/minecraftforge/forge/47.3.0/unix_args.txt"
+		lib     = "libraries/com/example/lib.jar"
+	)
+	for _, c := range []struct {
+		name     string
+		success  bool
+		want     map[string]string
+		wantArgs string
+	}{
+		{"failed install", false, map[string]string{oldArgs: "old args", newArgs: "<missing>", lib: "lib"}, oldArgs},
+		{"successful install", true, map[string]string{oldArgs: "<missing>", newArgs: "new args", lib: "lib"}, newArgs},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			serverPath := t.TempDir()
+			sub := filepath.Join(serverPath, "main")
+			writeTestFile(t, filepath.Join(sub, filepath.FromSlash(oldArgs)), "old args")
+			writeTestFile(t, filepath.Join(sub, filepath.FromSlash(lib)), "lib")
+
+			stash, err := stashServerJars(serverPath, "main")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// What runLoaderInstaller does, and what the installer writes
+			// before it fails or succeeds.
+			if err := clearLoaderLaunchDirs(sub); err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, filepath.Join(sub, filepath.FromSlash(newArgs)), "new args")
+
+			if c.success {
+				stash.discard()
+			} else if err := stash.restore(); err != nil {
+				t.Fatal(err)
+			}
+			for rel, want := range c.want {
+				if got := readTestFile(filepath.Join(sub, filepath.FromSlash(rel))); got != want {
+					t.Errorf("%s = %q, want %q", rel, got, want)
+				}
+			}
+			if got := resolveLaunch(sub); got.Mode != launchArgfile || got.ArgsFile != c.wantArgs {
+				t.Errorf("resolveLaunch = %+v, want args file %s", got, c.wantArgs)
+			}
+		})
+	}
+}
+
+// A node restart mid-install leaves the old software in the stash and the
+// sub-server without it. The redelivered attempt used to delete that stash
+// first, so a second failure left no jar at all; what is missing goes back
+// before the new stash is taken, and what is in place is not overwritten.
+func TestJarStashRecoversALeftOverStash(t *testing.T) {
+	serverPath := t.TempDir()
+	sub := filepath.Join(serverPath, "main")
+	left := filepath.Join(serverPath, ".main.oldjars", "main")
+	writeTestFile(t, filepath.Join(left, "server.jar"), "old jar")
+	writeTestFile(t, filepath.Join(left, "versions", "1.21.1", "paper.jar"), "old paper")
+	writeTestFile(t, filepath.Join(left, "mods", "sodium-old.jar"), "old mod")
+	writeTestFile(t, filepath.Join(left, "eula-helper.jar"), "stale")
+	writeTestFile(t, filepath.Join(sub, "eula-helper.jar"), "current")
+	writeTestFile(t, filepath.Join(sub, "world", "level.dat"), "world")
+
+	stash, err := stashServerJars(serverPath, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The redelivered install fails as well.
+	if err := stash.restore(); err != nil {
+		t.Fatal(err)
+	}
+	for rel, want := range map[string]string{
+		"server.jar":                "old jar",
+		"versions/1.21.1/paper.jar": "old paper",
+		"mods/sodium-old.jar":       "old mod",
+		"eula-helper.jar":           "current",
+		"world/level.dat":           "world",
+	} {
+		if got := readTestFile(filepath.Join(sub, filepath.FromSlash(rel))); got != want {
+			t.Errorf("%s = %q, want %q", rel, got, want)
+		}
+	}
+}
+
 // A loader Core accepts as a Modrinth tag but the node cannot install is
 // refused before anything is stopped or changed, and Core is told to put its
 // writes back.
@@ -165,6 +253,11 @@ func TestVersionMoveTakesTheSiblingSteps(t *testing.T) {
 	if !ok || strings.Contains(re, "CleanServerJars(") || !strings.Contains(re, "stashServerJars(") {
 		t.Error("reinstall deletes the server jars before the new ones are installed")
 	}
+	// Core wrote the new type and version before it sent the reinstall; a
+	// rollback that tells nothing left the DB naming software that never ran.
+	if !strings.Contains(re, "reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, cause)") || strings.Contains(re, "putBack()") {
+		t.Error("a rolled-back reinstall does not tell Core why on every path")
+	}
 }
 
 // A copy that will not appear tells Core, so the rows it wrote for the target
@@ -203,6 +296,44 @@ func TestCopySubServerReportsAFailure(t *testing.T) {
 				}
 			} else if readTestFile(filepath.Join(root, uuid, "copy", "world", "level.dat")) != "world" {
 				t.Error("the copy did not land")
+			}
+		})
+	}
+}
+
+// A copy to another target while one runs is refused, and Core is told so it
+// can remove the rows it wrote for that target; a redelivery of the running
+// copy is dropped quietly, or Core would remove the rows of the copy that runs.
+func TestCopySubServerBesideARunningCopy(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		running    string // the target of the copy already running
+		wantReport bool
+	}{
+		{"another target", "other", true},
+		{"same target", "copy", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			const uuid = "srv-copy-busy"
+			writeTestFile(t, filepath.Join(root, uuid, "main", "world", "level.dat"), "world")
+			// What the running copy holds.
+			for _, k := range []string{"copy_sub:" + uuid, "copy_sub:" + uuid + "/" + c.running} {
+				commandsInFlight.enter(k)
+				defer commandsInFlight.leave(k)
+			}
+			rdb := newMiniRedis(t)
+			payload, _ := json.Marshal(map[string]interface{}{"config": map[string]interface{}{
+				"uuid": uuid, "sourceSubServer": "main", "targetSubServer": "copy",
+			}})
+			runCopySubServer(context.Background(), rdb, &StorageManager{paths: []string{root}}, string(payload))
+
+			raw, _ := rdb.Get(context.Background(), "dylaris:server:"+uuid+":copy_sub_failed").Result()
+			if (raw != "") != c.wantReport {
+				t.Fatalf("failure report = %q, want reported=%v", raw, c.wantReport)
+			}
+			if readTestFile(filepath.Join(root, uuid, "copy", "world", "level.dat")) != "<missing>" {
+				t.Error("a copy ran beside the running one")
 			}
 		})
 	}

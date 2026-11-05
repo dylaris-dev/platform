@@ -328,6 +328,11 @@ func validateMrpackURL(u string) error {
 	return nil
 }
 
+// maxMrpackIndexBytes bounds the DECOMPRESSED modrinth.index.json, the same
+// 8 MiB Core's ParseMrpackContents allows: the archive cap is on compressed
+// bytes, and a deflate bomb in the index would otherwise OOM the node agent.
+const maxMrpackIndexBytes = 8 << 20
+
 func readMrpackIndex(path string) (*mrpackIndex, error) {
 	// Opened like the extraction: the scratch directory is the tenant's uid.
 	zf, err := openNoFollow(path)
@@ -347,13 +352,17 @@ func readMrpackIndex(path string) (*mrpackIndex, error) {
 		if f.Name != "modrinth.index.json" {
 			continue
 		}
+		// The header is the pack's own claim, so the decode is bounded too.
+		if f.UncompressedSize64 > maxMrpackIndexBytes {
+			return nil, fmt.Errorf("modrinth.index.json exceeds the %d byte cap", maxMrpackIndexBytes)
+		}
 		rc, err := f.Open()
 		if err != nil {
 			return nil, err
 		}
 		defer rc.Close()
 		var idx mrpackIndex
-		if err := json.NewDecoder(rc).Decode(&idx); err != nil {
+		if err := json.NewDecoder(io.LimitReader(rc, maxMrpackIndexBytes+1)).Decode(&idx); err != nil {
 			return nil, err
 		}
 		return &idx, nil

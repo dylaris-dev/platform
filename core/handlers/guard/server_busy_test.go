@@ -61,7 +61,8 @@ func TestFailedDispatchesLeaveNothingBehind(t *testing.T) {
 	for _, c := range []struct{ file, fn, want, why string }{
 		{"../servers/servers_lifecycle.go", "CreateServer", "h.d.Store.DeleteServer(int(serverID))", "a create the node never got left a row with no disk limit"},
 		{"../servers/servers_lifecycle.go", "SetupServer", "services.RestoreSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)", "a setup that was never sent stayed 'installing'"},
-		{"../servers/servers_lifecycle.go", "SetupServer", "services.RememberSetupBefore(r.Context(), h.d.Redis, srv, subName)", "a failed install could not be put back"},
+		{"../servers/servers_lifecycle.go", "SetupServer", "services.RememberSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)", "a failed install could not be put back"},
+		{"../servers/servers_lifecycle.go", "ReinstallServer", "services.RememberSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)", "a rolled-back reinstall left the DB on the new version"},
 		{"../servers/servers_lifecycle.go", "ReinstallServer", "undo()", "a reinstall that was never sent stayed 'installing'"},
 		{"../servers/servers_lifecycle.go", "CreateServer", `configPayload["storagePath"] = sp`, "the wizard's storage path was dropped"},
 		{"../guard/sub_server_limit.go", "RefuseIfSubServerLimitReached", "if subServerDirExists(entries, target) {", "the cap counted the sub-server being re-installed"},

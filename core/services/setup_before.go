@@ -26,18 +26,31 @@ func setupBeforeKey(uuid string) string { return "dylaris:server:" + uuid + ":se
 type setupBefore struct {
 	Target                                                     string
 	Image, Command, Active, Flags, Installer, MCVersion, Build string
+	// The target's install record, which the edit form and the mod checks
+	// prefer over the servers row; Install nil with InstallKnown means there
+	// was none. A record written before these fields existed restores only
+	// the columns.
+	InstallKnown bool                     `json:",omitempty"`
+	Install      *models.SubServerInstall `json:",omitempty"`
 }
 
-// RememberSetupBefore records srv's setup columns before a setup to target is
-// dispatched. Best-effort: without it a failure leaves the columns as today.
-func RememberSetupBefore(ctx context.Context, rdb *redis.Client, srv *models.Server, target string) {
+// RememberSetupBefore records srv's setup columns and target's install record
+// before a setup or reinstall to target is dispatched. Best-effort: without it
+// a failure leaves them as today.
+func RememberSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store, srv *models.Server, target string) {
 	if rdb == nil || srv == nil {
 		return
 	}
-	b, err := json.Marshal(setupBefore{
+	before := setupBefore{
 		Target: target, Image: srv.GameImage, Command: srv.StartCommand, Active: srv.ActiveSubServer,
 		Flags: srv.ExtraJvmFlags, Installer: srv.InstallerType, MCVersion: srv.MinecraftVersion, Build: srv.BuildNumber,
-	})
+	}
+	if st != nil {
+		if in, err := st.GetSubServerInstall(srv.ID, target); err == nil {
+			before.InstallKnown, before.Install = true, in
+		}
+	}
+	b, err := json.Marshal(before)
 	if err == nil {
 		rdb.Set(ctx, setupBeforeKey(srv.UUID), b, setupBeforeTTL)
 	}
@@ -60,6 +73,19 @@ func RestoreSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store, 
 	if err := st.UpdateServerSetup(srv.ID, b.Image, b.Command, b.Active, b.Flags, b.Installer, b.MCVersion, b.Build); err != nil {
 		log.Printf("setup of %s failed, and its previous settings could not be restored: %v", srv.UUID, err)
 		return false
+	}
+	if b.InstallKnown {
+		var ierr error
+		if b.Install != nil {
+			in := *b.Install
+			in.ServerID = srv.ID // not carried by the JSON
+			ierr = st.UpsertSubServerInstall(in)
+		} else {
+			ierr = st.DeleteSubServerInstall(srv.ID, target)
+		}
+		if ierr != nil {
+			log.Printf("setup of %s failed, and the install record of %s could not be restored: %v", srv.UUID, target, ierr)
+		}
 	}
 	rdb.Del(ctx, setupBeforeKey(srv.UUID))
 	return true

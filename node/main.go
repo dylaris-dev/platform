@@ -2049,18 +2049,21 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// the new software is in place: a failed download left a server with no
 		// jar at all (see jarStash).
 		stash, serr := stashServerJars(serverPath, subName)
-		putBack := func() {
-			if stash == nil {
-				return
+		// Core wrote the new type and version before it sent this; the report
+		// is what puts them back (RestoreSetupBefore) and tells the owner why,
+		// so the DB names the software that actually runs again.
+		putBack := func(cause error) {
+			if stash != nil {
+				if rerr := stash.restore(); rerr != nil {
+					log.Printf("reinstall: could not put the previous server software back for %s/%s: %v", cmd.Config.UUID, subName, rerr)
+				}
 			}
-			if rerr := stash.restore(); rerr != nil {
-				log.Printf("reinstall: could not put the previous server software back for %s/%s: %v", cmd.Config.UUID, subName, rerr)
-			}
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, cause)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 		}
 		if serr != nil {
 			log.Printf("Reinstall of %s/%s refused: setting the old server software aside failed: %v", cmd.Config.UUID, subName, serr)
-			putBack()
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			putBack(fmt.Errorf("the old server software could not be set aside: %w", serr))
 			return
 		}
 
@@ -2087,8 +2090,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		if err != nil {
 			log.Printf("Reinstall failed for %s/%s: %v", cmd.Config.UUID, subName, err)
-			putBack()
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			putBack(err)
 			return
 		}
 
@@ -2098,8 +2100,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
 		if err != nil {
 			log.Printf("buildStartCommand failed for reinstall %s/%s: %v", cmd.Config.UUID, subName, err)
-			putBack()
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			putBack(err)
 			return
 		}
 		cmd.Config.Docker.Command = startCmd

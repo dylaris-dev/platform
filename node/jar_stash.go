@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path"
@@ -26,10 +27,15 @@ type jarStash struct {
 	sub   string   // the sub-server directory, relative to root
 	moved []string // what was taken, relative to root
 	added []string // what the caller put in place, removed again by restore
+	// complete: everything was taken, so an install may have run and what
+	// now sits in the loader launch dirs is its output, not the old server's.
+	complete bool
 }
 
 // stashServerJars moves aside what CleanServerJars removes from sub: the root
-// jars and the generated directories. A stash a crashed earlier attempt left
+// jars and the generated directories, plus the Forge/NeoForge launch dirs a
+// loader install clears (clearLoaderLaunchDirs), which hold the unix_args.txt
+// the old server starts from. A stash a crashed earlier attempt left
 // behind is cleared first. On an error the stash holds what was taken so
 // far and the caller restores it.
 func stashServerJars(serverPath, sub string) (*jarStash, error) {
@@ -38,12 +44,13 @@ func stashServerJars(serverPath, sub string) (*jarStash, error) {
 		return nil, err
 	}
 	s := &jarStash{root: root, dir: "." + sub + ".oldjars", sub: sub}
+	recoverStash(root, s.dir)
 	root.RemoveAll(s.dir)
 	if err := root.Mkdir(s.dir, 0o700); err != nil {
 		root.Close()
 		return nil, err
 	}
-	for _, d := range []string{"versions", "cache", ".fabric", ".gradle"} {
+	for _, d := range append([]string{"versions", "cache", ".fabric", ".gradle"}, loaderLaunchDirs...) {
 		if st, err := root.Lstat(path.Join(sub, d)); err == nil && st.IsDir() {
 			if err := s.take(path.Join(sub, d)); err != nil {
 				return s, err
@@ -61,7 +68,31 @@ func stashServerJars(serverPath, sub string) (*jarStash, error) {
 			}
 		}
 	}
+	s.complete = true
 	return s, nil
+}
+
+// recoverStash puts back what a stash left by an attempt that never finished
+// (a node restart mid-install, or a restore that failed) holds and the server
+// no longer has. It held the only copy of the old software, and deleting it
+// first meant a redelivered attempt that failed too left no jar at all. What
+// is in place wins: it is newer than the stash.
+func recoverStash(root *os.Root, dir string) {
+	if st, err := root.Lstat(dir); err != nil || !st.IsDir() {
+		return
+	}
+	fs.WalkDir(root.FS(), dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel := strings.TrimPrefix(p, dir+"/")
+		if _, err := root.Lstat(rel); !errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		root.MkdirAll(path.Dir(rel), 0o755)
+		root.Rename(p, rel)
+		return nil
+	})
 }
 
 // take moves rel (relative to the server directory) into the stash. A name
@@ -112,9 +143,19 @@ func (s *jarStash) restore() error {
 	}
 	// Best effort: what it cannot clear, the renames below replace or report.
 	CleanServerJars(filepath.Join(s.root.Name(), filepath.FromSlash(s.sub)))
+	if s.complete {
+		// A failed loader install leaves a partial launch dir that
+		// resolveLaunch would pick over the old jar or args file. Only a
+		// complete stash may clear them: a partial one left them in place.
+		for _, d := range loaderLaunchDirs {
+			s.root.RemoveAll(path.Join(s.sub, d))
+		}
+	}
 	var first error
 	for i := len(s.moved) - 1; i >= 0; i-- {
 		rel := s.moved[i]
+		// A wipe of libraries/ during the install took a launch dir's parents.
+		s.root.MkdirAll(path.Dir(rel), 0o755)
 		if err := s.root.Rename(path.Join(s.dir, rel), rel); err != nil && first == nil {
 			first = err
 		}

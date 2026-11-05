@@ -1,10 +1,12 @@
 package main
 
 import (
+	"archive/zip"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -95,5 +97,45 @@ func TestDownloadFileBoundedAcceptsExactlyTheCap(t *testing.T) {
 	}
 	if info.Size() != cap {
 		t.Errorf("file is %d bytes on disk, want %d", info.Size(), cap)
+	}
+}
+
+// modrinth.index.json comes out of a tenant-supplied archive, and a deflate
+// bomb of a few MB unpacks to GBs: an uncapped decode OOM-kills the node, and
+// the redelivered setup kills it again on every restart.
+func TestReadMrpackIndexCapsTheDecodedSize(t *testing.T) {
+	cases := []struct {
+		name    string
+		summary int
+		wantErr bool
+	}{
+		{"small index", 16, false},
+		{"over the cap", maxMrpackIndexBytes + 1, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "pack.mrpack")
+			f, err := os.Create(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			zw := zip.NewWriter(f)
+			w, err := zw.Create("modrinth.index.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := `{"name":"x","summary":"` + strings.Repeat("a", c.summary) + `"}`
+			if _, err := w.Write([]byte(body)); err != nil {
+				t.Fatal(err)
+			}
+			if err := zw.Close(); err != nil {
+				t.Fatal(err)
+			}
+			f.Close()
+			_, err = readMrpackIndex(p)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("readMrpackIndex err = %v, wantErr %v", err, c.wantErr)
+			}
+		})
 	}
 }

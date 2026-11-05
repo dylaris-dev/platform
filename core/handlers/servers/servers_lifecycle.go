@@ -858,7 +858,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Could not prepare the install; try again in a moment", http.StatusServiceUnavailable)
 			return
 		}
-		services.RememberSetupBefore(r.Context(), h.d.Redis, srv, subName)
+		services.RememberSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)
 		if !recordSetup() {
 			return
 		}
@@ -1040,6 +1040,12 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Server must be set up before reinstalling", 400)
 		return
 	}
+	// An install queued but not yet started holds no busy key on the node, and
+	// a reinstall beside a version move shares its jar stash (as VersionUpdate).
+	if srv.Status == "installing" {
+		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
+		return
+	}
 
 	// What is sent to the node is what was validated: the request's fields,
 	// each falling back to what the server already runs. The node used to get
@@ -1132,6 +1138,9 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// A node that rolls the reinstall back reports it as a failed setup, and
+	// this record is what that report puts back (as in setup).
+	services.RememberSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)
 	// Update DB (start_command is display-only; node builds the real command)
 	if err := h.d.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, installerType, mcVersion, buildNumber); err != nil {
 		httpx.SendJSONError(w, "Failed to update server", 500)
