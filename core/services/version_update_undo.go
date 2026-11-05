@@ -55,6 +55,14 @@ type VersionUpdateUndo struct {
 	BuildNumber      string                 `json:"buildNumber"`
 	SubServerName    string                 `json:"subServerName"`
 	Mods             []VersionUpdateUndoMod `json:"mods"`
+	// GameImage is the Java image the move overwrote; empty in a record from
+	// an older Core, which never captured it.
+	GameImage string `json:"gameImage,omitempty"`
+	// Install is the sub-server's install record before the move, nil when it
+	// had none. InstallRecorded tells that nil apart from a record written by
+	// an older Core, which did not capture it and must not delete one.
+	Install         *models.SubServerInstall `json:"install,omitempty"`
+	InstallRecorded bool                     `json:"installRecorded,omitempty"`
 }
 
 // VersionUpdateUndoMod is one installed mod as it was before the move.
@@ -121,6 +129,24 @@ func (s *StatusWatcherService) consumeVersionUpdateFailures(ctx context.Context)
 
 			if err := s.store.UpdateServerLoaderMetadata(srv.ID, undo.InstallerType, undo.MinecraftVersion, undo.BuildNumber); err != nil {
 				log.Printf("Server %s: could not restore the Minecraft version: %v", uuid, err)
+			}
+			if undo.GameImage != "" {
+				if err := s.store.UpdateServerRuntime(srv.ID, undo.GameImage, srv.ExtraJvmFlags); err != nil {
+					log.Printf("Server %s: could not restore the Java image: %v", uuid, err)
+				}
+			}
+			if undo.InstallRecorded {
+				var err error
+				if undo.Install != nil {
+					rec := *undo.Install
+					rec.ServerID, rec.SubServerName = srv.ID, undo.SubServerName
+					err = s.store.UpsertSubServerInstall(rec)
+				} else {
+					err = s.store.DeleteSubServerInstall(srv.ID, undo.SubServerName)
+				}
+				if err != nil {
+					log.Printf("Server %s: could not restore the install record: %v", uuid, err)
+				}
 			}
 			s.restoreServerMods(srv.ID, undo)
 			s.store.UpdateServerStatus(srv.ID, "stopped")

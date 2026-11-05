@@ -316,6 +316,10 @@ type versionUpdateRequest struct {
 	// no version for the target. Without it the request is refused and the
 	// mods that would be lost are named.
 	DropUnavailable bool `json:"dropUnavailable"`
+	// AfterCopy names the sub-server copy this move was asked to follow
+	// ("copy first"). Until that copy is in place the move is answered
+	// copy_running, and copy_failed when it will not appear.
+	AfterCopy string `json:"afterCopy"`
 }
 
 // VersionUpdate POST /api/servers/{id}/version-update
@@ -329,14 +333,22 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
-	// The move stops the server and rewrites its jars, the same tree a restore,
-	// a reinstall or a migration is working in.
-	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
-		return
-	}
 	var req versionUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	req.AfterCopy = strings.TrimSpace(req.AfterCopy)
+	if req.AfterCopy != "" && !validate.IsSubServerName(req.AfterCopy) {
+		httpx.SendJSONError(w, "afterCopy must be a single plain directory name", http.StatusBadRequest)
+		return
+	}
+	if h.refuseUntilCopyLanded(w, r, srv, req.AfterCopy) {
+		return
+	}
+	// The move stops the server and rewrites its jars, the same tree a restore,
+	// a reinstall or a migration is working in.
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
 		return
 	}
 	req.Minecraft = strings.TrimSpace(req.Minecraft)
@@ -370,6 +382,14 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	if !validate.IsInstallerType(loader) {
 		httpx.SendJSONErrorCode(w, fmt.Sprintf("%s cannot be installed by the platform, so the server cannot be moved to another version this way. Install the new version through setup instead.", loader),
 			"loader_not_installable", http.StatusUnprocessableEntity)
+		return
+	}
+	// A move sends the target Minecraft version as the software version, and a
+	// proxy is versioned by its own release: the node stopped the proxy, asked
+	// for Velocity 1.21.4 and failed with every player already dropped.
+	if services.IsProxyLoader(loader) {
+		httpx.SendJSONErrorCode(w, fmt.Sprintf("A %s proxy is versioned by its own release, not by Minecraft's. Reinstall it through setup to change its version.", loader),
+			"proxy_not_movable", http.StatusUnprocessableEntity)
 		return
 	}
 	// The update reinstalls the server like a setup does, so it needs the same
@@ -478,8 +498,11 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// paired with it, and services.StatusWatcher puts it back. One hour is far
 	// longer than any move takes and short enough that a stale record cannot
 	// undo a LATER, successful move.
+	prevInstall, ierr := h.d.Store.GetSubServerInstall(serverID, srv.ActiveSubServer)
 	if h.d.Redis != nil {
-		if rec, merr := json.Marshal(buildVersionUpdateUndo(srv, mods)); merr == nil {
+		undo := buildVersionUpdateUndo(srv, mods)
+		undo.Install, undo.InstallRecorded = prevInstall, ierr == nil
+		if rec, merr := json.Marshal(undo); merr == nil {
 			h.d.Redis.Set(r.Context(), services.VersionUpdateUndoKey(srv.UUID), rec, time.Hour)
 		}
 	}
@@ -529,6 +552,24 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// The install record follows the move, as it follows a reinstall: a switch
+	// back to this sub-server takes its Minecraft version from there, and it
+	// kept naming the version this move replaced. The pack reference stays,
+	// since the move keeps the pack's files. Not written when the old record
+	// could not be read, or the pack fields would be lost.
+	if ierr == nil {
+		next := models.SubServerInstall{}
+		if prevInstall != nil {
+			next = *prevInstall
+		}
+		next.ServerID, next.SubServerName = serverID, srv.ActiveSubServer
+		next.InstallerType, next.McVersion = loader, req.Minecraft
+		next.BuildVersion, next.Loader = req.InstallerVersion, req.InstallerVersion
+		if err := h.d.Store.UpsertSubServerInstall(next); err != nil {
+			log.Printf("VersionUpdate: could not update the install record for server %d/%s: %v", serverID, srv.ActiveSubServer, err)
+		}
+	}
+
 	h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
 	h.d.Events.Publish(r.Context(), "servers.changed", nil)
 
@@ -538,6 +579,62 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		"installed": len(install),
 		"removed":   unavailable,
 	})
+}
+
+// refuseUntilCopyLanded holds a move back while a copy of the server is queued
+// or running, and refuses one that was asked to follow a copy that did not
+// land. The panel's "copy first" sent the move the moment the copy was QUEUED:
+// a running copy answered it with a generic busy 409, and a copy still waiting
+// in the stream let both run on one tree, leaving the rollback copy a mix of
+// old and new software. copy_running is the answer to wait on and ask again.
+func (h *ServerModsHandler) refuseUntilCopyLanded(w http.ResponseWriter, r *http.Request, srv *models.Server, afterCopy string) bool {
+	if h.d.Redis == nil {
+		return false
+	}
+	ctx := r.Context()
+	pending, _ := h.d.Redis.Get(ctx, services.CopyPendingKey(srv.UUID)).Result()
+	if pending == "" && afterCopy == "" {
+		return false
+	}
+	verdict := ""
+	if busy, _ := h.d.Redis.Get(ctx, services.NodeBusyKey(srv.UUID)).Result(); busy != "" {
+		verdict = "copy_running"
+	} else {
+		entries, err := guard.ListServerRootNames(h.d.GRPCRegistry, srv.NodeID, srv.UUID)
+		if err != nil {
+			httpx.SendJSONError(w, "The node did not answer, so it is not known whether the copy has finished: "+err.Error(), http.StatusBadGateway)
+			return true
+		}
+		verdict = copyBeforeMoveVerdict(pending, afterCopy, entries)
+		if verdict == "" && pending != "" {
+			h.d.Redis.Del(ctx, services.CopyPendingKey(srv.UUID))
+		}
+	}
+	switch verdict {
+	case "copy_running":
+		httpx.SendJSONErrorCode(w, "A copy of this server is still being made. The move starts once it has finished.", verdict, http.StatusConflict)
+		return true
+	case "copy_failed":
+		httpx.SendJSONErrorCode(w, "The copy to "+afterCopy+" did not finish, so the move was not started.", verdict, http.StatusConflict)
+		return true
+	}
+	return false
+}
+
+// copyBeforeMoveVerdict is refuseUntilCopyLanded's decision once the node is
+// known not to be working on the server: "" lets the move go, copy_running
+// means a queued copy has not landed yet, copy_failed means the copy the move
+// was to follow is neither queued nor there. A copy is in place once its
+// directory exists: the node builds it under a staging name and renames it in
+// as its last step.
+func copyBeforeMoveVerdict(pending, afterCopy string, entries []*pb.FileInfo) string {
+	if pending != "" && !subServerNameTaken(entries, pending) {
+		return "copy_running"
+	}
+	if afterCopy != "" && !subServerNameTaken(entries, afterCopy) {
+		return "copy_failed"
+	}
+	return ""
 }
 
 // duplicateOfInstalled reports whether identifying fileName as projectID would
@@ -569,6 +666,7 @@ func buildVersionUpdateUndo(srv *models.Server, mods []models.ServerMod) service
 		MinecraftVersion: srv.MinecraftVersion,
 		BuildNumber:      srv.BuildNumber,
 		SubServerName:    srv.ActiveSubServer,
+		GameImage:        srv.GameImage,
 		Mods:             make([]services.VersionUpdateUndoMod, 0, len(mods)),
 	}
 	for _, m := range mods {
@@ -746,11 +844,19 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Before the dispatch, so a version move can never see the copy as neither
+	// queued nor running (refuseUntilCopyLanded).
+	if h.d.Redis != nil {
+		h.d.Redis.Set(r.Context(), services.CopyPendingKey(srv.UUID), req.TargetName, services.CopyPendingTTL)
+	}
 	if err := h.d.Queue.SendCommand(context.Background(), node.Token, "copy_sub_server", map[string]interface{}{
 		"uuid":            srv.UUID,
 		"sourceSubServer": srv.ActiveSubServer,
 		"targetSubServer": req.TargetName,
 	}, nil); err != nil {
+		if h.d.Redis != nil {
+			h.d.Redis.Del(r.Context(), services.CopyPendingKey(srv.UUID))
+		}
 		httpx.SendJSONError(w, "Failed to queue the copy", http.StatusInternalServerError)
 		return
 	}

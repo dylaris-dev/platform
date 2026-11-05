@@ -17,6 +17,10 @@ type undoFakeStore struct {
 	loaderCalls []loaderMetadataCall
 	modUpserts  []models.ServerMod
 	notes       []models.Notification
+
+	runtimeCalls   []string
+	installUpserts []models.SubServerInstall
+	installDeletes int
 }
 
 type loaderMetadataCall struct {
@@ -26,6 +30,21 @@ type loaderMetadataCall struct {
 
 func (f *undoFakeStore) UpdateServerLoaderMetadata(id int, installerType, minecraftVersion, buildNumber string) error {
 	f.loaderCalls = append(f.loaderCalls, loaderMetadataCall{id, installerType, minecraftVersion, buildNumber})
+	return nil
+}
+
+func (f *undoFakeStore) UpdateServerRuntime(id int, image, flags string) error {
+	f.runtimeCalls = append(f.runtimeCalls, image)
+	return nil
+}
+
+func (f *undoFakeStore) UpsertSubServerInstall(in models.SubServerInstall) error {
+	f.installUpserts = append(f.installUpserts, in)
+	return nil
+}
+
+func (f *undoFakeStore) DeleteSubServerInstall(int, string) error {
+	f.installDeletes++
 	return nil
 }
 
@@ -185,3 +204,41 @@ func TestRestoreServerModsSkipsUnlinkedMods(t *testing.T) {
 }
 
 var _ store.Store = (*undoFakeStore)(nil)
+
+// An abandoned move puts back what else it overwrote: the Java image, and the
+// install record (removed again when there was none). An undo record from an
+// older Core captured neither and must leave both alone.
+func TestConsumeVersionUpdateFailures_PutsTheImageAndTheInstallRecordBack(t *testing.T) {
+	prev := &models.SubServerInstall{InstallerType: "fabric", McVersion: "1.20.1", PackID: 4}
+	for _, c := range []struct {
+		name                   string
+		undo                   VersionUpdateUndo
+		wantImage              []string
+		wantUpsert, wantDelete int
+	}{
+		{"record and image", VersionUpdateUndo{SubServerName: "server", GameImage: "img-java17", Install: prev, InstallRecorded: true}, []string{"img-java17"}, 1, 0},
+		{"no record before", VersionUpdateUndo{SubServerName: "server", GameImage: "img-java17", InstallRecorded: true}, []string{"img-java17"}, 0, 1},
+		{"older Core", VersionUpdateUndo{SubServerName: "server"}, nil, 0, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, fs := newUndoTest(t)
+			ctx := context.Background()
+			seedUndo(t, s, "u-1", c.undo)
+			if err := s.redis.Set(ctx, VersionUpdateFailedKey("u-1"), "install failed", 0).Err(); err != nil {
+				t.Fatal(err)
+			}
+			s.consumeVersionUpdateFailures(ctx)
+			if len(fs.runtimeCalls) != len(c.wantImage) || (len(c.wantImage) > 0 && fs.runtimeCalls[0] != c.wantImage[0]) {
+				t.Errorf("image restores = %v, want %v", fs.runtimeCalls, c.wantImage)
+			}
+			if len(fs.installUpserts) != c.wantUpsert || fs.installDeletes != c.wantDelete {
+				t.Errorf("install upserts = %+v, deletes = %d; want %d and %d", fs.installUpserts, fs.installDeletes, c.wantUpsert, c.wantDelete)
+			}
+			if c.wantUpsert == 1 {
+				if got := fs.installUpserts[0]; got.ServerID != 7 || got.SubServerName != "server" || got.McVersion != "1.20.1" || got.PackID != 4 {
+					t.Errorf("restored install record = %+v", got)
+				}
+			}
+		})
+	}
+}

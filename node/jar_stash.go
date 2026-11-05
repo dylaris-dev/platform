@@ -45,7 +45,7 @@ func stashServerJars(serverPath, sub string) (*jarStash, error) {
 	}
 	s := &jarStash{root: root, dir: "." + sub + ".oldjars", sub: sub}
 	recoverStash(root, s.dir)
-	root.RemoveAll(s.dir)
+	dropStash(root, s.dir)
 	if err := root.Mkdir(s.dir, 0o700); err != nil {
 		root.Close()
 		return nil, err
@@ -72,27 +72,62 @@ func stashServerJars(serverPath, sub string) (*jarStash, error) {
 	return s, nil
 }
 
-// recoverStash puts back what a stash left by an attempt that never finished
-// (a node restart mid-install, or a restore that failed) holds and the server
-// no longer has. It held the only copy of the old software, and deleting it
-// first meant a redelivered attempt that failed too left no jar at all. What
-// is in place wins: it is newer than the stash.
+// stashAddedList is the file in the stash that lists what the attempt put in
+// place (add), so an attempt that dies before restore can still be undone.
+const stashAddedList = "added.list"
+
+// recoverStash undoes an attempt that never finished (a node restart
+// mid-install, or a restore that failed): what it put in place goes, and what
+// its stash holds goes back. The stash held the only copy of the old software,
+// and deleting it first meant a redelivered attempt that failed too left no
+// jar at all.
+//
+// The stash wins over what is in place under the same name. A stash only
+// survives an attempt that did not finish (discard and restore drop it with
+// one rename), so anything at a name it took was written by that attempt: the
+// new server jar, or a new mod that the redelivery cannot tell from one that
+// was already there. In-place-wins kept those and deleted the old copies.
 func recoverStash(root *os.Root, dir string) {
 	if st, err := root.Lstat(dir); err != nil || !st.IsDir() {
 		return
+	}
+	if b, err := root.ReadFile(path.Join(dir, stashAddedList)); err == nil {
+		for _, rel := range strings.Split(string(b), "\n") {
+			if rel = strings.TrimSpace(rel); rel != "" {
+				root.Remove(rel)
+			}
+		}
 	}
 	fs.WalkDir(root.FS(), dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
 		rel := strings.TrimPrefix(p, dir+"/")
-		if _, err := root.Lstat(rel); !errors.Is(err, fs.ErrNotExist) {
+		// Everything taken sits under the sub-server's name; a file at the
+		// top of the stash is the stash's own (stashAddedList).
+		if !strings.Contains(rel, "/") {
 			return nil
+		}
+		if _, err := root.Lstat(rel); !errors.Is(err, fs.ErrNotExist) {
+			root.Remove(rel)
 		}
 		root.MkdirAll(path.Dir(rel), 0o755)
 		root.Rename(p, rel)
 		return nil
 	})
+}
+
+// dropStash removes a stash. It is renamed away first, so a removal that fails
+// part-way leaves debris under another name rather than a half stash that
+// recoverStash would put back over a server that has moved on.
+func dropStash(root *os.Root, dir string) {
+	trash := dir + ".drop"
+	root.RemoveAll(trash)
+	if root.Rename(dir, trash) == nil {
+		root.RemoveAll(trash)
+		return
+	}
+	root.RemoveAll(dir)
 }
 
 // take moves rel (relative to the server directory) into the stash. A name
@@ -130,8 +165,16 @@ func (s *jarStash) takeFile(src, rel string) error {
 	return nil
 }
 
-// add records rel as written by this attempt, for restore to remove.
-func (s *jarStash) add(rel string) { s.added = append(s.added, rel) }
+// add records rel as written by this attempt, for restore to remove. It is
+// also written down in the stash, for the recoverStash of a redelivery when
+// this attempt dies first. Call it BEFORE putting rel in place.
+func (s *jarStash) add(rel string) {
+	s.added = append(s.added, rel)
+	if f, err := s.root.OpenFile(path.Join(s.dir, stashAddedList), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600); err == nil {
+		f.WriteString(rel + "\n")
+		f.Close()
+	}
+}
 
 // restore removes what the failed install wrote in the stashed places and
 // puts everything taken back. The stash is kept when anything could not be
@@ -141,12 +184,14 @@ func (s *jarStash) restore() error {
 	for _, rel := range s.added {
 		s.root.Remove(rel)
 	}
-	// Best effort: what it cannot clear, the renames below replace or report.
-	CleanServerJars(filepath.Join(s.root.Name(), filepath.FromSlash(s.sub)))
+	// Only a complete stash may clear anything: a partial one stopped before
+	// the install ran, and what it did not reach (the server jar among them)
+	// is the old server, with no copy in the stash.
 	if s.complete {
+		// Best effort: what it cannot clear, the renames below replace or report.
+		CleanServerJars(filepath.Join(s.root.Name(), filepath.FromSlash(s.sub)))
 		// A failed loader install leaves a partial launch dir that
-		// resolveLaunch would pick over the old jar or args file. Only a
-		// complete stash may clear them: a partial one left them in place.
+		// resolveLaunch would pick over the old jar or args file.
 		for _, d := range loaderLaunchDirs {
 			s.root.RemoveAll(path.Join(s.sub, d))
 		}
@@ -161,13 +206,13 @@ func (s *jarStash) restore() error {
 		}
 	}
 	if first == nil {
-		s.root.RemoveAll(s.dir)
+		dropStash(s.root, s.dir)
 	}
 	return first
 }
 
 // discard drops the stash once the new software is in place.
 func (s *jarStash) discard() {
-	s.root.RemoveAll(s.dir)
+	dropStash(s.root, s.dir)
 	s.root.Close()
 }

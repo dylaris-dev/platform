@@ -67,3 +67,30 @@ func TestRunLoaderInstallerCleansUp(t *testing.T) {
 		})
 	}
 }
+
+// A blank NeoForge build means the newest one for the Minecraft version the
+// install names. A version move sends exactly that, and the newest NeoForge
+// overall belongs to whatever Minecraft line came out last.
+func TestPickNeoForgeVersion(t *testing.T) {
+	var meta neoForgeMetadata
+	meta.Versioning.Release = "21.10.5"
+	meta.Versioning.Versions.Version = []string{
+		"20.6.120", "21.0.167", "21.1.9", "21.1.265", "21.1.30", "21.10.5",
+		"21.11.0-beta", "26.1.0.3-beta", "26.1.2.5",
+	}
+	for _, c := range []struct{ mc, want string }{
+		{"", "21.10.5"},
+		{"1.21.1", "21.1.265"}, // numeric, not string order
+		{"1.21", "21.0.167"},
+		{"1.20.6", "20.6.120"},
+		{"1.21.11", "21.11.0-beta"}, // only a pre-release exists
+		{"26.1", "26.1.0.3-beta"},
+		{"26.1.2", "26.1.2.5"},
+		{"21.1.30", "21.1.30"}, // a NeoForge version itself
+		{"1.19.2", ""},
+	} {
+		if got := pickNeoForgeVersion(meta, c.mc); got != c.want {
+			t.Errorf("pickNeoForgeVersion(%q) = %q, want %q", c.mc, got, c.want)
+		}
+	}
+}

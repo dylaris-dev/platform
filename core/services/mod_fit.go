@@ -25,7 +25,7 @@ var modLoadersFor = map[string][]string{
 
 // A proxy records its own release ("3.5") as the Minecraft version, which no
 // plugin lists as a game version, so its plugins are matched by loader alone.
-func isProxyLoader(loader string) bool {
+func IsProxyLoader(loader string) bool {
 	switch loader {
 	case "velocity", "waterfall", "bungeecord":
 		return true
@@ -63,7 +63,7 @@ func ModFitKnown(serverLoader, serverMC string) bool {
 	if _, ok := modLoadersFor[loader]; !ok {
 		return false
 	}
-	return isProxyLoader(loader) || strings.TrimSpace(serverMC) != ""
+	return IsProxyLoader(loader) || strings.TrimSpace(serverMC) != ""
 }
 
 // ModVersionFits decides whether a Modrinth version (its loaders and
@@ -88,7 +88,7 @@ func ModVersionFits(serverLoader, serverMC string, versionLoaders, versionGameVe
 	if !loaderOK {
 		return false, "This build is for " + listForReason(versionLoaders) + ", and this server runs " + loader + ". Pick a " + loader + " build."
 	}
-	if isProxyLoader(loader) {
+	if IsProxyLoader(loader) {
 		return true, ""
 	}
 	if mc == "" {

@@ -285,7 +285,7 @@ func latestFitting(ctx context.Context, projectID, mc, loader string) (*modrinth
 	// A plugin fits any patch of its line, which an exact game_versions filter
 	// would hide, so plugins are filtered by pickPreferred alone.
 	var games []string
-	if !isProxyLoader(loader) && !isPluginLoader(loader) {
+	if !IsProxyLoader(loader) && !isPluginLoader(loader) {
 		games = []string{mc}
 	}
 	list, err := fetchProjectVersions(ctx, projectID, modLoadersFor[loader], games)
@@ -548,7 +548,7 @@ func resolveDeps(ctx context.Context, root *modrinthVersion, loader, mc string, 
 const modrinthNoAnswer = "Modrinth did not answer for this dependency. Try again in a moment."
 
 func noFitReason(loader, mc string) string {
-	if isProxyLoader(loader) {
+	if IsProxyLoader(loader) {
 		return "No " + loader + " build on Modrinth."
 	}
 	return "No " + loader + " build for Minecraft " + mc + " on Modrinth."

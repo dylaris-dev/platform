@@ -67,8 +67,8 @@ func runCopySubServer(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	}
 	defer commandsInFlight.leave(targetKey)
 	if !commandsInFlight.enter("copy_sub:" + pl.UUID) {
-		log.Printf("copy_sub_server: another copy of %s is running on this node, refusing the copy to %q", pl.UUID, pl.TargetSubServer)
-		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, "another copy of this server is running")
+		log.Printf("copy_sub_server: another copy or a version move of %s is running on this node, refusing the copy to %q", pl.UUID, pl.TargetSubServer)
+		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, "another copy or a version move of this server is running")
 		return
 	}
 	defer commandsInFlight.leave("copy_sub:" + pl.UUID)

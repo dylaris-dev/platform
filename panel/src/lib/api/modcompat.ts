@@ -200,6 +200,7 @@ export interface UnavailableMod {
 export interface VersionUpdateResponse {
     success: boolean;
     message?: string;
+    code?: string;
     installed?: number;
     removed?: UnavailableMod[];
     unavailable?: UnavailableMod[];
@@ -207,7 +208,7 @@ export interface VersionUpdateResponse {
 
 export async function updateServerVersion(
     serverId: number,
-    input: { minecraft: string; installerVersion?: string; loader?: string; javaImage?: string; dropUnavailable?: boolean },
+    input: { minecraft: string; installerVersion?: string; loader?: string; javaImage?: string; dropUnavailable?: boolean; afterCopy?: string },
 ): Promise<VersionUpdateResponse> {
     try {
         const res = await fetch(`${API_URL}/servers/${serverId}/version-update`, {
@@ -219,6 +220,29 @@ export async function updateServerVersion(
         const data = await res.json();
         return { success: res.ok, ...data } as VersionUpdateResponse;
     } catch (err) { return handleError(err) as VersionUpdateResponse; }
+}
+
+// How long "copy first" waits for the copy before it gives up on the move. A
+// copy of a large world takes minutes; this only bounds a node that never
+// finishes.
+const COPY_WAIT_MS = 60 * 60 * 1000;
+const COPY_POLL_MS = 3000;
+
+// updateServerVersionAfterCopy sends a move that has to follow the copy
+// to afterCopy. Core answers copy_running until that copy has landed, so the
+// move is asked again until it goes out or is refused for another reason.
+export async function updateServerVersionAfterCopy(
+    serverId: number,
+    input: Parameters<typeof updateServerVersion>[1],
+    afterCopy: string,
+    wait: (ms: number) => Promise<void> = ms => new Promise(r => setTimeout(r, ms)),
+): Promise<VersionUpdateResponse> {
+    const deadline = Date.now() + COPY_WAIT_MS;
+    for (;;) {
+        const res = await updateServerVersion(serverId, { ...input, afterCopy });
+        if (res.success || res.code !== 'copy_running' || Date.now() > deadline) return res;
+        await wait(COPY_POLL_MS);
+    }
 }
 
 export async function copySubServer(

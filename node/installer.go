@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -165,7 +166,16 @@ func installServer(serverDataPath, subServerName string, config InstallerConfig)
 	case "forge":
 		return nil, installForge(destDir, config.Version, config.Loader, config.JavaImage, config.ServerUUID)
 	case "neoforge":
-		return nil, installNeoForge(destDir, config.Loader, config.JavaImage, config.ServerUUID)
+		build := config.Loader
+		if build == "" && config.Version != "" {
+			// A version move sends the target Minecraft version and no build.
+			v, err := resolveNeoForgeVersion(config.Version)
+			if err != nil {
+				return nil, err
+			}
+			build = v
+		}
+		return nil, installNeoForge(destDir, build, config.JavaImage, config.ServerUUID)
 	case "library":
 		return nil, installFromLibrary(destDir, config.Path, config.URL)
 	case "import":
@@ -329,38 +339,149 @@ func installForge(dir, mcVersion, build, javaImage, serverUUID string) error {
 // inside a one-shot Java container.
 func installNeoForge(dir, version, javaImage, serverUUID string) error {
 	if version == "" {
-		resp, err := installerMetaClient.Get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
+		v, err := resolveNeoForgeVersion("")
 		if err != nil {
-			return fmt.Errorf("neoforge metadata fetch failed: %v", err)
+			return err
 		}
-		defer resp.Body.Close()
-		var meta struct {
-			Versioning struct {
-				Latest   string `xml:"latest"`
-				Release  string `xml:"release"`
-				Versions struct {
-					Version []string `xml:"version"`
-				} `xml:"versions"`
-			} `xml:"versioning"`
-		}
-		if err := xml.NewDecoder(resp.Body).Decode(&meta); err != nil {
-			return fmt.Errorf("neoforge metadata parse failed: %v", err)
-		}
-		if meta.Versioning.Release != "" {
-			version = meta.Versioning.Release
-		} else if meta.Versioning.Latest != "" {
-			version = meta.Versioning.Latest
-		} else if n := len(meta.Versioning.Versions.Version); n > 0 {
-			version = meta.Versioning.Versions.Version[n-1]
-		}
-		if version == "" {
-			return fmt.Errorf("no NeoForge version found in metadata")
-		}
+		version = v
 	}
 
 	installerURL := fmt.Sprintf("https://maven.neoforged.net/releases/net/neoforged/neoforge/%s/neoforge-%s-installer.jar", version, version)
 	log.Printf("Downloading NeoForge installer (version=%s)", version)
 	return runLoaderInstaller(dir, "neoforge", installerURL, "_neoforge-installer.jar", javaImage, serverUUID, "--install-server")
+}
+
+// resolveNeoForgeVersion reads the Maven metadata and picks the version a
+// blank build means for mc (pickNeoForgeVersion).
+func resolveNeoForgeVersion(mc string) (string, error) {
+	resp, err := installerMetaClient.Get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
+	if err != nil {
+		return "", fmt.Errorf("neoforge metadata fetch failed: %v", err)
+	}
+	defer resp.Body.Close()
+	var meta neoForgeMetadata
+	if err := xml.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return "", fmt.Errorf("neoforge metadata parse failed: %v", err)
+	}
+	version := pickNeoForgeVersion(meta, mc)
+	if version == "" && mc != "" {
+		return "", fmt.Errorf("no NeoForge version for Minecraft %s found in metadata", mc)
+	}
+	if version == "" {
+		return "", fmt.Errorf("no NeoForge version found in metadata")
+	}
+	return version, nil
+}
+
+type neoForgeMetadata struct {
+	Versioning struct {
+		Latest   string `xml:"latest"`
+		Release  string `xml:"release"`
+		Versions struct {
+			Version []string `xml:"version"`
+		} `xml:"versions"`
+	} `xml:"versioning"`
+}
+
+// pickNeoForgeVersion is the NeoForge version a blank loader means. With no
+// Minecraft version it is the newest overall, as before. With one it is the
+// newest build FOR that version: a version move sends the target Minecraft
+// version and no build, and the newest overall belongs to whatever Minecraft
+// line came out last, so a move to 1.21.1 installed NeoForge for 1.21.10.
+// A stable build wins over a newer pre-release; a line that only has
+// pre-releases gets the newest of those. mc may also name a NeoForge version
+// itself, which is then taken as it is.
+func pickNeoForgeVersion(meta neoForgeMetadata, mc string) string {
+	v := meta.Versioning
+	if mc == "" {
+		if v.Release != "" {
+			return v.Release
+		}
+		if v.Latest != "" {
+			return v.Latest
+		}
+		if n := len(v.Versions.Version); n > 0 {
+			return v.Versions.Version[n-1]
+		}
+		return ""
+	}
+	best, bestPre := "", ""
+	for _, c := range v.Versions.Version {
+		if c == mc {
+			return c
+		}
+		base, _, pre := strings.Cut(c, "-")
+		if neoForgeMinecraft(base) != mc {
+			continue
+		}
+		if !pre {
+			if best == "" || compareDotted(base, strings.SplitN(best, "-", 2)[0]) > 0 {
+				best = c
+			}
+		} else if bestPre == "" || compareDotted(base, strings.SplitN(bestPre, "-", 2)[0]) > 0 {
+			bestPre = c
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return bestPre
+}
+
+// neoForgeMinecraft maps a NeoForge build to the Minecraft version it targets,
+// "" when it cannot tell. Below 26 the minor is Minecraft's patch ("21.1.264"
+// is 1.21.1, "21.0.x" is 1.21); from 26 on the build starts with the Minecraft
+// version ("26.1.2.5" is 26.1.2, "26.3.0.89" is 26.3). Core's
+// services.NeoForgeMinecraft is the same mapping; keep the two in step.
+func neoForgeMinecraft(build string) string {
+	parts := strings.Split(build, ".")
+	if len(parts) < 3 {
+		return ""
+	}
+	nums := make([]int, len(parts))
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || len(p) > 9 {
+			return ""
+		}
+		nums[i] = n
+	}
+	if nums[0] == 0 {
+		return ""
+	}
+	if nums[0] >= 26 {
+		mc := parts[0] + "." + parts[1]
+		if len(parts) >= 4 && nums[2] != 0 {
+			mc += "." + parts[2]
+		}
+		return mc
+	}
+	mc := "1." + parts[0]
+	if nums[1] != 0 {
+		mc += "." + parts[1]
+	}
+	return mc
+}
+
+// compareDotted compares two all-numeric dotted versions part by part.
+func compareDotted(a, b string) int {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var x, y int
+		if i < len(pa) {
+			x, _ = strconv.Atoi(pa[i])
+		}
+		if i < len(pb) {
+			y, _ = strconv.Atoi(pb[i])
+		}
+		if x != y {
+			if x < y {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
 }
 
 // runJavaInstallerFn is runJavaInstaller, swapped in tests.

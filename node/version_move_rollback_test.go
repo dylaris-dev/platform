@@ -151,8 +151,9 @@ func TestJarStashPutsTheOldLoaderLaunchDirBack(t *testing.T) {
 
 // A node restart mid-install leaves the old software in the stash and the
 // sub-server without it. The redelivered attempt used to delete that stash
-// first, so a second failure left no jar at all; what is missing goes back
-// before the new stash is taken, and what is in place is not overwritten.
+// first, so a second failure left no jar at all; what the stash holds goes
+// back before the new stash is taken. It wins over what is in place under the
+// same name, which only the attempt that died can have written.
 func TestJarStashRecoversALeftOverStash(t *testing.T) {
 	serverPath := t.TempDir()
 	sub := filepath.Join(serverPath, "main")
@@ -176,8 +177,89 @@ func TestJarStashRecoversALeftOverStash(t *testing.T) {
 		"server.jar":                "old jar",
 		"versions/1.21.1/paper.jar": "old paper",
 		"mods/sodium-old.jar":       "old mod",
-		"eula-helper.jar":           "current",
+		"eula-helper.jar":           "stale",
 		"world/level.dat":           "world",
+	} {
+		if got := readTestFile(filepath.Join(sub, filepath.FromSlash(rel))); got != want {
+			t.Errorf("%s = %q, want %q", rel, got, want)
+		}
+	}
+}
+
+// The node dies mid-move after the new server jar and the new mods are in
+// place, and the redelivered move fails too. The old software comes back and
+// the dead attempt's mods go: it used to keep the new jar (what was in place
+// won), delete the only old copy, and leave both versions of every mod, which
+// Fabric and Forge refuse to start on.
+func TestJarStashRecoversWhatADeadAttemptWrote(t *testing.T) {
+	serverPath := t.TempDir()
+	sub := filepath.Join(serverPath, "main")
+	writeTestFile(t, filepath.Join(sub, "server.jar"), "old jar")
+	writeTestFile(t, filepath.Join(sub, "mods", "sodium-old.jar"), "old mod")
+
+	// The attempt that dies: stash, swap the mods, install, no restore.
+	dead, err := stashServerJars(serverPath, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dead.takeFile(filepath.Join(sub, "mods", "sodium-old.jar"), "main/mods/sodium-old.jar"); err != nil {
+		t.Fatal(err)
+	}
+	dead.add("main/mods/sodium-new.jar")
+	writeTestFile(t, filepath.Join(sub, "mods", "sodium-new.jar"), "new mod")
+	writeTestFile(t, filepath.Join(sub, "server.jar"), "new jar")
+	dead.root.Close()
+
+	// The redelivery stashes again, finds the new mod already in place (so
+	// cannot claim it) and fails.
+	again, err := stashServerJars(serverPath, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := again.takeFile(filepath.Join(sub, "mods", "sodium-old.jar"), "main/mods/sodium-old.jar"); err != nil {
+		t.Fatal(err)
+	}
+	if err := again.restore(); err != nil {
+		t.Fatal(err)
+	}
+	for rel, want := range map[string]string{
+		"server.jar":          "old jar",
+		"mods/sodium-old.jar": "old mod",
+		"mods/sodium-new.jar": "<missing>",
+	} {
+		if got := readTestFile(filepath.Join(sub, filepath.FromSlash(rel))); got != want {
+			t.Errorf("%s = %q, want %q", rel, got, want)
+		}
+	}
+}
+
+// A stash that stopped part-way puts back only what it took. Its restore used
+// to clear every root jar as well, and the ones it had not reached yet - the
+// server jar among them - had no copy anywhere.
+func TestJarStashPartialRestoreKeepsWhatItNeverTook(t *testing.T) {
+	serverPath := t.TempDir()
+	sub := filepath.Join(serverPath, "main")
+	writeTestFile(t, filepath.Join(sub, "server.jar"), "old jar")
+	writeTestFile(t, filepath.Join(sub, "versions", "1.21.1", "paper.jar"), "old paper")
+	root, err := os.OpenRoot(serverPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What stashServerJars holds after taking versions/ and failing before
+	// the root jars.
+	s := &jarStash{root: root, dir: ".main.oldjars", sub: "main"}
+	if err := root.Mkdir(s.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.take("main/versions"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.restore(); err != nil {
+		t.Fatal(err)
+	}
+	for rel, want := range map[string]string{
+		"server.jar":                "old jar",
+		"versions/1.21.1/paper.jar": "old paper",
 	} {
 		if got := readTestFile(filepath.Join(sub, filepath.FromSlash(rel))); got != want {
 			t.Errorf("%s = %q, want %q", rel, got, want)
@@ -189,7 +271,7 @@ func TestJarStashRecoversALeftOverStash(t *testing.T) {
 // refused before anything is stopped or changed, and Core is told to put its
 // writes back.
 func TestVersionMoveRefusesALoaderItCannotInstall(t *testing.T) {
-	for _, typ := range []string{"purpur", "spigot", "bukkit", "quilt", ""} {
+	for _, typ := range []string{"purpur", "spigot", "bukkit", "quilt", "", "velocity", "waterfall", "bungeecord"} {
 		t.Run(typ, func(t *testing.T) {
 			root := t.TempDir()
 			const uuid = "srv-move-purpur"
@@ -373,5 +455,31 @@ func TestAFailedDownloadKeepsTheFileItWouldReplace(t *testing.T) {
 				t.Errorf("the staging file was left behind: %v", err)
 			}
 		})
+	}
+}
+
+// A version move never runs beside a copy of the same server: the copy is
+// what makes the move reversible, and copyDir walking the tree while the move
+// swaps its jars captured a mix of both. Refused before anything is stopped.
+func TestVersionMoveRefusesBesideARunningCopy(t *testing.T) {
+	root := t.TempDir()
+	const uuid = "srv-move-copying"
+	jar := filepath.Join(root, uuid, "main", "server.jar")
+	writeTestFile(t, jar, "paper")
+	commandsInFlight.enter("copy_sub:" + uuid)
+	defer commandsInFlight.leave("copy_sub:" + uuid)
+	rdb := newMiniRedis(t)
+	payload, _ := json.Marshal(map[string]interface{}{"config": map[string]interface{}{
+		"uuid": uuid, "activeSubServer": "main", "targetDir": "plugins",
+	}})
+	// dm is nil: reaching the stop would panic, which is the point.
+	runUpdateServerVersion(context.Background(), rdb, nil, &StorageManager{paths: []string{root}},
+		NodeCommand{Installer: InstallerConfig{Type: "paper"}}, string(payload))
+
+	if got, _ := rdb.Get(context.Background(), "dylaris:server:"+uuid+":version_update_failed").Result(); got == "" {
+		t.Error("Core was not told the move did not happen")
+	}
+	if readTestFile(jar) != "paper" {
+		t.Error("the server was changed beside the copy")
 	}
 }

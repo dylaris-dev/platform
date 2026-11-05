@@ -51,10 +51,12 @@ type versionUpdatePayload struct {
 }
 
 // versionMoveInstallers is the installServer types a version move can target:
-// the loaders that are also an install source.
+// the loaders that are also an install source. Not the proxies: a move sends
+// the target MINECRAFT version, and Velocity, Waterfall and BungeeCord are
+// versioned by their own release, so the install failed after the proxy had
+// already been stopped and every player behind it dropped.
 var versionMoveInstallers = map[string]bool{
-	"paper": true, "velocity": true, "waterfall": true, "bungeecord": true,
-	"fabric": true, "forge": true, "neoforge": true,
+	"paper": true, "fabric": true, "forge": true, "neoforge": true,
 }
 
 // runUpdateServerVersion performs the whole move: stop, drop the named jars,
@@ -98,6 +100,16 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		return
 	}
 	defer commandsInFlight.leave("version_update:" + pl.UUID)
+	// The copy's key too, so neither runs beside the other: a copy is what
+	// makes the move reversible, and copyDir walking the tree while the move
+	// swapped its jars captured a mix of both. Whichever comes second is
+	// refused before it touches anything.
+	if !commandsInFlight.enter("copy_sub:" + pl.UUID) {
+		log.Printf("update_server_version: a copy of %s is running on this node, refusing the move", pl.UUID)
+		abandonVersionUpdate(ctx, rdb, pl.UUID, "a copy of this server was still being made")
+		return
+	}
+	defer commandsInFlight.leave("copy_sub:" + pl.UUID)
 
 	statusKey := fmt.Sprintf("dylaris:server:%s:status", pl.UUID)
 	// Hold the reconciler off for the whole move, exactly like reinstall: the
@@ -207,18 +219,19 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	}
 
 	for _, sj := range staged {
-		_, lerr := os.Lstat(sj.final)
+		// Only a name this move created is removed again on a failure: one that
+		// was already there and not on the removal list is not ours to delete.
+		// Recorded before the rename, so a node that dies right after it still
+		// leaves the name for the redelivery to take back.
+		if _, lerr := os.Lstat(sj.final); os.IsNotExist(lerr) {
+			stash.add(modsRel + "/" + filepath.Base(sj.final))
+		}
 		if err := os.Rename(sj.tmp, sj.final); err != nil {
 			// A rename failing after every download succeeded is a filesystem
 			// fault, not a content problem. Say which jar, so the gap in the
 			// mods directory has a name.
 			log.Printf("update_server_version: could not put %s in place: %v", sj.final, err)
 			continue
-		}
-		// Only a name this move created is removed again on a failure: one that
-		// was already there and not on the removal list is not ours to delete.
-		if os.IsNotExist(lerr) {
-			stash.add(modsRel + "/" + filepath.Base(sj.final))
 		}
 	}
 

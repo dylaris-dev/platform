@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-pkg/validate"
@@ -29,6 +30,19 @@ func CopySubFailedKey(serverUUID string) string {
 }
 
 const copySubFailedPattern = "dylaris:server:*:copy_sub_failed"
+
+// CopyPendingKey holds the target of a copy Core has queued and not yet seen
+// land. The node takes node_busy only once it STARTS the copy, so a copy still
+// waiting in the stream left nothing a version move could see, and the two ran
+// on one tree at once. Core writes it and Core clears it: when a move finds
+// the copy in place, or when the node reports the copy failed. An older node
+// needs nothing new for that; the TTL is the backstop.
+func CopyPendingKey(serverUUID string) string {
+	return "dylaris:server:" + serverUUID + ":copy_pending"
+}
+
+// CopyPendingTTL outlasts any copy that is actually going to happen.
+const CopyPendingTTL = time.Hour
 
 type copySubFailure struct {
 	Target string `json:"target"`
@@ -55,6 +69,8 @@ func (s *StatusWatcherService) consumeCopySubFailures(ctx context.Context) bool 
 				continue
 			}
 			s.redis.Del(ctx, key)
+			// No longer pending: a move asked to follow it now hears it failed.
+			s.redis.Del(ctx, CopyPendingKey(parts[2]))
 			var rep copySubFailure
 			if json.Unmarshal([]byte(raw), &rep) != nil || !validate.IsSubServerName(rep.Target) {
 				continue

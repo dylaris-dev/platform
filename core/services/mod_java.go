@@ -153,7 +153,7 @@ func JavaFit(ctx context.Context, root *ModrinthVersion, title, loader, mc strin
 	refuse := &ModFitError{Reason: fmt.Sprintf("%s. Switch the server to Java %d in Setup, or install an older version.", head, need)}
 
 	var games []string
-	if !isProxyLoader(loader) && !isPluginLoader(loader) {
+	if !IsProxyLoader(loader) && !isPluginLoader(loader) {
 		games = []string{mc}
 	}
 	list, err := fetchProjectVersions(ctx, root.ProjectID, modLoadersFor[loader], games)

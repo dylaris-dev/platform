@@ -10,6 +10,7 @@ import {
     copySubServer,
     getUnmanagedMods,
     updateServerVersion,
+    updateServerVersionAfterCopy,
     type CompatVersion,
 } from '@/lib/api/modcompat';
 import Checkbox from '@/components/ui/Checkbox';
@@ -139,6 +140,7 @@ function MoveDialog({
     const [copyFirst, setCopyFirst] = useState(false);
     const [copyName, setCopyName] = useState(`${server.activeSubServer || 'server'}-${server.minecraftVersion || 'old'}`);
     const [busy, setBusy] = useState(false);
+    const [waitingForCopy, setWaitingForCopy] = useState(false);
     const [error, setError] = useState('');
 
     const running = server.status === 'online' || server.status === 'installing';
@@ -147,6 +149,12 @@ function MoveDialog({
     const submit = async () => {
         setBusy(true);
         setError('');
+        const move = {
+            minecraft: target.minecraft,
+            installerVersion: installerVersion.trim() || undefined,
+            dropUnavailable: willDrop > 0,
+        };
+        let res;
         if (copyFirst) {
             const copy = await copySubServer(server.id, copyName.trim());
             if (!copy.success) {
@@ -154,12 +162,13 @@ function MoveDialog({
                 setError(copy.message || 'The copy failed, so the move was not started.');
                 return;
             }
+            // The copy is only queued here; the move waits until it has landed.
+            setWaitingForCopy(true);
+            res = await updateServerVersionAfterCopy(server.id, move, copyName.trim());
+            setWaitingForCopy(false);
+        } else {
+            res = await updateServerVersion(server.id, move);
         }
-        const res = await updateServerVersion(server.id, {
-            minecraft: target.minecraft,
-            installerVersion: installerVersion.trim() || undefined,
-            dropUnavailable: willDrop > 0,
-        });
         setBusy(false);
         if (!res.success) {
             setError(res.message || 'The version update failed.');
@@ -243,6 +252,11 @@ function MoveDialog({
 
                     {unmanaged > 0 && <UnlinkedContentWarning count={unmanaged} context="server" />}
 
+                    {waitingForCopy && (
+                        <p className="text-xs text-(--base-07)" role="status">
+                            Copying the server. The move starts once the copy has finished.
+                        </p>
+                    )}
                     {error && <p className="text-xs text-(--error-light)">{error}</p>}
                 </div>
 
