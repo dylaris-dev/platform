@@ -200,11 +200,15 @@ func TestTunnelsUp(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct {
-		clone, old int
-		want       bool
-	}{{0, 0, false}, {1, 0, true}, {1, 2, false}, {2, 2, true}, {3, 2, true}} {
-		if got := cloneReady(tc.clone, tc.old); got != tc.want {
-			t.Errorf("cloneReady(%d, %d) = %v", tc.clone, tc.old, got)
+		clone, old, found int
+		settled           bool
+		want              bool
+	}{
+		{0, 0, 0, false, false}, {1, 0, 0, false, true}, {1, 2, 0, false, false}, {2, 2, 0, false, true}, {3, 2, 0, false, true},
+		{1, 0, 2, false, false}, {2, 0, 2, false, true}, {1, 0, 2, true, true}, {1, 2, 2, true, false},
+	} {
+		if got := cloneReady(tc.clone, tc.old, tc.found, tc.settled); got != tc.want {
+			t.Errorf("cloneReady(%d, %d, %d, %v) = %v", tc.clone, tc.old, tc.found, tc.settled, got)
 		}
 	}
 }
@@ -591,4 +595,50 @@ func TestLinkUpdaterAppliesThePolicyBeforeTheCloneServes(t *testing.T) {
 	if rounds != 1 {
 		t.Fatalf("policy rounds after the clone started = %d, want 1", rounds)
 	}
+}
+
+// A draining Link that has run for weeks has a log past the 16 MiB the updater
+// read from its START, so the "Received signal" line at the end was never seen
+// and every tick sent another SIGTERM - which ends the drain at once and drops
+// every player still on it.
+func TestLinkUpdaterDoesNotResignalALongLoggedDrain(t *testing.T) {
+	filler := strings.Repeat("[Link] Session created: 0123456789abcdef -> 10.0.0.5:25565\n", (17<<20)/58)
+	u, _, expect := newLinkUpdaterTest(t, map[string]*fakeCtr{
+		"old-id":   {name: "l-draining", image: "sha256:old", running: true, labels: testLinkLabels, log: edgeA + filler + "Received signal terminated, draining for up to 6h0m0s before shutdown...\n"},
+		"clone-id": {name: "l-next", image: "sha256:new", running: true, labels: testLinkLabels, log: edgeA, created: updateAt},
+	})
+	u.tick(t.Context(), updateAt)
+	expect("signalled already, long ago in a long log")
+}
+
+// The old Link's tunnel lines are near the start of a log that may have been
+// rotated away, so it can read as holding none. The clone then has to reach
+// every edge it found itself before the old one drains, for as long as it is
+// still settling; an edge it cannot reach at all only delays the update.
+func TestLinkUpdaterWaitsForEveryEdgeTheCloneFound(t *testing.T) {
+	found := "[Mesh] Found Edge e1: public 1.1.1.1:7000, private none. Connecting...\n" +
+		"[Mesh] Found Edge e2: public 2.2.2.2:7000, private none. Connecting...\n"
+	u, f, expect := newLinkUpdaterTest(t, map[string]*fakeCtr{
+		"old-id":   {name: "l", image: "sha256:old", running: true, labels: testLinkLabels, log: "[Link] Session closed: 0123456789abcdef\n"},
+		"clone-id": {name: "l-next", image: "sha256:new", running: true, labels: testLinkLabels, log: found + edgeA, created: updateAt},
+	})
+	u.tick(t.Context(), updateAt.Add(time.Minute))
+	expect("one of the two edges it found: wait")
+
+	f.set("clone-id", func(c *fakeCtr) { c.log = found + "[Mesh] Edge e2 removed. Closing...\n" + edgeA })
+	u.tick(t.Context(), updateAt.Add(time.Minute))
+	expect("the other edge left: drain",
+		"rename l l-draining", "update l-draining restart=no", "kill l-draining SIGTERM")
+}
+
+func TestLinkUpdaterDrainsOnceTheCloneSettledWithoutAnUnreachableEdge(t *testing.T) {
+	found := "[Mesh] Found Edge e1: public 1.1.1.1:7000, private none. Connecting...\n" +
+		"[Mesh] Found Edge e2: public 2.2.2.2:7000, private none. Connecting...\n"
+	u, _, expect := newLinkUpdaterTest(t, map[string]*fakeCtr{
+		"old-id":   {name: "l", image: "sha256:old", running: true, labels: testLinkLabels, log: edgeA},
+		"clone-id": {name: "l-next", image: "sha256:new", running: true, labels: testLinkLabels, log: found + edgeA, created: updateAt},
+	})
+	u.tick(t.Context(), updateAt.Add(linkCloneSettle))
+	expect("settled: as many as the old one is enough",
+		"rename l l-draining", "update l-draining restart=no", "kill l-draining SIGTERM")
 }

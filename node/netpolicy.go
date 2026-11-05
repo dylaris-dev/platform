@@ -397,13 +397,26 @@ func (dm *DockerManager) applyRulesetWith(ctx context.Context, image, netMode, s
 	if err != nil {
 		return fmt.Errorf("create policy helper: %w", err)
 	}
+	// Waited on BEFORE the start, as `docker run --rm` does: the helper exits
+	// within milliseconds and AutoRemove deletes it, so a wait sent after the
+	// start could find no container and report applied rules as a failure.
+	wctx, cancelWait := context.WithCancel(ctx)
+	defer cancelWait()
+	statusCh, errCh := dm.cli.ContainerWait(wctx, resp.ID, container.WaitConditionNextExit)
 	if err := dm.cli.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		// AutoRemove applies only once a container ran; one that never
 		// started stayed behind as Created, one per failure every 15s.
 		_ = dm.cli.ContainerRemove(context.Background(), resp.ID, container.RemoveOptions{Force: true})
+		// The client's wait goroutine blocks until its result is read.
+		cancelWait()
+		go func() {
+			select {
+			case <-statusCh:
+			case <-errCh:
+			}
+		}()
 		return fmt.Errorf("start policy helper: %w", err)
 	}
-	statusCh, errCh := dm.cli.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 	select {
 	case err := <-errCh:
 		return fmt.Errorf("wait policy helper: %w", err)

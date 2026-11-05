@@ -1,7 +1,7 @@
 package main
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -51,11 +51,15 @@ const (
 	linkTunnelUpPrefix   = "Secure Tunnel established to "
 	linkTunnelLostPrefix = "Connection to "
 	linkSignalLine       = "Received signal"
-	linkServeTimeout     = 3 * time.Minute
-	linkUpdateTick       = time.Minute
-	linkLogReadMax       = 16 << 20
-	linkOldLogTail       = "20000"
-	linkStepTimeout      = 30 * time.Second
+	// Logged by gateway/link connection_manager.go for each edge it starts
+	// and stops dialling.
+	linkEdgeFoundPrefix = "[Mesh] Found Edge "
+	linkEdgeLeftPrefix  = "[Mesh] Edge "
+	linkEdgeRemovedMark = " removed. Closing"
+	linkServeTimeout    = 3 * time.Minute
+	linkCloneSettle     = 2 * time.Minute
+	linkUpdateTick      = time.Minute
+	linkStepTimeout     = 30 * time.Second
 )
 
 type linkCtr struct {
@@ -194,27 +198,55 @@ func judgeClone(serving bool, created, now time.Time) cloneVerdict {
 	return cloneWait
 }
 
+// linkLog is what the updater reads from a Link's log, replayed line by line:
+// the edges it holds a tunnel to at the end, how many it is dialling, and
+// whether it got a signal.
+type linkLog struct {
+	up        map[string]bool
+	edges     int
+	signalled bool
+}
+
+func (l *linkLog) line(line string) {
+	if l.up == nil {
+		l.up = map[string]bool{}
+	}
+	if _, rest, ok := strings.Cut(line, linkTunnelUpPrefix); ok {
+		addr, _, _ := strings.Cut(rest, " ")
+		l.up[addr] = true
+	} else if _, rest, ok := strings.Cut(line, linkTunnelLostPrefix); ok {
+		addr, _, _ := strings.Cut(rest, " ")
+		delete(l.up, addr)
+	}
+	if strings.Contains(line, linkEdgeFoundPrefix) {
+		l.edges++
+	} else if strings.Contains(line, linkEdgeLeftPrefix) && strings.Contains(line, linkEdgeRemovedMark) {
+		l.edges--
+	}
+	if strings.Contains(line, linkSignalLine) {
+		l.signalled = true
+	}
+}
+
 // tunnelsUp replays a Link's log and counts the edges it holds a tunnel to at
 // the end of it.
 func tunnelsUp(logText string) int {
-	up := map[string]bool{}
+	var l linkLog
 	for _, line := range strings.Split(logText, "\n") {
-		if _, rest, ok := strings.Cut(line, linkTunnelUpPrefix); ok {
-			addr, _, _ := strings.Cut(rest, " ")
-			up[addr] = true
-		} else if _, rest, ok := strings.Cut(line, linkTunnelLostPrefix); ok {
-			addr, _, _ := strings.Cut(rest, " ")
-			delete(up, addr)
-		}
+		l.line(line)
 	}
-	return len(up)
+	return len(l.up)
 }
 
 // cloneReady: the clone serves only once it holds a tunnel to at least as many
 // edges as the old Link. Draining on the first tunnel would leave every edge
 // the clone has not reached yet routing new players to a Link that refuses
-// them.
-func cloneReady(cloneUp, oldUp int) bool { return cloneUp >= 1 && cloneUp >= oldUp }
+// them. The old count comes from a log that rotation may have cut, so until
+// the clone has settled it must also hold every edge it found itself; past
+// that, an edge it cannot reach only delays the update.
+func cloneReady(cloneUp, oldUp, cloneEdges int, settled bool) bool {
+	return cloneUp >= 1 && cloneUp >= oldUp && (settled || cloneUp >= cloneEdges)
+}
 
 func parseLinkUpdateTime(s string) (hour, minute int, err error) {
 	t, err := time.Parse("15:04", strings.TrimSpace(s))
@@ -590,15 +622,15 @@ func (u *linkUpdater) checkClone(ctx context.Context, clone, old *linkCtr, now t
 		log.Printf("link update: read logs of %s: %v", clone.Name, err)
 		return
 	}
-	// The old Link may have run for weeks: its recent lines are enough to know
-	// which tunnels it holds now.
-	oldLog, err := u.logs(ctx, old.ID, container.LogsOptions{Tail: linkOldLogTail})
+	// The whole log: a tunnel is logged once, when it comes up, so on a Link
+	// that ran for weeks its line is near the start, not in a recent tail.
+	oldLog, err := u.logs(ctx, old.ID, container.LogsOptions{})
 	if err != nil {
 		log.Printf("link update: read logs of %s: %v", old.Name, err)
 		return
 	}
-	cloneUp, oldUp := tunnelsUp(cloneLog), tunnelsUp(oldLog)
-	switch judgeClone(cloneReady(cloneUp, oldUp), created, now) {
+	cloneUp, oldUp := len(cloneLog.up), len(oldLog.up)
+	switch judgeClone(cloneReady(cloneUp, oldUp, cloneLog.edges, now.Sub(created) >= linkCloneSettle), created, now) {
 	case cloneDrainOld:
 		log.Printf("link update: %s holds %d tunnels (%s holds %d); new players go to it", clone.Name, cloneUp, old.Name, oldUp)
 		u.retire(ctx, old, old.Name+linkDrainingSuffix)
@@ -609,24 +641,39 @@ func (u *linkUpdater) checkClone(ctx context.Context, clone, old *linkCtr, now t
 	}
 }
 
-// logs returns a container's log as text. Compose runs the Link without a TTY,
-// so the stream is multiplexed; a TTY container's raw stream is used as is.
-func (u *linkUpdater) logs(ctx context.Context, id string, opts container.LogsOptions) (string, error) {
+// logs replays a container's whole log as it streams, so its size costs time
+// but no memory. It used to keep the first 16 MiB, and on a long-running Link
+// the recent lines - "Received signal" among them - were past the cut.
+// Compose runs the Link without a TTY, so the stream is multiplexed; a TTY
+// container's raw stream is used as is.
+func (u *linkUpdater) logs(ctx context.Context, id string, opts container.LogsOptions) (*linkLog, error) {
 	opts.ShowStdout, opts.ShowStderr = true, true
 	rc, err := u.cli.ContainerLogs(ctx, id, opts)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer rc.Close()
-	raw, err := io.ReadAll(io.LimitReader(rc, linkLogReadMax))
-	if err != nil {
-		return "", err
+	br := bufio.NewReader(rc)
+	var src io.Reader = br
+	if h, _ := br.Peek(8); len(h) == 8 && h[0] <= 2 && h[1] == 0 && h[2] == 0 && h[3] == 0 {
+		pr, pw := io.Pipe()
+		defer pr.Close()
+		go func() {
+			_, err := stdcopy.StdCopy(pw, pw, br)
+			pw.CloseWithError(err)
+		}()
+		src = pr
 	}
-	var out bytes.Buffer
-	if _, err := stdcopy.StdCopy(&out, &out, bytes.NewReader(raw)); err != nil {
-		return string(raw), nil
+	var out linkLog
+	sc := bufio.NewScanner(src)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() {
+		out.line(sc.Text())
 	}
-	return out.String(), nil
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // retire renames a running Link to its drain name, then signals it once. It
@@ -659,12 +706,12 @@ func (u *linkUpdater) ensureSignalled(ctx context.Context, c *linkCtr) bool {
 	if err != nil || info.State == nil || !info.State.Running {
 		return false
 	}
-	text, err := u.logs(sctx, c.ID, container.LogsOptions{Since: info.State.StartedAt})
+	l, err := u.logs(sctx, c.ID, container.LogsOptions{Since: info.State.StartedAt})
 	if err != nil {
 		log.Printf("link update: read logs of %s: %v", c.Name, err)
 		return false
 	}
-	if strings.Contains(text, linkSignalLine) {
+	if l.signalled {
 		return true
 	}
 	// Otherwise Docker brings it back once the drain ends.

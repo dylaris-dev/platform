@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/docker/docker/client"
@@ -78,5 +79,33 @@ func TestMigrateStorageDoesNotGoThroughPowerActionDelete(t *testing.T) {
 	}
 	if strings.Contains(body[i:j], `PowerAction(cmd.Config.UUID, "delete")`) {
 		t.Error("migrate_storage removes the container via PowerAction(\"delete\"), which now also frees the port a moved server keeps")
+	}
+}
+
+// A release during a Redis blip removed the server from RAM but left its keys
+// in Redis, with no TTL, and nothing ever retried: the next restart loaded the
+// deleted server's port again. The release is retried until it lands.
+func TestReleasePortRetriesWhenRedisFails(t *testing.T) {
+	prev := forgetRetryEvery
+	forgetRetryEvery = 10 * time.Millisecond
+	t.Cleanup(func() { forgetRetryEvery = prev })
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
+	pm := NewPortManager(rdb, "node-1", 25600, 25699, seqMode)
+	if _, err := pm.AllocatePort("alpha"); err != nil {
+		t.Fatal(err)
+	}
+
+	mr.SetError("LOADING Redis is loading the dataset in memory")
+	pm.ReleasePort("alpha")
+	mr.SetError("")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for mr.Exists("dylaris:node:node-1:port:alpha") || mr.HGet("dylaris:node:node-1:ports", "alpha") != "" {
+		if time.Now().After(deadline) {
+			t.Fatal("the deleted server's port entry is still in Redis")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

@@ -1518,6 +1518,13 @@ func (dm *DockerManager) RestartContainerInZone(uuid, tz string, ramMB int) erro
 	}
 	config.Docker.CPULimit = float64(info.HostConfig.NanoCPUs) / 1e9
 	config.Docker.CpusetCpus = info.HostConfig.CpusetCpus
+	// Without it the container port fell back to the node default, and a
+	// server an admin had moved (a proxy listens there too) came back
+	// unreachable after every start or restart.
+	_, config.Docker.ContainerPort = boundPorts(info.HostConfig.PortBindings, containerLabel(info, extraPortsLabel))
+	if config.Docker.ContainerPort == 0 {
+		config.Docker.ContainerPort = dm.savedContainerPort(uuid)
+	}
 	config.Docker.Timezone = tz
 	if tz == "" {
 		config.Docker.Timezone = envValue(info.Config.Env, "TZ")

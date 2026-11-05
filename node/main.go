@@ -399,7 +399,7 @@ func main() {
 	dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd, getPortMode)
 	// Redis holds the port ledger but is in-memory only, so a host reboot wipes
 	// it while the containers keep their ports. Rebuild it from them.
-	dockerMgr.portMgr.AdoptExistingBindings(dockerMgr.ExistingHostPortBindings())
+	dockerMgr.portMgr.AdoptContainerBindings(dockerMgr.ExistingHostPortBindings())
 	dockerMgr.restorePortLedger()
 
 	// Load routing modes from Redis, refresh every 30s

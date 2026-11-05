@@ -85,6 +85,34 @@ func (pm *PortManager) AdoptExistingBindings(bindings map[string]int) {
 	}
 }
 
+// AdoptContainerBindings is AdoptExistingBindings for the bindings of the
+// host's containers, which hold their ports for real: a ledger entry loaded
+// from Redis for a server that binds no such port gives way. Such an entry is
+// what a release that failed in Redis leaves behind, and it used to keep the
+// live server out of the ledger, so its next recreate failed or moved it.
+func (pm *PortManager) AdoptContainerBindings(bindings map[string]int) {
+	pm.mu.Lock()
+	for uuid, port := range bindings {
+		owner, ok := pm.usedPorts[port]
+		if !ok || owner == uuid || bindings[owner] == port {
+			continue
+		}
+		delete(pm.usedPorts, port)
+		// An owner with a container elsewhere is moved by its own adoption,
+		// which rewrites its keys; one with none is gone.
+		if bindings[owner] == 0 {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			if err := pm.forget(ctx, owner, fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, owner)); err != nil {
+				log.Printf("PortManager: could not clear stale port %d of %s: %v", port, owner, err)
+			}
+			cancel()
+		}
+		log.Printf("PortManager: port %d was recorded for %s, but %s's container binds it", port, owner, uuid)
+	}
+	pm.mu.Unlock()
+	pm.AdoptExistingBindings(bindings)
+}
+
 // portsKey mirrors every dylaris:node:<id>:port:<uuid> key of this node into
 // one hash, so the allocations load with one read instead of a keyspace walk.
 // The node is losing SCAN: it lists every key NAME on the platform whatever
@@ -202,7 +230,12 @@ func (pm *PortManager) ReleasePort(serverUUID string) {
 			key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
-			pm.forget(ctx, serverUUID, key)
+			if err := pm.forget(ctx, serverUUID, key); err != nil {
+				// The keys have no TTL and nothing else removes them: left
+				// there, the next restart hands the port back to this server.
+				log.Printf("PortManager: release of port %d (server %s) not stored, retrying: %v", port, serverUUID, err)
+				go pm.retryForget(serverUUID, key)
+			}
 			delete(pm.usedPorts, port)
 			log.Printf("PortManager: released port %d (server %s)", port, serverUUID)
 			return
@@ -256,11 +289,43 @@ func (pm *PortManager) persist(ctx context.Context, serverUUID, key string, port
 }
 
 // forget removes both, together.
-func (pm *PortManager) forget(ctx context.Context, serverUUID, key string) {
+func (pm *PortManager) forget(ctx context.Context, serverUUID, key string) error {
 	pipe := pm.rdb.TxPipeline()
 	pipe.Del(ctx, key)
 	pipe.HDel(ctx, pm.portsKey(), serverUUID)
-	pipe.Exec(ctx)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+var forgetRetryEvery = 10 * time.Second
+
+// retryForget repeats a failed release for a few minutes. A server given a
+// port again in the meantime owns its keys again and stops it. Past that, a
+// stale entry still gives way to a live container at the next start
+// (AdoptContainerBindings).
+func (pm *PortManager) retryForget(serverUUID, key string) {
+	for range 30 {
+		time.Sleep(forgetRetryEvery)
+		pm.mu.Lock()
+		held := false
+		for _, uuid := range pm.usedPorts {
+			if uuid == serverUUID {
+				held = true
+				break
+			}
+		}
+		var err error
+		if !held {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			err = pm.forget(ctx, serverUUID, key)
+			cancel()
+		}
+		pm.mu.Unlock()
+		if held || err == nil {
+			return
+		}
+	}
+	log.Printf("PortManager: gave up releasing the port of %s in Redis", serverUUID)
 }
 
 // Snapshot returns serverUUID -> port for every allocation.
