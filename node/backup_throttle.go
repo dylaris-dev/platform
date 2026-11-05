@@ -192,7 +192,10 @@ func nodeLoad() (playersOnline bool, txBps int64) {
 // (and never above the uplink). The headroom is a share, not a fixed number: a
 // 40 Mbit/s home uplink has no 50 Mbit/s to spare. What keeps players smooth is
 // that the uplink never fills, so no queue builds in front of their packets.
-func backupRates(p *backupPolicy, envUplinkMbit int64, playersOnline bool, txBps int64, savesPaused bool, saveOffFor time.Duration) (upload, read rate.Limit) {
+//
+// share is how many runs split the budget. Only the budget is split, never the
+// floor: each run's parts must still finish inside partPutTimeout.
+func backupRates(p *backupPolicy, envUplinkMbit int64, playersOnline bool, txBps int64, savesPaused bool, saveOffFor time.Duration, share int64) (upload, read rate.Limit) {
 	if p == nil {
 		p = &backupPolicy{}
 	}
@@ -228,7 +231,7 @@ func backupRates(p *backupPolicy, envUplinkMbit int64, playersOnline bool, txBps
 	capBps := uplinkMbit * 1_000_000 / 8
 	budget := capBps*(100-headroom)/100 - txBps
 	floor := min(max(capBps/10, backupUploadFloorBps), capBps)
-	return rate.Limit(max(budget, floor)), read
+	return rate.Limit(max(budget/max(share, 1), floor)), read
 }
 
 // backupPolicyIsSet tells "Core sent a policy with no ceiling" from "no policy
@@ -318,10 +321,7 @@ func (b *backupPacer) refresh(force bool) {
 	if since != 0 {
 		saveOffFor = now.Sub(time.Unix(0, since))
 	}
-	up, read := backupRates(p, env, players, tx, since != 0, saveOffFor)
-	if up != rate.Inf {
-		up /= rate.Limit(b.uplinkShare())
-	}
+	up, read := backupRates(p, env, players, tx, since != 0, saveOffFor, b.uplinkShare())
 	up = min(up, b.storageCap)
 	if b.up.Limit() != up {
 		b.up.SetLimitAt(now, up)

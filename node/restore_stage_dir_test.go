@@ -213,3 +213,38 @@ func TestAHandMadeDirectoryIsNotMistakenForStaging(t *testing.T) {
 		}
 	}
 }
+
+// No restore survives a restart, so a stage older than this process is dead
+// whatever its age. Kept for 24 hours, it shrank the disk budget of the very
+// restore the queue redelivered after the restart.
+func TestRestoreCleanupRemovesAStageFromBeforeThisProcess(t *testing.T) {
+	sm, _ := newPlacementManager(t, 1)
+	root := sm.Paths()[0]
+	sub := filepath.Join(root, "srv-uuid", "survival")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dead, err := createStageDir(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As the previous process left it: minutes old, and not this process's.
+	ownStages.Delete(filepath.Base(dead))
+	at := time.Now().Add(-10 * time.Minute)
+	if err := os.Chtimes(dead, at, at); err != nil {
+		t.Fatal(err)
+	}
+	live, err := createStageDir(sub)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runRestoreCleanup(sm)
+
+	if _, err := os.Stat(dead); !os.IsNotExist(err) {
+		t.Errorf("stage of the previous process kept: %v", err)
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Errorf("swept a stage of this process: %v", err)
+	}
+}

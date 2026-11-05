@@ -2,7 +2,10 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -177,5 +180,72 @@ func TestAKeptStashLeavesTheCleanupsReach(t *testing.T) {
 	keepStash(1, filepath.Join(dir, "absent.pre-restore-20261008-120000")) // must not panic or create anything
 	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
 		t.Fatalf("keepStash of a missing stash changed the directory: %v", entries)
+	}
+}
+
+// A byte now and then re-armed the stall timer every time, so a tenant's own
+// bucket that trickled one byte inside each window held the slot for good.
+func TestARestoreGivesUpOnATricklingDownload(t *testing.T) {
+	prevStall, prevMin, prevNode, prevReq := restoreStallTimeout, restoreStallMinBytes, nodeID, coreRequest
+	t.Cleanup(func() {
+		restoreStallTimeout, restoreStallMinBytes, nodeID, coreRequest = prevStall, prevMin, prevNode, prevReq
+	})
+	restoreStallTimeout = 300 * time.Millisecond
+	restoreStallMinBytes = 1024
+	nodeID = "node-r82t"
+
+	// A valid archive, so the restore gets past the gzip header and is ended
+	// by the guard rather than by a parse error.
+	var archive bytes.Buffer
+	gz := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gz)
+	data := make([]byte, 4096)
+	rand.Read(data)
+	tw.WriteHeader(&tar.Header{Name: "a.bin", Mode: 0o644, Size: int64(len(data)), Typeflag: tar.TypeReg})
+	tw.Write(data)
+	tw.Close()
+	gz.Close()
+	stop := make(chan struct{})
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		for _, b := range archive.Bytes() {
+			if _, err := w.Write([]byte{b}); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+			select {
+			case <-time.After(50 * time.Millisecond):
+			case <-r.Context().Done():
+				return
+			case <-stop:
+				return
+			}
+		}
+	}))
+	defer src.Close()
+	defer close(stop) // before Close, which waits for the handler
+	coreRequest = func(context.Context, *pb.NodeMessage, time.Duration) (*pb.NodeMessage, error) {
+		return &pb.NodeMessage{Payload: &pb.NodeMessage_RestoreUrlResponse{RestoreUrlResponse: &pb.RestoreUrlResponse{Url: src.URL}}}, nil
+	}
+
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "srv-r82t"), 0o755)
+	blob, _ := json.Marshal(storageInfo{ID: 1, Provider: "s3"})
+	cmd := BackupRestoreCommand{RunID: 1, RestoreID: 85, ServerUUID: "srv-r82t", StorageKey: "k", Storage: blob, Download: modeDownloadPresigned}
+	rdb := newMiniRedis(t)
+	report := terminalReport(t, rdb, queue.BackupRestoresChannel(nodeID), func() {
+		done := make(chan struct{})
+		go func() {
+			RunRestore(context.Background(), rdb, &StorageManager{paths: []string{root}}, nil, cmd)
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("a trickling restore download held the command")
+		}
+	})
+	if report["status"] != "failed" {
+		t.Fatalf("report = %v, want failed", report)
 	}
 }

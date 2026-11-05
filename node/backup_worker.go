@@ -450,6 +450,9 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 			reportBackup(ctx, rdb, cmd.RunID, "failed", "spool the archive: "+err.Error(), 0)
 			return
 		}
+		// The file's bytes now count in the disk's free space; holding the
+		// reservation through the paced upload counted them twice.
+		releaseSpool()
 		addedAny = added
 		// The archive is complete on disk: the world may save again while the
 		// upload takes as long as the players need it to.

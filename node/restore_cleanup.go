@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,11 @@ const pendingDeleteTTL = 10 * time.Minute
 // restoreCleanupInterval is how often we walk the storage paths looking
 // for stale .pre-restore-* directories.
 const restoreCleanupInterval = time.Hour
+
+// ownStages holds the base names of the staging dirs this process created. No
+// restore survives a restart, so any other one is dead whatever its age. Names,
+// not mtimes: a clock stepped back at boot would make a fresh stage look old.
+var ownStages sync.Map
 
 // preRestoreStash matches the names RunRestore gives a stash:
 // "<target>.pre-restore-<YYYYMMDD-HHMMSS>". The sub-server name comes first,
@@ -138,8 +144,13 @@ func runRestoreCleanup(sm *StorageManager) {
 				label = "pending-delete tombstone"
 			case restoreStage.MatchString(base):
 				// Same 24h TTL as the stash: a restore still extracting after a
-				// day is not running, it is dead.
+				// day is not running, it is dead. One from before this process
+				// is dead already, and held the space its redelivered restore
+				// needs; on storage another node uses, it may be that node's.
 				label = "restore staging dir"
+				if _, ours := ownStages.Load(base); !ours && !sharedWithAnotherNode(root) {
+					cutoff = now
+				}
 			}
 			if info.ModTime().Before(cutoff) {
 				log.Printf("restore-cleanup: removing %s %s (age %v)", label, path, now.Sub(info.ModTime()).Round(time.Minute))

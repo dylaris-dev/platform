@@ -62,6 +62,7 @@ func createStageDir(targetDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	ownStages.Store(filepath.Base(dir), true)
 	// MkdirTemp creates 0700; the restored tree is handed to the MC container,
 	// which may not run as this process's user.
 	if err := os.Chmod(dir, 0o755); err != nil {
@@ -179,7 +180,8 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 
 	// The body has no deadline (a restore may stream for hours), so a source
 	// that stops sending ends it instead: a tenant's own bucket could trickle a
-	// byte a minute and hold this command slot for good.
+	// byte a minute and hold this command slot for good. A window must bring
+	// restoreStallMinBytes, not just any byte, or that trickle re-arms it.
 	dlCtx, dlCancel := context.WithCancel(ctx)
 	defer dlCancel()
 	var body io.ReadCloser
@@ -198,7 +200,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	stall := time.AfterFunc(restoreStallTimeout, dlCancel)
 	defer stall.Stop()
 
-	gr, err := gzip.NewReader(&stallReader{r: body, t: stall, d: restoreStallTimeout})
+	gr, err := gzip.NewReader(&stallReader{r: body, t: stall, d: restoreStallTimeout, min: restoreStallMinBytes})
 	if err != nil {
 		stageCleanup()
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "gzip open: "+err.Error())
@@ -482,19 +484,28 @@ var nodeOwnedRootEntries = []string{backupDirName, ".node_config.json", ".active
 // long. A variable for tests.
 var restoreStallTimeout = 2 * time.Minute
 
-// stallReader re-arms the stall timer for d on every read that returned data.
+// restoreStallMinBytes is the least a restore download must deliver per
+// restoreStallTimeout (about 8.7 KB/s). A variable for tests.
+var restoreStallMinBytes int64 = 1 << 20
+
+// stallReader re-arms the stall timer for d on every read that returned data,
+// or, with min set, once min bytes arrived since it was last armed.
 // It is NOT stopped at EOF: an HTTP/2 upload reads its last buffer to EOF before
 // flow control lets it go out, so a peer that withholds the window from there
 // would otherwise hold the request with no timer running. The owner stops it.
 type stallReader struct {
-	r io.Reader
-	t *time.Timer
-	d time.Duration
+	r   io.Reader
+	t   *time.Timer
+	d   time.Duration
+	min int64
+	got int64
 }
 
 func (s *stallReader) Read(p []byte) (int, error) {
 	n, err := s.r.Read(p)
-	if n > 0 {
+	s.got += int64(n)
+	if n > 0 && s.got >= s.min {
+		s.got = 0
 		s.t.Reset(s.d)
 	}
 	return n, err

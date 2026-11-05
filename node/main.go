@@ -469,6 +469,9 @@ func main() {
 
 	go startDiscoveryLoop(ctx, rdb, nodeID, nodeTags, nodeRegion, mon, dockerMgr)
 	go runCoreLoadPublisher(ctx, rdb, nodeID)
+	// Before the consumer: a restore the queue redelivers after a restart must
+	// not budget its disk around the stage its killed run left behind.
+	runRestoreCleanup(storageMgr)
 	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
 	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
 	globalSpoolDir = backupSpoolDir(storageMgr.Paths())

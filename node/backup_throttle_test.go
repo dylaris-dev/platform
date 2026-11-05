@@ -61,7 +61,7 @@ func TestBackupRates(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			up, read := backupRates(tt.p, tt.env, tt.players, tt.tx, tt.paused, tt.saveOffFor)
+			up, read := backupRates(tt.p, tt.env, tt.players, tt.tx, tt.paused, tt.saveOffFor, 1)
 			if up != tt.wantUp || read != tt.wantRead {
 				t.Fatalf("got up=%v read=%v, want up=%v read=%v", up, read, tt.wantUp, tt.wantRead)
 			}
@@ -448,6 +448,64 @@ func TestConcurrentUploadsSplitTheUplink(t *testing.T) {
 		a.refresh(true)
 		if a.up.Limit() != s.want {
 			t.Fatalf("%s: up=%v, want %v", s.name, a.up.Limit(), s.want)
+		}
+	}
+}
+
+// Once the spool file is written its bytes are already gone from the free
+// space, so holding the reservation through the paced upload counted them
+// twice and refused restores and copies on a disk with room for them.
+func TestSpoolReservationEndsOnceTheArchiveIsOnDisk(t *testing.T) {
+	spool := t.TempDir()
+	prevDir, prevPause, prevPolicy := globalSpoolDir, pauseSaves, backupPolicyNow.Load()
+	t.Cleanup(func() {
+		globalSpoolDir, pauseSaves = prevDir, prevPause
+		backupPolicyNow.Store(prevPolicy)
+		inflightWrites.Store(0)
+	})
+	globalSpoolDir = spool
+	backupPolicyNow.Store(&backupPolicy{HeadroomPct: i64(30), SpoolEnabled: true, SpoolMaxGB: 1})
+	inflightWrites.Store(0)
+
+	core := newFakeCore(t, 1024)
+	heldAtSaveOn := int64(-1)
+	pauseSaves = func(_ context.Context, _ *redis.Client, _ *DockerManager, uuid string) *worldSaveGuard {
+		return &worldSaveGuard{uuid: uuid, send: func(cmd string) {
+			if cmd == "save-on" && heldAtSaveOn < 0 {
+				heldAtSaveOn = inflightWrites.Load()
+			}
+		}}
+	}
+	if report := runBackupWithFakeCore(t, core, nil); report["status"] != "success" {
+		t.Fatalf("report = %v, want success", report)
+	}
+	if heldAtSaveOn != 0 {
+		t.Fatalf("inflightWrites = %d while the spooled archive uploads, want 0", heldAtSaveOn)
+	}
+}
+
+// Dividing the floor too left each of seven runs at the 4 Mbit/s floor with
+// about 36 KB/s per part, and a 64 MiB part then outlasts partPutTimeout.
+func TestConcurrentUploadsKeepTheFloorEach(t *testing.T) {
+	now := time.Unix(3_000_000, 0)
+	inputs := func() (*backupPolicy, int64, bool, int64, time.Time) {
+		// 10 Mbit/s with the players sending 9: the budget is below the floor.
+		return &backupPolicy{UplinkMbit: i64(10), HeadroomPct: i64(30)}, 0, true, 9_000_000 / 8, now
+	}
+	internet := func() bool { return false }
+	pacers := make([]*backupPacer, 7)
+	for i := range pacers {
+		pacers[i] = newBackupPacer(0)
+		pacers[i].inputs = inputs
+		t.Cleanup(pacers[i].done)
+		if err := pacers[i].uploadWait(context.Background(), internet)(1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, p := range pacers {
+		p.refresh(true)
+		if got := p.up.Limit(); got < backupUploadFloorBps {
+			t.Fatalf("run %d of 7: up=%v, want at least the floor %d", i, got, backupUploadFloorBps)
 		}
 	}
 }
