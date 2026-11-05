@@ -82,7 +82,19 @@ func (bt *BeamThrottle) WaitN(ctx context.Context, dir Direction, n int) error {
 	if lim == nil {
 		return nil // unlimited
 	}
-	return lim.WaitN(ctx, n)
+	// x/time refuses n > burst outright, and callers pass whole chunks
+	// (512 KiB uploads) that exceed the 256 KiB burst cap: pace in steps.
+	for n > 0 {
+		step := n
+		if b := lim.Burst(); step > b {
+			step = b
+		}
+		if err := lim.WaitN(ctx, step); err != nil {
+			return err
+		}
+		n -= step
+	}
+	return nil
 }
 
 // UpLimit / DownLimit expose the current caps for diagnostics.

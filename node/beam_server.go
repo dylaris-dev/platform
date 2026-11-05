@@ -1230,26 +1230,48 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	// follow-up BeamUploadStart with the same id. The 15s sweeper removes
 	// abandoned temps anyway.
 	completed := false
+	// resumedAt is the size the resumable temp already had at Start. Those
+	// bytes were counted when the stream that wrote them ended, so this one
+	// reserves and is charged only for what it adds.
+	var resumedAt int64
+	// Released only after the kept bytes are noted, so no Start in between
+	// sees the headroom without them.
+	releaseServer, releaseUser, releaseBudget := func() {}, func() {}, func() {}
 
 	defer func() {
-		if upRoot != nil {
-			defer upRoot.Close()
-		}
+		defer func() {
+			releaseServer()
+			releaseUser()
+			releaseBudget()
+			if upRoot != nil {
+				upRoot.Close()
+			}
+		}()
 		if tmpFile == nil {
 			return
 		}
-		tmpFile.Close()
 		if completed {
+			tmpFile.Close()
 			return
 		}
 		// Cancel / disconnect / error path.
 		if uploadID != "" {
 			// Stable id present → keep the temp so a resume can pick up
 			// where this stream left off. Sweeper trims it if no resume
-			// comes within the grace window.
+			// comes within the grace window. The kept bytes count now:
+			// otherwise the next upload under a fresh id sees the whole disk
+			// headroom and daily quota again. The stream context is already
+			// cancelled here, so the Redis writes must not use it.
+			if info, err := tmpFile.Stat(); err == nil && info.Size() > resumedAt {
+				bg := context.WithoutCancel(ctx)
+				s.recordBeamDailyUsage(bg, username, info.Size()-resumedAt)
+				noteDiskWrite(bg, s.rdb, serverUUID, info.Size()-resumedAt)
+			}
+			tmpFile.Close()
 			log.Printf("beam-server: upload %s interrupted, keeping partial temp %s for resume", uploadID, path.Base(tmpName))
 			return
 		}
+		tmpFile.Close()
 		upRoot.Remove(tmpName)
 		log.Printf("beam-server: upload aborted, removed partial temp %s", path.Base(tmpName))
 	}()
@@ -1298,14 +1320,30 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			if p.Start.TotalSize < 0 {
 				return status.Error(codes.InvalidArgument, "the upload size cannot be negative")
 			}
+			if uploadID != "" {
+				tmpName = path.Join(path.Dir(destName), ".beam-upload-"+uploadID)
+				if info, err := upRoot.Lstat(tmpName); err == nil && info.Mode().IsRegular() {
+					resumedAt = info.Size()
+				}
+			}
+			need := max(p.Start.TotalSize-resumedAt, 0)
+
 			// Every upload of this server and of this account that is still in
 			// progress counts against the same headroom and quota as this one.
 			// Reserved before checking, so two Starts at once cannot both see
 			// room that only one of them has.
-			serverTotal, releaseServer := s.reserveUpload("s:"+serverUUID, p.Start.TotalSize)
-			defer releaseServer()
-			userTotal, releaseUser := s.reserveUpload("u:"+username, p.Start.TotalSize)
-			defer releaseUser()
+			var serverTotal, userTotal int64
+			serverTotal, releaseServer = s.reserveUpload("s:"+serverUUID, need)
+			userTotal, releaseUser = s.reserveUpload("u:"+username, need)
+
+			// The node's own free space, less its reserve and what other writes
+			// in progress have claimed: the server's limit alone does not stop
+			// a node from filling for every tenant on it.
+			budget := &writeBudget{left: restoreDiskBudget(s.storageMgr.GetServerDir(serverUUID)) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
+			releaseBudget = budget.release
+			if !budget.spend(need) {
+				return status.Errorf(codes.ResourceExhausted, "not enough free space on the node for an upload of %d bytes", need)
+			}
 
 			// Disk-quota pre-check. The beam tunnel bypasses Core's HTTP body
 			// size cap and its disk precheck, so enforce the same server disk
@@ -1333,7 +1371,6 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				// reattaches to the same file. RDWR so we don't truncate
 				// what previous chunks already wrote; O_CREATE so the
 				// very first Start makes it.
-				tmpName = path.Join(path.Dir(destName), ".beam-upload-"+uploadID)
 				f, err := upRoot.OpenFile(tmpName, os.O_RDWR|os.O_CREATE, 0644)
 				if err != nil {
 					return status.Errorf(codes.Internal, "open temp: %v", err)
@@ -1407,10 +1444,11 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			return stream.SendAndClose(&pb.BeamOpResp{Success: false, Message: err.Error()})
 		}
 		// Count the completed upload against the user's daily quota by the final
-		// on-disk size, so a resumed multi-session upload is counted once.
+		// on-disk size, so a resumed multi-session upload is counted once: what
+		// an interrupted stream left in the temp was charged when it ended.
 		if fi, statErr := upRoot.Stat(destName); statErr == nil {
-			s.recordBeamDailyUsage(ctx, username, fi.Size())
-			noteDiskWrite(ctx, s.rdb, serverUUID, fi.Size()-prior)
+			s.recordBeamDailyUsage(ctx, username, fi.Size()-resumedAt)
+			noteDiskWrite(ctx, s.rdb, serverUUID, fi.Size()-prior-resumedAt)
 		}
 	}
 

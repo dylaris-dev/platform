@@ -28,12 +28,17 @@ type fakeBeamUploadStream struct {
 	msgs []*pb.BeamUploadMsg
 	idx  int
 	resp *pb.BeamOpResp
+	// end is what Recv returns after the last message; nil means a clean EOF.
+	end error
 }
 
 func (f *fakeBeamUploadStream) Context() context.Context { return f.ctx }
 
 func (f *fakeBeamUploadStream) Recv() (*pb.BeamUploadMsg, error) {
 	if f.idx >= len(f.msgs) {
+		if f.end != nil {
+			return nil, f.end
+		}
 		return nil, io.EOF
 	}
 	m := f.msgs[f.idx]

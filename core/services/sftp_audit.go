@@ -66,8 +66,9 @@ func (s *SFTPAuditService) Start(ctx context.Context) {
 }
 
 // apply writes one record after checking that the node that sent it hosts the
-// server it names, and is one of ours: a customer's machine serves no SFTP, so
-// a record from one is not a record of anything.
+// server it names. An SFTP record must also come from one of ours: a customer's
+// machine serves no SFTP, so such a record is not a record of anything. It does
+// serve Beam - the only file path it has - so its Beam records are kept.
 func (s *SFTPAuditService) apply(channel string, rec queue.SFTPAuditRecord) {
 	token, ok := queue.NodeTokenFromSFTPAuditChannel(channel)
 	if !ok || rec.ServerUUID == "" || rec.Username == "" {
@@ -78,8 +79,8 @@ func (s *SFTPAuditService) apply(channel string, rec queue.SFTPAuditRecord) {
 		return
 	}
 	node, err := s.store.GetNodeByID(srv.NodeID)
-	if err != nil || node == nil || node.Token != token || node.IsExternal() {
-		log.Printf("sftp audit: DROPPED a record from node %q about server %s, which it does not serve SFTP for", token, rec.ServerUUID)
+	if err != nil || node == nil || node.Token != token || (node.IsExternal() && rec.Via != "beam") {
+		log.Printf("sftp audit: DROPPED a record from node %q about server %s, which it does not serve file access for", token, rec.ServerUUID)
 		return
 	}
 	enabled, force, _, err := s.store.GetServerAuditState(srv.ID)
