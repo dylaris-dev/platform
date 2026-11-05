@@ -385,12 +385,16 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	// Spool or not is decided before saving pauses: measuring the server's
 	// size is a walk of its own and must not lengthen the window.
 	pacer := newBackupPacer(cmd.UploadCapMbit)
+	defer pacer.done()
 	spoolPath, spoolMax := "", int64(0)
+	releaseSpool := func() {}
+	// Deferred before the spool file's removal, so it runs after it.
+	defer func() { releaseSpool() }()
 	if cmd.Upload == modeUploadMultipart {
 		if p := backupPolicyNow.Load(); p != nil && p.SpoolEnabled && globalSpoolDir != "" {
 			_, free := getDiskSpace(globalSpoolDir)
 			var why string
-			spoolMax, why = spoolBudget(p, dirSize(rootDir), free)
+			spoolMax, releaseSpool, why = reserveSpool(p, dirSize(rootDir), free)
 			if spoolMax > 0 {
 				spoolPath = filepath.Join(globalSpoolDir, spoolFileName(cmd.RunID))
 			} else {
@@ -409,6 +413,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	} else {
 		// A stopped server has no save-off window to shorten.
 		spoolPath = ""
+		releaseSpool()
 	}
 	logBackupPace(cmd.RunID, pacer)
 

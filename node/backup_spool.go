@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // The spool packs a backup into a local file before uploading it. World saving
@@ -80,6 +81,29 @@ func spoolBudget(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, s
 	// Everything but the reserve: the archive may outgrow its estimate a
 	// little (a log written mid-run), and never into the last 5 GB.
 	return int64(freeBytes - spoolReserveBytes), ""
+}
+
+// spoolReserveMu makes reading the shared budget and holding a run's share of
+// it one step, so two runs started together cannot both see the space free.
+var spoolReserveMu sync.Mutex
+
+// reserveSpool is spoolBudget against the node's shared write budget: free
+// less what other writes (restores, copies, other spools) hold. A spool that is
+// granted holds its source size in inflightWrites until release, so the next
+// run, restore or copy sees it as taken. release is idempotent.
+func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, func(), string) {
+	spoolReserveMu.Lock()
+	defer spoolReserveMu.Unlock()
+	if held := inflightWrites.Load(); held > 0 {
+		freeBytes -= min(freeBytes, uint64(held))
+	}
+	limit, why := spoolBudget(p, sourceBytes, freeBytes)
+	if limit <= 0 {
+		return 0, func() {}, why
+	}
+	inflightWrites.Add(sourceBytes)
+	var once sync.Once
+	return limit, func() { once.Do(func() { inflightWrites.Add(-sourceBytes) }) }, ""
 }
 
 var errSpoolFull = errors.New("the archive outgrew the space reserved for the spool")

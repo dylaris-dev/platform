@@ -168,6 +168,7 @@ func TestPutToLANIsNotPaced(t *testing.T) {
 
 func TestUploadWaitPacesInternet(t *testing.T) {
 	b := slowPacer()
+	defer b.done()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	wait := b.uploadWait(ctx, func() bool { return false })
@@ -371,5 +372,82 @@ func TestPutToLANIsPacedByStorageCap(t *testing.T) {
 	defer cancel()
 	if err := u.put(ctx, srv.URL, bytes.Repeat([]byte{1}, 4<<20)); err == nil {
 		t.Fatal("4 MiB to a LAN storage capped at 1 Mbit/s finished within a second")
+	}
+}
+
+// Two spooled runs started together each saw the whole free space and
+// together filled the disk the servers run on. The first one's archive is
+// held against the shared budget until its spool file is gone.
+func TestSpoolReservationIsSharedAcrossRuns(t *testing.T) {
+	const gb = 1_000_000_000
+	on := &backupPolicy{SpoolEnabled: true, SpoolMaxGB: 50}
+	t.Cleanup(func() { inflightWrites.Store(0) })
+	inflightWrites.Store(0)
+	tests := []struct {
+		name     string
+		inflight int64
+		wantOK   bool
+	}{
+		{"alone", 0, true},
+		{"another write holds most of the disk", 20 * gb, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inflightWrites.Store(tt.inflight)
+			limit, release, why := reserveSpool(on, 30*gb, 50*gb)
+			defer release()
+			if (limit > 0) != tt.wantOK {
+				t.Fatalf("limit=%d why=%q, want ok=%v", limit, why, tt.wantOK)
+			}
+		})
+	}
+
+	inflightWrites.Store(0)
+	limit, release, _ := reserveSpool(on, 30*gb, 50*gb)
+	if limit <= 0 {
+		t.Fatal("first run refused")
+	}
+	if l2, r2, why := reserveSpool(on, 30*gb, 50*gb); l2 > 0 {
+		r2()
+		t.Fatalf("second run of 30 GB spooled into 50 GB beside the first (limit %d, %q)", l2, why)
+	}
+	release()
+	release() // idempotent
+	if got := inflightWrites.Load(); got != 0 {
+		t.Fatalf("inflightWrites = %d after release, want 0", got)
+	}
+}
+
+// Every run used to be paced to the whole uplink budget, so two at once sent
+// twice what the players had left them.
+func TestConcurrentUploadsSplitTheUplink(t *testing.T) {
+	now := time.Unix(3_000_000, 0)
+	inputs := func() (*backupPolicy, int64, bool, int64, time.Time) {
+		return &backupPolicy{UplinkMbit: i64(80), HeadroomPct: i64(50)}, 0, true, 0, now
+	}
+	a, b := newBackupPacer(0), newBackupPacer(0)
+	a.inputs, b.inputs = inputs, inputs
+	t.Cleanup(a.done)
+	t.Cleanup(b.done)
+	internet := func() bool { return false }
+	for _, p := range []*backupPacer{a, b} {
+		if err := p.uploadWait(context.Background(), internet)(1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	steps := []struct {
+		name string
+		do   func()
+		want rate.Limit
+	}{
+		{"two uploading split 5 MB/s", func() {}, 2_500_000},
+		{"one left takes it all", b.done, 5_000_000},
+	}
+	for _, s := range steps {
+		s.do()
+		a.refresh(true)
+		if a.up.Limit() != s.want {
+			t.Fatalf("%s: up=%v, want %v", s.name, a.up.Limit(), s.want)
+		}
 	}
 }

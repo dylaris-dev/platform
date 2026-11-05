@@ -273,6 +273,35 @@ func newBackupPacer(storageCapMbit int64) *backupPacer {
 	}
 }
 
+// uplinkUsers are the runs that have sent bytes through the uplink and not
+// finished. Each pacer aims at the players' budget, so every run used to get
+// all of it and two at once filled the uplink; they split it instead.
+var (
+	uplinkUsersMu sync.Mutex
+	uplinkUsers   = map[*backupPacer]bool{}
+)
+
+// uplinkShare is how many runs b shares the uplink with, itself included.
+func (b *backupPacer) uplinkShare() int64 {
+	uplinkUsersMu.Lock()
+	defer uplinkUsersMu.Unlock()
+	n := int64(len(uplinkUsers))
+	if !uplinkUsers[b] {
+		n++
+	}
+	return n
+}
+
+// done ends the run's share of the uplink. Safe on nil and more than once.
+func (b *backupPacer) done() {
+	if b == nil {
+		return
+	}
+	uplinkUsersMu.Lock()
+	delete(uplinkUsers, b)
+	uplinkUsersMu.Unlock()
+}
+
 func (b *backupPacer) savesPaused(at time.Time) { b.pausedSince.Store(at.UnixNano()) }
 func (b *backupPacer) savesResumed()            { b.pausedSince.Store(0) }
 
@@ -290,6 +319,9 @@ func (b *backupPacer) refresh(force bool) {
 		saveOffFor = now.Sub(time.Unix(0, since))
 	}
 	up, read := backupRates(p, env, players, tx, since != 0, saveOffFor)
+	if up != rate.Inf {
+		up /= rate.Limit(b.uplinkShare())
+	}
 	up = min(up, b.storageCap)
 	if b.up.Limit() != up {
 		b.up.SetLimitAt(now, up)
@@ -332,6 +364,9 @@ func (b *backupPacer) uploadWait(ctx context.Context, lan func() bool) func(int)
 		if lan() {
 			return b.wait(ctx, b.upLAN, n)
 		}
+		uplinkUsersMu.Lock()
+		uplinkUsers[b] = true
+		uplinkUsersMu.Unlock()
 		return b.wait(ctx, b.up, n)
 	}
 }

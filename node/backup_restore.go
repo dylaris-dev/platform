@@ -311,6 +311,10 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 				return
 			}
 			f.Close()
+			// Handed over now, while the name is the file's only one: a
+			// TypeLink entry may add a second, and the start-time ownership
+			// walk skips every file with two names.
+			chownForMCIn(stageRoot, name)
 			extracted++
 		case tar.TypeLink:
 			// The second name of a file archived once (see writeServerArchive).
@@ -328,6 +332,15 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		default:
 			// Skip block/char devices etc.
 		}
+	}
+
+	// tar stops at its end-of-archive blocks; the gzip CRC is checked only when
+	// the stream is read to its own end. Without this, an archive that rotted
+	// at rest was swapped in as success and the good world deleted.
+	if _, err := io.Copy(io.Discard, gr); err != nil {
+		stageCleanup()
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "archive checksum: "+err.Error())
+		return
 	}
 
 	// Close the stage Root BEFORE the swap: the swap renames stageDir itself,
