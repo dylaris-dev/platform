@@ -21,8 +21,11 @@ import (
 // server UUIDs to their actual filesystem location.
 type StorageManager struct {
 	paths []string // Validated, available storage paths
-	rdb   *redis.Client
-	mu    sync.RWMutex
+	// skipped counts configured paths left out of paths (missing, unmounted,
+	// read-only): servers on them exist but cannot be seen.
+	skipped int
+	rdb     *redis.Client
+	mu      sync.RWMutex
 
 	// Placement policy for NEW servers, published per node by Core. Zero value
 	// (empty mode) behaves as auto, so a node that never receives the key keeps
@@ -89,12 +92,14 @@ func NewStorageManager(pathsCSV string, rdb *redis.Client) *StorageManager {
 		abs, err := filepath.Abs(p)
 		if err != nil {
 			log.Printf("storage: [warn] cannot resolve path %q: %v — skipping", p, err)
+			sm.skipped++
 			continue
 		}
 
 		// Check if path exists and is writable
 		if err := validateStoragePath(abs); err != nil {
 			log.Printf("storage: [warn] %s — skipping", err)
+			sm.skipped++
 			continue
 		}
 

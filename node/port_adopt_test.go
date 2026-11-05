@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -125,6 +126,37 @@ func TestAdoptContainerBindings_TheLiveContainerBeatsAStaleEntry(t *testing.T) {
 			}
 			if tc.want["stale"] == 0 && mr.Exists("dylaris:node:node-1:port:stale") {
 				t.Error("the stale entry survived in Redis")
+			}
+		})
+	}
+}
+
+// A PORT_RANGE over the node's own listeners (SFTP 25520, beam 25521,
+// migration 25522, beam LAN 25523) or below 1024 handed those ports to game
+// servers: Docker could not bind them, and the ledger gave the same port back
+// on every retry. Every other path that publishes a port already skipped them.
+func TestAllocatePort_SkipsPortsTheNodeCannotPublish(t *testing.T) {
+	cases := []struct {
+		name       string
+		start, end int
+		want       []int
+	}{
+		{"the node's own listeners", 25519, 25524, []int{25519, 25524}},
+		{"privileged ports", 1022, 1025, []int{1024, 1025}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			pm := NewPortManager(rdb, "node-1", tc.start, tc.end, seqMode)
+			for i, want := range tc.want {
+				got, err := pm.AllocatePort(fmt.Sprintf("srv-%d", i))
+				if err != nil || got != want {
+					t.Fatalf("allocation %d = %d, %v; want %d", i, got, err, want)
+				}
+			}
+			if got, err := pm.AllocatePort("one-more"); err == nil {
+				t.Fatalf("allocated %d past the publishable ports", got)
 			}
 		})
 	}

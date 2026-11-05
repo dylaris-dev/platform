@@ -204,6 +204,11 @@ func (pm *PortManager) AllocatePort(serverUUID string) (int, error) {
 	}
 
 	for _, port := range candidates {
+		// PORT_RANGE is not checked against the node's own listeners, and a
+		// port Docker cannot bind would come back on every retry.
+		if hostPortProblem(port) != "" {
+			continue
+		}
 		if _, used := pm.usedPorts[port]; !used {
 			key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -300,9 +305,9 @@ func (pm *PortManager) forget(ctx context.Context, serverUUID, key string) error
 var forgetRetryEvery = 10 * time.Second
 
 // retryForget repeats a failed release for a few minutes. A server given a
-// port again in the meantime owns its keys again and stops it. Past that, a
-// stale entry still gives way to a live container at the next start
-// (AdoptContainerBindings).
+// port again in the meantime owns its keys again and stops it. Past that, the
+// stale entry is released at the next start (releaseGonePorts), or gives way to
+// a live container that binds its port (AdoptContainerBindings).
 func (pm *PortManager) retryForget(serverUUID, key string) {
 	for range 30 {
 		time.Sleep(forgetRetryEvery)

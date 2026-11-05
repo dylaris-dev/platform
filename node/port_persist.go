@@ -54,13 +54,51 @@ func savedHostPorts(storagePaths []string, rangeStart, rangeEnd int) map[string]
 // restorePortLedger runs once at startup, after the running containers were
 // adopted (they hold their ports for real, so they win a conflict). The saved
 // ports are reserved next, so no server is handed a port another one had
-// before its container went away. Last, every port in the ledger is written
-// back to its saved config, which backfills configs saved before they carried
-// one.
-func (dm *DockerManager) restorePortLedger() {
+// before its container went away. Then the ports of servers that are gone are
+// released, and last, every port in the ledger is written back to its saved
+// config, which backfills configs saved before they carried one.
+//
+// containers holds the uuid of every mc_ container on the host, nil when they
+// could not be listed.
+func (dm *DockerManager) restorePortLedger(containers map[string]bool) {
 	dm.portMgr.AdoptExistingBindings(savedHostPorts(dm.storageMgr.Paths(), dm.portMgr.rangeStart, dm.portMgr.rangeEnd))
+	dm.releaseGonePorts(containers)
 	for uuid, port := range dm.portMgr.Snapshot() {
 		dm.rememberHostPort(uuid, port)
+	}
+}
+
+// releaseGonePorts drops ledger entries of servers with neither a container
+// nor a directory on any storage path. A delete whose release never reached
+// Redis leaves one, the keys have no TTL, and no container can ever bind that
+// port to make AdoptContainerBindings free it, so it was lost to the range for
+// good. Unknown containers, or a configured storage path that was skipped or
+// cannot be read, may hide the server, so then nothing is released.
+func (dm *DockerManager) releaseGonePorts(containers map[string]bool) {
+	if containers == nil || dm.storageMgr.skipped > 0 {
+		return
+	}
+	paths := dm.storageMgr.Paths()
+	for _, sp := range paths {
+		if _, err := os.ReadDir(sp); err != nil {
+			return
+		}
+	}
+	for uuid := range dm.portMgr.Snapshot() {
+		if containers[uuid] {
+			continue
+		}
+		gone := true
+		for _, sp := range paths {
+			if fi, err := os.Stat(filepath.Join(sp, uuid)); err == nil && fi.IsDir() {
+				gone = false
+				break
+			}
+		}
+		if gone {
+			log.Printf("PortManager: server %s has no container and no directory; releasing its port", uuid)
+			dm.portMgr.ReleasePort(uuid)
+		}
 	}
 }
 

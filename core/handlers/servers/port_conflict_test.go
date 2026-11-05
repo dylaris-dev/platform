@@ -24,6 +24,9 @@ type portConflictFakeStore struct {
 	usedPorts    []int
 	usedPortsErr error
 	portsUpdated bool
+
+	settings         map[string]string
+	srvContainerPort int // 0: 25565
 }
 
 // The handler gates on LoadEffectivePermissions, which reads the user, not the
@@ -33,7 +36,11 @@ func (f *portConflictFakeStore) GetUserByID(id string) (*models.User, error) {
 }
 
 func (f *portConflictFakeStore) GetServerByID(id int) (*models.Server, error) {
-	return &models.Server{ID: id, UUID: "srv-1", NodeID: 7, HostPort: 25600, ContainerPort: 25565}, nil
+	cp := f.srvContainerPort
+	if cp == 0 {
+		cp = 25565
+	}
+	return &models.Server{ID: id, UUID: "srv-1", NodeID: 7, HostPort: 25600, ContainerPort: cp}, nil
 }
 func (f *portConflictFakeStore) UpdateServerResources(int, int, float64, int64) error { return nil }
 func (f *portConflictFakeStore) GetUsedHostPortsOnNode(int) ([]int, error) {
@@ -113,5 +120,46 @@ func TestUpdateServerResources_AllowsAFreePort(t *testing.T) {
 
 	if !fake.portsUpdated {
 		t.Errorf("a free port was not assigned (status %d): %s", rec.Code, rec.Body.String())
+	}
+}
+
+func (f *portConflictFakeStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
+
+// 25500-25599 is the platform's own range. A separated node's egress chain
+// drops it on the shared network for every tenant container, exempting only
+// the node-wide game port, so a backend moved to another port in that range
+// could not be reached by its own proxy, with nothing reported anywhere.
+func TestUpdateServerResources_ContainerPortInThePlatformRange(t *testing.T) {
+	cases := []struct {
+		name     string
+		port     int
+		settings map[string]string
+		want     bool // assigned
+	}{
+		{"another port in the platform range", 25566, nil, false},
+		{"the node's own listener", 25520, nil, false},
+		{"the default game port", 25565, map[string]string{"placement.container_port": "25570"}, true},
+		{"the node-wide game port", 25570, map[string]string{"placement.container_port": "25570"}, true},
+		{"outside the range", 25600, nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &portConflictFakeStore{settings: tc.settings}
+			fake.srvContainerPort = 25000
+			h := &ServerHandler{d: testDeps(Deps{Store: fake})}
+			body, _ := json.Marshal(map[string]any{"ram": 2048, "cpuLimit": 2.0, "diskLimit": 10240, "containerPort": tc.port})
+			r := httptest.NewRequest(http.MethodPut, "/api/servers/1/resources", bytes.NewReader(body))
+			r = mux.SetURLVars(r, map[string]string{"id": "1"})
+			ctx := context.WithValue(r.Context(), "isAdmin", true)
+			r = r.WithContext(context.WithValue(ctx, "userID", "admin-1"))
+			rec := httptest.NewRecorder()
+			h.UpdateServerResources(rec, r)
+			if fake.portsUpdated != tc.want {
+				t.Fatalf("assigned = %v, want %v (status %d): %s", fake.portsUpdated, tc.want, rec.Code, rec.Body.String())
+			}
+			if !tc.want && rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", rec.Code)
+			}
+		})
 	}
 }

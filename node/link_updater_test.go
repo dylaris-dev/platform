@@ -229,6 +229,7 @@ type fakeCtr struct {
 	created     time.Time
 	started     time.Time // zero: same as created
 	log         string
+	prevLog     string // earlier runs of the same container: served only without since
 }
 
 func (f *fakeLinkDocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -318,6 +319,9 @@ func (f *fakeLinkDocker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		case strings.HasSuffix(p, "/logs"):
+			if r.URL.Query().Get("since") == "" {
+				io.WriteString(w, c.prevLog)
+			}
 			io.WriteString(w, c.log)
 			return
 		case strings.HasSuffix(p, "/start"):
@@ -641,4 +645,37 @@ func TestLinkUpdaterDrainsOnceTheCloneSettledWithoutAnUnreachableEdge(t *testing
 	u.tick(t.Context(), updateAt.Add(linkCloneSettle))
 	expect("settled: as many as the old one is enough",
 		"rename l l-draining", "update l-draining restart=no", "kill l-draining SIGTERM")
+}
+
+// A Link killed with tunnels up never logs them lost, and Docker restarts the
+// same container with the same log. An edge gone by the next run then read as
+// still up, so the old Link counted one tunnel more than exist and no clone
+// could ever match it. Only the current run of each Link counts, the clone's
+// included: its earlier run must not make it look ready.
+func TestLinkUpdaterCountsOnlyTheCurrentRun(t *testing.T) {
+	gone := "[Link] Secure Tunnel established to 9.9.9.9:7000 over the internet!\n"
+	cases := []struct {
+		name       string
+		old, clone fakeCtr
+		want       []string
+	}{
+		{"a stale tunnel of the old Link's earlier run is ignored",
+			fakeCtr{prevLog: gone + edgeA, log: edgeA + edgeB},
+			fakeCtr{log: edgeA + edgeB},
+			[]string{"rename l l-draining", "update l-draining restart=no", "kill l-draining SIGTERM"}},
+		{"the clone's earlier run does not count",
+			fakeCtr{log: edgeA + edgeB},
+			fakeCtr{prevLog: edgeA + edgeB, log: edgeA},
+			nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			old, clone := tc.old, tc.clone
+			old.name, old.image, old.running, old.labels = "l", "sha256:old", true, testLinkLabels
+			clone.name, clone.image, clone.running, clone.labels, clone.created = "l-next", "sha256:new", true, testLinkLabels, updateAt
+			u, _, expect := newLinkUpdaterTest(t, map[string]*fakeCtr{"old-id": &old, "clone-id": &clone})
+			u.tick(t.Context(), updateAt.Add(time.Minute))
+			expect("tick", tc.want...)
+		})
+	}
 }

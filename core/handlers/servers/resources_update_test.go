@@ -146,7 +146,7 @@ func TestUpdateServerResources_ContainerPortOnlyChangeReachesTheNode(t *testing.
 
 	rec := httptest.NewRecorder()
 	h.UpdateServerResources(rec, resourcesReq(t, map[string]any{
-		"ram": 4096, "cpuLimit": 2.0, "diskLimit": 10240, "containerPort": 25570,
+		"ram": 4096, "cpuLimit": 2.0, "diskLimit": 10240, "containerPort": 25700,
 	}))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
@@ -155,8 +155,8 @@ func TestUpdateServerResources_ContainerPortOnlyChangeReachesTheNode(t *testing.
 	cmd := readNodeCmdStream(t, rdb, "dylaris:node:node-tok-7:cmds")
 	cfg, _ := cmd["config"].(map[string]interface{})
 	docker, _ := cfg["docker"].(map[string]interface{})
-	if got, _ := docker["containerPort"].(float64); got != 25570 {
-		t.Errorf("payload containerPort = %v, want 25570 (docker=%v)", docker["containerPort"], docker)
+	if got, _ := docker["containerPort"].(float64); got != 25700 {
+		t.Errorf("payload containerPort = %v, want 25700 (docker=%v)", docker["containerPort"], docker)
 	}
 	if got, _ := docker["hostPort"].(float64); got != 25600 {
 		t.Errorf("payload hostPort = %v, want the unchanged 25600", docker["hostPort"])

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"log"
+	"strings"
 
 	"dylaris-core/services/redisacl"
 
@@ -26,6 +27,7 @@ func NodeRedisKeys(token string) []string {
 		"dylaris:node:" + token + ":cpuload",
 		"dylaris:node:" + token + ":cmds",
 		"dylaris:node:" + token + ":cmds:dead",
+		"dylaris:node:" + token + ":ports",
 		NodeBackupPolicyKey(token),
 		NodeBackupEnvKey(token),
 	}
@@ -48,5 +50,30 @@ func RemoveNodeRedisState(ctx context.Context, rdb *redis.Client, prov *redisacl
 	}
 	if err := rdb.Del(ctx, NodeRedisKeys(token)...).Err(); err != nil {
 		log.Printf("node teardown: leftover Redis keys for node token %.8s... could not be removed: %v", token, err)
+	}
+	removeNodePortKeys(ctx, rdb, token)
+}
+
+// removeNodePortKeys drops the node's per-server port keys
+// (dylaris:node:<token>:port:<uuid>). Only the node's own release removes one,
+// so a node deleted while offline left them all for good. A token with a glob
+// character would match other nodes' keys, so it is not scanned.
+func removeNodePortKeys(ctx context.Context, rdb *redis.Client, token string) {
+	if strings.ContainsAny(token, "*?[]\\") {
+		return
+	}
+	iter := rdb.Scan(ctx, 0, "dylaris:node:"+token+":port:*", 500).Iterator()
+	var keys []string
+	for iter.Next(ctx) {
+		keys = append(keys, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
+		log.Printf("node teardown: port keys for node token %.8s... could not be listed: %v", token, err)
+	}
+	if len(keys) == 0 {
+		return
+	}
+	if err := rdb.Del(ctx, keys...).Err(); err != nil {
+		log.Printf("node teardown: port keys for node token %.8s... could not be removed: %v", token, err)
 	}
 }

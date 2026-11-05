@@ -54,7 +54,7 @@ func TestRestorePortLedger_KeepsEachServersPortAfterRedisAndContainersAreGone(t 
 
 	// No containers survived: nothing to adopt from Docker.
 	pm.AdoptExistingBindings(map[string]int{})
-	dm.restorePortLedger()
+	dm.restorePortLedger(map[string]bool{})
 
 	// server-b comes up first, as it did on the VM. It must not take 25600.
 	if got := pm.GetPort("server-b"); got != 25601 {
@@ -83,7 +83,7 @@ func TestRestorePortLedger_BackfillsTheSavedConfigFromTheLedger(t *testing.T) {
 
 	// The running container still holds 25605; its config does not say so.
 	pm.AdoptExistingBindings(map[string]int{"server-a": 25605})
-	dm.restorePortLedger()
+	dm.restorePortLedger(map[string]bool{})
 
 	cfg := readSavedConfig(t, dir, "server-a")
 	if cfg.Docker.HostPort != 25605 {
@@ -105,7 +105,7 @@ func TestRestorePortLedger_ARunningContainerWinsOverAStaleSavedPort(t *testing.T
 	dm := &DockerManager{storageMgr: NewStorageManager(dir, nil), portMgr: pm}
 
 	pm.AdoptExistingBindings(map[string]int{"server-a": 25610, "server-b": 25600})
-	dm.restorePortLedger()
+	dm.restorePortLedger(map[string]bool{})
 
 	if got := pm.GetPort("server-a"); got != 25610 {
 		t.Fatalf("server-a holds %d, want its container's 25610", got)
@@ -157,5 +157,51 @@ func TestSavedHostPorts_IgnoresPortsOutsideTheRangeOrOwnedByTheNode(t *testing.T
 	got := savedHostPorts([]string{dir}, 25500, 25699)
 	if len(got) != 1 || got["in-range"] != 25610 {
 		t.Fatalf("savedHostPorts = %v, want only in-range:25610", got)
+	}
+}
+
+// A release that never reached Redis (retryForget gave up) leaves the deleted
+// server's port in the TTL-less ledger. No container can ever bind that port,
+// so the container adoption never frees it, and each such event took one port
+// out of the range for good. At startup an entry with neither a container nor
+// a server directory is released; one whose storage cannot be read is kept.
+func TestRestorePortLedger_ReleasesThePortOfAServerThatIsGone(t *testing.T) {
+	cases := []struct {
+		name       string
+		containers map[string]bool
+		storage    func(dir string) string
+		wantGhost  int
+	}{
+		{"no container, no directory: released", map[string]bool{}, func(dir string) string { return dir }, 0},
+		{"its container is still there: kept", map[string]bool{"ghost": true}, func(dir string) string { return dir }, 25601},
+		{"containers unknown: kept", nil, func(dir string) string { return dir }, 25601},
+		{"a configured storage path is missing: kept", map[string]bool{}, func(dir string) string { return dir + "," + filepath.Join(dir, "unmounted") }, 25601},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeSavedConfig(t, dir, "live", 25600)
+			mr := miniredis.RunT(t)
+			mr.Set("dylaris:node:node-1:port:live", "25600")
+			mr.Set("dylaris:node:node-1:port:ghost", "25601")
+			mr.HSet("dylaris:node:node-1:ports", "live", "25600", "ghost", "25601")
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			pm := NewPortManager(rdb, "node-1", 25600, 25699, seqMode)
+			dm := &DockerManager{storageMgr: NewStorageManager(tc.storage(dir), nil), portMgr: pm}
+
+			dm.restorePortLedger(tc.containers)
+
+			if got := pm.GetPort("ghost"); got != tc.wantGhost {
+				t.Fatalf("ghost holds %d, want %d", got, tc.wantGhost)
+			}
+			if tc.wantGhost == 0 {
+				if mr.Exists("dylaris:node:node-1:port:ghost") || mr.HGet("dylaris:node:node-1:ports", "ghost") != "" {
+					t.Fatal("ghost's keys are still in Redis")
+				}
+				if got := pm.GetPort("live"); got != 25600 {
+					t.Fatalf("live holds %d, want 25600", got)
+				}
+			}
+		})
 	}
 }

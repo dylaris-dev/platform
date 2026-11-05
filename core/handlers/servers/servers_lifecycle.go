@@ -2071,6 +2071,23 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		if newContainerPort == 0 {
 			newContainerPort = 25565
 		}
+		// A separated node's egress chain drops 25500-25599 on the shared
+		// network for every tenant container, the node-wide game port aside,
+		// so a server listening elsewhere in that range cannot be reached by
+		// its own proxy. The node cannot exempt it: that range is where the
+		// platform's own services listen.
+		if req.ContainerPort > 0 && req.ContainerPort != srv.ContainerPort && req.ContainerPort >= 25500 && req.ContainerPort <= 25599 {
+			game := 25565
+			if v, _ := h.d.Store.GetSetting("placement.container_port"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 65535 {
+					game = n
+				}
+			}
+			if req.ContainerPort != game && req.ContainerPort != 25565 {
+				httpx.SendJSONError(w, fmt.Sprintf("Container port %d is in 25500-25599, which the platform's own services use; use %d or a port outside that range", req.ContainerPort, game), http.StatusBadRequest)
+				return
+			}
+		}
 		// Conflict check: ensure no other server on this node uses the same host port
 		if req.HostPort > 0 && req.HostPort != srv.HostPort {
 			// Fail CLOSED. Discarding this error left usedPorts empty, the

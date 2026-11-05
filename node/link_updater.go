@@ -617,14 +617,17 @@ func (u *linkUpdater) checkClone(ctx context.Context, clone, old *linkCtr, now t
 		return
 	}
 	created, _ := time.Parse(time.RFC3339Nano, info.Created)
-	cloneLog, err := u.logs(ctx, clone.ID, container.LogsOptions{})
+	cloneLog, err := u.runLogs(ctx, clone.ID, info.State)
 	if err != nil {
 		log.Printf("link update: read logs of %s: %v", clone.Name, err)
 		return
 	}
-	// The whole log: a tunnel is logged once, when it comes up, so on a Link
-	// that ran for weeks its line is near the start, not in a recent tail.
-	oldLog, err := u.logs(ctx, old.ID, container.LogsOptions{})
+	oldInfo, err := u.cli.ContainerInspect(ctx, old.ID)
+	if err != nil || oldInfo.ContainerJSONBase == nil {
+		log.Printf("link update: cannot inspect %s: %v", old.Name, err)
+		return
+	}
+	oldLog, err := u.runLogs(ctx, old.ID, oldInfo.State)
 	if err != nil {
 		log.Printf("link update: read logs of %s: %v", old.Name, err)
 		return
@@ -639,6 +642,19 @@ func (u *linkUpdater) checkClone(ctx context.Context, clone, old *linkCtr, now t
 		log.Printf("link update: ABORTED, %s holds %d of %d tunnels after %s; it drains, %s keeps serving", clone.Name, cloneUp, oldUp, linkServeTimeout, old.Name)
 		u.retire(ctx, clone, strings.TrimSuffix(clone.Name, linkNextSuffix)+linkAbandonedSuffix)
 	}
+}
+
+// runLogs replays the log of a Link's current run, from its start: a tunnel is
+// logged once, when it comes up, so on a Link that ran for weeks its line is
+// near the start, not in a recent tail. Not the whole log: Docker keeps it
+// across restarts, and a run that was killed never logged its tunnels lost, so
+// an edge gone since would count as up forever.
+func (u *linkUpdater) runLogs(ctx context.Context, id string, st *container.State) (*linkLog, error) {
+	var opts container.LogsOptions
+	if st != nil {
+		opts.Since = st.StartedAt
+	}
+	return u.logs(ctx, id, opts)
 }
 
 // logs replays a container's whole log as it streams, so its size costs time
