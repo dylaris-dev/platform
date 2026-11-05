@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestExtractMOTD(t *testing.T) {
@@ -170,5 +172,32 @@ func TestPingStillStartingIsNoAnswer(t *testing.T) {
 	resp, err := PingMinecraftServer(slpAnswer(t, `{"version":{"name":"1.20.1"},"players":{"max":20,"online":1},"description":{"text":"hi"}}`), time.Second, false)
 	if err != nil || resp.Version != "1.20.1" || resp.Players != 1 {
 		t.Fatalf("a real status: %+v, %v", resp, err)
+	}
+}
+
+// The MOTD is tenant-controlled and is copied into every 2 s stats sample
+// that the node buffers in the shared Redis, so it must arrive bounded.
+func TestExtractMOTDBounded(t *testing.T) {
+	cases := []struct {
+		name string
+		desc interface{}
+	}{
+		{"ascii string", strings.Repeat("<", 131000)},
+		{"text field", map[string]interface{}{"text": strings.Repeat("a", 40000)}},
+		{"multibyte cut", strings.Repeat("a", maxMOTDBytes-1) + strings.Repeat("é", 100)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := extractMOTD(c.desc)
+			if len(got) > maxMOTDBytes {
+				t.Fatalf("len = %d, want <= %d", len(got), maxMOTDBytes)
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("truncated MOTD is not valid UTF-8: %q", got[len(got)-4:])
+			}
+			if got == "" {
+				t.Fatal("truncation dropped the whole MOTD")
+			}
+		})
 	}
 }

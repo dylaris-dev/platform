@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"time"
+	"unicode/utf8"
 )
 
 // SLPResponse holds the parsed Server List Ping response.
@@ -138,16 +139,33 @@ func PingMinecraftServer(address string, timeout time.Duration, proxyLocal bool)
 	}, nil
 }
 
+// maxMOTDBytes bounds the tenant-controlled MOTD. It rides in every 2 s stats
+// sample, which is buffered 1800 deep in the shared Redis with no TTL, and the
+// status JSON alone allows ~128 KiB; vanilla caps a MOTD far below this.
+const maxMOTDBytes = 256
+
 func extractMOTD(desc interface{}) string {
 	switch v := desc.(type) {
 	case string:
-		return v
+		return truncateMOTD(v)
 	case map[string]interface{}:
 		if text, ok := v["text"].(string); ok {
-			return text
+			return truncateMOTD(text)
 		}
 	}
 	return ""
+}
+
+// truncateMOTD cuts on a rune boundary so the field stays valid UTF-8.
+func truncateMOTD(s string) string {
+	if len(s) <= maxMOTDBytes {
+		return s
+	}
+	n := maxMOTDBytes
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 func parsePort(s string) int {
