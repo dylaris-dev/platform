@@ -234,6 +234,14 @@ func sftpFailKey(nodeID, username string) string {
 	return fmt.Sprintf("dylaris:node:%s:sftp_fail:%s", nodeID, username)
 }
 
+// sftpFailUserAddrKey counts failed sign-ins to one account from one address.
+// A namespace of its own: under sftpFailKey, the SSH name "alice@<addr>" -
+// the client picks it - was alice's per-address counter, and anyone could
+// lock her out from her own address with ten tries.
+func sftpFailUserAddrKey(nodeID, username, addr string) string {
+	return fmt.Sprintf("dylaris:node:%s:sftp_fail_ua:%s|%s", nodeID, addr, username)
+}
+
 // sftpFailAddrKey counts failed sign-ins from one source address.
 func sftpFailAddrKey(nodeID, addr string) string {
 	return fmt.Sprintf("dylaris:node:%s:sftp_fail_addr:%s", nodeID, addr)
@@ -259,7 +267,7 @@ func (s *SFTPServer) authUser(username, password, addr string) (*ssh.Permissions
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	failKey := sftpFailKey(s.nodeID, username+"@"+addr)
+	failKey := sftpFailUserAddrKey(s.nodeID, username, addr)
 	addrKey := sftpFailAddrKey(s.nodeID, addr)
 	userKey := sftpFailKey(s.nodeID, username)
 	n, _ := s.rdb.Get(ctx, failKey).Int()
@@ -839,10 +847,10 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	return w, nil
 }
 
-// uploadInflight is, per server, what open SFTP handles have written and Beam
-// uploads have reserved, and neither has noted into the gauge yet (uuid ->
-// *atomic.Int64). One count for both: each path held only its own, so a Beam
-// upload and an SFTP handle at once each had the whole headroom.
+// uploadInflight is, per server, what open SFTP handles have written and not
+// noted into the gauge yet (uuid -> *atomic.Int64). Beam and panel uploads
+// reserve on serverInflight; every check against the gauge reads both, since
+// each path holding only its own gave two uploads at once the whole headroom.
 var uploadInflight sync.Map
 
 func uploadServerInflight(uuid string) *atomic.Int64 {
@@ -903,11 +911,12 @@ type meteredSFTPWriter struct {
 	baseline, maxEnd int64
 	rdb              *redis.Client
 	username         string
-	// srv is what every open SFTP handle is writing into this server, and
-	// every running Beam upload has reserved (uploadServerInflight), held
-	// against ceil: each handle had the whole headroom, so twenty at once wrote
-	// twenty times past the limit. Not shared with copies: those measure the
-	// disk live, which already holds these bytes. nil = no disk limit.
+	// srv is what every open SFTP handle is writing into this server
+	// (uploadServerInflight), held against ceil together with what Beam and
+	// panel uploads and copies reserved (serverInflight): each handle had the
+	// whole headroom, so twenty at once wrote twenty times past the limit.
+	// Copies do not count srv: they measure the disk live, which already holds
+	// these bytes. nil = no disk limit.
 	srv  *atomic.Int64
 	uuid string
 	// prior is the file's size before this open; noted0 the server's noted
@@ -947,7 +956,7 @@ func (m *meteredSFTPWriter) WriteAt(p []byte, off int64) (int, error) {
 	if m.ceil >= 0 {
 		others := int64(0)
 		if m.srv != nil {
-			others = m.srv.Load() - before + notedFor(m.uuid).Load() - m.noted0
+			others = m.srv.Load() - before + serverInflightOf(m.uuid).Load() + notedFor(m.uuid).Load() - m.noted0
 		}
 		if others+after > m.ceil {
 			return 0, fmt.Errorf("SFTP write refused: %s exceeded", m.reason)

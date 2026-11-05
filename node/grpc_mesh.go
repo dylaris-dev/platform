@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -122,11 +121,11 @@ type pendingWrite struct {
 func uploadBudget(rdb *redis.Client, dir, uuid string, size int64) (*writeBudget, bool) {
 	b := &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
 	if total, limit := serverDiskGauge(context.Background(), rdb, uuid); limit > 0 {
-		c, _ := serverInflight.LoadOrStore(uuid, new(atomic.Int64))
 		// b.uuid stays empty: release would remeasure the server by walking it,
 		// and commitUpload's noteDiskWrite already moved the gauge.
-		b.srv = c.(*atomic.Int64)
-		if left := limit - total - b.srv.Load(); left < b.left {
+		b.srv = serverInflightOf(uuid)
+		// Open SFTP handles are not in the gauge either.
+		if left := limit - total - b.srv.Load() - uploadServerInflight(uuid).Load(); left < b.left {
 			b.left, b.err = left, errServerDiskLimit
 		}
 	}

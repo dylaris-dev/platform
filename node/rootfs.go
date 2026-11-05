@@ -574,8 +574,17 @@ var errServerDiskLimit = errors.New("this writes more than the server's disk lim
 // reserve.
 var inflightWrites atomic.Int64
 
-// serverInflight is inflightWrites per server (uuid -> *atomic.Int64).
+// serverInflight is inflightWrites per server (uuid -> *atomic.Int64): what
+// copies, extracts and installs have written, and the declared size panel and
+// Beam uploads have reserved. SFTP's written bytes are apart, in
+// uploadServerInflight, because a copy measuring the disk live already sees
+// them; a check against the gauge sees none of either and reads both.
 var serverInflight sync.Map
+
+func serverInflightOf(uuid string) *atomic.Int64 {
+	c, _ := serverInflight.LoadOrStore(uuid, new(atomic.Int64))
+	return c.(*atomic.Int64)
+}
 
 // serverDiskHeadroom is what the server whose directory holds dir may still
 // write, measured now rather than read off the gauge: that one is up to five
@@ -619,8 +628,7 @@ func serverOfDir(bases []string, dir string) (uuid, serverDir string) {
 func newWriteBudget(dir string) *writeBudget {
 	b := &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
 	if uuid, left, ok := serverDiskHeadroom(dir); ok {
-		c, _ := serverInflight.LoadOrStore(uuid, new(atomic.Int64))
-		b.srv, b.uuid = c.(*atomic.Int64), uuid
+		b.srv, b.uuid = serverInflightOf(uuid), uuid
 		if left -= b.srv.Load(); left < b.left {
 			b.left, b.err = left, errServerDiskLimit
 		}

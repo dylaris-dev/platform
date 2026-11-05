@@ -177,10 +177,14 @@ func (bt *BeamThrottle) reloadFromRedis(ctx context.Context, rdb *redis.Client) 
 		return
 	}
 
-	if up == 0 {
+	// Only an ABSENT direction key falls back to the legacy one (an old Core
+	// writes nothing else). A new Core always writes both, and its explicit 0
+	// means that direction is uncapped; bw_limit is the lower of the two, so
+	// treating 0 as unset capped the direction the operator left open.
+	if errors.Is(upErr, redis.Nil) {
 		up = legacy
 	}
-	if down == 0 {
+	if errors.Is(downErr, redis.Nil) {
 		down = legacy
 	}
 	bt.setLimits(up, down)

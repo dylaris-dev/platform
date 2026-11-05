@@ -122,13 +122,23 @@ type uploadClaim struct {
 	owner   uint64 // the stream that may write, rename and be charged for it
 	charged int64  // how much of the temp was charged to the quota and gauge
 	refs    int
+	left    time.Time // when the last stream let go of a temp it left charged
 }
 
 var uploadStreamSeq atomic.Uint64
 
+// keptClaimFor is how long the charge a stream left on its temp is remembered
+// for a resume. Past the sweeper's grace and interval: by then the temp is gone.
+const keptClaimFor = time.Hour
+
 // claimUploadTemp makes stream me the owner of the temp name and returns how
-// much of it is already charged. A temp nobody holds was charged in full by
-// the stream that left it.
+// much of it is already charged: what the Beam stream that left it was
+// charged, never more than it holds. A temp no Beam stream left - copied or
+// planted under the temp's name - was charged nothing, and taking its size as
+// charged let an upload stream over it for free.
+//
+// ponytail: in memory, so a node restart forgets it and a resume across the
+// restart is charged again for what it had; a Redis record if that matters.
 func (s *beamServer) claimUploadTemp(root *os.Root, key, name string, me uint64) (*uploadClaim, int64) {
 	s.tempsMu.Lock()
 	defer s.tempsMu.Unlock()
@@ -139,9 +149,14 @@ func (s *beamServer) claimUploadTemp(root *os.Root, key, name string, me uint64)
 	if s.uploadTemps == nil {
 		s.uploadTemps = map[string]*uploadClaim{}
 	}
+	for k, c := range s.uploadTemps {
+		if c.refs == 0 && time.Since(c.left) > keptClaimFor {
+			delete(s.uploadTemps, k)
+		}
+	}
 	c := s.uploadTemps[key]
 	if c == nil {
-		c = &uploadClaim{charged: size}
+		c = &uploadClaim{}
 		s.uploadTemps[key] = c
 	}
 	c.refs++
@@ -162,7 +177,11 @@ func (s *beamServer) releaseUploadTemp(key string, c *uploadClaim, me uint64) {
 		c.owner = 0
 	}
 	if c.refs--; c.refs == 0 {
-		delete(s.uploadTemps, key)
+		if c.charged == 0 {
+			delete(s.uploadTemps, key)
+		} else {
+			c.left = time.Now()
+		}
 	}
 }
 
@@ -1206,12 +1225,8 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 	for {
 		n, readErr := f.Read(buf)
 		if n > 0 {
-			// Throttle: this is the download direction (disk → client).
-			if err := s.throttle.WaitN(ctx, DirectionDown, n); err != nil {
-				return status.Errorf(codes.Canceled, "throttle: %v", err)
-			}
-			if err := s.dataThrottle.WaitN(ctx, s.extractServerUUID(ctx), n); err != nil {
-				return status.Errorf(codes.Canceled, "throttle: %v", err)
+			if err := s.paceDownload(ctx, serverUUID, n); err != nil {
+				return err
 			}
 
 			chunk := &pb.BeamChunk{
@@ -1317,6 +1332,9 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	// bytes were counted when the stream that wrote them ended, so this one
 	// reserves and is charged only for what it adds.
 	var resumedAt int64
+	// have is how far the temp holds bytes: its size at Start, then the end of
+	// what this stream wrote. A chunk past it would leave a zero-filled hole.
+	var have int64
 	// Released only after the kept bytes are noted, so no Start in between
 	// sees the headroom without them.
 	releaseServer, releaseUser, releaseBudget, releaseTemp := func() {}, func() {}, func() {}, func() {}
@@ -1425,9 +1443,16 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			if p.Start.TotalSize < 0 {
 				return status.Error(codes.InvalidArgument, "the upload size cannot be negative")
 			}
+			// The claim key is the temp's path in the server. tmpName is only
+			// its name in upRoot, which on Linux is the destination's own
+			// directory, so it is the same in every folder: the same id in a
+			// second folder took over the first folder's live upload. A write
+			// path follows no link, so its clean text names one directory.
+			relDir := path.Dir(path.Clean("/" + strings.ReplaceAll(remotePath, "\\", "/")))
+			tempKey := func(name string) string { return serverUUID + path.Join(relDir, path.Base(name)) }
 			if uploadID != "" {
 				tmpName = path.Join(path.Dir(destName), ".beam-upload-"+uploadID)
-				key := serverUUID + "/" + tmpName
+				key := tempKey(tmpName)
 				claim, resumedAt = s.claimUploadTemp(upRoot, key, tmpName, me)
 				c := claim
 				releaseTemp = func() { s.releaseUploadTemp(key, c, me) }
@@ -1439,7 +1464,10 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// Reserved before checking, so two Starts at once cannot both see
 			// room that only one of them has.
 			var serverTotal, userTotal int64
-			serverTotal, releaseServer = reserveOn(uploadServerInflight(serverUUID), need)
+			// On the counter panel uploads and copies reserve on, so each of
+			// them sees this one; plus what open SFTP handles wrote.
+			serverTotal, releaseServer = reserveOn(serverInflightOf(serverUUID), need)
+			serverTotal += uploadServerInflight(serverUUID).Load()
 			userTotal, releaseUser = s.reserveUpload("u:"+username, need)
 
 			// The node's own free space, less its reserve and what other writes
@@ -1490,6 +1518,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				}
 				tmpFile = f
 				if info, statErr := f.Stat(); statErr == nil && info.Size() > 0 {
+					have = info.Size()
 					log.Printf("beam-server: upload %s resumed at offset %d (%s)", uploadID, info.Size(), path.Base(tmpName))
 				}
 			} else {
@@ -1502,7 +1531,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				tmpFile = f
 				tmpName = name
 				// Claimed too: an upload id may spell this random name.
-				key := serverUUID + "/" + tmpName
+				key := tempKey(tmpName)
 				claim, _ = s.claimUploadTemp(upRoot, key, tmpName, me)
 				c := claim
 				releaseTemp = func() { s.releaseUploadTemp(key, c, me) }
@@ -1523,6 +1552,15 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 					"upload exceeds its declared size of %d bytes", declaredSize)
 			}
 
+			// A resume continues from the offset the client reached, which is
+			// past what the temp holds when the temp was swept or chunks the
+			// client counted as sent were lost in flight. Written anyway, the
+			// gap stayed zeros and landed as a successful upload.
+			if p.Chunk.Offset < 0 || p.Chunk.Offset > have {
+				return status.Error(codes.FailedPrecondition,
+					"the partial upload is gone or shorter than expected; start the upload again")
+			}
+
 			// Throttle: this is the upload direction (client → disk).
 			if err := s.throttle.WaitN(ctx, DirectionUp, len(p.Chunk.Data)); err != nil {
 				return status.Errorf(codes.Canceled, "throttle: %v", err)
@@ -1537,6 +1575,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			if _, err := tmpFile.WriteAt(p.Chunk.Data, p.Chunk.Offset); err != nil {
 				return status.Errorf(codes.Internal, "write chunk: %v", err)
 			}
+			have = max(have, p.Chunk.Offset+int64(len(p.Chunk.Data)))
 		}
 	}
 
@@ -1564,6 +1603,9 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			return status.Error(codes.Aborted, "this upload was resumed on another connection")
 		}
 		err := upRoot.Rename(tmpName, destName)
+		if err == nil {
+			claim.charged = 0 // the temp is gone; nothing is left to resume
+		}
 		s.tempsMu.Unlock()
 		if err != nil {
 			upRoot.Remove(tmpName)
@@ -1761,6 +1803,7 @@ func addTreeToZip(zw *zip.Writer, root *os.Root, nameBase, target string) error 
 // close to it. 0 means unknown and the client reports bytes loaded only.
 func (s *beamServer) streamZip(stream grpc.ServerStreamingServer[pb.BeamChunk], filename string, estimate int64, writeEntries func(*zip.Writer) error) error {
 	ctx := stream.Context()
+	serverUUID := s.extractServerUUID(ctx)
 	pr, pw := io.Pipe()
 
 	go func() {
@@ -1791,11 +1834,8 @@ func (s *beamServer) streamZip(stream grpc.ServerStreamingServer[pb.BeamChunk], 
 			readErr = io.EOF
 		}
 		if n > 0 {
-			if err := s.throttle.WaitN(ctx, DirectionDown, n); err != nil {
-				return status.Errorf(codes.Canceled, "throttle: %v", err)
-			}
-			if err := s.dataThrottle.WaitN(ctx, s.extractServerUUID(ctx), n); err != nil {
-				return status.Errorf(codes.Canceled, "throttle: %v", err)
+			if err := s.paceDownload(ctx, serverUUID, n); err != nil {
+				return err
 			}
 			chunk := &pb.BeamChunk{Data: buf[:n], Offset: offset}
 			if first {
@@ -1815,6 +1855,24 @@ func (s *beamServer) streamZip(stream grpc.ServerStreamingServer[pb.BeamChunk], 
 			return status.Errorf(codes.Internal, "zip stream: %v", readErr)
 		}
 	}
+}
+
+// paceDownload runs before every download chunk is sent. Access revoked while
+// the stream runs ends it here, as on the upload side; the check at the start
+// was the only one. The data throttle takes the uuid bound at the start: a
+// revoked session re-derives "", which is "no throttle".
+func (s *beamServer) paceDownload(ctx context.Context, serverUUID string, n int) error {
+	if err := s.requireFilePerm(ctx, canRead, "download"); err != nil {
+		return err
+	}
+	// Throttle: this is the download direction (disk → client).
+	if err := s.throttle.WaitN(ctx, DirectionDown, n); err != nil {
+		return status.Errorf(codes.Canceled, "throttle: %v", err)
+	}
+	if err := s.dataThrottle.WaitN(ctx, serverUUID, n); err != nil {
+		return status.Errorf(codes.Canceled, "throttle: %v", err)
+	}
+	return nil
 }
 
 // ─── Quota ───────────────────────────────────────────────────────────

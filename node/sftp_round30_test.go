@@ -309,3 +309,17 @@ func TestSFTPLockoutCountsTheAccountAndIPv6Prefixes(t *testing.T) {
 		t.Error("an account guessed at from many addresses was not locked")
 	}
 }
+
+// H32: the per-account and per-account-from-address counters shared one key
+// namespace, and the SSH name is the client's: failing as "alice@<her
+// address>" counted against alice's own address.
+func TestSFTPANameSpellingAnAddressDoesNotLockThatAccountOut(t *testing.T) {
+	s, mr := sftpTestServer(t)
+	setHash(t, mr, "alice", "right")
+	for i := 0; i < sftpMaxFailsPerUserAddr; i++ {
+		s.authUser("alice@203.0.113.5", "x", "198.51.100.9")
+	}
+	if _, err := s.authUser("alice", "right", "203.0.113.5"); err != nil {
+		t.Errorf("alice from her own address was locked out by a name spelling it: %v", err)
+	}
+}

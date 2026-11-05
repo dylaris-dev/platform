@@ -63,3 +63,41 @@ func TestBeamThrottleUnsetKeysStillMeanNoCap(t *testing.T) {
 		t.Error("an installation with no throttle configured got one anyway")
 	}
 }
+
+// A per-direction key that is SET to 0 is an answer: that direction has no
+// cap. Only an absent key falls back to the legacy beam:bw_limit, which is all
+// an old Core writes. Core derives bw_limit as the lower non-zero direction, so
+// reading 0 as "unset" capped the direction the operator left unlimited.
+func TestBeamThrottleDirectionZeroIsNoCap(t *testing.T) {
+	cases := []struct {
+		name           string
+		keys           map[string]string
+		wantUp, wantDn bool
+	}{
+		{"up capped, down explicit 0", map[string]string{"beam:bw_limit": "10485760", "beam:bw_up_internal": "10485760", "beam:bw_down_internal": "0"}, true, false},
+		{"down capped, up explicit 0", map[string]string{"beam:bw_limit": "10485760", "beam:bw_up_internal": "0", "beam:bw_down_internal": "10485760"}, false, true},
+		{"old core: legacy only", map[string]string{"beam:bw_limit": "10485760"}, true, true},
+		{"all explicit 0", map[string]string{"beam:bw_limit": "0", "beam:bw_up_internal": "0", "beam:bw_down_internal": "0"}, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mr, err := miniredis.Run()
+			if err != nil {
+				t.Fatalf("miniredis: %v", err)
+			}
+			defer mr.Close()
+			for k, v := range tc.keys {
+				mr.Set(k, v)
+			}
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			bt := &BeamThrottle{}
+			bt.reloadFromRedis(context.Background(), rdb)
+			if (bt.upLimiter != nil) != tc.wantUp {
+				t.Errorf("up capped = %v, want %v", bt.upLimiter != nil, tc.wantUp)
+			}
+			if (bt.downLimiter != nil) != tc.wantDn {
+				t.Errorf("down capped = %v, want %v", bt.downLimiter != nil, tc.wantDn)
+			}
+		})
+	}
+}
