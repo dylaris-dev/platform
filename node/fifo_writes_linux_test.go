@@ -27,6 +27,17 @@ func TestTenantPlantedPipesDoNotBlockTheNode(t *testing.T) {
 			}
 			return errRefusedForTest
 		}},
+		// The stats collector reads it inline, so a blocked open there stopped
+		// that server's disk and memory guards.
+		{"ping reads server.properties", "srv-pipe-0001/main/server.properties", func(dir string) error {
+			prevMgr := globalStorageMgr
+			defer func() { globalStorageMgr = prevMgr }()
+			globalStorageMgr = NewStorageManager(dir, nil)
+			if statusPingDisabled("srv-pipe-0001", "/data/main") {
+				t.Error("a pipe read as enable-status=false")
+			}
+			return errRefusedForTest
+		}},
 		{"download to server.jar.part", "main/server.jar.part", func(dir string) error {
 			// More than a pipe buffer holds, so a write into the pipe blocks too.
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

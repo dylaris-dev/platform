@@ -1317,10 +1317,17 @@ func (o *MigrationOrchestrator) currentPlayerCount(ctx context.Context, serverUU
 // playerCountFromStats reads the latest entry of the per-server stats buffer
 // stream and returns the player count, or 0 if unreadable. The buffer entry's
 // "data" field is a JSON StatsPayload with a lowercase "players" field.
+//
+// An entry StatsSampleFresh rejects is 0 too, as in PlayersOnlineByServer: the
+// stream outlives the container, so it is the count a stopped server had when
+// it stopped, and it kept the rebalancer from ever picking that server.
 func playerCountFromStats(ctx context.Context, rdb *redis.Client, serverUUID string) int {
 	key := fmt.Sprintf("dylaris:server:%s:stats:buffer", serverUUID)
 	msgs, err := rdb.XRevRangeN(ctx, key, "+", "-", 1).Result()
 	if err != nil || len(msgs) == 0 {
+		return 0
+	}
+	if at, ok := StatsEntryTime(msgs[0].ID); !ok || !StatsSampleFresh(at, time.Now()) {
 		return 0
 	}
 	raw, ok := msgs[0].Values["data"].(string)

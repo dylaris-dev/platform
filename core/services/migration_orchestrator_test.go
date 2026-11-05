@@ -5,6 +5,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-pkg/queue"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -61,6 +62,24 @@ func TestPlayerCountFromStats(t *testing.T) {
 		rdb := newQueueTestRedis(t)
 		if got := playerCountFromStats(context.Background(), rdb, "srv-missing"); got != 0 {
 			t.Errorf("playerCountFromStats = %d, want 0", got)
+		}
+	})
+
+	// G50: the node stops writing when the container goes, so a stopped
+	// server's last sample keeps the players it had then. Aged like
+	// PlayersOnlineByServer ages it, or the rebalancer never moves it.
+	t.Run("stale entry -> 0", func(t *testing.T) {
+		rdb := newQueueTestRedis(t)
+		old := time.Now().Add(-2 * playersFreshFor).UnixMilli()
+		if err := rdb.XAdd(context.Background(), &redis.XAddArgs{
+			Stream: "dylaris:server:srv-3:stats:buffer",
+			ID:     fmt.Sprintf("%d-0", old),
+			Values: map[string]interface{}{"data": `{"players": 4}`},
+		}).Err(); err != nil {
+			t.Fatal(err)
+		}
+		if got := playerCountFromStats(context.Background(), rdb, "srv-3"); got != 0 {
+			t.Errorf("playerCountFromStats = %d, want 0 for a sample older than %v", got, playersFreshFor)
 		}
 	})
 

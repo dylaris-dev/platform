@@ -73,7 +73,10 @@ const (
 	// a slow scan, but expires on its own if this node dies while holding a
 	// server down - the guard re-evaluates within one cycle when it comes back,
 	// so a stale marker can never strand a server whose space was freed.
-	diskFullMarkerTTL    = 1 * time.Hour
+	diskFullMarkerTTL = 1 * time.Hour
+	// statsBufferTTL is how long a server's stats buffer outlives its last
+	// sample: the hour the default MAXLEN holds at one sample per 2 s.
+	statsBufferTTL       = 1 * time.Hour
 	historyBatchInterval = 2 * time.Minute
 	pingTimeout          = 3 * time.Second
 	watchCacheDuration   = 2 * time.Second
@@ -177,7 +180,9 @@ func statusPingDisabled(uuid, workingDir string) bool {
 		return false
 	}
 	defer root.Close()
-	f, err := root.Open(sub + "/server.properties")
+	// Not root.Open: a named pipe there blocks the open, and this runs on the
+	// collector's own goroutine, ahead of its disk and memory guards.
+	f, err := openRegularIn(root, sub+"/server.properties")
 	if err != nil {
 		return false
 	}
@@ -414,14 +419,17 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				releaseResolvedDiskHolds(ctx, rdb, quota)
-				if containers, err := dm.ListRunningMCContainers(); err == nil {
-					running := make(map[string]bool, len(containers))
-					for _, c := range containers {
-						running[c.UUID] = true
-					}
-					publishStoppedDiskUsage(ctx, rdb, quota, running)
+				containers, err := dm.ListRunningMCContainers()
+				if err != nil {
+					releaseResolvedDiskHolds(ctx, rdb, quota, nil)
+					continue
 				}
+				running := make(map[string]bool, len(containers))
+				for _, c := range containers {
+					running[c.UUID] = true
+				}
+				releaseResolvedDiskHolds(ctx, rdb, quota, running)
+				publishStoppedDiskUsage(ctx, rdb, quota, running)
 			}
 		}
 	}()
@@ -652,12 +660,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		snap.mu.Unlock()
 
 		// Always write to buffer stream (replaces sorted set)
-		rdb.XAdd(ctx, &redis.XAddArgs{
-			Stream: bufferKey,
-			MaxLen: bufferMaxLen,
-			Approx: true,
-			Values: map[string]interface{}{"data": string(data)},
-		})
+		appendStatsSample(ctx, rdb, bufferKey, bufferMaxLen, data)
 
 		// Only publish to pub/sub if someone is watching (on-demand)
 		if isWatching() {
@@ -974,6 +977,21 @@ func looksLikeServerUUID(s string) bool {
 	return true
 }
 
+// appendStatsSample adds one sample to a server's stats buffer and re-arms its
+// TTL. Without one, a sample written after Core deleted a server's keys (its
+// collector runs until the container is gone) left a stream nothing removes.
+func appendStatsSample(ctx context.Context, rdb *redis.Client, key string, maxLen int64, data []byte) {
+	pipe := rdb.Pipeline()
+	pipe.XAdd(ctx, &redis.XAddArgs{
+		Stream: key,
+		MaxLen: maxLen,
+		Approx: true,
+		Values: map[string]interface{}{"data": string(data)},
+	})
+	pipe.Expire(ctx, key, statsBufferTTL)
+	pipe.Exec(ctx)
+}
+
 // releaseResolvedDiskHolds lifts the disk guard's hold on any server this node
 // hosts whose usage is back under its limit.
 //
@@ -981,7 +999,12 @@ func looksLikeServerUUID(s string) bool {
 // per RUNNING container, and a server the guard is holding is stopped. The two
 // writes mirror the trip - drop the marker so the reconciler may start the
 // server again, and report "stopped" so Core stops refusing a manual start.
-func releaseResolvedDiskHolds(ctx context.Context, rdb *redis.Client, quota *QuotaSet) {
+//
+// A held server whose container is in running is skipped: the guard's stop did
+// not take, or it was started past the hold. Its own collector releases it once
+// under, and refreshing the marker here kept that collector's trip, which only
+// fires without a marker, from ever stopping it again.
+func releaseResolvedDiskHolds(ctx context.Context, rdb *redis.Client, quota *QuotaSet, running map[string]bool) {
 	if rdb == nil || globalStorageMgr == nil {
 		return
 	}
@@ -989,6 +1012,9 @@ func releaseResolvedDiskHolds(ctx context.Context, rdb *redis.Client, quota *Quo
 	// dylaris:server:*:disk_full: the node is losing SCAN, which lists every
 	// key NAME on the platform whatever its ACL's patterns say.
 	for _, uuid := range localServerUUIDs() {
+		if running[uuid] {
+			continue
+		}
 		if n, err := rdb.Exists(ctx, diskFullKey(uuid)).Result(); err != nil || n == 0 {
 			continue
 		}

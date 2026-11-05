@@ -340,7 +340,9 @@ func TestMigrateServerPathDoesNotBlockLookupsDuringTheCopy(t *testing.T) {
 
 // F60: removing the limit of a held server is the strongest "raise the limit"
 // and has to lift the hold. F62: a server still over keeps its hold alive
-// rather than lapsing after the marker's TTL.
+// rather than lapsing after the marker's TTL. G47/G49: a held server whose
+// container still runs is left to its collector - refreshing its marker kept
+// the guard from ever stopping it again.
 func TestReleaseResolvedDiskHolds(t *testing.T) {
 	prevNodeID, prevMgr := nodeID, globalStorageMgr
 	t.Cleanup(func() { nodeID, globalStorageMgr = prevNodeID, prevMgr })
@@ -351,11 +353,15 @@ func TestReleaseResolvedDiskHolds(t *testing.T) {
 		name     string
 		limitMB  int64
 		size     int
+		running  bool
 		released bool
+		refresh  bool
 	}{
-		{"limit removed", 0, 4096, true},
-		{"still over", 1, 2 << 20, false},
-		{"back under", 1, 4096, true},
+		{"limit removed", 0, 4096, false, true, false},
+		{"still over", 1, 2 << 20, false, false, true},
+		{"back under", 1, 4096, false, true, false},
+		{"still over and running", 1, 2 << 20, true, false, false},
+		{"back under and running", 1, 4096, true, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mr := miniredis.RunT(t)
@@ -373,14 +379,14 @@ func TestReleaseResolvedDiskHolds(t *testing.T) {
 			mr.Set(diskFullKey(held), "1")
 			mr.SetTTL(diskFullKey(held), time.Minute) // most of the hour already gone
 
-			releaseResolvedDiskHolds(ctx, rdb, NewQuotaSet(nil))
+			releaseResolvedDiskHolds(ctx, rdb, NewQuotaSet(nil), map[string]bool{held: tc.running})
 
 			if released := !mr.Exists(diskFullKey(held)); released != tc.released {
 				t.Fatalf("released = %v, want %v", released, tc.released)
 			}
 			if !tc.released {
-				if ttl := mr.TTL(diskFullKey(held)); ttl < diskFullMarkerTTL-time.Minute {
-					t.Fatalf("hold TTL = %v, want it refreshed to %v", ttl, diskFullMarkerTTL)
+				if refreshed := mr.TTL(diskFullKey(held)) > time.Minute; refreshed != tc.refresh {
+					t.Fatalf("hold refreshed = %v (TTL %v), want %v", refreshed, mr.TTL(diskFullKey(held)), tc.refresh)
 				}
 			} else if got, _ := mr.Get(fmt.Sprintf("dylaris:server:%s:status", held)); got != "stopped" {
 				t.Fatalf("status = %q, want stopped", got)
