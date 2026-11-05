@@ -52,7 +52,7 @@ func TestR2TransferFailureLeaksNoSignedURL(t *testing.T) {
 		name string
 		run  func(progress string)
 	}{
-		{"push status", func(p string) { handleMigratePushR2(ctx, rdb, storage, "tok", uuid, p, signed) }},
+		{"push status", func(p string) { handleMigratePushR2(ctx, rdb, storage, "tok", uuid, p, signed, nil, 0) }},
 		{"pull status", func(p string) {
 			handleMigratePullR2(ctx, rdb, &StorageManager{paths: []string{t.TempDir()}}, "tok", uuid, p, signed, "00", 0)
 		}},

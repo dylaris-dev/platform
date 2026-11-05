@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -315,7 +316,7 @@ func TestSendMigratePushR2Command(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigratePushR2Command(context.Background(), "tok-11", "server-uuid", "att1", "https://example.com/put-url"); err != nil {
+	if err := svc.SendMigratePushR2Command(context.Background(), "tok-11", "server-uuid", "att1", "https://example.com/put-url", nil, 0); err != nil {
 		t.Fatalf("SendMigratePushR2Command: %v", err)
 	}
 
@@ -329,6 +330,40 @@ func TestSendMigratePushR2Command(t *testing.T) {
 	}
 	if got["presignedPutUrl"] != "https://example.com/put-url" {
 		t.Errorf("presignedPutUrl = %v, want https://example.com/put-url", got["presignedPutUrl"])
+	}
+}
+
+// G52: the part URLs ride in the command for a node that uploads in parts, and
+// stay out of it otherwise, so a single-PUT command is what it always was.
+func TestSendMigratePushR2CommandParts(t *testing.T) {
+	tests := []struct {
+		name     string
+		parts    []string
+		partSize int64
+	}{
+		{"single PUT", nil, 0},
+		{"multipart", []string{"https://example.com/p1", "https://example.com/p2"}, 64 << 20},
+	}
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			svc := NewQueueService(rdb)
+			tok := fmt.Sprintf("tok-p%d", i)
+			if err := svc.SendMigratePushR2Command(context.Background(), tok, "server-uuid", "att1", "https://example.com/put-url", tc.parts, tc.partSize); err != nil {
+				t.Fatalf("SendMigratePushR2Command: %v", err)
+			}
+			got := readStreamPayload(t, rdb, "dylaris:node:"+tok+":cmds")
+			if got["presignedPutUrl"] != "https://example.com/put-url" {
+				t.Errorf("presignedPutUrl = %v: an old node needs it either way", got["presignedPutUrl"])
+			}
+			urls, _ := got["presignedPartUrls"].([]interface{})
+			if len(urls) != len(tc.parts) {
+				t.Fatalf("presignedPartUrls = %v, want %v", got["presignedPartUrls"], tc.parts)
+			}
+			if size, present := got["partSize"]; tc.parts == nil && present || tc.parts != nil && size != float64(tc.partSize) {
+				t.Errorf("partSize = %v (present %v), want %d", size, present, tc.partSize)
+			}
+		})
 	}
 }
 

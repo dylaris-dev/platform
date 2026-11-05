@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -27,7 +28,7 @@ import (
 //
 // Redis keys this file owns:
 //   dylaris:migration:<uuid>:meta    JSON {sha256,size,sourceNodeID,stagedAt}, TTL ~1h
-//   dylaris:migration:<uuid>:status  JSON {phase,error?}, TTL ~1h
+//   dylaris:migration:<uuid>:status  JSON {phase,error?,bytes?}, TTL ~1h
 // The endpoint key dylaris:migration:endpoint:<nodeID> is owned by migration_server.go.
 
 const (
@@ -52,6 +53,9 @@ type migrationMeta struct {
 type migrationStatus struct {
 	Phase string `json:"phase"`
 	Error string `json:"error,omitempty"` // populated only on phase=error
+	// Bytes is how far the staged archive has grown, on phase=staging. Core
+	// extends its stage wait while it grows; an older Core ignores both.
+	Bytes int64 `json:"bytes,omitempty"`
 }
 
 // stagedArchivePath returns the staged-zip path for a server given its storage
@@ -128,7 +132,11 @@ func migrationArchivePathFor(storage *StorageManager) func(serverUUID string) (s
 
 // setMigrationStatus writes the migration status key (best-effort).
 func setMigrationStatus(ctx context.Context, rdb *redis.Client, nodeToken, serverUUID, phase, errMsg string) {
-	data, err := json.Marshal(migrationStatus{Phase: phase, Error: errMsg})
+	writeMigrationStatus(ctx, rdb, nodeToken, serverUUID, migrationStatus{Phase: phase, Error: errMsg})
+}
+
+func writeMigrationStatus(ctx context.Context, rdb *redis.Client, nodeToken, serverUUID string, st migrationStatus) {
+	data, err := json.Marshal(st)
 	if err != nil {
 		return
 	}
@@ -155,6 +163,20 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 		return
 	}
 
+	// The copy lands outside every server's quota, on the disk the other
+	// servers on this path write to, and region data barely compresses: so it
+	// is bounded by the free space the same way every other large write is,
+	// and held against the other writes while it is being made.
+	need := dirSize(srcDir)
+	if budget := restoreDiskBudget(storagePath) - inflightWrites.Load(); need > budget {
+		log.Printf("migrate_out %s: %d bytes to stage, %d bytes of free space to give", serverUUID, need, budget)
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf(
+			"not enough free space on the source node to stage the move: need %s, can use %s", formatBytes(uint64(need)), formatBytes(uint64(max(budget, 0)))))
+		return
+	}
+	inflightWrites.Add(need)
+	defer inflightWrites.Add(-need)
+
 	stagingDir := filepath.Join(storagePath, migrationStagingDir)
 	if err := os.MkdirAll(stagingDir, 0755); err != nil {
 		log.Printf("migrate_out %s: cannot create staging dir: %v", serverUUID, err)
@@ -173,7 +195,9 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 
 	destZip := stagedArchivePath(storagePath, serverUUID)
 	log.Printf("migrate_out %s: archiving %s → %s", serverUUID, srcDir, destZip)
+	stopProgress := reportStagingProgress(ctx, rdb, nodeToken, progressID, destZip)
 	sha, size, err := migration.Archive(srcDir, destZip)
+	stopProgress()
 	if err != nil {
 		log.Printf("migrate_out %s: archive failed: %v", serverUUID, err)
 		os.Remove(destZip) // partial archive is useless
@@ -192,6 +216,43 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 
 	setMigrationStatus(ctx, rdb, nodeToken, progressID, "staged", "")
 	log.Printf("migrate_out %s: staged (%s, sha256=%s)", serverUUID, formatBytes(uint64(size)), sha)
+}
+
+// stagingProgressInterval is how often migrate_out reports the archive's size.
+// Well inside Core's stage wait, which each report of growth restarts. A
+// variable for tests.
+var stagingProgressInterval = 20 * time.Second
+
+// reportStagingProgress writes phase "staging" with the size zipPath has grown
+// to, now and every stagingProgressInterval, until the returned func is called.
+// That func returns only once no further write can happen, so the caller's
+// final phase is never overwritten by a late "staging".
+func reportStagingProgress(ctx context.Context, rdb *redis.Client, nodeToken, progressID, zipPath string) func() {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(stagingProgressInterval)
+		defer t.Stop()
+		for {
+			var n int64
+			if fi, err := os.Stat(zipPath); err == nil {
+				n = fi.Size()
+			}
+			writeMigrationStatus(ctx, rdb, nodeToken, progressID, migrationStatus{Phase: "staging", Bytes: n})
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+	}
 }
 
 // handleMigrateIn (target side) pulls the staged archive from the source node
@@ -656,8 +717,12 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 // orchestrator routes the transfer through R2 (node-direct, $0 egress, no warp
 // hairpin). The archive + its hash were already produced by migrate_out, so this
 // only re-uses that staged zip — no re-archiving. Reports phase "pushed".
-func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID, putURL string) {
-	if putURL == "" {
+//
+// partURLs, from a Core that knows multipart, carries one URL per partSize
+// piece of the archive; Core completes the upload once we report "pushed".
+// Without them the archive goes up as one PUT, as an older Core expects.
+func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID, putURL string, partURLs []string, partSize int64) {
+	if putURL == "" && len(partURLs) == 0 {
 		log.Printf("migrate_push_r2 %s: missing presigned put url", serverUUID)
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "missing push_r2 url")
 		return
@@ -675,12 +740,23 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 		return
 	}
 
-	log.Printf("migrate_push_r2 %s: uploading staged archive to R2", serverUUID)
-	if err := putFilePresigned(ctx, putURL, zipPath); err != nil {
+	log.Printf("migrate_push_r2 %s: uploading staged archive to R2 (%d parts)", serverUUID, len(partURLs))
+	var err error
+	if len(partURLs) > 0 {
+		err = putFileMultipart(ctx, zipPath, partURLs, partSize)
+	} else {
+		err = putFilePresigned(ctx, putURL, zipPath)
+	}
+	if err != nil {
 		log.Printf("migrate_push_r2 %s: upload failed: %v", serverUUID, err)
 		// The detail stays in this log: the move status is served to the
 		// server's owner and sub-users, and R2's error body is not theirs.
-		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "upload to transfer storage failed")
+		msg := "upload to transfer storage failed"
+		if errors.Is(err, errArchiveOverSinglePut) {
+			// Permanent, unlike a network error, so it must read differently.
+			msg = "the server's archive is larger than the 5 GiB one upload can carry, and this Core cannot upload in parts: update Core"
+		}
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", msg)
 		return
 	}
 
@@ -757,8 +833,48 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 	log.Printf("migrate_pull_r2 %s: transferred into %s", serverUUID, targetDir)
 }
 
-// presignedPutMaxSize is the S3/R2 single-PUT object limit.
-const presignedPutMaxSize = 5 * 1024 * 1024 * 1024 // 5 GiB
+// presignedPutMaxSize is the S3/R2 single-PUT object limit. A variable for
+// tests.
+var presignedPutMaxSize int64 = 5 * 1024 * 1024 * 1024 // 5 GiB
+
+// errArchiveOverSinglePut is putFilePresigned's refusal of an archive over
+// presignedPutMaxSize.
+var errArchiveOverSinglePut = errors.New("staged archive exceeds the 5 GiB single-upload limit")
+
+// putFileMultipart uploads a local file through the part URLs Core signed, one
+// per partSize piece in order, with the backup uploader's buffering and
+// per-part retries. Core completes the upload, so nothing is completed here.
+func putFileMultipart(ctx context.Context, filePath string, partURLs []string, partSize int64) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open staged archive: %w", err)
+	}
+	defer f.Close()
+	stat, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	size := stat.Size()
+	// A count that does not match leaves parts unsigned or an upload Core
+	// cannot complete, so it is refused before the first byte.
+	if partSize <= 0 || int64(len(partURLs)) != (size+partSize-1)/partSize {
+		return fmt.Errorf("Core signed %d parts of %d bytes for an archive of %d bytes", len(partURLs), partSize, size)
+	}
+	api := multipartAPI{
+		partURLs: func(_ context.Context, parts []int32) (int64, map[int32]string, error) {
+			out := make(map[int32]string, len(parts))
+			for _, p := range parts {
+				if p >= 1 && int(p) <= len(partURLs) {
+					out[p] = partURLs[p-1]
+				}
+			}
+			return partSize, out, nil
+		},
+		complete: func(context.Context) (int64, error) { return size, nil },
+	}
+	_, err = uploadMultipart(ctx, api, objectTransferClient, f, nil)
+	return err
+}
 
 // putFilePresigned uploads a local file to a pre-signed PUT URL. The file is
 // already on disk so its size is known up front (no temp re-staging like the
@@ -776,7 +892,7 @@ func putFilePresigned(ctx context.Context, url, filePath string) error {
 	}
 	size := stat.Size()
 	if size > presignedPutMaxSize {
-		return fmt.Errorf("staged archive %d bytes exceeds the 5 GiB single-upload limit", size)
+		return fmt.Errorf("%w (%d bytes)", errArchiveOverSinglePut, size)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, f)

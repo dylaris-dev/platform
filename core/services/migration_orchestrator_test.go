@@ -6,6 +6,7 @@ import (
 	"dylaris-pkg/queue"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -306,5 +307,75 @@ func TestMigrationSourceLANIPs(t *testing.T) {
 func TestMigrationTokenOutlivesTheTransferWait(t *testing.T) {
 	if migrationTokenTTL < migrationTransferTimeout {
 		t.Fatalf("migrationTokenTTL %v < migrationTransferTimeout %v", migrationTokenTTL, migrationTransferTimeout)
+	}
+}
+
+// G52: an archive over the single-PUT limit could not go through transfer
+// storage at all. It now gets a multipart upload with one signed URL per part;
+// one that fits keeps the single PUT an older node understands.
+func TestPresignMigrationParts(t *testing.T) {
+	tests := []struct {
+		name      string
+		size      int64
+		wantParts int
+	}{
+		{"fits one PUT", migrationPutMaxSize, 0},
+		{"one byte over", migrationPutMaxSize + 1, int(migrationPutMaxSize/backupPartSize) + 1},
+		{"32 GB world", 32 << 30, int((32 << 30) / backupPartSize)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prov := &fakeMultipartStorage{}
+			uploadID, urls, err := presignMigrationParts(context.Background(), prov, "migration-transfer/k.zip", tc.size, time.Hour)
+			if err != nil {
+				t.Fatalf("presignMigrationParts: %v", err)
+			}
+			if len(urls) != tc.wantParts {
+				t.Fatalf("got %d part URLs, want %d", len(urls), tc.wantParts)
+			}
+			if tc.wantParts == 0 {
+				if uploadID != "" || prov.creates != 0 {
+					t.Fatalf("an archive that fits one PUT started a multipart upload (%q)", uploadID)
+				}
+				return
+			}
+			if uploadID == "" || prov.creates != 1 {
+				t.Fatalf("upload id %q after %d creates, want one upload", uploadID, prov.creates)
+			}
+			for i, u := range urls {
+				if want := fmt.Sprintf("partNumber=%d&", i+1); !strings.Contains(u, want) || !strings.Contains(u, "uploadId="+uploadID) {
+					t.Fatalf("URL %d = %q, want part %d of %s", i, u, i+1, uploadID)
+				}
+			}
+		})
+	}
+}
+
+// G54: the stage wait was a fixed 5 minutes from the moment Core queued
+// migrate_out, so archiving a large server failed every move. A node that
+// reports its archive growing now keeps the wait open.
+func TestWaitForNodePhaseProgressExtendsDeadline(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	ctx := context.Background()
+	o := &MigrationOrchestrator{redis: rdb}
+	key := queue.MigrationStatusKey("node-a", "srv-p")
+	set := func(v string) {
+		if err := rdb.Set(ctx, key, v, 0).Err(); err != nil {
+			t.Error(err)
+		}
+	}
+	set(`{"phase":"staging","bytes":1}`)
+	go func() {
+		time.Sleep(time.Second)
+		set(`{"phase":"staging","bytes":2}`)
+		time.Sleep(2 * time.Second)
+		set(`{"phase":"staged"}`)
+	}()
+
+	// 100ms is long past by the second poll (2s), so only the growth seen
+	// there can keep the wait open until "staged".
+	phase, errMsg := o.waitForNodePhase(ctx, "node-a", "srv-p", "staged", 100*time.Millisecond)
+	if phase != "staged" || errMsg != "" {
+		t.Fatalf("waitForNodePhase = (%q, %q), want (staged, \"\")", phase, errMsg)
 	}
 }

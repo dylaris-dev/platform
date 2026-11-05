@@ -237,6 +237,10 @@ type NodeCommand struct {
 	// PresignedGetURL. The node never receives bucket credentials.
 	PresignedPutURL string `json:"presignedPutUrl,omitempty"`
 	PresignedGetURL string `json:"presignedGetUrl,omitempty"`
+	// PresignedPartURLs and PartSize carry an archive too large for one PUT
+	// as a multipart upload; an older Core sends neither.
+	PresignedPartURLs []string `json:"presignedPartUrls,omitempty"`
+	PartSize          int64    `json:"partSize,omitempty"`
 }
 
 func main() {
@@ -2222,7 +2226,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "migrate_push_r2":
 		// Source side (cross-LAN BYON fallback): upload the staged archive to R2.
-		handleMigratePushR2(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.PresignedPutURL)
+		handleMigratePushR2(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.PresignedPutURL, cmd.PresignedPartURLs, cmd.PartSize)
 
 	case "migrate_pull_r2":
 		// Target side (cross-LAN BYON fallback): download from R2, verify, extract.

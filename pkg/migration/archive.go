@@ -13,10 +13,11 @@ import (
 	"strings"
 )
 
-// Archive streams a zip of the srcDir tree into destZipPath, then computes a
-// sha256 over the finished file. Nothing is buffered whole in memory: each
-// entry is copied file→zip→disk, and the hash is a second streaming pass over
-// the closed archive. Relative paths and file modes are preserved; empty dirs
+// Archive streams a zip of the srcDir tree into destZipPath and computes its
+// sha256 over the same bytes as they are written. Nothing is buffered whole in
+// memory: each entry is copied file→zip→disk. The hash used to be a second
+// pass over the closed archive, a full re-read of a multi-GB file during which
+// the zip no longer grew - and growth is what the node reports as progress. Relative paths and file modes are preserved; empty dirs
 // are written as explicit directory entries so Extract recreates them.
 //
 // Returns the lowercase hex sha256 and the archive's byte size.
@@ -36,7 +37,9 @@ func Archive(srcDir, destZipPath string) (sha256hex string, size int64, err erro
 		}
 	}()
 
-	zw := zip.NewWriter(out)
+	h := sha256.New()
+	cw := &countingWriter{w: io.MultiWriter(out, h)}
+	zw := zip.NewWriter(cw)
 	walkErr := filepath.Walk(srcDir, func(path string, info os.FileInfo, werr error) error {
 		if werr != nil {
 			return werr
@@ -103,22 +106,19 @@ func Archive(srcDir, destZipPath string) (sha256hex string, size int64, err erro
 	}
 	closed = true
 
-	return hashFile(destZipPath)
+	return hex.EncodeToString(h.Sum(nil)), cw.n, nil
 }
 
-// hashFile streams the file at path through sha256 and returns hex digest + size.
-func hashFile(path string) (string, int64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", 0, err
-	}
-	defer f.Close()
-	h := sha256.New()
-	n, err := io.Copy(h, f)
-	if err != nil {
-		return "", 0, err
-	}
-	return hex.EncodeToString(h.Sum(nil)), n, nil
+// countingWriter counts what passes through it.
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // MaxArchiveEntries bounds the entries Extract creates. A large modded server

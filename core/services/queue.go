@@ -255,20 +255,29 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 // fallback). The source node uploads its already-staged archive to the pre-signed
 // PUT URL and reports phase "pushed". The URL carries its own auth, so the node
 // never receives bucket credentials.
-func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, serverUUID, attempt, putURL string) error {
+//
+// partURLs, when set, sign every partSize piece of an archive too large for one
+// PUT; a node that knows them uploads in parts, an older one tries putURL.
+func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, serverUUID, attempt, putURL string, partURLs []string, partSize int64) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migratePushR2Cmd struct {
-		Action          string                 `json:"action"`
-		Config          map[string]interface{} `json:"config"`
-		Attempt         string                 `json:"attempt,omitempty"`
-		PresignedPutURL string                 `json:"presignedPutUrl"`
+		Action            string                 `json:"action"`
+		Config            map[string]interface{} `json:"config"`
+		Attempt           string                 `json:"attempt,omitempty"`
+		PresignedPutURL   string                 `json:"presignedPutUrl"`
+		PresignedPartURLs []string               `json:"presignedPartUrls,omitempty"`
+		PartSize          int64                  `json:"partSize,omitempty"`
 	}
 	cmd := migratePushR2Cmd{
-		Action:          "migrate_push_r2",
-		Config:          map[string]interface{}{"uuid": serverUUID},
-		Attempt:         attempt,
-		PresignedPutURL: putURL,
+		Action:            "migrate_push_r2",
+		Config:            map[string]interface{}{"uuid": serverUUID},
+		Attempt:           attempt,
+		PresignedPutURL:   putURL,
+		PresignedPartURLs: partURLs,
+	}
+	if len(partURLs) > 0 {
+		cmd.PartSize = partSize
 	}
 
 	jsonData, err := json.Marshal(cmd)

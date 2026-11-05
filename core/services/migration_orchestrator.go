@@ -145,11 +145,14 @@ const (
 	// giving up. It MUST exceed migrationLockTTL so a dead Core's leftover lock
 	// is always outlived; a lock still held after this belongs to a migration
 	// that is genuinely alive elsewhere.
-	migrationLockWait        = 90 * time.Second
-	migrationLockPoll        = 1 * time.Second
-	orchestrationStatusTTL   = time.Hour
-	migrationStopTimeout     = 90 * time.Second
-	migrationStageTimeout    = 5 * time.Minute  // archiving GBs on the source
+	migrationLockWait      = 90 * time.Second
+	migrationLockPoll      = 1 * time.Second
+	orchestrationStatusTTL = time.Hour
+	migrationStopTimeout   = 90 * time.Second
+	// migrationStageTimeout is the stage wait with no word from the source; each
+	// report of the archive growing restarts it, up to migrationProgressMaxWait.
+	migrationStageTimeout    = 5 * time.Minute
+	migrationProgressMaxWait = 6 * time.Hour
 	migrationTransferTimeout = 30 * time.Minute // multi-GB transfer to target
 	// migrationR2PhaseTimeout bounds each leg (upload, then download) of the
 	// cross-LAN BYON R2 fallback. Longer than the LAN/overlay transfer because a
@@ -1117,20 +1120,38 @@ func (o *MigrationOrchestrator) pollDBStatus(ctx context.Context, serverID int, 
 func (o *MigrationOrchestrator) waitForNodePhase(ctx context.Context, nodeToken, progressID, wantPhase string, timeout time.Duration) (string, string) {
 	key := queue.MigrationStatusKey(nodeToken, progressID)
 	serverUUID := queue.MigrationProgressServer(progressID)
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline := start.Add(timeout)
 	ticker := time.NewTicker(migrationPollInterval)
 	defer ticker.Stop()
 
 	lastPhase := ""
+	var lastBytes int64
 	for {
 		raw, err := o.redis.Get(ctx, key).Result()
 		if err == nil && raw != "" {
 			var st struct {
 				Phase string `json:"phase"`
 				Error string `json:"error,omitempty"`
+				Bytes int64  `json:"bytes,omitempty"`
 			}
 			if json.Unmarshal([]byte(raw), &st) == nil {
 				lastPhase = st.Phase
+				// A node that reports work growing (migrate_out's archive)
+				// gets the timeout again from now: a fixed wait failed every
+				// move of a server too large to archive in it. Capped, so a
+				// customer's node counting up forever cannot hold the
+				// serialized migration queue.
+				if st.Bytes > lastBytes {
+					lastBytes = st.Bytes
+					next := time.Now().Add(timeout)
+					if limit := start.Add(migrationProgressMaxWait); next.After(limit) {
+						next = limit
+					}
+					if next.After(deadline) {
+						deadline = next
+					}
+				}
 				if st.Phase == wantPhase {
 					return st.Phase, ""
 				}
@@ -1265,12 +1286,34 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 		}
 	}()
 
+	uploadID, partURLs, err := presignMigrationParts(ctx, prov, key, expectedSize, ttl)
+	if err != nil {
+		return err
+	}
+	completed := false
+	if uploadID != "" {
+		defer func() {
+			if completed {
+				return
+			}
+			if aerr := prov.AbortMultipart(context.Background(), key, uploadID); aerr != nil {
+				log.Printf("migration %s: R2 transfer upload abort failed (%s): %v", srv.UUID, key, aerr)
+			}
+		}()
+	}
+
 	// Source uploads its staged archive to R2.
-	if err := o.queue.SendMigratePushR2Command(ctx, sourceNode.Token, srv.UUID, attempt, putURL); err != nil {
+	if err := o.queue.SendMigratePushR2Command(ctx, sourceNode.Token, srv.UUID, attempt, putURL, partURLs, backupPartSize); err != nil {
 		return fmt.Errorf("queue migrate_push_r2: %w", err)
 	}
 	if phase, nerr := o.waitForNodePhase(ctx, sourceNode.Token, progress, "pushed", migrationR2PhaseTimeout); phase != "pushed" {
 		return fmt.Errorf("source R2 upload failed (phase=%s): %s", phase, nerr)
+	}
+	if uploadID != "" {
+		if _, err := prov.CompleteMultipart(ctx, key, uploadID, backupPartSize); err != nil {
+			return fmt.Errorf("complete transfer upload: %w", err)
+		}
+		completed = true
 	}
 
 	// Target downloads from R2, verifies the hash, extracts. Reports "transferred".
@@ -1281,6 +1324,42 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 		return fmt.Errorf("target R2 download failed (phase=%s): %s", phase, nerr)
 	}
 	return nil
+}
+
+// migrationPutMaxSize is the S3/R2 single-PUT object limit. A staged archive
+// above it goes up as a multipart upload in backupPartSize parts.
+const migrationPutMaxSize int64 = 5 << 30
+
+// presignMigrationParts starts a multipart upload for an archive too large for
+// one PUT and signs a URL for every part, in part order. An archive that fits
+// gets no upload: the single PUT is what every node, old or new, understands.
+// ponytail: every URL rides in the one command (~1 KB each, ~500 for a 32 GB
+// archive); ask for them as the upload goes, as backups do, if archives reach
+// the hundreds of GB.
+func presignMigrationParts(ctx context.Context, prov backupstorage.Storage, key string, size int64, ttl time.Duration) (string, []string, error) {
+	if size <= migrationPutMaxSize {
+		return "", nil, nil
+	}
+	parts := (size + backupPartSize - 1) / backupPartSize
+	if parts > maxPartNumber {
+		return "", nil, fmt.Errorf("staged archive of %d bytes is larger than transfer storage can take in %d parts", size, maxPartNumber)
+	}
+	uploadID, err := prov.CreateMultipart(ctx, key)
+	if err != nil {
+		return "", nil, fmt.Errorf("staged archive of %d bytes needs a multipart upload, which transfer storage refused: %w", size, err)
+	}
+	urls := make([]string, 0, parts)
+	for p := int32(1); int64(p) <= parts; p++ {
+		u, err := prov.UploadPartURL(ctx, key, uploadID, p, ttl)
+		if err != nil {
+			if aerr := prov.AbortMultipart(context.Background(), key, uploadID); aerr != nil {
+				log.Printf("migration: transfer upload abort failed (%s): %v", key, aerr)
+			}
+			return "", nil, fmt.Errorf("presign transfer part %d: %w", p, err)
+		}
+		urls = append(urls, u)
+	}
+	return uploadID, urls, nil
 }
 
 // nodeMeta mirrors the node-owned dylaris:migration:<uuid>:meta JSON.
