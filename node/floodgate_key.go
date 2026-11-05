@@ -41,7 +41,7 @@ func writeFloodgateKey(serverDir string, key []byte) error {
 		return fmt.Errorf("floodgate key: %w", err)
 	}
 	defer root.Close()
-	if err := root.WriteFile(leaf, key, nodeOwnedFileMode); err != nil {
+	if err := writeFileIn(root, leaf, key, nodeOwnedFileMode); err != nil {
 		return fmt.Errorf("floodgate key: %w", err)
 	}
 	// WriteFile keeps the mode of a file that already existed.

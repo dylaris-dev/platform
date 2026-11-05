@@ -204,6 +204,28 @@ func openRegularIn(root *os.Root, name string) (*os.File, error) {
 	return f, nil
 }
 
+// openWriteIn is root.OpenFile for a write to a name the tenant can plant a
+// named pipe under. A blocking open of a pipe for writing waits for a reader
+// forever, and with the server stopped there is none: a FIFO at
+// server.jar.part or key.pem held the install, or the start, for good. With
+// O_NONBLOCK that open fails at once (ENXIO), and one that a running reader
+// lets through is refused as not a regular file.
+func openWriteIn(root *os.Root, name string, flag int, perm os.FileMode) (*os.File, error) {
+	f, err := root.OpenFile(name, flag|unix.O_NONBLOCK, perm)
+	if err != nil {
+		return nil, err
+	}
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("%s is not a regular file", path.Base(name))
+	}
+	if err := unix.SetNonblock(int(f.Fd()), false); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
 // openDirIn opens name in root as a directory without blocking: a FIFO in its
 // place fails instead of hanging the open.
 func openDirIn(root *os.Root, name string) (*os.File, error) {

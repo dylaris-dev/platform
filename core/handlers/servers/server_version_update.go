@@ -329,6 +329,11 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
+	// The move stops the server and rewrites its jars, the same tree a restore,
+	// a reinstall or a migration is working in.
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
+		return
+	}
 	var req versionUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -347,12 +352,24 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Set the server up before changing its Minecraft version", http.StatusBadRequest)
 		return
 	}
+	// An install queued but not yet started holds no busy key on the node.
+	if srv.Status == "installing" {
+		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
+		return
+	}
 	loader := strings.ToLower(strings.TrimSpace(req.Loader))
 	if loader == "" {
 		loader = strings.ToLower(srv.InstallerType)
 	}
 	if !validate.IsModrinthLoader(loader) {
 		httpx.SendJSONError(w, "This server's loader is not one Modrinth knows, so its mods cannot be resolved for another version. Declare the loader first.", http.StatusUnprocessableEntity)
+		return
+	}
+	// spigot, bukkit, purpur and quilt are Modrinth tags with no installer
+	// behind them: the node would swap the mods, clear the jars and then fail.
+	if !validate.IsInstallerType(loader) {
+		httpx.SendJSONErrorCode(w, fmt.Sprintf("%s cannot be installed by the platform, so the server cannot be moved to another version this way. Install the new version through setup instead.", loader),
+			"loader_not_installable", http.StatusUnprocessableEntity)
 		return
 	}
 	// The update reinstalls the server like a setup does, so it needs the same

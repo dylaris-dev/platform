@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"syscall"
 	"time"
 )
@@ -90,13 +89,11 @@ var guardedDownloadClient = &http.Client{
 
 // downloadFileGuarded downloads through the guarded client, with the same stall
 // watchdog as every installer download, and fails once more than maxBytes
-// arrive instead of keeping a truncated file.
+// arrive instead of keeping a truncated file. A failure leaves destPath as it
+// was: downloadWith only renames a complete body over it, and removing it here
+// deleted the working server.jar of an import that failed.
 func downloadFileGuarded(url, destPath string, maxBytes int64) error {
-	err := downloadWith(guardedDownloadClient, url, destPath, installerStallTimeout, maxBytes)
-	if err != nil {
-		os.Remove(destPath)
-	}
-	return err
+	return downloadWith(guardedDownloadClient, url, destPath, installerStallTimeout, maxBytes)
 }
 
 // cappedWriter fails the copy on the first byte past the cap.

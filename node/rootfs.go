@@ -146,7 +146,21 @@ func createIn(root *os.Root, name string, perm os.FileMode) (*os.File, error) {
 	if err := mkdirParentIn(root, name); err != nil {
 		return nil, err
 	}
-	return root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	return openWriteIn(root, name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+}
+
+// writeFileIn is root.WriteFile through createIn, so a named pipe at name is
+// refused instead of blocking the write.
+func writeFileIn(root *os.Root, name string, data []byte, perm os.FileMode) error {
+	f, err := createIn(root, name, perm)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // mkdirParentIn creates the directory that will hold name.
@@ -650,7 +664,7 @@ func writeEULA(serverPath, subName string) error {
 		return err
 	}
 	defer root.Close()
-	if err := root.WriteFile(leaf, []byte("eula=true\n"), 0o644); err != nil {
+	if err := writeFileIn(root, leaf, []byte("eula=true\n"), 0o644); err != nil {
 		return err
 	}
 	chownForMCIn(root, leaf)

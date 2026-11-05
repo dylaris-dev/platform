@@ -61,3 +61,38 @@ func TestVersionUpdateRefusesWhatItWouldBreak(t *testing.T) {
 		})
 	}
 }
+
+// A move the node cannot carry out is refused before Core writes anything:
+// a loader with no installer behind it, or a server still being installed.
+func TestVersionUpdateRefusesWhatTheNodeCannotDo(t *testing.T) {
+	cases := []struct {
+		name       string
+		srv        models.Server
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{"purpur", models.Server{ID: 1, ActiveSubServer: "main", Status: "stopped", InstallerType: "purpur"},
+			`{"minecraft":"1.21.4"}`, http.StatusUnprocessableEntity, "loader_not_installable"},
+		{"quilt asked for", models.Server{ID: 1, ActiveSubServer: "main", Status: "stopped", InstallerType: "fabric"},
+			`{"minecraft":"1.21.4","loader":"quilt"}`, http.StatusUnprocessableEntity, "loader_not_installable"},
+		{"spigot", models.Server{ID: 1, ActiveSubServer: "main", Status: "stopped", InstallerType: "spigot"},
+			`{"minecraft":"1.21.4"}`, http.StatusUnprocessableEntity, "loader_not_installable"},
+		{"still installing", models.Server{ID: 1, ActiveSubServer: "main", Status: "installing", InstallerType: "paper"},
+			`{"minecraft":"1.21.4"}`, http.StatusConflict, "server_installing"},
+		{"being moved", models.Server{ID: 1, ActiveSubServer: "main", Status: "migrating", InstallerType: "paper"},
+			`{"minecraft":"1.21.4"}`, http.StatusConflict, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := NewServerModsHandler(testDeps(Deps{Store: &versionGuardStore{srv: c.srv}}))
+			req := httptest.NewRequest(http.MethodPost, "/api/servers/1/version-update", strings.NewReader(c.body))
+			req = mux.SetURLVars(req, map[string]string{"id": "1"})
+			rec := httptest.NewRecorder()
+			h.VersionUpdate(rec, req)
+			if rec.Code != c.wantStatus || !strings.Contains(rec.Body.String(), c.wantCode) {
+				t.Fatalf("answered %d %s, want %d %s", rec.Code, rec.Body.String(), c.wantStatus, c.wantCode)
+			}
+		})
+	}
+}

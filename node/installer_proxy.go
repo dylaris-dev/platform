@@ -113,7 +113,9 @@ func consoleStopCommand(serverDir, sub string) string {
 		return "stop"
 	}
 	defer root.Close()
-	f, err := root.Open(path.Join(filepath.ToSlash(sub), "config.yml"))
+	// Not root.Open: a named pipe there with no writer blocked the open, and
+	// with it every stop of this server and the express workers behind it.
+	f, err := openRegularIn(root, path.Join(filepath.ToSlash(sub), "config.yml"))
 	if err != nil {
 		return "stop"
 	}

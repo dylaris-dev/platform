@@ -50,6 +50,13 @@ type versionUpdatePayload struct {
 	Install         []versionUpdateFile `json:"install"`
 }
 
+// versionMoveInstallers is the installServer types a version move can target:
+// the loaders that are also an install source.
+var versionMoveInstallers = map[string]bool{
+	"paper": true, "velocity": true, "waterfall": true, "bungeecord": true,
+	"fabric": true, "forge": true, "neoforge": true,
+}
+
 // runUpdateServerVersion performs the whole move: stop, drop the named jars,
 // fetch the new ones, reinstall the server software at the new version, restart.
 func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerManager, storage *StorageManager, cmd NodeCommand, payload string) {
@@ -102,6 +109,16 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 
 	log.Printf("update_server_version: moving %s/%s (%d removals, %d installs)", pl.UUID, subName, len(pl.Remove), len(pl.Install))
 
+	// Refused before anything is fetched or stopped. Core accepts every Modrinth
+	// loader tag, and spigot, bukkit, purpur and quilt are tags the installer has
+	// no source for: the move used to swap the plugins and clean the jars, then
+	// fail with "unknown installer type" on a server left with no jar.
+	if !versionMoveInstallers[cmd.Installer.Type] {
+		log.Printf("update_server_version: %s cannot be installed by this node, the move of %s is refused", cmd.Installer.Type, pl.UUID)
+		abandonVersionUpdate(ctx, rdb, pl.UUID, fmt.Sprintf("%q is not server software this node can install", cmd.Installer.Type))
+		return
+	}
+
 	// Same traversal + symlink boundary install_mod goes through: the mods
 	// directory is bind-mounted into the tenant's own container, so a symlink
 	// planted there would otherwise redirect every write and delete below.
@@ -152,67 +169,112 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	}()
 	log.Printf("update_server_version: staged %d new jars for %s/%s", len(staged), pl.UUID, subName)
 
-	// Past this point the move is committed: everything it needs is on disk.
+	// Past this point the server is stopped and its files change. Nothing is
+	// deleted until the new software is installed:
+	// the removed mods and the old server jars are moved aside, and a failure
+	// puts them back, so the server is left on the version it ran.
 	dm.PowerAction(pl.UUID, "stop")
 	time.Sleep(3 * time.Second)
 
+	stash, err := stashServerJars(serverPath, subName)
+	fail := func(what string, cause error) {
+		log.Printf("update_server_version: %s failed for %s/%s: %v; putting the previous version back", what, pl.UUID, subName, cause)
+		if stash != nil {
+			if rerr := stash.restore(); rerr != nil {
+				log.Printf("update_server_version: could not put everything back for %s/%s: %v", pl.UUID, subName, rerr)
+			}
+		}
+		// The disk is back on the old version, so Core's optimistic writes are
+		// now the wrong ones - and the reason reaches the owner from there.
+		abandonVersionUpdate(ctx, rdb, pl.UUID, fmt.Sprintf("%s failed: %v", what, cause))
+		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
+	}
+	if err != nil {
+		fail("setting the old server software aside", err)
+		return
+	}
+
+	modsRel := filepath.ToSlash(filepath.Join(subName, targetDir))
 	for _, name := range pl.Remove {
 		if !validate.IsPlainFileName(name) {
 			log.Printf("update_server_version: skipping invalid removal name %q", name)
 			continue
 		}
-		p := filepath.Join(modsDir, name)
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			log.Printf("update_server_version: rm %s: %v", p, err)
+		if err := stash.takeFile(filepath.Join(modsDir, name), modsRel+"/"+name); err != nil {
+			fail("setting "+name+" aside", err)
+			return
 		}
 	}
 
 	for _, sj := range staged {
+		_, lerr := os.Lstat(sj.final)
 		if err := os.Rename(sj.tmp, sj.final); err != nil {
 			// A rename failing after every download succeeded is a filesystem
 			// fault, not a content problem. Say which jar, so the gap in the
 			// mods directory has a name.
 			log.Printf("update_server_version: could not put %s in place: %v", sj.final, err)
+			continue
+		}
+		// Only a name this move created is removed again on a failure: one that
+		// was already there and not on the removal list is not ours to delete.
+		if os.IsNotExist(lerr) {
+			stash.add(modsRel + "/" + filepath.Base(sj.final))
 		}
 	}
 
 	subServerDir := filepath.Join(serverPath, subName)
-	if err := CleanServerJars(subServerDir); err != nil {
-		log.Printf("update_server_version: clean failed for %s/%s: %v", pl.UUID, subName, err)
-	}
-
 	installerCfg := cmd.Installer
 	installerCfg.JavaImage = cmd.Config.Docker.Image
 	installerCfg.ServerUUID = pl.UUID
-	if _, err := InstallServer(serverPath, subName, installerCfg); err != nil {
-		log.Printf("update_server_version: install failed for %s/%s: %v", pl.UUID, subName, err)
-		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
+	_, err = InstallServer(serverPath, subName, installerCfg)
+	// Same as setup and reinstall: a delete that landed during the downloads
+	// removed the directory the install just recreated.
+	if discardIfDeleted(pl.UUID, serverPath) {
+		stash.root.Close()
+		return
+	}
+	if err != nil {
+		fail("the install", err)
 		return
 	}
 
 	startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, cmd.Config.Docker.ExtraJvmFlags, cmd.Config.Docker.Image)
 	if err != nil {
-		log.Printf("update_server_version: buildStartCommand failed for %s/%s: %v", pl.UUID, subName, err)
-		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
+		fail("building the start command", err)
 		return
 	}
 	cmd.Config.Docker.Command = startCmd
-	if err := dm.RecreateWithCommand(cmd.Config); err != nil {
+
+	// Started only while the platform still means to run it, as setup and
+	// reinstall do: a cutoff that lands during the downloads writes only the
+	// desired state, because the status reads "installing".
+	provisionFloodgateKey(ctx, rdb, serverPath, pl.UUID, subName)
+	recreate, status := dm.RecreateWithCommand, "starting"
+	if desired, derr := rdb.Get(ctx, fmt.Sprintf("dylaris:server:%s:desired_state", pl.UUID)).Result(); derr == nil && desired == "stopped" {
+		recreate, status = dm.RecreateStopped, "stopped"
+	}
+	// The new software is in place from here on, so a Docker fault in the
+	// recreate keeps it, as reinstall does: putting the old files back under a
+	// container that may already carry the new command would match neither.
+	stash.discard()
+	if err := recreate(cmd.Config); err != nil {
 		log.Printf("update_server_version: failed to restart %s: %v", pl.UUID, err)
 		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
 		return
 	}
-	log.Printf("update_server_version: %s/%s moved and running", pl.UUID, subName)
+	rdb.Set(ctx, statusKey, status, 30*time.Second)
+	log.Printf("update_server_version: %s/%s moved (status %s)", pl.UUID, subName, status)
 }
 
 // abandonVersionUpdate tells Core the move did not happen, so it can undo the
 // database writes it made before dispatching the command.
 //
-// ONLY for the aborts that happen before anything on disk has been touched. Past
-// the commit point the server really has moved, and asking Core to revert then
-// would make the database wrong in the other direction. The TTL outlives several
-// of the status watcher's five-second ticks without lingering long enough to
-// land on a later, successful move.
+// ONLY when the disk is on the old version: an abort before anything was
+// touched, or a failure after the stop whose files were put back. A server that
+// really has moved must not be reverted, or the database would be wrong in the
+// other direction. The TTL outlives several of the status watcher's
+// five-second ticks without lingering long enough to land on a later,
+// successful move.
 func abandonVersionUpdate(ctx context.Context, rdb *redis.Client, serverUUID, reason string) {
 	if rdb == nil {
 		return

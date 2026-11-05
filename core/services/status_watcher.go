@@ -128,6 +128,11 @@ func (s *StatusWatcherService) scan() {
 	if s.consumeVersionUpdateFailures(ctx) {
 		dirty = true
 	}
+	// And a sub-server copy the node could not make: drop the rows Core wrote
+	// for it when it queued the copy.
+	if s.consumeCopySubFailures(ctx) {
+		dirty = true
+	}
 
 	// Publish the durable per-server state keys the node reconciler and the
 	// gateway edge read (desired_state + live_status).

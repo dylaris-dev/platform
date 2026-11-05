@@ -880,6 +880,11 @@ func downloadFileWithin(url, destPath string, stall time.Duration) error {
 
 // downloadWith is the shared body: client chooses the dial policy, maxBytes > 0
 // caps the body (0 = no cap).
+//
+// The body lands in "<name>.dl" beside the destination and is renamed over it
+// only once complete. The destination itself used to be opened and truncated
+// before the request went out, so a 404, a 5xx or a stall replaced a working
+// server.jar with an empty or partial one.
 func downloadWith(client *http.Client, url, destPath string, stall time.Duration, maxBytes int64) error {
 	// Created THROUGH a Root at the destination's directory so a symlink planted
 	// at destPath (the sub-server dir is tenant-writable) is refused rather than
@@ -889,12 +894,27 @@ func downloadWith(client *http.Client, url, destPath string, stall time.Duration
 		return err
 	}
 	defer root.Close()
-	out, err := root.Create(filepath.Base(destPath))
+	name := filepath.Base(destPath)
+	tmp := name + ".dl"
+	out, err := createIn(root, tmp, 0o644)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	err = fetchInto(out, client, url, stall, maxBytes)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = root.Rename(tmp, name)
+	}
+	if err != nil {
+		root.Remove(tmp)
+	}
+	return err
+}
 
+// fetchInto writes url's body to out under the stall watchdog and the cap.
+func fetchInto(out io.Writer, client *http.Client, url string, stall time.Duration, maxBytes int64) error {
 	// Cancelling the request context is what actually unblocks a stalled read;
 	// closing the body from another goroutine is not safe.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -917,7 +937,7 @@ func downloadWith(client *http.Client, url, destPath string, stall time.Duration
 	watchdog := time.AfterFunc(stall, cancel)
 	defer watchdog.Stop()
 
-	var dst io.Writer = out
+	dst := out
 	if maxBytes > 0 {
 		dst = &cappedWriter{w: out, left: maxBytes}
 	}

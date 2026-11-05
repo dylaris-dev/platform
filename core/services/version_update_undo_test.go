@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"dylaris-core/models"
@@ -15,6 +16,7 @@ type undoFakeStore struct {
 
 	loaderCalls []loaderMetadataCall
 	modUpserts  []models.ServerMod
+	notes       []models.Notification
 }
 
 type loaderMetadataCall struct {
@@ -27,6 +29,11 @@ func (f *undoFakeStore) UpdateServerLoaderMetadata(id int, installerType, minecr
 	return nil
 }
 
+func (f *undoFakeStore) InsertNotification(n *models.Notification) (int64, error) {
+	f.notes = append(f.notes, *n)
+	return 1, nil
+}
+
 func (f *undoFakeStore) UpsertServerMod(m *models.ServerMod) (int, error) {
 	f.modUpserts = append(f.modUpserts, *m)
 	return len(f.modUpserts), nil
@@ -36,7 +43,7 @@ func newUndoTest(t *testing.T) (*StatusWatcherService, *undoFakeStore) {
 	t.Helper()
 	fs := &undoFakeStore{}
 	fs.serversByUUID = map[string]models.Server{
-		"u-1": {ID: 7, UUID: "u-1", ActiveSubServer: "server"},
+		"u-1": {ID: 7, UUID: "u-1", Name: "SMP", OwnerID: "owner-1", ActiveSubServer: "server", MinecraftVersion: "1.21.4"},
 	}
 	rdb := newQueueTestRedis(t)
 	return &StatusWatcherService{store: fs, redis: rdb}, fs
@@ -105,6 +112,11 @@ func TestConsumeVersionUpdateFailures_PutsTheVersionAndTheModsBack(t *testing.T)
 	}
 	if fs.modUpserts[0].ModrinthVersionID != "v-old" || fs.modUpserts[0].FileName != "sodium-1.20.1.jar" {
 		t.Errorf("Sodium restored as %+v, want its pre-move version and file name", fs.modUpserts[0])
+	}
+
+	// The owner is told why; before, the panel only showed a stopped server.
+	if len(fs.notes) != 1 || fs.notes[0].UserID != "owner-1" || !strings.Contains(fs.notes[0].Body, "sodium.jar could not be fetched") {
+		t.Errorf("notifications = %+v, want one to the owner carrying the node's reason", fs.notes)
 	}
 
 	// Both keys are gone, so the next tick does not restore over a later move.

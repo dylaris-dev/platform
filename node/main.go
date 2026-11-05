@@ -962,7 +962,7 @@ func writeServerRootFile(serverDir, name string, data []byte) error {
 		return err
 	}
 	defer root.Close()
-	return root.WriteFile(name, data, nodeOwnedFileMode)
+	return writeFileIn(root, name, data, nodeOwnedFileMode)
 }
 
 // storageManager is set during init and used by heartbeat to publish storage info.
@@ -2032,9 +2032,23 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
 		subServerDir := filepath.Join(serverPath, subName)
 
-		// Clean old JARs and generated directories
-		if err := CleanServerJars(subServerDir); err != nil {
-			log.Printf("Clean failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+		// Old JARs and generated directories are moved aside, not deleted, until
+		// the new software is in place: a failed download left a server with no
+		// jar at all (see jarStash).
+		stash, serr := stashServerJars(serverPath, subName)
+		putBack := func() {
+			if stash == nil {
+				return
+			}
+			if rerr := stash.restore(); rerr != nil {
+				log.Printf("reinstall: could not put the previous server software back for %s/%s: %v", cmd.Config.UUID, subName, rerr)
+			}
+		}
+		if serr != nil {
+			log.Printf("Reinstall of %s/%s refused: setting the old server software aside failed: %v", cmd.Config.UUID, subName, serr)
+			putBack()
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			return
 		}
 
 		// Re-install with new config (Forge/NeoForge need the
@@ -2055,10 +2069,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 		_, err := InstallServer(serverPath, subName, installerCfg)
 		if discardIfDeleted(cmd.Config.UUID, serverPath) {
+			stash.root.Close()
 			return
 		}
 		if err != nil {
 			log.Printf("Reinstall failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+			putBack()
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 			return
 		}
@@ -2069,6 +2085,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
 		if err != nil {
 			log.Printf("buildStartCommand failed for reinstall %s/%s: %v", cmd.Config.UUID, subName, err)
+			putBack()
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 			return
 		}
@@ -2088,8 +2105,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		if err := reinstallRecreate(cmd.Config); err != nil {
 			log.Printf("Failed to restart server pod %s: %v", cmd.Config.UUID, err)
+			stash.discard()
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 		} else {
+			stash.discard()
 			log.Printf("Server %s/%s reinstalled (status %s)", cmd.Config.UUID, subName, reinstallStatus)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), reinstallStatus, 30*time.Second)
 		}

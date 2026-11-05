@@ -5,6 +5,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 
@@ -24,9 +25,9 @@ import (
 //
 // So the pre-move state is parked in Redis at dispatch, the node writes a
 // give-up signal on the abort paths, and the status watcher pairs the two and
-// puts the columns back. Only the pre-commit aborts signal: once the node has
-// started removing jars the disk really has moved, and reverting the database
-// then would be the mistake, not the fix.
+// puts the columns back. Only a disk that is on the old version signals: a
+// pre-commit abort, or a failure after the stop whose files the node put back.
+// A server that really has moved must not be reverted.
 //
 // A lost signal leaves exactly the old behaviour, so this can only improve on it.
 
@@ -123,6 +124,11 @@ func (s *StatusWatcherService) consumeVersionUpdateFailures(ctx context.Context)
 			}
 			s.restoreServerMods(srv.ID, undo)
 			s.store.UpdateServerStatus(srv.ID, "stopped")
+			// The panel only showed a stopped server on its old version; the
+			// reason sat in the node's log.
+			notifyServerOwner(s.store, srv, "Version change failed",
+				fmt.Sprintf("Moving %s to Minecraft %s did not finish: %s. The server was left on its previous version.",
+					srv.Name, srv.MinecraftVersion, reason))
 			changed = true
 		}
 		cursor = next

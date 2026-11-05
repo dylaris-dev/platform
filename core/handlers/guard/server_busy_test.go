@@ -21,6 +21,7 @@ func TestEveryRewritingHandlerTakesTheBusyGuard(t *testing.T) {
 		{"../servers/servers_lifecycle.go", "queueMigration", "RefuseIfServerBusy("},
 		{"../servers/servers_lifecycle.go", "DeleteServer", "RefuseIfMoving("},
 		{"../servers/server_version_update.go", "CopySubServer", "RefuseIfServerBusy("},
+		{"../servers/server_version_update.go", "VersionUpdate", "RefuseIfServerBusy("},
 		{"../backup/backup.go", "RestoreRun", "RefuseIfServerBusy("},
 	} {
 		body := handlertest.FuncBody(t, c.file, c.header)
@@ -44,6 +45,7 @@ func TestSuspensionIsAnsweredBeforeTheBusyGuard(t *testing.T) {
 		{"../servers/servers_lifecycle.go", "ReinstallServer"},
 		{"../servers/servers_lifecycle.go", "SwitchSubServer"},
 		{"../servers/server_version_update.go", "CopySubServer"},
+		{"../servers/server_version_update.go", "VersionUpdate"},
 		{"../backup/backup.go", "RestoreRun"},
 	} {
 		body := handlertest.FuncBody(t, c.file, c.fn)

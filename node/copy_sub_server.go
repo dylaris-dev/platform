@@ -18,6 +18,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -65,14 +66,19 @@ func runCopySubServer(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	src, err := resolveWithinDir(serverPath, pl.SourceSubServer)
 	if err != nil {
 		log.Printf("copy_sub_server: %v", err)
+		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, "the source sub-server is outside the server directory")
 		return
 	}
 	if st, err := os.Stat(src); err != nil || !st.IsDir() {
 		log.Printf("copy_sub_server: source %q is not a directory", pl.SourceSubServer)
+		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, "the source sub-server is not on the node")
 		return
 	}
 	dst := filepath.Join(serverPath, pl.TargetSubServer)
 	if _, err := os.Lstat(dst); err == nil {
+		// Not reported: Core refused a taken name before queueing, so this is a
+		// second copy to the same name, and the rows Core wrote describe the
+		// sub-server that IS there.
 		log.Printf("copy_sub_server: target %q already exists", pl.TargetSubServer)
 		return
 	}
@@ -92,18 +98,59 @@ func runCopySubServer(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	// verbatim variant and belongs to a whole-server MOVE. copyDir also already
 	// pins the symlink boundary at the copy source, which a copy inside a
 	// tenant-writable directory needs.
-	if err := copyDir(src, staging); err != nil {
+	err = copyDir(src, staging)
+	// A delete that landed during the copy removed the server directory the
+	// copy has just recreated.
+	if discardIfDeleted(pl.UUID, serverPath) {
+		return
+	}
+	if err != nil {
 		os.RemoveAll(staging)
 		log.Printf("copy_sub_server: copy %s -> %s failed: %v", pl.SourceSubServer, pl.TargetSubServer, err)
+		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, copyFailureReason(err))
 		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
 		return
 	}
 	if err := os.Rename(staging, dst); err != nil {
 		os.RemoveAll(staging)
 		log.Printf("copy_sub_server: rename into place failed: %v", err)
+		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, "the copy could not be put in place")
 		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
+		return
+	}
+	if discardIfDeleted(pl.UUID, serverPath) {
 		return
 	}
 	rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
 	log.Printf("copy_sub_server: %s/%s copied to %s", pl.UUID, pl.SourceSubServer, pl.TargetSubServer)
+}
+
+// copyFailureReason is what the owner is told about a failed copy. The disk
+// limit is the common one - a copy doubles the sub-server - and the only one
+// they can act on; everything else is the node's to explain in its log.
+func copyFailureReason(err error) string {
+	if errors.Is(err, errServerDiskLimit) {
+		return "the copy does not fit in the server's disk limit"
+	}
+	if errors.Is(err, errUnpackBudget) {
+		return "the node does not have the free space for the copy"
+	}
+	return "the node could not copy the files"
+}
+
+// reportCopyFailed tells Core that a queued copy will not appear, so it can
+// remove the rows it wrote for the target when it queued it.
+//
+// A key beside version_update_failed rather than a channel: the node's Redis
+// ACL already grants dylaris:server:<uuid>:*, and an older Core ignores the
+// key until it expires. The TTL outlives many of the status watcher's ticks.
+func reportCopyFailed(ctx context.Context, rdb *redis.Client, serverUUID, target, reason string) {
+	if rdb == nil {
+		return
+	}
+	b, err := json.Marshal(map[string]string{"target": target, "reason": reason})
+	if err != nil {
+		return
+	}
+	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:copy_sub_failed", serverUUID), b, 5*time.Minute)
 }
