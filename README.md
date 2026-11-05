@@ -22,6 +22,7 @@ Provision, run, route, and scale Minecraft (vanilla, modded, and modpack) server
 
 ## Table of Contents
 
+- [Screenshots](#screenshots)
 - [What is DYLARIS?](#what-is-dylaris)
 - [Features](#features)
 - [Architecture](#architecture)
@@ -46,6 +47,44 @@ Provision, run, route, and scale Minecraft (vanilla, modded, and modpack) server
 - [Contributing](#contributing)
 - [Security](#security)
 - [License](#license)
+
+---
+
+## Screenshots
+
+Taken on a fresh self-hosted install. The address shown, `203.0.113.10`, is a documentation example, not a real host.
+
+**Server overview with live CPU and memory (JVM heap vs container)**
+
+![Server overview with live CPU and memory (JVM heap vs container)](screenshots/overview.png)
+
+**Modrinth plugins installed into a server, with update controls**
+
+![Modrinth plugins installed into a server, with update controls](screenshots/mods-installed.png)
+
+**Installing a Modrinth modpack as a server**
+
+![Installing a Modrinth modpack as a server](screenshots/modpack-install.png)
+
+**Live console**
+
+![Live console](screenshots/console.png)
+
+**File editor**
+
+![File editor](screenshots/file-editor.png)
+
+**Inviting a friend to one server with individual permissions**
+
+![Inviting a friend to one server with individual permissions](screenshots/permissions.png)
+
+**A map plugin (squaremap) as a panel tab**
+
+![A map plugin (squaremap) as a panel tab](screenshots/custom-tab-map.png)
+
+**Adding a server domain with the built-in DDNS updater**
+
+![Adding a server domain with the built-in DDNS updater](screenshots/domain-ddns.png)
 
 ---
 
