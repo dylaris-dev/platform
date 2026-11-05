@@ -105,7 +105,9 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		// Already there is fine; anything else surfaces at the copy.
 		_ = h.nodeFileOp(srv, &pb.NodeMessage_CreateReq{CreateReq: &pb.CreateFileReq{Path: offDir, IsDir: true}})
 	}
-	if err := h.nodeFileOp(srv, &pb.NodeMessage_CopyReq{CopyReq: &pb.CopyFileReq{SrcPath: src, DstPath: dst}}); err != nil {
+	// Overwrite: a toggle whose delete failed left the jar at both places,
+	// and the retry copies onto it.
+	if err := h.nodeFileOp(srv, &pb.NodeMessage_CopyReq{CopyReq: &pb.CopyFileReq{SrcPath: src, DstPath: dst, Overwrite: true}}); err != nil {
 		httpx.SendJSONError(w, fmt.Sprintf("Could not move %s: %v", target.FileName, err), http.StatusBadGateway)
 		return
 	}
@@ -122,7 +124,7 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		// copy from where the jar no longer is and fail for good. Move it
 		// back so file and row agree again, and a retry starts clean.
 		log.Printf("mods: server %d mod %d: saving disabled=%v failed after the move: %v", serverID, target.ID, !enable, err)
-		if h.nodeFileOp(srv, &pb.NodeMessage_CopyReq{CopyReq: &pb.CopyFileReq{SrcPath: dst, DstPath: src}}) == nil &&
+		if h.nodeFileOp(srv, &pb.NodeMessage_CopyReq{CopyReq: &pb.CopyFileReq{SrcPath: dst, DstPath: src, Overwrite: true}}) == nil &&
 			h.nodeFileOp(srv, &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: dst}}) == nil {
 			httpx.SendJSONError(w, "The setting could not be saved, so the mod was left as it was. Try again.", http.StatusInternalServerError)
 			return

@@ -16,6 +16,8 @@ import (
 
 	"dylaris-pkg/validate"
 	pb "dylaris-proto/node"
+
+	"google.golang.org/protobuf/proto"
 )
 
 const chunkSize = 64 * 1024 // 64KB
@@ -37,7 +39,11 @@ func NewStreamHandler(storageMgr *StorageManager) *StreamHandler {
 func (h *StreamHandler) Handle(msg *pb.NodeMessage) []*pb.NodeMessage {
 	switch p := msg.Payload.(type) {
 	case *pb.NodeMessage_ListReq:
-		return []*pb.NodeMessage{h.handleList(msg.RequestId, msg.ServerUuid, p.ListReq)}
+		reply := h.handleList(msg.RequestId, msg.ServerUuid, p.ListReq)
+		if p.ListReq.GetPaged() {
+			return pageListing(reply)
+		}
+		return []*pb.NodeMessage{reply}
 	case *pb.NodeMessage_WriteReq:
 		return []*pb.NodeMessage{h.handleWrite(msg.RequestId, msg.ServerUuid, p.WriteReq)}
 	case *pb.NodeMessage_CreateReq:
@@ -258,6 +264,11 @@ func jailError(reqID string, err error) *pb.NodeMessage {
 	return errorMsg(reqID, 403, err.Error())
 }
 
+// existsMsg answers a create, copy or rename onto a taken name.
+func existsMsg(reqID, name string) *pb.NodeMessage {
+	return errorMsg(reqID, 409, fmt.Sprintf("%q already exists", path.Base(name)))
+}
+
 // zipName is the download name for a zipped directory: the directory's own
 // name, and the server UUID for the server root, as before.
 func zipName(serverUUID, name string) string {
@@ -365,6 +376,37 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 			ListResp: &pb.ListFilesResp{Files: files},
 		},
 	}
+}
+
+// listPageBytes is what one part of a paged listing may hold in entries,
+// below coreMaxMessage by room for the envelope around them.
+const listPageBytes = coreMaxMessage - 4*1024
+
+// pageListing splits a listing into parts Core accepts, every one but the last
+// marked more. A folder of 2,500 entries (world/playerdata of 1,250 players)
+// was one message past Core's limit, and could never be listed.
+func pageListing(reply *pb.NodeMessage) []*pb.NodeMessage {
+	files := reply.GetListResp().GetFiles()
+	if files == nil || proto.Size(reply) <= coreMaxMessage {
+		return []*pb.NodeMessage{reply}
+	}
+	var parts []*pb.NodeMessage
+	part := func(batch []*pb.FileInfo) {
+		parts = append(parts, &pb.NodeMessage{RequestId: reply.RequestId, Payload: &pb.NodeMessage_ListResp{ListResp: &pb.ListFilesResp{Files: batch, More: true}}})
+	}
+	start, size := 0, 0
+	for i, f := range files {
+		// The entry, its field tag and a length of up to three bytes.
+		n := proto.Size(f) + 4
+		if size+n > listPageBytes && i > start {
+			part(files[start:i])
+			start, size = i, 0
+		}
+		size += n
+	}
+	part(files[start:])
+	parts[len(parts)-1].GetListResp().More = false
+	return parts
 }
 
 // dirSizeIn sums the file sizes under name. It used to shell out to du on the
@@ -817,7 +859,10 @@ func (h *StreamHandler) handleCreate(reqID, serverUUID string, req *pb.CreateFil
 			return errorMsg(reqID, 500, fmt.Sprintf("mkdir: %v", err))
 		}
 	} else {
-		f, err := createIn(root, name, 0o644)
+		f, err := createNewIn(root, name, 0o644)
+		if errors.Is(err, fs.ErrExist) {
+			return existsMsg(reqID, name)
+		}
 		if err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("create: %v", err))
 		}
@@ -879,7 +924,16 @@ func (h *StreamHandler) handleRename(reqID, serverUUID string, req *pb.RenameFil
 		return errorMsg(reqID, 403, "cannot use protected filename")
 	}
 
-	if err := root.Rename(oldName, path.Join(path.Dir(oldName), newName)); err != nil {
+	newPath := path.Join(path.Dir(oldName), newName)
+	if newPath != oldName {
+		if err := refuseExistingIn(root, newPath); err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				return existsMsg(reqID, newPath)
+			}
+			return errorMsg(reqID, 500, fmt.Sprintf("rename: %v", err))
+		}
+	}
+	if err := root.Rename(oldName, newPath); err != nil {
 		return errorMsg(reqID, 500, fmt.Sprintf("rename: %v", err))
 	}
 
@@ -933,6 +987,16 @@ func (h *StreamHandler) handleCopy(reqID, serverUUID string, req *pb.CopyFileReq
 		return errorMsg(reqID, 403, err.Error())
 	}
 	defer dstRoot.Close()
+	if !req.Overwrite {
+		// A folder copied onto an existing one merged into it, replacing
+		// every file the two had in common.
+		if err := refuseExistingIn(dstRoot, dstLeaf); err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				return existsMsg(reqID, dstLeaf)
+			}
+			return errorMsg(reqID, 500, fmt.Sprintf("copy: %v", err))
+		}
+	}
 	if stat.IsDir() {
 		if err := copyDirForTenant(root, srcName, h.serverDir(serverUUID), dstName); err != nil {
 			return errorMsg(reqID, 500, fmt.Sprintf("copy dir: %v", err))

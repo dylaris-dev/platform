@@ -1439,7 +1439,12 @@ type ListFilesReq struct {
 	// Skip the recursive folder sizes. A caller that only needs the names (the
 	// sub-server count) would otherwise walk every world on the server. An older
 	// node ignores the field and answers with sizes, which is slower, not wrong.
-	NamesOnly     bool `protobuf:"varint,2,opt,name=names_only,json=namesOnly,proto3" json:"names_only,omitempty"`
+	NamesOnly bool `protobuf:"varint,2,opt,name=names_only,json=namesOnly,proto3" json:"names_only,omitempty"`
+	// Core collects the listing from several ListFilesResp, the last with more
+	// unset, so a folder of thousands of entries fits Core's message limit.
+	// An older node ignores it and answers in one message, as before; an older
+	// Core never sets it and gets one message.
+	Paged         bool `protobuf:"varint,3,opt,name=paged,proto3" json:"paged,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1488,9 +1493,18 @@ func (x *ListFilesReq) GetNamesOnly() bool {
 	return false
 }
 
+func (x *ListFilesReq) GetPaged() bool {
+	if x != nil {
+		return x.Paged
+	}
+	return false
+}
+
 type ListFilesResp struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Files         []*FileInfo            `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Files []*FileInfo            `protobuf:"bytes,1,rep,name=files,proto3" json:"files,omitempty"`
+	// Set on every part of a paged listing but the last.
+	More          bool `protobuf:"varint,2,opt,name=more,proto3" json:"more,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1530,6 +1544,13 @@ func (x *ListFilesResp) GetFiles() []*FileInfo {
 		return x.Files
 	}
 	return nil
+}
+
+func (x *ListFilesResp) GetMore() bool {
+	if x != nil {
+		return x.More
+	}
+	return false
 }
 
 type FileInfo struct {
@@ -2157,9 +2178,12 @@ func (x *RenameFileReq) GetNewName() string {
 }
 
 type CopyFileReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SrcPath       string                 `protobuf:"bytes,1,opt,name=src_path,json=srcPath,proto3" json:"src_path,omitempty"`
-	DstPath       string                 `protobuf:"bytes,2,opt,name=dst_path,json=dstPath,proto3" json:"dst_path,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	SrcPath string                 `protobuf:"bytes,1,opt,name=src_path,json=srcPath,proto3" json:"src_path,omitempty"`
+	DstPath string                 `protobuf:"bytes,2,opt,name=dst_path,json=dstPath,proto3" json:"dst_path,omitempty"`
+	// Replace an existing destination. Unset, a node that knows the field
+	// refuses one with 409; an older node replaces it either way.
+	Overwrite     bool `protobuf:"varint,3,opt,name=overwrite,proto3" json:"overwrite,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2206,6 +2230,13 @@ func (x *CopyFileReq) GetDstPath() string {
 		return x.DstPath
 	}
 	return ""
+}
+
+func (x *CopyFileReq) GetOverwrite() bool {
+	if x != nil {
+		return x.Overwrite
+	}
+	return false
 }
 
 // ─── Chunked Transfer ────────────────────────────────────────────────
@@ -4040,13 +4071,15 @@ const file_node_node_proto_rawDesc = "" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\";\n" +
 	"\aNodeIPs\x12\x16\n" +
 	"\x06public\x18\x01 \x01(\tR\x06public\x12\x18\n" +
-	"\aprivate\x18\x02 \x03(\tR\aprivate\"A\n" +
+	"\aprivate\x18\x02 \x03(\tR\aprivate\"W\n" +
 	"\fListFilesReq\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1d\n" +
 	"\n" +
-	"names_only\x18\x02 \x01(\bR\tnamesOnly\"=\n" +
+	"names_only\x18\x02 \x01(\bR\tnamesOnly\x12\x14\n" +
+	"\x05paged\x18\x03 \x01(\bR\x05paged\"Q\n" +
 	"\rListFilesResp\x12,\n" +
-	"\x05files\x18\x01 \x03(\v2\x16.dylaris.node.FileInfoR\x05files\"I\n" +
+	"\x05files\x18\x01 \x03(\v2\x16.dylaris.node.FileInfoR\x05files\x12\x12\n" +
+	"\x04more\x18\x02 \x01(\bR\x04more\"I\n" +
 	"\bFileInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x15\n" +
 	"\x06is_dir\x18\x02 \x01(\bR\x05isDir\x12\x12\n" +
@@ -4089,10 +4122,11 @@ const file_node_node_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\"E\n" +
 	"\rRenameFileReq\x12\x19\n" +
 	"\bold_path\x18\x01 \x01(\tR\aoldPath\x12\x19\n" +
-	"\bnew_name\x18\x02 \x01(\tR\anewName\"C\n" +
+	"\bnew_name\x18\x02 \x01(\tR\anewName\"a\n" +
 	"\vCopyFileReq\x12\x19\n" +
 	"\bsrc_path\x18\x01 \x01(\tR\asrcPath\x12\x19\n" +
-	"\bdst_path\x18\x02 \x01(\tR\adstPath\":\n" +
+	"\bdst_path\x18\x02 \x01(\tR\adstPath\x12\x1c\n" +
+	"\toverwrite\x18\x03 \x01(\bR\toverwrite\":\n" +
 	"\n" +
 	"FlowCredit\x12\x14\n" +
 	"\x05grant\x18\x01 \x01(\rR\x05grant\x12\x16\n" +

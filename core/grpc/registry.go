@@ -168,10 +168,19 @@ func (r *Registry) IsConnected(nodeID int) bool {
 
 // SendRequest sends a message over the gRPC stream and waits for a response
 // matching the same request_id. Returns error on timeout or if Node is not connected.
+//
+// A listing is asked for in parts (ListFilesReq.paged) and returned joined: a
+// folder of thousands of entries is past what Core accepts in one message, and
+// the node could only answer it with 502. An older node ignores the flag and
+// answers in one message, which ends the wait like any reply.
 func (r *Registry) SendRequest(nodeID int, msg *pb.NodeMessage, timeout time.Duration) (*pb.NodeMessage, error) {
 	conn, ok := r.GetConnection(nodeID)
 	if !ok {
 		return nil, fmt.Errorf("node %d not connected", nodeID)
+	}
+	listing := msg.GetListReq()
+	if listing != nil {
+		listing.Paged = true
 	}
 
 	ch := make(chan *pb.NodeMessage, 1)
@@ -193,14 +202,25 @@ func (r *Registry) SendRequest(nodeID int, msg *pb.NodeMessage, timeout time.Dur
 		return nil, fmt.Errorf("failed to send to node %d: %w", nodeID, err)
 	}
 
-	select {
-	case resp, ok := <-ch:
-		if !ok {
-			return nil, fmt.Errorf("node %d connection closed while waiting", nodeID)
+	deadline := time.After(timeout)
+	var parts []*pb.FileInfo
+	for {
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				return nil, fmt.Errorf("node %d connection closed while waiting", nodeID)
+			}
+			list := resp.GetListResp()
+			if listing == nil || list == nil || !list.More {
+				if list != nil && len(parts) > 0 {
+					list.Files = append(parts, list.Files...)
+				}
+				return resp, nil
+			}
+			parts = append(parts, list.Files...)
+		case <-deadline:
+			return nil, fmt.Errorf("timeout waiting for response from node %d (request %s)", nodeID, msg.RequestId)
 		}
-		return resp, nil
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("timeout waiting for response from node %d (request %s)", nodeID, msg.RequestId)
 	}
 }
 

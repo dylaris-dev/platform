@@ -1009,7 +1009,10 @@ func (s *beamServer) CreateFile(ctx context.Context, req *pb.BeamFileCreateReq) 
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
 	} else {
-		f, err := createIn(root, name, 0644)
+		f, err := createNewIn(root, name, 0644)
+		if errors.Is(err, fs.ErrExist) {
+			err = fmt.Errorf("%s: %w", path.Base(name), fs.ErrExist)
+		}
 		if err != nil {
 			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 		}
@@ -1079,6 +1082,17 @@ func (s *beamServer) RenameFile(ctx context.Context, req *pb.BeamFileRenameReq) 
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 
+	if newName != oldName {
+		nr, nl, err := writeScope(serverDir, newName, false)
+		if err != nil {
+			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+		}
+		err = refuseExistingIn(nr, nl)
+		nr.Close()
+		if err != nil {
+			return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+		}
+	}
 	// Both parents are reached without following a link (see writeScope).
 	if err := renameNoFollow(serverDir, oldName, newName); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
@@ -1119,6 +1133,9 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 	defer dstRoot.Close()
+	if err := refuseExistingIn(dstRoot, dstLeaf); err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
 
 	stat, err := root.Stat(srcName)
 	if err != nil {

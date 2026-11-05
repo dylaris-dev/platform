@@ -41,6 +41,11 @@ func (s *fileOpNode) Send(m *pb.NodeMessage) error {
 	case m.GetCopyReq() != nil:
 		s.ops = append(s.ops, "copy "+m.GetCopyReq().SrcPath+" -> "+m.GetCopyReq().DstPath)
 		reply = ok
+		if !m.GetCopyReq().Overwrite {
+			// The jar may be at the destination from a toggle whose delete
+			// failed; a node refuses that copy unless it is asked to replace.
+			reply = &pb.NodeMessage{RequestId: m.RequestId, Payload: &pb.NodeMessage_Error{Error: &pb.OpError{Code: 409, Message: "already exists"}}}
+		}
 		if s.failCopy {
 			reply = &pb.NodeMessage{RequestId: m.RequestId, Payload: &pb.NodeMessage_Error{Error: &pb.OpError{Code: 500, Message: "disk full"}}}
 		}

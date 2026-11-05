@@ -110,6 +110,7 @@ type pendingWrite struct {
 	lastActive time.Time
 	budget     *writeBudget
 	reserved   int64 // bytes the budget holds: the declared size, or the furthest chunk end past it
+	owner      *coreConnection
 }
 
 // uploadBudget reserves a mesh upload's declared size against the node's free
@@ -190,12 +191,24 @@ func (m *MeshManager) Run(ctx context.Context) {
 // This prevents memory/disk leaks from aborted uploads.
 func (m *MeshManager) cleanupStalePendingWrites() {
 	threshold := time.Now().Add(-5 * time.Minute)
+	m.dropPendingWrites(func(pw *pendingWrite) bool { return pw.lastActive.Before(threshold) })
+}
+
+// dropConnectionWrites ends the uploads cc was sending. Its chunks can only
+// come on cc, so once cc is gone they are abandoned, and each held its whole
+// declared size until the stale sweep: a retry right after a Core restart was
+// refused as over the disk limit.
+func (m *MeshManager) dropConnectionWrites(cc *coreConnection) {
+	m.dropPendingWrites(func(pw *pendingWrite) bool { return pw.owner == cc })
+}
+
+func (m *MeshManager) dropPendingWrites(drop func(*pendingWrite) bool) {
 	m.writeMu.Lock()
 	defer m.writeMu.Unlock()
 
 	for reqID, pw := range m.pendingWrites {
-		if pw.lastActive.Before(threshold) {
-			log.Printf("gRPC Mesh: Cleaning up stale upload (request_id=%s, path=%s)", reqID, pw.path)
+		if drop(pw) {
+			log.Printf("gRPC Mesh: Cleaning up abandoned upload (request_id=%s, path=%s)", reqID, pw.path)
 			pw.tempFile.Close()
 			m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
 			pw.budget.release()
@@ -527,6 +540,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	// of leaving it to leak until its own next I/O error (or forever, on an
 	// idle silent container).
 	m.closeWSBridgesForConn(cc)
+	m.dropConnectionWrites(cc)
 	log.Printf("gRPC Mesh: Disconnected from Core %s", info.ID)
 }
 
@@ -648,6 +662,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 			lastActive: time.Now(),
 			budget:     budget,
 			reserved:   writeReq.TotalSize,
+			owner:      cc,
 		}
 		m.writeMu.Unlock()
 	}

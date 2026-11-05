@@ -291,10 +291,17 @@ message ListFilesReq {
   // sub-server count) would otherwise walk every world on the server. An older
   // node ignores the field and answers with sizes, which is slower, not wrong.
   bool names_only = 2;
+  // Core collects the listing from several ListFilesResp, the last with more
+  // unset, so a folder of thousands of entries fits Core's message limit.
+  // An older node ignores it and answers in one message, as before; an older
+  // Core never sets it and gets one message.
+  bool paged = 3;
 }
 
 message ListFilesResp {
   repeated FileInfo files = 1;
+  // Set on every part of a paged listing but the last.
+  bool more = 2;
 }
 
 message FileInfo {
@@ -365,6 +372,9 @@ message RenameFileReq {
 message CopyFileReq {
   string src_path = 1;
   string dst_path = 2;
+  // Replace an existing destination. Unset, a node that knows the field
+  // refuses one with 409; an older node replaces it either way.
+  bool overwrite = 3;
 }
 
 // ─── Chunked Transfer ────────────────────────────────────────────────

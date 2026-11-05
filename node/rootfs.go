@@ -149,6 +149,31 @@ func createIn(root *os.Root, name string, perm os.FileMode) (*os.File, error) {
 	return openWriteIn(root, name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
 }
 
+// createNewIn is createIn for a file that must not exist yet: an existing one
+// fails with fs.ErrExist instead of being emptied.
+func createNewIn(root *os.Root, name string, perm os.FileMode) (*os.File, error) {
+	if err := mkdirParentIn(root, name); err != nil {
+		return nil, err
+	}
+	return openWriteIn(root, name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+}
+
+// refuseExistingIn fails with fs.ErrExist when name is already taken in root,
+// by anything, a link included. For the user's copy and rename, which would
+// otherwise replace it without a word.
+// ponytail: check then act; a name created in between is still replaced.
+// renameat2(RENAME_NOREPLACE) closes it for rename if that ever matters.
+func refuseExistingIn(root *os.Root, name string) error {
+	_, err := root.Lstat(name)
+	if err == nil {
+		return fmt.Errorf("%s: %w", path.Base(name), fs.ErrExist)
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 // writeFileIn is root.WriteFile through createIn, so a named pipe at name is
 // refused instead of blocking the write.
 func writeFileIn(root *os.Root, name string, data []byte, perm os.FileMode) error {

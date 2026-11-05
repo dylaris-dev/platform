@@ -37,7 +37,8 @@ func TestCopyIntoASubServerDoesNotFollowItsLinks(t *testing.T) {
 		dir := sm.GetServerDir(uuid)
 		cfg := plantLinks(t, dir)
 		plantPayload(t, dir)
-		h.handleCopy("r1", uuid, &nodepb.CopyFileReq{SrcPath: "survival/payload", DstPath: "survival"})
+		// Overwrite: without it the copy is refused before it walks anything.
+		h.handleCopy("r1", uuid, &nodepb.CopyFileReq{SrcPath: "survival/payload", DstPath: "survival", Overwrite: true})
 		assertUntouched(t, dir, cfg)
 	})
 	t.Run("beam", func(t *testing.T) {
