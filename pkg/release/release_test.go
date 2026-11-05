@@ -458,3 +458,79 @@ func TestUnindentedProseAfterABulletIsStillAnError(t *testing.T) {
 		t.Fatal("unindented prose after a bullet was accepted; it would vanish from the release")
 	}
 }
+
+// Stacked requirements: the newest sets the floor, but the EARLIEST deadline
+// among those the component still fails is the one that binds. Otherwise a
+// later, more lenient release would re-open a deadline that already passed.
+func TestRequirementTakesTheEarliestDeadlineItStillFails(t *testing.T) {
+	block := func(v, req string) string {
+		return "## " + v + "\n" + req + "\n### Features\n- Nothing.\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- x `node`\n"
+	}
+	cases := []struct {
+		name, src, cur, wantMin string
+		wantDeadline            time.Time
+		wantImmediate           bool
+	}{
+		{
+			"an older overdue deadline is not masked by a newer later one",
+			block("2026.11.20", "**Update required by 2026-12-01**") + block("2026.11.10", "**Update required by 2026-11-12 10:00 UTC** - old nodes break"),
+			"2026.11.01", "2026.11.20",
+			time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC), false,
+		},
+		{
+			"an older 'now' binds too",
+			block("2026.11.20", "**Update required by 2026-12-01**") + block("2026.11.10", "**Update required now**"),
+			"2026.11.01", "2026.11.20",
+			time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC), true,
+		},
+		{
+			"a requirement already satisfied does not count",
+			block("2026.11.20", "**Update required by 2026-12-01**") + block("2026.11.10", "**Update required by 2026-11-12**"),
+			"2026.11.10", "2026.11.20",
+			time.Date(2026, 12, 1, 23, 59, 59, 0, time.UTC), false,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rs, err := Parse([]byte(c.src))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			req, min, ok := Requirement(rs, "node", mustVersion(t, c.cur))
+			if !ok {
+				t.Fatal("no requirement")
+			}
+			if min.String() != c.wantMin {
+				t.Errorf("min = %s, want %s", min, c.wantMin)
+			}
+			if !req.Deadline.Equal(c.wantDeadline) {
+				t.Errorf("deadline = %v, want %v", req.Deadline, c.wantDeadline)
+			}
+			if req.Immediate != c.wantImmediate {
+				t.Errorf("immediate = %v, want %v", req.Immediate, c.wantImmediate)
+			}
+		})
+	}
+}
+
+// The frozen format allows HH:MM UTC only. Any other abbreviation used to parse
+// with a ZERO offset when the machine did not know it, so the enforced instant
+// silently differed from the one the author wrote.
+func TestRequiredDeadlineMustBeUTC(t *testing.T) {
+	for _, zone := range []string{"PST", "CET", "CEST", "XYZ", "MST"} {
+		t.Run(zone, func(t *testing.T) {
+			src := "## 2026.08.28\n**Update required by 2026-09-05 14:00 " + zone + "**\n### Features\n- Nothing.\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n"
+			if _, err := Parse([]byte(src)); err == nil || !strings.Contains(err.Error(), "cannot read the deadline") {
+				t.Errorf("err = %v, want a deadline error", err)
+			}
+		})
+	}
+	src := "## 2026.08.28\n**Update required by 2026-09-05 14:00 UTC**\n### Features\n- Nothing.\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n"
+	rs, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if want := time.Date(2026, 9, 5, 14, 0, 0, 0, time.UTC); !rs[0].Required.Deadline.Equal(want) {
+		t.Errorf("deadline = %v, want %v", rs[0].Required.Deadline, want)
+	}
+}

@@ -678,7 +678,9 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 	log.Printf("migrate_push_r2 %s: uploading staged archive to R2", serverUUID)
 	if err := putFilePresigned(ctx, putURL, zipPath); err != nil {
 		log.Printf("migrate_push_r2 %s: upload failed: %v", serverUUID, err)
-		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("r2 push failed: %v", err))
+		// The detail stays in this log: the move status is served to the
+		// server's owner and sub-users, and R2's error body is not theirs.
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "upload to transfer storage failed")
 		return
 	}
 
@@ -729,7 +731,7 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 	if err := migration.PullURL(ctx, getURL, expectedSha256, tmpZip, 3, pullCap(expectedSize, targetPath)); err != nil {
 		log.Printf("migrate_pull_r2 %s: download failed: %v", serverUUID, err)
 		os.Remove(tmpZip)
-		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("r2 pull failed: %v", err))
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "download from transfer storage failed")
 		return
 	}
 
@@ -784,7 +786,7 @@ func putFilePresigned(ctx context.Context, url, filePath string) error {
 	req.ContentLength = size
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("presigned put: %w", err)
+		return fmt.Errorf("presigned put: %w", withoutURL(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {

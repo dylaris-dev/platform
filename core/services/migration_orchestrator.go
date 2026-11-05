@@ -158,8 +158,8 @@ const (
 	migrationR2PhaseTimeout    = 1 * time.Hour
 	migrationStartTimeout      = 90 * time.Second // best-effort online confirm
 	migrationPollInterval      = 2 * time.Second
-	migrationTokenTTL          = 15 * time.Minute
-	migrationQueueBlockTimeout = 5 * time.Second // BLPOP timeout; not a hot spin
+	migrationTokenTTL          = migrationTransferTimeout // checked on every pull attempt, so it must last the whole wait
+	migrationQueueBlockTimeout = 5 * time.Second          // BLPOP timeout; not a hot spin
 )
 
 func NewMigrationOrchestrator(s store.Store, r *redis.Client, q *QueueService, g GatewayProvider, clusterSecret string) *MigrationOrchestrator {

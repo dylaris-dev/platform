@@ -438,9 +438,14 @@ func parseRequired(line string, v Version) (*Required, error) {
 		return req, nil
 	}
 	when := strings.TrimSpace(m[2])
-	if t, err := time.Parse("2006-01-02 15:04 MST", when); err == nil {
-		req.Deadline = t.UTC()
-		return req, nil
+	// The literal UTC suffix, not the "MST" layout: that accepts any
+	// abbreviation and gives one the machine does not know a ZERO offset, so
+	// "14:00 PST" would be enforced at 14:00 UTC.
+	if hm, isUTC := strings.CutSuffix(when, " UTC"); isUTC {
+		if t, err := time.ParseInLocation("2006-01-02 15:04", hm, time.UTC); err == nil {
+			req.Deadline = t
+			return req, nil
+		}
 	}
 	if t, err := time.Parse("2006-01-02", when); err == nil {
 		req.Deadline = t.Add(24*time.Hour - time.Second)
@@ -479,11 +484,12 @@ func Outdated(rs []Release, service string, cur Version) bool {
 }
 
 // Requirement returns the mandatory-update requirement a component is subject
-// to, or nil. Only the NEWEST applicable one matters: it carries the latest
-// deadline and the highest floor, so an older requirement adds nothing.
+// to, or nil.
 //
-// MinVersion is the version the component must reach to satisfy it, which is
-// the release that declared it.
+// MinVersion is the NEWEST release that declared one the component is below:
+// reaching it satisfies every older one too. The deadline is the EARLIEST
+// among all of those, because a newer release's later deadline is the more
+// lenient one and must not re-open an older deadline that already passed.
 func Requirement(rs []Release, service string, cur Version) (req *Required, minVersion Version, ok bool) {
 	if cur.IsZero() {
 		return nil, Version{}, false
@@ -493,11 +499,15 @@ func Requirement(rs []Release, service string, cur Version) (req *Required, minV
 			continue
 		}
 		if r.Version.Compare(cur) <= 0 {
-			// This component already satisfies the newest requirement, and
+			// This component already satisfies this requirement, and
 			// anything below it is older still.
-			return nil, Version{}, false
+			break
 		}
-		return r.Required, r.Version, true
+		if !ok {
+			req, minVersion, ok = r.Required, r.Version, true
+		} else if r.Required.Deadline.Before(req.Deadline) {
+			req = r.Required
+		}
 	}
-	return nil, Version{}, false
+	return req, minVersion, ok
 }

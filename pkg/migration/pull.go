@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -145,7 +146,7 @@ func pullOnce(ctx context.Context, client *http.Client, rawURL, token, destPath 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", withoutURL(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -187,4 +188,15 @@ func (s *stallReader) Read(p []byte) (int, error) {
 		s.t.Reset(pullStallTimeout)
 	}
 	return n, err
+}
+
+// withoutURL drops the request URL net/http puts into its errors (the node's
+// backup path has the same helper). For a pre-signed URL that text IS the
+// credential, and it travels on into logs and the move status.
+func withoutURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return fmt.Errorf("%s: %w", ue.Op, ue.Err)
+	}
+	return err
 }

@@ -279,3 +279,13 @@ func TestMigrationSourceLANIPs(t *testing.T) {
 		})
 	}
 }
+
+// The pull token is checked on every pull attempt, and Core waits up to
+// migrationTransferTimeout for the transfer. A token that dies first turns a
+// migrate_in that waited behind long jobs, or a retry after a failed first
+// attempt, into a 401 and a rolled-back move while Core still waits.
+func TestMigrationTokenOutlivesTheTransferWait(t *testing.T) {
+	if migrationTokenTTL < migrationTransferTimeout {
+		t.Fatalf("migrationTokenTTL %v < migrationTransferTimeout %v", migrationTokenTTL, migrationTransferTimeout)
+	}
+}

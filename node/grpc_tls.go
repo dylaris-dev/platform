@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	beamauth "dylaris-pkg/beam/auth"
 
@@ -85,7 +86,14 @@ func resolveCorePin() (source, fingerprint string, err error) {
 		}
 		return "CLUSTER_SECRET", fp, nil
 	case grpcTLSFingerprint != "":
-		return "GRPC_TLS_FINGERPRINT", grpcTLSFingerprint, nil
+		// Normalised to what VerifyConnection compares against (lowercase hex,
+		// no colons) and checked here, so a mangled paste fails boot with the
+		// FATAL that names the fix instead of never matching or panicking.
+		fp := strings.ToLower(strings.ReplaceAll(grpcTLSFingerprint, ":", ""))
+		if b, herr := hex.DecodeString(fp); herr != nil || len(b) != sha256.Size {
+			return "", "", fmt.Errorf("GRPC_TLS_FINGERPRINT is not a SHA-256 fingerprint (want %d hex characters)", 2*sha256.Size)
+		}
+		return "GRPC_TLS_FINGERPRINT", fp, nil
 	default:
 		return "", "", errors.New("neither CLUSTER_SECRET nor GRPC_TLS_FINGERPRINT is set")
 	}
