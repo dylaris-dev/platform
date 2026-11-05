@@ -404,10 +404,14 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	log.Printf("Restore %d completed: %d files in %v", cmd.RunID, extracted, time.Since(started))
 }
 
-// retagAfterRestore is a var so a test can see a full restore reach it. Only
-// the tag, not the limit: the limit sits on the project id and did not move.
+// retagAfterRestore is a var so a test can see a full restore reach it. The
+// limit sits on the project id and did not move; it is lifted for the tag and
+// put back.
 var retagAfterRestore = func(ctx context.Context, rdb *redis.Client, uuid string) {
-	if err := assignQuotaCounted(ctx, rdb, globalQuotaSet, uuid); err != nil {
+	if globalQuotaSet == nil {
+		return
+	}
+	if err := countDiskUsage(ctx, rdb, globalQuotaSet, uuid, knownDiskLimitMB(ctx, rdb, globalQuotaSet, uuid), false); err != nil {
 		log.Printf("quota: re-tag %s after restore: %v", uuid, err)
 	}
 }

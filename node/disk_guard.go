@@ -59,62 +59,180 @@ func applyDiskLimit(ctx context.Context, rdb *redis.Client, quota *QuotaSet, uui
 		return
 	}
 	recordDiskLimit(ctx, rdb, uuid, limitMB)
-	// The limit before the tag, so the recount below compares against the
-	// limit the server will actually run under.
-	if err := quota.SetLimit(uuid, limitMB); err != nil {
-		log.Printf("quota: limit %s: %v", uuid, err)
+	if limitMB <= 0 {
+		if err := quota.SetLimit(uuid, 0); err != nil {
+			log.Printf("quota: limit %s: %v", uuid, err)
+		}
 	}
-	if err := assignQuotaCounted(ctx, rdb, quota, uuid); err != nil {
+	if err := countDiskUsage(ctx, rdb, quota, uuid, limitMB, false); err != nil {
 		log.Printf("quota: assign %s: %v", uuid, err)
 	}
 }
 
 // diskGraceKeyFmt marks a server that went over its limit only because its
 // existing data was counted for the first time (owner decision 2026-11-05:
-// warn, do not stop). The value is the limit in bytes it was granted under.
+// warn, do not stop). The value is diskGrace: the limit it was granted under
+// and the hard limit the filesystem holds instead while it lasts, in bytes.
 const diskGraceKeyFmt = "node:%s:server:%s:disk_grace"
 
 func diskGraceKey(uuid string) string { return fmt.Sprintf(diskGraceKeyFmt, nodeID, uuid) }
 
+// diskCountedKeyFmt marks a server whose whole tree has been counted under its
+// project on this node. The boot recount skips it from then on, which is what
+// makes the grace once per server and keeps a restart from walking every tree.
+const diskCountedKeyFmt = "node:%s:server:%s:disk_counted"
+
+func diskCountedKey(uuid string) string { return fmt.Sprintf(diskCountedKeyFmt, nodeID, uuid) }
+
+type diskGrace struct{ limit, ceiling int64 }
+
+// holds reports whether the grace still applies: same limit, still over it,
+// and short of the ceiling. At the ceiling the filesystem refuses writes again,
+// so the guard's stop is the better outcome than a server failing silently.
+func (g diskGrace) holds(limit, total int64) bool {
+	return limit > 0 && g.limit == limit && total >= limit && total < g.ceiling
+}
+
+// diskGraceHeadroom is how far past usage the hard limit is lifted while a
+// grace lasts: room for world saves, not for growth without end.
+func diskGraceHeadroom(limit int64) int64 {
+	return max(limit/10, 1<<30)
+}
+
+func loadDiskGrace(ctx context.Context, rdb *redis.Client, uuid string) (diskGrace, bool) {
+	var g diskGrace
+	if rdb == nil {
+		return g, false
+	}
+	v, err := rdb.Get(ctx, diskGraceKey(uuid)).Result()
+	if err != nil {
+		return g, false
+	}
+	if _, err := fmt.Sscan(v, &g.limit, &g.ceiling); err != nil {
+		return g, false
+	}
+	return g, true
+}
+
+func saveDiskGrace(ctx context.Context, rdb *redis.Client, uuid string, g diskGrace) {
+	rdb.Set(ctx, diskGraceKey(uuid), fmt.Sprintf("%d %d", g.limit, g.ceiling), 0)
+}
+
+type diskLimiter interface {
+	SetLimit(uuid string, limitMB int64) error
+}
+
 type quotaAssigner interface {
+	diskLimiter
 	AssignQuota(uuid string) error
 	GetDiskUsage(uuid string) *DiskUsagePayload
 }
 
-// assignQuotaCounted tags a server's directory with its project and, when that
-// recount is what puts it at or over its limit, grants the grace diskGraced
-// honours. A server already over before the tag gets none: that is not new.
-func assignQuotaCounted(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string) error {
-	before := q.GetDiskUsage(uuid)
+// countDiskUsage tags a server's directory and everything in it with its
+// project, then leaves the project's hard limit where it belongs: limitMB, or
+// the ceiling while a grace holds. limitMB <= 0 leaves the hard limit alone.
+//
+// The hard limit is off while the tag runs. ext4 charges each re-tagged inode
+// to the project through dquot_transfer, which refuses at bhard without
+// CAP_SYS_RESOURCE, and no node kit grants that: a tree over its limit was
+// counted up to the limit and the rest stayed uncounted (G35).
+//
+// allowGrace is set only by the boot recount, the one place a count can rise
+// because ext4 now counts data it never counted before. A move, a restore or a
+// storage move of a tree over its limit is an ordinary over-limit server.
+func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string, limitMB int64, allowGrace bool) error {
+	limit := limitMB << 20
+	var before *DiskUsagePayload
+	if allowGrace && limit > 0 {
+		before = q.GetDiskUsage(uuid)
+	}
+	if limitMB > 0 {
+		if err := q.SetLimit(uuid, 0); err != nil {
+			log.Printf("quota: lift the limit of %s for the recount: %v", uuid, err)
+		}
+	}
 	err := q.AssignQuota(uuid)
 	after := q.GetDiskUsage(uuid)
-	if rdb == nil || after == nil || after.Limit <= 0 || after.Total < after.Limit {
-		return err
+	enforceMB := limitMB
+	if rdb != nil && after != nil {
+		if g, ok := loadDiskGrace(ctx, rdb, uuid); ok {
+			if g.holds(limit, after.Total) {
+				enforceMB = g.ceiling >> 20
+			} else {
+				rdb.Del(ctx, diskGraceKey(uuid))
+			}
+		} else if allowGrace && limit > 0 && after.Total >= limit && (before == nil || before.Total < limit) {
+			// nil before with a working quota read after: the project was not
+			// in the report yet, which is a count of zero.
+			enforceMB = (after.Total + diskGraceHeadroom(limit) + 1<<20 - 1) >> 20
+			saveDiskGrace(ctx, rdb, uuid, diskGrace{limit: limit, ceiling: enforceMB << 20})
+			// The limit the grace ends on; a server from before the cache had
+			// it only on the project, which now holds the ceiling.
+			recordDiskLimit(ctx, rdb, uuid, limitMB)
+			log.Printf("quota: %s is over its limit now that its existing data is counted (%d of %d bytes) - warning, not stopping, with the hard limit lifted to %d MB until the limit changes or usage drops below it", uuid, after.Total, limit, enforceMB)
+		}
+		rdb.Set(ctx, diskCountedKey(uuid), 1, 0)
 	}
-	// nil before with a working quota read after: the project was not in the
-	// report yet, which is a count of zero.
-	if before == nil || before.Total < after.Limit {
-		log.Printf("quota: %s is over its limit now that its existing data is counted (%d of %d bytes) - warning, not stopping, until the limit changes or usage drops below it", uuid, after.Total, after.Limit)
-		rdb.Set(ctx, diskGraceKey(uuid), after.Limit, 0)
+	if limitMB > 0 {
+		if serr := q.SetLimit(uuid, enforceMB); serr != nil {
+			log.Printf("quota: limit %s: %v", uuid, serr)
+		}
 	}
 	return err
 }
 
+// reconcileServer is the boot recount of one server, once per server on this
+// node. It reports whether it counted.
+func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string) (bool, error) {
+	if rdb != nil {
+		if n, err := rdb.Exists(ctx, diskCountedKey(uuid)).Result(); err == nil && n == 1 {
+			return false, nil
+		}
+	}
+	return true, countDiskUsage(ctx, rdb, q, uuid, knownDiskLimitMB(ctx, rdb, q, uuid), true)
+}
+
+// knownDiskLimitMB is the limit Core last pushed, else the one on the project
+// (a server limited before the cache existed). For paths Core sends no limit on.
+func knownDiskLimitMB(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string) int64 {
+	if limitMB := loadDiskLimit(ctx, rdb, uuid); limitMB > 0 {
+		return limitMB
+	}
+	if u := q.GetDiskUsage(uuid); u != nil {
+		return u.Limit >> 20
+	}
+	return 0
+}
+
+// withGraceLimit reports a graced server against its own limit rather than the
+// ceiling the filesystem holds meanwhile, so the owner sees it as full.
+func withGraceLimit(ctx context.Context, rdb *redis.Client, uuid string, usage *DiskUsagePayload) {
+	if g, ok := loadDiskGrace(ctx, rdb, uuid); ok {
+		usage.Limit = g.limit
+	}
+}
+
 // diskGraced reports whether the disk guard must let this full server run. The
-// grace lasts only while the server is still over the limit it was granted
-// under; once usage drops below it or the limit changes it is gone for good.
-func diskGraced(ctx context.Context, rdb *redis.Client, uuid string, usage *DiskUsagePayload) bool {
+// grace lasts only while diskGrace.holds; once it ends it is gone for good and
+// the server's real limit goes back on the filesystem.
+func diskGraced(ctx context.Context, rdb *redis.Client, q diskLimiter, uuid string, usage *DiskUsagePayload) bool {
 	if rdb == nil || usage == nil {
 		return false
 	}
-	granted, err := rdb.Get(ctx, diskGraceKey(uuid)).Int64()
-	if err != nil {
+	g, ok := loadDiskGrace(ctx, rdb, uuid)
+	if !ok {
 		return false
 	}
-	if usage.Limit > 0 && usage.Total >= usage.Limit && granted == usage.Limit {
+	limitMB := loadDiskLimit(ctx, rdb, uuid)
+	if g.holds(limitMB<<20, usage.Total) {
 		return true
 	}
 	rdb.Del(ctx, diskGraceKey(uuid))
+	if q != nil {
+		if err := q.SetLimit(uuid, limitMB); err != nil {
+			log.Printf("quota: restore the limit of %s after its grace: %v", uuid, err)
+		}
+	}
 	return false
 }
 
@@ -125,7 +243,7 @@ func forgetDiskLimit(ctx context.Context, rdb *redis.Client, uuid string) {
 	if rdb == nil || uuid == "" {
 		return
 	}
-	rdb.Del(ctx, diskLimitKey(uuid), diskGraceKey(uuid))
+	rdb.Del(ctx, diskLimitKey(uuid), diskGraceKey(uuid), diskCountedKey(uuid))
 }
 
 // loadDiskLimit returns the cached limit in MB, or 0 for "no limit known".

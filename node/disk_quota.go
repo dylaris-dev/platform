@@ -166,7 +166,7 @@ func (qp *QuotaProvider) IsAvailable() bool {
 
 // reconcileExisting assigns quotas to all existing server directories that
 // were created before quota support was enabled, or whose data was never
-// counted (ext4 before the recursive tag).
+// counted (ext4 before the recursive tag). Once per server: see reconcileServer.
 func (qp *QuotaProvider) reconcileExisting(rdb *redis.Client) {
 	if !qp.available {
 		return
@@ -181,9 +181,9 @@ func (qp *QuotaProvider) reconcileExisting(rdb *redis.Client) {
 			continue
 		}
 		uuid := e.Name()
-		if err := assignQuotaCounted(context.Background(), rdb, qp, uuid); err != nil {
+		if counted, err := reconcileServer(context.Background(), rdb, qp, uuid); err != nil {
 			log.Printf("quota: reconcile %s: %v", uuid, err)
-		} else {
+		} else if counted {
 			count++
 		}
 	}

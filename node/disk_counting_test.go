@@ -38,80 +38,196 @@ func TestProjectAssignCommandTagsTheWholeTree(t *testing.T) {
 
 // fakeQuota reports `before` until AssignQuota ran and `after` from then on,
 // which is what re-tagging an already populated directory does to the count.
+// It records the hard limit in force when the tag ran and every limit set.
 type fakeQuota struct {
 	before, after *DiskUsagePayload
 	assigned      bool
+	limitMB       int64
+	limitAtTag    int64
+	setLimits     []int64
 }
 
-func (f *fakeQuota) AssignQuota(string) error { f.assigned = true; return nil }
+func (f *fakeQuota) AssignQuota(string) error {
+	f.assigned = true
+	f.limitAtTag = f.limitMB
+	return nil
+}
 func (f *fakeQuota) GetDiskUsage(string) *DiskUsagePayload {
 	if f.assigned {
 		return f.after
 	}
 	return f.before
 }
+func (f *fakeQuota) SetLimit(_ string, limitMB int64) error {
+	f.limitMB = limitMB
+	f.setLimits = append(f.setLimits, limitMB)
+	return nil
+}
 
 func usageOf(total, limit int64) *DiskUsagePayload {
 	return &DiskUsagePayload{Total: total, Limit: limit}
 }
 
+const mib = int64(1) << 20
+
 // The owner's rule: a server that lands over its limit only because its
-// existing data is now counted is warned, not stopped, the first time.
-func TestAssignQuotaCountedGrantsGraceOnlyWhenTheRecountTipsIt(t *testing.T) {
+// existing data is now counted is warned, not stopped, the first time - and
+// keeps working, so its filesystem limit is lifted to usage plus headroom.
+// Only the boot recount can grant it (G36/G38): a move, a restore or a storage
+// move of a tree that is over its limit is an ordinary over-limit server.
+func TestCountDiskUsageGrantsGraceOnlyWhenTheRecountTipsIt(t *testing.T) {
+	ceiling := (150*mib + diskGraceHeadroom(100*mib) + mib - 1) / mib
 	for _, tc := range []struct {
 		name          string
 		before, after *DiskUsagePayload
+		allowGrace    bool
 		grace         bool
+		enforcedMB    int64
 	}{
-		{"recount tips it over", usageOf(10, 100), usageOf(150, 100), true},
-		{"untracked before (not in the report)", nil, usageOf(150, 100), true},
-		{"recount stays under", usageOf(10, 100), usageOf(90, 100), false},
-		{"already over before the recount", usageOf(120, 100), usageOf(150, 100), false},
-		{"no limit", usageOf(10, 0), usageOf(150, 0), false},
-		{"quotas unavailable", nil, nil, false},
+		{"recount tips it over", usageOf(10*mib, 100*mib), usageOf(150*mib, 100*mib), true, true, ceiling},
+		{"untracked before (not in the report)", nil, usageOf(150*mib, 100*mib), true, true, ceiling},
+		{"recount stays under", usageOf(10*mib, 100*mib), usageOf(90*mib, 100*mib), true, false, 100},
+		{"already over before the recount", usageOf(120*mib, 100*mib), usageOf(150*mib, 100*mib), true, false, 100},
+		{"move, restore or storage move over its limit", nil, usageOf(150*mib, 100*mib), false, false, 100},
+		{"quotas unavailable", nil, nil, true, false, 100},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rdb := newDiskGuardRedis(t)
 			ctx := context.Background()
-			assignQuotaCounted(ctx, rdb, &fakeQuota{before: tc.before, after: tc.after}, "srv")
+			q := &fakeQuota{before: tc.before, after: tc.after, limitMB: 100}
+			countDiskUsage(ctx, rdb, q, "srv", 100, tc.allowGrace)
 			n, _ := rdb.Exists(ctx, diskGraceKey("srv")).Result()
 			if (n == 1) != tc.grace {
 				t.Fatalf("grace set = %v, want %v", n == 1, tc.grace)
+			}
+			// G35: ext4 refuses to charge re-tagged inodes past bhard without
+			// CAP_SYS_RESOURCE, so the tag has to run with no hard limit.
+			if q.limitAtTag != 0 {
+				t.Fatalf("hard limit during the tag = %d MB, want it lifted", q.limitAtTag)
+			}
+			if q.limitMB != tc.enforcedMB {
+				t.Fatalf("hard limit after = %d MB, want %d", q.limitMB, tc.enforcedMB)
+			}
+		})
+	}
+
+	t.Run("no limit leaves the filesystem limit alone", func(t *testing.T) {
+		q := &fakeQuota{after: usageOf(150*mib, 0)}
+		countDiskUsage(context.Background(), newDiskGuardRedis(t), q, "srv", 0, true)
+		if len(q.setLimits) != 0 {
+			t.Fatalf("set limits %v, want none", q.setLimits)
+		}
+	})
+}
+
+// A grace already granted survives a later recount under the same limit (a
+// storage move, a restore) with its ceiling, is not granted again, and ends
+// when the limit changes or usage is back under it.
+func TestCountDiskUsageKeepsAnExistingGraceOnlyUnderTheSameLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		limitMB    int64
+		total      int64
+		kept       bool
+		enforcedMB int64
+	}{
+		{"same limit, still over", 100, 150 * mib, true, 300},
+		{"limit raised", 200, 150 * mib, false, 200},
+		{"back under", 100, 90 * mib, false, 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newDiskGuardRedis(t)
+			ctx := context.Background()
+			saveDiskGrace(ctx, rdb, "srv", diskGrace{limit: 100 * mib, ceiling: 300 * mib})
+			q := &fakeQuota{after: usageOf(tc.total, 0)}
+			countDiskUsage(ctx, rdb, q, "srv", tc.limitMB, false)
+			if _, ok := loadDiskGrace(ctx, rdb, "srv"); ok != tc.kept {
+				t.Fatalf("grace kept = %v, want %v", ok, tc.kept)
+			}
+			if q.limitMB != tc.enforcedMB {
+				t.Fatalf("hard limit = %d MB, want %d", q.limitMB, tc.enforcedMB)
 			}
 		})
 	}
 }
 
-// Grace holds only while the server is still over the SAME limit; it ends for
-// good once usage drops below it or the limit changes.
+// Grace holds only while the server is still over the SAME limit and inside
+// its headroom; once it ends the real limit goes back on the filesystem.
 func TestDiskGraced(t *testing.T) {
+	prevNodeID := nodeID
+	t.Cleanup(func() { nodeID = prevNodeID })
+	nodeID = "node-1"
 	for _, tc := range []struct {
 		name      string
 		granted   bool
-		usage     *DiskUsagePayload
+		limitMB   int64
+		total     int64
 		graced    bool
-		keyRemain bool
+		restoreMB int64 // limit put back when the grace ends, -1 for none
 	}{
-		{"granted, still over the same limit", true, usageOf(150, 100), true, true},
-		{"granted, usage dropped below", true, usageOf(90, 100), false, false},
-		{"granted, limit changed", true, usageOf(150, 120), false, false},
-		{"granted, limit removed", true, usageOf(150, 0), false, false},
-		{"never granted", false, usageOf(150, 100), false, false},
+		{"granted, still over the same limit", true, 100, 150 * mib, true, -1},
+		{"granted, usage dropped below", true, 100, 90 * mib, false, 100},
+		{"granted, limit changed", true, 120, 150 * mib, false, 120},
+		{"granted, limit removed", true, 0, 150 * mib, false, 0},
+		{"granted, headroom used up", true, 100, 300 * mib, false, 100},
+		{"never granted", false, 100, 150 * mib, false, -1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rdb := newDiskGuardRedis(t)
 			ctx := context.Background()
+			recordDiskLimit(ctx, rdb, "srv", tc.limitMB)
 			if tc.granted {
-				rdb.Set(ctx, diskGraceKey("srv"), 100, 0)
+				saveDiskGrace(ctx, rdb, "srv", diskGrace{limit: 100 * mib, ceiling: 300 * mib})
 			}
-			if got := diskGraced(ctx, rdb, "srv", tc.usage); got != tc.graced {
+			q := &fakeQuota{limitMB: -1}
+			if got := diskGraced(ctx, rdb, q, "srv", usageOf(tc.total, 100*mib)); got != tc.graced {
 				t.Fatalf("graced = %v, want %v", got, tc.graced)
 			}
-			n, _ := rdb.Exists(ctx, diskGraceKey("srv")).Result()
-			if (n == 1) != tc.keyRemain {
-				t.Fatalf("grace key kept = %v, want %v", n == 1, tc.keyRemain)
+			if _, ok := loadDiskGrace(ctx, rdb, "srv"); ok != tc.graced {
+				t.Fatalf("grace key kept = %v, want %v", ok, tc.graced)
+			}
+			if q.limitMB != tc.restoreMB {
+				t.Fatalf("hard limit = %d MB, want %d", q.limitMB, tc.restoreMB)
 			}
 		})
+	}
+}
+
+// While graced, the filesystem's hard limit is the ceiling; the usage the panel
+// and the guard see still carries the server's own limit, so it reads "full".
+func TestGracedUsageReportsTheServersLimit(t *testing.T) {
+	rdb := newDiskGuardRedis(t)
+	ctx := context.Background()
+	saveDiskGrace(ctx, rdb, "srv", diskGrace{limit: 100 * mib, ceiling: 300 * mib})
+	u := usageOf(150*mib, 300*mib)
+	withGraceLimit(ctx, rdb, "srv", u)
+	if u.Limit != 100*mib {
+		t.Fatalf("limit = %d, want the granted %d", u.Limit, 100*mib)
+	}
+}
+
+// G39 and the once-rule: the boot recount walks a tree only until it has been
+// counted on this node; after that a restart neither walks it again nor can
+// grant the grace a second time.
+func TestReconcileCountsAServerOnce(t *testing.T) {
+	rdb := newDiskGuardRedis(t)
+	ctx := context.Background()
+	recordDiskLimit(ctx, rdb, "srv", 100)
+	q := &fakeQuota{before: usageOf(10*mib, 100*mib), after: usageOf(150*mib, 100*mib), limitMB: 100}
+	if done, _ := reconcileServer(ctx, rdb, q, "srv"); !done || !q.assigned {
+		t.Fatal("the first boot did not count the server")
+	}
+	rdb.Del(ctx, diskGraceKey("srv"))
+	q2 := &fakeQuota{before: usageOf(10*mib, 100*mib), after: usageOf(150*mib, 100*mib), limitMB: 100}
+	if done, _ := reconcileServer(ctx, rdb, q2, "srv"); done || q2.assigned {
+		t.Fatal("a later boot walked the server again")
+	}
+	if n, _ := rdb.Exists(ctx, diskGraceKey("srv")).Result(); n != 0 {
+		t.Fatal("a later boot granted the grace again")
+	}
+	forgetDiskLimit(ctx, rdb, "srv")
+	if n, _ := rdb.Exists(ctx, diskCountedKey("srv")).Result(); n != 0 {
+		t.Fatal("forgetting the server kept its counted marker")
 	}
 }
 
@@ -270,5 +386,59 @@ func TestReleaseResolvedDiskHolds(t *testing.T) {
 				t.Fatalf("status = %q, want stopped", got)
 			}
 		})
+	}
+}
+
+// G37: a lookup of the server being moved resolved to the source during the
+// copy, so a write made then landed in the tree the move deletes. It has to
+// wait for the move, as it did under the old manager-wide lock, while the
+// sweeps over every server must not wait on it.
+func TestALookupOfTheMovingServerWaitsForTheMove(t *testing.T) {
+	sm, _ := newPlacementManager(t, 2)
+	paths := sm.Paths()
+	prevMgr := globalStorageMgr
+	t.Cleanup(func() { globalStorageMgr = prevMgr })
+	globalStorageMgr = sm
+	const uuid = "b083ff0c-fc16-47c5-9700-7b16486583e7"
+	if err := os.MkdirAll(filepath.Join(paths[0], uuid), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	copying, release := make(chan struct{}), make(chan struct{})
+	prev := migrateCopyTree
+	t.Cleanup(func() { migrateCopyTree = prev })
+	migrateCopyTree = func(src, dst string) error {
+		close(copying)
+		<-release
+		return prev(src, dst)
+	}
+	done := make(chan error, 1)
+	go func() { done <- sm.MigrateServerPath(uuid, paths[1]) }()
+	<-copying
+
+	resolved := make(chan string, 1)
+	go func() { resolved <- sm.GetServerDir(uuid) }()
+	select {
+	case dir := <-resolved:
+		close(release)
+		t.Fatalf("the moving server resolved to %q during the copy", dir)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	listed := make(chan struct{})
+	go func() { localServerUUIDs(); close(listed) }()
+	select {
+	case <-listed:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("the sweep over every server waited on the move")
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("MigrateServerPath: %v", err)
+	}
+	if dir := <-resolved; dir != filepath.Join(paths[1], uuid) {
+		t.Fatalf("resolved %q after the move, want the target", dir)
 	}
 }

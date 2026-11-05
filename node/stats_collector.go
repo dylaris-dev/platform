@@ -705,7 +705,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 				if usage != nil {
 					publishDiskUsage(ctx, rdb, uuid, usage, measuredFrom, 10*time.Minute)
 
-					graced := diskGraced(ctx, rdb, uuid, usage)
+					graced := diskGraced(ctx, rdb, quota, uuid, usage)
 					if usage.Warning == "full" && !graced {
 						// The marker, not the status key, decides whether this server is
 						// already being held down. The status key is a mailbox Core drains
@@ -774,6 +774,9 @@ func getDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, quota *Qu
 	enforceable := quota != nil && quota.IsAvailableFor(uuid)
 	if enforceable {
 		usage = quota.GetDiskUsage(uuid)
+		if usage != nil {
+			withGraceLimit(ctx, rdb, uuid, usage)
+		}
 	}
 	if usage == nil {
 		usage = duDiskUsage(ctx, rdb, uuid)
@@ -1020,6 +1023,11 @@ func localServerUUIDs() []string {
 		for _, e := range entries {
 			uuid := e.Name()
 			if !e.IsDir() || !looksLikeServerUUID(uuid) {
+				continue
+			}
+			// Mid storage move it lives on neither path yet, and resolving it
+			// would hold this sweep for every other server until the copy ends.
+			if globalStorageMgr.moveInProgress(uuid) != nil {
 				continue
 			}
 			// Only where this server actually lives: a copy left on another

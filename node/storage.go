@@ -29,6 +29,11 @@ type StorageManager struct {
 	// the original free-space behaviour.
 	placementMode  string
 	placementOrder []string
+
+	// moving holds a channel per server whose storage move is copying; it is
+	// closed once the move is done. See fenceMove.
+	movingMu sync.Mutex
+	moving   map[string]chan struct{}
 }
 
 // Placement modes for new-server assignment. Aliases of the shared constants so
@@ -159,6 +164,9 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 	// root holds .node_secret. Anything that is not a server id is no server.
 	if !validate.IsServerUUID(serverUUID) {
 		return ""
+	}
+	if ch := sm.moveInProgress(serverUUID); ch != nil {
+		<-ch
 	}
 
 	sm.mu.RLock()
@@ -425,6 +433,33 @@ func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (strin
 	return currentPath, nil
 }
 
+// fenceMove makes every lookup of this one server wait until the returned
+// func runs. During the copy the storage key still names the source, so a
+// write resolved then landed in the tree the move deletes afterwards. The old
+// manager-wide lock gave the same wait, for every server on the node.
+func (sm *StorageManager) fenceMove(serverUUID string) func() {
+	ch := make(chan struct{})
+	sm.movingMu.Lock()
+	if sm.moving == nil {
+		sm.moving = map[string]chan struct{}{}
+	}
+	sm.moving[serverUUID] = ch
+	sm.movingMu.Unlock()
+	return func() {
+		sm.movingMu.Lock()
+		delete(sm.moving, serverUUID)
+		sm.movingMu.Unlock()
+		close(ch)
+	}
+}
+
+// moveInProgress returns the channel a lookup of this server waits on, or nil.
+func (sm *StorageManager) moveInProgress(serverUUID string) chan struct{} {
+	sm.movingMu.Lock()
+	defer sm.movingMu.Unlock()
+	return sm.moving[serverUUID]
+}
+
 // migrateCopyTree is a var so a test can hold the copy open.
 var migrateCopyTree = copyTree
 
@@ -436,6 +471,8 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 	if err != nil {
 		return err
 	}
+
+	defer sm.fenceMove(serverUUID)()
 
 	srcDir := filepath.Join(currentPath, serverUUID)
 	dstDir := filepath.Join(targetPath, serverUUID)
