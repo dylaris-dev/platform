@@ -438,3 +438,18 @@ func TestTeardownRefusesWhileTheAccountsNodeRunsOtherPeoplesServers(t *testing.T
 		t.Fatalf("revoked %v / deleted %v before refusing", fs.revokeCalls, fs.deletedNodes)
 	}
 }
+
+// TestNodeRedisKeysCoverTheCommandStreams: the command consumer parks a poison
+// message on <stream>:dead with no TTL, so the dead-letter stream must go with
+// the node like the command stream itself.
+func TestNodeRedisKeysCoverTheCommandStreams(t *testing.T) {
+	for _, want := range []string{"dylaris:node:tok:cmds", "dylaris:node:tok:cmds:dead"} {
+		found := false
+		for _, k := range NodeRedisKeys("tok") {
+			found = found || k == want
+		}
+		if !found {
+			t.Errorf("%s outlives its node", want)
+		}
+	}
+}

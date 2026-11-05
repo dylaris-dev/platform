@@ -331,7 +331,7 @@ func TestSlowHandlerIsNotRunTwiceByRecovery(t *testing.T) {
 // start; after the wipe every XREADGROUP returned "NOGROUP ..." forever and the
 // node silently stopped receiving Core commands until the process was restarted.
 // Run must recreate the group at "0" so a command enqueued AFTER the restart is
-// still delivered (the "$" startup position would skip it). FlushAll models the
+// still delivered. FlushAll models the
 // restart faithfully: stream + group + done-markers all gone at once.
 func TestRunSelfHealsAfterGroupVanishes(t *testing.T) {
 	rdb := newTestRedis(t)
@@ -426,5 +426,76 @@ func TestPanickingHandlerIsDeadLetteredNotFatal(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("dead-letter len=%d, want 1", n)
+	}
+}
+
+// TestRunStartupDeliversEntriesQueuedBeforeTheGroup covers the start-up half of
+// the vanished-group case above. Core queues commands for a node that is away;
+// after a Redis restart with no persistence the XADD recreates the stream
+// without the node's group, and the node then STARTS rather than self-healing
+// mid-run. A group created at "$" there skipped every one of those commands
+// without a trace. An existing group must keep its position (BUSYGROUP), so
+// work already handled is not replayed.
+func TestRunStartupDeliversEntriesQueuedBeforeTheGroup(t *testing.T) {
+	tests := []struct {
+		name          string
+		groupExisting bool // group created and "old" handled before Run starts
+		want          []string
+	}{
+		{name: "stream without group replays queued entries", want: []string{"old", "new"}},
+		{name: "existing group keeps its position", groupExisting: true, want: []string{"new"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rdb := newTestRedis(t)
+			ctx := context.Background()
+			c := NewConsumer(rdb, "q", "g", "c1")
+			c.Block = 50 * time.Millisecond
+			if tt.groupExisting {
+				if err := c.EnsureGroup(ctx); err != nil {
+					t.Fatalf("EnsureGroup: %v", err)
+				}
+			}
+			if _, err := Publish(ctx, rdb, "q", []byte("old")); err != nil {
+				t.Fatalf("Publish: %v", err)
+			}
+			if tt.groupExisting {
+				for _, m := range readNew(t, c) {
+					if err := rdb.XAck(ctx, "q", "g", m.ID).Err(); err != nil {
+						t.Fatalf("XAck: %v", err)
+					}
+				}
+			}
+
+			got := make(chan string, 4)
+			runCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			go c.Run(runCtx, func(_ context.Context, data []byte) error { got <- string(data); return nil })
+			time.Sleep(150 * time.Millisecond)
+			if _, err := Publish(ctx, rdb, "q", []byte("new")); err != nil {
+				t.Fatalf("Publish: %v", err)
+			}
+
+			var seen []string
+			deadline := time.After(3 * time.Second)
+			for len(seen) < len(tt.want) {
+				select {
+				case v := <-got:
+					seen = append(seen, v)
+				case <-deadline:
+					t.Fatalf("delivered %v, want %v", seen, tt.want)
+				}
+			}
+			select {
+			case v := <-got:
+				t.Fatalf("unexpected extra delivery %q (delivered %v)", v, seen)
+			case <-time.After(200 * time.Millisecond):
+			}
+			for i := range tt.want {
+				if seen[i] != tt.want[i] {
+					t.Fatalf("delivered %v, want %v", seen, tt.want)
+				}
+			}
+		})
 	}
 }

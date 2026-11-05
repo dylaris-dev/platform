@@ -159,17 +159,16 @@ func (c *Consumer) deadKey() string              { return c.stream + ":dead" }
 
 // EnsureGroup creates the consumer group (and the stream) if absent. Idempotent.
 func (c *Consumer) EnsureGroup(ctx context.Context) error {
-	// "$" = only new messages for a freshly created group; existing entries are
-	// not replayed to a brand-new group (matches the old fire-and-forward
-	// semantics — only the group's own pending is ever reprocessed).
-	return c.ensureGroupAt(ctx, "$")
+	// "0", not "$": a stream that exists without this group holds only entries
+	// nobody in the group has read - Core XADDed them while the consumer was
+	// away, typically after a Redis restart with no persistence wiped stream
+	// and group. "$" skipped them without a trace. An existing group keeps its
+	// position (BUSYGROUP), so nothing already handled is replayed.
+	return c.ensureGroupAt(ctx, "0")
 }
 
 // ensureGroupAt creates the group (and stream) at startID if absent. Idempotent
-// (BUSYGROUP is not an error). "$" is the startup position (ignore old history);
-// "0" is the self-heal position after the group vanished, which replays
-// everything still in the stream so messages XADDed while the group was missing
-// are delivered rather than lost.
+// (BUSYGROUP is not an error).
 func (c *Consumer) ensureGroupAt(ctx context.Context, startID string) error {
 	err := c.rdb.XGroupCreateMkStream(ctx, c.stream, c.group, startID).Err()
 	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
