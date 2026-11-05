@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -325,5 +326,62 @@ func TestAPanelUploadIsAddedToTheGauge(t *testing.T) {
 	upload("w2")
 	if got := gaugeTotal(t, rdb, uuid); got != 300 {
 		t.Errorf("gauge after uploading the same file again = %d, want 300", got)
+	}
+}
+
+// Mesh uploads reserved nothing: Core checks each against the same gauge, so
+// uploads sent together each passed, and the node wrote them all past the
+// server's limit and its own free space. Copies, extractions and beam uploads
+// all reserve.
+func TestAMeshUploadReservesItsSize(t *testing.T) {
+	const uuid = "84848484-8484-8484-8484-848484848484"
+	for _, tc := range []struct {
+		name               string
+		nodeFree, limit    int64
+		first, second      int64
+		secondChunk        int
+		wantFirst, wantSec bool
+	}{
+		{"two uploads that only fit the server limit one at a time", 1 << 30, 1000, 600, 600, 600, true, false},
+		{"two uploads that only fit the node's free space one at a time", 1000, 0, 600, 600, 600, true, false},
+		{"a chunk past the declared size is charged too", 1 << 30, 1000, 600, 10, 600, true, false},
+		{"both fit", 1 << 30, 1000, 400, 400, 400, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, _, _ := seedNodeOwned(t)
+			withDiskBudget(t, tc.nodeFree, 1000)
+			_, rdb := gaugeRedis(t)
+			if tc.limit > 0 {
+				rdb.Set(context.Background(), diskGaugeKey(uuid), fmt.Sprintf(`{"total":0,"limit":%d}`, tc.limit), 10*time.Minute)
+			}
+			stream := &fakeCoreStream{}
+			cc := &coreConnection{stream: stream}
+			m := &MeshManager{handler: h, rdb: rdb, pendingWrites: map[string]*pendingWrite{}}
+			refused := func(id string) bool {
+				for _, msg := range stream.messages() {
+					if msg.RequestId == id && msg.GetError() != nil {
+						return true
+					}
+				}
+				return false
+			}
+
+			m.handleRequest(cc, &nodepb.NodeMessage{RequestId: "a", ServerUuid: uuid, Payload: &nodepb.NodeMessage_WriteReq{WriteReq: &nodepb.WriteFileReq{Path: "survival/a.bin", TotalSize: tc.first}}})
+			m.handleRequest(cc, &nodepb.NodeMessage{RequestId: "a", Payload: &nodepb.NodeMessage_Chunk{Chunk: &nodepb.DataChunk{Data: make([]byte, tc.first)}}})
+			m.handleRequest(cc, &nodepb.NodeMessage{RequestId: "b", ServerUuid: uuid, Payload: &nodepb.NodeMessage_WriteReq{WriteReq: &nodepb.WriteFileReq{Path: "survival/b.bin", TotalSize: tc.second}}})
+			m.handleRequest(cc, &nodepb.NodeMessage{RequestId: "b", Payload: &nodepb.NodeMessage_Chunk{Chunk: &nodepb.DataChunk{Data: make([]byte, tc.secondChunk)}}})
+			if got := !refused("a"); got != tc.wantFirst {
+				t.Errorf("first accepted = %v, want %v", got, tc.wantFirst)
+			}
+			if got := !refused("b"); got != tc.wantSec {
+				t.Errorf("second accepted = %v, want %v", got, tc.wantSec)
+			}
+			for _, id := range []string{"a", "b"} {
+				m.handleRequest(cc, &nodepb.NodeMessage{RequestId: id, Payload: &nodepb.NodeMessage_TransferDone{TransferDone: &nodepb.TransferDone{}}})
+			}
+			if n := inflightWrites.Load(); n != 0 {
+				t.Errorf("%d bytes still reserved after both uploads ended", n)
+			}
+		})
 	}
 }

@@ -31,8 +31,8 @@ var flowCreditWait = 5 * time.Minute
 // other tenant's reads - the editor, RCON's server.properties - behind them.
 var downloadsPerServer = 4
 
-// requestsPerServer caps the other file requests (list, copy, delete, hash,
-// RCON...) one server runs at once off the read loop; see handleRequest.
+// requestsPerServer caps the other file requests (list, copy, delete, hash...)
+// one server runs at once off the read loop; see handleRequest.
 var requestsPerServer = 4
 
 // requestSlotWait is how long such a request waits for a slot before it is

@@ -86,6 +86,19 @@ func TestCoresAreFoundWithoutAnIndexToo(t *testing.T) {
 	}
 }
 
+// The walk matched the index SET itself; GET on it answers WRONGTYPE, which
+// scanCores reads as an unreadable heartbeat, so it never dropped a gone Core.
+func TestTheWalkDoesNotReturnTheIndexItself(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	mr.SAdd(coreIndexKey, "core-a")
+	mr.Set("dylaris:core:core-a", `{"id":"core-a"}`)
+	keys, err := coreHeartbeatKeys(context.Background(), rdb)
+	if err != nil || len(keys) != 1 || keys[0] != "dylaris:core:core-a" {
+		t.Fatalf("keys = %v, %v; want only the heartbeat", keys, err)
+	}
+}
+
 // Without a walk the ledger loads from the hash, and every write keeps it.
 func TestPortsLoadFromTheHashAndStayMirrored(t *testing.T) {
 	mr := miniredis.RunT(t)

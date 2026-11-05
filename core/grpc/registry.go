@@ -371,6 +371,9 @@ func (r *Registry) CleanupRequest(nodeID int, requestID string) {
 // Send serializes writes to the underlying gRPC stream. gRPC streams are not
 // safe for concurrent Send; the WS bridge and parallel file ops can both write.
 func (conn *NodeConnection) Send(msg *pb.NodeMessage) error {
+	// Core sends tenant-chosen strings (a query-string path, a tab request
+	// header) that need not be UTF-8; see pb.ValidUTF8.
+	pb.ValidUTF8(msg.ProtoReflect())
 	conn.sendMu.Lock()
 	defer conn.sendMu.Unlock()
 	return conn.Stream.Send(msg)

@@ -180,3 +180,33 @@ func TestARequestThatWaitsTooLongIsAnsweredBusy(t *testing.T) {
 		t.Fatal("the delete ran after it was answered busy")
 	}
 }
+
+// RCON waited up to requestSlotWait (20s) behind slow file operations while
+// Core gave up after timeoutMs+1s: the command Core reported as failed ran
+// anyway once a slot freed, and twice on a retry. It is not disk work, so it
+// does not queue behind it.
+func TestRconDoesNotWaitForAFileSlot(t *testing.T) {
+	h, uuid, _ := seedNodeOwned(t)
+	stream := &fakeCoreStream{}
+	cc := &coreConnection{stream: stream}
+	m := &MeshManager{handler: h}
+
+	slots := requestSlotsFor(uuid)
+	for i := 0; i < requestsPerServer; i++ {
+		slots <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for len(slots) > 0 {
+			<-slots
+		}
+	})
+	// An empty command is answered without dialling, so only the slot wait is measured.
+	m.handleRequest(cc, &pb.NodeMessage{RequestId: "rcon", ServerUuid: uuid, Payload: &pb.NodeMessage_RconExecReq{RconExecReq: &pb.RconExecReq{TimeoutMs: 5000}}})
+	deadline := time.Now().Add(2 * time.Second)
+	for len(stream.messages()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if msgs := stream.messages(); len(msgs) != 1 || msgs[0].GetRconExecResp() == nil {
+		t.Fatalf("got %v, want the RCON answer while every file slot is taken", msgs)
+	}
+}

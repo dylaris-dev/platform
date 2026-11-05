@@ -10,11 +10,10 @@ import (
 	"log"
 	"net"
 	"os"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	pb "dylaris-proto/node"
 
@@ -22,7 +21,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 // CoreInfo is the heartbeat payload written by each Core instance to Redis.
@@ -86,45 +84,12 @@ const coreMaxMessage = 120 * 1024
 // - or an error text quoting them - did exactly that, as often as it liked.
 func boundForCore(msg *pb.NodeMessage) *pb.NodeMessage {
 	// Before the size check: a replaced byte grows to three.
-	validUTF8(msg.ProtoReflect())
+	pb.ValidUTF8(msg.ProtoReflect())
 	if n := proto.Size(msg); n > coreMaxMessage {
 		log.Printf("gRPC Mesh: a reply of %d bytes for %s is over Core's limit, sending an error instead", n, msg.GetRequestId())
 		return errorMsg(msg.GetRequestId(), 502, fmt.Sprintf("the reply was too large to forward (%d bytes)", n))
 	}
 	return msg
-}
-
-// validUTF8 replaces invalid UTF-8 in every string field, in place. proto3
-// refuses to marshal such a string, and grpc-go ends the whole stream on a
-// marshal error, so one file name or response header a tenant chose (a CP437
-// zip, a plugin) cut every transfer, console and tab of every tenant on this
-// node, again on each listing. Size alone does not catch it.
-//
-// ponytail: no map fields in node.proto; walk them here if one is added.
-func validUTF8(m protoreflect.Message) {
-	m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
-		switch {
-		case fd.IsMap():
-		case fd.IsList():
-			l := v.List()
-			for i := 0; i < l.Len(); i++ {
-				if fd.Kind() == protoreflect.StringKind {
-					if s := l.Get(i).String(); !utf8.ValidString(s) {
-						l.Set(i, protoreflect.ValueOfString(strings.ToValidUTF8(s, "�")))
-					}
-				} else if fd.Message() != nil {
-					validUTF8(l.Get(i).Message())
-				}
-			}
-		case fd.Kind() == protoreflect.StringKind:
-			if s := v.String(); !utf8.ValidString(s) {
-				m.Set(fd, protoreflect.ValueOfString(strings.ToValidUTF8(s, "�")))
-			}
-		case fd.Message() != nil:
-			validUTF8(v.Message())
-		}
-		return true
-	})
 }
 
 // uploadTempRefusal answers a WriteReq whose staging file could not be created.
@@ -143,6 +108,28 @@ type pendingWrite struct {
 	tempFile   *os.File
 	tempName   string // relative to the server directory's Root
 	lastActive time.Time
+	budget     *writeBudget
+	reserved   int64 // bytes the budget holds: the declared size, or the furthest chunk end past it
+}
+
+// uploadBudget reserves a mesh upload's declared size against the node's free
+// space and the server's disk limit, held until the upload ends. Core checks
+// each upload against the same gauge, so uploads sent together each passed
+// and the node wrote them all. The limit is the gauge plus what is in flight,
+// as the beam upload reads it: serverDiskHeadroom walks the server directory,
+// and this runs on the read loop for every file of a folder upload.
+func uploadBudget(rdb *redis.Client, dir, uuid string, size int64) (*writeBudget, bool) {
+	b := &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
+	if total, limit := serverDiskGauge(context.Background(), rdb, uuid); limit > 0 {
+		c, _ := serverInflight.LoadOrStore(uuid, new(atomic.Int64))
+		// b.uuid stays empty: release would remeasure the server by walking it,
+		// and commitUpload's noteDiskWrite already moved the gauge.
+		b.srv = c.(*atomic.Int64)
+		if left := limit - total - b.srv.Load(); left < b.left {
+			b.left, b.err = left, errServerDiskLimit
+		}
+	}
+	return b, b.spend(size)
 }
 
 // MeshManager discovers Core instances via Redis and maintains outbound
@@ -211,6 +198,7 @@ func (m *MeshManager) cleanupStalePendingWrites() {
 			log.Printf("gRPC Mesh: Cleaning up stale upload (request_id=%s, path=%s)", reqID, pw.path)
 			pw.tempFile.Close()
 			m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
+			pw.budget.release()
 			delete(m.pendingWrites, reqID)
 		}
 	}
@@ -230,7 +218,10 @@ const coreIndexKey = "dylaris:core:index"
 // all of them after a rollback that left only dead ids behind - and a node
 // that sees no Core disconnects from every one it had.
 func coreHeartbeatKeys(ctx context.Context, rdb *redis.Client) ([]string, error) {
-	seen := map[string]bool{}
+	// The walk matches the index SET itself, and a GET on it answers
+	// WRONGTYPE: scanCores would read that as an unreadable heartbeat on
+	// every scan and never drop a Core that is gone.
+	seen := map[string]bool{coreIndexKey: true}
 	var keys []string
 	add := func(k string) {
 		if !seen[k] {
@@ -556,6 +547,19 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		m.writeMu.Lock()
 		if pw, ok := m.pendingWrites[msg.RequestId]; ok {
 			pw.lastActive = time.Now()
+			if end := chunk.Offset + int64(len(chunk.Data)); end > pw.reserved {
+				more := end - pw.reserved
+				pw.reserved = end
+				if !pw.budget.spend(more) {
+					pw.tempFile.Close()
+					m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
+					pw.budget.release()
+					delete(m.pendingWrites, msg.RequestId)
+					m.writeMu.Unlock()
+					cc.send(errorMsg(msg.RequestId, 413, pw.budget.err.Error()))
+					return
+				}
+			}
 			if _, err := pw.tempFile.WriteAt(chunk.Data, chunk.Offset); err != nil {
 				log.Printf("gRPC Mesh: Write chunk to disk failed (request_id=%s): %v", msg.RequestId, err)
 				// Any write failure corrupts the upload. Abort and clean up
@@ -563,6 +567,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				// TransferDone report success on a partial/corrupt file.
 				pw.tempFile.Close()
 				m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
+				pw.budget.release()
 				delete(m.pendingWrites, msg.RequestId)
 				m.writeMu.Unlock()
 				if errors.Is(err, syscall.EDQUOT) {
@@ -584,6 +589,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		delete(m.pendingWrites, msg.RequestId)
 		m.writeMu.Unlock()
 		if ok {
+			defer pw.budget.release()
 			// Truncate to exact size (file may be sparse from WriteAt). On the
 			// open file, not by name: the name is the tenant's to swap.
 			if done.TotalBytes > 0 {
@@ -624,17 +630,26 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 			}
 			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{reply})
 			return
-		} else {
-			m.writeMu.Lock()
-			m.pendingWrites[msg.RequestId] = &pendingWrite{
-				serverUUID: msg.ServerUuid,
-				path:       writeReq.Path,
-				tempFile:   tempFile,
-				tempName:   tempName,
-				lastActive: time.Now(),
-			}
-			m.writeMu.Unlock()
 		}
+		budget, ok := uploadBudget(m.rdb, m.handler.serverDir(msg.ServerUuid), msg.ServerUuid, writeReq.TotalSize)
+		if !ok {
+			tempFile.Close()
+			m.handler.removeUploadTemp(msg.ServerUuid, writeReq.Path, tempName)
+			budget.release()
+			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{errorMsg(msg.RequestId, 413, budget.err.Error())})
+			return
+		}
+		m.writeMu.Lock()
+		m.pendingWrites[msg.RequestId] = &pendingWrite{
+			serverUUID: msg.ServerUuid,
+			path:       writeReq.Path,
+			tempFile:   tempFile,
+			tempName:   tempName,
+			lastActive: time.Now(),
+			budget:     budget,
+			reserved:   writeReq.TotalSize,
+		}
+		m.writeMu.Unlock()
 	}
 
 	// HttpProxyReq (WS5): stream the container HTTP response back over the mesh.
@@ -683,7 +698,15 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		return
 	}
 
-	// Everything else (List, Create, Delete, Rename, Copy, hashing, RCON...)
+	// RCON is network I/O bounded by its own TimeoutMs, not disk work. In the
+	// file slots it waited up to requestSlotWait while Core gave up after
+	// TimeoutMs+1s, so a command reported as failed still ran, twice on a retry.
+	if msg.GetRconExecReq() != nil {
+		go func() { m.sendResponses(cc, msg.RequestId, m.handler.Handle(msg)) }()
+		return
+	}
+
+	// Everything else (List, Create, Delete, Rename, Copy, hashing...)
 	// is one message in, one answer out, so it runs off the loop. On it, a
 	// copy of a large tree, a delete of millions of files, a listing that sums
 	// a whole world, or an open that blocked, stopped this node reading
