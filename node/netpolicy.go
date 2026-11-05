@@ -219,20 +219,22 @@ func writeEgressChain(b *strings.Builder, eg *netEgress) {
 
 // platformPortSet is the platform's port range plus the Redis and Postgres
 // ports, minus the game port, as an nft set. Postgres shares the network in the
-// self-host compose file.
+// self-host compose file. 25565 is spared too: Core lets a server keep it next
+// to a different global game port, and a proxy dials its backend there.
 func platformPortSet(game int) string {
 	parts := []string{"5432", "6379"}
-	switch {
-	case game <= platformPortLow || game >= platformPortHigh:
-		if game == platformPortLow {
-			parts = append(parts, fmt.Sprintf("%d-%d", platformPortLow+1, platformPortHigh))
-		} else if game == platformPortHigh {
-			parts = append(parts, fmt.Sprintf("%d-%d", platformPortLow, platformPortHigh-1))
-		} else {
-			parts = append(parts, fmt.Sprintf("%d-%d", platformPortLow, platformPortHigh))
+	start := platformPortLow
+	for p := platformPortLow; p <= platformPortHigh+1; p++ {
+		if p <= platformPortHigh && p != game && p != 25565 {
+			continue
 		}
-	default:
-		parts = append(parts, fmt.Sprintf("%d-%d", platformPortLow, game-1), fmt.Sprintf("%d-%d", game+1, platformPortHigh))
+		switch {
+		case start == p-1:
+			parts = append(parts, strconv.Itoa(start))
+		case start < p-1:
+			parts = append(parts, fmt.Sprintf("%d-%d", start, p-1))
+		}
+		start = p + 1
 	}
 	return strings.Join(parts, ", ")
 }

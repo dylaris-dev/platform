@@ -52,7 +52,9 @@ func (f *fakeNetPolicyStore) ListServers(string) ([]models.Server, error) { retu
 
 // The flag follows tenancy: set for an external or BYON machine with two
 // owners, cleared once it has one, never set on a platform node. A
-// single-owner BYON machine gets no policy at all, as before.
+// single-owner BYON machine still gets its owner's policy (H48): a node with
+// NETPOLICY=on separates without the flag, and waited forever for one, or
+// kept enforcing the list left from a shared period.
 func TestThePublisherFlagsSharedMachinesOnly(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -67,9 +69,11 @@ func TestThePublisherFlagsSharedMachinesOnly(t *testing.T) {
 		servers: []models.Server{
 			ownedSrv(1, "p1", 1, "alice", nil), ownedSrv(2, "p2", 1, "bob", nil),
 			ownedSrv(3, "e1", 2, "alice", nil), ownedSrv(4, "e2", 2, "bob", nil), ownedSrv(5, "e3", 2, "bob", nil),
-			ownedSrv(6, "c1", 3, "carol", nil),
+			ownedSrv(6, "c1", 3, "carol", nil), ownedSrv(7, "c2", 3, "carol", nil),
 		},
 	}
+	// The narrower list left from a period the BYON machine was shared.
+	mr.Set(NetPolicyKey("byon"), `{"c1":[]}`)
 	// A stale flag on a node that is (no longer) external is cleared.
 	mr.Set(NetPolicyTenancyKey("plat"), "shared")
 	pub := NewNetPolicyPublisher(store, rdb)
@@ -81,10 +85,13 @@ func TestThePublisherFlagsSharedMachinesOnly(t *testing.T) {
 	if mr.Exists(NetPolicyTenancyKey("plat")) || mr.Exists(NetPolicyTenancyKey("byon")) {
 		t.Error("a platform or single-owner machine was flagged")
 	}
-	if mr.Exists(NetPolicyKey("byon")) {
-		t.Error("a single-owner BYON machine got a policy")
+	raw, _ := mr.Get(NetPolicyKey("byon"))
+	var byon map[string][]string
+	json.Unmarshal([]byte(raw), &byon)
+	if len(byon["c1"]) != 1 || byon["c1"][0] != "c2" || len(byon["c2"]) != 1 || byon["c2"][0] != "c1" {
+		t.Errorf("single-owner BYON policy does not let the owner's servers reach each other: %v", byon)
 	}
-	raw, _ := mr.Get(NetPolicyKey("ext"))
+	raw, _ = mr.Get(NetPolicyKey("ext"))
 	var ext map[string][]string
 	json.Unmarshal([]byte(raw), &ext)
 	if len(ext["e1"]) != 0 || len(ext["e2"]) != 1 || ext["e2"][0] != "e3" {

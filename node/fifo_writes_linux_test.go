@@ -73,6 +73,17 @@ func TestTenantPlantedPipesDoNotBlockTheNode(t *testing.T) {
 		{"eula", "main/eula.txt", func(dir string) error {
 			return writeEULA(dir, "main")
 		}},
+		// H46: the real-IP step reads the config it finds, after the server
+		// was stopped for the install, so a pipe there has no writer.
+		{"real-IP reads paper-global.yml", "main/config/paper-global.yml", func(dir string) error {
+			return proxyConfigAnswer(writeProxyProtocolConfig(dir, "main", InstallerConfig{Type: "paper"}))
+		}},
+		{"real-IP reads velocity.toml", "main/velocity.toml", func(dir string) error {
+			return proxyConfigAnswer(writeProxyProtocolConfig(dir, "main", InstallerConfig{Type: "velocity"}))
+		}},
+		{"real-IP reads server.jar", "main/server.jar", func(dir string) error {
+			return proxyConfigAnswer(writeProxyProtocolConfig(dir, "main", InstallerConfig{Type: "velocity"}))
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -119,3 +130,12 @@ func TestNonBlockingWriteStillWritesAFile(t *testing.T) {
 }
 
 var errRefusedForTest = os.ErrInvalid
+
+// proxyConfigAnswer turns the real-IP step's yes/no into the table's error: a
+// yes over a pipe is the wrong answer.
+func proxyConfigAnswer(ok bool) error {
+	if ok {
+		return nil
+	}
+	return errRefusedForTest
+}

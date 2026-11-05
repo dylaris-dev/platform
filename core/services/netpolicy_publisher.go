@@ -229,18 +229,18 @@ func (p *NetPolicyPublisher) RunOnce(ctx context.Context) {
 		// policy goes out BEFORE the flag, so a node never pairs the flag with
 		// an older, narrower list.
 		shared := n.Kind() != models.NodeKindPlatform && ownersOnNode(servers, n.ID) > 1
-		if shared {
+		// A single-owner customer machine gets its owner's list too: a node
+		// with NETPOLICY=on reads a policy without the flag, and skipping it
+		// left that node waiting forever, or enforcing the narrower list from
+		// a period it was shared. Without NETPOLICY=on it reads nothing.
+		if shared || n.Kind() == models.NodeKindBYON {
 			policy = SameOwnerPolicies(servers, n.ID)
-		} else {
+		}
+		if !shared {
 			// Cleared on a platform node too: one whose external tag was taken
 			// away keeps no stale flag behind.
 			if derr := p.redis.Del(ctx, NetPolicyTenancyKey(n.Token)).Err(); derr != nil {
 				logErrf("netpolicy", "cannot clear the tenancy flag of node %d: %v", n.ID, derr)
-			}
-			// A single-owner customer machine is left alone: nothing there
-			// reads a policy without the flag.
-			if n.Kind() == models.NodeKindBYON {
-				continue
 			}
 		}
 		if policy == nil {

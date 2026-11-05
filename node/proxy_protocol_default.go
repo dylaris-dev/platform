@@ -114,8 +114,10 @@ func writeProxyProtocolConfig(serverPath, subName string, cfg InstallerConfig) b
 }
 
 // readSmall reads name inside root, bounded. A missing file is fs.ErrNotExist.
+// The tenant can plant a pipe at these names, and the server is stopped for
+// the install, so a blocking open would wait for a writer forever.
 func readSmall(root *os.Root, name string) ([]byte, error) {
-	f, err := root.Open(name)
+	f, err := openRegularIn(root, name)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +272,7 @@ func writeVelocityProxyProtocol(sub *os.Root) (bool, error) {
 
 // zipEntryIn reads one entry of the zip archive name inside root.
 func zipEntryIn(root *os.Root, name, entry string) ([]byte, error) {
-	f, err := root.Open(name)
+	f, err := openRegularIn(root, name)
 	if err != nil {
 		return nil, err
 	}

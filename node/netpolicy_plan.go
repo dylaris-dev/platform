@@ -81,6 +81,9 @@ func (dm *DockerManager) sharedTenancy(ctx context.Context, rdb *redis.Client, n
 
 // planNetPolicy decides the round.
 func (dm *DockerManager) planNetPolicy(ctx context.Context, rdb *redis.Client, nodeToken string) netPlan {
+	// The flag before the policy: Core writes them the other way round, so a
+	// "shared" flag read here is never paired with an older, narrower list.
+	separate := !dm.external || dm.netPolicyForce || dm.sharedTenancy(ctx, rdb, nodeToken)
 	fresh, published, err := loadNetPolicy(ctx, rdb, nodeToken)
 	switch {
 	case err != nil:
@@ -93,7 +96,6 @@ func (dm *DockerManager) planNetPolicy(ctx context.Context, rdb *redis.Client, n
 	}
 	policy, haveSource := dm.netPolicySrc.get()
 
-	separate := !dm.external || dm.netPolicyForce || dm.sharedTenancy(ctx, rdb, nodeToken)
 	dm.netPolicySeparates.Store(separate)
 	plan := netPlan{policy: policy, peerCache: map[string][]string{}}
 	if !separate {
