@@ -27,13 +27,19 @@ type serverPowerLock struct {
 	held sync.Mutex    // guards active and waiting
 	// active is true while an action runs.
 	active bool
-	// waiting holds one waiter per slot (waitSlot), closed to send it away.
-	waiting map[string]chan struct{}
+	// waiting holds one waiter per slot (waitSlot).
+	waiting map[string]powerWaiter
+}
+
+type powerWaiter struct {
+	kick chan struct{} // closed to send the waiter away
+	cfg  *ServerConfig // its payload, nil when not given
 }
 
 // waitSlot names the one waiting place an action may hold. Start, stop and
 // restart share one: the last click is the whole intent. Each config change
-// has its own, because its payload is the full state of its kind only.
+// has its own, because its payload is the full state of its kind only - except
+// update_resources, which the newer waiter merges (inheritResourceChanges).
 func waitSlot(action string) string {
 	if powerActions[action] {
 		return "power"
@@ -64,18 +70,24 @@ func powerLockFor(uuid string) *serverPowerLock {
 // whose payload held the newest state while the older waiter ran and stayed.
 // At most four waiters per server, so kill (its own express pool) and other
 // servers still get a slot.
-func lockServerPower(uuid, action string) (func(), bool) {
+//
+// cfg is the action's payload, which it may still be changed through before it
+// runs: a newer update_resources takes over what the one it replaces changed.
+func lockServerPower(uuid, action string, cfg *ServerConfig) (func(), bool) {
 	l := powerLockFor(uuid)
 	slot := waitSlot(action)
 	kick := make(chan struct{})
 	l.held.Lock()
 	if l.waiting == nil {
-		l.waiting = map[string]chan struct{}{}
+		l.waiting = map[string]powerWaiter{}
 	}
-	if old := l.waiting[slot]; old != nil {
-		close(old)
+	if old, ok := l.waiting[slot]; ok {
+		if action == "update_resources" && cfg != nil && old.cfg != nil {
+			inheritResourceChanges(&cfg.Docker, old.cfg.Docker)
+		}
+		close(old.kick)
 	}
-	l.waiting[slot] = kick
+	l.waiting[slot] = powerWaiter{kick: kick, cfg: cfg}
 	l.held.Unlock()
 
 	select {
@@ -98,6 +110,23 @@ func lockServerPower(uuid, action string) (func(), bool) {
 		l.setActive(false)
 		<-l.turn
 	}, true
+}
+
+// inheritResourceChanges gives a newer update_resources what the waiting one
+// it replaces changed and it does not. Core sends the padding and the ports
+// only when they change, and the node reads them missing as "keep as is", so
+// replacing the waiter outright dropped a headroom or port change and acked it.
+// Everything else is in every payload, so the newer one already wins there.
+func inheritResourceChanges(newer *DockerConfig, older DockerConfig) {
+	if newer.RAMPaddingMB == nil {
+		newer.RAMPaddingMB = older.RAMPaddingMB
+	}
+	if newer.HostPort == 0 {
+		newer.HostPort = older.HostPort
+	}
+	if newer.ContainerPort == 0 {
+		newer.ContainerPort = older.ContainerPort
+	}
 }
 
 func (l *serverPowerLock) setActive(v bool) {

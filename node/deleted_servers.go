@@ -74,3 +74,25 @@ func serverDeleted(uuid string) bool {
 // a storage root skips plain files, and a ".deleted" directory would be walked
 // as a server by the sweeps that do not skip dot names.
 func tombstonePath(uuid string) string { return filepath.Join(nodeSecretDir, uuid+".deleted") }
+
+// removeDeletedLeftovers removes this node's containers of servers deleted
+// here and returns the others. A delete whose removal failed (a busy overlay
+// unmount, a daemon timeout) still dropped the data and was acked, and Core
+// had dropped the row, so nothing would name that container again; a build
+// that slipped past the tombstone left one too. The reconciler retries the
+// removal on every pass for as long as the tombstone lasts.
+func (dm *DockerManager) removeDeletedLeftovers(existing []MCContainerInfo) []MCContainerInfo {
+	var kept []MCContainerInfo
+	for _, c := range existing {
+		if !serverDeleted(c.UUID) {
+			kept = append(kept, c)
+			continue
+		}
+		if err := dm.PowerAction(c.UUID, "delete"); err != nil {
+			log.Printf("reconciler(deleted): container %s of a deleted server not removed, retrying next pass: %v", c.ContainerName, err)
+		} else {
+			log.Printf("reconciler(deleted): removed container %s of a deleted server", c.ContainerName)
+		}
+	}
+	return kept
+}

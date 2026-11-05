@@ -98,12 +98,41 @@ func logTailAsksRestart(ctx context.Context, rdb *redis.Client, key string) bool
 		if chatLine(line) || shipperLine(line) {
 			continue
 		}
-		l := strings.ToLower(line)
+		msg := consoleMessage(line)
+		if pluginLifecycleLine(msg) {
+			continue
+		}
+		l := strings.ToLower(msg)
 		if strings.Contains(l, "restart") || strings.Contains(l, "startup script") {
 			return true
 		}
 	}
 	return false
+}
+
+// consoleMessage is what a console line says, without its timestamp and thread
+// and without the "[Plugin] " tags Bukkit puts in front of a plugin's lines: a
+// plugin named "AutoRestart" carries that name in every line it logs, and a
+// console stop of its server read as a restart and the server came back.
+func consoleMessage(line string) string {
+	msg := line
+	if i := strings.Index(line, "]: "); i >= 0 {
+		msg = line[i+3:]
+	}
+	for strings.HasPrefix(msg, "[") {
+		j := strings.Index(msg, "] ")
+		if j < 0 {
+			break
+		}
+		msg = msg[j+2:]
+	}
+	return msg
+}
+
+// pluginLifecycleLine reports Bukkit's "Loading/Enabling/Disabling <Plugin>
+// vX" lines, which name the plugin again and print on every start and stop.
+func pluginLifecycleLine(msg string) bool {
+	return strings.HasPrefix(msg, "Loading ") || strings.HasPrefix(msg, "Enabling ") || strings.HasPrefix(msg, "Disabling ")
 }
 
 // shipperLine reports a line the log-shipper wrote itself, not the server. Its

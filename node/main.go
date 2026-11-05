@@ -26,6 +26,7 @@ import (
 	"dylaris-pkg/validate"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 )
@@ -1365,7 +1366,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	}
 
 	if serialisedActions[cmd.Action] && cmd.Config.UUID != "" {
-		release, ok := lockServerPower(cmd.Config.UUID, cmd.Action)
+		release, ok := lockServerPower(cmd.Config.UUID, cmd.Action, &cmd.Config)
 		if !ok {
 			log.Printf("%s for %s dropped: replaced by a newer action of its kind", cmd.Action, cmd.Config.UUID)
 			return
@@ -1716,6 +1717,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		cmd.Config.Docker.Command = startCmd
 
 		provisionFloodgateKey(ctx, rdb, serverPath, cmd.Config.UUID, subName)
+		if abandonedForStop(ctx, rdb, cmd) {
+			return
+		}
 		if err := dm.RecreateWithCommand(cmd.Config); err != nil {
 			log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
 		} else {
@@ -1736,6 +1740,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// and stops the server the user just asked for.
 		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 		dm.PullContainerImage(cmd.Config.UUID)
+		if abandonedForStop(ctx, rdb, cmd) {
+			return
+		}
 		provisionFloodgateKey(ctx, rdb, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.ActiveSubServer)
 		if err := dm.RestartContainerInZone(cmd.Config.UUID, cmd.Config.Docker.Timezone, cmd.Config.Docker.RAM); err != nil {
 			log.Printf("Failed to start server %s: %v", cmd.Config.UUID, err)
@@ -1771,6 +1778,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Clean up stop-requested key to prevent race with new log-shipper instance
 		rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:stop-requested", cmd.Config.UUID))
 		time.Sleep(2 * time.Second)
+		if abandonedForStop(ctx, rdb, cmd) {
+			return
+		}
 		provisionFloodgateKey(ctx, rdb, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.ActiveSubServer)
 		// Recreate container (more reliable than ContainerStart on exited container)
 		if err := dm.RestartContainerInZone(cmd.Config.UUID, cmd.Config.Docker.Timezone, cmd.Config.Docker.RAM); err != nil {
@@ -1819,7 +1829,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		log.Printf("Deleting Server %s ...", cmd.Config.UUID)
 		// First, so an install still running for it cannot start it again.
 		markServerDeleted(cmd.Config.UUID)
-		dm.PowerAction(cmd.Config.UUID, "delete")
+		// The data goes regardless: Core has already dropped the row. A
+		// container left behind is removed by the reconciler (tombstone).
+		if err := dm.PowerAction(cmd.Config.UUID, "delete"); err != nil && !client.IsErrNotFound(err) {
+			log.Printf("delete %s: container not removed, the reconciler retries: %v", cmd.Config.UUID, err)
+		}
 
 		if quota != nil {
 			quota.RemoveQuota(cmd.Config.UUID)

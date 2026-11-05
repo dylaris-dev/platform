@@ -1,10 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // powerActions are the commands that only express what a server should be
@@ -88,4 +92,18 @@ func overtakenByStop(action, uuid string, issuedAt int64) bool {
 	}
 	v, ok := lastStopIssued.Load(uuid)
 	return ok && v.(int64) > issuedAt
+}
+
+// abandonedForStop is the check right before a start, restart or switch brings
+// the container up. Kill takes no lock, so one pressed while the action was
+// already running (an image pull, a restart's graceful stop) was only noted,
+// and the action then started the server against the user's last click. The
+// server is reported stopped, which is what it is.
+func abandonedForStop(ctx context.Context, rdb *redis.Client, cmd NodeCommand) bool {
+	if !overtakenByStop(cmd.Action, cmd.Config.UUID, cmd.IssuedAt) {
+		return false
+	}
+	log.Printf("%s for %s abandoned: a stop or kill queued after it arrived while it ran", cmd.Action, cmd.Config.UUID)
+	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+	return true
 }

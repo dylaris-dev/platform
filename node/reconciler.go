@@ -137,6 +137,7 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 		log.Printf("reconciler(deleted): failed to list containers: %v", err)
 		return
 	}
+	existing = dm.removeDeletedLeftovers(existing)
 	containerUUIDs := make(map[string]bool, len(existing))
 	for _, c := range existing {
 		containerUUIDs[c.UUID] = true

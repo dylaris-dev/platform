@@ -1465,6 +1465,12 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 			if resp, err = dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, containerName); err != nil {
 				return "", fmt.Errorf("mc container create error: %v", err)
 			}
+			// The same check as after the first create: a delete's own removal
+			// is what most often fails the first start and lands here.
+			if serverDeleted(config.UUID) {
+				dm.discardDeletedServer(config.UUID, resp.ID, localServerPath)
+				return "", fmt.Errorf("server %s was deleted on this node while its container was being prepared", config.UUID)
+			}
 			err = dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{})
 		}
 		if err != nil {

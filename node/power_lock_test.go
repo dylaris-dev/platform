@@ -17,12 +17,12 @@ import (
 // removed the container while the stop was still saving. They now queue on the
 // server's lock; another server is not held up, and kill never waits.
 func TestPowerActionsForOneServerRunInTurn(t *testing.T) {
-	release, _ := lockServerPower("a", "start")
+	release, _ := lockServerPower("a", "start", nil)
 	if !serverPowerActive("a") || serverPowerActive("b") {
 		t.Fatal("active flag wrong while a holds the lock")
 	}
 	otherDone := make(chan struct{})
-	go func() { r, _ := lockServerPower("b", "start"); r(); close(otherDone) }()
+	go func() { r, _ := lockServerPower("b", "start", nil); r(); close(otherDone) }()
 	select {
 	case <-otherDone:
 	case <-time.After(time.Second):
@@ -30,7 +30,7 @@ func TestPowerActionsForOneServerRunInTurn(t *testing.T) {
 	}
 
 	second := make(chan struct{})
-	go func() { r, _ := lockServerPower("a", "update_resources"); r(); close(second) }()
+	go func() { r, _ := lockServerPower("a", "update_resources", nil); r(); close(second) }()
 	select {
 	case <-second:
 		t.Fatal("a second action on a ran while the first held its lock")
@@ -58,20 +58,20 @@ func TestTheNewestPowerActionReplacesTheWaitingOne(t *testing.T) {
 		{"update_resources", "start", "stop"},
 		{"restart", "stop", "start"},
 		{"reconfigure", "restart", "stop"},
-		// A config payload is the full state of its kind, so the newest save
-		// of a kind holds everything the waiting one would have applied.
+		// The newest save of a kind holds everything the waiting one would
+		// have applied (update_resources by merging, see below).
 		{"restart", "update_resources", "update_resources"},
 		{"update_resources", "reconfigure", "reconfigure"},
 		{"reconfigure", "switch_server", "switch_server"},
 	} {
 		uuid := fmt.Sprintf("newest-%d", i)
-		release, ok := lockServerPower(uuid, c.running)
+		release, ok := lockServerPower(uuid, c.running, nil)
 		if !ok {
 			t.Fatalf("%v: the first action did not get the lock", c)
 		}
 		waiter := make(chan bool, 1)
 		go func() {
-			r, ok := lockServerPower(uuid, c.waiting)
+			r, ok := lockServerPower(uuid, c.waiting, nil)
 			if ok {
 				r()
 			}
@@ -80,7 +80,7 @@ func TestTheNewestPowerActionReplacesTheWaitingOne(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		newest := make(chan bool, 1)
 		go func() {
-			r, ok := lockServerPower(uuid, c.newest)
+			r, ok := lockServerPower(uuid, c.newest, nil)
 			if ok {
 				r()
 			}
@@ -110,13 +110,13 @@ func TestTheNewestPowerActionReplacesTheWaitingOne(t *testing.T) {
 // change of another kind, or a power action, waits beside it and both run. The
 // three config kinds shared one slot, and a third change was dropped and acked.
 func TestAPowerActionDoesNotReplaceAWaitingConfigChange(t *testing.T) {
-	release, _ := lockServerPower("cfg", "restart")
+	release, _ := lockServerPower("cfg", "restart", nil)
 	actions := []string{"update_resources", "reconfigure", "switch_server", "stop"}
 	done := make(chan bool, len(actions))
 	for _, a := range actions {
 		a := a
 		go func() {
-			r, ok := lockServerPower("cfg", a)
+			r, ok := lockServerPower("cfg", a, nil)
 			if ok {
 				r()
 			}
@@ -194,7 +194,7 @@ func TestPowerWiringIsInPlace(t *testing.T) {
 	}
 	mainSrc, rec, dmSrc := read("main.go"), read("reconciler.go"), read("docker_mgr.go")
 	proc := between(t, mainSrc, "func processCommand(", "case \"switch_server\":")
-	if !strings.Contains(proc, "lockServerPower(cmd.Config.UUID, cmd.Action)") {
+	if !strings.Contains(proc, "lockServerPower(cmd.Config.UUID, cmd.Action, &cmd.Config)") {
 		t.Error("processCommand does not take the server's power lock")
 	}
 	sw := between(t, mainSrc, "Switching server %s to sub-server", "case \"start\":")
@@ -267,5 +267,126 @@ func TestACleanExitAfterACrashOrARestartIsNotAStop(t *testing.T) {
 	}
 	if !logTailAsksRestart(ctx, rdb, key) {
 		t.Fatal("a log spam hid the restart line")
+	}
+}
+
+// An update_resources carries padding and ports only when they change, so a
+// newer save that replaced a waiting one dropped the waiting one's change and
+// acked it. The newer one now takes over what it does not set itself.
+func TestANewerResourceSaveKeepsTheWaitingOnesChanges(t *testing.T) {
+	pad := func(n int) *int { return &n }
+	for i, c := range []struct {
+		waiting, newest  DockerConfig
+		wantPad          *int
+		wantHost, wantCt int
+	}{
+		{DockerConfig{RAMPaddingMB: pad(1024), HostPort: 25601, ContainerPort: 25577}, DockerConfig{CPULimit: 2},
+			pad(1024), 25601, 25577},
+		{DockerConfig{RAMPaddingMB: pad(1024), HostPort: 25601}, DockerConfig{RAMPaddingMB: pad(256), HostPort: 25602, ContainerPort: 25566},
+			pad(256), 25602, 25566},
+		{DockerConfig{}, DockerConfig{CPULimit: 2}, nil, 0, 0},
+	} {
+		uuid := fmt.Sprintf("merge-%d", i)
+		release, _ := lockServerPower(uuid, "restart", nil)
+		waiting := &ServerConfig{UUID: uuid, Docker: c.waiting}
+		dropped := make(chan bool, 1)
+		go func() {
+			r, ok := lockServerPower(uuid, "update_resources", waiting)
+			if ok {
+				r()
+			}
+			dropped <- !ok
+		}()
+		time.Sleep(50 * time.Millisecond)
+		newest := &ServerConfig{UUID: uuid, Docker: c.newest}
+		ran := make(chan struct{})
+		go func() { r, _ := lockServerPower(uuid, "update_resources", newest); r(); close(ran) }()
+		if !<-dropped {
+			t.Fatalf("case %d: the waiting save was not replaced", i)
+		}
+		release()
+		<-ran
+		d := newest.Docker
+		if (d.RAMPaddingMB == nil) != (c.wantPad == nil) || (d.RAMPaddingMB != nil && *d.RAMPaddingMB != *c.wantPad) ||
+			d.HostPort != c.wantHost || d.ContainerPort != c.wantCt || d.CPULimit != c.newest.CPULimit {
+			t.Errorf("case %d: newest ran with %+v (padding %v), want padding %v host %d container %d",
+				i, d, d.RAMPaddingMB, c.wantPad, c.wantHost, c.wantCt)
+		}
+	}
+}
+
+// A kill pressed while a start or restart is already past the lock must keep
+// the server down: the start used to recreate the container after it.
+func TestAKillDuringAStartKeepsTheServerDown(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+	for _, action := range []string{"start", "restart", "switch_server"} {
+		uuid := "killed-during-" + action
+		cmd := NodeCommand{Action: action, IssuedAt: 2000}
+		cmd.Config.UUID = uuid
+		if abandonedForStop(ctx, rdb, cmd) {
+			t.Fatalf("%s abandoned with no stop or kill", action)
+		}
+		noteStop(uuid, 2001) // the kill, on its express worker
+		if !abandonedForStop(ctx, rdb, cmd) {
+			t.Fatalf("%s went on after a newer kill", action)
+		}
+		if got, _ := rdb.Get(ctx, "dylaris:server:"+uuid+":status").Result(); got != "stopped" {
+			t.Errorf("%s abandoned with status %q, want stopped", action, got)
+		}
+	}
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	for _, s := range []struct{ from, to, create string }{
+		{"case \"switch_server\":", "case \"start\":", "dm.RecreateWithCommand(cmd.Config)"},
+		{"case \"start\":", "case \"stop\":", "dm.RestartContainerInZone("},
+		{"case \"restart\":", "case \"update_resources\":", "dm.RestartContainerInZone("},
+	} {
+		body := between(t, src, s.from, s.to)
+		check, create := strings.Index(body, "abandonedForStop(ctx, rdb, cmd)"), strings.Index(body, s.create)
+		if check < 0 || create < 0 || check > create {
+			t.Errorf("%s brings the container up without checking for a kill first", s.from)
+		}
+	}
+}
+
+// Bukkit names a plugin in every line it logs and in its enable and disable
+// lines, so a console stop of a server with "AutoRestart" read as a restart
+// and the server came back.
+func TestAPluginNamedRestartDoesNotTurnAStopIntoARestart(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+	ms := int64(1_000_000_000)
+	for i, c := range []struct {
+		lines []string
+		want  bool
+	}{
+		{[]string{
+			"[12:00:00 INFO]: [SpigotLibraryLoader] [UltimateAutoRestart] Loading 1 libraries... please wait",
+			"[12:00:00 INFO]: [UltimateAutoRestart] Loading server plugin UltimateAutoRestart v1.0",
+			"[12:00:00 INFO]: [UltimateAutoRestart] Enabling UltimateAutoRestart v1.0",
+			"[12:00:01] [Server thread/INFO]: [AutoRestart] Config loaded",
+			"[12:00:02] [Server thread/INFO]: Stopping server",
+			"[12:00:02] [Server thread/INFO]: [UltimateAutoRestart] Disabling UltimateAutoRestart v1.0",
+		}, false},
+		{[]string{
+			"[12:00:00] [Server thread/INFO]: [AutoRestart] The server will restart in 10 seconds",
+			"[12:00:10] [Server thread/INFO]: [AutoRestart] Disabling AutoRestart v2.1",
+		}, true},
+		{[]string{"[12:00:00] [Server thread/INFO]: Steve issued server command: /restart"}, true},
+	} {
+		key := serverLogStreamKey(fmt.Sprintf("plugin-%d", i), "")
+		for _, l := range c.lines {
+			ms++
+			rdb.XAdd(ctx, &redis.XAddArgs{Stream: key, ID: fmt.Sprintf("%d-0", ms), Values: map[string]interface{}{"line": l}})
+		}
+		if got := logTailAsksRestart(ctx, rdb, key); got != c.want {
+			t.Errorf("case %d: asks restart = %v, want %v", i, got, c.want)
+		}
 	}
 }

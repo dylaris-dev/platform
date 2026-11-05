@@ -112,3 +112,39 @@ func TestADeleteDuringThePullLeavesNoDirectory(t *testing.T) {
 		t.Fatalf("directory recreated for a server deleted during its pull: %v", err)
 	}
 }
+
+// A delete whose container removal failed, or a build that slipped past the
+// tombstone, left an mc_<uuid> nothing would ever remove. The reconciler now
+// removes this node's containers of servers deleted here, and nothing else.
+func TestALeftoverContainerOfADeletedServerIsRemoved(t *testing.T) {
+	const uuid = sharedDaemonUUID
+	for _, c := range []struct {
+		owner   string
+		deleted bool
+		want    bool
+	}{
+		{"node-a", true, true},
+		{"node-a", false, false},
+		{"node-b", true, false}, // another node's on a shared daemon
+	} {
+		dm, d := newSharedDaemon(t, c.owner, true, nil)
+		forgetTombstoneInMemory(uuid)
+		if c.deleted {
+			markServerDeleted(uuid)
+		}
+		left := dm.removeDeletedLeftovers([]MCContainerInfo{{UUID: uuid, ContainerName: "mc_" + uuid}})
+		removed := strings.Contains(strings.Join(d.changed(), ","), "remove mc_"+uuid)
+		if removed != c.want || (len(left) == 0) != c.deleted {
+			t.Errorf("owner %q deleted %v: removed %v (%v), left %v", c.owner, c.deleted, removed, d.changed(), left)
+		}
+		forgetTombstoneInMemory(uuid)
+	}
+	b, err := os.ReadFile("docker_mgr.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback := between(t, string(b), "starting without them\", containerName, err)", "dm.openNetGate(config.UUID)")
+	if !strings.Contains(fallback, "serverDeleted(config.UUID)") {
+		t.Error("the extra-port fallback starts a second container without checking for a delete")
+	}
+}
