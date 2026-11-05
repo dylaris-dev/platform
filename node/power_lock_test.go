@@ -36,11 +36,6 @@ func TestPowerActionsForOneServerRunInTurn(t *testing.T) {
 		t.Fatal("a second action on a ran while the first held its lock")
 	case <-time.After(100 * time.Millisecond):
 	}
-	// One config change waits; a second is dropped rather than taking another
-	// command slot.
-	if _, ok := lockServerPower("a", "reconfigure"); ok {
-		t.Fatal("a second config change queued behind a running and a waiting one")
-	}
 	release()
 	select {
 	case <-second:
@@ -63,6 +58,11 @@ func TestTheNewestPowerActionReplacesTheWaitingOne(t *testing.T) {
 		{"update_resources", "start", "stop"},
 		{"restart", "stop", "start"},
 		{"reconfigure", "restart", "stop"},
+		// A config payload is the full state of its kind, so the newest save
+		// of a kind holds everything the waiting one would have applied.
+		{"restart", "update_resources", "update_resources"},
+		{"update_resources", "reconfigure", "reconfigure"},
+		{"reconfigure", "switch_server", "switch_server"},
 	} {
 		uuid := fmt.Sprintf("newest-%d", i)
 		release, ok := lockServerPower(uuid, c.running)
@@ -106,11 +106,14 @@ func TestTheNewestPowerActionReplacesTheWaitingOne(t *testing.T) {
 	}
 }
 
-// A config change waiting is not replaced by a power action: both run.
+// A waiting change is replaced only by a newer one of its own kind: a config
+// change of another kind, or a power action, waits beside it and both run. The
+// three config kinds shared one slot, and a third change was dropped and acked.
 func TestAPowerActionDoesNotReplaceAWaitingConfigChange(t *testing.T) {
 	release, _ := lockServerPower("cfg", "restart")
-	done := make(chan bool, 2)
-	for _, a := range []string{"update_resources", "stop"} {
+	actions := []string{"update_resources", "reconfigure", "switch_server", "stop"}
+	done := make(chan bool, len(actions))
+	for _, a := range actions {
 		a := a
 		go func() {
 			r, ok := lockServerPower("cfg", a)
@@ -122,7 +125,7 @@ func TestAPowerActionDoesNotReplaceAWaitingConfigChange(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	release()
-	for i := 0; i < 2; i++ {
+	for range actions {
 		select {
 		case ok := <-done:
 			if !ok {

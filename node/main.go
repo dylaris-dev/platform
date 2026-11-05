@@ -1353,7 +1353,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	if serialisedActions[cmd.Action] && cmd.Config.UUID != "" {
 		release, ok := lockServerPower(cmd.Config.UUID, cmd.Action)
 		if !ok {
-			log.Printf("%s for %s dropped: replaced by a newer power action, or another change already waits", cmd.Action, cmd.Config.UUID)
+			log.Printf("%s for %s dropped: replaced by a newer action of its kind", cmd.Action, cmd.Config.UUID)
 			return
 		}
 		defer release()

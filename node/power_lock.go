@@ -24,12 +24,21 @@ var serverPowerLocks sync.Map // uuid -> *serverPowerLock
 
 type serverPowerLock struct {
 	turn chan struct{} // capacity 1: whoever holds it runs
-	held sync.Mutex    // guards active, intent and configWaiting
+	held sync.Mutex    // guards active and waiting
 	// active is true while an action runs.
 	active bool
-	// intent is the waiting start, stop or restart, closed to send it away.
-	intent        chan struct{}
-	configWaiting bool
+	// waiting holds one waiter per slot (waitSlot), closed to send it away.
+	waiting map[string]chan struct{}
+}
+
+// waitSlot names the one waiting place an action may hold. Start, stop and
+// restart share one: the last click is the whole intent. Each config change
+// has its own, because its payload is the full state of its kind only.
+func waitSlot(action string) string {
+	if powerActions[action] {
+		return "power"
+	}
+	return action
 }
 
 // serialisedActions are the commands that stop, start or recreate a server's
@@ -49,50 +58,40 @@ func powerLockFor(uuid string) *serverPowerLock {
 // command slots, so without a bound a burst of clicks on one server could fill
 // them all and stall every other server's commands, kill included.
 //
-// The bound keeps one waiting start/stop/restart and one waiting config change
-// (switch, resources, reconfigure). A newer start, stop or restart REPLACES
-// the waiting one: refusing the newcomer instead dropped and acked a user's
-// stop behind a waiting start, which then brought the server up against the
-// last click. A config change is not replaced - each carries a change the
-// server would otherwise never get - so a second one while one waits is
-// dropped as before.
+// The bound keeps one waiter per slot (waitSlot), and a newer action REPLACES
+// the waiter in its slot. Refusing the newcomer instead dropped and acked the
+// newest intent: a stop behind a waiting start, or the third settings save,
+// whose payload held the newest state while the older waiter ran and stayed.
+// At most four waiters per server, so kill (its own express pool) and other
+// servers still get a slot.
 func lockServerPower(uuid, action string) (func(), bool) {
 	l := powerLockFor(uuid)
-	var kick chan struct{}
+	slot := waitSlot(action)
+	kick := make(chan struct{})
 	l.held.Lock()
-	if powerActions[action] {
-		if l.intent != nil {
-			close(l.intent)
-		}
-		kick = make(chan struct{})
-		l.intent = kick
-	} else {
-		if l.active && l.configWaiting {
-			l.held.Unlock()
-			return nil, false
-		}
-		l.configWaiting = true
+	if l.waiting == nil {
+		l.waiting = map[string]chan struct{}{}
 	}
+	if old := l.waiting[slot]; old != nil {
+		close(old)
+	}
+	l.waiting[slot] = kick
 	l.held.Unlock()
 
 	select {
 	case l.turn <- struct{}{}:
-	case <-kick: // nil for a config change, which is never sent away
+	case <-kick:
 		return nil, false
 	}
 	l.held.Lock()
-	if kick != nil {
-		select {
-		case <-kick: // replaced in the moment the turn came free
-			l.held.Unlock()
-			<-l.turn
-			return nil, false
-		default:
-		}
-		l.intent = nil
-	} else {
-		l.configWaiting = false
+	select {
+	case <-kick: // replaced in the moment the turn came free
+		l.held.Unlock()
+		<-l.turn
+		return nil, false
+	default:
 	}
+	delete(l.waiting, slot)
 	l.active = true
 	l.held.Unlock()
 	return func() {
