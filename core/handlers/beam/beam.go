@@ -389,6 +389,28 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, fmt.Sprintf("Failed to sign ticket: %v", err), http.StatusInternalServerError)
 		return
 	}
+	// Read the status again AFTER signing. A move writes 'migrating' and only
+	// then stamps the access epoch once; a ticket signed in a later second than
+	// that stamp passes it, so write rights decided from the read at the top
+	// survived the whole move. A read after signing that still sees no move
+	// means the stamp is no earlier than this ticket's iat, and the node refuses
+	// it - so only this read has to catch the move. Fail closed on an error.
+	if filePerms.Write || filePerms.Delete {
+		now, rerr := h.d.Store.GetServerByUUID(serverUUID)
+		if rerr != nil || now == nil {
+			httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
+			return
+		}
+		if now.Status == "migrating" {
+			filePerms.Write, filePerms.Delete = false, false
+			ticketString, err = beamauth.SignBeamTicketWithNodeProof(
+				h.jwtSecret, claims, beamauth.BeamTicketTTL, nodeProofSecret)
+			if err != nil {
+				httpx.SendJSONError(w, fmt.Sprintf("Failed to sign ticket: %v", err), http.StatusInternalServerError)
+				return
+			}
+		}
+	}
 
 	// expires is informational. Compute it from the TTL directly - SignBeamTicket
 	// takes claims by value and sets ExpiresAt on its own copy, so claims.ExpiresAt

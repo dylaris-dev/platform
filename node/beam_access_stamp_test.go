@@ -31,7 +31,13 @@ func TestAuthenticateRefusesATicketOlderThanTheAccessStamp(t *testing.T) {
 	}
 	defer mr.Close()
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 40200}})
+	// Each attempt is its own connection, as a reconnect is: a connection that
+	// authenticated once does not authenticate again.
+	port := 40200
+	conn := func() context.Context {
+		port++
+		return peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}})
+	}
 
 	sign := func(t *testing.T) string {
 		t.Helper()
@@ -45,7 +51,7 @@ func TestAuthenticateRefusesATicketOlderThanTheAccessStamp(t *testing.T) {
 	bs := &beamServer{jwtSecret: secret, rdb: rdb}
 
 	t.Run("no stamp, the ticket works", func(t *testing.T) {
-		resp, err := bs.Authenticate(ctx, &pb.BeamAuthReq{Ticket: sign(t)})
+		resp, err := bs.Authenticate(conn(), &pb.BeamAuthReq{Ticket: sign(t)})
 		if err != nil {
 			t.Fatalf("Authenticate: %v", err)
 		}
@@ -63,7 +69,7 @@ func TestAuthenticateRefusesATicketOlderThanTheAccessStamp(t *testing.T) {
 	}
 
 	t.Run("the older ticket is refused", func(t *testing.T) {
-		resp, err := bs.Authenticate(ctx, &pb.BeamAuthReq{Ticket: stale})
+		resp, err := bs.Authenticate(conn(), &pb.BeamAuthReq{Ticket: stale})
 		if err != nil {
 			t.Fatalf("Authenticate: %v", err)
 		}
@@ -78,7 +84,7 @@ func TestAuthenticateRefusesATicketOlderThanTheAccessStamp(t *testing.T) {
 
 	t.Run("a ticket minted after it works again", func(t *testing.T) {
 		time.Sleep(1100 * time.Millisecond)
-		resp, err := bs.Authenticate(ctx, &pb.BeamAuthReq{Ticket: sign(t)})
+		resp, err := bs.Authenticate(conn(), &pb.BeamAuthReq{Ticket: sign(t)})
 		if err != nil {
 			t.Fatalf("Authenticate: %v", err)
 		}
@@ -92,7 +98,7 @@ func TestAuthenticateRefusesATicketOlderThanTheAccessStamp(t *testing.T) {
 	// of the two failures.
 	t.Run("an unreachable Redis lets the ticket through", func(t *testing.T) {
 		mr.Close()
-		resp, err := bs.Authenticate(ctx, &pb.BeamAuthReq{Ticket: sign(t)})
+		resp, err := bs.Authenticate(conn(), &pb.BeamAuthReq{Ticket: sign(t)})
 		if err != nil {
 			t.Fatalf("Authenticate: %v", err)
 		}

@@ -92,6 +92,13 @@ type beamServer struct {
 	// operation can ask again whether access changed since (sessionLive). An
 	// open session used to keep its rights for as long as the connection
 	// lived - and the client's health pings kept it alive indefinitely.
+	//
+	// It is also the once-per-connection gate: Authenticate claims it with
+	// LoadOrStore before writing the other maps, and only ConnEnd removes it,
+	// so the bindings above are written by exactly one ticket per connection.
+	// A file RPC reads its rights and its server in two separate loads; a
+	// second Authenticate between them handed it ticket A's rights on ticket
+	// B's server.
 	sessionByPeer sync.Map // map[string]*beamSession
 
 	// inflight is the declared size of uploads in progress, per account
@@ -137,6 +144,9 @@ type beamSession struct {
 	claims  *beamauth.BeamClaims
 	opened  time.Time
 	checked atomic.Int64 // unix nanoseconds
+	// ended is set when sessionLive drops the bindings. The entry itself stays
+	// until the connection ends, so the connection cannot authenticate again.
+	ended atomic.Bool
 }
 
 // beamRecheckEvery bounds how often a session's access stamp is read from
@@ -159,6 +169,9 @@ func (s *beamServer) sessionLive(ctx context.Context, addr string) bool {
 		return true
 	}
 	sess := v.(*beamSession)
+	if sess.ended.Load() {
+		return false
+	}
 	now := time.Now().UnixNano()
 	expired := time.Since(sess.opened) > beamMaxSession
 	if !expired && now-sess.checked.Load() < int64(beamRecheckEvery) {
@@ -177,7 +190,7 @@ func (s *beamServer) sessionLive(ctx context.Context, addr string) bool {
 		s.serverUUIDByPeer.Delete(addr)
 		s.usernameByPeer.Delete(addr)
 		s.permsByPeer.Delete(addr)
-		s.sessionByPeer.Delete(addr)
+		sess.ended.Store(true)
 		return false
 	}
 	sess.checked.Store(now)
@@ -727,6 +740,12 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 	// extractServerUUID reads the same key on every subsequent RPC from
 	// the same Beam.exe session.
 	if p, ok := peer.FromContext(ctx); ok && p != nil && p.Addr != nil {
+		sess := &beamSession{claims: claims, opened: time.Now()}
+		sess.checked.Store(time.Now().UnixNano())
+		if _, taken := s.sessionByPeer.LoadOrStore(p.Addr.String(), sess); taken {
+			log.Printf("beam: authentication refused from %s: this connection is already authenticated", beamPeerAddr(ctx))
+			return &pb.BeamAuthResp{Ok: false, Message: "this connection is already authenticated - reconnect to use another ticket"}, nil
+		}
 		s.serverUUIDByPeer.Store(p.Addr.String(), claims.ServerUUID)
 		// Keep the username too, but only when present, so an empty-username
 		// ticket never shares a daily-quota bucket with another user.
@@ -737,9 +756,6 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 		// never authenticated" from "authenticated by a Core that sends no
 		// permissions".
 		s.permsByPeer.Store(p.Addr.String(), claims.Perms)
-		sess := &beamSession{claims: claims, opened: time.Now()}
-		sess.checked.Store(time.Now().UnixNano())
-		s.sessionByPeer.Store(p.Addr.String(), sess)
 	}
 	return &pb.BeamAuthResp{
 		Ok:         true,
