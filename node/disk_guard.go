@@ -93,6 +93,11 @@ const diskLiftedKeyFmt = "node:%s:server:%s:disk_lifted"
 
 func diskLiftedKey(uuid string) string { return fmt.Sprintf(diskLiftedKeyFmt, nodeID, uuid) }
 
+// diskLiftedNoGrace is the lifted marker of a recount that may not grant the
+// grace (a move, a restore, a resize). Any other value is what every recount
+// wrote before, read as the grace-eligible boot recount it may have been.
+const diskLiftedNoGrace = "nograce"
+
 type diskGrace struct{ limit, ceiling int64 }
 
 // holds reports whether the grace still applies: same limit, still over it,
@@ -109,15 +114,25 @@ func diskGraceHeadroom(limit int64) int64 {
 }
 
 func loadDiskGrace(ctx context.Context, rdb *redis.Client, uuid string) (diskGrace, bool) {
-	var g diskGrace
+	g, ok, _ := readDiskGrace(ctx, rdb, uuid)
+	return g, ok
+}
+
+// readDiskGrace is loadDiskGrace that tells a server with no grace apart from
+// a Redis that could not say: err is set only for the latter.
+func readDiskGrace(ctx context.Context, rdb *redis.Client, uuid string) (diskGrace, bool, error) {
 	if rdb == nil {
-		return g, false
+		return diskGrace{}, false, nil
 	}
 	v, err := rdb.Get(ctx, diskGraceKey(uuid)).Result()
-	if err != nil {
-		return g, false
+	if errors.Is(err, redis.Nil) {
+		return diskGrace{}, false, nil
 	}
-	return parseDiskGrace(v)
+	if err != nil {
+		return diskGrace{}, false, err
+	}
+	g, ok := parseDiskGrace(v)
+	return g, ok, nil
 }
 
 func parseDiskGrace(v string) (diskGrace, bool) {
@@ -186,7 +201,12 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 		// limit only on the project, which reads 0 once lifted.
 		if rdb != nil {
 			recordDiskLimit(ctx, rdb, uuid, limitMB)
-			rdb.Set(ctx, diskLiftedKey(uuid), 1, 0)
+			// SetNX: an interrupted boot recount's marker stays what it was.
+			var lifted any = 1
+			if !allowGrace {
+				lifted = diskLiftedNoGrace
+			}
+			rdb.SetNX(ctx, diskLiftedKey(uuid), lifted, 0)
 		}
 		if err := q.SetLimit(uuid, 0); err != nil {
 			log.Printf("quota: lift the limit of %s for the recount: %v", uuid, err)
@@ -195,8 +215,18 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 	err := q.AssignQuota(uuid)
 	after := q.GetDiskUsage(uuid)
 	enforceMB := limitMB
+	graceUnknown := false
 	if rdb != nil {
-		if g, ok := loadDiskGrace(ctx, rdb, uuid); ok {
+		g, ok, gerr := readDiskGrace(ctx, rdb, uuid)
+		if gerr != nil {
+			// Neither the real limit nor a grant: under a graced server's
+			// usage the real one had the filesystem refuse its writes while
+			// the guard, reading the grace fine next tick, let it run. The
+			// limit stays lifted and the marker set, and the server is not
+			// marked counted, so the next boot decides it.
+			graceUnknown = true
+			log.Printf("quota: read the disk grace of %s: %v - leaving its hard limit lifted until a recount can read it", uuid, gerr)
+		} else if ok {
 			// A count that cannot be read is not the server back under its
 			// limit: the real limit with the grace key left in place had the
 			// guard let a server run that the filesystem no longer let write.
@@ -212,11 +242,11 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 			saveDiskGrace(ctx, rdb, uuid, diskGrace{limit: limit, ceiling: enforceMB << 20})
 			log.Printf("quota: %s is over its limit now that its existing data is counted (%d of %d bytes) - warning, not stopping, with the hard limit lifted to %d MB until the limit changes or usage drops below it", uuid, after.Total, limit, enforceMB)
 		}
-		if after != nil {
+		if after != nil && !graceUnknown {
 			rdb.Set(ctx, diskCountedKey(uuid), 1, 0)
 		}
 	}
-	if limitMB > 0 {
+	if limitMB > 0 && !graceUnknown {
 		if serr := q.SetLimit(uuid, enforceMB); serr != nil {
 			log.Printf("quota: limit %s: %v", uuid, serr)
 		} else if rdb != nil {
@@ -249,6 +279,10 @@ func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uu
 				return false, nil
 			}
 			// Counted already: the grace stays once per server.
+			allowGrace = false
+		} else if v, _ := rdb.Get(ctx, diskLiftedKey(uuid)).Result(); v == diskLiftedNoGrace {
+			// Lifted by a recount that could not grant it, killed mid-tag:
+			// finishing it here is that recount, not the boot's first count.
 			allowGrace = false
 		}
 	}

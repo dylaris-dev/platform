@@ -683,3 +683,118 @@ func TestAMovedServerKeepsItsGrace(t *testing.T) {
 		})
 	}
 }
+
+// K37: the saved config is the disk limit's fallback when Redis lost it, and
+// setup, reconfigure and switch_server saved Core payloads that carry none -
+// so the first setup already wrote 0 over it. Only create and update_resources
+// carry the limit; every other save keeps the one on disk.
+func TestTheSavedDiskLimitSurvivesSavesThatCarryNone(t *testing.T) {
+	dir := t.TempDir()
+	created := ServerConfig{UUID: "aaaaaaaa-1111-2222-3333-444444444444"}
+	created.Docker.DiskLimit = 100
+	saveNodeConfigWithDiskLimit(dir, created)
+
+	setup := ServerConfig{UUID: created.UUID, ActiveSubServer: "survival"}
+	saveNodeConfig(dir, setup)
+	if got := savedDiskLimitIn(dir); got != 100 {
+		t.Fatalf("saved disk limit after setup = %d MB, want 100", got)
+	}
+
+	// update_resources to unlimited is a change, not a payload without one.
+	saveNodeConfigWithDiskLimit(dir, ServerConfig{UUID: created.UUID})
+	if got := savedDiskLimitIn(dir); got != 0 {
+		t.Fatalf("saved disk limit after a change to unlimited = %d MB, want 0", got)
+	}
+}
+
+// K39: a move, restore or storage-move recount is not grace-eligible. Killed
+// mid-tag on a node where the server was never counted, it left the same
+// lifted marker as an interrupted boot recount, and the next boot granted the
+// once-only grace to an ordinary over-limit server.
+func TestAnInterruptedNonGraceRecountGrantsNoGraceOnBoot(t *testing.T) {
+	rdb := newDiskGuardRedis(t)
+	ctx := context.Background()
+	q := &fakeQuota{before: usageOf(0, 0), limitMB: 100, onTag: func() { panic("killed") }}
+	func() {
+		defer func() { _ = recover() }()
+		countDiskUsage(ctx, rdb, q, "srv", 100, false)
+	}()
+
+	q2 := &fakeQuota{before: usageOf(120*mib, 0), after: usageOf(150*mib, 0)}
+	if done, err := reconcileServer(ctx, rdb, q2, "srv"); !done || err != nil {
+		t.Fatalf("reconcileServer = %v, %v", done, err)
+	}
+	if _, ok := loadDiskGrace(ctx, rdb, "srv"); ok {
+		t.Fatal("the boot granted a grace after an interrupted move recount")
+	}
+	if q2.limitMB != 100 {
+		t.Fatalf("hard limit = %d MB, want the real 100", q2.limitMB)
+	}
+}
+
+// K40: a grace that cannot be read is not "no grace". Enforcing the real
+// limit under a graced server's usage left the guard letting it run while
+// the filesystem refused its writes. And the boot's one chance at the grace
+// is not spent on a read that failed: the server is not marked counted.
+func TestAnUnreadableGraceLeavesTheLimitLifted(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		allowGrace bool
+		graced     bool
+	}{
+		{"graced server, recount for a resize", false, true},
+		{"boot recount", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			t.Cleanup(func() { _ = rdb.Close() })
+			ctx := context.Background()
+			recordDiskLimit(ctx, rdb, "srv", 100)
+			if tc.graced {
+				saveDiskGrace(ctx, rdb, "srv", diskGrace{limit: 100 * mib, ceiling: 300 * mib})
+			}
+			q := &fakeQuota{after: usageOf(150*mib, 0), limitMB: 300}
+			fail := &failGetHook{key: diskGraceKey("srv")}
+			rdb.AddHook(fail)
+			q.onTag = func() { fail.on = true }
+			countDiskUsage(ctx, rdb, q, "srv", 100, tc.allowGrace)
+			fail.on = false
+
+			if q.limitMB != 0 {
+				t.Fatalf("hard limit = %d MB, want it left lifted while the grace is unknown", q.limitMB)
+			}
+			if !mr.Exists(diskLiftedKey("srv")) {
+				t.Fatal("the lifted marker is gone, so no recount puts the limit back")
+			}
+			if mr.Exists(diskCountedKey("srv")) {
+				t.Fatal("marked counted although the grace was never decided")
+			}
+			if _, ok := loadDiskGrace(ctx, rdb, "srv"); ok != tc.graced {
+				t.Fatalf("grace present = %v, want %v", ok, tc.graced)
+			}
+		})
+	}
+}
+
+// failGetHook fails a GET of one key while on, the way a Redis blip fails one
+// read in the middle of a recount.
+type failGetHook struct {
+	key string
+	on  bool
+}
+
+func (h *failGetHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h *failGetHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if a := cmd.Args(); h.on && len(a) == 2 && a[0] == "get" && a[1] == h.key {
+			err := fmt.Errorf("i/o timeout")
+			cmd.SetErr(err)
+			return err
+		}
+		return next(ctx, cmd)
+	}
+}
+func (h *failGetHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}

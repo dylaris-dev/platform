@@ -962,6 +962,16 @@ func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 // saveNodeConfig persists the ServerConfig as .node_config.json in the server directory.
 // The reconciler reads this file to recreate containers that were manually deleted.
 func saveNodeConfig(serverDir string, config ServerConfig) {
+	// Only create and update_resources carry the disk limit. The rest wrote
+	// their 0 over it, and the saved one is what the boot recount falls back
+	// to when Redis lost the cache - a graced server then kept its ceiling.
+	config.Docker.DiskLimit = savedDiskLimitIn(serverDir)
+	saveNodeConfigWithDiskLimit(serverDir, config)
+}
+
+// saveNodeConfigWithDiskLimit is saveNodeConfig for the commands whose payload
+// carries the disk limit, 0 (unlimited) included.
+func saveNodeConfigWithDiskLimit(serverDir string, config ServerConfig) {
 	if config.Docker.HostPort == 0 {
 		// Core sends 0 for "the node picks one"; what it picked is what must be saved.
 		config.Docker.HostPort = ledgerHostPort(config.UUID)
@@ -1575,7 +1585,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			}
 		} else {
 			log.Printf("Server slot %s created (pending setup)", cmd.Config.UUID)
-			saveNodeConfig(serverPath, cmd.Config)
+			saveNodeConfigWithDiskLimit(serverPath, cmd.Config)
 			refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, "")
 		}
 
@@ -1921,7 +1931,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		} else {
 			log.Printf("Server %s resources updated", cmd.Config.UUID)
 			resServerPath := storage.GetServerDir(cmd.Config.UUID)
-			saveNodeConfig(resServerPath, applied)
+			saveNodeConfigWithDiskLimit(resServerPath, applied)
 			refreshServerMetadata(resServerPath, cmd.Config.UUID, "", applied.Docker.Image, applied.Docker.RAM, applied.Docker.CPULimit, readActiveSubServer(resServerPath))
 		}
 		// Assigned again before the limit: a server that arrived by a move was

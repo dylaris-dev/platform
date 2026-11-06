@@ -182,6 +182,7 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 	defer sm.mu.RUnlock()
 
 	// 1. Redis lookup
+	keyed := false
 	if sm.rdb != nil {
 		key := fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)
 		if val, err := sm.rdb.Get(context.Background(), key).Result(); err == nil && val != "" {
@@ -191,18 +192,31 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 					return val
 				}
 			}
+			keyed = true
 			log.Printf("storage: Redis path %q for %s not in active paths, scanning...", val, serverUUID)
 		}
 	}
 
 	// 2. Scan all paths for existing UUID directory
+	found, copies := "", 0
 	for _, p := range sm.paths {
 		serverDir := filepath.Join(p, serverUUID)
 		if stat, err := os.Stat(serverDir); err == nil && stat.IsDir() {
-			// Found it — update Redis for future lookups
-			sm.setRedisPath(serverUUID, p)
-			return p
+			if found == "" {
+				found = p
+			}
+			copies++
 		}
+	}
+	if found != "" {
+		// Written back only when it cannot be a guess: a key naming a path
+		// that is merely not mounted yet, or a second copy a move left, made
+		// the first match the server's storage for good - and the next move
+		// to the live path cleared the live tree as the "leftover" (K35).
+		if !keyed && copies == 1 {
+			sm.setRedisPath(serverUUID, found)
+		}
+		return found
 	}
 
 	// 3. Not found — return first path as default
@@ -427,7 +441,8 @@ func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (strin
 			}
 		}
 	}
-	if currentPath == "" {
+	scanned := currentPath == ""
+	if scanned {
 		for _, p := range sm.paths {
 			if stat, err := os.Stat(filepath.Join(p, serverUUID)); err == nil && stat.IsDir() {
 				currentPath = p
@@ -440,6 +455,13 @@ func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (strin
 	}
 	if currentPath == targetPath {
 		return "", fmt.Errorf("server %s is already on path %q", serverUUID, targetPath)
+	}
+	// The move clears the target as a leftover, which only the storage key
+	// can vouch for. Found by scanning, either copy may be the live one.
+	if scanned {
+		if _, err := os.Stat(filepath.Join(targetPath, serverUUID)); !os.IsNotExist(err) {
+			return "", fmt.Errorf("server %s has a directory on both %q and %q and no storage key says which one is live; refusing the move", serverUUID, currentPath, targetPath)
+		}
 	}
 	return currentPath, nil
 }
@@ -545,7 +567,7 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 	dstDir := filepath.Join(targetPath, serverUUID)
 
 	// A tree already at the target is a copy an earlier move left (the storage
-	// key names the source, resolveMigration made sure of that). Copied over,
+	// key names the source; resolveMigration refuses when it does not). Copied over,
 	// it merged: files deleted from the live tree since came back. Cleared
 	// before the space check, which it would otherwise count as used.
 	if err := os.RemoveAll(dstDir); err != nil {

@@ -112,7 +112,7 @@ func TestUpdateResourcesHandlerSavesTheAppliedConfig(t *testing.T) {
 		t.Fatal("the update_resources case moved; move this assertion with it")
 	}
 	body := s[i:j]
-	if strings.Contains(body, "saveNodeConfig(resServerPath, cmd.Config)") || !strings.Contains(body, "saveNodeConfig(resServerPath, applied)") {
+	if strings.Contains(body, "(resServerPath, cmd.Config)") || !strings.Contains(body, "saveNodeConfigWithDiskLimit(resServerPath, applied)") {
 		t.Error("update_resources saves the payload instead of the config it applied")
 	}
 }
