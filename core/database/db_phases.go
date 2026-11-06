@@ -136,6 +136,12 @@ func applyPhase10Schema(db *sql.DB) error {
 		// no loader reads (Fabric/Paper/NeoForge/Forge list one level, Quilt
 		// skips dot-folders). The upsert does not name it.
 		`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS disabled BOOLEAN NOT NULL DEFAULT FALSE`,
+		// The jar an install replaces, restored onto the row when the node
+		// reports the install failed (it keeps the old jar). NULL: nothing to
+		// restore, a first install or a row written by another path.
+		`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS previous_file_name VARCHAR(255)`,
+		`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS previous_target_dir VARCHAR(16)`,
+		`ALTER TABLE server_mods ADD COLUMN IF NOT EXISTS previous_sha512 VARCHAR(128)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("phase 10: %s: %w", stmt, err)

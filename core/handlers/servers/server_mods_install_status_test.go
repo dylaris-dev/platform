@@ -29,6 +29,7 @@ type installStatusFakeStore struct {
 	mr             *miniredis.Miniredis
 	queuedAtUpsert bool
 	statusSet      []string
+	prev           *models.ServerMod
 }
 
 func (f *installStatusFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
@@ -40,7 +41,7 @@ func (f *installStatusFakeStore) GetServerByID(id int) (*models.Server, error) {
 }
 
 func (f *installStatusFakeStore) GetServerModByProject(serverID int, sub, projectID string) (*models.ServerMod, error) {
-	return nil, nil
+	return f.prev, nil
 }
 
 func (f *installStatusFakeStore) GetNodeByID(id int) (*models.Node, error) {
@@ -147,5 +148,30 @@ func TestInstallMarksTheRowFailedWhenDispatchFails(t *testing.T) {
 	want := fs.upserted.InstallID + "/" + models.ServerModFailed
 	if len(fs.statusSet) != 1 || fs.statusSet[0] != want {
 		t.Errorf("status writes = %v, want [%s]", fs.statusSet, want)
+	}
+}
+
+// P08: the row carries the jar it replaces, so a failed report can name that
+// jar again instead of the one the node never wrote.
+func TestInstallRecordsTheJarItReplaces(t *testing.T) {
+	m := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: m.Addr()})
+	fs := &installStatusFakeStore{prev: &models.ServerMod{
+		ModrinthProjectID: "P1", ModrinthVersionID: "V1", FileName: "spark-old.jar", TargetDir: "mods", SHA512: "old",
+	}}
+	h := &ServerModsHandler{d: testDeps(Deps{Store: fs, Redis: rdb, Queue: services.NewQueueService(rdb)})}
+
+	body := `{"projectId":"P1","versionId":"V1","fileName":"spark.jar","downloadUrl":"https://cdn.modrinth.com/data/P1/versions/V1/spark.jar"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/servers/7/mods", strings.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), "userID", "alice"))
+	rw := httptest.NewRecorder()
+	h.Install(rw, mux.SetURLVars(req, map[string]string{"id": "7"}))
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rw.Code, rw.Body.String())
+	}
+	u := fs.upserted
+	if u == nil || u.PreviousFileName != "spark-old.jar" || u.PreviousTargetDir != "mods" || u.PreviousSHA512 != "old" {
+		t.Errorf("upserted row = %+v, want it to name the replaced jar", u)
 	}
 }

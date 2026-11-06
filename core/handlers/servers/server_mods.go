@@ -402,6 +402,9 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		Status:    nodeops.InstallStatusFor(r.Context(), h.d.Redis, node.Token),
 		InstallID: installID,
 	}
+	if prev != nil {
+		mod.PreviousFileName, mod.PreviousTargetDir, mod.PreviousSHA512 = prev.FileName, prev.TargetDir, prev.SHA512
+	}
 	// Filed BEFORE the upsert, which is the write that destroys it. A history
 	// failure is logged rather than fatal: losing the way back is smaller than
 	// losing the install.

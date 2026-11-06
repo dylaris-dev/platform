@@ -19,6 +19,7 @@ const (
 	forgePromosPath   = "/net/minecraftforge/forge/promotions_slim.json"
 	forgeJarPath      = "/net/minecraftforge/forge/1.20.1-47.3.0/forge-1.20.1-47.3.0-installer.jar"
 	neoJarPath        = "/releases/net/neoforged/neoforge/21.1.9/neoforge-21.1.9-installer.jar"
+	neoLegacyJarPath  = "/releases/net/neoforged/forge/1.20.1-47.1.106/forge-1.20.1-47.1.106-installer.jar"
 )
 
 // M11: every loader a move can target is checked upstream before the stop,
@@ -33,6 +34,7 @@ func TestResolveVersionMoveTarget(t *testing.T) {
 		forgePromosPath:              `{"promos":{"1.20.1-recommended":"47.3.0"}}`,
 		forgeJarPath:                 "jar",
 		neoJarPath:                   "jar",
+		neoLegacyJarPath:             "jar",
 	})
 	tests := []struct {
 		name      string
@@ -55,6 +57,12 @@ func TestResolveVersionMoveTarget(t *testing.T) {
 		{"forge typed build that does not", InstallerConfig{Type: "forge", Version: "1.20.1", Loader: "99.9.9"}, "", true},
 		{"neoforge typed build that exists", InstallerConfig{Type: "neoforge", Version: "1.21.1", Loader: "21.1.9"}, "21.1.9", false},
 		{"neoforge typed build that does not", InstallerConfig{Type: "neoforge", Version: "1.21.1", Loader: "21.1.999"}, "", true},
+		// P07: a build that exists but belongs to another Minecraft line is
+		// refused before the stop, like a Forge build whose coordinate 404s.
+		{"neoforge typed build for another line", InstallerConfig{Type: "neoforge", Version: "1.21.4", Loader: "21.1.9"}, "", true},
+		{"neoforge 47.x build for 1.20.1", InstallerConfig{Type: "neoforge", Version: "1.20.1", Loader: "47.1.106"}, "47.1.106", false},
+		{"neoforge 1.20.1- build for 1.20.1", InstallerConfig{Type: "neoforge", Version: "1.20.1", Loader: "1.20.1-47.1.106"}, "1.20.1-47.1.106", false},
+		{"neoforge 47.x build for another line", InstallerConfig{Type: "neoforge", Version: "1.21.1", Loader: "47.1.106"}, "", true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

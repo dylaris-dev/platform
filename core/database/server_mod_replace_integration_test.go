@@ -265,3 +265,54 @@ func TestIntegrationAModPinSurvivesUpdateAndRestore(t *testing.T) {
 }
 
 var _ = store.PostgresStore{}
+
+// P08: a failed update leaves the node's old jar in place, so the row has to
+// name that jar again, or uninstall, a retry and a version move all act on a
+// file that is not on disk while the old one keeps loading. The attempted
+// version stays on the row: it is what the panel matches the failure to.
+func TestIntegrationAFailedUpdateNamesTheJarStillOnDisk(t *testing.T) {
+	tests := []struct {
+		name         string
+		hasPrevious  bool
+		status       string
+		wantFileName string
+		wantDir      string
+		wantSHA      string
+	}{
+		{"failed update", true, models.ServerModFailed, "spark-1.0.jar", "mods", "sha-old"},
+		{"successful update", true, models.ServerModInstalled, "spark-1.1.jar", "plugins", "sha-new"},
+		{"failed first install", false, models.ServerModFailed, "spark-1.1.jar", "plugins", "sha-new"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, st := integrationDB(t)
+			f := newFixture(t, st)
+			row := &models.ServerMod{
+				ServerID: f.server.ID, SubServerName: "survival",
+				ModrinthProjectID: "spark", ModrinthVersionID: "v2",
+				FileName: "spark-1.1.jar", TargetDir: "plugins", SHA512: "sha-new",
+				Status: models.ServerModInstalling, InstallID: "a2",
+			}
+			if tc.hasPrevious {
+				row.PreviousFileName, row.PreviousTargetDir, row.PreviousSHA512 = "spark-1.0.jar", "mods", "sha-old"
+			}
+			if _, err := st.UpsertServerMod(row); err != nil {
+				t.Fatalf("upsert: %v", err)
+			}
+			if applied, err := st.SetServerModStatus(f.server.ID, "survival", "spark", "a2", tc.status, "x"); err != nil || !applied {
+				t.Fatalf("SetServerModStatus: applied=%v err=%v", applied, err)
+			}
+			got, err := st.GetServerModByProject(f.server.ID, "survival", "spark")
+			if err != nil || got == nil {
+				t.Fatalf("read back: %v", err)
+			}
+			if got.FileName != tc.wantFileName || got.TargetDir != tc.wantDir || got.SHA512 != tc.wantSHA {
+				t.Errorf("row = %s/%s sha %s, want %s/%s sha %s", got.TargetDir, got.FileName, got.SHA512,
+					tc.wantDir, tc.wantFileName, tc.wantSHA)
+			}
+			if got.ModrinthVersionID != "v2" || got.Status != tc.status {
+				t.Errorf("version %q status %q, want v2 %q", got.ModrinthVersionID, got.Status, tc.status)
+			}
+		})
+	}
+}

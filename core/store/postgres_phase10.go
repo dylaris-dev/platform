@@ -46,8 +46,10 @@ func (s *PostgresStore) UpsertServerMod(m *models.ServerMod) (int, error) {
 	err := s.db.QueryRow(`INSERT INTO server_mods
 		(server_id, sub_server_name, modrinth_project_id, modrinth_project_slug,
 		 modrinth_version_id, title, file_name, target_dir, sha512, installed_by,
-		 status, status_message, install_id, disabled)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'',$12,$13)
+		 status, status_message, install_id, disabled,
+		 previous_file_name, previous_target_dir, previous_sha512)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'',$12,$13,
+		 NULLIF($14,''),NULLIF($15,''),NULLIF($16,''))
 		ON CONFLICT (server_id, sub_server_name, modrinth_project_id)
 		DO UPDATE SET
 			modrinth_project_slug = EXCLUDED.modrinth_project_slug,
@@ -60,11 +62,15 @@ func (s *PostgresStore) UpsertServerMod(m *models.ServerMod) (int, error) {
 			installed_by          = EXCLUDED.installed_by,
 			status                = EXCLUDED.status,
 			status_message        = '',
-			install_id            = EXCLUDED.install_id
+			install_id            = EXCLUDED.install_id,
+			previous_file_name    = EXCLUDED.previous_file_name,
+			previous_target_dir   = EXCLUDED.previous_target_dir,
+			previous_sha512       = EXCLUDED.previous_sha512
 		RETURNING id`,
 		m.ServerID, m.SubServerName, m.ModrinthProjectID, m.ModrinthProjectSlug,
 		m.ModrinthVersionID, m.Title, m.FileName, m.TargetDir, m.SHA512, installedBy,
 		m.Status, m.InstallID, m.Disabled,
+		m.PreviousFileName, m.PreviousTargetDir, m.PreviousSHA512,
 	).Scan(&id)
 	return id, err
 }
@@ -94,11 +100,19 @@ func (s *PostgresStore) GetServerModByProject(serverID int, subServerName, proje
 // two clicks in a row is all it takes to produce that. A mismatch is not an
 // error, it is a late answer - the caller is told nothing changed by the zero
 // rows affected.
+//
+// A failed attempt puts the replaced jar's name, directory and hash back: the
+// node removes the old jar only after the new one is in place, so on failure
+// the old one is what is on disk. The attempted version id stays, it is what
+// the panel matches the failure to.
 func (s *PostgresStore) SetServerModStatus(serverID int, subServerName, projectID, installID, status, message string) (bool, error) {
 	res, err := s.db.Exec(`UPDATE server_mods
-		SET status=$5, status_message=$6
+		SET status=$5, status_message=$6,
+			file_name  = CASE WHEN $7 THEN COALESCE(previous_file_name, file_name) ELSE file_name END,
+			target_dir = CASE WHEN $7 THEN COALESCE(previous_target_dir, target_dir) ELSE target_dir END,
+			sha512     = CASE WHEN $7 THEN COALESCE(previous_sha512, sha512) ELSE sha512 END
 		WHERE server_id=$1 AND sub_server_name=$2 AND modrinth_project_id=$3 AND install_id=$4`,
-		serverID, subServerName, projectID, installID, status, message)
+		serverID, subServerName, projectID, installID, status, message, status == models.ServerModFailed)
 	if err != nil {
 		return false, err
 	}

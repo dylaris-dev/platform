@@ -37,6 +37,12 @@ type ServerMod struct {
 	UpdatesPaused bool `json:"updatesPaused"`
 	// Disabled: the jar was moved to <TargetDir>/.disabled/ and is not loaded.
 	Disabled bool `json:"disabled"`
+	// Previous* name the jar this install replaces. Written with the row and
+	// put back by a failed report: the node keeps the old jar on any failure,
+	// so the row has to name that one again or nothing can remove it.
+	PreviousFileName  string `json:"-"`
+	PreviousTargetDir string `json:"-"`
+	PreviousSHA512    string `json:"-"`
 }
 
 // ServerModHistoryEntry is a version this mod USED to be, kept so an update can

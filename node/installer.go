@@ -491,6 +491,16 @@ func resolveVersionMoveTarget(cfg InstallerConfig) (string, error) {
 		if cfg.Loader == "" {
 			return resolveNeoForgeVersion(cfg.Version)
 		}
+		// Unlike Forge's mc+build coordinate, a NeoForge build's URL does not
+		// carry the Minecraft version, so a build from another line HEADs fine
+		// and would install a loader the moved mods cannot run on.
+		mc := "1.20.1"
+		if !strings.HasPrefix(cfg.Loader, "47.") && !strings.HasPrefix(cfg.Loader, "1.20.1-") {
+			mc = neoForgeMinecraft(strings.SplitN(cfg.Loader, "-", 2)[0])
+		}
+		if mc != "" && cfg.Version != "" && mc != cfg.Version {
+			return "", fmt.Errorf("NeoForge build %s is for Minecraft %s, not %s", cfg.Loader, mc, cfg.Version)
+		}
 		return cfg.Loader, checkInstallerExists(neoForgeInstallerURL(cfg.Loader))
 	}
 	return cfg.Loader, nil
