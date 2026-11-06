@@ -7,6 +7,7 @@ import (
 	beamauth "dylaris-pkg/beam/auth"
 	"dylaris-pkg/beam/quota"
 	"dylaris-pkg/queue"
+	"dylaris-pkg/validate"
 )
 
 // commandCats is the category grant every principal here gets: read, write,
@@ -127,14 +128,20 @@ func BeamQuotaSelector(usernames []string) string {
 	sorted := append([]string(nil), usernames...)
 	sort.Strings(sorted)
 	var b strings.Builder
-	b.WriteString("(")
 	for _, u := range sorted {
 		// Usernames cannot contain ':' or glob metacharacters (validate.Username),
-		// which is what makes this interpolation unambiguous.
+		// which is what makes this interpolation unambiguous. A row that slipped
+		// past that rule is skipped: a space in it would make ACL SETUSER reject
+		// the node's whole grant, and a crafted one would widen it.
+		if !validate.IsUsername(u) {
+			continue
+		}
 		b.WriteString("~" + quota.DailyKeyPrefix(u) + "* ")
 	}
-	b.WriteString("+get +incrby +expire)")
-	return b.String()
+	if b.Len() == 0 {
+		return ""
+	}
+	return "(" + b.String() + "+get +incrby +expire)"
 }
 
 // migrationKeys are the migration grants, split by what the node actually does

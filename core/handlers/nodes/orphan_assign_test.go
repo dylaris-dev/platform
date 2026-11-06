@@ -124,3 +124,26 @@ func TestAssignOrphanIsAdminOnly(t *testing.T) {
 		t.Fatalf("status = %d, want 403 (%s)", rw.Code, rw.Body.String())
 	}
 }
+
+// Every other path that creates a user runs validate.IsUsername. Adopting an orphan
+// did not, and the name it created reaches the node's Redis ACL selector, the beam
+// quota key and SFTP, where a space or '+' is not just ugly but a broken grant.
+func TestAssignOrphanRejectsInvalidUsername(t *testing.T) {
+	for _, name := range []string{"john doe", "x +@all ~*", "a:b"} {
+		raw, _ := json.Marshal(map[string]any{
+			"node_id":   2,
+			"uuid":      "orphan-probe-1",
+			"name":      "recovered",
+			"new_user":  map[string]string{"username": name, "password": "pw-long-enough"},
+			"memory_mb": 1024,
+			"cpu_limit": 1,
+		})
+		h := &NodeHandler{d: testDeps(Deps{Store: &orphanAssignFakeStore{err: sql.ErrNoRows}})}
+		rw := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/disk/orphans/assign", bytes.NewReader(raw))
+		h.AssignOrphan(rw, req.WithContext(context.WithValue(req.Context(), "isAdmin", true)))
+		if rw.Code != http.StatusBadRequest {
+			t.Errorf("username %q: status = %d, want 400 (%s)", name, rw.Code, rw.Body.String())
+		}
+	}
+}

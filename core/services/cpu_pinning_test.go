@@ -1,7 +1,9 @@
 package services
 
 import (
+	"context"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -210,5 +212,43 @@ func TestComputeAutoCpuset_SharesLeastLoadedWhenFull(t *testing.T) {
 	load := map[int]int{0: 2, 1: 2, 2: 1, 3: 1}
 	if got := computeAutoCpuset(topo, 2, 0, load, nil); got != "2-3" {
 		t.Fatalf("got %q, want 2-3", got)
+	}
+}
+
+// A cpuset range is expanded element by element, so an unbounded one ("0-9999999999")
+// was a fatal out-of-memory in the shared Core, reachable by any holder of
+// server.settings.write. The parser must bound it, and so must the total, since many
+// in-bounds parts add up just the same.
+func TestParseCpusetListIsBounded(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []int
+	}{
+		{"0-9999999999", nil},
+		{"0-3,0-30000000", []int{0, 1, 2, 3}},
+		{"-5-2", nil},
+		{"8192", nil},
+	}
+	for _, c := range cases {
+		if got := parseCpusetList(c.in); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("parseCpusetList(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+	many := strings.Repeat("0-8191,", 1000)
+	if got := len(parseCpusetList(many)); got > maxCPUID+1 {
+		t.Errorf("parseCpusetList(1000 x 0-8191) returned %d ids, want at most %d", got, maxCPUID+1)
+	}
+}
+
+// ValidateCpuset is the boundary a manual cpuset is stored through, so it refuses an
+// out-of-range or malformed part outright instead of storing a string that every later
+// reader would have to survive. It decides before it looks at the topology, which is
+// why a nil Redis client is enough here.
+func TestValidateCpusetRejectsOutOfRangeParts(t *testing.T) {
+	s := &CPUPinningService{}
+	for _, in := range []string{"0-9999999999", "0-3,0-30000000", "8192", "x", "3-1", strings.Repeat("0-8191,", 2) + "0"} {
+		if err := s.ValidateCpuset(context.Background(), "tok", in, ""); err == nil {
+			t.Errorf("ValidateCpuset(%.40q) = nil, want an error", in)
+		}
 	}
 }

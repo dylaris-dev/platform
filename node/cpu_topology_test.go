@@ -166,3 +166,29 @@ func TestOnlineCPUIDs(t *testing.T) {
 		}
 	}
 }
+
+// The node expands a stored cpuset on every container create and every stats tick, so
+// an oversized one Core accepted before it was bounded ("0-30000000") must not cost the
+// node a 30M-element slice each time it touches that server.
+func TestParseCPUListIsBounded(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []int
+	}{
+		{"0-9999999999", nil},
+		{"0-3,0-30000000", []int{0, 1, 2, 3}},
+		{"8192", nil},
+	}
+	for _, c := range cases {
+		if got := parseCPUList(c.in); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("parseCPUList(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+	var many string
+	for i := 0; i < 1000; i++ {
+		many += "0-8191,"
+	}
+	if got := len(parseCPUList(many)); got > maxCPUID+1 {
+		t.Errorf("parseCPUList(1000 x 0-8191) returned %d ids, want at most %d", got, maxCPUID+1)
+	}
+}

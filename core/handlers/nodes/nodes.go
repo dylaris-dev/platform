@@ -341,6 +341,10 @@ func (h *NodeHandler) UpdateNode(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&req)
 
 	if req.CpusetCpus != nil {
+		if err := services.CheckCpusetSyntax(*req.CpusetCpus); err != nil {
+			httpx.SendJSONError(w, err.Error(), 400)
+			return
+		}
 		if err := h.d.Store.UpdateNodeCpusetCpus(id, *req.CpusetCpus); err != nil {
 			httpx.SendJSONError(w, "Failed to update node", 500)
 			return
@@ -1306,6 +1310,12 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 	if req.NewUser != nil {
 		if strings.TrimSpace(req.NewUser.Username) == "" || req.NewUser.Password == "" {
 			httpx.SendJSONError(w, "new_user.username and new_user.password are required", 400)
+			return
+		}
+		// The name reaches the node's Redis ACL selector, the beam quota key and
+		// SFTP, which all rely on the same rule every other user-creating path checks.
+		if !validate.IsUsername(req.NewUser.Username) {
+			httpx.SendJSONError(w, "Invalid username: 3-32 characters, must start with a letter or digit, then letters, digits, '.', '_' or '-'", 400)
 			return
 		}
 	}

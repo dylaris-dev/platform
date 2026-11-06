@@ -81,3 +81,21 @@ func TestBeamQuotaGrantIsEmptyForANodeWithNoUsers(t *testing.T) {
 		t.Errorf("expected no selector for a node with no users, got %q", sel)
 	}
 }
+
+// A username outside validate.Username (a space, a '~', a '+') would split the
+// selector, and ACL SETUSER rejects the whole call - freezing the node's grant for
+// every user - or, crafted, widens it. One bad row must cost only that row.
+func TestBeamQuotaSelectorSkipsInvalidNames(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want string
+	}{
+		{[]string{"alice", "john doe", "x +@all ~*"}, "(~dylaris:beam:daily:alice:* +get +incrby +expire)"},
+		{[]string{"john doe"}, ""},
+	}
+	for _, c := range cases {
+		if got := BeamQuotaSelector(c.in); got != c.want {
+			t.Errorf("BeamQuotaSelector(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

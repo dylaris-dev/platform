@@ -213,7 +213,14 @@ func readCPUListSorted(path string) []int {
 	return list
 }
 
-// parseCPUList expands "0-3,8,10-11" into [0 1 2 3 8 10 11].
+// maxCPUID is the highest logical core id a cpuset may name: the kernel's
+// NR_CPUS ceiling. parseCPUList also reads cpusets Core stored before it bounded
+// them, on every container create and stats tick, so the expansion is capped
+// here rather than trusted.
+const maxCPUID = 8191
+
+// parseCPUList expands "0-3,8,10-11" into [0 1 2 3 8 10 11]. Out-of-range parts
+// are skipped and the total is capped at maxCPUID+1 ids.
 func parseCPUList(s string) []int {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -228,13 +235,16 @@ func parseCPUList(s string) []int {
 		if i := strings.IndexByte(part, '-'); i >= 0 {
 			lo, err1 := strconv.Atoi(strings.TrimSpace(part[:i]))
 			hi, err2 := strconv.Atoi(strings.TrimSpace(part[i+1:]))
-			if err1 != nil || err2 != nil || hi < lo {
+			if err1 != nil || err2 != nil || lo < 0 || hi < lo || hi > maxCPUID {
 				continue
 			}
 			for n := lo; n <= hi; n++ {
+				if len(out) > maxCPUID {
+					return out
+				}
 				out = append(out, n)
 			}
-		} else if n, err := strconv.Atoi(part); err == nil {
+		} else if n, err := strconv.Atoi(part); err == nil && n >= 0 && n <= maxCPUID && len(out) <= maxCPUID {
 			out = append(out, n)
 		}
 	}

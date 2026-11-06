@@ -131,6 +131,9 @@ func PinMismatch(cpuLimit float64, cpuset string) (have, need int, mismatch bool
 // within it. If the topology is unavailable it cannot validate, so it accepts the
 // value (best-effort) rather than blocking the operator.
 func (s *CPUPinningService) ValidateCpuset(ctx context.Context, nodeToken, cpuset, nodeCpuset string) error {
+	if err := CheckCpusetSyntax(cpuset); err != nil {
+		return err
+	}
 	ids := parseCpusetList(cpuset)
 	if len(ids) == 0 {
 		return fmt.Errorf("cpuset is empty")
@@ -334,7 +337,32 @@ func compactCpuset(ids []int) string {
 	return strings.Join(parts, ",")
 }
 
+// maxCPUID is the highest logical core id a cpuset may name: the kernel's
+// NR_CPUS ceiling. It is what keeps a range expansion bounded - "0-9999999999"
+// expanded element by element was a fatal out-of-memory for the whole Core.
+const maxCPUID = 8191
+
+// parseCpusetPart reads one "n" or "lo-hi" token. ok is false for anything
+// malformed, inverted or outside 0..maxCPUID.
+func parseCpusetPart(part string) (lo, hi int, ok bool) {
+	part = strings.TrimSpace(part)
+	var err1, err2 error
+	if i := strings.IndexByte(part, '-'); i >= 0 {
+		lo, err1 = strconv.Atoi(strings.TrimSpace(part[:i]))
+		hi, err2 = strconv.Atoi(strings.TrimSpace(part[i+1:]))
+	} else {
+		lo, err1 = strconv.Atoi(part)
+		hi = lo
+	}
+	if err1 != nil || err2 != nil || lo < 0 || hi < lo || hi > maxCPUID {
+		return 0, 0, false
+	}
+	return lo, hi, true
+}
+
 // parseCpusetList expands "0-3,8" into [0 1 2 3 8]. Invalid tokens are skipped.
+// The total is capped too: many in-bounds parts add up just like one huge one,
+// and an already-stored value is read on every auto-pin and overview.
 func parseCpusetList(s string) []int {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -342,22 +370,38 @@ func parseCpusetList(s string) []int {
 	}
 	var out []int
 	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
+		lo, hi, ok := parseCpusetPart(part)
+		if !ok {
 			continue
 		}
-		if i := strings.IndexByte(part, '-'); i >= 0 {
-			lo, err1 := strconv.Atoi(strings.TrimSpace(part[:i]))
-			hi, err2 := strconv.Atoi(strings.TrimSpace(part[i+1:]))
-			if err1 != nil || err2 != nil || hi < lo {
-				continue
+		for n := lo; n <= hi; n++ {
+			if len(out) > maxCPUID {
+				return out
 			}
-			for n := lo; n <= hi; n++ {
-				out = append(out, n)
-			}
-		} else if n, err := strconv.Atoi(part); err == nil {
 			out = append(out, n)
 		}
 	}
 	return out
+}
+
+// CheckCpusetSyntax refuses a cpuset that parseCpusetList would have to skip or
+// truncate, so what is stored is exactly what every reader expands. Empty is
+// valid (no pinning / no pool).
+func CheckCpusetSyntax(s string) error {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	total := 0
+	for _, part := range strings.Split(s, ",") {
+		lo, hi, ok := parseCpusetPart(part)
+		if !ok {
+			return fmt.Errorf("invalid cpuset part %q (want n or lo-hi, cores 0-%d)", strings.TrimSpace(part), maxCPUID)
+		}
+		total += hi - lo + 1
+		if total > maxCPUID+1 {
+			return fmt.Errorf("cpuset names more than %d cores", maxCPUID+1)
+		}
+	}
+	return nil
 }
