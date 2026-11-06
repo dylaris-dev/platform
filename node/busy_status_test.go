@@ -113,3 +113,19 @@ func TestNodeBusyKeyFormatIsAContract(t *testing.T) {
 		t.Errorf("nodeBusyKey = %q; Core reads this exact format", got)
 	}
 }
+
+// A refresh already past its select when the work ends must not land after the
+// release: node_busy then stayed up to a TTL with nothing behind it, holding the
+// reconciler off and making Core refuse power actions with a 409.
+func TestHoldBusyReleaseWaitsForAnInFlightRefresh(t *testing.T) {
+	rdb, _ := newBusyRedis(t)
+	ctx := context.Background()
+	for i := range 300 {
+		release := holdBusyStatus(rdb, "srv-uuid", "installing", 3*time.Millisecond)
+		time.Sleep(time.Duration(i%7) * 300 * time.Microsecond)
+		release()
+		if isNodeBusy(ctx, rdb, "srv-uuid") {
+			t.Fatalf("round %d: node_busy still set after release", i)
+		}
+	}
+}

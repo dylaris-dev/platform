@@ -53,9 +53,11 @@ func (p *NodeModePublisher) Start(ctx context.Context) {
 		return
 	}
 	p.Publish(ctx)
-	// Per-node backup policies ride the same ticker; they live in the database
-	// for the same reason and would vanish with Redis the same way.
+	// Per-node backup policies and storage placement ride the same ticker; they
+	// live in the database for the same reason and would vanish with Redis the
+	// same way.
 	PublishBackupPolicies(ctx, p.store, p.redis)
+	PublishStoragePlacements(ctx, p.store, p.redis)
 	go func() {
 		t := time.NewTicker(nodeModePublishInterval)
 		defer t.Stop()
@@ -66,6 +68,7 @@ func (p *NodeModePublisher) Start(ctx context.Context) {
 			case <-t.C:
 				p.Publish(context.Background())
 				PublishBackupPolicies(context.Background(), p.store, p.redis)
+				PublishStoragePlacements(context.Background(), p.store, p.redis)
 			}
 		}
 	}()

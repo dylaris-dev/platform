@@ -342,7 +342,7 @@ func TestAKillDuringAStartKeepsTheServerDown(t *testing.T) {
 	}
 	src := string(b)
 	for _, s := range []struct{ from, to, create string }{
-		{"case \"switch_server\":", "case \"start\":", "dm.RecreateWithCommand(cmd.Config)"},
+		{"case \"switch_server\":", "case \"start\":", "recreate(cmd.Config)"},
 		{"case \"start\":", "case \"stop\":", "dm.RestartContainerInZone("},
 		{"case \"restart\":", "case \"update_resources\":", "dm.RestartContainerInZone("},
 	} {
@@ -351,6 +351,35 @@ func TestAKillDuringAStartKeepsTheServerDown(t *testing.T) {
 		if check < 0 || create < 0 || check > create {
 			t.Errorf("%s brings the container up without checking for a kill first", s.from)
 		}
+	}
+}
+
+// A switch carries state Core has already committed (active_sub_server), so a
+// stop or kill queued after it must not drop it whole: the node then stayed on
+// the old sub-server while the panel, the console and mod installs targeted the
+// new one. It still switches, and leaves the server stopped.
+func TestASwitchOvertakenByAStopStillSwitches(t *testing.T) {
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := between(t, string(b), "case \"switch_server\":", "case \"start\":")
+	for _, tt := range []struct {
+		name, needle string
+		want         bool
+	}{
+		{"builds the new container stopped", "dm.RecreateStopped", true},
+		{"writes the active sub-server", "\".active_server\"", true},
+		{"no early return on the stop", "if abandonedForStop(ctx, rdb, cmd) {\n\t\t\treturn", false},
+	} {
+		if got := strings.Contains(body, tt.needle); got != tt.want {
+			t.Errorf("switch_server %s: contains %q = %v, want %v", tt.name, tt.needle, got, tt.want)
+		}
+	}
+	uuid := "switch-overtaken"
+	noteStop(uuid, 3001)
+	if overtakenByStop("switch_server", uuid, 3000) {
+		t.Error("processCommand drops a switch a later stop overtook")
 	}
 }
 

@@ -87,12 +87,13 @@ func noteStop(uuid string, issuedAt int64) {
 	}
 }
 
-// overtakenByStop reports a start, restart or switch queued before a stop or
-// kill that has already run. The same second is left alone: which came first
-// cannot be told.
+// overtakenByStop reports a start or restart queued before a stop or kill that
+// has already run. The same second is left alone: which came first cannot be
+// told. A switch is not dropped: Core has already committed its sub-server, so
+// it still switches and only the start is left out (abandonedForStop).
 func overtakenByStop(action, uuid string, issuedAt int64) bool {
 	switch action {
-	case "start", "restart", "switch_server":
+	case "start", "restart":
 	default:
 		return false
 	}
@@ -118,7 +119,7 @@ var errStartAbandoned = errors.New("start abandoned: a stop or kill came in whil
 // and the action then started the server against the user's last click. The
 // server is reported stopped, which is what it is.
 func abandonedForStop(ctx context.Context, rdb *redis.Client, cmd NodeCommand) bool {
-	if !overtakenByStop(cmd.Action, cmd.Config.UUID, cmd.IssuedAt) {
+	if !stopNotedAfter(cmd.Config.UUID, cmd.IssuedAt) {
 		return false
 	}
 	log.Printf("%s for %s abandoned: a stop or kill queued after it arrived while it ran", cmd.Action, cmd.Config.UUID)

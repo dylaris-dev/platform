@@ -939,7 +939,13 @@ func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
 			"dylaris:placement:storage_default",
 		} {
 			v, err := rdb.Get(ctx, key).Result()
-			if err != nil || v == "" {
+			if err != nil && err != redis.Nil {
+				// Unread is not unset: keep the policy we have rather than
+				// placing new servers on auto until the next round.
+				log.Printf("storage placement: keeping the current policy, %s unreadable: %v", key, err)
+				return
+			}
+			if v == "" {
 				continue
 			}
 			var cfg struct {
@@ -1831,11 +1837,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		cmd.Config.Docker.Command = startCmd
 
 		provisionFloodgateKey(ctx, rdb, serverPath, cmd.Config.UUID, subName)
+		// A stop or kill queued after the switch still gets the switch, only not
+		// the start: Core already wrote the new active sub-server, and dropping
+		// the switch left the node on the old one for good.
+		recreate := dm.RecreateWithCommand
 		if abandonedForStop(ctx, rdb, cmd) {
-			return
+			recreate = dm.RecreateStopped
 		}
 		// Abandoned still switched: the new container is there, only stopped.
-		if err := dm.RecreateWithCommand(cmd.Config); err != nil && !errors.Is(err, errStartAbandoned) {
+		if err := recreate(cmd.Config); err != nil && !errors.Is(err, errStartAbandoned) {
 			log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
 		} else {
 			if err := writeServerRootFile(serverPath, ".active_server", []byte(subName)); err != nil {
@@ -2503,8 +2513,9 @@ func holdBusyStatus(rdb *redis.Client, uuid, status string, ttl time.Duration) f
 		rdb.Set(ctx, statusKey, status, ttl)
 	}
 	write()
-	done := make(chan struct{})
+	done, stopped := make(chan struct{}), make(chan struct{})
 	go func() {
+		defer close(stopped)
 		t := time.NewTicker(ttl / 3)
 		defer t.Stop()
 		for {
@@ -2518,6 +2529,9 @@ func holdBusyStatus(rdb *redis.Client, uuid, status string, ttl time.Duration) f
 	}()
 	return func() {
 		close(done)
+		// A refresh already past the select would otherwise land after the Del
+		// and leave node_busy up for a TTL with nothing behind it.
+		<-stopped
 		// The interlock is dropped immediately so the reconciler can resume
 		// looking after this server. The status key is left for the caller, which
 		// writes the real terminal status right after.

@@ -2,7 +2,7 @@ package services
 
 import (
 	"context"
-	"errors"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,7 +46,7 @@ func (s *settingsStub) SetSetting(key, value string) error {
 func (s *settingsStub) GetSetting(key string) (string, error) {
 	v, ok := s.values[key]
 	if !ok {
-		return "", errors.New("no such setting")
+		return "", sql.ErrNoRows // what the real store answers for a missing row
 	}
 	return v, nil
 }
@@ -180,8 +180,8 @@ func (alwaysSetStore) GetSetting(string) (string, error) { return "x", nil }
 
 // mirroredKeyPattern finds the Redis keys a handler writes on an admin save.
 // Only string literals: a key built from a helper (the storage-placement pair)
-// is deliberately Redis-only with no database row behind it, so there is
-// nothing for this publisher to re-derive it from.
+// is saved and re-asserted by its own pair of functions
+// (SaveNodePlacement / PublishStoragePlacements).
 var mirroredKeyPattern = regexp.MustCompile(`Redis\.Set\([^,]+, "(dylaris:[^"]+)"`)
 
 // Every setting a handler mirrors into Redis has to be one this publisher

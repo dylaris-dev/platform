@@ -98,10 +98,10 @@ func TestStartOvertakenByAStop(t *testing.T) {
 	}{
 		{"start", 999, true},
 		{"restart", 500, true},
-		{"switch_server", 999, true},
-		{"start", 1000, false}, // the same second: order unknown
-		{"start", 1001, false}, // queued after the stop
-		{"start", 0, false},    // from a Core that does not stamp
+		{"switch_server", 999, false}, // still switched, left stopped (processCommand)
+		{"start", 1000, false},        // the same second: order unknown
+		{"start", 1001, false},        // queued after the stop
+		{"start", 0, false},           // from a Core that does not stamp
 		{"update_resources", 1, false},
 	}
 	for _, tt := range tests {

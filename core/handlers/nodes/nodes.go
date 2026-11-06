@@ -742,15 +742,9 @@ func (h *NodeHandler) SetNodeStoragePlacement(w http.ResponseWriter, r *http.Req
 		order = append(order, p)
 	}
 
-	payload, err := json.Marshal(storagePlacement{Mode: req.Mode, Order: order})
-	if err != nil {
-		httpx.SendJSONError(w, "Failed to encode placement", 500)
-		return
-	}
-	// No TTL: this is configuration, and the node re-reads it on every settings
-	// poll. It survives a node restart but not a Redis flush - same as the other
-	// dylaris:placement:* settings.
-	if err := h.d.Redis.Set(r.Context(), storagePlacementKey(node.Token), payload, 0).Err(); err != nil {
+	// Database first, then Redis: the node reads the key, and the publisher
+	// re-asserts it from the row after a Redis restart.
+	if err := services.SaveNodePlacement(r.Context(), h.d.Store, h.d.Redis, *node, services.NodePlacement{Mode: req.Mode, Order: order}); err != nil {
 		httpx.SendJSONError(w, "Failed to store placement", 500)
 		return
 	}
@@ -779,7 +773,7 @@ func (h *NodeHandler) GetFleetStoragePlacement(w http.ResponseWriter, r *http.Re
 
 // SetFleetStoragePlacement PUT /api/settings/storage-placement - sets fleet-
 // wide storage placement to auto or manual, manual carrying an explicit node
-// order. Stored in Redis, not in the database.
+// order. Stored in the database and mirrored into Redis for the nodes.
 func (h *NodeHandler) SetFleetStoragePlacement(w http.ResponseWriter, r *http.Request) {
 	if h.d.Redis == nil {
 		httpx.SendJSONError(w, "Redis unavailable", 503)
@@ -809,7 +803,7 @@ func (h *NodeHandler) SetFleetStoragePlacement(w http.ResponseWriter, r *http.Re
 	}
 
 	next := services.NodePlacement{Mode: req.Mode, Order: order}
-	if err := services.SaveFleetPlacement(r.Context(), h.d.Redis, next); err != nil {
+	if err := services.SaveFleetPlacement(r.Context(), h.d.Store, h.d.Redis, next); err != nil {
 		httpx.SendJSONError(w, "Failed to store placement", 500)
 		return
 	}

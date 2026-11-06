@@ -2,8 +2,16 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
 	"sort"
+	"strconv"
+
+	"dylaris-core/models"
+	"dylaris-core/store"
 
 	"dylaris-pkg/storageplacement"
 
@@ -58,12 +66,29 @@ func decodeFleetPlacement(raw string) NodePlacement {
 	return stored
 }
 
-// SaveFleetPlacement writes the fleet default. No TTL: it is configuration, and
-// nodes re-read it on every settings poll.
-func SaveFleetPlacement(ctx context.Context, rdb *redis.Client, p NodePlacement) error {
-	if rdb == nil {
-		return nil
-	}
+// FleetPlacementSetting and NodePlacementSetting are the database rows behind
+// the two Redis keys. Redis runs without persistence, so the keys alone lost an
+// operator's placement to every Redis restart; the rows are what
+// PublishStoragePlacements re-asserts from.
+const FleetPlacementSetting = "placement.storage_default"
+
+// NodePlacementSetting is keyed by node ID, not token, so a rolled key keeps it.
+func NodePlacementSetting(nodeID int) string {
+	return "node." + strconv.Itoa(nodeID) + ".storage_placement"
+}
+
+// SaveFleetPlacement writes the fleet default, database first. No TTL: it is
+// configuration, and nodes re-read it on every settings poll.
+func SaveFleetPlacement(ctx context.Context, st store.Store, rdb *redis.Client, p NodePlacement) error {
+	return savePlacement(ctx, st, rdb, FleetPlacementSetting, FleetPlacementKey, p)
+}
+
+// SaveNodePlacement writes one node's policy, database first.
+func SaveNodePlacement(ctx context.Context, st store.Store, rdb *redis.Client, node models.Node, p NodePlacement) error {
+	return savePlacement(ctx, st, rdb, NodePlacementSetting(node.ID), NodePlacementKey(node.Token), p)
+}
+
+func savePlacement(ctx context.Context, st store.Store, rdb *redis.Client, setting, key string, p NodePlacement) error {
 	p.Mode = storageplacement.NormalizeMode(p.Mode)
 	if p.Order == nil {
 		p.Order = []string{}
@@ -72,7 +97,58 @@ func SaveFleetPlacement(ctx context.Context, rdb *redis.Client, p NodePlacement)
 	if err != nil {
 		return err
 	}
-	return rdb.Set(ctx, FleetPlacementKey, payload, 0).Err()
+	if st != nil {
+		if err := st.SetSetting(setting, string(payload)); err != nil {
+			return fmt.Errorf("store placement %s: %w", setting, err)
+		}
+	}
+	if rdb == nil {
+		return nil
+	}
+	return rdb.Set(ctx, key, payload, 0).Err()
+}
+
+// PublishStoragePlacements re-asserts the fleet default and every node's policy
+// from the database. A row that was never saved adopts what Redis holds, which
+// is how a policy saved by a Core from before the rows existed gets one.
+func PublishStoragePlacements(ctx context.Context, st store.Store, rdb *redis.Client) {
+	if st == nil || rdb == nil {
+		return
+	}
+	publishPlacement(ctx, st, rdb, FleetPlacementSetting, FleetPlacementKey)
+	nodes, err := st.ListNodes()
+	if err != nil {
+		log.Printf("placement publisher: list nodes: %v", err)
+		return
+	}
+	for _, n := range nodes {
+		if n.Token == "" {
+			continue
+		}
+		publishPlacement(ctx, st, rdb, NodePlacementSetting(n.ID), NodePlacementKey(n.Token))
+	}
+}
+
+func publishPlacement(ctx context.Context, st store.Store, rdb *redis.Client, setting, key string) {
+	v, err := st.GetSetting(setting)
+	if err == nil && v != "" {
+		if err := rdb.Set(ctx, key, v, 0).Err(); err != nil {
+			log.Printf("placement publisher: set %s: %v", key, err)
+		}
+		return
+	}
+	// Only a row that does not exist is adopted: an unreadable one must not be
+	// overwritten with whatever Redis holds.
+	if !errors.Is(err, sql.ErrNoRows) {
+		return
+	}
+	cur, rerr := rdb.Get(ctx, key).Result()
+	if rerr != nil || cur == "" {
+		return
+	}
+	if err := st.SetSetting(setting, cur); err != nil {
+		log.Printf("placement publisher: adopt %s: %v", setting, err)
+	}
 }
 
 // EffectiveNodePlacement is the policy a node actually applies: its own if it
