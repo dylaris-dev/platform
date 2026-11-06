@@ -198,6 +198,101 @@ func TestAMigrateOutAbortedWhileStagingLeavesNoArchive(t *testing.T) {
 	}
 }
 
+// J52/J57: a cancelled attempt's migrate_out still archiving when the retry
+// staged removed the archive and origin stamp by path once it finished - the
+// retry's, since both were named by the server alone - and the retry's target
+// pull found nothing. Each attempt now writes its own file and removes only
+// that one.
+func TestALateAbortedMigrateOutLeavesTheRetrysArchive(t *testing.T) {
+	tests := []struct {
+		name   string
+		failsA bool
+	}{
+		{"the earlier attempt finishes after the retry", false},
+		{"the earlier attempt fails after the retry", true},
+	}
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, stagingTestUUID), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			os.WriteFile(filepath.Join(root, stagingTestUUID, "level.dat"), []byte("w"), 0o644)
+			storage := &StorageManager{paths: []string{root}}
+			rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+			attemptA := queue.MigrationProgressID(stagingTestUUID, string(rune('a'+2*i)))
+			attemptB := queue.MigrationProgressID(stagingTestUUID, string(rune('b'+2*i)))
+			prev := migrateOutArchive
+			nested := false
+			migrateOutArchive = func(src, dst string) (string, int64, error) {
+				if nested {
+					return migration.Archive(src, dst)
+				}
+				nested = true
+				// A is still archiving: Core aborts it, and the retry runs
+				// to "staged" before A is done.
+				os.WriteFile(dst, []byte("half"), 0o644)
+				handleMigrateAbort(storage, stagingTestUUID)
+				handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptB)
+				if tc.failsA {
+					return "", 0, errors.New("disk error")
+				}
+				return migration.Archive(src, dst)
+			}
+			t.Cleanup(func() { migrateOutArchive = prev })
+
+			handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptA)
+
+			if st := readMigrationStatusMaybe(rdb, attemptB); st.Phase != "staged" {
+				t.Fatalf("retry status = %+v, want staged", st)
+			}
+			for _, p := range []string{stagedArchivePath(root, stagingTestUUID), migrationOriginPath(root, stagingTestUUID)} {
+				if _, err := os.Stat(p); err != nil {
+					t.Errorf("the retry's %s was removed by the earlier attempt: %v", p, err)
+				}
+			}
+			entries, _ := os.ReadDir(filepath.Join(root, migrationStagingDir))
+			if len(entries) != 2 {
+				names := []string{}
+				for _, e := range entries {
+					names = append(names, e.Name())
+				}
+				t.Errorf("staging dir holds %v, want only the retry's archive and stamp", names)
+			}
+		})
+	}
+}
+
+// J55: a migrate_out redelivered after a node restart, queued too long ago to
+// run, was dropped without a word, and Core waited out its stage deadline.
+func TestADroppedStaleMigrateOutReportsAnError(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	progress := queue.MigrationProgressID(stagingTestUUID, "stale")
+	if !dropStaleMigrateOut(context.Background(), rdb, "tok", progress, now.Add(-time.Hour).Unix(), now) {
+		t.Fatal("a stale migrate_out was not dropped")
+	}
+	if st := readMigrationStatusMaybe(rdb, progress); st.Phase != "error" {
+		t.Fatalf("status = %+v, want error", st)
+	}
+	fresh := queue.MigrationProgressID(stagingTestUUID, "fresh")
+	if dropStaleMigrateOut(context.Background(), rdb, "tok", fresh, now.Unix(), now) {
+		t.Fatal("a fresh migrate_out was dropped")
+	}
+	if st := readMigrationStatusMaybe(rdb, fresh); st.Phase != "" {
+		t.Fatalf("a fresh migrate_out wrote status %+v", st)
+	}
+}
+
+// J53: Core's waits grow with progress up to 6h (migrationProgressMaxWait), so
+// a discard that gave up after 2h kept the copy of a pull that ran on.
+func TestMigrateDiscardOutwaitsTheLongestPull(t *testing.T) {
+	const coreProgressMaxWait = 6 * time.Hour
+	if migrateDiscardWait <= coreProgressMaxWait {
+		t.Fatalf("migrateDiscardWait = %s, a pull may run %s", migrateDiscardWait, coreProgressMaxWait)
+	}
+}
+
 func TestStaleMigrateOut(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	tests := []struct {

@@ -192,6 +192,11 @@ func (o *MigrationOrchestrator) Start(ctx context.Context) {
 // their pre-signed URLs expired, scored by that time (unix seconds).
 const migrationR2SweepKey = "dylaris:migration:r2sweep"
 
+// migrationR2SweepUploadsKey maps a transfer object's key to its multipart
+// upload while that upload is neither completed nor aborted. Beside the ZSET
+// rather than in its members, so an older Core still reads those as keys.
+const migrationR2SweepUploadsKey = "dylaris:migration:r2sweep:uploads"
+
 // sweepR2TransfersLoop runs the sweep on the leader every quarter hour.
 func (o *MigrationOrchestrator) sweepR2TransfersLoop(ctx context.Context) {
 	t := time.NewTicker(15 * time.Minute)
@@ -211,7 +216,7 @@ func (o *MigrationOrchestrator) sweepR2TransfersLoop(ctx context.Context) {
 
 // sweepR2Transfers deletes every recorded transfer object whose URLs have
 // expired, and forgets it only once the delete succeeded.
-func (o *MigrationOrchestrator) sweepR2Transfers(ctx context.Context, now time.Time, del func(context.Context, string) error) {
+func (o *MigrationOrchestrator) sweepR2Transfers(ctx context.Context, now time.Time, del func(ctx context.Context, key, uploadID string) error) {
 	due, err := o.redis.ZRangeByScoreWithScores(ctx, migrationR2SweepKey, &redis.ZRangeBy{
 		Min: "-inf", Max: strconv.FormatInt(now.Unix(), 10),
 	}).Result()
@@ -221,20 +226,23 @@ func (o *MigrationOrchestrator) sweepR2Transfers(ctx context.Context, now time.T
 	}
 	for _, z := range due {
 		key, _ := z.Member.(string)
-		if err := del(ctx, key); err != nil {
+		uploadID, _ := o.redis.HGet(ctx, migrationR2SweepUploadsKey, key).Result()
+		if err := del(ctx, key, uploadID); err != nil {
 			// A storage that went away (switched off S3, deleted bucket) will
 			// not come back for this key; a week of retries is enough.
 			if now.Sub(time.Unix(int64(z.Score), 0)) > 7*24*time.Hour {
 				o.redis.ZRem(ctx, migrationR2SweepKey, key)
+				o.redis.HDel(ctx, migrationR2SweepUploadsKey, key)
 			}
 			log.Printf("migration: R2 transfer object sweep failed (%s): %v", key, err)
 			continue
 		}
 		o.redis.ZRem(ctx, migrationR2SweepKey, key)
+		o.redis.HDel(ctx, migrationR2SweepUploadsKey, key)
 	}
 }
 
-func (o *MigrationOrchestrator) deleteTransferObject(ctx context.Context, key string) error {
+func (o *MigrationOrchestrator) deleteTransferObject(ctx context.Context, key, uploadID string) error {
 	bs, err := o.store.GetDefaultBackupStorage()
 	if err != nil {
 		return fmt.Errorf("no S3/R2 backup storage to sweep: %w", err)
@@ -243,7 +251,14 @@ func (o *MigrationOrchestrator) deleteTransferObject(ctx context.Context, key st
 	if err != nil {
 		return err
 	}
-	return prov.Delete(ctx, key)
+	if err := prov.Delete(ctx, key); err != nil {
+		return err
+	}
+	// Deleting the key leaves a pending upload's parts stored.
+	if uploadID != "" {
+		return prov.AbortMultipart(ctx, key, uploadID)
+	}
+	return nil
 }
 
 // EnqueueMigration pushes a migration request onto the queue. Callable from any
@@ -934,7 +949,11 @@ func (o *MigrationOrchestrator) rollbackPreCutover(ctx context.Context, srv *mod
 	// only a successful move's cleanup removed it: every failed attempt left
 	// one behind, past even the server's deletion. Best-effort; an older node
 	// ignores the command.
-	if err := o.queue.SendCommand(ctx, sourceNode.Token, "migrate_abort", map[string]interface{}{"uuid": srv.UUID}, nil); err != nil {
+	//
+	// Every send here is on context.Background(): a rollback reached through a
+	// Core shutdown or lost leadership runs on a cancelled ctx, and the abort
+	// and restart it could not send left the server down for hours.
+	if err := o.queue.SendCommand(context.Background(), sourceNode.Token, "migrate_abort", map[string]interface{}{"uuid": srv.UUID}, nil); err != nil {
 		log.Printf("migration %s: could not tell the source to drop its staged archive: %v", srv.UUID, err)
 	}
 	// The target may hold a whole copy by now - a pull that finished after Core
@@ -950,7 +969,7 @@ func (o *MigrationOrchestrator) rollbackPreCutover(ctx context.Context, srv *mod
 	if wasRunning {
 		o.store.UpdateServerDesiredState(srv.ID, "online")
 		o.store.UpdateServerStatus(srv.ID, "starting")
-		if err := o.queue.SendCommand(ctx, sourceNode.Token, "start", map[string]interface{}{"uuid": srv.UUID}, nil); err != nil {
+		if err := o.queue.SendCommand(context.Background(), sourceNode.Token, "start", map[string]interface{}{"uuid": srv.UUID}, nil); err != nil {
 			log.Printf("migration %s: rollback restart on source failed: %v", srv.UUID, err)
 		}
 	} else {
@@ -1173,7 +1192,9 @@ func (o *MigrationOrchestrator) waitForNodePhaseAny(ctx context.Context, nodeTok
 				// wait failed every move too large to stage or transfer in it.
 				// Capped, so a customer's node counting up forever cannot hold
 				// the serialized migration queue.
-				if st.Bytes > lastBytes {
+				// Changed, not grown: a node restarted mid-leg reruns the
+				// redelivered command from 0.
+				if st.Bytes != lastBytes {
 					lastBytes = st.Bytes
 					next := time.Now().Add(timeout)
 					if limit := start.Add(migrationProgressMaxWait); next.After(limit) {
@@ -1262,8 +1283,15 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 			}
 			if aerr := prov.AbortMultipart(context.Background(), key, uploadID); aerr != nil {
 				log.Printf("migration %s: R2 transfer upload abort failed (%s): %v", srv.UUID, key, aerr)
+				return
 			}
+			o.redis.HDel(context.Background(), migrationR2SweepUploadsKey, key)
 		}()
+		// This defer dies with the process, so a Core that goes away
+		// mid-push leaves the upload to the sweep.
+		if err := o.redis.HSet(ctx, migrationR2SweepUploadsKey, key, uploadID).Err(); err != nil {
+			return fmt.Errorf("record transfer upload for cleanup: %w", err)
+		}
 	}
 
 	// Source uploads its staged archive to R2.
@@ -1278,6 +1306,7 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 			return fmt.Errorf("complete transfer upload: %w", err)
 		}
 		completed = true
+		o.redis.HDel(context.Background(), migrationR2SweepUploadsKey, key)
 	}
 
 	// Signed only now: the upload may have taken up to its cap, and the

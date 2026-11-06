@@ -444,6 +444,33 @@ func TestWaitForNodePhaseAnyProgressExtendsDeadline(t *testing.T) {
 	}
 }
 
+// J55: a node restarted mid-leg reruns the redelivered command from byte 0,
+// and the wait extended only past the killed run's high-water mark - so the
+// rerun timed out before it could catch up. A count that changes is progress.
+func TestWaitForNodePhaseAnyARestartedCountIsProgress(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	ctx := context.Background()
+	o := &MigrationOrchestrator{redis: rdb}
+	key := queue.MigrationStatusKey("node-b", "srv-r")
+	set := func(v string) {
+		if err := rdb.Set(ctx, key, v, 0).Err(); err != nil {
+			t.Error(err)
+		}
+	}
+	set(`{"phase":"transferring","bytes":5}`)
+	go func() {
+		time.Sleep(time.Second)
+		set(`{"phase":"transferring","bytes":1}`)
+		time.Sleep(2 * time.Second)
+		set(`{"phase":"transferred"}`)
+	}()
+
+	phase, errMsg := o.waitForNodePhaseAny(ctx, "node-b", "srv-r", map[string]bool{"transferred": true}, 100*time.Millisecond)
+	if phase != "transferred" || errMsg != "" {
+		t.Fatalf("waitForNodePhaseAny = (%q, %q), want (transferred, \"\")", phase, errMsg)
+	}
+}
+
 // H60/H62: the waits now grow with progress, so everything sized against the
 // fixed waits must outlast the longest a move can now take.
 func TestMigrationLifetimesOutlastTheLongestWait(t *testing.T) {

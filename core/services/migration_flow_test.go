@@ -279,6 +279,26 @@ func TestAFailedMoveDropsTheStagedArchive(t *testing.T) {
 	}
 }
 
+// J54: a rollback reached through a cancelled context (a Core shutdown or a
+// lost leadership) sent neither the abort nor the restart, and the leftover
+// archive kept the reconciler off the stopped server for hours.
+func TestARollbackOnACancelledContextStillTellsTheSource(t *testing.T) {
+	o, fs, sim, _ := newFlow(t, "migrating")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	srv, _ := fs.GetServerByID(5)
+	src, _ := fs.GetNodeByID(1)
+	dst, _ := fs.GetNodeByID(2)
+	o.rollbackPreCutover(ctx, srv, src, dst, "a1", true, "online", func(string, string) {}, "context cancelled")
+	deadline := time.Now().Add(2 * time.Second)
+	for (len(sim.commands(flowSourceToken, "migrate_abort")) == 0 || len(sim.commands(flowSourceToken, "start")) == 0) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(sim.commands(flowSourceToken, "migrate_abort")) != 1 || len(sim.commands(flowSourceToken, "start")) != 1 {
+		t.Fatal("the source was not told to drop its archive and start the server again")
+	}
+}
+
 // A request runs against the placement it was decided on, or not at all.
 func TestARequestForAServerThatMovedSinceDoesNothing(t *testing.T) {
 	o, fs, sim, _ := newFlow(t, "stopped")

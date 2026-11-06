@@ -43,8 +43,9 @@ func sweepInterruptedWork(roots []string) {
 		}
 		for _, e := range entries {
 			if !e.IsDir() {
-				// A migration download lands next to the server dirs.
-				if strings.HasSuffix(e.Name(), ".migration-in.zip") && olderThan(e, cutoff) {
+				// A migration download lands next to the server dirs, under
+				// pull's temp name until its last byte.
+				if (strings.HasSuffix(e.Name(), ".migration-in.zip") || strings.HasPrefix(e.Name(), ".migration-pull-")) && olderThan(e, cutoff) {
 					if os.Remove(filepath.Join(base, e.Name())) == nil {
 						removed++
 					}

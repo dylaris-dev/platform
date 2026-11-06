@@ -154,6 +154,13 @@ func writeMigrationStatus(ctx context.Context, rdb *redis.Client, nodeToken, ser
 // stopped before this runs, so we archive the dir as-is.
 func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID string) {
 	aborts := migrateAbortCount(serverUUID)
+	// A cancelled attempt can still be archiving when the retry runs, and
+	// both stamp the same path: only the latest run may remove the stamp.
+	// Identity, not progressID: a Core that sends no attempt gives both the
+	// same one.
+	run := new(byte)
+	migrateOutLatest.Store(serverUUID, run)
+	defer migrateOutLatest.CompareAndDelete(serverUUID, run)
 	storagePath := storage.GetServerPath(serverUUID)
 	if storagePath == "" {
 		log.Printf("migrate_out %s: no storage path found", serverUUID)
@@ -197,14 +204,25 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 		return
 	}
 
+	// Written under a name of this run's own and renamed into place only once
+	// it is still wanted: the served path is the server's alone, and a
+	// cancelled attempt finishing late removed the retry's archive by it.
 	destZip := stagedArchivePath(storagePath, serverUUID)
+	part, err := os.CreateTemp(stagingDir, serverUUID+".*.part")
+	if err != nil {
+		log.Printf("migrate_out %s: cannot create the archive: %v", serverUUID, err)
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "cannot create the archive")
+		return
+	}
+	partZip := part.Name()
+	part.Close()
+	defer os.Remove(partZip) // gone once renamed; otherwise useless
 	log.Printf("migrate_out %s: archiving %s → %s", serverUUID, srcDir, destZip)
-	stopProgress := reportStagingProgress(ctx, rdb, nodeToken, progressID, destZip)
-	sha, size, err := migrateOutArchive(srcDir, destZip)
+	stopProgress := reportStagingProgress(ctx, rdb, nodeToken, progressID, partZip)
+	sha, size, err := migrateOutArchive(srcDir, partZip)
 	stopProgress()
 	if err != nil {
 		log.Printf("migrate_out %s: archive failed: %v", serverUUID, err)
-		os.Remove(destZip) // partial archive is useless
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("archive failed: %v", err))
 		return
 	}
@@ -213,8 +231,14 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	// the reconciler off the server Core has started again.
 	if migrateAbortCount(serverUUID) != aborts {
 		log.Printf("migrate_out %s: the move was aborted while staging, dropping the archive", serverUUID)
-		os.Remove(destZip)
-		os.Remove(migrationOriginPath(storagePath, serverUUID))
+		if cur, _ := migrateOutLatest.Load(serverUUID); cur == run {
+			os.Remove(migrationOriginPath(storagePath, serverUUID))
+		}
+		return
+	}
+	if err := os.Rename(partZip, destZip); err != nil {
+		log.Printf("migrate_out %s: cannot put the archive in place: %v", serverUUID, err)
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "cannot put the archive in place")
 		return
 	}
 
@@ -638,6 +662,10 @@ func handleMigrateAbort(storage *StorageManager, serverUUID string) {
 // that arrived while it ran by the count changing.
 var migrateAborts sync.Map
 
+// migrateOutLatest holds the newest migrate_out run per server (uuid -> its
+// token).
+var migrateOutLatest sync.Map
+
 func migrateAbortCount(uuid string) int64 {
 	if c, ok := migrateAborts.Load(uuid); ok {
 		return c.(*atomic.Int64).Load()
@@ -659,6 +687,18 @@ func staleMigrateOut(issuedAt int64, now time.Time) bool {
 	return issuedAt != 0 && now.Sub(time.Unix(issuedAt, 0)) > migrateOutMaxAge
 }
 
+// dropStaleMigrateOut reports a stale migrate_out and fails its attempt: one
+// redelivered after a node restart may still have Core waiting on it, which
+// otherwise sat out the rest of its stage deadline. Nobody reads it when Core
+// has given up.
+func dropStaleMigrateOut(ctx context.Context, rdb *redis.Client, nodeToken, progressID string, issuedAt int64, now time.Time) bool {
+	if !staleMigrateOut(issuedAt, now) {
+		return false
+	}
+	setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "the move was queued too long ago to stage; try it again")
+	return true
+}
+
 // movedInMarker sits beside a server directory a move brought here, and names
 // the attempt that brought it.
 func movedInMarker(storagePath, serverUUID string) string {
@@ -675,7 +715,9 @@ func markMovedIn(storagePath, serverUUID, progressID string) {
 }
 
 // migrateDiscardWait bounds how long a discard waits for a pull still running.
-var migrateDiscardWait = 2 * time.Hour
+// Past Core's longest transfer wait (6h, its migrationProgressMaxWait): a
+// shorter one gave up on a pull that then finished and kept its copy for good.
+var migrateDiscardWait = stagedArchiveMaxAge
 
 // handleMigrateDiscard (target side) removes the copy a move that did not
 // happen left here: a pull Core gave up waiting for still finishes and
