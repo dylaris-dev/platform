@@ -1801,7 +1801,14 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		cmd.Config.Docker.Command = startCmd
 
-		if err := dm.RecreateKeepingRunState(cmd.Config); err != nil {
+		if err := dm.RecreateKeepingRunState(cmd.Config); errors.Is(err, errHostPortClaim) {
+			// Only a move's reconfigure carries a host port, and the target has
+			// no container yet. Saving no config would leave the moved server
+			// with nothing to start from; without the port the next start picks
+			// a free one, which the status watcher reports to Core.
+			log.Printf("reconfigure %s: host port %d not kept (%v); the next start picks one", cmd.Config.UUID, cmd.Config.Docker.HostPort, err)
+			cmd.Config.Docker.HostPort = 0
+		} else if err != nil {
 			log.Printf("Failed to reconfigure server %s: %v", cmd.Config.UUID, err)
 			return
 		}

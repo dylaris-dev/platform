@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -358,6 +359,27 @@ func (pm *PortManager) GetPort(serverUUID string) int {
 // (SSH among them) or one of the node's own listeners would be taken from the
 // service that should hold it. 25565 stays allowed: without the gateway it is
 // the port players expect.
+var errHostPortClaim = errors.New("port assignment failed")
+
+// claimHostPort books a host port a config change carries in this node's
+// ledger. startMinecraftContainer binds whatever the ledger holds and only
+// reads the config's port when the ledger holds none, so a port that reached
+// only the saved config was rebound back to the old one at the next start, or
+// handed to a new server meanwhile.
+func (dm *DockerManager) claimHostPort(config ServerConfig) error {
+	port := config.Docker.HostPort
+	if getRoutingMode() == "gateway" || dm.portMgr == nil || port <= 0 || port == dm.portMgr.GetPort(config.UUID) {
+		return nil
+	}
+	if problem := hostPortProblem(port); problem != "" {
+		return fmt.Errorf("%w: %s", errHostPortClaim, problem)
+	}
+	if err := dm.portMgr.SetPort(config.UUID, port); err != nil {
+		return fmt.Errorf("%w: %w", errHostPortClaim, err)
+	}
+	return nil
+}
+
 func hostPortProblem(port int) string {
 	if port < 1024 || port > 65535 {
 		return fmt.Sprintf("host port %d is outside 1024-65535", port)

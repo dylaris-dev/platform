@@ -801,6 +801,11 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	if keptPort > 0 {
 		docker["hostPort"] = keptPort
 	}
+	// The archived config held the admin-set container port, and the target
+	// drops that file: without it the target binds its own default.
+	if srv.ContainerPort > 0 {
+		docker["containerPort"] = srv.ContainerPort
+	}
 	confErr := o.queue.SendCommand(postCutover, targetNode.Token, "reconfigure", map[string]interface{}{
 		"uuid":            srv.UUID,
 		"ownerId":         srv.OwnerID,

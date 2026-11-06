@@ -1172,6 +1172,9 @@ func (dm *DockerManager) RecreateKeepingRunState(config ServerConfig) error {
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
 	info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
 	if client.IsErrNotFound(err) {
+		if cerr := dm.claimHostPort(config); cerr != nil {
+			return cerr
+		}
 		log.Printf("reconfigure: no container for %s yet; the new settings apply on the next start", config.UUID)
 		return nil
 	}
@@ -1749,14 +1752,9 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 		// holds fails the change while this server still runs as it was. Once
 		// claimed it stays claimed: if the recreate below fails, the server is
 		// down and the reconciler rebuilds it on the new port.
-		// startMinecraftContainer takes whatever the manager holds, so a new
-		// host port that only sat in the config never reached the container.
-		if direct && payloadHost > 0 && payloadHost != dm.portMgr.GetPort(config.UUID) {
-			if problem := hostPortProblem(payloadHost); problem != "" {
-				return config, fmt.Errorf("port assignment failed: %s", problem)
-			}
-			if err := dm.portMgr.SetPort(config.UUID, payloadHost); err != nil {
-				return config, fmt.Errorf("port assignment failed: %w", err)
+		if payloadHost > 0 {
+			if err := dm.claimHostPort(config); err != nil {
+				return config, err
 			}
 		}
 		// A resource change leaves the server as it was. It used to end
@@ -1771,6 +1769,9 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 	// whatever the server's state: a routing-mode switch started suspended and
 	// stopped servers. Like RecreateKeepingRunState, the change only reaches
 	// the saved config, which the next start builds from.
+	if err := dm.claimHostPort(config); err != nil {
+		return config, err
+	}
 	return dm.mergeIntoSavedConfig(config), nil
 }
 

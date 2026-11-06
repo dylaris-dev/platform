@@ -138,3 +138,25 @@ func TestDirectMoveProblem(t *testing.T) {
 		})
 	}
 }
+
+// The target drops the archived config, so the container port an admin set
+// came back as the node default and the server listened where nothing bound.
+func TestAMoveCarriesTheContainerPort(t *testing.T) {
+	for name, mode := range map[string]string{"direct": "ip_port", "gateway": ""} {
+		t.Run(name, func(t *testing.T) {
+			o, fs, sim, _ := newDirectFlow(t, "25600-25699")
+			fs.mode = mode
+			fs.srv.ContainerPort = 25577
+			o.Migrate(context.Background(), MigrationRequest{ServerID: 5, TargetNodeID: 2, SourceNodeID: 1, Reason: "manual"})
+			time.Sleep(100 * time.Millisecond)
+			got := sim.commands(flowTargetToken, "reconfigure")
+			if len(got) != 1 {
+				t.Fatalf("reconfigure sent %d times, want once", len(got))
+			}
+			d := got[0]["config"].(map[string]interface{})["docker"].(map[string]interface{})
+			if d["containerPort"] != float64(25577) {
+				t.Fatalf("containerPort sent %v, want 25577", d["containerPort"])
+			}
+		})
+	}
+}
