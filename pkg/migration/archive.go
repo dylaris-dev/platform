@@ -159,6 +159,10 @@ func Extract(zipPath, destDir string, budget int64, onWrite func(int64)) error {
 	// Directories already cleared by linkFreeUnder, so the check costs one Lstat
 	// per distinct directory rather than one per entry per level.
 	verified := map[string]bool{destAbs: true}
+	// Inodes this extraction creates. Capping entries alone did not bound them:
+	// MkdirAll makes one directory per missing path segment, so a single deep
+	// entry costs thousands.
+	created := 0
 
 	for _, f := range zr.File {
 		target := filepath.Join(destDir, f.Name)
@@ -172,8 +176,12 @@ func Extract(zipPath, destDir string, budget int64, onWrite func(int64)) error {
 		if targetAbs != destAbs && !strings.HasPrefix(targetAbs, destAbs+string(os.PathSeparator)) {
 			return fmt.Errorf("migration: entry %q escapes destination", f.Name)
 		}
-		if err := linkFreeUnder(destAbs, targetAbs, verified); err != nil {
+		missing, err := linkFreeUnder(destAbs, targetAbs, verified)
+		if err != nil {
 			return err
+		}
+		if created += missing; created > MaxArchiveEntries {
+			return fmt.Errorf("migration: archive creates more than the %d files and directories allowed", MaxArchiveEntries)
 		}
 
 		if f.FileInfo().IsDir() {
@@ -210,14 +218,17 @@ func Extract(zipPath, destDir string, budget int64, onWrite func(int64)) error {
 // never puts a link INTO the zip (it skips non-regular files), so nothing here
 // legitimately traverses one.
 //
-// verified is the caller's cache of directories already cleared.
-func linkFreeUnder(destAbs, target string, verified map[string]bool) error {
+// verified is the caller's cache of directories already cleared. missing is how
+// many segments of target, leaf included, do not exist yet: the inodes writing
+// it will create.
+func linkFreeUnder(destAbs, target string, verified map[string]bool) (missing int, err error) {
 	rel, err := filepath.Rel(destAbs, target)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	cur := destAbs
-	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+	segs := strings.Split(filepath.ToSlash(rel), "/")
+	for i, seg := range segs {
 		if seg == "" || seg == "." {
 			continue
 		}
@@ -227,20 +238,20 @@ func linkFreeUnder(destAbs, target string, verified map[string]bool) error {
 		}
 		fi, err := os.Lstat(cur)
 		if os.IsNotExist(err) {
-			return nil // nothing from here down exists yet, so nothing to follow
+			return len(segs) - i, nil // nothing from here down exists yet, so nothing to follow
 		}
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("migration: %q in the destination is a symlink", rel)
+			return 0, fmt.Errorf("migration: %q in the destination is a symlink", rel)
 		}
 		// Only directories are cached: a file leaf is about to be replaced.
 		if fi.IsDir() {
 			verified[cur] = true
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 // ErrExtractBudget ends an extraction that would write more than its budget.

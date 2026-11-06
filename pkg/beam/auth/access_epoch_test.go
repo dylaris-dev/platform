@@ -112,6 +112,46 @@ func TestTheStampOutlivesTheLongestSession(t *testing.T) {
 	}
 }
 
+// A plain SET let a delayed earlier stamp (or a Core replica with a slower
+// clock) land over a later one and move the epoch BACK, reviving tickets the
+// later change had made stale.
+func TestTheStampNeverMovesBackwards(t *testing.T) {
+	rdb, mr := epochFixture(t)
+	key := AccessEpochKey("srv-1")
+	cases := []struct {
+		name        string
+		offset      time.Duration // stored stamp relative to now
+		wantForward bool          // true: the bump writes now; false: stored stays
+	}{
+		{"a later stamp already there stays", time.Hour, false},
+		{"an earlier stamp is moved forward", -time.Hour, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stored := time.Now().Add(c.offset).Unix()
+			mr.Set(key, strconv.FormatInt(stored, 10))
+			mr.SetTTL(key, time.Minute)
+			before := time.Now().Unix()
+			if err := BumpAccessEpoch(context.Background(), rdb, "srv-1"); err != nil {
+				t.Fatalf("bump: %v", err)
+			}
+			got, err := rdb.Get(context.Background(), key).Int64()
+			if err != nil {
+				t.Fatalf("read stamp: %v", err)
+			}
+			if !c.wantForward && got != stored {
+				t.Errorf("stamp moved from %d back to %d", stored, got)
+			}
+			if c.wantForward && (got < before || got > time.Now().Unix()) {
+				t.Errorf("stamp %d was not moved forward to now (%d)", got, before)
+			}
+			if ttl := mr.TTL(key); ttl <= 24*time.Hour {
+				t.Errorf("TTL %v was not re-armed", ttl)
+			}
+		})
+	}
+}
+
 // A ticket minted in the same second as the change cannot be told apart from
 // one minted just before it, and is refused.
 func TestATicketFromTheSameSecondAsTheChangeIsStale(t *testing.T) {

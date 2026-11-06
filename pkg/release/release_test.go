@@ -274,6 +274,16 @@ func TestParseRejects(t *testing.T) {
 			"nested bullets are not supported",
 		},
 		{
+			"a section heading with no entry",
+			"## 2026.08.28\n### Features\n- Nothing.\n### Breaking\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
+			"section \"Breaking\" has no entries",
+		},
+		{
+			"the last section with no entry",
+			"## 2026.08.28\n### Features\n- Nothing.\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n",
+			"section \"Fixes\" has no entries",
+		},
+		{
 			"prose continuing after the service tags",
 			"## 2026.08.28\n### Features\n- Fix X `core`\n  and Y.\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
 			"must be on the bullet's last line",

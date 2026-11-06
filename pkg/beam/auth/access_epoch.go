@@ -52,8 +52,21 @@ func BumpAccessEpoch(ctx context.Context, rdb *redis.Client, serverUUID string) 
 	if rdb == nil || serverUUID == "" {
 		return nil
 	}
-	return rdb.Set(ctx, AccessEpochKey(serverUUID), time.Now().Unix(), AccessEpochTTL).Err()
+	return bumpEpochScript.Run(ctx, rdb, []string{AccessEpochKey(serverUUID)},
+		time.Now().Unix(), int64(AccessEpochTTL/time.Second)).Err()
 }
+
+// The stamp may only move forward. A plain SET was last-writer-wins: a delayed
+// earlier bump, or a Core replica whose clock runs behind, wrote an older value
+// over a newer one and revived every ticket minted in between. The TTL is
+// re-armed either way.
+var bumpEpochScript = redis.NewScript(`
+local cur = tonumber(redis.call('GET', KEYS[1])) or 0
+local v = tonumber(ARGV[1])
+if v > cur then cur = v end
+redis.call('SET', KEYS[1], cur, 'EX', ARGV[2])
+return cur
+`)
 
 // TicketPredatesAccessChange reports whether this ticket was minted before the
 // last access change on its server, and is therefore stale.

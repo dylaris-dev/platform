@@ -1149,7 +1149,6 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	var uploadedBytes int64 // actual bytes streamed, for the daily quota counter
 	for _, fileHeader := range files {
 		sanitizedName := fileHeader.Filename
 		if sanitizedName == ".active_server" {
@@ -1245,13 +1244,11 @@ func (h *FileHandler) UploadFileHandler(w http.ResponseWriter, r *http.Request) 
 			httpx.SendJSONError(w, fmt.Sprintf("%s: %s", sanitizedName, msg), status)
 			return
 		}
-		uploadedBytes += offset
+		// Booked per file, by the bytes actually streamed, as soon as the node
+		// has committed it: a later file failing returns above, and the files
+		// already on disk must still count against the shared daily quota.
+		quota.RecordDailyUsage(r.Context(), h.d.Redis, username, offset)
 	}
-
-	// Count the completed upload against the user's shared daily quota, by the
-	// bytes actually streamed. Runs only on full success; a mid-loop failure
-	// returns above and is not counted.
-	quota.RecordDailyUsage(r.Context(), h.d.Redis, username, uploadedBytes)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

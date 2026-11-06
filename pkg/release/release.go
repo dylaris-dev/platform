@@ -252,6 +252,9 @@ func Parse(src []byte) ([]Release, error) {
 		// Which of the four sections this block has seen, to catch a missing or
 		// duplicated one.
 		seen int
+		// Bullets read in the current section, placeholder included, and the
+		// line its heading is on.
+		bullets, sectionLine int
 		// The bullet being read, joined across indented continuation lines, and
 		// the line it started on so an error points at the bullet rather than at
 		// its last fragment.
@@ -270,6 +273,7 @@ func Parse(src []byte) ([]Release, error) {
 		if err != nil {
 			return fmt.Errorf("line %d: %w", pendingLine, err)
 		}
+		bullets++
 		if !empty {
 			entries = append(entries, e)
 		}
@@ -279,10 +283,16 @@ func Parse(src []byte) ([]Release, error) {
 		if err := flushBullet(); err != nil {
 			return err
 		}
+		// "- Nothing." is dropped above, so without counting bullets an omitted
+		// section looks exactly like an empty one - and "no security fixes" gets
+		// announced for a section nobody filled in.
+		if cur != nil && section != "" && bullets == 0 {
+			return fmt.Errorf("line %d: release %s section %q has no entries; write - Nothing.", sectionLine, cur.Version, section)
+		}
 		if cur != nil && section != "" {
 			cur.set(section, entries)
 		}
-		section, entries = "", nil
+		section, entries, bullets = "", nil, 0
 		return nil
 	}
 	flushRelease := func(atLine int) error {
@@ -365,7 +375,7 @@ func Parse(src []byte) ([]Release, error) {
 				return nil, fmt.Errorf("line %d: release %s has section %q where %q was expected; the four sections are fixed and ordered (%s)",
 					ln, cur.Version, name, want, strings.Join(sections, ", "))
 			}
-			section = name
+			section, sectionLine = name, ln
 			seen++
 
 		case strings.HasPrefix(line, "**Update required"):

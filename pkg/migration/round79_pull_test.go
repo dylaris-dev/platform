@@ -158,3 +158,50 @@ func TestExtractRefusesTooManyEntries(t *testing.T) {
 		t.Error("entries were written before the refusal")
 	}
 }
+
+// The entry cap bounded entries, not inodes: one entry deep in fresh
+// directories made one inode per path segment, none of them counted.
+func TestExtractCountsTheDirectoriesAnEntryCreates(t *testing.T) {
+	prev := MaxArchiveEntries
+	MaxArchiveEntries = 5
+	t.Cleanup(func() { MaxArchiveEntries = prev })
+
+	cases := []struct {
+		name     string
+		entries  []string
+		existing string // a directory already in the destination
+		wantErr  bool
+	}{
+		{"shallow archive under the cap", []string{"a/b/x", "a/y"}, "", false},
+		{"one deep entry over the cap", []string{"a/b/c/d/e/f/x"}, "", true},
+		{"a directory entry over the cap", []string{"a/b/c/d/e/f/"}, "", true},
+		{"directories already there are free", []string{"a/b/c/d/e/x"}, "a/b/c/d", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			zp := filepath.Join(dir, "a.zip")
+			f, _ := os.Create(zp)
+			zw := zip.NewWriter(f)
+			for _, n := range c.entries {
+				w, _ := zw.Create(n)
+				if !strings.HasSuffix(n, "/") {
+					w.Write([]byte("x"))
+				}
+			}
+			zw.Close()
+			f.Close()
+
+			dest := filepath.Join(dir, "out")
+			if c.existing != "" {
+				if err := os.MkdirAll(filepath.Join(dest, c.existing), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := Extract(zp, dest, 1<<20, nil)
+			if (err != nil) != c.wantErr {
+				t.Fatalf("err = %v, want error %v", err, c.wantErr)
+			}
+		})
+	}
+}

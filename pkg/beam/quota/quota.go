@@ -153,6 +153,9 @@ func RecordDailyUsage(ctx context.Context, rdb *redis.Client, username string, n
 	if rdb == nil || username == "" || n <= 0 {
 		return
 	}
+	// The bytes are already written when this runs; a caller whose client hung
+	// up (a cancelled request context) must not skip booking them.
+	ctx = context.WithoutCancel(ctx)
 	key := DailyKey(username, time.Now())
 	pipe := rdb.Pipeline()
 	pipe.IncrBy(ctx, key, n)
