@@ -779,7 +779,10 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		// filename — the directory is server-scoped already so the prefix
 		// adds no information.
 		dir := filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName)
-		if err := os.MkdirAll(dir, nodeOwnedDirMode); err != nil {
+		// Mkdir, not MkdirAll: the server may have been deleted while the
+		// backup waited for its save flush, and MkdirAll brought its directory
+		// back for good. A missing server root fails the run instead.
+		if err := os.Mkdir(dir, nodeOwnedDirMode); err != nil && !errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("create node-local backup dir: %w", err)
 		}
 		archive := nodeLocalArchiveName(key)

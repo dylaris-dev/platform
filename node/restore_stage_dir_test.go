@@ -143,6 +143,8 @@ func TestRestoreCleanupRemovesAbandonedStagingDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 	age(abandoned, old)
+	// Its restore has returned; only a running one keeps its stage regardless.
+	releaseStageDir(abandoned)
 
 	// A restore that started a moment ago must not be swept out from under
 	// itself.

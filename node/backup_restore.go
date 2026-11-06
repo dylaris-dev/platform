@@ -68,6 +68,7 @@ func createStageDir(targetDir string) (string, error) {
 	// which may not run as this process's user.
 	if err := os.Chmod(dir, 0o755); err != nil {
 		os.RemoveAll(dir)
+		releaseStageDir(dir)
 		return "", fmt.Errorf("stage dir perms: %w", err)
 	}
 	return dir, nil
@@ -152,6 +153,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "stage dir: "+err.Error())
 		return
 	}
+	defer releaseStageDir(stageDir)
 	// On any error we'll remove the stage dir; success path will remove the
 	// previous targetDir instead.
 	stageCleanup := func() { os.RemoveAll(stageDir) }
@@ -550,14 +552,18 @@ var restoreStallTimeout = 2 * time.Minute
 // restoreStallTimeout (about 8.7 KB/s). A variable for tests.
 var restoreStallMinBytes int64 = 1 << 20
 
-// restoreDeadlineFloor, restoreDeadlineMinRate and restoreDeadlineUnknownSize
-// set restoreDeadline. The rate (2 Mbit/s) is far below any line a restore
-// runs over; S3 and R2 always state a length, so an unknown one is an unusual
-// source and gets a fixed day. Variables for tests.
+// restoreDeadlineFloor, restoreDeadlineMinRate, restoreDeadlineUnknownSize and
+// restoreDeadlineMax set restoreDeadline. The rate (2 Mbit/s) is far below any
+// line a restore runs over; S3 and R2 always state a length, so an unknown one
+// is an unusual source and gets a fixed day. The size is the Content-Length the
+// source declares, and a tenant's own endpoint declares what it likes: without
+// the ceiling, 1 TiB at the stall guard's minimum rate held a command slot for
+// seven weeks. Variables for tests.
 var (
 	restoreDeadlineFloor             = 2 * time.Hour
 	restoreDeadlineMinRate     int64 = 256 << 10
 	restoreDeadlineUnknownSize       = 24 * time.Hour
+	restoreDeadlineMax               = 24 * time.Hour
 )
 
 // restoreDeadline is how long a restore of an archive of size bytes (-1:
@@ -566,7 +572,12 @@ func restoreDeadline(size int64) time.Duration {
 	if size < 0 {
 		return restoreDeadlineUnknownSize
 	}
-	return restoreDeadlineFloor + time.Duration(size/restoreDeadlineMinRate)*time.Second
+	// Compared in seconds before converting: size/rate times a second
+	// overflows int64 for a declared length above about 2.4e15.
+	if secs := size / restoreDeadlineMinRate; secs < int64((restoreDeadlineMax-restoreDeadlineFloor)/time.Second) {
+		return restoreDeadlineFloor + time.Duration(secs)*time.Second
+	}
+	return restoreDeadlineMax
 }
 
 // stallReader re-arms the stall timer for d on every read that returned data,

@@ -27,9 +27,13 @@ const pendingDeleteTTL = 10 * time.Minute
 // for stale .pre-restore-* directories.
 const restoreCleanupInterval = time.Hour
 
-// ownStages holds the base names of the staging dirs this process created. No
-// restore survives a restart, so any other one is dead whatever its age. Names,
-// not mtimes: a clock stepped back at boot would make a fresh stage look old.
+// ownStages holds the base names of the staging dirs of the restores this
+// process is running now (createStageDir adds one, releaseStageDir drops it).
+// Those are never swept: a stage's mtime moves only when its top level gains an
+// entry, and restoreDeadline lets a big archive extract for a whole day, so an
+// age said nothing about a running one. No restore survives a restart, so any
+// other one is dead whatever its age. Names, not mtimes: a clock stepped back at
+// boot would make a fresh stage look old.
 var ownStages sync.Map
 
 // preRestoreStash matches the names RunRestore gives a stash:
@@ -143,12 +147,15 @@ func runRestoreCleanup(sm *StorageManager) {
 				cutoff = pendingCutoff
 				label = "pending-delete tombstone"
 			case restoreStage.MatchString(base):
-				// Same 24h TTL as the stash: a restore still extracting after a
-				// day is not running, it is dead. One from before this process
-				// is dead already, and held the space its redelivered restore
-				// needs; on storage another node uses, it may be that node's.
+				// One of a restore running here is never swept (see ownStages).
+				// Any other is dead already, and held the space its redelivered
+				// restore needs; on storage another node uses, it may be that
+				// node's running restore, so it keeps the stash's 24h TTL.
 				label = "restore staging dir"
-				if _, ours := ownStages.Load(base); !ours && !sharedWithAnotherNode(root) {
+				if _, ours := ownStages.Load(base); ours {
+					return filepath.SkipDir
+				}
+				if !sharedWithAnotherNode(root) {
 					cutoff = now
 				}
 			}
@@ -193,3 +200,7 @@ func depthBelow(root, path string) int {
 	}
 	return strings.Count(filepath.ToSlash(rel), "/") + 1
 }
+
+// releaseStageDir ends dir's place in ownStages, once the restore that made it
+// has returned. Whatever of the stage is still on disk then is dead.
+func releaseStageDir(dir string) { ownStages.Delete(filepath.Base(dir)) }
