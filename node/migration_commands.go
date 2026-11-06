@@ -329,6 +329,9 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 		return
 	}
 	defer migrateInFlight.Delete(serverUUID)
+	if refuseDiscardedAttempt(ctx, rdb, storage, nodeToken, serverUUID, progressID) {
+		return
+	}
 
 	// Resolve where to pull from. The source node refreshes this key while it
 	// is up; if it is absent the source is unreachable/down and we cannot move.
@@ -412,6 +415,16 @@ func receiveMovedServer(ctx context.Context, rdb *redis.Client, nodeToken, serve
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, phase, msg)
 	}()
 	fail := func(m string) { phase, msg = "error", m }
+
+	// The size is known before the first byte: an archive that cannot fit was
+	// downloaded up to the free space four times over (the retries), holding
+	// that space against every other write here, and then failed vaguely.
+	if budget := restoreDiskBudget(targetPath) - inflightWrites.Load(); expectedSize > 0 && expectedSize > budget {
+		log.Printf("%s %s: %d bytes announced, %d bytes of free space to give", cmd, serverUUID, expectedSize, budget)
+		fail(fmt.Sprintf("not enough free space on the target node to receive the move: need %s, can use %s",
+			formatBytes(uint64(expectedSize)), formatBytes(uint64(max(budget, 0)))))
+		return
+	}
 
 	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
 	defer os.Remove(tmpZip)
@@ -611,9 +624,11 @@ func migrationInFlight(storage *StorageManager, serverUUID string) bool {
 	return err == nil && time.Since(st.ModTime()) < stagedArchiveMaxAge
 }
 
-// stagedArchiveMaxAge outlives the longest wait that still reads the archive:
-// Core's migrate_in wait, then a push, each extended by progress up to its
-// migrationProgressMaxWait (6h).
+// stagedArchiveMaxAge outlives the longest wait between two uses of the
+// archive, each extended by progress up to Core's migrationProgressMaxWait
+// (6h): migrate_in's, or on the R2 path the push's and then the pull's. The
+// push dates the archive at both ends (touchStagedArchive), so no one age has
+// to cover all of them.
 const stagedArchiveMaxAge = 7 * time.Hour
 
 // sweepStaleMigrationArchives removes staged archives and origin stamps older
@@ -731,6 +746,78 @@ func handleMigrateDiscard(storage *StorageManager, dm *DockerManager, serverUUID
 	if strings.TrimSpace(serverUUID) == "" || progressID == "" {
 		return
 	}
+	// The command is acked once this returns, and the wait below lives only
+	// in memory: a restart lost it while the unacked pull was redelivered and
+	// brought its copy again. On disk it stops that pull and outlives the
+	// restart (resumeMigrationDiscards).
+	if p := storage.GetServerPath(serverUUID); p != "" {
+		if err := os.WriteFile(migrationDiscardMarker(p, serverUUID), []byte(progressID), 0o600); err != nil {
+			log.Printf("migrate_discard %s: could not record the discard: %v", serverUUID, err)
+		}
+	}
+	discardMovedCopy(storage, dm, serverUUID, progressID, wait)
+}
+
+// migrationDiscardMarker sits beside a server directory and names the attempt
+// a discard was sent for.
+func migrationDiscardMarker(storagePath, serverUUID string) string {
+	return filepath.Join(storagePath, serverUUID+migrationDiscardSuffix)
+}
+
+const migrationDiscardSuffix = ".discarded"
+
+// refuseDiscardedAttempt fails a transfer of an attempt Core already
+// discarded, which is what a pull redelivered after a restart is. Another
+// attempt's marker is spent: this one supersedes it.
+func refuseDiscardedAttempt(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID string) bool {
+	p := storage.GetServerPath(serverUUID)
+	if p == "" {
+		return false
+	}
+	m := migrationDiscardMarker(p, serverUUID)
+	got, err := os.ReadFile(m)
+	if err != nil {
+		return false
+	}
+	if string(got) != progressID {
+		os.Remove(m)
+		return false
+	}
+	log.Printf("migrate %s: attempt %s was discarded, not transferring it again", serverUUID, progressID)
+	setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "this move was cancelled")
+	return true
+}
+
+// resumeMigrationDiscards runs again the discards a restart cut off. One older
+// than any move is dropped: no pull of its attempt can still succeed.
+func resumeMigrationDiscards(storage *StorageManager, dm *DockerManager) {
+	for _, root := range storage.Paths() {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			uuid, ok := strings.CutSuffix(e.Name(), migrationDiscardSuffix)
+			if !ok || e.IsDir() {
+				continue
+			}
+			p := filepath.Join(root, e.Name())
+			info, ierr := e.Info()
+			got, rerr := os.ReadFile(p)
+			if ierr != nil || rerr != nil {
+				continue
+			}
+			if time.Since(info.ModTime()) >= stagedArchiveMaxAge {
+				os.Remove(p)
+				continue
+			}
+			discardMovedCopy(storage, dm, uuid, string(got), migrateDiscardWait)
+		}
+	}
+}
+
+// discardMovedCopy is handleMigrateDiscard's removal, in the background.
+func discardMovedCopy(storage *StorageManager, dm *DockerManager, serverUUID, progressID string, wait time.Duration) {
 	go func() {
 		deadline := time.Now().Add(wait)
 		for {
@@ -861,6 +948,7 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 		return
 	}
 
+	touchStagedArchive(storagePath, serverUUID)
 	log.Printf("migrate_push_r2 %s: uploading staged archive to R2 (%d parts)", serverUUID, len(partURLs))
 	var sent countingWriter
 	stopProgress := reportMigrationProgress(ctx, rdb, nodeToken, progressID, "pushing", sent.Total)
@@ -884,8 +972,22 @@ func handleMigratePushR2(ctx context.Context, rdb *redis.Client, storage *Storag
 		return
 	}
 
+	// The pull leg Core waits on next gets its own 6h, after this one's.
+	touchStagedArchive(storagePath, serverUUID)
 	setMigrationStatus(ctx, rdb, nodeToken, progressID, "pushed", "")
 	log.Printf("migrate_push_r2 %s: uploaded to R2", serverUUID)
+}
+
+// touchStagedArchive dates the staged archive and origin stamp from now, so
+// their age, which the restart guard and the boot sweep read, counts from the
+// archive's last use rather than from the end of staging.
+func touchStagedArchive(storagePath, serverUUID string) {
+	now := time.Now()
+	for _, p := range []string{stagedArchivePath(storagePath, serverUUID), migrationOriginPath(storagePath, serverUUID)} {
+		if err := os.Chtimes(p, now, now); err != nil && !os.IsNotExist(err) {
+			log.Printf("migrate_push_r2 %s: could not date %s: %v", serverUUID, p, err)
+		}
+	}
 }
 
 // handleMigratePullR2 (target side) downloads the migration archive from a
@@ -910,6 +1012,9 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 		return
 	}
 	defer migrateInFlight.Delete(serverUUID)
+	if refuseDiscardedAttempt(ctx, rdb, storage, nodeToken, serverUUID, progressID) {
+		return
+	}
 
 	// Same hazard as the LAN path: the R2 round trip does not make the source
 	// and target directories any less identical on shared storage.
@@ -996,12 +1101,18 @@ func putFilePresigned(ctx context.Context, url, filePath string, read io.Writer)
 		return fmt.Errorf("%w (%d bytes)", errArchiveOverSinglePut, size)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, io.TeeReader(f, read))
+	// Bounded the way a part PUT is (put): an endpoint that takes the body
+	// and never answers held a command slot until the node restarted.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stall := time.AfterFunc(partStallTimeout, cancel)
+	defer stall.Stop()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, &stallReader{r: io.TeeReader(f, read), t: stall, d: partStallTimeout})
 	if err != nil {
 		return err
 	}
 	req.ContentLength = size
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := objectTransferClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("presigned put: %w", withoutURL(err))
 	}

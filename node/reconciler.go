@@ -306,6 +306,7 @@ func restartBlocked(ctx context.Context, rdb *redis.Client, storage *StorageMana
 func StartReconciler(ctx context.Context, rdb *redis.Client, dm *DockerManager, storage *StorageManager) {
 	log.Println("Reconciler started (interval: 15s)")
 	sweepStaleMigrationArchives(storage)
+	resumeMigrationDiscards(storage, dm)
 	tracker := make(map[string]*reconcileInfo)
 	var mu sync.Mutex
 
