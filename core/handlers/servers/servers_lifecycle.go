@@ -2114,6 +2114,15 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 					return
 				}
 			}
+			// TCP extra ports share the host's port space with game ports.
+			// A one-port range is free exactly when no server_ports row holds it.
+			if _, ferr := h.d.Store.FreeServerPort(srv.NodeID, "tcp", req.HostPort, req.HostPort, nil); errors.Is(ferr, store.ErrPortRangeFull) {
+				httpx.SendJSONError(w, "Host port already in use on this node by a TCP extra port", 409)
+				return
+			} else if ferr != nil {
+				httpx.SendJSONError(w, "Could not verify host port availability", http.StatusInternalServerError)
+				return
+			}
 		}
 	}
 	// Either port counts: a container-port-only change used to be saved and

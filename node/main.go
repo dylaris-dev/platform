@@ -2060,6 +2060,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 				log.Printf("delete_sub_server %s: %s belongs to node %s on this Docker daemon, leaving it alone", cmd.Config.UUID, mcName, owner)
 				return
 			}
+			if ref == "" {
+				return
+			}
 			killCtx, killCancel := context.WithTimeout(ctx, 15*time.Second)
 			defer killCancel()
 			if killErr := dm.cli.ContainerKill(killCtx, ref, "SIGKILL"); killErr != nil {

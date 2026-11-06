@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
 )
 
 // Which MC containers on this Docker daemon are THIS node's.
@@ -136,10 +137,15 @@ func (dm *DockerManager) foreignContainer(name string) (owner string, running bo
 // ownedRef is foreignContainer for an action that follows the check: it also
 // returns what to act on, the inspected container's ID. Acting by name again
 // reached a container another node created under the name in between (a move
-// on a shared daemon); the ID cannot. ref is the name when nothing could be
-// inspected, which keeps the old behaviour there.
+// on a shared daemon); the ID cannot. ref is "" when no container has the
+// name: that gap is exactly when another node on the daemon may be creating
+// it, so a by-name action there would reach that node's container. It is the
+// name when the inspect failed otherwise, which keeps the old behaviour there.
 func (dm *DockerManager) ownedRef(name string) (ref, owner string) {
 	info, err := dm.cli.ContainerInspect(dm.ctx, name)
+	if client.IsErrNotFound(err) {
+		return "", ""
+	}
 	if err != nil || info.ContainerJSONBase == nil {
 		return name, ""
 	}

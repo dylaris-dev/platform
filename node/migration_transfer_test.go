@@ -311,3 +311,45 @@ func TestStaleMigrateOut(t *testing.T) {
 		}
 	}
 }
+
+// P22: the abort count lives in memory, so an abort that ran before a node
+// restart was forgotten and the redelivered migrate_out of that attempt staged
+// a full archive nothing removed. The abort is recorded on disk against the
+// attempt that was staging; a newer attempt still stages.
+func TestAnAbortBeforeARestartStillStopsTheRedeliveredMigrateOut(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, stagingTestUUID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(root, stagingTestUUID, "level.dat"), []byte("w"), 0o644)
+	storage := &StorageManager{paths: []string{root}}
+	abortNow := true
+	prev := migrateOutArchive
+	migrateOutArchive = func(src, dst string) (string, int64, error) {
+		if abortNow {
+			abortNow = false
+			handleMigrateAbort(storage, stagingTestUUID)
+		}
+		return migration.Archive(src, dst)
+	}
+	t.Cleanup(func() { migrateOutArchive = prev; migrateAborts.Delete(stagingTestUUID) })
+	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	attemptA := queue.MigrationProgressID(stagingTestUUID, "restart-a")
+	attemptB := queue.MigrationProgressID(stagingTestUUID, "restart-b")
+
+	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptA)
+	migrateAborts.Delete(stagingTestUUID) // the node restarts
+	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptA)
+
+	if st := readMigrationStatusMaybe(rdb, attemptA); st.Phase == "staged" {
+		t.Fatal("the redelivered migrate_out of an aborted attempt reported staged")
+	}
+	if _, err := os.Stat(stagedArchivePath(root, stagingTestUUID)); !os.IsNotExist(err) {
+		t.Fatalf("the aborted attempt left an archive: %v", err)
+	}
+
+	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptB)
+	if st := readMigrationStatusMaybe(rdb, attemptB); st.Phase != "staged" {
+		t.Fatalf("the next attempt: %+v, want staged", st)
+	}
+}

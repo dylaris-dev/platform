@@ -1237,6 +1237,16 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		}
 		return nil
 	}
+	if ref == "" {
+		if action == "delete" {
+			if dm.portMgr != nil {
+				dm.portMgr.ReleasePort(uuid)
+			}
+			return nil
+		}
+		// By name, so the caller still gets Docker's own not-found error.
+		ref = mcName
+	}
 
 	switch action {
 	case "start":

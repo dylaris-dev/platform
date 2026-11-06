@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -31,7 +32,10 @@ type portsFakeStore struct {
 	hosts    map[int]string
 	ports    []store.ServerPort
 	nextID   int
+	game     []int // servers.host_port on the node
 }
+
+func (f *portsFakeStore) GetUsedHostPortsOnNode(int) ([]int, error) { return f.game, nil }
 
 func (f *portsFakeStore) GetServerByID(id int) (*models.Server, error) { return f.servers[id], nil }
 func (f *portsFakeStore) GetNodeByID(int) (*models.Node, error)        { return f.node, nil }
@@ -115,9 +119,9 @@ func (f *portsFakeStore) CreateServerPort(p store.ServerPort) (store.ServerPort,
 	f.ports = append(f.ports, p)
 	return p, nil
 }
-func (f *portsFakeStore) FreeServerPort(nodeID int, protocol string, min, max int, _ []int) (int, error) {
+func (f *portsFakeStore) FreeServerPort(nodeID int, protocol string, min, max int, skip []int) (int, error) {
 	for port := min; port <= max; port++ {
-		taken := false
+		taken := slices.Contains(skip, port)
 		for _, q := range f.ports {
 			if q.NodeID == nodeID && q.Protocol == protocol && q.HostPort == port {
 				taken = true
@@ -606,5 +610,31 @@ func TestPortsOverviewShowsTheDefaultRange(t *testing.T) {
 		if n.Range != want || n.DefaultRange != !hosted || out.Settings.DefaultRange != want || n.Host != "voice.example.com" {
 			t.Fatalf("hosted=%v: node %+v settings %+v", hosted, n, out.Settings)
 		}
+	}
+}
+
+// P19: game host ports and TCP extra ports share the host's port space. An
+// admin can set a game port outside the game range, and an extra port handed
+// the same number made whichever server started second fail.
+func TestATCPExtraPortNeverTakesAGamePort(t *testing.T) {
+	pc := newPortsCase(t)
+	pc.fs.game = []int{26000, 26500}
+	var out struct {
+		Port store.ServerPort `json:"port"`
+	}
+	w := pc.create(tcpPort, false)
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if w.Code != 200 || out.Port.HostPort != 26001 {
+		t.Fatalf("tcp: status %d port %+v, want 26001 (26000 is a game port)", w.Code, out.Port)
+	}
+	// UDP does not clash with a game port.
+	w = pc.create(`{"protocol":"udp","containerPort":8100,"name":"Query"}`, false)
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if w.Code != 200 || out.Port.HostPort != 26000 {
+		t.Fatalf("udp: status %d port %+v, want 26000", w.Code, out.Port)
+	}
+	w = pc.create(`{"protocol":"tcp","containerPort":8100,"name":"Map","hostPort":26500}`, true)
+	if w.Code != 409 || errCode(w) != "port_taken" {
+		t.Fatalf("admin port on a game port: status %d code %q, want 409 port_taken", w.Code, errCode(w))
 	}
 }

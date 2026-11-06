@@ -70,6 +70,14 @@ func stagedArchivePath(storagePath, serverUUID string) string {
 	return filepath.Join(storagePath, migrationStagingDir, serverUUID+".zip")
 }
 
+// migrationAbortedPath records the attempt an abort stopped while it was
+// staging. The abort count is memory only, and the abort is acked: after a
+// node restart the redelivered migrate_out of that attempt would otherwise
+// stage a full copy nothing removes.
+func migrationAbortedPath(storagePath, serverUUID string) string {
+	return filepath.Join(storagePath, migrationStagingDir, serverUUID+".aborted")
+}
+
 // migrationOriginPath is the stamp migrate_out drops next to the staged archive,
 // naming the node that staged it.
 func migrationOriginPath(storagePath, serverUUID string) string {
@@ -160,14 +168,20 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	// A cancelled attempt can still be archiving when the retry runs, and
 	// both stamp the same path: only the latest run may remove the stamp.
 	// Identity, not progressID: a Core that sends no attempt gives both the
-	// same one.
-	run := new(byte)
+	// same one. It carries the progress id for handleMigrateAbort.
+	run := &progressID
 	migrateOutLatest.Store(serverUUID, run)
 	defer migrateOutLatest.CompareAndDelete(serverUUID, run)
 	storagePath := storage.GetServerPath(serverUUID)
 	if storagePath == "" {
 		log.Printf("migrate_out %s: no storage path found", serverUUID)
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "storage path not found")
+		return
+	}
+	// Only a per-attempt id: an old Core sends none, and every retry of its
+	// would read as the aborted one.
+	if b, err := os.ReadFile(migrationAbortedPath(storagePath, serverUUID)); err == nil && progressID != serverUUID && string(b) == progressID {
+		log.Printf("migrate_out %s: attempt %s was aborted, not staging it", serverUUID, progressID)
 		return
 	}
 	srcDir := filepath.Join(storagePath, serverUUID)
@@ -275,6 +289,9 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	}
 
 	setMigrationStatus(ctx, rdb, nodeToken, progressID, "staged", "")
+	if b, err := os.ReadFile(migrationAbortedPath(storagePath, serverUUID)); err == nil && string(b) != progressID {
+		os.Remove(migrationAbortedPath(storagePath, serverUUID)) // an older attempt's, superseded
+	}
 	log.Printf("migrate_out %s: staged (%s, sha256=%s)", serverUUID, formatBytes(uint64(size)), sha)
 }
 
@@ -701,6 +718,13 @@ func handleMigrateAbort(storage *StorageManager, serverUUID string) {
 	if storagePath == "" {
 		return
 	}
+	if cur, ok := migrateOutLatest.Load(serverUUID); ok {
+		// The run may not have made the staging dir yet.
+		os.MkdirAll(filepath.Join(storagePath, migrationStagingDir), 0755)
+		if err := os.WriteFile(migrationAbortedPath(storagePath, serverUUID), []byte(*cur.(*string)), 0644); err != nil {
+			log.Printf("migrate_abort %s: could not record the abort: %v", serverUUID, err)
+		}
+	}
 	for _, p := range []string{stagedArchivePath(storagePath, serverUUID), migrationOriginPath(storagePath, serverUUID)} {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			log.Printf("migrate_abort %s: could not remove %s: %v", serverUUID, p, err)
@@ -714,7 +738,7 @@ func handleMigrateAbort(storage *StorageManager, serverUUID string) {
 var migrateAborts sync.Map
 
 // migrateOutLatest holds the newest migrate_out run per server (uuid -> its
-// token).
+// token, a *string holding its progress id).
 var migrateOutLatest sync.Map
 
 func migrateAbortCount(uuid string) int64 {

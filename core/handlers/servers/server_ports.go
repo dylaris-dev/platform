@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -325,12 +326,26 @@ func (h *ServerHandler) CreateServerPort(w http.ResponseWriter, r *http.Request)
 // port of the node's range. It answers an error code and sentence instead of
 // an error, so every refusal reaches the panel as something to act on.
 func (h *ServerHandler) takePort(p store.ServerPort, hostPort int, gameRange string) (store.ServerPort, string, string) {
+	// A game host port lives in servers.host_port, not server_ports, and an
+	// admin may set one outside the game range: a TCP extra port on the same
+	// number made whichever of the two servers started second fail to bind.
+	var game []int
+	if p.Protocol == "tcp" {
+		var err error
+		if game, err = h.d.Store.GetUsedHostPortsOnNode(p.NodeID); err != nil {
+			log.Printf("ports: server %d: game ports: %v", p.ServerID, err)
+			return p, "port_failed", "Failed to add the port."
+		}
+	}
 	if hostPort != 0 {
 		if hostPort < 1024 || hostPort > 65535 || (hostPort >= 25520 && hostPort <= 25523) {
 			return p, "port_out_of_range", "Pick a host port between 1024 and 65535, outside the node's own ports 25520-25523."
 		}
 		if gameRange != "" && services.InPortRange(hostPort, gameRange) {
 			return p, "port_out_of_range", "That port is in the node's game port range (" + gameRange + "). Pick one outside it."
+		}
+		if slices.Contains(game, hostPort) {
+			return p, "port_taken", "A server on this node already uses TCP port " + strconv.Itoa(hostPort) + " as its game port."
 		}
 		p.HostPort = hostPort
 		got, err := h.d.Store.CreateServerPort(p)
@@ -360,7 +375,7 @@ func (h *ServerHandler) takePort(p store.ServerPort, hostPort int, gameRange str
 		return p, "ports_range_conflict", "The extra port range " + rng + " overlaps the node's game port range " + gameRange + ". An administrator moves it under Settings, Extra ports."
 	}
 	for attempt := 0; attempt < 3; attempt++ {
-		free, err := h.d.Store.FreeServerPort(p.NodeID, p.Protocol, min, max, nil)
+		free, err := h.d.Store.FreeServerPort(p.NodeID, p.Protocol, min, max, game)
 		if errors.Is(err, store.ErrPortRangeFull) {
 			return p, "ports_range_full", "Every " + strings.ToUpper(p.Protocol) + " port in this node's range (" + rng + ") is taken. Ask an administrator to widen the range."
 		}
@@ -599,12 +614,21 @@ func (h *ServerHandler) syncPortsToStart(srv *models.Server, subName string) {
 	if err != nil || node == nil {
 		return
 	}
+	var game []int
 	for _, p := range ports {
 		if p.NodeID == srv.NodeID {
 			continue
 		}
-		if err := h.d.Store.MoveServerPort(p.ID, srv.NodeID, p.HostPort); err == nil {
-			continue
+		if game == nil {
+			if game, err = h.d.Store.GetUsedHostPortsOnNode(srv.NodeID); err != nil {
+				log.Printf("ports: server %d: game ports: %v", srv.ID, err)
+			}
+		}
+		// Kept only off the new node's game ports; takePort below skips them.
+		if p.Protocol != "tcp" || !slices.Contains(game, p.HostPort) {
+			if err := h.d.Store.MoveServerPort(p.ID, srv.NodeID, p.HostPort); err == nil {
+				continue
+			}
 		}
 		gameRange := ""
 		if hb := services.LoadHeartbeat(ctx, h.d.Redis, node.Token); hb != nil {

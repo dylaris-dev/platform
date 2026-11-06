@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"dylaris-core/models"
@@ -23,6 +24,7 @@ type portConflictFakeStore struct {
 
 	usedPorts    []int
 	usedPortsErr error
+	tcpExtras    []int // server_ports tcp host ports on the node
 	portsUpdated bool
 
 	settings         map[string]string
@@ -45,6 +47,14 @@ func (f *portConflictFakeStore) GetServerByID(id int) (*models.Server, error) {
 func (f *portConflictFakeStore) UpdateServerResources(int, int, float64, int64) error { return nil }
 func (f *portConflictFakeStore) GetUsedHostPortsOnNode(int) ([]int, error) {
 	return f.usedPorts, f.usedPortsErr
+}
+func (f *portConflictFakeStore) FreeServerPort(_ int, protocol string, min, max int, _ []int) (int, error) {
+	for p := min; p <= max; p++ {
+		if protocol != "tcp" || !slices.Contains(f.tcpExtras, p) {
+			return p, nil
+		}
+	}
+	return 0, store.ErrPortRangeFull
 }
 func (f *portConflictFakeStore) UpdateServerPorts(int, int, int) error {
 	f.portsUpdated = true
@@ -107,6 +117,23 @@ func TestUpdateServerResources_RejectsAPortAlreadyInUse(t *testing.T) {
 	}
 	if fake.portsUpdated {
 		t.Error("a conflicting port was assigned")
+	}
+}
+
+// P19: a game host port is refused when a TCP extra port on the node holds it;
+// the second of the two servers to start would fail to bind.
+func TestUpdateServerResources_RejectsAPortATCPExtraPortHolds(t *testing.T) {
+	fake := &portConflictFakeStore{tcpExtras: []int{25705}}
+	h := &ServerHandler{d: testDeps(Deps{Store: fake})}
+
+	rec := httptest.NewRecorder()
+	h.UpdateServerResources(rec, portReq(t, 25705))
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409", rec.Code)
+	}
+	if fake.portsUpdated {
+		t.Error("a port an extra port holds was assigned")
 	}
 }
 

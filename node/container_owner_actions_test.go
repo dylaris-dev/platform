@@ -393,3 +393,26 @@ func TestCreateStoppedPullsAMissingImage(t *testing.T) {
 		t.Fatalf("no container was created: %v", d.changed())
 	}
 }
+
+// P21: when the inspect finds no mc_<uuid>, a delete removed by NAME anyway, so
+// on a shared daemon it force-removed the container another node created under
+// the name a moment later. Not found is nothing to remove; the port is still
+// released.
+func TestDeleteOfAMissingContainerRemovesNothingByName(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	dm, d := newSharedDaemon(t, "-", false, nil)
+	dm.portMgr = NewPortManager(rdb, "node-a", 25600, 25699, seqMode)
+	if _, err := dm.portMgr.AllocatePort(sharedDaemonUUID); err != nil {
+		t.Fatal(err)
+	}
+	if err := dm.PowerAction(sharedDaemonUUID, "delete"); err != nil {
+		t.Fatalf("delete of a missing container: %v", err)
+	}
+	if ch := d.changed(); len(ch) != 0 {
+		t.Fatalf("removed by name after a not-found inspect: %v", ch)
+	}
+	if got := dm.portMgr.GetPort(sharedDaemonUUID); got != 0 {
+		t.Errorf("port %d still held after the delete", got)
+	}
+}
