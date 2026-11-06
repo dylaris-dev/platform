@@ -29,6 +29,8 @@ type serverPowerLock struct {
 	active bool
 	// waiting holds one waiter per slot (waitSlot).
 	waiting map[string]powerWaiter
+	// abandon is the holder's startGuard, nil when it has none.
+	abandon func() bool
 }
 
 type powerWaiter struct {
@@ -127,6 +129,53 @@ func inheritResourceChanges(newer *DockerConfig, older DockerConfig) {
 	if newer.ContainerPort == 0 {
 		newer.ContainerPort = older.ContainerPort
 	}
+}
+
+// tryLockServerPower takes the server's lock only if it is free, for the
+// reconciler: it must not queue behind a command, and a command must not find
+// the reconciler's recreate running beside it unlocked.
+func tryLockServerPower(uuid string) (func(), bool) {
+	l := powerLockFor(uuid)
+	select {
+	case l.turn <- struct{}{}:
+	default:
+		return nil, false
+	}
+	l.setActive(true)
+	return func() {
+		l.setActive(false)
+		<-l.turn
+	}, true
+}
+
+// startGuard sets the check the lock holder's bring-up makes right before
+// ContainerStart (startAbandoned), and returns its removal. Kill takes no lock,
+// so one pressed during a recreate - an image pull, an ownership walk - hit a
+// container that was gone or not yet started, failed, and the recreate then
+// started the server against the user's last click.
+func startGuard(uuid string, abandon func() bool) func() {
+	l := powerLockFor(uuid)
+	l.held.Lock()
+	l.abandon = abandon
+	l.held.Unlock()
+	return func() {
+		l.held.Lock()
+		l.abandon = nil
+		l.held.Unlock()
+	}
+}
+
+// startAbandoned is the last check before a server's container is started.
+func startAbandoned(uuid string) bool {
+	v, ok := serverPowerLocks.Load(uuid)
+	if !ok {
+		return false
+	}
+	l := v.(*serverPowerLock)
+	l.held.Lock()
+	abandon := l.abandon
+	l.held.Unlock()
+	return abandon != nil && abandon()
 }
 
 func (l *serverPowerLock) setActive(v bool) {

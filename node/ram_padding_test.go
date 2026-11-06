@@ -195,3 +195,26 @@ func TestRAMFromContainer(t *testing.T) {
 		}
 	}
 }
+
+// A host without a memory cgroup stores no limit, so the limit never matched
+// the booking and every resource change, a CPU-only one included, recreated
+// (restarted) a running server. The labels say what it was created for.
+func TestCreatedMemoryOnAHostWithoutLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		labels map[string]string
+		mem    int64
+		want   int64
+	}{
+		{"limit stored", map[string]string{ramLabel: "4096", ramPaddingLabel: "512"}, 4608 << 20, 4608 << 20},
+		{"no limit, labelled", map[string]string{ramLabel: "4096", ramPaddingLabel: "1024"}, 0, 5120 << 20},
+		{"no limit, default padding", map[string]string{ramLabel: "2048"}, 0, 2560 << 20},
+		{"no limit, no labels", nil, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := createdMemory(tc.labels, tc.mem); got != tc.want {
+				t.Errorf("createdMemory = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

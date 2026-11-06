@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -225,7 +226,17 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 
 			// RecreateWithCommand handles stop+remove (no-op if missing), port binding, and start.
 			// It errors only if network or container create fails.
-			if err := dm.RecreateWithCommand(config); err != nil {
+			ran, err := reconcileStart(ctx, rdb, uuid, func() error {
+				// A command may have built one since the listing.
+				if !dm.containerGone(uuid) {
+					return errStartAbandoned
+				}
+				return dm.RecreateWithCommand(config)
+			})
+			if !ran || errors.Is(err, errStartAbandoned) {
+				continue
+			}
+			if err != nil {
 				log.Printf("reconciler(deleted): failed to recreate mc_%s: %v", uuid, err)
 			} else {
 				log.Printf("reconciler(deleted): mc_%s recreated and started", uuid)
@@ -233,6 +244,30 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 			}
 		}
 	}
+}
+
+// reconcileStart runs one of the reconciler's bring-ups under the server's
+// power lock, and reports false without running it when a command holds the
+// lock. Unlocked, a stop found no container while the recreate pulled the
+// image, reported "stopped", and the recreate then started the server; nothing
+// stops a running server whose desired state is stopped. desired_state is read
+// again right before the start, since a kill takes no lock either.
+func reconcileStart(ctx context.Context, rdb *redis.Client, uuid string, start func() error) (bool, error) {
+	release, ok := tryLockServerPower(uuid)
+	if !ok {
+		return false, nil
+	}
+	defer release()
+	defer startGuard(uuid, func() bool {
+		desired, err := rdb.Get(ctx, desiredStateKey(uuid)).Result()
+		if err != nil || desired == "online" {
+			return false
+		}
+		log.Printf("reconciler: mc_%s left stopped, its desired state is now %q", uuid, desired)
+		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
+		return true
+	})()
+	return true, start()
 }
 
 // restartBlocked reports whether the reconciler must leave a stopped container
@@ -375,7 +410,11 @@ func StartReconciler(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 			// Signal "restarting" status
 			rdb.Set(ctx, statusKey, "restarting", 30*time.Second)
 
-			if err := dm.PowerAction(c.UUID, "start"); err != nil {
+			ran, err := reconcileStart(ctx, rdb, c.UUID, func() error { return dm.PowerAction(c.UUID, "start") })
+			if !ran || errors.Is(err, errStartAbandoned) {
+				continue
+			}
+			if err != nil {
 				log.Printf("reconciler: failed to restart mc_%s: %v", c.UUID, err)
 				info.crashCount++
 				info.lastRestart = time.Now()

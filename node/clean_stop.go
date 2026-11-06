@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -99,7 +100,13 @@ func logTailAsksRestart(ctx context.Context, rdb *redis.Client, key string) bool
 			continue
 		}
 		msg := consoleMessage(line)
-		if pluginLifecycleLine(msg) {
+		if pluginLifecycleLine(msg) || playerChatLine(msg) {
+			continue
+		}
+		if _, cmd, ok := strings.Cut(msg, " issued server command: "); ok {
+			if restartCommand(cmd) {
+				return true
+			}
 			continue
 		}
 		l := strings.ToLower(msg)
@@ -140,6 +147,30 @@ func pluginLifecycleLine(msg string) bool {
 // and a stop typed within minutes of such a crash brought the server back.
 func shipperLine(line string) bool {
 	return strings.HasPrefix(line, "[Server crashed") || strings.HasPrefix(line, "[dylaris]") || strings.HasPrefix(line, "[log-shipper]")
+}
+
+// chatName is a chat line as plugins format it once consoleMessage took the
+// rank tags off: "Steve: hi", "Steve » hi", "Steve > hi", with the "~" or "."
+// nickname and Bedrock prefixes.
+var chatName = regexp.MustCompile(`^[~.]?([A-Za-z0-9_]{3,16})(: | » | >>? )`)
+
+// playerChatLine reports what a player wrote that is not vanilla chat: plugin
+// formatted chat and /me ("* Steve hi"). A plugin announcing "Restart: in 10s"
+// looks like chat by its shape, so a "name" that says restart itself is not one.
+func playerChatLine(msg string) bool {
+	if strings.HasPrefix(msg, "* ") {
+		return true
+	}
+	m := chatName.FindStringSubmatch(msg)
+	return m != nil && !strings.Contains(strings.ToLower(m[1]), "restart")
+}
+
+// restartCommand reports whether a player's command is a restart ("/restart",
+// "/essentials:restart"), not one that only mentions it, like a /msg.
+func restartCommand(cmd string) bool {
+	name, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(cmd), "/"), " ")
+	name = strings.ToLower(name)
+	return name == "restart" || strings.HasSuffix(name, ":restart")
 }
 
 // chatLine reports a player's chat message: "[12:00:00] [Server thread/INFO]:

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -876,10 +877,17 @@ func lookupPublicIP() string {
 	return ""
 }
 
+var modeRefreshMu sync.Mutex
+
 // loadModesFromRedis reads routing_mode, file_access_mode, port_mode and
 // container_port from Redis. Called on startup and every 30s so the node
 // reacts to admin setting changes without a restart.
 func loadModesFromRedis(ctx context.Context, rdb *redis.Client) {
+	// One round at a time: each is a read-modify-write, and the ticker's round
+	// that read the old mode finished after a command's round that read the
+	// new one, installing the old mode again.
+	modeRefreshMu.Lock()
+	defer modeRefreshMu.Unlock()
 	// Read the current set, overwrite only what Redis actually carries, then
 	// install the whole thing at once. Assigning the globals field by field would
 	// let a reader see a half-applied round, and every one of them is read from
@@ -999,17 +1007,13 @@ func readServerRootFile(serverDir, name string) ([]byte, error) {
 	} else if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", name)
 	}
-	f, err := root.Open(name)
+	// Re-checked on the open file, which openRegularIn opens without blocking:
+	// the name can be swapped between the two, for a pipe too.
+	f, err := openRegularIn(root, name)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	// Re-checked on the open file: the name can be swapped between the two.
-	if info, err := f.Stat(); err != nil {
-		return nil, err
-	} else if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", name)
-	}
 	return io.ReadAll(f)
 }
 
@@ -1425,6 +1429,18 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			log.Printf("%s for %s dropped: a stop queued after it ran while it waited", cmd.Action, cmd.Config.UUID)
 			return
 		}
+		// And once more right before ContainerStart, wherever this action
+		// brings the container up: a kill does not wait for the lock.
+		if cmd.Action != "stop" {
+			defer startGuard(cmd.Config.UUID, func() bool {
+				if !stopNotedAfter(cmd.Config.UUID, cmd.IssuedAt) {
+					return false
+				}
+				log.Printf("%s for %s leaves the container stopped: a stop or kill queued after it came in while it ran", cmd.Action, cmd.Config.UUID)
+				rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+				return true
+			})()
+		}
 	}
 
 	// Apply node-level default cpuset if not set by core
@@ -1767,7 +1783,8 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if abandonedForStop(ctx, rdb, cmd) {
 			return
 		}
-		if err := dm.RecreateWithCommand(cmd.Config); err != nil {
+		// Abandoned still switched: the new container is there, only stopped.
+		if err := dm.RecreateWithCommand(cmd.Config); err != nil && !errors.Is(err, errStartAbandoned) {
 			log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
 		} else {
 			if err := writeServerRootFile(serverPath, ".active_server", []byte(subName)); err != nil {
@@ -1800,7 +1817,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "stop":
 		log.Printf("Graceful stop for Server %s ...", cmd.Config.UUID)
-		gracefulStop(rdb, cmd.Config.UUID, dm)
+		if err := gracefulStop(rdb, cmd.Config.UUID, dm); err != nil {
+			log.Printf("Failed to stop server %s: %v", cmd.Config.UUID, err)
+			break
+		}
 		log.Printf("Server %s stopped", cmd.Config.UUID)
 		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 
@@ -1929,16 +1949,17 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		toreDown := false
 		teardown := func() {
 			toreDown = true
-			if owner, _ := dm.foreignContainer(mcName); owner != "" {
+			ref, owner := dm.ownedRef(mcName)
+			if owner != "" {
 				log.Printf("delete_sub_server %s: %s belongs to node %s on this Docker daemon, leaving it alone", cmd.Config.UUID, mcName, owner)
 				return
 			}
 			killCtx, killCancel := context.WithTimeout(ctx, 15*time.Second)
 			defer killCancel()
-			if killErr := dm.cli.ContainerKill(killCtx, mcName, "SIGKILL"); killErr != nil {
+			if killErr := dm.cli.ContainerKill(killCtx, ref, "SIGKILL"); killErr != nil {
 				log.Printf("delete_sub_server %s: ContainerKill: %v (probably already stopped — continuing)", cmd.Config.UUID, killErr)
 			}
-			statusCh, errCh := dm.cli.ContainerWait(killCtx, mcName, container.WaitConditionNotRunning)
+			statusCh, errCh := dm.cli.ContainerWait(killCtx, ref, container.WaitConditionNotRunning)
 			select {
 			case <-statusCh:
 			case waitErr := <-errCh:
@@ -1948,7 +1969,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			case <-killCtx.Done():
 				log.Printf("delete_sub_server %s: kill wait timed out, proceeding anyway", cmd.Config.UUID)
 			}
-			if rmErr := dm.cli.ContainerRemove(ctx, mcName, container.RemoveOptions{Force: true}); rmErr != nil {
+			if rmErr := dm.cli.ContainerRemove(ctx, ref, container.RemoveOptions{Force: true}); rmErr != nil {
 				log.Printf("delete_sub_server %s: ContainerRemove: %v (probably gone already — continuing)", cmd.Config.UUID, rmErr)
 			}
 		}
@@ -2249,9 +2270,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// ContainerRemove rather than PowerAction("delete") because that also
 		// releases the host port, and the server keeps its port across a move.
 		mcName := "mc_" + cmd.Config.UUID
-		if owner, _ := dm.foreignContainer(mcName); owner != "" {
+		if ref, owner := dm.ownedRef(mcName); owner != "" {
 			log.Printf("migrate_storage %s: %s belongs to node %s on this Docker daemon, leaving it alone", cmd.Config.UUID, mcName, owner)
-		} else if rmErr := dm.cli.ContainerRemove(ctx, mcName, container.RemoveOptions{Force: true}); rmErr != nil {
+		} else if rmErr := dm.cli.ContainerRemove(ctx, ref, container.RemoveOptions{Force: true}); rmErr != nil {
 			log.Printf("migrate_storage %s: ContainerRemove: %v (probably gone already - the next start recreates it)", cmd.Config.UUID, rmErr)
 		}
 
@@ -2467,7 +2488,12 @@ func justStarted(st *container.State, now time.Time) bool {
 
 // gracefulStop sends save-all and stop commands via the Redis stdin queue,
 // waits for the container to exit, and falls back to docker stop if needed.
-func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
+//
+// It returns an error when it could not stop a running server: the inspect
+// failed for another reason than "no such container", or the container is
+// another node's. Read as "not running", a stop then reported "stopped" for a
+// server that went on running.
+func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) error {
 	ctx := context.Background()
 	inputKey := fmt.Sprintf("dylaris:server:%s:input", uuid)
 	stopKey := fmt.Sprintf("dylaris:server:%s:stop-requested", uuid)
@@ -2475,15 +2501,17 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
 
 	// Check if container is running
 	info, err := dm.cli.ContainerInspect(ctx, mcName)
+	if err != nil && !client.IsErrNotFound(err) {
+		return fmt.Errorf("inspect %s: %w", mcName, err)
+	}
 	if err != nil || !info.State.Running {
 		log.Printf("Server %s container not running, skipping graceful stop", uuid)
-		return
+		return nil
 	}
 	// Another node's server on a shared Docker daemon (see foreignContainer):
 	// the console stop below would reach it by uuid just as the docker stop would.
 	if info.Config != nil && !ownsContainer(info.Config.Labels, nodeIdentities(nodeSecretDir)) {
-		log.Printf("Server %s: %s belongs to node %s on this Docker daemon, not stopping it", uuid, mcName, info.Config.Labels[ownerLabel])
-		return
+		return fmt.Errorf("%s belongs to node %s on this Docker daemon, not stopping it", mcName, info.Config.Labels[ownerLabel])
 	}
 
 	// Set stop flag so log-shipper knows not to restart Java
@@ -2538,12 +2566,15 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) {
 		cInfo, cErr := dm.cli.ContainerInspect(ctx, mcName)
 		if cErr != nil || !cInfo.State.Running {
 			log.Printf("Server %s: container stopped gracefully", uuid)
-			return
+			return nil
 		}
 		time.Sleep(1 * time.Second)
 	}
 
 	// Fallback: force stop
 	log.Printf("Server %s: didn't stop gracefully, forcing...", uuid)
-	dm.PowerAction(uuid, "stop")
+	if err := dm.PowerAction(uuid, "stop"); err != nil && !client.IsErrNotFound(err) {
+		return err
+	}
+	return nil
 }

@@ -296,16 +296,34 @@ func TestDirectByNameRemovesAskWhoseContainerItIs(t *testing.T) {
 	}
 	s := string(b)
 	for _, c := range []struct{ from, to string }{
-		{"teardown := func() {", "dm.cli.ContainerKill(killCtx, mcName"},
-		{`mcName := "mc_" + cmd.Config.UUID`, "dm.cli.ContainerRemove(ctx, mcName"},
+		{"teardown := func() {", "dm.cli.ContainerKill(killCtx, ref"},
+		{`mcName := "mc_" + cmd.Config.UUID`, "dm.cli.ContainerRemove(ctx, ref"},
 	} {
 		i := strings.Index(s, c.from)
 		j := strings.Index(s[max(i, 0):], c.to)
 		if i < 0 || j < 0 {
 			t.Fatalf("cannot locate %q; move this assertion with it", c.from)
 		}
-		if !strings.Contains(s[i:i+j], "dm.foreignContainer(mcName)") {
+		if !strings.Contains(s[i:i+j], "dm.ownedRef(mcName)") {
 			t.Errorf("the by-name call after %q no longer checks the owner label", c.from)
+		}
+	}
+}
+
+// The owner check and the action were two by-name calls, so a container
+// another node created under the name in between (a move on a shared daemon)
+// was the one stopped, killed or removed. The action goes to the inspected ID.
+func TestPowerActionActsOnTheContainerItChecked(t *testing.T) {
+	for _, c := range []struct{ action, want string }{
+		{"stop", "stop c-id"},
+		{"kill", "kill c-id"},
+		{"delete", "remove c-id"},
+		{"start", "start c-id"},
+	} {
+		dm, d := newSharedDaemon(t, "node-a", c.action != "start", nil)
+		dm.PowerAction(sharedDaemonUUID, c.action)
+		if ch := d.changed(); len(ch) != 1 || ch[0] != c.want {
+			t.Errorf("%s: %v, want [%s]", c.action, ch, c.want)
 		}
 	}
 }

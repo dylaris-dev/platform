@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -94,5 +95,61 @@ func TestLoadModesFromRedis_ExternalNodeStaysOnGateway(t *testing.T) {
 	}
 	if got := getFileAccessMode(); got != "beam" {
 		t.Fatalf("external node file access mode = %q, want beam", got)
+	}
+}
+
+// pauseAfterRoutingRead holds a client's round right after it read the routing
+// mode, until release is closed.
+type pauseAfterRoutingRead struct{ reached, release chan struct{} }
+
+func (pauseAfterRoutingRead) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (pauseAfterRoutingRead) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (h pauseAfterRoutingRead) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if a := cmd.Args(); len(a) == 2 && a[0] == "get" && a[1] == "dylaris:routing_mode" {
+			close(h.reached)
+			<-h.release
+		}
+		return err
+	}
+}
+
+// Rounds ran side by side, each a read-modify-write: the ticker's round read
+// the old mode, a command's round read and installed the new one, and the
+// ticker's then finished and installed the old one again.
+func TestAnOlderModeRoundCannotOverwriteANewerOne(t *testing.T) {
+	mr := miniredis.RunT(t)
+	ctx := context.Background()
+	origRouting, origFile, origPort, origCPort, origIO, origPids := getModes()
+	origExternal := nodeExternal
+	t.Cleanup(func() {
+		setModes(origRouting, origFile, origPort, origCPort, origIO, origPids)
+		nodeExternal = origExternal
+	})
+	nodeExternal = false
+
+	mr.Set("dylaris:routing_mode", "ip_port")
+	stale := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	h := pauseAfterRoutingRead{reached: make(chan struct{}), release: make(chan struct{})}
+	stale.AddHook(h)
+	staleDone := make(chan struct{})
+	go func() { loadModesFromRedis(ctx, stale); close(staleDone) }()
+	<-h.reached
+
+	mr.Set("dylaris:routing_mode", "gateway") // Core switches
+	freshDone := make(chan struct{})
+	go func() { loadModesFromRedis(ctx, redis.NewClient(&redis.Options{Addr: mr.Addr()})); close(freshDone) }()
+	select {
+	case <-freshDone:
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(h.release)
+	<-staleDone
+	<-freshDone
+	if got := getRoutingMode(); got != "gateway" {
+		t.Fatalf("routing mode = %q after the switch, want gateway", got)
 	}
 }

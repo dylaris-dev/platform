@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -405,6 +406,20 @@ func ramFromContainer(labels map[string]string, memoryBytes int64) int {
 		return v
 	}
 	return max(int(memoryBytes/(1024*1024))-ramPaddingFromLabels(labels), 0)
+}
+
+// createdMemory is the memory limit a container was created for. A host
+// without a memory cgroup stores none (0), and comparing that with the booking
+// made every resource change, a CPU-only one included, recreate a running
+// server; the labels say what it was created for.
+func createdMemory(labels map[string]string, memoryBytes int64) int64 {
+	if memoryBytes != 0 {
+		return memoryBytes
+	}
+	if ram := ramFromContainer(labels, 0); ram > 0 {
+		return int64(ram+ramPaddingFromLabels(labels)) << 20
+	}
+	return 0
 }
 
 // The project moved from ghcr.io/bartis-dev/dylaris-* to ghcr.io/dylaris-dev/*
@@ -1176,6 +1191,10 @@ func (dm *DockerManager) RecreateKeepingRunState(config ServerConfig) error {
 		return nerr
 	}
 	_, err = dm.startMinecraftContainer(config, netID, netName, wasRunning)
+	if errors.Is(err, errStartAbandoned) {
+		// The new container holds the change; it is only left stopped.
+		return nil
+	}
 	if err == nil && wasRunning && dm.announceStarting != nil {
 		dm.announceStarting(config.UUID)
 	}
@@ -1188,7 +1207,8 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 	// On a shared docker.sock the name may be another node's container; see
 	// foreignContainer. The port ledger is this node's own, so a delete still
 	// frees it, and reports success: nothing of this node's is left there.
-	if owner, _ := dm.foreignContainer(mcName); owner != "" {
+	ref, owner := dm.ownedRef(mcName)
+	if owner != "" {
 		log.Printf("%s %s: the container belongs to node %s on this Docker daemon, leaving it alone", action, mcName, owner)
 		if action != "delete" {
 			return fmt.Errorf("%s belongs to node %s", mcName, owner)
@@ -1216,8 +1236,11 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 				}
 			}
 		}
+		if startAbandoned(uuid) {
+			return errStartAbandoned
+		}
 		dm.closeNetGate(uuid)
-		err := dm.cli.ContainerStart(dm.ctx, mcName, container.StartOptions{})
+		err := dm.cli.ContainerStart(dm.ctx, ref, container.StartOptions{})
 		if err != nil && strings.Contains(err.Error(), "already exists") {
 			// A stale network endpoint left by an ungraceful prior exit blocks the
 			// start ("endpoint with name mc_... already exists in network ..."),
@@ -1227,10 +1250,10 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 			// the endpoint from the container's own network config.
 			if info, ierr := dm.cli.ContainerInspect(dm.ctx, mcName); ierr == nil {
 				for netName := range info.NetworkSettings.Networks {
-					_ = dm.cli.NetworkDisconnect(dm.ctx, netName, mcName, true)
+					_ = dm.cli.NetworkDisconnect(dm.ctx, netName, ref, true)
 				}
 			}
-			err = dm.cli.ContainerStart(dm.ctx, mcName, container.StartOptions{})
+			err = dm.cli.ContainerStart(dm.ctx, ref, container.StartOptions{})
 		}
 		if err == nil {
 			dm.openNetGate(uuid)
@@ -1238,11 +1261,11 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		return err
 	case "stop":
 		timeout := 30
-		return dm.cli.ContainerStop(dm.ctx, mcName, container.StopOptions{Timeout: &timeout})
+		return dm.cli.ContainerStop(dm.ctx, ref, container.StopOptions{Timeout: &timeout})
 	case "kill":
-		return dm.cli.ContainerKill(dm.ctx, mcName, "SIGKILL")
+		return dm.cli.ContainerKill(dm.ctx, ref, "SIGKILL")
 	case "delete":
-		err := dm.cli.ContainerRemove(dm.ctx, mcName, container.RemoveOptions{Force: true})
+		err := dm.cli.ContainerRemove(dm.ctx, ref, container.RemoveOptions{Force: true})
 		// Released whatever the removal reported. The ledger is keyed by SERVER,
 		// not by container, and this action's only caller goes on to delete the
 		// server's directory outright - so by the time it returns there is no
@@ -1453,6 +1476,9 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		return "", fmt.Errorf("server %s was deleted on this node while its container was being prepared", config.UUID)
 	}
 
+	if autoStart && startAbandoned(config.UUID) {
+		return containerName, errStartAbandoned
+	}
 	if autoStart {
 		dm.closeNetGate(config.UUID)
 		err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{})
@@ -1669,7 +1695,7 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 			config.Docker.RAMPaddingMB = &p
 		}
 		have := resourceShape{
-			Memory:   info.HostConfig.Memory,
+			Memory:   createdMemory(info.Config.Labels, info.HostConfig.Memory),
 			NanoCPUs: info.HostConfig.NanoCPUs,
 			Cpuset:   info.HostConfig.CpusetCpus,
 			Image:    info.Config.Image,

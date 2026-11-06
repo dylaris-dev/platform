@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -87,12 +88,21 @@ func overtakenByStop(action, uuid string, issuedAt int64) bool {
 	default:
 		return false
 	}
+	return stopNotedAfter(uuid, issuedAt)
+}
+
+// stopNotedAfter reports a stop or kill begun that was queued after issuedAt.
+func stopNotedAfter(uuid string, issuedAt int64) bool {
 	if issuedAt == 0 {
 		return false
 	}
 	v, ok := lastStopIssued.Load(uuid)
 	return ok && v.(int64) > issuedAt
 }
+
+// errStartAbandoned is a bring-up that left its new container stopped because
+// startAbandoned said so. The container is there, built from the new config.
+var errStartAbandoned = errors.New("start abandoned: a stop or kill came in while the container was being prepared")
 
 // abandonedForStop is the check right before a start, restart or switch brings
 // the container up. Kill takes no lock, so one pressed while the action was

@@ -131,6 +131,25 @@ func (dm *DockerManager) foreignContainer(name string) (owner string, running bo
 	return info.Config.Labels[ownerLabel], info.State != nil && info.State.Running
 }
 
+// ownedRef is foreignContainer for an action that follows the check: it also
+// returns what to act on, the inspected container's ID. Acting by name again
+// reached a container another node created under the name in between (a move
+// on a shared daemon); the ID cannot. ref is the name when nothing could be
+// inspected, which keeps the old behaviour there.
+func (dm *DockerManager) ownedRef(name string) (ref, owner string) {
+	info, err := dm.cli.ContainerInspect(dm.ctx, name)
+	if err != nil || info.ContainerJSONBase == nil {
+		return name, ""
+	}
+	if info.Config != nil && !ownsContainer(info.Config.Labels, nodeIdentities(nodeSecretDir)) {
+		return name, info.Config.Labels[ownerLabel]
+	}
+	if info.ID == "" {
+		return name, ""
+	}
+	return info.ID, ""
+}
+
 // refuseForeignRunning guards the remove-before-create paths. Replacing another
 // node's STOPPED mc_<uuid> stays allowed: Core sends create work only to the
 // node the server is assigned to, and on a shared daemon that is how a moved

@@ -133,7 +133,8 @@ func TestALeftoverContainerOfADeletedServerIsRemoved(t *testing.T) {
 			markServerDeleted(uuid)
 		}
 		left := dm.removeDeletedLeftovers([]MCContainerInfo{{UUID: uuid, ContainerName: "mc_" + uuid}})
-		removed := strings.Contains(strings.Join(d.changed(), ","), "remove mc_"+uuid)
+		// By the inspected ID, not the name (ownedRef).
+		removed := strings.Contains(strings.Join(d.changed(), ","), "remove c-id")
 		if removed != c.want || (len(left) == 0) != c.deleted {
 			t.Errorf("owner %q deleted %v: removed %v (%v), left %v", c.owner, c.deleted, removed, d.changed(), left)
 		}
