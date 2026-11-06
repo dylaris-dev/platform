@@ -75,3 +75,40 @@ func TestServerRootReadsRefuseLinks(t *testing.T) {
 		t.Fatalf("savedContainerPortIn followed a link to a neighbour's config: port %d", got)
 	}
 }
+
+// A root container can truncate one of these files to a terabyte: sparse, it
+// costs no quota, and an unbounded read OOM-killed the node at every boot
+// (restorePortLedger). Past serverRootFileMax the read is refused.
+func TestServerRootReadIsBounded(t *testing.T) {
+	srv := t.TempDir()
+	for _, c := range []struct {
+		name    string
+		size    int64
+		wantErr bool
+	}{
+		{"small", 64, false},
+		{"at the cap", serverRootFileMax, false},
+		{"past the cap", serverRootFileMax + 1, true},
+		{"sparse terabyte", 1 << 40, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := filepath.Join(srv, ".node_config.json")
+			f, err := os.Create(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.Truncate(c.size); err != nil {
+				f.Close()
+				t.Skipf("cannot make a %d byte file here: %v", c.size, err)
+			}
+			f.Close()
+			b, err := readServerRootFile(srv, ".node_config.json")
+			if (err != nil) != c.wantErr {
+				t.Fatalf("err = %v, want error %v", err, c.wantErr)
+			}
+			if err == nil && int64(len(b)) != c.size {
+				t.Fatalf("read %d bytes, want %d", len(b), c.size)
+			}
+		})
+	}
+}

@@ -166,3 +166,73 @@ func TestExpressKeepsMainPoolOrder(t *testing.T) {
 		}
 	}
 }
+
+// A kill must not wait behind stops that fill the express pool: a node's stops
+// block on their server's power lock, or spend 30s in a graceful stop, and kill
+// is what someone presses when a stop hangs. Instant messages have workers of
+// their own, and stops waiting for an express worker do not stop the reader.
+func TestInstantRunsPastABusyExpressPool(t *testing.T) {
+	rdb := newTestRedis(t)
+	ctx := context.Background()
+	c := NewConsumer(rdb, "q", "g", "c1")
+	c.Block = 50 * time.Millisecond
+	c.Concurrency = 1
+	c.Express = func(p []byte) bool { return string(p) != "backup" }
+	c.Instant = func(p []byte) bool { return string(p) == "kill" }
+	c.ExpressConcurrency = 1
+	if err := c.EnsureGroup(ctx); err != nil {
+		t.Fatalf("EnsureGroup: %v", err)
+	}
+
+	release := make(chan struct{})
+	stopStarted := make(chan struct{}, 4)
+	ran := make(chan string, 8)
+	handler := func(_ context.Context, data []byte) error {
+		if string(data) != "kill" {
+			stopStarted <- struct{}{}
+			<-release
+		}
+		ran <- string(data)
+		return nil
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { c.Run(runCtx, handler); close(done) }()
+
+	for _, p := range []string{"stop1", "stop2", "stop3", "kill"} {
+		if _, err := Publish(ctx, rdb, "q", []byte(p)); err != nil {
+			t.Fatalf("Publish: %v", err)
+		}
+		if p == "stop1" {
+			select {
+			case <-stopStarted:
+			case <-time.After(3 * time.Second):
+				t.Fatal("the first stop never started")
+			}
+		}
+	}
+	select {
+	case got := <-ran:
+		if got != "kill" {
+			t.Fatalf("%q ran first, want the kill past the blocked stops", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the kill waited behind the blocked stops")
+	}
+	close(release)
+	want := map[string]bool{"stop1": true, "stop2": true, "stop3": true}
+	for len(want) > 0 {
+		select {
+		case got := <-ran:
+			delete(want, got)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("express work never ran: %v", want)
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not end with its context")
+	}
+}

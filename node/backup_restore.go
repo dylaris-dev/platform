@@ -180,7 +180,13 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	wasRunning := dm != nil && containerRunning(dm, cmd.ServerUUID)
 	if dm != nil {
 		log.Printf("Restore %d: stopping container %s", cmd.RunID, cmd.ServerUUID)
-		gracefulStop(rdb, cmd.ServerUUID, dm)
+		if err := gracefulStop(rdb, cmd.ServerUUID, dm); err != nil {
+			// Nothing on disk is touched yet: the swap below must not run under
+			// a server that is still writing its world.
+			stageCleanup()
+			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "stop the server: "+err.Error())
+			return
+		}
 	}
 	defer func() {
 		if wasRunning {

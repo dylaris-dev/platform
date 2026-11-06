@@ -70,6 +70,19 @@ func TestExpressCommands(t *testing.T) {
 	if !strings.Contains(string(b), "consumer.Express = isExpressCommand") {
 		t.Error("the command consumer no longer gives stop and kill their own workers")
 	}
+	// Kill also has workers stops cannot take (see queue.Consumer.Instant).
+	for payload, want := range map[string]bool{
+		`{"action":"kill","config":{"uuid":"s"}}`: true,
+		`{"action":"stop"}`:                       false,
+		`not json`:                                false,
+	} {
+		if got := isKillCommand([]byte(payload)); got != want {
+			t.Errorf("isKillCommand %s: %v, want %v", payload, got, want)
+		}
+	}
+	if !strings.Contains(string(b), "consumer.Instant = isKillCommand") {
+		t.Error("the command consumer no longer gives kill workers of its own")
+	}
 }
 
 // A stop or kill that ran on its own workers before an earlier start reached a

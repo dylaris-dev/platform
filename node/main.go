@@ -993,6 +993,11 @@ func writeServerRootFile(serverDir, name string, data []byte) error {
 	return writeFileIn(root, name, data, nodeOwnedFileMode)
 }
 
+// serverRootFileMax bounds readServerRootFile. Its files are a few KB; a root
+// container can make one a sparse terabyte that costs no quota, and reading it
+// whole OOM-killed the node at every boot.
+const serverRootFileMax = 1 << 20
+
 // readServerRootFile is the read side of writeServerRootFile. A root container
 // (MC_RUN_AS=0 with a root image) can replace the file with a link, and the
 // node reads as root: ../.node_secret would come back and be copied into the
@@ -1015,7 +1020,11 @@ func readServerRootFile(serverDir, name string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(f)
+	b, err := io.ReadAll(io.LimitReader(f, serverRootFileMax+1))
+	if err == nil && len(b) > serverRootFileMax {
+		return nil, fmt.Errorf("%s is larger than %d bytes", name, serverRootFileMax)
+	}
+	return b, err
 }
 
 // readActiveSubServer returns the server's .active_server, or "" when it is
@@ -1296,6 +1305,9 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 	// or restores held every slot, a kill waited behind them for hours.
 	consumer.Express = isExpressCommand
 	consumer.ExpressConcurrency = 4
+	// And kill has workers of its own again: stops blocked on their server's
+	// power lock, or inside a 30s graceful stop, could fill all four.
+	consumer.Instant = isKillCommand
 
 	handler := func(ctx context.Context, payloadBytes []byte) error {
 		var cmd NodeCommand
@@ -1625,7 +1637,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// and unpacking into it as root. A setup ends by recreating and
 		// starting the server anyway; this moves the stop to the start.
 		if dm != nil {
-			gracefulStop(rdb, cmd.Config.UUID, dm)
+			if err := gracefulStop(rdb, cmd.Config.UUID, dm); err != nil {
+				log.Printf("Setup of %s/%s refused: the server could not be stopped: %v", cmd.Config.UUID, subName, err)
+				rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+				reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, fmt.Errorf("the server could not be stopped: %w", err))
+				return
+			}
 		}
 
 		manifest, err := InstallServer(serverPath, subName, installerCfg)
@@ -1861,7 +1878,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		log.Printf("Graceful restart for Server %s ...", cmd.Config.UUID)
 		// Same reason as "start" above: this is a deliberate retry.
 		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
-		gracefulStop(rdb, cmd.Config.UUID, dm)
+		if err := gracefulStop(rdb, cmd.Config.UUID, dm); err != nil {
+			log.Printf("Failed to stop server %s for the restart: %v", cmd.Config.UUID, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+			break
+		}
 		// gracefulStop leaves "stopping" behind, which is true while the JVM is
 		// winding down but reads to a player as "it is not coming back". From
 		// here on it is a restart, so say that instead.
@@ -2156,8 +2177,14 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Same as the setup path: a reinstall ends by starting the server.
 		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 
-		// Stop the container first
-		dm.PowerAction(cmd.Config.UUID, "stop")
+		// Stop the container first. Its jars are moved aside next, so a server
+		// that could not be stopped is not reinstalled under its running JVM.
+		if err := gracefulStop(rdb, cmd.Config.UUID, dm); err != nil {
+			log.Printf("Reinstall of %s/%s refused: the server could not be stopped: %v", cmd.Config.UUID, subName, err)
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, fmt.Errorf("the server could not be stopped: %w", err))
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+			return
+		}
 		time.Sleep(3 * time.Second)
 
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
@@ -2267,8 +2294,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		releaseMigrateBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
 		defer releaseMigrateBusy()
 
-		// Stop the server first
-		gracefulStop(rdb, cmd.Config.UUID, dm)
+		// Stop the server first. MigrateServerPath copies the tree and deletes
+		// the source, so it must not run under a server still writing to it.
+		if err := gracefulStop(rdb, cmd.Config.UUID, dm); err != nil {
+			log.Printf("Storage migration of %s refused: the server could not be stopped: %v", cmd.Config.UUID, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+			return
+		}
 
 		// Read while the server still resolves to the source: a server
 		// limited before the cache existed has its limit only on the source's
@@ -2494,9 +2526,23 @@ func announceStopping(ctx context.Context, rdb *redis.Client, uuid string) {
 	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopping", 30*time.Second)
 }
 
+// statusAfterFailedStop is the status a command reports when it gave up because
+// its stop failed: "online" for a server Docker still shows running, rather than
+// the "stopped" (or the busy hold's "installing") it would otherwise leave.
+func statusAfterFailedStop(dm *DockerManager, uuid string) string {
+	if containerRunning(dm, uuid) {
+		return "online"
+	}
+	return "stopped"
+}
+
 // saveAllMinUptime is how long a container must have run before a stop sends
 // save-all ahead of "stop"; see gracefulStop.
 const saveAllMinUptime = time.Minute
+
+// gracefulStopWait is how long gracefulStop gives the JVM to exit before it
+// forces the stop; a variable so a test need not sit through it.
+var gracefulStopWait = 30 * time.Second
 
 // justStarted reports whether the container started less than saveAllMinUptime
 // ago. An unreadable start time counts as not just started, which keeps the
@@ -2516,9 +2562,10 @@ func justStarted(st *container.State, now time.Time) bool {
 // waits for the container to exit, and falls back to docker stop if needed.
 //
 // It returns an error when it could not stop a running server: the inspect
-// failed for another reason than "no such container", or the container is
-// another node's. Read as "not running", a stop then reported "stopped" for a
-// server that went on running.
+// failed for another reason than "no such container", the container is
+// another node's, or the forced stop failed. Read as "not running", a stop then
+// reported "stopped" for a server that went on running. Every caller that goes
+// on to touch the server's files must abort on it.
 func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) error {
 	ctx := context.Background()
 	inputKey := fmt.Sprintf("dylaris:server:%s:input", uuid)
@@ -2587,10 +2634,13 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) error {
 	rdb.RPush(ctx, inputKey, stopCmd)
 
 	// Wait for container to exit (max 30s)
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(gracefulStopWait)
 	for time.Now().Before(deadline) {
+		// Only an answer counts as stopped: a failed inspect (daemon busy or
+		// restarting) says nothing, and read as "stopped" it let callers copy
+		// and delete a tree the JVM was still writing.
 		cInfo, cErr := dm.cli.ContainerInspect(ctx, mcName)
-		if cErr != nil || !cInfo.State.Running {
+		if client.IsErrNotFound(cErr) || (cErr == nil && (cInfo.State == nil || !cInfo.State.Running)) {
 			log.Printf("Server %s: container stopped gracefully", uuid)
 			return nil
 		}

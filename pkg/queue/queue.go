@@ -85,6 +85,11 @@ type Consumer struct {
 	// express message behind them is still seen. nil keeps the plain pool.
 	Express            func(payload []byte) bool
 	ExpressConcurrency int
+	// Instant, when set, picks among the Express messages those that must not
+	// wait behind the other Express ones either: a node's kill behind stops
+	// that wait for their server's power lock. They get ExpressConcurrency
+	// workers of their own.
+	Instant func(payload []byte) bool
 
 	// inflight holds the ids this process is running RIGHT NOW. Recovery reads
 	// (ownPending, staleClaimed) list pending entries, and "pending" includes
@@ -197,6 +202,7 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 	}
 	work := make(chan redis.XMessage)
 	expressWork := make(chan redis.XMessage)
+	instantWork := make(chan redis.XMessage)
 	var wg sync.WaitGroup
 	pool := func(ch chan redis.XMessage, n int) {
 		for i := 0; i < n; i++ {
@@ -212,35 +218,49 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 	}
 	pool(work, workers)
 	// With Express set, main-pool messages queue here in stream order and one
-	// forwarder hands them to the pool, so the reader never waits on it.
-	var backlog chan redis.XMessage
-	forwarded := make(chan struct{})
-	if c.Express != nil {
-		pool(expressWork, max(c.ExpressConcurrency, 1))
-		backlog = make(chan redis.XMessage, expressBacklog)
+	// forwarder hands them to the pool, so the reader never waits on it. With
+	// Instant set too, the Express ones do the same: a full express pool kept
+	// the reader from ever seeing the Instant message behind it.
+	var backlog, expressQueue chan redis.XMessage
+	var forwarders sync.WaitGroup
+	forward := func(to chan redis.XMessage) chan redis.XMessage {
+		q := make(chan redis.XMessage, expressBacklog)
+		forwarders.Add(1)
 		go func() {
-			defer close(forwarded)
-			for m := range backlog {
+			defer forwarders.Done()
+			for m := range q {
 				select {
-				case work <- m:
+				case to <- m:
 				case <-ctx.Done():
 					c.endInflight(m.ID)
 				}
 			}
 		}()
-	} else {
-		close(forwarded)
+		return q
 	}
-	// Run returns only once ctx is done, so the forwarder drains the backlog
-	// as released entries; the pools close after it, or a late send would hit
-	// a closed channel.
+	if c.Express != nil {
+		pool(expressWork, max(c.ExpressConcurrency, 1))
+		backlog = forward(work)
+		expressQueue = expressWork
+		if c.Instant != nil {
+			pool(instantWork, max(c.ExpressConcurrency, 1))
+			expressQueue = forward(expressWork)
+		}
+	}
+	// Run returns only once ctx is done, so the forwarders drain their queues
+	// as released entries; the pools close after them, or a late send would
+	// hit a closed channel.
 	defer func() {
 		if backlog != nil {
 			close(backlog)
 		}
-		<-forwarded
+		if c.Express != nil && c.Instant != nil {
+			close(expressQueue)
+		}
+		forwarders.Wait()
 		close(work)
 		close(expressWork)
+		close(instantWork)
 		wg.Wait()
 	}()
 
@@ -253,8 +273,12 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 			}
 			if c.Express != nil {
 				if data := msgData(m); data != nil && c.Express(data) {
+					to := expressQueue
+					if c.Instant != nil && c.Instant(data) {
+						to = instantWork
+					}
 					select {
-					case expressWork <- m:
+					case to <- m:
 					case <-ctx.Done():
 						c.endInflight(m.ID)
 						return false

@@ -70,7 +70,7 @@ func powerLockFor(uuid string) *serverPowerLock {
 // the waiter in its slot. Refusing the newcomer instead dropped and acked the
 // newest intent: a stop behind a waiting start, or the third settings save,
 // whose payload held the newest state while the older waiter ran and stayed.
-// At most four waiters per server, so kill (its own express pool) and other
+// At most four waiters per server, so kill (workers of its own, queue.Consumer.Instant) and other
 // servers still get a slot.
 //
 // cfg is the action's payload, which it may still be changed through before it

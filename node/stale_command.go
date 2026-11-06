@@ -57,6 +57,14 @@ func isExpressCommand(payload []byte) bool {
 	return c.Action == "stop" || c.Action == "kill"
 }
 
+// isKillCommand picks kill among them: it must not wait behind stops either.
+func isKillCommand(payload []byte) bool {
+	var c struct {
+		Action string `json:"action"`
+	}
+	return json.Unmarshal(payload, &c) == nil && c.Action == "kill"
+}
+
 // lastStopIssued holds, per server, when the newest stop or kill the node has
 // begun was queued. Stop and kill run on workers of their own, so one can run
 // before a start that was queued earlier and is still waiting for a worker; the
