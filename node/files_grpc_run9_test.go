@@ -68,6 +68,9 @@ func TestAWriteForADeletedServerDoesNotRecreateIt(t *testing.T) {
 // into the gauge, and nothing lowered it until the next measurement.
 func TestTheUploadSweeperRemeasuresWhatItFrees(t *testing.T) {
 	_, rdb := gaugeRedis(t)
+	// A remeasure an earlier test started reads globalStorageMgr; swapping it
+	// under that goroutine is a data race under -race.
+	waitRemeasuresIdle(t)
 	prevSM, prevQ := globalStorageMgr, globalQuotaSet
 	t.Cleanup(func() { globalStorageMgr, globalQuotaSet = prevSM, prevQ })
 	globalStorageMgr, globalQuotaSet = NewStorageManager(t.TempDir(), rdb), nil
@@ -107,9 +110,7 @@ func TestTheUploadSweeperRemeasuresWhatItFrees(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	for v, ok := remeasureRuns.Load(uuid); ok && v.(*atomic.Int64).Load() != 0; {
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitRemeasuresIdle(t)
 }
 
 // P16: a rename caught between its two renameat calls by a node restart left
@@ -158,4 +159,21 @@ func TestTheBootSweepRecoversAParkedRename(t *testing.T) {
 			t.Error("a parked link was given a visible name")
 		}
 	}
+}
+
+// waitRemeasuresIdle waits until no background remeasure is running, so a
+// test can swap the storage globals without racing one. The atomic counter
+// reaching 0 happens after the goroutine's last read of the globals.
+func waitRemeasuresIdle(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	remeasureRuns.Range(func(_, v any) bool {
+		for v.(*atomic.Int64).Load() != 0 {
+			if time.Now().After(deadline) {
+				t.Fatal("a background remeasure is still running")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		return true
+	})
 }

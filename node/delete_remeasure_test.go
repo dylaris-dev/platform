@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,7 +51,5 @@ func TestADeleteRemeasuresTheServer(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	// The walk has to be over before the cleanup swaps the storage manager back.
-	for v, _ := remeasureRuns.Load(uuid); v.(*atomic.Int64).Load() != 0; {
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitRemeasuresIdle(t)
 }
