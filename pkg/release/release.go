@@ -375,6 +375,10 @@ func Parse(src []byte) ([]Release, error) {
 			if section != "" {
 				return nil, fmt.Errorf("line %d: the required-update line belongs directly under the version heading, not inside a section", ln)
 			}
+			// A second line would silently replace the first, losing a stricter deadline.
+			if cur.Required != nil {
+				return nil, fmt.Errorf("line %d: release %s already has a required-update line; one per release", ln, cur.Version)
+			}
 			req, err := parseRequired(line, cur.Version)
 			if err != nil {
 				return nil, fmt.Errorf("line %d: %w", ln, err)

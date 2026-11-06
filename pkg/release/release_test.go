@@ -244,6 +244,11 @@ func TestParseRejects(t *testing.T) {
 			"directly under the version heading",
 		},
 		{
+			"two required lines in one release",
+			"## 2026.08.28\n**Update required by 2026-09-01**\n**Update required by 2026-09-30**\n### Features\n- Nothing.\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
+			"already has a required-update line",
+		},
+		{
 			"a nested bullet",
 			"## 2026.08.28\n### Features\n- Faster backups. `core`\n  - Node side streams now. `node`\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
 			"nested bullets are not supported",
