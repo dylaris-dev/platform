@@ -676,7 +676,7 @@ func parseConfig() {
 	log.Printf("Stats buffer MAXLEN: %d entries", statsBufferMaxLen)
 
 	// Node system stats stream (CPU/RAM/Net of the host)
-	statsStreamMaxLen = 360 // ~3h at 30s interval
+	statsStreamMaxLen = 360 // ~30 min at the 5 s interval
 	if v := os.Getenv("STATS_STREAM_MAXLEN"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			statsStreamMaxLen = n

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newQuotaSetOverPaths builds a QuotaSet over n temp dirs. The providers there
@@ -90,9 +91,6 @@ func TestQuotaSetNilAndUnknownAreNoOps(t *testing.T) {
 	if nilSet.IsAvailableFor("x") {
 		t.Error("nil IsAvailableFor returned true")
 	}
-	if nilSet.AnyAvailable() {
-		t.Error("nil AnyAvailable returned true")
-	}
 	if got := nilSet.AvailabilityByPath(); len(got) != 0 {
 		t.Errorf("nil AvailabilityByPath returned %v, want empty", got)
 	}
@@ -101,5 +99,35 @@ func TestQuotaSetNilAndUnknownAreNoOps(t *testing.T) {
 	qs, _, _ := newQuotaSetOverPaths(t, 1)
 	if err := qs.SetLimit("unknown-server", 100); err != nil {
 		t.Errorf("SetLimit for an unresolvable server returned %v, want nil", err)
+	}
+}
+
+// The disk poll interval was picked node-wide: one quota-capable path put
+// every server on a du-only path (NFS/CIFS) on the 10 s quota cadence, which
+// for them is a full du walk back to back.
+func TestDiskPollIntervalIsPerServer(t *testing.T) {
+	qs, _, roots := newQuotaSetOverPaths(t, 2)
+	qs.providers[roots[0]].available = true
+	quotaSrv := "11111111-2222-3333-4444-555555555555"
+	duSrv := "66666666-7777-8888-9999-000000000000"
+	for _, d := range []string{filepath.Join(roots[0], quotaSrv), filepath.Join(roots[1], duSrv)} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cases := []struct {
+		uuid string
+		want time.Duration
+	}{
+		{quotaSrv, diskInterval},
+		{duSrv, diskFallbackInterval},
+	}
+	for _, c := range cases {
+		if got := diskPollInterval(qs, c.uuid); got != c.want {
+			t.Errorf("%s: interval %v, want %v", c.uuid, got, c.want)
+		}
+	}
+	if got := diskPollInterval(nil, quotaSrv); got != diskFallbackInterval {
+		t.Errorf("nil quota set: interval %v, want %v", got, diskFallbackInterval)
 	}
 }

@@ -201,3 +201,26 @@ func TestExtractMOTDBounded(t *testing.T) {
 		})
 	}
 }
+
+// The player figures are tenant-controlled and end up in Core's INT columns;
+// one value past int4 made Postgres refuse the whole node's stats batch.
+func TestPingPlayersBounded(t *testing.T) {
+	cases := []struct {
+		online, max         string
+		wantOnline, wantMax int
+	}{
+		{"3000000000", "3000000000", 2147483647, 2147483647},
+		{"-5", "-1", 0, 0},
+		{"3", "20", 3, 20},
+	}
+	for _, c := range cases {
+		body := `{"version":{"name":"1.20.1"},"players":{"max":` + c.max + `,"online":` + c.online + `}}`
+		resp, err := PingMinecraftServer(slpAnswer(t, body), time.Second, false)
+		if err != nil {
+			t.Fatalf("%s/%s: %v", c.online, c.max, err)
+		}
+		if resp.Players != c.wantOnline || resp.MaxPlayers != c.wantMax {
+			t.Errorf("%s/%s: got %d/%d, want %d/%d", c.online, c.max, resp.Players, resp.MaxPlayers, c.wantOnline, c.wantMax)
+		}
+	}
+}

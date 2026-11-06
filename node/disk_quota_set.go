@@ -98,21 +98,6 @@ func (qs *QuotaSet) IsAvailableFor(uuid string) bool {
 	return qp != nil && qp.IsAvailable()
 }
 
-// AnyAvailable reports whether at least one storage path supports quotas. Used
-// for node-wide decisions such as how often to poll disk usage, where a du-scan
-// fallback on one path should not slow the cheap quota reads on the others.
-func (qs *QuotaSet) AnyAvailable() bool {
-	if qs == nil {
-		return false
-	}
-	for _, qp := range qs.providers {
-		if qp != nil && qp.IsAvailable() {
-			return true
-		}
-	}
-	return false
-}
-
 // AvailabilityByPath reports, per storage path, whether disk limits can actually
 // be ENFORCED there. Surfaced so an operator is not left believing a limit
 // applies on a filesystem that cannot carry one (NFS/CIFS report false).

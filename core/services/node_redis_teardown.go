@@ -28,6 +28,10 @@ func NodeRedisKeys(token string) []string {
 		"dylaris:node:" + token + ":cmds",
 		"dylaris:node:" + token + ":cmds:dead",
 		"dylaris:node:" + token + ":ports",
+		// The node's stats streams, with the stats consumer group and its
+		// pending list: MAXLEN-capped but never expiring.
+		"dylaris:node:" + token + ":stats:batch",
+		"dylaris:node:" + token + ":system",
 		NodeBackupPolicyKey(token),
 		NodeBackupEnvKey(token),
 	}

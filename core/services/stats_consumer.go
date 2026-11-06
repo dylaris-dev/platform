@@ -2,10 +2,13 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"dylaris-core/models"
 	"dylaris-core/store"
 	"encoding/json"
+	"errors"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -83,12 +86,19 @@ func statsRows(batch statsBatchPayload, allowed map[string]bool) []models.Server
 			CPULimit:     item.CPULimit,
 			MemUsed:      item.MemUsed,
 			MemLimit:     item.MemLimit,
-			Players:      item.Players,
-			MaxPlayers:   item.MaxPlayers,
+			Players:      boundInt4(item.Players),
+			MaxPlayers:   boundInt4(item.MaxPlayers),
 			JavaHeapUsed: heap,
 		})
 	}
 	return rows
+}
+
+// boundInt4 keeps a node-sent count inside an INT column. The batch is
+// inserted in one transaction, so one out-of-range value - a tenant's SLP
+// answer, or a BYON node's own write - refused every row on that node.
+func boundInt4(n int) int {
+	return min(max(n, 0), math.MaxInt32)
 }
 
 func NewStatsConsumerService(s store.Store, r *redis.Client, coreID string) *StatsConsumerService {
@@ -161,14 +171,33 @@ func (s *StatsConsumerService) consumeStream(streamKey string) {
 		retryAt: time.Now(),
 	}
 
+	// A consumer outlived its node: it polled for ever, and creating the
+	// group would bring back the stream the node teardown removed. Dropping
+	// the entry lets scanNodes start a fresh one if the node is seen again.
+	defer func() {
+		s.mu.Lock()
+		delete(s.nodeKeys, streamKey)
+		s.mu.Unlock()
+	}()
+	if s.nodeGone(r.nodeToken) {
+		return
+	}
+
 	// XGroupCreateMkStream is idempotent — error on re-create is expected and ignored.
 	s.redis.XGroupCreateMkStream(ctx, r.key, r.group, "0").Err()
 
 	log.Printf("Stats consumer started for stream %s", streamKey)
 
-	for {
-		s.readStats(ctx, r)
+	for s.readStats(ctx, r) {
 	}
+	log.Printf("Stats consumer stopped for stream %s: the node is gone", streamKey)
+}
+
+// nodeGone reports whether the node's row is definitely gone. A database
+// error is not an answer, so it keeps the consumer running.
+func (s *StatsConsumerService) nodeGone(token string) bool {
+	_, err := s.store.GetNodeByToken(token)
+	return errors.Is(err, sql.ErrNoRows)
 }
 
 // statsStreamReader is one node batch stream's consumer state.
@@ -178,6 +207,10 @@ type statsStreamReader struct {
 
 	allowed   map[string]bool
 	allowedAt time.Time
+
+	// goneCheckedAt is when an idle read last asked whether the node still
+	// exists; an empty stream is all a deleted node's consumer ever sees.
+	goneCheckedAt time.Time
 
 	// retryAt, when set and due, reads this consumer's own un-ACKed entries
 	// ("0") instead of new ones (">"). ">" never hands an entry out twice, so
@@ -194,8 +227,9 @@ const statsRetryEvery = time.Minute
 // dropped: well past a database blip, and inside the ~3 h the node keeps.
 const statsPendingMaxAge = time.Hour
 
-// readStats runs one read of the stream and stores what it got.
-func (s *StatsConsumerService) readStats(ctx context.Context, r *statsStreamReader) {
+// readStats runs one read of the stream and stores what it got. It returns
+// false once the node is gone and the consumer should stop.
+func (s *StatsConsumerService) readStats(ctx context.Context, r *statsStreamReader) bool {
 	from := ">"
 	retrying := !r.retryAt.IsZero() && !time.Now().Before(r.retryAt)
 	if retrying {
@@ -210,15 +244,23 @@ func (s *StatsConsumerService) readStats(ctx context.Context, r *statsStreamRead
 		Block:    r.block,
 	}).Result()
 	if err == redis.Nil {
-		return
+		if time.Since(r.goneCheckedAt) < time.Minute {
+			return true
+		}
+		r.goneCheckedAt = time.Now()
+		return !s.nodeGone(r.nodeToken)
 	}
 	if err != nil {
+		// NOGROUP is also what the node teardown leaves behind.
+		if s.nodeGone(r.nodeToken) {
+			return false
+		}
 		// The group may have vanished (Redis restarted with no persistence).
 		// Recreating is idempotent - BUSYGROUP when it still exists - so this
 		// self-heals a NOGROUP loop instead of spinning until the Core restarts.
 		s.redis.XGroupCreateMkStream(ctx, r.key, r.group, "0")
 		time.Sleep(5 * time.Second)
-		return
+		return true
 	}
 
 	read := 0
@@ -275,4 +317,5 @@ func (s *StatsConsumerService) readStats(ctx context.Context, r *statsStreamRead
 	case retrying && read < count:
 		r.retryAt = time.Time{} // the pending list is empty now
 	}
+	return true
 }

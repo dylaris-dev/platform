@@ -449,6 +449,16 @@ func StartStatsCollector(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	}
 }
 
+// diskPollInterval asks per server, not per node: on a node with mixed
+// filesystems a server on the du-only path would otherwise be walked every
+// diskInterval, back to back, because another path can do quotas.
+func diskPollInterval(quota *QuotaSet, uuid string) time.Duration {
+	if quota.IsAvailableFor(uuid) {
+		return diskInterval
+	}
+	return diskFallbackInterval
+}
+
 func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManager, uuid, containerName string, bufferMaxLen int64, quota *QuotaSet, snap *containerSnapshot) {
 	log.Printf("stats: tracking %s", containerName)
 	// A stopped server holds no players; a stale count would pace backups
@@ -458,12 +468,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	liveTicker := time.NewTicker(liveInterval)
 	pingTicker := time.NewTicker(pingInterval)
 
-	// Disk interval depends on quota availability
-	dInterval := diskFallbackInterval
-	if quota.AnyAvailable() {
-		dInterval = diskInterval
-	}
-	diskTicker := time.NewTicker(dInterval)
+	diskTicker := time.NewTicker(diskPollInterval(quota, uuid))
 
 	defer liveTicker.Stop()
 	defer pingTicker.Stop()
@@ -925,13 +930,13 @@ func scanSubServerSizes(serverDir string) map[string]int64 {
 
 // dirSize returns the total size of a directory in bytes.
 func dirSize(path string) int64 {
-	out, err := exec.Command("du", "-sb", path).Output()
-	if err == nil {
-		fields := strings.Fields(string(out))
-		if len(fields) > 0 {
-			if size, err := strconv.ParseInt(fields[0], 10, 64); err == nil {
-				return size
-			}
+	// du exits non-zero when a file vanished mid-walk or one was unreadable,
+	// and still prints the total of what it read; walking the whole tree a
+	// second time for the same number doubled the slowest measurements.
+	out, _ := exec.Command("du", "-sb", path).Output()
+	if fields := strings.Fields(string(out)); len(fields) > 0 {
+		if size, err := strconv.ParseInt(fields[0], 10, 64); err == nil {
+			return size
 		}
 	}
 
@@ -962,7 +967,9 @@ func publishStoppedDiskUsage(ctx context.Context, rdb *redis.Client, quota *Quot
 	if rdb == nil || globalStorageMgr == nil {
 		return
 	}
-	for _, uuid := range localServerUUIDs() {
+	uuids := localServerUUIDs()
+	rearmStoppedDiskGauges(ctx, rdb, uuids, running)
+	for _, uuid := range uuids {
 		if running[uuid] {
 			continue
 		}
@@ -973,6 +980,21 @@ func publishStoppedDiskUsage(ctx context.Context, rdb *redis.Client, quota *Quot
 		}
 		publishDiskUsage(ctx, rdb, uuid, usage, measuredFrom, stoppedDiskUsageTTL)
 	}
+}
+
+// rearmStoppedDiskGauges extends every stopped server's existing gauge before
+// the sweep walks them. The walks run one after another, so a slow tree (or
+// just many large servers) delayed the next measurement of the others past
+// stoppedDiskUsageTTL, and an expired gauge reads as no limit to every upload
+// check. A gauge never measured is not created: there is nothing to keep.
+func rearmStoppedDiskGauges(ctx context.Context, rdb *redis.Client, uuids []string, running map[string]bool) {
+	pipe := rdb.Pipeline()
+	for _, uuid := range uuids {
+		if !running[uuid] {
+			pipe.Expire(ctx, diskGaugeKey(uuid), stoppedDiskUsageTTL)
+		}
+	}
+	pipe.Exec(ctx)
 }
 
 // looksLikeServerUUID keeps the sweeps to server directories: a canonical

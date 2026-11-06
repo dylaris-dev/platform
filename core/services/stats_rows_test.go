@@ -38,3 +38,24 @@ func TestStatsRowsCarryJavaHeap(t *testing.T) {
 		t.Errorf("b heap = %d, want nil for an unknown heap", *rows[1].JavaHeapUsed)
 	}
 }
+
+// players/max_players are INT columns and the whole batch goes in one
+// transaction: one out-of-range figure from a tenant's server made Postgres
+// refuse every row on that node, retried until the batch was dropped.
+func TestStatsRowsBoundPlayersToInt4(t *testing.T) {
+	batch := statsBatchPayload{TS: 1, Stats: []statsBatchItem{
+		{UUID: "big", Players: 3000000000, MaxPlayers: 1 << 40},
+		{UUID: "neg", Players: -1, MaxPlayers: -7},
+		{UUID: "ok", Players: 3, MaxPlayers: 20},
+	}}
+	rows := statsRows(batch, map[string]bool{"big": true, "neg": true, "ok": true})
+	want := map[string][2]int{"big": {2147483647, 2147483647}, "neg": {0, 0}, "ok": {3, 20}}
+	if len(rows) != 3 {
+		t.Fatalf("rows = %+v, want 3", rows)
+	}
+	for _, r := range rows {
+		if w := want[r.ServerUUID]; r.Players != w[0] || r.MaxPlayers != w[1] {
+			t.Errorf("%s: players %d/%d, want %d/%d", r.ServerUUID, r.Players, r.MaxPlayers, w[0], w[1])
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -86,5 +87,40 @@ func TestStoppedServersPublishTheirDiskUsage(t *testing.T) {
 	}
 	if mr.Exists("dylaris:server:not-a-server:stats:disk") {
 		t.Error("a directory that is not a server was measured")
+	}
+}
+
+// K45: the sweep measures stopped servers one after another, so a slow one
+// delayed the next measurement of the others past their gauge's TTL; with the
+// gauge gone every upload check let any amount through. Each sweep re-arms
+// the gauges it is about to measure before it starts walking.
+func TestStoppedDiskSweepRearmsGaugesFirst(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	const stopped = "aaaaaaaa-1111-2222-3333-444444444444"
+	const running = "bbbbbbbb-1111-2222-3333-444444444444"
+	const never = "cccccccc-1111-2222-3333-444444444444"
+	for _, u := range []string{stopped, running} {
+		rdb.Set(ctx, diskGaugeKey(u), `{"total":1}`, time.Minute)
+	}
+
+	rearmStoppedDiskGauges(ctx, rdb, []string{stopped, running, never}, map[string]bool{running: true})
+
+	cases := []struct {
+		uuid string
+		want time.Duration
+	}{
+		{stopped, stoppedDiskUsageTTL},
+		{running, time.Minute},
+		{never, 0},
+	}
+	for _, c := range cases {
+		if got := mr.TTL(diskGaugeKey(c.uuid)); got != c.want {
+			t.Errorf("%s: ttl %v, want %v", c.uuid, got, c.want)
+		}
+	}
+	if mr.Exists(diskGaugeKey(never)) {
+		t.Error("re-arming created a gauge that was never measured")
 	}
 }

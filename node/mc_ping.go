@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"time"
 	"unicode/utf8"
@@ -132,11 +133,18 @@ func PingMinecraftServer(address string, timeout time.Duration, proxyLocal bool)
 	motd := extractMOTD(resp.Description)
 
 	return &SLPResponse{
-		Players:    resp.Players.Online,
-		MaxPlayers: resp.Players.Max,
+		Players:    boundPlayers(resp.Players.Online),
+		MaxPlayers: boundPlayers(resp.Players.Max),
 		MOTD:       motd,
 		Version:    resp.Version.Name,
 	}, nil
+}
+
+// boundPlayers keeps a tenant-supplied player figure inside Core's INT column:
+// a value past int4 made Postgres refuse the stats batch of every server on
+// the node.
+func boundPlayers(n int) int {
+	return min(max(n, 0), math.MaxInt32)
 }
 
 // maxMOTDBytes bounds the tenant-controlled MOTD. It rides in every 2 s stats
