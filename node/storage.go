@@ -364,14 +364,16 @@ func (sm *StorageManager) GetStorageInfo() []StorageInfo {
 }
 
 // setRedisPath stores the storage path for a server in Redis (no expiry).
-func (sm *StorageManager) setRedisPath(serverUUID, storagePath string) {
+func (sm *StorageManager) setRedisPath(serverUUID, storagePath string) error {
 	if sm.rdb == nil {
-		return
+		return nil
 	}
 	key := fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)
 	if err := sm.rdb.Set(context.Background(), key, storagePath, 0).Err(); err != nil {
 		log.Printf("storage: failed to set Redis key %s: %v", key, err)
+		return err
 	}
+	return nil
 }
 
 // getFreeSpace returns the available bytes on the filesystem containing path.
@@ -508,7 +510,7 @@ var migrateCopyTree = copyTree
 
 // MigrateServerPath moves a server's data directory from its current storage path
 // to targetPath. The server container must be stopped before calling this.
-// Steps: validate → find current → check space → copy → verify → delete old → update Redis.
+// Steps: validate → find current → clear target → check space → copy → verify → update Redis → delete old.
 func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error {
 	currentPath, err := sm.resolveMigration(serverUUID, targetPath)
 	if err != nil {
@@ -523,6 +525,14 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 
 	srcDir := filepath.Join(currentPath, serverUUID)
 	dstDir := filepath.Join(targetPath, serverUUID)
+
+	// A tree already at the target is a copy an earlier move left (the storage
+	// key names the source, resolveMigration made sure of that). Copied over,
+	// it merged: files deleted from the live tree since came back. Cleared
+	// before the space check, which it would otherwise count as used.
+	if err := os.RemoveAll(dstDir); err != nil {
+		return fmt.Errorf("clear the leftover copy at %s: %w", dstDir, err)
+	}
 
 	// Check free space (dirSize returns int64, getFreeSpace returns uint64)
 	srcSize := dirSize(srcDir) // int64, from stats_collector.go
@@ -551,12 +561,18 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 		return fmt.Errorf("copy verification failed: source=%s, dest=%s", formatBytes(uint64(srcSize)), formatBytes(uint64(dstSize)))
 	}
 
+	// The key moves before the source goes: a node killed during the delete,
+	// or a key that could not be written, left the server resolving to a
+	// half-deleted tree. Both copies are whole here, so on a failed write
+	// neither is touched, whichever one the key ended up naming.
+	if err := sm.setRedisPath(serverUUID, targetPath); err != nil {
+		return fmt.Errorf("record the new storage path: %w", err)
+	}
+
 	// Remove old directory (data is safe at target)
 	if err := os.RemoveAll(srcDir); err != nil {
 		log.Printf("storage: [warn] could not remove old directory %s: %v", srcDir, err)
 	}
-
-	sm.setRedisPath(serverUUID, targetPath)
 	log.Printf("storage: migration complete: %s → %s", serverUUID, targetPath)
 	return nil
 }

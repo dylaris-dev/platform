@@ -235,8 +235,8 @@ func TestGracedUsageReportsTheServersLimit(t *testing.T) {
 	recordDiskLimit(ctx, rdb, "srv", 200)
 	u = usageOf(150*mib, 0)
 	withGraceLimit(ctx, rdb, "srv", u)
-	if u.Limit != 0 {
-		t.Fatalf("limit = %d after the limit changed, want the filesystem's", u.Limit)
+	if u.Limit != 200*mib {
+		t.Fatalf("limit = %d after the limit changed, want the new %d", u.Limit, 200*mib)
 	}
 }
 
@@ -558,5 +558,128 @@ func TestALookupOfTheMovingServerWaitsForTheMove(t *testing.T) {
 	}
 	if dir := <-resolved; dir != filepath.Join(paths[1], uuid) {
 		t.Fatalf("resolved %q after the move, want the target", dir)
+	}
+}
+
+// J40: a first recount killed mid-tag left part of the tree charged to the
+// project, so the next boot read that partial count as "before" and, once it
+// had passed the limit, enforced it on a server that only the new counting
+// put over.
+func TestAnInterruptedFirstRecountStillGrantsTheGrace(t *testing.T) {
+	rdb := newDiskGuardRedis(t)
+	ctx := context.Background()
+	recordDiskLimit(ctx, rdb, "srv", 100)
+	rdb.Set(ctx, diskLiftedKey("srv"), 1, 0)
+	q := &fakeQuota{before: usageOf(120*mib, 0), after: usageOf(150*mib, 0)}
+
+	if done, err := reconcileServer(ctx, rdb, q, "srv"); !done || err != nil {
+		t.Fatalf("reconcileServer = %v, %v", done, err)
+	}
+	if _, ok := loadDiskGrace(ctx, rdb, "srv"); !ok {
+		t.Fatal("no grace for a server the interrupted first count put over")
+	}
+	if want := (150*mib + diskGraceHeadroom(100*mib) + mib - 1) / mib; q.limitMB != want {
+		t.Fatalf("hard limit = %d MB, want the ceiling %d", q.limitMB, want)
+	}
+}
+
+// J42: Redis keeps the grace and the cached limit in memory only. Once both
+// were gone the boot recount read the ceiling off the project as the limit
+// Core set, cached it, and the server kept that disk for good. The real limit
+// is in the saved config, and the ceiling still on the project is the grace.
+func TestAGraceRedisLostIsKeptOnBoot(t *testing.T) {
+	prevMgr := globalStorageMgr
+	t.Cleanup(func() { globalStorageMgr = prevMgr })
+	root := t.TempDir()
+	globalStorageMgr = NewStorageManager(root, nil)
+	const uuid = "aaaaaaaa-1111-2222-3333-444444444444"
+	if err := os.MkdirAll(filepath.Join(root, uuid), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := fmt.Sprintf(`{"uuid":%q,"docker":{"diskLimit":100}}`, uuid)
+	if err := os.WriteFile(filepath.Join(root, uuid, ".node_config.json"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		total     int64
+		grace     bool
+		enforceMB int64
+	}{
+		{"still over, short of the ceiling", 150 * mib, true, 300},
+		{"back under its limit", 90 * mib, false, 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newDiskGuardRedis(t)
+			ctx := context.Background()
+			q := &fakeQuota{before: usageOf(tc.total, 300*mib), after: usageOf(tc.total, 300*mib), limitMB: 300}
+			if done, err := reconcileServer(ctx, rdb, q, uuid); !done || err != nil {
+				t.Fatalf("reconcileServer = %v, %v", done, err)
+			}
+			if got := loadDiskLimit(ctx, rdb, uuid); got != 100 {
+				t.Fatalf("cached limit = %d MB, want the 100 Core set, not the ceiling", got)
+			}
+			g, ok := loadDiskGrace(ctx, rdb, uuid)
+			if ok != tc.grace || ok && (g.limit != 100*mib || g.ceiling != 300*mib) {
+				t.Fatalf("grace = %+v (%v), want %v under 100 MB up to 300 MB", g, ok, tc.grace)
+			}
+			if q.limitMB != tc.enforceMB {
+				t.Fatalf("hard limit = %d MB, want %d", q.limitMB, tc.enforceMB)
+			}
+		})
+	}
+}
+
+// J43: a hard limit the recount could not put back reads 0 off the project.
+// That is not "unlimited": the guard compares against the limit Core set.
+func TestALiftedLimitIsReportedAsTheKnownOne(t *testing.T) {
+	rdb := newDiskGuardRedis(t)
+	ctx := context.Background()
+	recordDiskLimit(ctx, rdb, "srv", 100)
+	u := usageOf(150*mib, 0)
+	withGraceLimit(ctx, rdb, "srv", u)
+	if u.Limit != 100*mib {
+		t.Fatalf("limit = %d, want the known %d", u.Limit, 100*mib)
+	}
+
+	// No limit known stays no limit.
+	u = usageOf(150*mib, 0)
+	withGraceLimit(ctx, rdb, "other", u)
+	if u.Limit != 0 {
+		t.Fatalf("limit = %d for a server with none, want 0", u.Limit)
+	}
+}
+
+// J44: the grace is node-scoped and the source forgets it on cleanup, so a
+// graced server moved to another node arrived as an ordinary over-limit one
+// and was stopped there. Core hands the grace over with the move.
+func TestAMovedServerKeepsItsGrace(t *testing.T) {
+	ctx := context.Background()
+	grace := fmt.Sprintf("%d %d", 100*mib, 300*mib)
+	for _, tc := range []struct {
+		name      string
+		limitMB   int64
+		grace     string
+		kept      bool
+		enforceMB int64
+	}{
+		{"carried under the same limit", 100, grace, true, 300},
+		{"granted under another limit", 200, grace, false, 200},
+		{"none carried", 100, "", false, 100},
+		{"unreadable", 100, "x", false, 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newDiskGuardRedis(t)
+			adoptMovedDiskGrace(ctx, rdb, "srv", tc.limitMB, tc.grace)
+			q := &fakeQuota{after: usageOf(150*mib, 0)}
+			countDiskUsage(ctx, rdb, q, "srv", tc.limitMB, false)
+			if _, ok := loadDiskGrace(ctx, rdb, "srv"); ok != tc.kept {
+				t.Fatalf("grace kept = %v, want %v", ok, tc.kept)
+			}
+			if q.limitMB != tc.enforceMB {
+				t.Fatalf("hard limit = %d MB, want %d", q.limitMB, tc.enforceMB)
+			}
+		})
 	}
 }

@@ -350,6 +350,10 @@ type DockerConfig struct {
 	// timestamps) reads. Empty = not sent (older Core): a rebuilt container
 	// keeps the TZ it had, a new one runs in UTC as before.
 	Timezone string `json:"timezone,omitempty"`
+	// DiskGrace rides only on migrate_in and migrate_pull_r2: the source
+	// node's disk_grace value ("<limit> <ceiling>" in bytes), which Core
+	// hands over when it trusts the source. Empty = none, or an older Core.
+	DiskGrace string `json:"diskGrace,omitempty"`
 }
 
 // tzEnv is the TZ entry for a container, or nothing for a zone this node
@@ -1823,6 +1827,20 @@ func savedContainerPortIn(serverDir string) int {
 		return 0
 	}
 	return saved.Docker.ContainerPort
+}
+
+// savedDiskLimitIn is the disk limit in MB the server's saved config holds:
+// the one Core last pushed, or 0.
+func savedDiskLimitIn(serverDir string) int64 {
+	data, err := readServerRootFile(serverDir, ".node_config.json")
+	if err != nil {
+		return 0
+	}
+	var saved ServerConfig
+	if json.Unmarshal(data, &saved) != nil {
+		return 0
+	}
+	return saved.Docker.DiskLimit
 }
 
 // containerGone reports whether the server's container is known not to exist.

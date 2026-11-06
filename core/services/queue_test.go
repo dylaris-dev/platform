@@ -261,7 +261,7 @@ func TestSendMigrateInCommand(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigrateInCommand(context.Background(), "tok-9", "server-uuid", "att1", "source-node-id", "migrate-tok", "deadbeef", 4096, []string{"10.0.0.5", "192.168.1.10"}, 2048); err != nil {
+	if err := svc.SendMigrateInCommand(context.Background(), "tok-9", "server-uuid", "att1", "source-node-id", "migrate-tok", "deadbeef", 4096, []string{"10.0.0.5", "192.168.1.10"}, 2048, "104857600 314572800"); err != nil {
 		t.Fatalf("SendMigrateInCommand: %v", err)
 	}
 
@@ -277,6 +277,10 @@ func TestSendMigrateInCommand(t *testing.T) {
 	// server used to run with none on its new node.
 	if d, _ := cfg["docker"].(map[string]interface{}); d == nil || d["diskLimit"] != float64(2048) {
 		t.Errorf("config.docker = %v, want diskLimit 2048", cfg["docker"])
+	}
+	// J44: the source's disk grace, which its key scope keeps from the target.
+	if d, _ := cfg["docker"].(map[string]interface{}); d == nil || d["diskGrace"] != "104857600 314572800" {
+		t.Errorf("config.docker = %v, want the disk grace handed over", cfg["docker"])
 	}
 	if got["sourceNodeId"] != "source-node-id" {
 		t.Errorf("sourceNodeId = %v, want source-node-id", got["sourceNodeId"])
@@ -302,13 +306,17 @@ func TestSendMigrateInCommand_OmitsEmptySourcePrivateIPs(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigrateInCommand(context.Background(), "tok-10", "server-uuid", "", "source-node-id", "migrate-tok", "deadbeef", 4096, nil, 0); err != nil {
+	if err := svc.SendMigrateInCommand(context.Background(), "tok-10", "server-uuid", "", "source-node-id", "migrate-tok", "deadbeef", 4096, nil, 0, ""); err != nil {
 		t.Fatalf("SendMigrateInCommand: %v", err)
 	}
 
 	got := readStreamPayload(t, rdb, "dylaris:node:tok-10:cmds")
 	if _, present := got["sourcePrivateIps"]; present {
 		t.Errorf("sourcePrivateIps must be omitted when nil/empty, got %+v", got)
+	}
+	cfg, _ := got["config"].(map[string]interface{})
+	if d, _ := cfg["docker"].(map[string]interface{}); d == nil || d["diskGrace"] != nil {
+		t.Errorf("config.docker = %v, want no diskGrace when there is none", cfg["docker"])
 	}
 }
 
@@ -371,7 +379,7 @@ func TestSendMigratePullR2Command(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	svc := NewQueueService(rdb)
 
-	if err := svc.SendMigratePullR2Command(context.Background(), "tok-12", "server-uuid", "att1", "https://example.com/get-url", "cafebabe", 8192, 2048); err != nil {
+	if err := svc.SendMigratePullR2Command(context.Background(), "tok-12", "server-uuid", "att1", "https://example.com/get-url", "cafebabe", 8192, 2048, "104857600 314572800"); err != nil {
 		t.Fatalf("SendMigratePullR2Command: %v", err)
 	}
 
@@ -385,8 +393,8 @@ func TestSendMigratePullR2Command(t *testing.T) {
 	}
 	// The disk limit the target applies to the arriving directory; a moved
 	// server used to run with none on its new node.
-	if d, _ := cfg["docker"].(map[string]interface{}); d == nil || d["diskLimit"] != float64(2048) {
-		t.Errorf("config.docker = %v, want diskLimit 2048", cfg["docker"])
+	if d, _ := cfg["docker"].(map[string]interface{}); d == nil || d["diskLimit"] != float64(2048) || d["diskGrace"] != "104857600 314572800" {
+		t.Errorf("config.docker = %v, want diskLimit 2048 and the disk grace", cfg["docker"])
 	}
 	if got["presignedGetUrl"] != "https://example.com/get-url" {
 		t.Errorf("presignedGetUrl = %v, want https://example.com/get-url", got["presignedGetUrl"])

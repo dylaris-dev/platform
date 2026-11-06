@@ -117,10 +117,29 @@ func loadDiskGrace(ctx context.Context, rdb *redis.Client, uuid string) (diskGra
 	if err != nil {
 		return g, false
 	}
+	return parseDiskGrace(v)
+}
+
+func parseDiskGrace(v string) (diskGrace, bool) {
+	var g diskGrace
 	if _, err := fmt.Sscan(v, &g.limit, &g.ceiling); err != nil {
-		return g, false
+		return diskGrace{}, false
 	}
 	return g, true
+}
+
+// adoptMovedDiskGrace takes over the grace a moved server held on its source
+// node, as Core handed it over. The key is node-scoped and the source forgets
+// it on cleanup, so a graced server arrived as an ordinary over-limit one and
+// was stopped. Only under the limit it was granted under; countDiskUsage
+// keeps it from there while it holds.
+func adoptMovedDiskGrace(ctx context.Context, rdb *redis.Client, uuid string, limitMB int64, grace string) {
+	if rdb == nil || grace == "" || limitMB <= 0 {
+		return
+	}
+	if g, ok := parseDiskGrace(grace); ok && g.limit == limitMB<<20 {
+		saveDiskGrace(ctx, rdb, uuid, g)
+	}
 }
 
 func saveDiskGrace(ctx context.Context, rdb *redis.Client, uuid string, g diskGrace) {
@@ -153,7 +172,13 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 	limit := limitMB << 20
 	var before *DiskUsagePayload
 	if allowGrace && limit > 0 {
-		before = q.GetDiskUsage(uuid)
+		// Lifted but never counted is a first recount killed mid-tag: what
+		// it charged is part of the tree, not what the server held before
+		// the counting, and reads as no count at all.
+		if rdb == nil || rdb.Exists(ctx, diskLiftedKey(uuid)).Val() == 0 {
+			before = q.GetDiskUsage(uuid)
+		}
+		restoreLostDiskGrace(ctx, rdb, uuid, limit, before)
 	}
 	if limitMB > 0 {
 		// Persisted before it comes off, so a node killed during the tag puts
@@ -201,6 +226,18 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 	return err
 }
 
+// restoreLostDiskGrace puts back a grace whose key Redis lost - it keeps it
+// in memory only. A project held above the server's limit by a server still
+// over it is that grace's ceiling: restored, not granted a second time.
+func restoreLostDiskGrace(ctx context.Context, rdb *redis.Client, uuid string, limit int64, before *DiskUsagePayload) {
+	if rdb == nil || before == nil || before.Limit <= limit || before.Total < limit || before.Total >= before.Limit {
+		return
+	}
+	if _, ok := loadDiskGrace(ctx, rdb, uuid); !ok {
+		saveDiskGrace(ctx, rdb, uuid, diskGrace{limit: limit, ceiling: before.Limit})
+	}
+}
+
 // reconcileServer is the boot recount of one server, once per server on this
 // node, and again for one whose limit a recount left lifted. It reports
 // whether it counted.
@@ -220,9 +257,20 @@ func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uu
 
 // knownDiskLimitMB is the limit Core last pushed, else the one on the project
 // (a server limited before the cache existed). For paths Core sends no limit on.
+//
+// The saved config comes before the project: it survives a Redis that lost
+// the cache, and while a grace holds the project's limit is its ceiling,
+// which then became the server's limit for good.
 func knownDiskLimitMB(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string) int64 {
 	if limitMB := loadDiskLimit(ctx, rdb, uuid); limitMB > 0 {
 		return limitMB
+	}
+	if globalStorageMgr != nil {
+		if dir := globalStorageMgr.GetServerDir(uuid); dir != "" {
+			if limitMB := savedDiskLimitIn(dir); limitMB > 0 {
+				return limitMB
+			}
+		}
 	}
 	if u := q.GetDiskUsage(uuid); u != nil {
 		return u.Limit >> 20
@@ -234,7 +282,14 @@ func knownDiskLimitMB(ctx context.Context, rdb *redis.Client, q quotaAssigner, u
 // ceiling the filesystem holds meanwhile, so the owner sees it as full. Only
 // while that is still its limit: right after a raise it read as full against
 // the old one.
+//
+// A project with no hard limit under a known one is a lift a recount could
+// not undo, not an unlimited server: reported against the known limit, the
+// guard still warns and stops where the filesystem no longer does.
 func withGraceLimit(ctx context.Context, rdb *redis.Client, uuid string, usage *DiskUsagePayload) {
+	if usage.Limit == 0 {
+		usage.Limit = loadDiskLimit(ctx, rdb, uuid) << 20
+	}
 	if g, ok := loadDiskGrace(ctx, rdb, uuid); ok && g.limit == loadDiskLimit(ctx, rdb, uuid)<<20 {
 		usage.Limit = g.limit
 	}

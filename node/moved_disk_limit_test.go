@@ -21,20 +21,20 @@ func TestAMovedServerKeepsItsDiskLimit(t *testing.T) {
 	const uuid = "moved-1"
 	dir := t.TempDir()
 
-	applyMovedDiskLimit(ctx, rdb, quota, dir, uuid, 2048)
+	applyMovedDiskLimit(ctx, rdb, quota, dir, uuid, 2048, "")
 	if got := loadDiskLimit(ctx, rdb, uuid); got != 2048 {
 		t.Fatalf("limit after the move = %d, want 2048", got)
 	}
 
 	// An older Core sends no limit. That means "not told", and must not wipe
 	// the limit this node already enforces.
-	applyMovedDiskLimit(ctx, rdb, quota, dir, uuid, 0)
+	applyMovedDiskLimit(ctx, rdb, quota, dir, uuid, 0, "")
 	if got := loadDiskLimit(ctx, rdb, uuid); got != 2048 {
 		t.Fatalf("limit after a move that named none = %d, want the known 2048 kept", got)
 	}
 
 	// A failed move leaves no directory, and nothing is recorded for it.
-	applyMovedDiskLimit(ctx, rdb, quota, dir+"/missing", "never-arrived", 512)
+	applyMovedDiskLimit(ctx, rdb, quota, dir+"/missing", "never-arrived", 512, "")
 	if got := loadDiskLimit(ctx, rdb, "never-arrived"); got != 0 {
 		t.Fatalf("a server that never arrived got limit %d", got)
 	}

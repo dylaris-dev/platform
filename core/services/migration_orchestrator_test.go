@@ -300,6 +300,42 @@ func TestMigrationSourceLANIPs(t *testing.T) {
 	}
 }
 
+// J44: the disk grace lives under the source node's own key, which the target
+// cannot read, so Core hands it over. Only from a node whose word Core takes:
+// a customer's machine writes its own keys, and a grace it made up would buy
+// disk on someone else's node.
+func TestMovedDiskGrace(t *testing.T) {
+	ctx := context.Background()
+	rdb := newQueueTestRedis(t)
+	const uuid = "srv-1"
+	a, b := "tenant-a", "tenant-b"
+	node := func(token string, owner *string) *models.Node { return &models.Node{Token: token, OwnerID: owner} }
+	for _, token := range []string{"plat", "own-a"} {
+		if err := rdb.Set(ctx, "node:"+token+":server:"+uuid+":disk_grace", "100 300", 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name           string
+		source, target *models.Node
+		want           string
+	}{
+		{"platform source", node("plat", nil), node("t", nil), "100 300"},
+		{"platform to a customer's machine", node("plat", nil), node("t", &b), "100 300"},
+		{"a customer's machine to platform", node("own-a", &a), node("t", nil), ""},
+		{"to another customer's machine", node("own-a", &a), node("t", &b), ""},
+		{"between one customer's machines", node("own-a", &a), node("t", &a), "100 300"},
+		{"no grace on the source", node("none", nil), node("t", nil), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := movedDiskGrace(ctx, rdb, tt.source, tt.target, uuid); got != tt.want {
+				t.Errorf("grace = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // The pull token is checked on every pull attempt, and Core waits up to
 // migrationTransferTimeout for the transfer. A token that dies first turns a
 // migrate_in that waited behind long jobs, or a retry after a failed first

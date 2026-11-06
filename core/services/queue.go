@@ -196,11 +196,17 @@ func (q *QueueService) sendAttemptCommand(ctx context.Context, nodeToken, action
 }
 
 // migrateTargetConfig is the Config of a command that lands a server on a new
-// node: its uuid and the disk limit the target applies to it.
-func migrateTargetConfig(serverUUID string, diskLimitMB int64) map[string]interface{} {
+// node: its uuid, the disk limit the target applies to it, and the disk grace
+// it held on the source (see movedDiskGrace), omitted when there is none. An
+// older node ignores the field and stops a graced server as before.
+func migrateTargetConfig(serverUUID string, diskLimitMB int64, diskGrace string) map[string]interface{} {
+	docker := map[string]interface{}{"diskLimit": diskLimitMB}
+	if diskGrace != "" {
+		docker["diskGrace"] = diskGrace
+	}
 	return map[string]interface{}{
 		"uuid":   serverUUID,
-		"docker": map[string]interface{}{"diskLimit": diskLimitMB},
+		"docker": docker,
 	}
 }
 
@@ -213,7 +219,7 @@ func migrateTargetConfig(serverUUID string, diskLimitMB int64) map[string]interf
 // so the target puts the arriving directory under its quota. It never did: a
 // moved server ran with no disk limit on its new node until someone next
 // changed its resources.
-func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, attempt, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string, diskLimitMB int64) error {
+func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serverUUID, attempt, sourceNodeID, token, expectedSha256 string, expectedSize int64, sourcePrivateIPs []string, diskLimitMB int64, diskGrace string) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migrateInCmd struct {
@@ -236,7 +242,7 @@ func (q *QueueService) SendMigrateInCommand(ctx context.Context, nodeToken, serv
 	}
 	cmd := migrateInCmd{
 		Action:           "migrate_in",
-		Config:           migrateTargetConfig(serverUUID, diskLimitMB),
+		Config:           migrateTargetConfig(serverUUID, diskLimitMB, diskGrace),
 		SourceNodeID:     sourceNodeID,
 		Attempt:          attempt,
 		MigrateToken:     token,
@@ -294,7 +300,7 @@ func (q *QueueService) SendMigratePushR2Command(ctx context.Context, nodeToken, 
 // fallback). The target node downloads from the pre-signed GET URL, verifies the
 // archive against expectedSha256, extracts it, and reports phase "transferred" —
 // the same terminal phase as migrate_in, so cutover proceeds identically.
-func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, serverUUID, attempt, getURL, expectedSha256 string, expectedSize int64, diskLimitMB int64) error {
+func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, serverUUID, attempt, getURL, expectedSha256 string, expectedSize int64, diskLimitMB int64, diskGrace string) error {
 	stream := nodeCmdStream(nodeToken)
 
 	type migratePullR2Cmd struct {
@@ -308,7 +314,7 @@ func (q *QueueService) SendMigratePullR2Command(ctx context.Context, nodeToken, 
 	}
 	cmd := migratePullR2Cmd{
 		Action:          "migrate_pull_r2",
-		Config:          migrateTargetConfig(serverUUID, diskLimitMB),
+		Config:          migrateTargetConfig(serverUUID, diskLimitMB, diskGrace),
 		Attempt:         attempt,
 		PresignedGetURL: getURL,
 		ExpectedSha256:  expectedSha256,

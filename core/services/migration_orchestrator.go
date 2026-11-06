@@ -684,7 +684,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	// unavailable", after the server had been stopped and archived.
 	// See migrationSourceLANIPs for who is handed the source's LAN addresses.
 	sourcePrivateIPs := migrationSourceLANIPs(sourceNode, targetNode)
-	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, attempt, sourceNode.Token, token, meta.SHA256, meta.Size, sourcePrivateIPs, srv.DiskLimit); err != nil {
+	if err := o.queue.SendMigrateInCommand(ctx, targetNode.Token, srv.UUID, attempt, sourceNode.Token, token, meta.SHA256, meta.Size, sourcePrivateIPs, srv.DiskLimit, movedDiskGrace(ctx, o.redis, sourceNode, targetNode, srv.UUID)); err != nil {
 		log.Printf("migration %s: migrate_in queue failed: %v", srv.UUID, err)
 		o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "migrate_in queue failed")
 		return
@@ -1293,7 +1293,7 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 	}
 
 	// Target downloads from R2, verifies the hash, extracts. Reports "transferred".
-	if err := o.queue.SendMigratePullR2Command(ctx, targetNode.Token, srv.UUID, attempt, getURL, expectedSha256, expectedSize, srv.DiskLimit); err != nil {
+	if err := o.queue.SendMigratePullR2Command(ctx, targetNode.Token, srv.UUID, attempt, getURL, expectedSha256, expectedSize, srv.DiskLimit, movedDiskGrace(ctx, o.redis, sourceNode, targetNode, srv.UUID)); err != nil {
 		return fmt.Errorf("queue migrate_pull_r2: %w", err)
 	}
 	if phase, nerr := o.waitForNodePhase(ctx, targetNode.Token, progress, "transferred", migrationR2PhaseTimeout); phase != "transferred" {
@@ -1458,6 +1458,29 @@ func (o *MigrationOrchestrator) writeStatus(ctx context.Context, serverUUID, pha
 	if err := o.redis.Set(ctx, key, data, orchestrationStatusTTL).Err(); err != nil {
 		log.Printf("migration %s: failed to write orchestration status: %v", serverUUID, err)
 	}
+}
+
+// movedDiskGrace is the disk grace the source node holds for the server
+// ("<limit> <ceiling>" in bytes, the node's own format), for the target to
+// take over. The node-scoped key (node:<token>:server:<uuid>:disk_grace) is
+// out of the target's Redis ACL, and the source forgets it on cleanup, so a
+// server the owner decided warns rather than stops was stopped on arrival.
+//
+// Only from a node Core takes at its word. A customer's machine writes its
+// own keys, and a grace it made up would hold disk on a node that is not
+// theirs; between two of one customer's machines it is their own disk.
+func movedDiskGrace(ctx context.Context, rdb *redis.Client, source, target *models.Node, serverUUID string) string {
+	if rdb == nil || source == nil || target == nil {
+		return ""
+	}
+	if source.Kind() == models.NodeKindBYON && (target.Kind() != models.NodeKindBYON || *target.OwnerID != *source.OwnerID) {
+		return ""
+	}
+	v, err := rdb.Get(ctx, fmt.Sprintf("node:%s:server:%s:disk_grace", source.Token, serverUUID)).Result()
+	if err != nil {
+		return ""
+	}
+	return v
 }
 
 // migrationSourceLANIPs is what a migrate_in is told about the source's LAN.

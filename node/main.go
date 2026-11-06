@@ -2319,7 +2319,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// container start here: Core sends "reconfigure" with its config next,
 		// and the reconciler creates the container from that.
 		handleMigrateIn(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.ExpectedSize, cmd.SourcePrivateIPs)
-		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
+		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit, cmd.Config.Docker.DiskGrace)
 
 	case "migrate_cleanup":
 		// Source side: drop the staged archive + original dir.
@@ -2342,7 +2342,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "migrate_pull_r2":
 		// Target side (cross-LAN BYON fallback): download from R2, verify, extract.
 		handleMigratePullR2(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.PresignedGetURL, cmd.ExpectedSha256, cmd.ExpectedSize)
-		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
+		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit, cmd.Config.Docker.DiskGrace)
 
 	case "backup_run":
 		// Re-decode the full payload — BackupRunCommand has many fields
@@ -2420,8 +2420,9 @@ const busyStatusTTL = 30 * time.Second
 // applyMovedDiskLimit applies the limit a move command carried, once the
 // server's directory is on this node. A Core that predates the field sends
 // none, and "none" here means "not told", not "unlimited": that case keeps
-// whatever this node already knew instead of clearing it.
-func applyMovedDiskLimit(ctx context.Context, rdb *redis.Client, quota *QuotaSet, serverDir, uuid string, limitMB int64) {
+// whatever this node already knew instead of clearing it. grace is the disk
+// grace the server held on its source, empty when Core sent none.
+func applyMovedDiskLimit(ctx context.Context, rdb *redis.Client, quota *QuotaSet, serverDir, uuid string, limitMB int64, grace string) {
 	if serverDir == "" {
 		return
 	}
@@ -2431,6 +2432,7 @@ func applyMovedDiskLimit(ctx context.Context, rdb *redis.Client, quota *QuotaSet
 	if limitMB <= 0 {
 		limitMB = loadDiskLimit(ctx, rdb, uuid)
 	}
+	adoptMovedDiskGrace(ctx, rdb, uuid, limitMB, grace)
 	applyDiskLimit(ctx, rdb, quota, uuid, limitMB)
 }
 
