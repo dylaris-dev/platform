@@ -191,28 +191,44 @@ var saveFlushTimeout = 3 * time.Minute
 // "Saved the game" from 1.13 on, "Saved the world" before it (Forge 1.12.2,
 // 1.7.10), and the dimension summary some loaders print last.
 func saveConfirmed(line string) bool {
-	return strings.Contains(line, "Saved the game") || strings.Contains(line, "Saved the world") ||
-		strings.Contains(line, "All dimensions are saved")
+	msg := afterLogPrefix(line)
+	for _, p := range []string{"Saved the game", "Saved the world", "All dimensions are saved", "ThreadedAnvilChunkStorage: All dimensions are saved"} {
+		if strings.HasPrefix(msg, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// afterLogPrefix is a console line without its log prefix. The message is
+// matched from its start: a player's chat ("<Steve> Saved the game?") carries
+// the same phrases, and a wait ended by one archived a world mid-flush. The
+// prefix ends at the FIRST "]: " (vanilla, Paper, Forge), else at the first
+// "] " (BungeeCord); nothing a player types can move either one earlier.
+// Unlike consoleMessage it keeps a "[Steve] " tag, which is how /say prints.
+func afterLogPrefix(line string) string {
+	msg := strings.TrimSpace(ansiEscape.ReplaceAllString(line, ""))
+	if i := strings.Index(msg, "]: "); i >= 0 {
+		return msg[i+3:]
+	}
+	if i := strings.Index(msg, "] "); i >= 0 {
+		return msg[i+2:]
+	}
+	return msg
 }
 
 // saveUnsupported reports a console that answered the save commands with "I do
 // not know that command" (a proxy, or a custom server): no confirmation is
 // coming, so there is nothing to wait for.
 func saveUnsupported(line string) bool {
-	l := strings.ToLower(line)
-	if strings.Contains(l, "unknown command") || strings.Contains(l, "unknown or incomplete command") {
+	msg := afterLogPrefix(line)
+	if l := strings.ToLower(msg); strings.HasPrefix(l, "unknown command") || strings.HasPrefix(l, "unknown or incomplete command") {
 		return true
 	}
-	// The proxies answer in words of their own, matched as the whole message
-	// after the log prefix: a backup that stops waiting early on a game server
-	// archives a world mid-save, so nothing looser than their exact reply.
-	msg := strings.TrimSpace(ansiEscape.ReplaceAllString(line, ""))
-	for _, reply := range proxyUnknownCommandReplies {
-		if msg == reply || strings.HasSuffix(msg, "]: "+reply) || strings.HasSuffix(msg, "] "+reply) {
-			return true
-		}
-	}
-	return false
+	// The proxies answer in words of their own, matched as the whole message:
+	// a backup that stops waiting early on a game server archives a world
+	// mid-save, so nothing looser than their exact reply.
+	return slices.Contains(proxyUnknownCommandReplies, msg)
 }
 
 // proxyUnknownCommandReplies are the proxies' answers to a command they do not
@@ -385,6 +401,17 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	if err := requireCoreTransfer(storage.Provider, cmd.Upload == modeUploadMultipart); err != nil {
 		reportBackup(ctx, rdb, cmd.RunID, "failed", err.Error(), 0)
 		return
+	}
+	// The same run once more after a node restart: killed after its success
+	// report and before the queue's ACK, it comes back with its own key. The
+	// archive there is the one the success row points at; writing it again
+	// truncated it first, and a rerun that then failed deleted it.
+	if cmd.Upload != modeUploadMultipart {
+		if size, ok := completeArchive(sm, cmd.ServerUUID, storage, cmd.StorageKey); ok {
+			log.Printf("backup_run: run %s already has its complete archive, reporting it instead of writing it again", key)
+			reportBackup(ctx, rdb, cmd.RunID, "success", "", size)
+			return
+		}
 	}
 
 	serverRoot := resolveServerRoot(sm, cmd.ServerUUID)
@@ -830,6 +857,45 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 	default:
 		return fmt.Errorf("unknown provider %s", info.Provider)
 	}
+}
+
+// completeArchive reports the size of a complete archive already under key on
+// a filesystem provider. The key carries a random suffix per run, so a file
+// there is this run's; it counts only when its gzip stream reads to the end
+// with a good checksum, which a write cut short (or an older node's in-place
+// write) never has.
+func completeArchive(sm *StorageManager, serverUUID string, info storageInfo, key string) (int64, bool) {
+	var f *os.File
+	var err error
+	switch info.Provider {
+	case "local", "shared":
+		var cfg localCfg
+		if json.Unmarshal(info.Config, &cfg) != nil || cfg.BasePath == "" {
+			return 0, false
+		}
+		f, err = os.Open(filepath.Join(cfg.BasePath, filepath.Clean("/"+key)))
+	case "node-local":
+		// Inside the tenant's bind mount: openArchive refuses a planted link.
+		f, err = openArchive(filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName, nodeLocalArchiveName(key)))
+	default:
+		return 0, false
+	}
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || !st.Mode().IsRegular() {
+		return 0, false
+	}
+	gr, err := gzip.NewReader(f)
+	if err != nil {
+		return 0, false
+	}
+	if _, err := io.Copy(io.Discard, gr); err != nil {
+		return 0, false
+	}
+	return st.Size(), true
 }
 
 // nodeLocalArchiveName collapses a storage key into its leaf filename so

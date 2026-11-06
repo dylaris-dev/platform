@@ -284,6 +284,27 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 	return err
 }
 
+// liftDiskLimit takes a server's hard limit off for work that holds an old and
+// a new copy of its data under its project at once (a sub-server restore
+// extracts beside the sub-server it replaces). It sets the same marker a
+// recount does, so a node killed meanwhile puts the limit back on its next
+// boot; otherwise a countDiskUsage puts it back. Reports whether it lifted.
+func liftDiskLimit(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string) bool {
+	limitMB := knownDiskLimitMB(ctx, rdb, q, uuid)
+	if limitMB <= 0 || rdb == nil {
+		return false
+	}
+	recordDiskLimit(ctx, rdb, uuid, limitMB)
+	if err := rdb.SetNX(ctx, diskLiftedKey(uuid), diskLiftedNoGrace, 0).Err(); err != nil {
+		log.Printf("quota: mark the hard limit of %s lifted: %v - leaving it on", uuid, err)
+		return false
+	}
+	if err := q.SetLimit(uuid, 0); err != nil {
+		log.Printf("quota: lift the limit of %s: %v", uuid, err)
+	}
+	return true
+}
+
 // restoreLostDiskGrace puts back a grace whose key Redis lost - it keeps it
 // in memory only. A project held above the server's limit by a server still
 // over it is that grace's ceiling: restored, not granted a second time.

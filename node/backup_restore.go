@@ -198,6 +198,20 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			}
 		}
 	}()
+	// A sub-server stage is inside the server root and inherits its quota
+	// project, so the extraction was charged beside the sub-server it replaces
+	// and failed with EDQUOT on any server past half its limit. Off while the
+	// server is stopped; deferred after the restart's defer, so the limit is
+	// back before the server runs again.
+	if cmd.SubServer != "" && liftDiskLimitForRestore(ctx, rdb, cmd.ServerUUID) {
+		defer func() {
+			if serverDeleted(cmd.ServerUUID) {
+				rdb.Del(context.Background(), diskLiftedKey(cmd.ServerUUID))
+				return
+			}
+			retagAfterRestore(ctx, rdb, cmd.ServerUUID)
+		}()
+	}
 
 	// The body has no deadline (a restore may stream for hours), so a source
 	// that stops sending ends it instead: a tenant's own bucket could trickle a
@@ -451,7 +465,13 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		}
 	}
 	if carried {
-		go os.RemoveAll(backupDir)
+		// Not in the background: a renamed tree keeps its quota project, so the
+		// old world counted against the server until the delete finished, and
+		// the limit put back meanwhile had the restored server refused writes
+		// and stopped by the disk guard.
+		if err := os.RemoveAll(backupDir); err != nil {
+			log.Printf("Restore %d: [warn] remove the old copy %s: %v", cmd.RunID, backupDir, err)
+		}
 	} else {
 		keepStash(cmd.RunID, backupDir)
 	}
@@ -480,6 +500,14 @@ var retagAfterRestore = func(ctx context.Context, rdb *redis.Client, uuid string
 	if err := countDiskUsage(ctx, rdb, globalQuotaSet, uuid, knownDiskLimitMB(ctx, rdb, globalQuotaSet, uuid), false); err != nil {
 		log.Printf("quota: re-tag %s after restore: %v", uuid, err)
 	}
+}
+
+// liftDiskLimitForRestore is a var for the same reason as retagAfterRestore.
+var liftDiskLimitForRestore = func(ctx context.Context, rdb *redis.Client, uuid string) bool {
+	if globalQuotaSet == nil || !globalQuotaSet.IsAvailableFor(uuid) {
+		return false
+	}
+	return liftDiskLimit(ctx, rdb, globalQuotaSet, uuid)
 }
 
 // keepStash renames a stash that must survive out of the restore cleanup's
