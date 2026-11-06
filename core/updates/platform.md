@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.06
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Tenant code can no longer overwrite node-managed files in a server folder through backslash names,
+  hard links or planted links over SFTP, Beam or the panel. `node`
+- A Beam ticket is dated when the account was read, so a demotion, password reset or account
+  deletion in that window revokes it. `core`
+- Tab apps are capped per server and node, and their requests end when the browser leaves. `core` `node`
+
+### Fixes
+- A Kill or Stop now wins over a running Start, Restart, sub-server switch or crash restart, and a
+  stop the node cannot complete is reported instead of shown as done. `node`
+- Storage moves, restores, setups and version moves refuse to run against a server the node could
+  not stop, and every writer holds a storage move off instead of losing its files. `node` `core`
+- Over 250 further fixes from an audit of the node: quotas and disk limits, backups, cross-node
+  moves, installers (Quilt packs, NeoForge 1.20.1), tab apps, ports and stats. `node` `core` `log-shipper`
+
 ## 2026.11.05
 
 ### Features

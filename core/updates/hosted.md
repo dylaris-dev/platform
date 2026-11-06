@@ -11,6 +11,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.06
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- BYON: code running in one of your servers can no longer overwrite the files your node keeps in
+  that server's folder. Your node updates itself. `node`
+
+### Fixes
+- BYON: Kill and Stop now always win over a start that is still preparing, and server moves,
+  restores and version changes no longer run against a server that could not be stopped. `node`
+- Restoring a full backup that does not contain the active sub-server is now refused with a clear
+  message; switch to a sub-server in the backup first. Tab apps with live connections work.
+- Over 250 further fixes to uploads, quotas, backups, server moves, mod and modpack installs and
+  server stats, on our side and on BYON nodes. `node`
+
 ## 2026.11.04.2
 
 ### Features

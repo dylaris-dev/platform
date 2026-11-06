@@ -332,6 +332,12 @@ direct tab with a real public URL for those.
 The application forbids being framed. That is its own setting, not ours - Grafana
 for instance needs `allow_embedding = true`.
 
+**"Too many tab requests are running on this server or node".**
+A node runs at most 64 tab requests per server and 512 in total at once, so a
+page that leaves streams or long polls open cannot starve everything else.
+Requests end when the browser leaves the tab; reload once the app has closed
+the ones it no longer needs.
+
 **Certificate errors on tab hostnames only.**
 Almost always the wildcard depth: a certificate for `*.example.com` does not
 cover `abc.tabs.example.com`, and neither does one for `*.tabs.example.com` cover
