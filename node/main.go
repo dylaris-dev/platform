@@ -1965,6 +1965,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 				log.Printf("update_resources %s: container is gone after the failed change; the server is down until it is started again", cmd.Config.UUID)
 				rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 			}
+			// Except the disk limit, which applyDiskLimit below enforces and
+			// caches regardless. Left old here, a change to unlimited dropped
+			// the cache and the du/quota fallbacks read the old cap back from
+			// this file.
+			setSavedDockerField(storage.GetServerDir(cmd.Config.UUID), "diskLimit", cmd.Config.Docker.DiskLimit)
 		} else {
 			log.Printf("Server %s resources updated", cmd.Config.UUID)
 			resServerPath := storage.GetServerDir(cmd.Config.UUID)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/docker/docker/client"
+	"github.com/redis/go-redis/v9"
 )
 
 // noContainerDocker answers every container inspect with 404 and counts what
@@ -137,5 +140,65 @@ func TestUpdateResourcesIgnoresAPlantedSavedSubServer(t *testing.T) {
 	}
 	if got.ActiveSubServer != "" {
 		t.Errorf("planted sub-server %q survived the merge", got.ActiveSubServer)
+	}
+}
+
+// N16/N20: a failed update_resources kept the old limit in the saved config
+// while the cache took the new one. Changed to unlimited, the cache key was
+// dropped and the du fallback read the old cap back out of the saved config.
+func TestAFailedUpdateResourcesStillSavesTheNewDiskLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		saved, sent int64
+	}{
+		{"to unlimited", 10240, 0},
+		{"to a lower cap", 10240, 5120},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const uuid = "14141414-2222-3333-4444-555555555555"
+			ctx := context.Background()
+			rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+			storage := NewStorageManager(t.TempDir(), rdb)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"message":"daemon busy"}`))
+			}))
+			t.Cleanup(srv.Close)
+			cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithVersion("1.44"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { cli.Close() })
+			dm := &DockerManager{cli: cli, ctx: t.Context(), storageMgr: storage}
+
+			dir := storage.GetServerDir(uuid)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			saved := ServerConfig{UUID: uuid, ActiveSubServer: "survival"}
+			saved.Docker.Image = "img:saved"
+			saved.Docker.RAM = 1024
+			saved.Docker.DiskLimit = tc.saved
+			b, _ := json.Marshal(saved)
+			os.WriteFile(filepath.Join(dir, ".node_config.json"), b, 0o644)
+			recordDiskLimit(ctx, rdb, uuid, tc.saved)
+
+			cmd := NodeCommand{Action: "update_resources"}
+			cmd.Config.UUID = uuid
+			cmd.Config.Docker.RAM = 4096
+			cmd.Config.Docker.DiskLimit = tc.sent
+			processCommand(ctx, cmd, "", rdb, dm, "node-a", NewQuotaSet(nil), storage)
+
+			if got := savedDiskLimitIn(dir); got != tc.sent {
+				t.Errorf("saved disk limit = %d MB, want the new %d", got, tc.sent)
+			}
+			var after ServerConfig
+			data, _ := os.ReadFile(filepath.Join(dir, ".node_config.json"))
+			json.Unmarshal(data, &after)
+			if after.Docker.RAM != 1024 || after.Docker.Image != "img:saved" {
+				t.Errorf("rest of the saved config changed: ram %d image %q", after.Docker.RAM, after.Docker.Image)
+			}
+		})
 	}
 }

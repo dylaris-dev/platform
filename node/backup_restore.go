@@ -204,6 +204,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// back before the server runs again.
 	if cmd.SubServer != "" && liftDiskLimitForRestore(ctx, rdb, cmd.ServerUUID) {
 		defer func() {
+			endDiskLift(cmd.ServerUUID)
 			if serverDeleted(cmd.ServerUUID) {
 				rdb.Del(context.Background(), diskLiftedKey(cmd.ServerUUID))
 				return

@@ -2010,6 +2010,11 @@ func (h *ServerHandler) UpdateServerResources(w http.ResponseWriter, r *http.Req
 		httpx.SendJSONError(w, "The server is being moved to another node. Change its resources when the move has finished.", http.StatusConflict)
 		return
 	}
+	// A restore holds node_busy, not a status: its lifted hard limit was put
+	// back mid-extraction by the recount a resource change runs.
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
+		return
+	}
 
 	isAdmin := r.Context().Value("isAdmin").(bool)
 

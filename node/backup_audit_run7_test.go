@@ -185,6 +185,7 @@ func TestLiftDiskLimitIsUndoneByTheRecount(t *testing.T) {
 	if v, _ := rdb.Get(ctx, diskLiftedKey("srv")).Result(); v != diskLiftedNoGrace {
 		t.Fatalf("lifted marker = %q, want %q", v, diskLiftedNoGrace)
 	}
+	endDiskLift("srv")
 	if err := countDiskUsage(ctx, rdb, q, "srv", knownDiskLimitMB(ctx, rdb, q, "srv"), false); err != nil {
 		t.Fatal(err)
 	}
@@ -195,5 +196,45 @@ func TestLiftDiskLimitIsUndoneByTheRecount(t *testing.T) {
 	unlimited := &fakeQuota{}
 	if liftDiskLimit(ctx, newMiniRedis(t), unlimited, "free") || len(unlimited.setLimits) != 0 {
 		t.Fatal("a server with no limit was lifted")
+	}
+}
+
+// N17: a recount another command ran while a restore held the lift (an
+// update_resources beside it) put the hard limit back mid-extraction and
+// dropped the marker, so the extraction failed with EDQUOT. It now only
+// records the new limit, and the restore's own recount applies it.
+func TestARecountDuringARestoreLiftLeavesTheLimitOff(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		newMB   int64
+		wantEnd int64
+	}{
+		{"raised during the restore", 200, 200},
+		{"unchanged", 100, 100},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			rdb := newMiniRedis(t)
+			q := &fakeQuota{limitMB: 100, before: usageOf(10*mib, 100*mib), after: usageOf(10*mib, 100*mib)}
+			recordDiskLimit(ctx, rdb, "srv", 100)
+			if !liftDiskLimit(ctx, rdb, q, "srv") {
+				t.Fatal("a limited server was not lifted")
+			}
+			t.Cleanup(func() { endDiskLift("srv") })
+			recordDiskLimit(ctx, rdb, "srv", tc.newMB)
+			if err := countDiskUsage(ctx, rdb, q, "srv", tc.newMB, false); err != nil {
+				t.Fatal(err)
+			}
+			if q.limitMB != 0 || rdb.Exists(ctx, diskLiftedKey("srv")).Val() != 1 {
+				t.Fatalf("during the restore: limit %d MB, marker kept = %v; want lifted and kept", q.limitMB, rdb.Exists(ctx, diskLiftedKey("srv")).Val() == 1)
+			}
+			endDiskLift("srv")
+			if err := countDiskUsage(ctx, rdb, q, "srv", knownDiskLimitMB(ctx, rdb, q, "srv"), false); err != nil {
+				t.Fatal(err)
+			}
+			if q.limitMB != tc.wantEnd || rdb.Exists(ctx, diskLiftedKey("srv")).Val() != 0 {
+				t.Fatalf("after the restore: limit %d MB, want %d, marker left = %v", q.limitMB, tc.wantEnd, rdb.Exists(ctx, diskLiftedKey("srv")).Val() != 0)
+			}
+		})
 	}
 }

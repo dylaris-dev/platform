@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -202,6 +203,16 @@ func assignNewServerQuota(ctx context.Context, rdb *redis.Client, q quotaAssigne
 // because ext4 now counts data it never counted before. A move, a restore or a
 // storage move of a tree over its limit is an ordinary over-limit server.
 func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string, limitMB int64, allowGrace bool) error {
+	if diskLiftHeld(uuid) {
+		// A restore still extracts under its lift: putting the limit back here
+		// (an update_resources beside it) failed the extraction with EDQUOT.
+		// The restore's own recount applies what is cached.
+		if limitMB > 0 {
+			recordDiskLimit(ctx, rdb, uuid, limitMB)
+		}
+		log.Printf("quota: %s is restoring with its hard limit lifted; the limit goes back on when the restore ends", uuid)
+		return nil
+	}
 	limit := limitMB << 20
 	var before *DiskUsagePayload
 	if allowGrace && limit > 0 {
@@ -297,11 +308,38 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 	return err
 }
 
+// heldDiskLifts counts the lifts liftDiskLimit granted that their work has not
+// ended yet. In memory on purpose: a node killed meanwhile has the marker put
+// the limit back on its next boot.
+var heldDiskLifts = struct {
+	sync.Mutex
+	n map[string]int
+}{n: map[string]int{}}
+
+func diskLiftHeld(uuid string) bool {
+	heldDiskLifts.Lock()
+	defer heldDiskLifts.Unlock()
+	return heldDiskLifts.n[uuid] > 0
+}
+
+// endDiskLift releases a lift liftDiskLimit granted. Called before the
+// recount that puts the limit back, which a held lift would skip.
+func endDiskLift(uuid string) {
+	heldDiskLifts.Lock()
+	defer heldDiskLifts.Unlock()
+	if heldDiskLifts.n[uuid] <= 1 {
+		delete(heldDiskLifts.n, uuid)
+		return
+	}
+	heldDiskLifts.n[uuid]--
+}
+
 // liftDiskLimit takes a server's hard limit off for work that holds an old and
 // a new copy of its data under its project at once (a sub-server restore
 // extracts beside the sub-server it replaces). It sets the same marker a
 // recount does, so a node killed meanwhile puts the limit back on its next
-// boot; otherwise a countDiskUsage puts it back. Reports whether it lifted.
+// boot; otherwise a countDiskUsage after endDiskLift puts it back. Reports
+// whether it lifted; a true has to be ended with endDiskLift.
 func liftDiskLimit(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string) bool {
 	limitMB := knownDiskLimitMB(ctx, rdb, q, uuid)
 	if limitMB <= 0 || rdb == nil {
@@ -315,6 +353,9 @@ func liftDiskLimit(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid
 	if err := q.SetLimit(uuid, 0); err != nil {
 		log.Printf("quota: lift the limit of %s: %v", uuid, err)
 	}
+	heldDiskLifts.Lock()
+	heldDiskLifts.n[uuid]++
+	heldDiskLifts.Unlock()
 	return true
 }
 
