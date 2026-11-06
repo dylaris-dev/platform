@@ -265,8 +265,9 @@ func (dm *DockerManager) openNetGate(uuid string) {
 		}
 		dm.kickNetPolicy()
 	}
-	p := filepath.Join(dm.resolveLocalServerPath(uuid), netGateFile)
-	if err := os.WriteFile(p, nil, 0o644); err != nil {
+	// Through the server's Root: under MC_RUN_AS=0 the tenant can swap the
+	// marker for a link, and a plain WriteFile truncated its target as root.
+	if err := writeServerRootFile(dm.resolveLocalServerPath(uuid), netGateFile, nil); err != nil {
 		log.Printf("netpolicy: cannot open the start gate of %s (its server waits %s): %v", uuid, 30*time.Second, err)
 	}
 }

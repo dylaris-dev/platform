@@ -237,3 +237,26 @@ func TestLinkAddrsKeyIgnoresOrder(t *testing.T) {
 		t.Fatal("the same Link addresses compare as a change")
 	}
 }
+
+// K41: a link planted at the marker (a root container, MC_RUN_AS=0) must not
+// carry the node's truncating write out of the server's directory.
+func TestOpenNetGateDoesNotFollowAPlantedLink(t *testing.T) {
+	dir := t.TempDir()
+	dm := &DockerManager{localDataPath: dir}
+	uuid := "11111111-2222-3333-4444-555555555555"
+	srv := dm.resolveLocalServerPath(uuid)
+	if err := os.MkdirAll(srv, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(dir, "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(srv, netGateFile)); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+	dm.openNetGate(uuid)
+	if b, _ := os.ReadFile(victim); string(b) != "keep" {
+		t.Fatalf("openNetGate wrote through the link: %q", b)
+	}
+}
