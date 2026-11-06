@@ -21,13 +21,17 @@ import (
 )
 
 const (
-	rconTypeAuth       = 3
-	rconTypeAuthResp   = 2
-	rconTypeExec       = 2
-	rconTypeRespValue  = 0
-	rconRequestExec    = 1
-	rconRequestAuth    = 2
-	rconMaxBodyLen     = 4096
+	rconTypeAuth      = 3
+	rconTypeAuthResp  = 2
+	rconTypeExec      = 2
+	rconTypeRespValue = 0
+	rconRequestExec   = 1
+	rconRequestAuth   = 2
+	rconMaxBodyLen    = 4096
+	// rconMaxReadBodyLen bounds an INBOUND packet. Vanilla splits a reply every
+	// 4096 UTF-16 code units and encodes UTF-8 afterwards (MC-270327), so one
+	// packet body is up to 3*4096 bytes; 4096 rejected any non-ASCII reply.
+	rconMaxReadBodyLen = 3 * rconMaxBodyLen
 	rconDefaultPortVar = 25575
 	rconDefaultTimeout = 3 * time.Second
 	// rconIdleGap is how long to wait for a FURTHER reply packet once one has
@@ -56,6 +60,9 @@ const (
 // silent cut would read as a short answer from the server, which for something
 // like a player list is worse than no answer.
 const rconTruncatedNote = "\n[output truncated: the server's reply exceeded the 64KB limit]"
+
+// rconCutNote marks a reply whose connection failed after part of it arrived.
+const rconCutNote = "\n[output truncated: the RCON connection failed mid-reply]"
 
 // execRcon dials addr, auths, runs cmd, returns the server's reply.
 //
@@ -134,6 +141,7 @@ func execRcon(addr, password, command string, timeout time.Duration) (string, er
 	var out strings.Builder
 	got := false
 	truncated := false
+	cut := false
 	for {
 		deadline := time.Now().Add(timeout)
 		if got {
@@ -145,9 +153,14 @@ func execRcon(addr, password, command string, timeout time.Duration) (string, er
 		_ = conn.SetReadDeadline(deadline)
 		rid, rtyp, body, err := readRconPacket(conn)
 		if err != nil {
-			// Once something arrived, a read timeout is the end of the reply,
-			// not a failure.
+			// Once something arrived, a read timeout (or a close at a packet
+			// boundary) is the end of the reply, not a failure. Anything else
+			// cut the reply, and must not read as a complete one.
 			if got {
+				var ne net.Error
+				if !(errors.As(err, &ne) && ne.Timeout()) && !errors.Is(err, io.EOF) {
+					cut = true
+				}
 				break
 			}
 			return "", fmt.Errorf("read exec resp: %w", err)
@@ -169,6 +182,8 @@ func execRcon(addr, password, command string, timeout time.Duration) (string, er
 	res := strings.ToValidUTF8(strings.TrimRight(out.String(), "\x00 \r\n"), "")
 	if truncated {
 		res += rconTruncatedNote
+	} else if cut {
+		res += rconCutNote
 	}
 	return res, nil
 }
@@ -195,7 +210,7 @@ func readRconPacket(r io.Reader) (int32, int32, string, error) {
 		return 0, 0, "", err
 	}
 	size := int32(binary.LittleEndian.Uint32(sizeBuf[:]))
-	if size < 10 || size > rconMaxBodyLen+10 {
+	if size < 10 || size > rconMaxReadBodyLen+10 {
 		return 0, 0, "", fmt.Errorf("invalid packet size %d", size)
 	}
 	buf := make([]byte, size)

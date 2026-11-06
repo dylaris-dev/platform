@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"io"
 	"net"
 	"strings"
@@ -128,5 +130,92 @@ func TestExecRconStillReturnsAShortReply(t *testing.T) {
 	}
 	if out != "There are 2 of a max of 20 players online" {
 		t.Errorf("got %q", out)
+	}
+}
+
+// writeRawRconPacket frames a body without writeRconPacket's outbound 4096
+// cap, because that cap is ours and a server is not bound by it.
+func writeRawRconPacket(w io.Writer, id, typ int32, body []byte) error {
+	buf := make([]byte, 4+4+4+len(body)+2)
+	binary.LittleEndian.PutUint32(buf[0:4], uint32(len(buf)-4))
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(id))
+	binary.LittleEndian.PutUint32(buf[8:12], uint32(typ))
+	copy(buf[12:], body)
+	_, err := w.Write(buf)
+	return err
+}
+
+// rconRawServer answers auth, then writes the given raw frames as the exec
+// reply and keeps the connection open, as Minecraft does.
+func rconRawServer(t *testing.T, frames ...[]byte) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lis.Close() })
+	go func() {
+		conn, err := lis.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		readRconPacket(conn)
+		writeRconPacket(conn, rconRequestAuth, rconTypeAuthResp, "")
+		readRconPacket(conn)
+		for _, f := range frames {
+			if _, err := conn.Write(f); err != nil {
+				return
+			}
+		}
+		io.Copy(io.Discard, conn)
+	}()
+	return lis.Addr().String()
+}
+
+func rawFrame(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var b bytes.Buffer
+	if err := writeRawRconPacket(&b, rconRequestExec, rconTypeRespValue, body); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+// Vanilla splits a reply every 4096 UTF-16 code units and only then encodes
+// UTF-8 (MC-270327), so one packet carries up to 3*4096 body bytes. Any
+// non-ASCII reply over 4096 bytes used to fail the command the server had
+// already run; a broken later packet used to read as a complete reply.
+func TestExecRconReadsVanillaSizedPackets(t *testing.T) {
+	cyr := strings.Repeat("Ж", 4096) // 8192 bytes, one vanilla packet
+	cjk := strings.Repeat("世", 4096) // 12288 bytes, the vanilla maximum
+	bogus := make([]byte, 4)         // a size field no packet can have
+	binary.LittleEndian.PutUint32(bogus, 1<<30)
+
+	cases := []struct {
+		name      string
+		frames    [][]byte
+		want      string
+		wantTrunc bool
+	}{
+		{"two-byte runes", [][]byte{rawFrame(t, []byte(cyr))}, cyr, false},
+		{"three-byte runes", [][]byte{rawFrame(t, []byte(cjk))}, cjk, false},
+		{"split over two big packets", [][]byte{rawFrame(t, []byte(cjk)), rawFrame(t, []byte(cyr))}, cjk + cyr, false},
+		{"broken packet after the first", [][]byte{rawFrame(t, []byte("head")), bogus}, "head", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := execRcon(rconRawServer(t, tc.frames...), "pw", "x", 2*time.Second)
+			if err != nil {
+				t.Fatalf("execRcon: %v", err)
+			}
+			body, trunc := strings.CutSuffix(out, rconCutNote)
+			if trunc != tc.wantTrunc {
+				t.Errorf("truncation note present = %v, want %v (out tail %q)", trunc, tc.wantTrunc, out[max(0, len(out)-80):])
+			}
+			if body != tc.want {
+				t.Errorf("got %d bytes, want %d", len(body), len(tc.want))
+			}
+		})
 	}
 }

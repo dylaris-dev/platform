@@ -126,6 +126,20 @@ func RefuseIncomplete(w http.ResponseWriter, complete, bodyStarted bool) {
 	panic(http.ErrAbortHandler)
 }
 
+// RefuseNodeError ends a download the node reported failed. The metadata
+// frame stages the attachment headers before any body exists, so "headers
+// set" is not "body started": until a byte is out there is still a status to
+// send, without the attachment header that would save the error as the file.
+// After that only an abort keeps the browser from calling the download done.
+func RefuseNodeError(w http.ResponseWriter, e *pb.OpError, bodyStarted bool) {
+	if !bodyStarted {
+		w.Header().Del("Content-Disposition")
+		http.Error(w, e.Message, NodeErrorStatus(e.Code))
+		return
+	}
+	panic(http.ErrAbortHandler)
+}
+
 // nodeWriteConfirmTimeout bounds the wait for the node to commit a written
 // file: a rename on its own disk, so seconds at most.
 const nodeWriteConfirmTimeout = 30 * time.Second

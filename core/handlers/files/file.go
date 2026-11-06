@@ -865,9 +865,7 @@ func (h *FileHandler) DownloadFileHandler(w http.ResponseWriter, r *http.Request
 	complete := false
 	for resp := range ch {
 		if errResp := resp.GetError(); errResp != nil {
-			if !headerWritten {
-				http.Error(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
-			}
+			nodeops.RefuseNodeError(w, errResp, bodyStarted)
 			return
 		}
 		if nodegrpc.IsFinalTransferDone(resp) {
@@ -979,9 +977,7 @@ func (h *FileHandler) SelectiveDownloadHandler(w http.ResponseWriter, r *http.Re
 	complete := false
 	for resp := range ch {
 		if errResp := resp.GetError(); errResp != nil {
-			if !headerWritten {
-				http.Error(w, errResp.Message, nodeops.NodeErrorStatus(errResp.Code))
-			}
+			nodeops.RefuseNodeError(w, errResp, bodyStarted)
 			return
 		}
 		if nodegrpc.IsFinalTransferDone(resp) {

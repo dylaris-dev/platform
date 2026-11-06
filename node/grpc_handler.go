@@ -644,15 +644,25 @@ func addZipEntry(zw *zip.Writer, root *os.Root, name, relPath string, info fs.Fi
 	} else {
 		header.Method = zipMethodFor(relPath)
 	}
-	writer, err := zw.CreateHeader(header)
-	if err != nil || info.IsDir() {
+	if info.IsDir() {
+		_, err = zw.CreateHeader(header)
 		return err
 	}
+	// Opened before the header, so a file that is gone by now (a live
+	// server's temp file renamed over level.dat or playerdata) leaves no
+	// entry behind and is skipped, as walkRoot skips a vanished directory.
 	f, err := openTenantReadIn(root, name, deny)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	writer, err := zw.CreateHeader(header)
+	if err != nil {
+		return err
+	}
 	_, err = io.Copy(writer, f)
 	return err
 }
