@@ -129,7 +129,13 @@ func rootEntryInfo(root *os.Root, name string, d fs.DirEntry) (fs.FileInfo, bool
 // a directory swapped for a link mid-walk is not listed from outside.
 func walkRoot(root *os.Root, start string, fn func(name string, info fs.FileInfo) error) error {
 	return fs.WalkDir(root.FS(), start, func(name string, d fs.DirEntry, err error) error {
+		// A directory removed after its parent was listed (a restore's stash
+		// being deleted, a plugin's temp dir) is gone, not an error: it failed
+		// the whole backup of a live tree.
 		if err != nil {
+			if name != start && errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
 			return err
 		}
 		info, ok := rootEntryInfo(root, name, d)

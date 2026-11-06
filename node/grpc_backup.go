@@ -21,10 +21,10 @@ import (
 const backupDirName = ".dylaris-backups"
 
 // resolveBackupDir returns the absolute path of the .dylaris-backups
-// directory for the given server UUID. Creates the directory on demand —
-// node-local stores are pulled into existence by the first backup_worker
-// run, and this method shouldn't fail just because that hasn't happened
-// yet (List on a fresh server is a valid empty list).
+// directory for the given server UUID. It does NOT create it: only the backup
+// writer does. Created here, Core's archive purge right after a server delete
+// brought the deleted server's directory back on disk. A missing directory is
+// an empty list, a zero usage and a 404 to its callers.
 func (h *StreamHandler) resolveBackupDir(serverUUID string) (string, error) {
 	if serverUUID == "" {
 		return "", fmt.Errorf("server_uuid required")
@@ -32,11 +32,11 @@ func (h *StreamHandler) resolveBackupDir(serverUUID string) (string, error) {
 	if h.storageMgr == nil {
 		return "", fmt.Errorf("storage manager not initialised")
 	}
-	dir := filepath.Join(h.storageMgr.GetServerDir(serverUUID), backupDirName)
-	if err := os.MkdirAll(dir, nodeOwnedDirMode); err != nil {
-		return "", fmt.Errorf("mkdir backup dir: %w", err)
+	serverDir := h.storageMgr.GetServerDir(serverUUID)
+	if serverDir == "" {
+		return "", fmt.Errorf("invalid server_uuid")
 	}
-	return dir, nil
+	return filepath.Join(serverDir, backupDirName), nil
 }
 
 // resolveBackupKey accepts an archive filename (NOT a path), validates it

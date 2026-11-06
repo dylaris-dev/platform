@@ -135,6 +135,17 @@ func isBackupStoreEntry(rel string) bool {
 		rel == manifestDirName || strings.HasPrefix(rel, manifestDirName+"/")
 }
 
+// archiveSourceBytes estimates what an archive of dir holds for the spool
+// decision: the tree less the backup and manifest stores the walk skips. Those
+// hold every node-local archive of the server, so a server with a few of them
+// measured several times its world and was refused the spool.
+// ponytail: exclude patterns still count; over-reserving errs safe, mirror the
+// walk's filter here if they ever push eligible servers off the spool.
+func archiveSourceBytes(dir string) int64 {
+	n := dirSize(dir) - dirSize(filepath.Join(dir, backupDirName)) - dirSize(filepath.Join(dir, manifestDirName))
+	return max(n, 0)
+}
+
 // archiveHiddenRootFiles are the node-owned files in a server root that no
 // archive carries. .active_server is not among them: the active sub-server is
 // no secret, and a restore onto an empty disk still learns it from the archive.
@@ -406,7 +417,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		if p := backupPolicyNow.Load(); p != nil && p.SpoolEnabled && globalSpoolDir != "" {
 			_, free := getDiskSpace(globalSpoolDir)
 			var why string
-			spoolMax, releaseSpool, why = reserveSpool(p, dirSize(rootDir), free)
+			spoolMax, releaseSpool, why = reserveSpool(p, archiveSourceBytes(rootDir), free)
 			if spoolMax > 0 {
 				spoolPath = filepath.Join(globalSpoolDir, spoolFileName(cmd.RunID))
 			} else {

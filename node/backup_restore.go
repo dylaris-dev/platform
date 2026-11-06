@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -95,15 +96,6 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		return
 	}
 	defer restoreServersInFlight.leave(cmd.ServerUUID)
-	// Same interlock as setup/reinstall/migrate_storage, and for the same
-	// reason: the restore stops a container whose desired_state is still
-	// "online" and then renames its whole directory away. Without this the
-	// reconciler starts the server back up mid-restore, against the very
-	// directory the swap is about to replace. Taken only once this restore
-	// holds the server: a refused duplicate that held it too deleted the
-	// running restore's node_busy on its way out.
-	releaseBusy := holdBusyStatus(rdb, cmd.ServerUUID, "restarting", busyStatusTTL)
-	defer releaseBusy()
 
 	started := time.Now()
 	storage := storageInfo{}
@@ -130,6 +122,27 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			return
 		}
 	}
+
+	// Same interlock as setup/reinstall/migrate_storage, and for the same
+	// reason: the restore stops a container whose desired_state is still
+	// "online" and then renames its whole directory away. Without this the
+	// reconciler starts the server back up mid-restore, against the very
+	// directory the swap is about to replace. Taken only once this restore
+	// holds the server: a refused duplicate that held it too deleted the
+	// running restore's node_busy on its way out.
+	releaseBusy := holdBusyStatus(rdb, cmd.ServerUUID, "restarting", busyStatusTTL)
+	defer func() {
+		releaseBusy()
+		// The hold reported "restarting" throughout, and nothing else reports a
+		// container that is not running: a restore of a stopped server (or one
+		// whose restart failed) left that status for good, and Core refuses every
+		// power action on a restarting server. A running one reports itself.
+		// The checks above refuse before this: they touch neither the server
+		// nor its status.
+		if !serverDeleted(cmd.ServerUUID) && (dm == nil || !containerRunning(dm, cmd.ServerUUID)) {
+			rdb.Set(context.Background(), fmt.Sprintf("dylaris:server:%s:status", cmd.ServerUUID), "stopped", 30*time.Second)
+		}
+	}()
 
 	// Stage the new content in a sibling directory so we can swap it in
 	// atomically. The sibling lives in the same filesystem as targetDir,
@@ -199,6 +212,12 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	defer body.Close()
 	stall := time.AfterFunc(restoreStallTimeout, dlCancel)
 	defer stall.Stop()
+	// The stall guard is a minimum rate, and bytes that are never written to
+	// disk (a manifest entry with a huge size, gzip members after the tar end)
+	// pass no budget either: an endless stream at that rate held the slot for
+	// good. This bounds the whole restore, however fast the source sends.
+	deadline := time.AfterFunc(restoreDeadline(archiveSize(body)), dlCancel)
+	defer deadline.Stop()
 
 	gr, err := gzip.NewReader(&stallReader{r: body, t: stall, d: restoreStallTimeout, min: restoreStallMinBytes})
 	if err != nil {
@@ -316,14 +335,16 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			// Handed over now, while the name is the file's only one: a
 			// TypeLink entry may add a second, and the start-time ownership
 			// walk skips every file with two names.
-			chownForMCIn(stageRoot, name)
+			if !nodeOwnedRestoreName(cmd.SubServer, name) {
+				chownForMCIn(stageRoot, name)
+			}
 			extracted++
 		case tar.TypeLink:
 			// The second name of a file archived once (see writeServerArchive).
 			// Both names go through the stage Root, so the link cannot reach
 			// out of it.
 			old, skipOld := extractSkip(stageDir, hdr.Linkname)
-			if skipOld || mkdirParentIn(stageRoot, name) != nil || stageRoot.Link(old, name) != nil {
+			if skipOld || nodeOwnedRestoreName(cmd.SubServer, name) || mkdirParentIn(stageRoot, name) != nil || stageRoot.Link(old, name) != nil {
 				log.Printf("restore: skipping link entry %q -> %q", hdr.Name, hdr.Linkname)
 			}
 		case tar.TypeSymlink:
@@ -501,6 +522,16 @@ func carryArchivesAcrossSwap(stashedRoot, restoredRoot string) error {
 	return nil
 }
 
+// nodeOwnedRestoreName reports whether name, in a whole-server restore, is one
+// of the node's own root files. A restore onto a missing root keeps the
+// archive's copy (carryArchivesAcrossSwap), and handed to the MC uid - or
+// linked to a file that is - the tenant's container could rewrite the config
+// the reconciler recreates the container from. Created by the node, it stays
+// the node's.
+func nodeOwnedRestoreName(subServer, name string) bool {
+	return subServer == "" && (slices.Contains(nodeOwnedRootEntries, name) || slices.Contains(archiveHiddenRootFiles, name))
+}
+
 // nodeOwnedRootEntries are the names in a server root the node writes and the
 // tenant cannot (isProtectedFile).
 var nodeOwnedRootEntries = []string{backupDirName, ".node_config.json", ".active_server", ".dylaris.json"}
@@ -512,6 +543,25 @@ var restoreStallTimeout = 2 * time.Minute
 // restoreStallMinBytes is the least a restore download must deliver per
 // restoreStallTimeout (about 8.7 KB/s). A variable for tests.
 var restoreStallMinBytes int64 = 1 << 20
+
+// restoreDeadlineFloor, restoreDeadlineMinRate and restoreDeadlineUnknownSize
+// set restoreDeadline. The rate (2 Mbit/s) is far below any line a restore
+// runs over; S3 and R2 always state a length, so an unknown one is an unusual
+// source and gets a fixed day. Variables for tests.
+var (
+	restoreDeadlineFloor             = 2 * time.Hour
+	restoreDeadlineMinRate     int64 = 256 << 10
+	restoreDeadlineUnknownSize       = 24 * time.Hour
+)
+
+// restoreDeadline is how long a restore of an archive of size bytes (-1:
+// unknown) may take in all.
+func restoreDeadline(size int64) time.Duration {
+	if size < 0 {
+		return restoreDeadlineUnknownSize
+	}
+	return restoreDeadlineFloor + time.Duration(size/restoreDeadlineMinRate)*time.Second
+}
 
 // stallReader re-arms the stall timer for d on every read that returned data,
 // or, with min set, once min bytes arrived since it was last armed.
@@ -613,7 +663,27 @@ func downloadPresigned(ctx context.Context, client *http.Client, url string) (io
 		resp.Body.Close()
 		return nil, err
 	}
-	return resp.Body, nil
+	return sizedBody{resp.Body, resp.ContentLength}, nil
+}
+
+// sizedBody carries the length a response declared (-1 when it declared none)
+// to restoreDeadline.
+type sizedBody struct {
+	io.ReadCloser
+	size int64
+}
+
+// archiveSize is the length of a restore source where it states one, else -1.
+func archiveSize(body io.Reader) int64 {
+	switch b := body.(type) {
+	case sizedBody:
+		return b.size
+	case *os.File:
+		if fi, err := b.Stat(); err == nil {
+			return fi.Size()
+		}
+	}
+	return -1
 }
 
 // reportRestore publishes on this node's OWN restore channel so the Core's

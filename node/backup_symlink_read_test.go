@@ -26,6 +26,9 @@ func TestBackupDownloadRefusesAPlantedSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	secret := filepath.Join(t.TempDir(), "node_secret")
 	if err := os.WriteFile(secret, []byte("THE-NODE-SECRET"), 0o600); err != nil {
@@ -74,6 +77,9 @@ func TestBackupListAndUsageIgnoreNonFiles(t *testing.T) {
 
 	dir, err := h.resolveBackupDir(uuid)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	target := filepath.Join(t.TempDir(), "target")
