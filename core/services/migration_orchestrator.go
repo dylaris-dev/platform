@@ -522,6 +522,10 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	writeStatus := func(phase, errMsg string) {
 		o.writeStatus(ctx, srv.UUID, phase, errMsg, sourceNode.ID, targetNode.ID, req.Reason, startedAt)
 	}
+	if req.SourceNodeID != 0 && srv.NodeID != req.SourceNodeID && srv.NodeID == req.TargetNodeID {
+		o.resumeAfterCutover(ctx, req, srv, targetNode, &keepMarker)
+		return
+	}
 	if req.SourceNodeID != 0 && srv.NodeID != req.SourceNodeID {
 		log.Printf("migration %s: server moved from node %d to %d since the request was queued, refusing", srv.UUID, req.SourceNodeID, srv.NodeID)
 		writeStatus("failed", "server was moved since this request was queued")
@@ -572,28 +576,8 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	}
 
 	// --- (b) Acquire per-server lock ---
-	releaseLock, err := o.holdMigrationLock(ctx, srv.UUID, req.RequestedBy,
-		migrationLockTTL, migrationLockWait, migrationLockPoll)
-	if errors.Is(err, errMigrationLockHeld) {
-		// Still held after the full wait, so it is not a dead Core's leftover:
-		// another Core owns this migration and will finish it.
-		log.Printf("migration %s: still locked after %s, another Core is migrating it - skipping", srv.UUID, migrationLockWait)
-		keepMarker = true
-		return
-	}
-	if isContextError(err) {
-		// Leadership handover or shutdown while waiting out the lock. This is
-		// NOT a failure of this migration: the handler's ACK runs on the same
-		// cancelled context and fails too, so the request stays pending and the
-		// next leader re-runs it. Returning through the branch below would
-		// depend on writeStatus quietly no-opping for the same reason - true
-		// today, and not something to leave resting on.
-		log.Printf("migration %s: stopped while waiting for the lock (%v) - left pending for the next leader", srv.UUID, err)
-		return
-	}
-	if err != nil {
-		log.Printf("migration %s: lock error: %v", srv.UUID, err)
-		writeStatus("failed", "lock error")
+	releaseLock, ok := o.lockMigration(ctx, srv.UUID, req, &keepMarker, writeStatus)
+	if !ok {
 		return
 	}
 	defer releaseLock()
@@ -777,6 +761,13 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		return
 	}
 
+	o.finishCutover(ctx, srv, sourceNode, targetNode, keptPort, wasRunning, preStatus, writeStatus)
+	log.Printf("migration %s: done (node %d -> %d, reason=%s)", srv.UUID, sourceNode.ID, targetNode.ID, req.Reason)
+}
+
+// finishCutover is the move from the node flip on: the target's config, its
+// start, the source's cleanup and the final status.
+func (o *MigrationOrchestrator) finishCutover(ctx context.Context, srv *models.Server, sourceNode, targetNode *models.Node, keptPort int, wasRunning bool, preStatus string, writeStatus func(phase, errMsg string)) {
 	// The machine the server left could read its voice key; a new one ends
 	// that. Best-effort: a failure leaves voice on the old key, as before.
 	if err := RotateVoiceKey(ctx, o.store, o.redis, srv.ID); err != nil {
@@ -872,7 +863,77 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	if confErr == nil {
 		writeStatus("done", "")
 	}
-	log.Printf("migration %s: done (node %d -> %d, reason=%s)", srv.UUID, sourceNode.ID, targetNode.ID, req.Reason)
+}
+
+// resumeAfterCutover finishes a move whose Core was lost after the node flip:
+// the re-run finds the server on its target already. Refused as "moved", it
+// sent no migrate_cleanup, and the source's reconciler restarted its stopped
+// copy on stale data once the staged archive aged out - two live instances.
+// What it sends repeats safely: a re-sent config recreates the target's
+// container in its run state, and a cleanup that already ran finds nothing.
+func (o *MigrationOrchestrator) resumeAfterCutover(ctx context.Context, req MigrationRequest, srv *models.Server, targetNode *models.Node, keepMarker *bool) {
+	startedAt := time.Now()
+	writeStatus := func(phase, errMsg string) {
+		o.writeStatus(ctx, srv.UUID, phase, errMsg, req.SourceNodeID, targetNode.ID, req.Reason, startedAt)
+	}
+	sourceNode, err := o.store.GetNodeByID(req.SourceNodeID)
+	if err != nil {
+		log.Printf("migration %s: source node %d not found: %v", srv.UUID, req.SourceNodeID, err)
+		writeStatus("failed_post_cutover", "source node not found")
+		return
+	}
+	releaseLock, ok := o.lockMigration(ctx, srv.UUID, req, keepMarker, writeStatus)
+	if !ok {
+		return
+	}
+	defer releaseLock()
+	defer o.redis.Del(context.Background(), migrationCancelKey(srv.UUID))
+	log.Printf("migration %s: already on node %d, finishing a move cut over before a restart", srv.UUID, targetNode.ID)
+
+	preStatus := srv.Status
+	if preStatus == "migrating" && req.PreStatus != "" {
+		preStatus = req.PreStatus
+	}
+	// The flip may have landed without the route following it.
+	if o.gatewayEnabled() {
+		if err := o.gateway.MigrateServerRoutes(uint(srv.ID), uint(targetNode.ID)); err != nil {
+			log.Printf("migration %s: re-pointing the route at the target failed: %v", srv.UUID, err)
+		}
+	}
+	// No kept port: the server counts as the target's own now, so its port
+	// reads as taken there. Without one the target keeps the port its
+	// container has, or picks one and reports it.
+	o.finishCutover(ctx, srv, sourceNode, targetNode, 0, movesAsRunning(preStatus), preStatus, writeStatus)
+}
+
+// lockMigration takes the per-server lock for Migrate, or reports why not and
+// returns ok=false.
+func (o *MigrationOrchestrator) lockMigration(ctx context.Context, serverUUID string, req MigrationRequest, keepMarker *bool, writeStatus func(phase, errMsg string)) (func(), bool) {
+	release, err := o.holdMigrationLock(ctx, serverUUID, req.RequestedBy,
+		migrationLockTTL, migrationLockWait, migrationLockPoll)
+	if errors.Is(err, errMigrationLockHeld) {
+		// Still held after the full wait, so it is not a dead Core's leftover:
+		// another Core owns this migration and will finish it.
+		log.Printf("migration %s: still locked after %s, another Core is migrating it - skipping", serverUUID, migrationLockWait)
+		*keepMarker = true
+		return nil, false
+	}
+	if isContextError(err) {
+		// Leadership handover or shutdown while waiting out the lock. This is
+		// NOT a failure of this migration: the handler's ACK runs on the same
+		// cancelled context and fails too, so the request stays pending and the
+		// next leader re-runs it. Returning through the branch below would
+		// depend on writeStatus quietly no-opping for the same reason - true
+		// today, and not something to leave resting on.
+		log.Printf("migration %s: stopped while waiting for the lock (%v) - left pending for the next leader", serverUUID, err)
+		return nil, false
+	}
+	if err != nil {
+		log.Printf("migration %s: lock error: %v", serverUUID, err)
+		writeStatus("failed", "lock error")
+		return nil, false
+	}
+	return release, true
 }
 
 // errMigrationLockHeld means another Core holds this server's migration lock and

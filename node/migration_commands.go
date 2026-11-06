@@ -20,6 +20,7 @@ import (
 
 	"dylaris-pkg/migration"
 	"dylaris-pkg/queue"
+	"dylaris-pkg/validate"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -174,6 +175,16 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "server directory missing")
 		return
 	}
+	// Beam and SFTP lose their write rights only on their next access check,
+	// seconds after Core marks the server migrating: a write landing while the
+	// tree is read is missing from the copy or torn in it, and the source is
+	// deleted after cutover. Refused now, or dropped once the archive is read.
+	writesSince, err := storage.watchWrites(serverUUID)
+	if err != nil {
+		log.Printf("migrate_out %s: %v", serverUUID, err)
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", err.Error())
+		return
+	}
 
 	// The copy lands outside every server's quota, on the disk the other
 	// servers on this path write to, and region data barely compresses: so it
@@ -230,6 +241,11 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	if err != nil {
 		log.Printf("migrate_out %s: archive failed: %v", serverUUID, err)
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf("archive failed: %v", err))
+		return
+	}
+	if writesSince() {
+		log.Printf("migrate_out %s: files were written while staging, dropping the archive", serverUUID)
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "files were written to the server while the move was staging; try the move again")
 		return
 	}
 	// Core gave up on this attempt while it was archiving: its abort found
@@ -743,12 +759,33 @@ func staleMigrateOut(issuedAt int64, now time.Time) bool {
 // redelivered after a node restart may still have Core waiting on it, which
 // otherwise sat out the rest of its stage deadline. Nobody reads it when Core
 // has given up.
+//
+// Not one this node was staging a moment ago: a restart mid-staging redelivers
+// the command with Core's original stamp, and Core is still waiting on it,
+// since its wait restarts on every changed report. The status key's remaining
+// TTL dates the last report without either clock.
 func dropStaleMigrateOut(ctx context.Context, rdb *redis.Client, nodeToken, progressID string, issuedAt int64, now time.Time) bool {
-	if !staleMigrateOut(issuedAt, now) {
+	if !staleMigrateOut(issuedAt, now) || stagedRecently(ctx, rdb, nodeToken, progressID) {
 		return false
 	}
 	setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "the move was queued too long ago to stage; try it again")
 	return true
+}
+
+// stagedRecently reports whether this node wrote phase "staging" for the
+// attempt within migrateOutMaxAge.
+func stagedRecently(ctx context.Context, rdb *redis.Client, nodeToken, progressID string) bool {
+	key := queue.MigrationStatusKey(nodeToken, progressID)
+	raw, err := rdb.Get(ctx, key).Result()
+	if err != nil {
+		return false
+	}
+	var st migrationStatus
+	if json.Unmarshal([]byte(raw), &st) != nil || st.Phase != "staging" {
+		return false
+	}
+	ttl, err := rdb.TTL(ctx, key).Result()
+	return err == nil && ttl > 0 && migrationStatusTTL-ttl < migrateOutMaxAge
 }
 
 // movedInMarker sits beside a server directory a move brought here, and names
@@ -806,18 +843,28 @@ const migrationDiscardSuffix = ".discarded"
 // refuseDiscardedAttempt fails a transfer of an attempt Core already
 // discarded, which is what a pull redelivered after a restart is. Another
 // attempt's marker is spent: this one supersedes it.
+//
+// Every path, not the one the server resolves to: the discard that wrote the
+// marker removed the copy and its storage key, and the lookup then falls back
+// to the first path, which on a multi-path node need not be the marker's.
 func refuseDiscardedAttempt(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID string) bool {
-	p := storage.GetServerPath(serverUUID)
-	if p == "" {
+	if !validate.IsServerUUID(serverUUID) {
 		return false
 	}
-	m := migrationDiscardMarker(p, serverUUID)
-	got, err := os.ReadFile(m)
-	if err != nil {
-		return false
+	discarded := false
+	for _, p := range storage.Paths() {
+		m := migrationDiscardMarker(p, serverUUID)
+		got, err := os.ReadFile(m)
+		if err != nil {
+			continue
+		}
+		if string(got) == progressID {
+			discarded = true
+		} else {
+			os.Remove(m)
+		}
 	}
-	if string(got) != progressID {
-		os.Remove(m)
+	if !discarded {
 		return false
 	}
 	log.Printf("migrate %s: attempt %s was discarded, not transferring it again", serverUUID, progressID)

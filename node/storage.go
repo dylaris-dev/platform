@@ -41,6 +41,10 @@ type StorageManager struct {
 	// Beam and panel uploads, restores, installs. Under movingMu with moving:
 	// see holdWriter.
 	writers map[string]int
+	// writeGen counts, per server, every writer ever taken: a cross-node move
+	// archives without a fence, so it tells a write that began and ended
+	// while it read the tree by this number moving. See watchWrites.
+	writeGen map[string]uint64
 }
 
 // Placement modes for new-server assignment. Aliases of the shared constants so
@@ -562,6 +566,10 @@ func (sm *StorageManager) holdWriterUnlessMoving(serverUUID string, refuseMoving
 		sm.writers = map[string]int{}
 	}
 	sm.writers[serverUUID]++
+	if sm.writeGen == nil {
+		sm.writeGen = map[string]uint64{}
+	}
+	sm.writeGen[serverUUID]++
 	sm.movingMu.Unlock()
 	var once sync.Once
 	return func() {
@@ -573,6 +581,26 @@ func (sm *StorageManager) holdWriterUnlessMoving(serverUUID string, refuseMoving
 			sm.movingMu.Unlock()
 		})
 	}, true
+}
+
+// watchWrites is for a reader of the whole tree that must not make lookups
+// wait, as fenceMove does: migrate_out archives for minutes, and a fence held
+// that long stalled the stats and reconcile loops and a retry of the same move.
+// It is refused while a writer holds the server, like a fence, and the
+// returned func reports whether any write began since, so a copy that may be
+// missing or tearing a write is dropped instead of becoming the server.
+func (sm *StorageManager) watchWrites(serverUUID string) (func() bool, error) {
+	sm.movingMu.Lock()
+	defer sm.movingMu.Unlock()
+	if n := sm.writers[serverUUID]; n > 0 {
+		return nil, writersInProgress(serverUUID, n)
+	}
+	start := sm.writeGen[serverUUID]
+	return func() bool {
+		sm.movingMu.Lock()
+		defer sm.movingMu.Unlock()
+		return sm.writeGen[serverUUID] != start || sm.writers[serverUUID] > 0
+	}, nil
 }
 
 // moveInProgress returns the channel a lookup of this server waits on, or nil.

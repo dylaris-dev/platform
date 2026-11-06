@@ -544,3 +544,33 @@ func TestARouteThatCannotBeRepointedUndoesTheMove(t *testing.T) {
 		t.Errorf("phase %q, want failed", st.Phase)
 	}
 }
+
+// M29: a Core lost between the node flip and migrate_cleanup left the re-run
+// refusing a server "moved since the request was queued": the source kept its
+// stopped copy, which its reconciler restarted on stale data once the staged
+// archive aged out. A re-run that finds the server on its target finishes the
+// move instead.
+func TestARerunAfterTheCutoverFinishesTheMove(t *testing.T) {
+	o, fs, sim, rdb := newFlow(t, "migrating")
+	fs.srv.NodeID = 2
+	o.Migrate(context.Background(), MigrationRequest{ServerID: 5, TargetNodeID: 2, SourceNodeID: 1, PreStatus: "stopped", Reason: "manual"})
+	time.Sleep(100 * time.Millisecond)
+	if n := len(sim.commands(flowSourceToken, "migrate_cleanup")); n != 1 {
+		t.Fatalf("migrate_cleanup sent %d times, want once", n)
+	}
+	if n := len(sim.commands(flowTargetToken, "reconfigure")); n != 1 {
+		t.Fatalf("reconfigure sent %d times, want once", n)
+	}
+	if len(sim.commands(flowSourceToken, "migrate_out")) != 0 || len(fs.cutovers) != 0 {
+		t.Fatal("the finished move was run again")
+	}
+	if got := fs.status(); got != "stopped" {
+		t.Errorf("status %q, want stopped", got)
+	}
+	raw, _ := rdb.Get(context.Background(), "dylaris:migration:srv-flow:orchestration").Result()
+	var st orchestrationStatus
+	json.Unmarshal([]byte(raw), &st)
+	if st.Phase != "done" {
+		t.Errorf("phase %q, want done", st.Phase)
+	}
+}
