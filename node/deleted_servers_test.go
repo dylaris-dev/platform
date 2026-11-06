@@ -151,3 +151,44 @@ func TestALeftoverContainerOfADeletedServerIsRemoved(t *testing.T) {
 		t.Error("the extra-port fallback starts a second container without checking for a delete")
 	}
 }
+
+// P05: Core lets a deleted server's UUID come back (the create takes a UUID
+// from the client), and the tombstone then refused that server for 90 days. A
+// create Core issued after the delete clears it; anything that cannot show
+// that - an old Core without issuedAt, an old tombstone without the delete's,
+// a create from before the delete - is still refused.
+func TestACreateIssuedAfterTheDeleteClearsTheTombstone(t *testing.T) {
+	cases := []struct {
+		name          string
+		deleteIssued  int64
+		createIssued  int64
+		restart       bool
+		wantClearance bool
+	}{
+		{"create issued after the delete", 1000, 2000, false, true},
+		{"after a node restart", 1000, 2000, true, true},
+		{"create queued before the delete", 1000, 990, false, false},
+		{"same second", 1000, 1000, false, false},
+		{"old core: create has no issuedAt", 1000, 0, false, false},
+		{"old tombstone: no delete issuedAt", 0, 2000, true, false},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			uuid := "7d1e0000-0000-4000-8000-0000000005a" + string(rune('0'+i))
+			prev := nodeSecretDir
+			nodeSecretDir = t.TempDir()
+			t.Cleanup(func() { nodeSecretDir = prev; forgetTombstoneInMemory(uuid) })
+
+			markServerDeletedIssued(uuid, c.deleteIssued)
+			if c.restart {
+				forgetTombstoneInMemory(uuid)
+			}
+			if got := clearTombstoneForCreate(uuid, c.createIssued); got != c.wantClearance {
+				t.Fatalf("cleared = %v, want %v", got, c.wantClearance)
+			}
+			if serverDeleted(uuid) == c.wantClearance {
+				t.Fatalf("serverDeleted = %v after clearance %v", serverDeleted(uuid), c.wantClearance)
+			}
+		})
+	}
+}

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +25,10 @@ const sharedDaemonUUID = "abababab-2222-3333-4444-555555555555"
 type sharedDaemon struct {
 	mu      sync.Mutex
 	changes []string
+	env     []string // Config.Env of mc_<uuid>
+	// noImage: a create answers 404 "No such image" until an image is pulled,
+	// as the Engine API does (only the docker CLI pulls on create).
+	noImage, pulled bool
 }
 
 func (d *sharedDaemon) changed() []string {
@@ -58,10 +64,16 @@ func newSharedDaemon(t *testing.T, owner string, running bool, onPull func()) (*
 				w.Write([]byte(`{"message":"No such container"}`))
 				return
 			}
-			w.Write([]byte(`{"Id":"c-id","State":{"Running":` + run + `},"Config":{"Image":"img:1","WorkingDir":"/data/main","Labels":` + labels + `},"HostConfig":{},"NetworkSettings":{"Networks":{}}}`))
+			d.mu.Lock()
+			env, _ := json.Marshal(d.env)
+			d.mu.Unlock()
+			w.Write([]byte(`{"Id":"c-id","State":{"Running":` + run + `},"Config":{"Image":"img:1","WorkingDir":"/data/main","Env":` + string(env) + `,"Labels":` + labels + `},"HostConfig":{},"NetworkSettings":{"Networks":{}}}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(p, "/containers/new-id-0123456789ab/json"):
 			w.Write([]byte(`{"Id":"new-id-0123456789ab","State":{"Running":true},"Config":{"Labels":{}},"NetworkSettings":{"Networks":{"dylaris_net":{}}}}`))
 		case strings.HasSuffix(p, "/images/create"):
+			d.mu.Lock()
+			d.pulled = true
+			d.mu.Unlock()
 			if onPull != nil {
 				onPull()
 			}
@@ -69,6 +81,14 @@ func newSharedDaemon(t *testing.T, owner string, running bool, onPull func()) (*
 		case strings.HasSuffix(p, "/images/json"):
 			w.Write([]byte(`[]`))
 		case strings.HasSuffix(p, "/containers/create"):
+			d.mu.Lock()
+			missing := d.noImage && !d.pulled
+			d.mu.Unlock()
+			if missing {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"message":"No such image: img:1"}`))
+				return
+			}
 			d.record("create")
 			w.Write([]byte(`{"Id":"new-id-0123456789ab"}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(p, "/networks"):
@@ -325,5 +345,51 @@ func TestPowerActionActsOnTheContainerItChecked(t *testing.T) {
 		if ch := d.changed(); len(ch) != 1 || ch[0] != c.want {
 			t.Errorf("%s: %v, want [%s]", c.action, ch, c.want)
 		}
+	}
+}
+
+// P03: the reconciler's crash-restart (PowerAction "start") used to start the
+// old container as it was, so after a host reboot - every MC container exited,
+// ReconcileRedisEnv finds nothing running - a server came back on the Redis
+// address and credential it was created with. A stale one is recreated now;
+// a current one is still just started.
+func TestCrashRestartRecreatesAStaleRedisEnv(t *testing.T) {
+	prev := nodeRedis
+	nodeRedis = &redisAddrState{}
+	nodeRedis.set("10.0.0.9:6379", false)
+	t.Cleanup(func() { nodeRedis = prev })
+
+	for _, tc := range []struct {
+		name     string
+		env      []string
+		recreate bool
+	}{
+		{"old address", []string{"REDIS_ADDR=10.0.0.1:6379"}, true},
+		{"current", buildRedisEnv(sharedDaemonUUID, "", "10.0.0.9:6379"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dm, d := newSharedDaemon(t, "node-a", false, nil)
+			d.env = tc.env
+			dm.PowerAction(sharedDaemonUUID, "start")
+			if got := slices.Contains(d.changed(), "create"); got != tc.recreate {
+				t.Fatalf("recreated = %v (%v), want %v", got, d.changed(), tc.recreate)
+			}
+		})
+	}
+}
+
+// P04: the stopped slot of a server's first create on a node whose daemon has
+// never held the image failed with "No such image" (the Engine API does not
+// pull on create), so main skipped saving the config and its disk limit.
+func TestCreateStoppedPullsAMissingImage(t *testing.T) {
+	dm, d := newSharedDaemon(t, "-", false, nil)
+	d.noImage = true
+	cfg := ServerConfig{UUID: sharedDaemonUUID}
+	cfg.Docker.Image = "img:1"
+	if err := dm.CreateServerPodStopped(cfg); err != nil {
+		t.Fatalf("create of a slot whose image is not on the node: %v", err)
+	}
+	if !slices.Contains(d.changed(), "create") {
+		t.Fatalf("no container was created: %v", d.changed())
 	}
 }

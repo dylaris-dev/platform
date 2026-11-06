@@ -20,7 +20,7 @@ import (
 // and the keys had no TTL, so maxmemory eviction could never take them back.
 // The log-shipper no longer hands the credential to the server process; this
 // is the second layer, for whatever still writes there: every pass, any of
-// these keys over its cap is deleted, and a small one without a TTL is given one.
+// these keys over its cap is deleted (a console stream is first trimmed), and a small one without a TTL is given one.
 //
 // Keys only, no SCAN (the node's ACL has none): the console streams of
 // sub-servers are found through the sub-server directories, so a stream under
@@ -28,20 +28,26 @@ import (
 
 const (
 	shipperGuardInterval = 30 * time.Second
-	// The console stream holds at most 5000 lines of at most 64 KiB; a real one
-	// is a few MiB. 64 MiB is far past anything the shipper writes.
-	shipperStreamCap = 64 << 20
+	// The shipper keeps up to 5000 lines of up to 64 KiB (~320 MiB), so a
+	// console stream over this cap can be a chatty server rather than abuse:
+	// it is trimmed to its newest shipperStreamTrimLen lines (32 MiB at the
+	// line cap) and deleted only when that does not bring it under the cap.
+	shipperStreamCap     = 64 << 20
+	shipperStreamTrimLen = 512
 	// Everything else is a number, a flag or a short queue of commands.
 	shipperSmallCap = 64 << 10
 )
 
 // ttl 0 means size cap only. The console streams get no TTL on purpose: a
 // stopped server's console history stays as long as it always did (there is no
-// retention setting for it), and their size is what is bounded.
+// retention setting for it), and their size is what is bounded. trim > 0 means
+// an oversized key is a stream cut to that many newest entries before it is
+// deleted.
 type guardedKey struct {
-	key string
-	cap int64
-	ttl time.Duration
+	key  string
+	cap  int64
+	ttl  time.Duration
+	trim int64
 }
 
 // shipperGuardedKeys lists one server's keys: the six its credential may write
@@ -49,14 +55,14 @@ type guardedKey struct {
 func shipperGuardedKeys(uuid string, subServers []string) []guardedKey {
 	p := "dylaris:server:" + uuid + ":"
 	ks := []guardedKey{
-		{p + "logs", shipperStreamCap, 0},
-		{p + "java-heap", shipperSmallCap, time.Hour},
-		{p + "input", shipperSmallCap, 24 * time.Hour},
-		{p + "log_filter_rcon", shipperSmallCap, time.Hour},
-		{p + "stop-requested", shipperSmallCap, time.Hour},
+		{p + "logs", shipperStreamCap, 0, shipperStreamTrimLen},
+		{p + "java-heap", shipperSmallCap, time.Hour, 0},
+		{p + "input", shipperSmallCap, 24 * time.Hour, 0},
+		{p + "log_filter_rcon", shipperSmallCap, time.Hour, 0},
+		{p + "stop-requested", shipperSmallCap, time.Hour, 0},
 	}
 	for _, s := range subServers {
-		ks = append(ks, guardedKey{p + "logs:" + s, shipperStreamCap, 0})
+		ks = append(ks, guardedKey{p + "logs:" + s, shipperStreamCap, 0, shipperStreamTrimLen})
 	}
 	return ks
 }
@@ -66,6 +72,16 @@ func guardKey(ctx context.Context, rdb *redis.Client, k guardedKey) bool {
 	used, err := rdb.MemoryUsage(ctx, k.key).Result()
 	if err != nil {
 		return false // missing (redis.Nil) or unreadable: nothing to do
+	}
+	if used > k.cap && k.trim > 0 {
+		// A WRONGTYPE error (something not a stream at that name) falls
+		// through to the delete, as does a trim that leaves it over the cap.
+		if rdb.XTrimMaxLen(ctx, k.key, k.trim).Err() == nil {
+			if after, err := rdb.MemoryUsage(ctx, k.key).Result(); err == nil && after <= k.cap {
+				log.Printf("shipper-guard: trimmed %s to %d entries (%d -> %d bytes, cap %d)", k.key, k.trim, used, after, k.cap)
+				return false
+			}
+		}
 	}
 	if used > k.cap {
 		if rdb.Del(ctx, k.key).Err() == nil {

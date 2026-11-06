@@ -1579,8 +1579,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// A create and a delete queued together (node offline, restarting) run
 		// in parallel, and the delete usually finishes first.
 		if serverDeleted(cmd.Config.UUID) {
-			log.Printf("create %s: the server was already deleted on this node, not creating it", cmd.Config.UUID)
-			return
+			if !clearTombstoneForCreate(cmd.Config.UUID, cmd.IssuedAt) {
+				log.Printf("create %s: the server was already deleted on this node, not creating it", cmd.Config.UUID)
+				return
+			}
+			log.Printf("create %s: a server deleted here is created again under its UUID, tombstone cleared", cmd.Config.UUID)
 		}
 
 		// Assign storage path: the one the create asked for, else balanced by
@@ -1992,7 +1995,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		log.Printf("Deleting Server %s ...", cmd.Config.UUID)
 		// First, so an install still running for it cannot start it again.
-		markServerDeleted(cmd.Config.UUID)
+		markServerDeletedIssued(cmd.Config.UUID, cmd.IssuedAt)
 		// The data goes regardless: Core has already dropped the row. A
 		// container left behind is removed by the reconciler (tombstone).
 		if err := dm.PowerAction(cmd.Config.UUID, "delete"); err != nil && !client.IsErrNotFound(err) {

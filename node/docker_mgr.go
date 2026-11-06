@@ -1001,9 +1001,11 @@ func (dm *DockerManager) PullImage(image string) {
 }
 
 // CreateServerPodStopped creates a container without starting it (Step 1 - pending_setup).
-// No image pull, no EULA - just directory + stopped container.
+// No EULA - just directory + stopped container. The image is pulled only when
+// the daemon does not have it.
 func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	log.Printf("Creating stopped container for: %s", config.UUID)
+	config.Docker.Image = normalizeImageRef(config.Docker.Image)
 
 	netID, netName, err := dm.ensureGlobalNetwork()
 	if err != nil {
@@ -1068,6 +1070,13 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 	dm.cli.ContainerRemove(dm.ctx, containerName, container.RemoveOptions{Force: true})
 
 	resp, err := dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, containerName)
+	if client.IsErrNotFound(err) {
+		// The Engine API does not pull on create, and a failed create skips
+		// saving the config (and its disk limit), so a node's first server of
+		// an image got none.
+		dm.pullImage(cc.Image)
+		resp, err = dm.cli.ContainerCreate(dm.ctx, cc, hc, nc, nil, containerName)
+	}
 	if err != nil {
 		return fmt.Errorf("container create error: %v", err)
 	}
@@ -1239,7 +1248,9 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		// and without this the loop restarts it into the same error until it gives
 		// up. The sub-server comes from the container's own working directory, the
 		// same source RestartContainer reads it from.
+		var env []string
 		if info, ierr := dm.cli.ContainerInspect(dm.ctx, mcName); ierr == nil {
+			env = info.Config.Env
 			if sub := strings.TrimPrefix(info.Config.WorkingDir, "/data/"); sub != "" && sub != info.Config.WorkingDir {
 				if oerr := ensureSubServerOwnership(filepath.Join(dm.resolveLocalServerPath(uuid), sub)); oerr != nil {
 					log.Printf("mc-user: %v", oerr)
@@ -1248,6 +1259,18 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		}
 		if startAbandoned(uuid) {
 			return errStartAbandoned
+		}
+		// After a host reboot every MC container is exited, so ReconcileRedisEnv
+		// (running containers only) fixed none of them and this start is the
+		// first one each gets. A plain start keeps the Redis env baked in at
+		// create time; a recreate, like a panel start, gets the current one.
+		if env != nil {
+			if wantAddr, werr := dm.wantSidecarRedisAddr(); werr == nil && wantAddr != "" {
+				if key := redisEnvDrift(env, buildRedisEnv(uuid, "", wantAddr)); key != "" {
+					log.Printf("start %s: stale %s, recreating", mcName, key)
+					return dm.RestartContainer(uuid)
+				}
+			}
 		}
 		dm.closeNetGate(uuid)
 		err := dm.cli.ContainerStart(dm.ctx, ref, container.StartOptions{})
@@ -2316,6 +2339,15 @@ func redisEnvDrift(current, want []string) string {
 	return ""
 }
 
+// wantSidecarRedisAddr is the REDIS_ADDR a container created now would get.
+func (dm *DockerManager) wantSidecarRedisAddr() (string, error) {
+	netID, _, err := dm.ensureGlobalNetwork()
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve the server network: %w", err)
+	}
+	return dm.sidecarRedisAddr(netID, nodeRedis.current())
+}
+
 // ReconcileRedisEnv checks all running MC containers and restarts any whose
 // baked-in Redis connection env doesn't match what a container created NOW
 // would get. This handles a node that restarts on a different Redis address -
@@ -2350,12 +2382,7 @@ func (dm *DockerManager) ReconcileRedisEnv() {
 	if len(running) == 0 {
 		return
 	}
-	netID, _, err := dm.ensureGlobalNetwork()
-	if err != nil {
-		log.Printf("ReconcileRedisEnv: cannot resolve the server network: %v", err)
-		return
-	}
-	wantAddr, err := dm.sidecarRedisAddr(netID, nodeRedis.current())
+	wantAddr, err := dm.wantSidecarRedisAddr()
 	if err != nil {
 		log.Printf("ReconcileRedisEnv: %v", err)
 		return

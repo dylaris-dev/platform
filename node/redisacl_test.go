@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -110,5 +111,31 @@ func TestSFTPAuthKeyMatchesCore(t *testing.T) {
 	// readable by every node under the old fleet-wide grant.
 	if got := sftpAuthKey("other-node", "alice"); got == sftpAuthKey("n1", "alice") {
 		t.Error("sftpAuthKey does not depend on the node token")
+	}
+}
+
+// P02: every re-confirm rewrites .node_secret, so it must be replaced, never
+// truncated and written in place: a kill between the two left an empty file
+// and the next boot ran as "paired id, no secret". A hard link to the old file
+// tells the two apart without a crash - an in-place write shows through it, a
+// rename does not.
+func TestSaveNodeSecretReplacesTheFile(t *testing.T) {
+	dir := t.TempDir()
+	old := []byte("0123456789abcdef0123456789abcdef")
+	if err := saveNodeSecret(dir, old); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	link := filepath.Join(dir, "old-secret")
+	if err := os.Link(filepath.Join(dir, ".node_secret"), link); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	if err := saveNodeSecret(dir, []byte("fedcba9876543210fedcba9876543210")); err != nil {
+		t.Fatalf("re-save: %v", err)
+	}
+	if b, _ := os.ReadFile(link); string(b) != hex.EncodeToString(old) {
+		t.Fatalf(".node_secret was rewritten in place, not replaced: old inode now holds %q", b)
+	}
+	if got, ok := loadNodeSecret(dir); !ok || string(got) != "fedcba9876543210fedcba9876543210" {
+		t.Fatalf("new secret not loaded: ok=%v got=%q", ok, got)
 	}
 }

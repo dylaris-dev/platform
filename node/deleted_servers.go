@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,8 +24,10 @@ import (
 // STARTING a container for a server Core no longer had. Nothing removes a
 // container without a database row, so it kept its memory and its port.
 //
-// A UUID is never reused, so a tombstone is final; it is only aged out so the
-// map and the directory stay small. The lifetime is not "how long a command
+// A tombstone is final for every command issued before the delete; it is only
+// aged out so the map and the directory stay small. Core can bring a UUID back
+// (a create takes the client's UUID), so a create Core issued after the delete
+// clears it - see clearTombstoneForCreate. The lifetime is not "how long a command
 // runs": the queue redelivers a pending setup however old it is, so a node that
 // was off for days still sees it. A day was too short for a weekend outage.
 //
@@ -33,20 +37,28 @@ import (
 var deletedServers = struct {
 	sync.Mutex
 	at map[string]time.Time
-}{at: map[string]time.Time{}}
+	// issued is the delete command's issuedAt (Core's clock), 0 when unknown.
+	issued map[string]int64
+}{at: map[string]time.Time{}, issued: map[string]int64{}}
 
 const deletedServerMemory = 90 * 24 * time.Hour
 
-func markServerDeleted(uuid string) {
+func markServerDeleted(uuid string) { markServerDeletedIssued(uuid, 0) }
+
+// markServerDeletedIssued records the tombstone with the delete's issuedAt,
+// which is also the marker file's content, so a restart keeps it.
+func markServerDeletedIssued(uuid string, issuedAt int64) {
 	deletedServers.Lock()
 	defer deletedServers.Unlock()
 	now := time.Now()
 	for u, t := range deletedServers.at {
 		if now.Sub(t) > deletedServerMemory {
 			delete(deletedServers.at, u)
+			delete(deletedServers.issued, u)
 		}
 	}
 	deletedServers.at[uuid] = now
+	deletedServers.issued[uuid] = issuedAt
 	if nodeSecretDir == "" {
 		return
 	}
@@ -57,7 +69,11 @@ func markServerDeleted(uuid string) {
 			}
 		}
 	}
-	if err := os.WriteFile(tombstonePath(uuid), nil, 0o600); err != nil {
+	var content []byte
+	if issuedAt > 0 {
+		content = strconv.AppendInt(nil, issuedAt, 10)
+	}
+	if err := os.WriteFile(tombstonePath(uuid), content, 0o600); err != nil {
 		log.Printf("delete %s: tombstone not persisted, a restart forgets it: %v", uuid, err)
 	}
 }
@@ -74,6 +90,32 @@ func serverDeleted(uuid string) bool {
 	}
 	fi, err := os.Stat(tombstonePath(uuid))
 	return err == nil && time.Since(fi.ModTime()) <= deletedServerMemory
+}
+
+// clearTombstoneForCreate lifts uuid's tombstone for a create Core issued
+// after the delete, and reports whether it did. Both times are Core's clock, so
+// node clock skew cannot reorder them; a create queued before the delete and
+// redelivered after it is older and stays refused. Without both times (an old
+// Core, a tombstone written before this) nothing is cleared.
+func clearTombstoneForCreate(uuid string, createIssuedAt int64) bool {
+	deletedServers.Lock()
+	defer deletedServers.Unlock()
+	deleteIssuedAt, ok := deletedServers.issued[uuid]
+	if !ok && nodeSecretDir != "" {
+		b, _ := os.ReadFile(tombstonePath(uuid))
+		deleteIssuedAt, _ = strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	}
+	if createIssuedAt == 0 || deleteIssuedAt == 0 || createIssuedAt <= deleteIssuedAt {
+		return false
+	}
+	delete(deletedServers.at, uuid)
+	delete(deletedServers.issued, uuid)
+	if nodeSecretDir != "" {
+		if err := os.Remove(tombstonePath(uuid)); err != nil && !os.IsNotExist(err) {
+			log.Printf("create %s: tombstone not removed, a restart refuses the server again: %v", uuid, err)
+		}
+	}
+	return true
 }
 
 // Beside the server directories rather than in a subdirectory: every sweep of

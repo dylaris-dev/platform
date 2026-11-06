@@ -110,12 +110,11 @@ func ensureSecretDir(workdir string) error {
 	return os.MkdirAll(workdir, 0755)
 }
 
-// saveNodeSecret persists the secret as hex with 0600 perms.
+// saveNodeSecret persists the secret as hex with 0600 perms, atomically like
+// saveNodeID: every re-confirm rewrites it, so a truncate-then-write would
+// leave an empty file whenever the node is killed in between.
 func saveNodeSecret(workdir string, secret []byte) error {
-	if err := ensureSecretDir(workdir); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(workdir, ".node_secret"), []byte(hex.EncodeToString(secret)), 0600)
+	return writeFileAtomic(workdir, ".node_secret", []byte(hex.EncodeToString(secret)))
 }
 
 // loadNodeID reads the cached server-assigned node id from <workdir>/.node_id.
