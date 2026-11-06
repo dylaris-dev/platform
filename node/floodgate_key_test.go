@@ -108,8 +108,11 @@ func TestWriteFloodgateKeyPrefersFloodgatesOwnFolder(t *testing.T) {
 	}{
 		{"fabric after a paper move", []string{"plugins/floodgate", "mods", "config/floodgate"}, []string{"plugins/floodgate/key.pem", "config/floodgate/key.pem"}},
 		{"plugins dir left, mod folder made", []string{"plugins", "mods", "config/floodgate"}, []string{"config/floodgate/key.pem"}},
-		{"paper folder made", []string{"plugins/floodgate", "mods"}, []string{"plugins/floodgate/key.pem"}},
-		{"no folder yet, plugins", []string{"plugins", "mods"}, []string{"plugins/floodgate/key.pem"}},
+		// N05: mods/ with no config/floodgate yet is the first start after a
+		// Paper->Fabric move; the mod would generate its own key there.
+		{"paper folder made", []string{"plugins/floodgate", "mods"}, []string{"plugins/floodgate/key.pem", "config/floodgate/key.pem"}},
+		{"no folder yet, plugins", []string{"plugins", "mods"}, []string{"plugins/floodgate/key.pem", "config/floodgate/key.pem"}},
+		{"no folder yet, plugins only", []string{"plugins"}, []string{"plugins/floodgate/key.pem"}},
 		{"no folder yet, mods", []string{"mods"}, []string{"config/floodgate/key.pem"}},
 	}
 	for _, tc := range tests {

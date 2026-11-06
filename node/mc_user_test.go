@@ -19,8 +19,9 @@ func TestMCUser(t *testing.T) {
 		{name: "unset", env: "", wantUID: 1000, wantSpec: "1000:1000"},
 		{name: "another uid", env: "1500", wantUID: 1500, wantSpec: "1500:1500"},
 		// 0 is a deliberate opt-out, not a mistake: an operator with data owned
-		// by root who would rather keep it than have every world rewritten.
-		{name: "explicit root opt-out", env: "0", wantUID: 0, wantSpec: ""},
+		// by root who would rather keep it than have every world rewritten. It
+		// is spelled out: the images carry USER 1000, so "" would not be root.
+		{name: "explicit root opt-out", env: "0", wantUID: 0, wantSpec: "0:0"},
 		// Garbage falls back to the safe default rather than to root. A typo in
 		// an env var must not be the thing that hands a tenant uid 0.
 		{name: "not a number", env: "dylaris", wantUID: 1000, wantSpec: "1000:1000"},

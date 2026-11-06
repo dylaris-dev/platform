@@ -11,12 +11,14 @@ import (
 )
 
 const (
-	paperBuildsPath  = "/v3/projects/paper/versions/1.21.4/builds/latest"
-	paperBuildsBody  = `{"id":1,"downloads":{"server:default":{"name":"p.jar","url":"https://fill-data.papermc.io/p.jar"}}}`
-	fabricLoaderPath = "/v2/versions/loader/1.21.4"
-	forgePromosPath  = "/net/minecraftforge/forge/promotions_slim.json"
-	forgeJarPath     = "/net/minecraftforge/forge/1.20.1-47.3.0/forge-1.20.1-47.3.0-installer.jar"
-	neoJarPath       = "/releases/net/neoforged/neoforge/21.1.9/neoforge-21.1.9-installer.jar"
+	paperBuildsPath   = "/v3/projects/paper/versions/1.21.4/builds/latest"
+	paperBuildsBody   = `{"id":1,"downloads":{"server:default":{"name":"p.jar","url":"https://fill-data.papermc.io/p.jar"}}}`
+	paperBuild130Path = "/v3/projects/paper/versions/1.21.4/builds/130"
+	paperBuild130Body = `{"id":130,"downloads":{"server:default":{"name":"p.jar","url":"https://fill-data.papermc.io/p130.jar"}}}`
+	fabricLoaderPath  = "/v2/versions/loader/1.21.4"
+	forgePromosPath   = "/net/minecraftforge/forge/promotions_slim.json"
+	forgeJarPath      = "/net/minecraftforge/forge/1.20.1-47.3.0/forge-1.20.1-47.3.0-installer.jar"
+	neoJarPath        = "/releases/net/neoforged/neoforge/21.1.9/neoforge-21.1.9-installer.jar"
 )
 
 // M11: every loader a move can target is checked upstream before the stop,
@@ -25,6 +27,7 @@ const (
 func TestResolveVersionMoveTarget(t *testing.T) {
 	stubInstallerMeta(t, metaTransport{
 		paperBuildsPath:              paperBuildsBody,
+		paperBuild130Path:            paperBuild130Body,
 		fabricLoaderPath:             `[{"loader":{"version":"0.17.0-beta","stable":false}},{"loader":{"version":"0.16.9","stable":true}}]`,
 		"/v2/versions/loader/1.99.0": `[]`,
 		forgePromosPath:              `{"promos":{"1.20.1-recommended":"47.3.0"}}`,
@@ -39,6 +42,9 @@ func TestResolveVersionMoveTarget(t *testing.T) {
 	}{
 		{"paper with a build", InstallerConfig{Type: "paper", Version: "1.21.4"}, "", false},
 		{"paper with no build yet", InstallerConfig{Type: "paper", Version: "1.21.5"}, "", true},
+		// N08: a typed build is checked like a Forge or NeoForge one.
+		{"paper typed build that exists", InstallerConfig{Type: "paper", Version: "1.21.4", Loader: "130"}, "130", false},
+		{"paper typed build that does not", InstallerConfig{Type: "paper", Version: "1.21.4", Loader: "99999"}, "", true},
 		{"fabric blank loader", InstallerConfig{Type: "fabric", Version: "1.21.4"}, "0.16.9", false},
 		{"fabric version with no loader", InstallerConfig{Type: "fabric", Version: "1.99.0"}, "", true},
 		{"fabric typed loader that exists", InstallerConfig{Type: "fabric", Version: "1.21.4", Loader: "0.17.0-beta"}, "0.17.0-beta", false},
@@ -147,5 +153,32 @@ func TestPlaceStagedJarsReportsAFailedRename(t *testing.T) {
 	}
 	if readTestFile(filepath.Join(serverPath, "main", "server.jar")) != "old" {
 		t.Error("the old server jar was not put back")
+	}
+}
+
+// N08: the build a Paper move names is the one installed. installPaper took
+// only the version and installed the latest, while Core recorded the typed one.
+func TestInstallPaperUsesTheTypedBuild(t *testing.T) {
+	rt := metaTransport{
+		paperBuildsPath:   paperBuildsBody,
+		paperBuild130Path: paperBuild130Body,
+		"/p.jar":          "latest",
+		"/p130.jar":       "build130",
+	}
+	stubInstallerMeta(t, rt)
+	prev := installerDownloadClient
+	installerDownloadClient = &http.Client{Transport: rt}
+	t.Cleanup(func() { installerDownloadClient = prev })
+	for _, tc := range []struct{ build, want string }{{"", "latest"}, {"130", "build130"}} {
+		dir := t.TempDir()
+		if err := installPaper(dir, "1.21.4", tc.build); err != nil {
+			t.Fatalf("build %q: %v", tc.build, err)
+		}
+		if got := readTestFile(filepath.Join(dir, "server.jar")); got != tc.want {
+			t.Errorf("build %q installed %q, want %q", tc.build, got, tc.want)
+		}
+	}
+	if err := installPaper(t.TempDir(), "1.21.4", "../latest"); err == nil {
+		t.Error("a build that is not a number was sent to the API")
 	}
 }

@@ -25,7 +25,7 @@ func TestArchiveOpenRefusesANamedPipe(t *testing.T) {
 		done <- err
 	}()
 	go func() {
-		_, err := uploadTopFolder(pipe)
+		_, _, err := uploadTopFolder(pipe)
 		done <- err
 	}()
 	for i := 0; i < 2; i++ {

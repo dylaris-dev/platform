@@ -187,6 +187,14 @@ func TestUploadZip_SubfolderClashRefused(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(dir, "server.properties")); string(b) != "old" {
 		t.Fatalf("existing file replaced: %q", b)
 	}
+	// N06: refused before extracting, so the retry the message asks for works
+	// and the upload does not sit one level down using the disk.
+	if !exists(filepath.Join(dir, ".upload.zip")) {
+		t.Error("the upload was deleted, a retry needs a re-upload")
+	}
+	if exists(filepath.Join(dir, "srv")) {
+		t.Error("the refused upload was left extracted in srv/")
+	}
 }
 
 // A file beside the folder means the archive is the server's top folder.

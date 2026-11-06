@@ -26,24 +26,20 @@ const floodgateKeyLen = 16
 // Floodgate generates its own key on first start; ours must win so Geyser and
 // every Floodgate agree, hence the overwrite.
 //
-// The data folder Floodgate made is where it reads, so that wins over the
-// layout guess: a Paper server moved to Fabric keeps its plugins/ folder, and
-// the key went there while the Fabric mod read config/floodgate.
+// Each layout is decided on its own: a Paper server moved to Fabric keeps its
+// plugins/ folder (often with plugins/floodgate in it), and a key written only
+// there left the Fabric mod to generate its own in config/floodgate on the
+// first start. A key file nobody reads is harmless. The one guess left out is
+// a bare plugins/ beside a config/floodgate Floodgate already made.
 func writeFloodgateKey(serverDir string, key []byte) error {
 	var rels []string
-	if isDir(filepath.Join(serverDir, "plugins", "floodgate")) {
+	configFG := isDir(filepath.Join(serverDir, "config", "floodgate"))
+	if isDir(filepath.Join(serverDir, "plugins", "floodgate")) ||
+		(!configFG && isDir(filepath.Join(serverDir, "plugins"))) {
 		rels = append(rels, "plugins/floodgate/key.pem")
 	}
-	if isDir(filepath.Join(serverDir, "config", "floodgate")) {
+	if configFG || isDir(filepath.Join(serverDir, "mods")) {
 		rels = append(rels, "config/floodgate/key.pem")
-	}
-	if len(rels) == 0 {
-		switch {
-		case isDir(filepath.Join(serverDir, "plugins")):
-			rels = []string{"plugins/floodgate/key.pem"}
-		case isDir(filepath.Join(serverDir, "mods")):
-			rels = []string{"config/floodgate/key.pem"}
-		}
 	}
 	for _, rel := range rels {
 		if err := writeFloodgateKeyAt(serverDir, rel, key); err != nil {

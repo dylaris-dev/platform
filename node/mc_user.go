@@ -51,14 +51,12 @@ func mcUser() int {
 	return defaultMCUser
 }
 
-// mcUserSpec is what Docker's User field wants, or "" to leave the image's own
-// USER in force. Both are set on purpose: the image carries USER 1000 so a
-// hand-run container is non-root too, and this is what an operator overrides.
+// mcUserSpec is what Docker's User field wants. Always set, root included: the
+// image carries USER 1000 so a hand-run container is non-root too, and leaving
+// the field empty for MC_RUN_AS=0 ran that uid 1000 against root-owned data
+// while every ownership handover was skipped for the opt-out.
 func mcUserSpec() string {
 	u := mcUser()
-	if u == 0 {
-		return "" // explicit opt-out: fall back to the image, which is root only on an old one
-	}
 	return fmt.Sprintf("%d:%d", u, u)
 }
 

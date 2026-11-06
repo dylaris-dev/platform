@@ -147,7 +147,7 @@ func installServer(serverDataPath, subServerName string, config InstallerConfig)
 
 	switch config.Type {
 	case "paper":
-		return nil, installPaper(destDir, config.Version)
+		return nil, installPaper(destDir, config.Version, config.Loader)
 	case "velocity", "waterfall":
 		if err := installPaperMC(destDir, config.Type, config.Version); err != nil {
 			return nil, err
@@ -478,7 +478,7 @@ func forgeInstallerURL(mcVersion, build string) string {
 func resolveVersionMoveTarget(cfg InstallerConfig) (string, error) {
 	switch cfg.Type {
 	case "paper":
-		_, err := latestPaperMCBuild("paper", cfg.Version)
+		_, err := paperMCBuildFor("paper", cfg.Version, cfg.Loader)
 		return cfg.Loader, err
 	case "fabric":
 		return resolveFabricLoader(cfg.Version, cfg.Loader)
@@ -765,12 +765,22 @@ func fetchJSON(url string, target interface{}) error {
 	return json.NewDecoder(resp.Body).Decode(target)
 }
 
-// installPaper fetches the latest PaperMC build for the given version and
-// downloads it as server.jar. Uses the v3 Fill API; the old api.papermc.io/v2
-// was retired (now returns 410 "sunset"). The v3 builds/latest response carries
-// the direct download URL, so there is no longer a URL to reconstruct.
-func installPaper(dir, version string) error {
-	return installPaperMC(dir, "paper", version)
+// installPaper fetches the PaperMC build for the given version (the latest when
+// build is blank) and downloads it as server.jar. Uses the v3 Fill API; the old
+// api.papermc.io/v2 was retired (now returns 410 "sunset"). The v3 build
+// response carries the direct download URL, so there is no longer a URL to
+// reconstruct.
+//
+// build is what a version move's "Loader build" names. Core records it as the
+// server's build, so installing the latest instead left the record naming a
+// build that was not on disk.
+func installPaper(dir, version, build string) error {
+	b, err := paperMCBuildFor("paper", version, build)
+	if err != nil {
+		return err
+	}
+	log.Printf("Downloading %s %s build %d ...", paperMCLabels["paper"], version, b.id)
+	return installServerJar(dir, b.url, b.sha256)
 }
 
 // paperMCLabels names a Fill project in the log and in errors. Paper keeps the
@@ -795,11 +805,24 @@ type paperMCBuild struct {
 
 // latestPaperMCBuild is the newest build Fill serves for a project version.
 func latestPaperMCBuild(project, version string) (paperMCBuild, error) {
+	return paperMCBuildFor(project, version, "")
+}
+
+// paperMCBuildFor is the named build of a project version, or the newest when
+// build is blank.
+func paperMCBuildFor(project, version, build string) (paperMCBuild, error) {
 	label := paperMCLabels[project]
 	if label == "" {
 		return paperMCBuild{}, fmt.Errorf("unknown PaperMC project %q", project)
 	}
-	apiURL := fmt.Sprintf("https://fill.papermc.io/v3/projects/%s/versions/%s/builds/latest", project, url.PathEscape(version))
+	id := "latest"
+	if build = strings.TrimSpace(build); build != "" {
+		if n, err := strconv.Atoi(build); err != nil || n <= 0 {
+			return paperMCBuild{}, fmt.Errorf("%s build %q is not a build number", label, build)
+		}
+		id = build
+	}
+	apiURL := fmt.Sprintf("https://fill.papermc.io/v3/projects/%s/versions/%s/builds/%s", project, url.PathEscape(version), id)
 	resp, err := installerMetaClient.Get(apiURL)
 	if err != nil {
 		return paperMCBuild{}, fmt.Errorf("failed to query PaperMC API: %v", err)
@@ -1006,9 +1029,17 @@ func installFromUploadZip(destDir, structure string) error {
 	// "more than one folder", and the new upload stayed unused one level down.
 	top := ""
 	if structure == "subfolder" {
+		var children []string
 		var err error
-		if top, err = uploadTopFolder(zipPath); err != nil {
+		if top, children, err = uploadTopFolder(zipPath); err != nil {
 			return fmt.Errorf("failed to read upload zip: %v", err)
+		}
+		// Refused before extracting: afterwards the zip was gone, so the retry
+		// the message asks for needed a re-upload, and <top>/ stayed behind.
+		if top != "" {
+			if err := uploadClash(destDir, top, children); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -1030,46 +1061,76 @@ func uploadMacJunk(name string) bool {
 }
 
 // uploadTopFolder names the one folder every entry of the zip sits in, or ""
-// when there is no single one.
+// when there is no single one, and the names directly inside it.
 //
 // Opened like the extraction that follows: no link, nothing but a regular file.
-func uploadTopFolder(zipPath string) (string, error) {
+func uploadTopFolder(zipPath string) (string, []string, error) {
 	f, err := openNoFollow(zipPath)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	zr, err := zip.NewReader(f, st.Size())
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	top := ""
+	var children []string
+	seen := map[string]bool{}
 	for _, f := range zr.File {
 		name := strings.TrimPrefix(strings.ReplaceAll(f.Name, "\\", "/"), "./")
-		first, _, nested := strings.Cut(name, "/")
+		first, rest, nested := strings.Cut(name, "/")
 		if first == "" || uploadMacJunk(first) {
 			continue
 		}
 		if !nested && !f.FileInfo().IsDir() {
-			return "", nil // a file beside the folder
+			return "", nil, nil // a file beside the folder
 		}
 		if top != "" && top != first {
-			return "", nil
+			return "", nil, nil
 		}
 		top = first
+		if child, _, _ := strings.Cut(rest, "/"); child != "" && !seen[child] {
+			seen[child] = true
+			children = append(children, child)
+		}
 	}
-	return top, nil
+	return top, children, nil
+}
+
+// uploadClash refuses names of top's contents that already exist in destDir.
+// A name that already exists is refused rather than skipped - skipping left the
+// old file in use and the upload's copy unused, with the install reported as a
+// success.
+func uploadClash(destDir, top string, names []string) error {
+	root, err := os.OpenRoot(destDir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	var clash []string
+	for _, n := range names {
+		if _, err := root.Lstat(n); err == nil {
+			clash = append(clash, n)
+		}
+	}
+	if len(clash) > 0 {
+		if len(clash) > 5 {
+			clash = append(clash[:5], "...")
+		}
+		return fmt.Errorf("the upload's %s would replace files already on this server (%s); delete them first, or upload into a new server", top, strings.Join(clash, ", "))
+	}
+	return nil
 }
 
 // moveUploadUp moves top's contents into destDir, through an os.Root: the
 // directory is the tenant's, so a link planted there must not carry the move
-// outside it. A name that already exists is refused rather than skipped -
-// skipping left the old file in use and the upload's copy unused, with the
-// install reported as a success.
+// outside it. The clash check runs again on what was extracted, the names a
+// zip index spells differently included.
 func moveUploadUp(destDir, top string) error {
 	root, err := os.OpenRoot(destDir)
 	if err != nil {
@@ -1080,17 +1141,12 @@ func moveUploadUp(destDir, top string) error {
 	if err != nil {
 		return fmt.Errorf("reading the uploaded folder: %w", err)
 	}
-	var clash []string
-	for _, e := range entries {
-		if _, err := root.Lstat(e.Name()); err == nil {
-			clash = append(clash, e.Name())
-		}
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
 	}
-	if len(clash) > 0 {
-		if len(clash) > 5 {
-			clash = append(clash[:5], "...")
-		}
-		return fmt.Errorf("the upload's %s would replace files already on this server (%s); delete them first, or upload into a new server", top, strings.Join(clash, ", "))
+	if err := uploadClash(destDir, top, names); err != nil {
+		return err
 	}
 	log.Printf("Moving contents from subfolder: %s", top)
 	for _, e := range entries {
