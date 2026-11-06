@@ -1868,6 +1868,49 @@ func savedDiskLimitIn(serverDir string) int64 {
 	return saved.Docker.DiskLimit
 }
 
+// dataBindStale reports whether a container's /data bind names another host
+// directory than serverDir. No /data bind is not stale: nothing to compare.
+func dataBindStale(binds []string, serverDir string) bool {
+	for _, b := range binds {
+		i := strings.LastIndex(b, ":/data")
+		if i < 0 || (len(b) > i+6 && b[i+6] != ':') {
+			continue
+		}
+		return filepath.Clean(b[:i]) != filepath.Clean(serverDir)
+	}
+	return false
+}
+
+// removeStaleServerContainer removes the server's mc_ container when it is
+// still bound to a directory the server no longer lives in, which a restart
+// would reuse verbatim (see RestartContainer). One bound where the server is
+// stays. Another node's container on a shared daemon is left alone.
+func (dm *DockerManager) removeStaleServerContainer(ctx context.Context, uuid string) error {
+	mcName := "mc_" + uuid
+	info, err := dm.cli.ContainerInspect(ctx, mcName)
+	if client.IsErrNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", mcName, err)
+	}
+	if info.ContainerJSONBase == nil {
+		return nil
+	}
+	if info.Config != nil && !ownsContainer(info.Config.Labels, nodeIdentities(nodeSecretDir)) {
+		log.Printf("storage move %s: %s belongs to node %s on this Docker daemon, leaving it alone", uuid, mcName, info.Config.Labels[ownerLabel])
+		return nil
+	}
+	if info.HostConfig == nil || !dataBindStale(info.HostConfig.Binds, dm.resolveHostServerPath(uuid)) {
+		return nil
+	}
+	// By the inspected ID, not the name (ownedRef).
+	if err := dm.cli.ContainerRemove(ctx, info.ID, container.RemoveOptions{Force: true}); err != nil && !client.IsErrNotFound(err) {
+		return fmt.Errorf("remove %s, still bound to the old path: %w", mcName, err)
+	}
+	return nil
+}
+
 // containerGone reports whether the server's container is known not to exist.
 // An inspect that fails for another reason does not count.
 func (dm *DockerManager) containerGone(uuid string) bool {

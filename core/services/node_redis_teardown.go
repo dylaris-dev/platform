@@ -59,25 +59,29 @@ func RemoveNodeRedisState(ctx context.Context, rdb *redis.Client, prov *redisacl
 }
 
 // removeNodePortKeys drops the node's per-server port keys
-// (dylaris:node:<token>:port:<uuid>). Only the node's own release removes one,
-// so a node deleted while offline left them all for good. A token with a glob
-// character would match other nodes' keys, so it is not scanned.
+// (dylaris:node:<token>:port:<uuid>) and its per-server storage and disk keys
+// (node:<token>:server:<uuid>:storage, :disk_limit_mb, :disk_grace, ...).
+// Only the node itself removes one, so a node deleted while offline left them
+// all for good. A token with a glob character would match other nodes' keys,
+// so it is not scanned.
 func removeNodePortKeys(ctx context.Context, rdb *redis.Client, token string) {
 	if strings.ContainsAny(token, "*?[]\\") {
 		return
 	}
-	iter := rdb.Scan(ctx, 0, "dylaris:node:"+token+":port:*", 500).Iterator()
-	var keys []string
-	for iter.Next(ctx) {
-		keys = append(keys, iter.Val())
-	}
-	if err := iter.Err(); err != nil {
-		log.Printf("node teardown: port keys for node token %.8s... could not be listed: %v", token, err)
-	}
-	if len(keys) == 0 {
-		return
-	}
-	if err := rdb.Del(ctx, keys...).Err(); err != nil {
-		log.Printf("node teardown: port keys for node token %.8s... could not be removed: %v", token, err)
+	for _, pattern := range []string{"dylaris:node:" + token + ":port:*", "node:" + token + ":server:*"} {
+		iter := rdb.Scan(ctx, 0, pattern, 500).Iterator()
+		var keys []string
+		for iter.Next(ctx) {
+			keys = append(keys, iter.Val())
+		}
+		if err := iter.Err(); err != nil {
+			log.Printf("node teardown: per-server keys for node token %.8s... could not be listed: %v", token, err)
+		}
+		if len(keys) == 0 {
+			continue
+		}
+		if err := rdb.Del(ctx, keys...).Err(); err != nil {
+			log.Printf("node teardown: per-server keys for node token %.8s... could not be removed: %v", token, err)
+		}
 	}
 }

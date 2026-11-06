@@ -116,3 +116,48 @@ func TestDuDiskUsageWithoutStorageManager(t *testing.T) {
 		t.Errorf("duDiskUsage without a storage manager = %+v, want nil", got)
 	}
 }
+
+// M25: on a filesystem without project quotas the cached limit is the only
+// one the du path had. A Redis that lost it reported no limit, so nothing
+// stopped a server that filled the disk; the saved config still knows it.
+func TestDuDiskUsageFallsBackToTheSavedLimit(t *testing.T) {
+	prevNodeID, prevMgr := nodeID, globalStorageMgr
+	t.Cleanup(func() { nodeID, globalStorageMgr = prevNodeID, prevMgr })
+	nodeID = "node-1"
+
+	ctx := context.Background()
+	rdb := newDiskGuardRedis(t)
+	const uuid = "aaaaaaaa-1111-2222-3333-444444444444"
+
+	root := t.TempDir()
+	globalStorageMgr = NewStorageManager(root, nil)
+	dir := filepath.Join(root, uuid)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	for _, tc := range []struct {
+		name  string
+		saved int64
+	}{
+		{"limited", 100},
+		{"unlimited", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := ServerConfig{UUID: uuid}
+			cfg.Docker.DiskLimit = tc.saved
+			saveNodeConfigWithDiskLimit(dir, cfg)
+			rdb.Del(ctx, diskLimitKey(uuid))
+
+			usage := duDiskUsage(ctx, rdb, uuid)
+			if usage == nil {
+				t.Fatal("duDiskUsage returned nil")
+			}
+			if want := tc.saved << 20; usage.Limit != want {
+				t.Fatalf("Limit = %d, want %d from the saved config", usage.Limit, want)
+			}
+			if got := loadDiskLimit(ctx, rdb, uuid); got != tc.saved {
+				t.Fatalf("cached limit = %d MB, want %d written back", got, tc.saved)
+			}
+		})
+	}
+}

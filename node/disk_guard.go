@@ -227,6 +227,19 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 			// Without the marker nothing puts a lifted limit back after a
 			// crash: the boot skips a counted server that has none.
 			if err := rdb.SetNX(ctx, diskLiftedKey(uuid), lifted, 0).Err(); err != nil {
+				// No lift and no tag, but the limit itself still goes on: an
+				// update_resources is not retried, and returning here kept the
+				// old limit on the filesystem. A grace that cannot be read
+				// leaves the limit as it is rather than block a graced server.
+				if g, ok, gerr := readDiskGrace(ctx, rdb, uuid); gerr == nil {
+					enforceMB := limitMB
+					if ok && g.limit == limit {
+						enforceMB = g.ceiling >> 20
+					}
+					if serr := q.SetLimit(uuid, enforceMB); serr != nil {
+						log.Printf("quota: limit %s: %v", uuid, serr)
+					}
+				}
 				return fmt.Errorf("mark the hard limit of %s lifted for the recount: %w", uuid, err)
 			}
 		}

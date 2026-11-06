@@ -290,21 +290,21 @@ func TestGracefulStopLeavesAnotherNodesServerRunning(t *testing.T) {
 // delete_sub_server's teardown and migrate_storage's remove call Docker by name
 // directly rather than through PowerAction, so they carry the guard themselves.
 func TestDirectByNameRemovesAskWhoseContainerItIs(t *testing.T) {
-	b, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(b)
-	for _, c := range []struct{ from, to string }{
-		{"teardown := func() {", "dm.cli.ContainerKill(killCtx, ref"},
-		{`mcName := "mc_" + cmd.Config.UUID`, "dm.cli.ContainerRemove(ctx, ref"},
+	for _, c := range []struct{ file, from, to, check string }{
+		{"main.go", "teardown := func() {", "dm.cli.ContainerKill(killCtx, ref", "dm.ownedRef(mcName)"},
+		{"docker_mgr.go", "func (dm *DockerManager) removeStaleServerContainer(", "dm.cli.ContainerRemove(ctx, info.ID", "ownsContainer(info.Config.Labels"},
 	} {
+		b, err := os.ReadFile(c.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(b)
 		i := strings.Index(s, c.from)
 		j := strings.Index(s[max(i, 0):], c.to)
 		if i < 0 || j < 0 {
 			t.Fatalf("cannot locate %q; move this assertion with it", c.from)
 		}
-		if !strings.Contains(s[i:i+j], "dm.ownedRef(mcName)") {
+		if !strings.Contains(s[i:i+j], c.check) {
 			t.Errorf("the by-name call after %q no longer checks the owner label", c.from)
 		}
 	}

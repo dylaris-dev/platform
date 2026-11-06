@@ -19,6 +19,10 @@ func TestRemoveNodeRedisStateDropsThePortLedger(t *testing.T) {
 	}
 	mr.HSet("dylaris:node:tok:ports", "srv-a", "25600", "srv-b", "25601")
 	mr.HSet("dylaris:node:other:ports", "srv-c", "25600")
+	// M21: the node's per-server storage and disk keys, also without a TTL.
+	for _, k := range []string{"node:tok:server:srv-a:storage", "node:tok:server:srv-a:disk_limit_mb", "node:tok:server:srv-b:disk_lifted", "node:other:server:srv-c:storage"} {
+		mr.Set(k, "1")
+	}
 
 	RemoveNodeRedisState(t.Context(), rdb, nil, "tok")
 
@@ -31,6 +35,10 @@ func TestRemoveNodeRedisStateDropsThePortLedger(t *testing.T) {
 		{"dylaris:node:tok:ports", false},
 		{"dylaris:node:other:port:srv-c", true},
 		{"dylaris:node:other:ports", true},
+		{"node:tok:server:srv-a:storage", false},
+		{"node:tok:server:srv-a:disk_limit_mb", false},
+		{"node:tok:server:srv-b:disk_lifted", false},
+		{"node:other:server:srv-c:storage", true},
 	} {
 		if got := mr.Exists(k.key); got != k.want {
 			t.Errorf("%s exists = %v, want %v", k.key, got, k.want)

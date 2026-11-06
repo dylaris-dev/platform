@@ -937,9 +937,18 @@ func duDiskUsage(ctx context.Context, rdb *redis.Client, uuid string) *DiskUsage
 	if total < 0 {
 		return nil
 	}
+	// The cache is the only limit this path has, and a Redis restart loses
+	// it; the saved config does not. Written back so the upload checks see it
+	// too. An unlimited server saves 0, so this never caps one.
+	limitMB := loadDiskLimit(ctx, rdb, uuid)
+	if limitMB <= 0 {
+		if limitMB = savedDiskLimitIn(dir); limitMB > 0 {
+			recordDiskLimit(ctx, rdb, uuid, limitMB)
+		}
+	}
 	return &DiskUsagePayload{
 		Total: total,
-		Limit: loadDiskLimit(ctx, rdb, uuid) * 1024 * 1024,
+		Limit: limitMB * 1024 * 1024,
 		// The quota path fills this and this one did not, which made it the
 		// only path most installs ever take with the map missing: project
 		// quotas need xfs or ext4, so NFS, CIFS and every Docker Desktop bind

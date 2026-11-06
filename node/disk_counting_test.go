@@ -883,3 +883,34 @@ func TestASaveKeepsTheCachedDiskLimitOfAMovedServer(t *testing.T) {
 		t.Fatalf("saved disk limit = %d MB, want the cached 100", got)
 	}
 }
+
+// M18: a recount whose lifted marker cannot be written skips the lift, but
+// the new limit still goes on. update_resources is not retried, so returning
+// before it left the old limit on the filesystem for good.
+func TestARecountThatCannotMarkTheLiftStillAppliesTheNewLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		graced bool
+		want   int64
+	}{
+		{"raised limit", false, 200},
+		{"graced server keeps its ceiling", true, 300},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newDiskGuardRedis(t)
+			ctx := context.Background()
+			rdb.Set(ctx, diskCountedKey("srv"), 1, 0)
+			if tc.graced {
+				saveDiskGrace(ctx, rdb, "srv", diskGrace{limit: 200 * mib, ceiling: 300 * mib})
+			}
+			rdb.AddHook(&failGetHook{key: diskLiftedKey("srv"), on: true, cmd: "setnx"})
+			q := &fakeQuota{before: usageOf(10*mib, 100*mib), after: usageOf(10*mib, 100*mib), limitMB: 100}
+			if err := countDiskUsage(ctx, rdb, q, "srv", 200, false); err == nil {
+				t.Fatal("the recount reported success without its crash marker")
+			}
+			if q.limitMB != tc.want {
+				t.Fatalf("hard limit = %d MB, want %d (limits set %v)", q.limitMB, tc.want, q.setLimits)
+			}
+		})
+	}
+}

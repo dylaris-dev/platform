@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -458,7 +459,7 @@ func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (strin
 		return "", fmt.Errorf("server %s not found on any storage path", serverUUID)
 	}
 	if currentPath == targetPath {
-		return "", fmt.Errorf("server %s is already on path %q", serverUUID, targetPath)
+		return "", fmt.Errorf("server %s %w %q", serverUUID, errAlreadyOnPath, targetPath)
 	}
 	// The move clears the target as a leftover, which only the storage key
 	// can vouch for. Found by scanning, either copy may be the live one.
@@ -468,6 +469,47 @@ func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (strin
 		}
 	}
 	return currentPath, nil
+}
+
+// errAlreadyOnPath is a move whose target is where the server already lives.
+// It is also what a move killed after its key flip reads like on redelivery.
+var errAlreadyOnPath = errors.New("is already on path")
+
+// dropStaleCopies removes the server's directories on every storage path but
+// the one its storage key names: a move killed during the delete of its
+// source left that copy behind. Only the key can vouch for which copy is live,
+// so without one nothing is removed.
+func (sm *StorageManager) dropStaleCopies(serverUUID string) {
+	if sm.rdb == nil || !validate.IsServerUUID(serverUUID) {
+		return
+	}
+	live, err := sm.rdb.Get(context.Background(), fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)).Result()
+	if err != nil || live == "" {
+		return
+	}
+	sm.mu.RLock()
+	paths := append([]string(nil), sm.paths...)
+	sm.mu.RUnlock()
+	known := false
+	for _, p := range paths {
+		known = known || p == live
+	}
+	if !known {
+		return
+	}
+	for _, p := range paths {
+		dir := filepath.Join(p, serverUUID)
+		if p == live {
+			continue
+		}
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		log.Printf("storage: removing the leftover copy of %s at %s (it lives on %s)", serverUUID, dir, live)
+		if err := os.RemoveAll(dir); err != nil {
+			log.Printf("storage: [warn] could not remove leftover copy %s: %v", dir, err)
+		}
+	}
 }
 
 // fenceMove makes every lookup of this one server wait until the returned

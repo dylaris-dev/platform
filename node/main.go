@@ -996,6 +996,19 @@ func saveNodeConfig(serverDir string, config ServerConfig) {
 	saveNodeConfigWithDiskLimit(serverDir, config)
 }
 
+// finishStorageMove is what a storage move does once its storage key names the
+// target: the container bound to the old path goes (ContainerRemove rather
+// than PowerAction("delete"), which also releases the host port the server
+// keeps), a source copy a killed move left is removed, and the tree is put
+// under the target filesystem's quota. Every step is a no-op when already
+// done. The limit is applied even when the container could not be removed.
+func finishStorageMove(ctx context.Context, rdb *redis.Client, dm *DockerManager, quota *QuotaSet, storage *StorageManager, uuid string, limitMB int64) error {
+	rmErr := dm.removeStaleServerContainer(ctx, uuid)
+	storage.dropStaleCopies(uuid)
+	applyDiskLimit(ctx, rdb, quota, uuid, limitMB)
+	return rmErr
+}
+
 // saveNodeConfigWithDiskLimit is saveNodeConfig for the commands whose payload
 // carries the disk limit, 0 (unlimited) included.
 func saveNodeConfigWithDiskLimit(serverDir string, config ServerConfig) {
@@ -2339,7 +2352,21 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// The refusals first: made after the stop, they took a live server
 		// and its players down for a move that never ran, and reported it
 		// "stopped" like a finished one.
-		if err := storage.CheckMigration(cmd.Config.UUID, targetPath); err != nil {
+		if err := storage.CheckMigration(cmd.Config.UUID, targetPath); errors.Is(err, errAlreadyOnPath) {
+			// The key already names the target: either a repeat of a move
+			// that finished, or one killed after its key flip (a Watchtower
+			// restart) that left the container bound to the half-deleted
+			// source and the tree on the target untagged. Finishing is a
+			// no-op for the first and the rest of the move for the second.
+			if ferr := finishStorageMove(ctx, rdb, dm, quota, storage, cmd.Config.UUID, knownDiskLimitMB(ctx, rdb, quota, cmd.Config.UUID)); ferr != nil {
+				log.Printf("Storage migration of %s to %s could not be finished: %v - repeating the move finishes it", cmd.Config.UUID, targetPath, ferr)
+				rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+				return
+			}
+			log.Printf("Storage migration of %s: already on %s, finished what an earlier move left", cmd.Config.UUID, targetPath)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+			return
+		} else if err != nil {
 			log.Printf("Storage migration of %s refused: %v", cmd.Config.UUID, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
 			return
@@ -2374,18 +2401,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Without this the move looks like a success and then the server crash
 		// loops: its /data is the directory we just emptied.
 		//
-		// ContainerRemove rather than PowerAction("delete") because that also
-		// releases the host port, and the server keeps its port across a move.
-		mcName := "mc_" + cmd.Config.UUID
-		if ref, owner := dm.ownedRef(mcName); owner != "" {
-			log.Printf("migrate_storage %s: %s belongs to node %s on this Docker daemon, leaving it alone", cmd.Config.UUID, mcName, owner)
-		} else if rmErr := dm.cli.ContainerRemove(ctx, ref, container.RemoveOptions{Force: true}); rmErr != nil {
-			log.Printf("migrate_storage %s: ContainerRemove: %v (probably gone already - the next start recreates it)", cmd.Config.UUID, rmErr)
-		}
-
 		// The new path may be another filesystem with its own quota. The limit
 		// is the one this node already enforced.
-		applyDiskLimit(ctx, rdb, quota, cmd.Config.UUID, limitMB)
+		if err := finishStorageMove(ctx, rdb, dm, quota, storage, cmd.Config.UUID, limitMB); err != nil {
+			log.Printf("Storage migration of %s to %s is on disk but not finished: %v - repeating the move finishes it", cmd.Config.UUID, targetPath, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			return
+		}
 
 		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 		log.Printf("Migration complete for server %s → %s", cmd.Config.UUID, targetPath)
