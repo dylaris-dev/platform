@@ -483,3 +483,41 @@ func TestVersionMoveRefusesBesideARunningCopy(t *testing.T) {
 		t.Error("the server was changed beside the copy")
 	}
 }
+
+// A move redelivered after the node died mid-move finds the old software in
+// the stash and no jar at the root. If that attempt aborts while staging, it
+// says the server was left as it was, so the old software is back first: the
+// stash used to be recovered only by the next stashServerJars, which an
+// aborted move never reaches, and every start crash-looped.
+func TestVersionMoveRecoversAStrandedStashBeforeItCanAbort(t *testing.T) {
+	root := t.TempDir()
+	const uuid = "srv-move-stranded"
+	sub := filepath.Join(root, uuid, "main")
+	writeTestFile(t, filepath.Join(root, uuid, ".main.oldjars", "main", "server.jar"), "old jar")
+	writeTestFile(t, filepath.Join(root, uuid, ".main.oldjars", "main", "versions", "1.21.1", "paper.jar"), "old paper")
+	writeTestFile(t, filepath.Join(sub, "world", "level.dat"), "world")
+	rdb := newMiniRedis(t)
+	payload, _ := json.Marshal(map[string]interface{}{"config": map[string]interface{}{
+		"uuid": uuid, "activeSubServer": "main", "targetDir": "plugins",
+		"install": []map[string]string{{"fileName": "../escape.jar", "downloadUrl": "https://cdn.modrinth.com/x.jar"}},
+	}})
+	// dm is nil: reaching the stop would panic, which is the point.
+	runUpdateServerVersion(context.Background(), rdb, nil, &StorageManager{paths: []string{root}},
+		NodeCommand{Installer: InstallerConfig{Type: "paper"}}, string(payload))
+
+	if got, _ := rdb.Get(context.Background(), "dylaris:server:"+uuid+":version_update_failed").Result(); got == "" {
+		t.Error("Core was not told the move did not happen")
+	}
+	for rel, want := range map[string]string{
+		"server.jar":                "old jar",
+		"versions/1.21.1/paper.jar": "old paper",
+		"world/level.dat":           "world",
+	} {
+		if got := readTestFile(filepath.Join(sub, filepath.FromSlash(rel))); got != want {
+			t.Errorf("%s = %q, want %q", rel, got, want)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(root, uuid, ".main.oldjars")); !os.IsNotExist(err) {
+		t.Errorf("the stash is still there: %v", err)
+	}
+}

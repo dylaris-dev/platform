@@ -348,7 +348,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	}
 	// The move stops the server and rewrites its jars, the same tree a restore,
 	// a reinstall or a migration is working in.
-	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
 		return
 	}
 	req.Minecraft = strings.TrimSpace(req.Minecraft)
@@ -776,7 +776,7 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
-	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
 		return
 	}
 	var req copySubServerRequest
@@ -925,16 +925,7 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 // Pure, so the rule can be exercised without a node on the other end - which is
 // the whole reason the check exists: what is on that disk is not knowable here.
 func subServerNameTaken(entries []*pb.FileInfo, name string) bool {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return false
-	}
-	for _, e := range entries {
-		if e != nil && strings.EqualFold(strings.TrimSpace(e.Name), name) {
-			return true
-		}
-	}
-	return false
+	return guard.SubServerNameTaken(entries, name)
 }
 
 // --- node round trips ------------------------------------------------------

@@ -118,6 +118,8 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	defer releaseBusy()
 	rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", pl.UUID))
 	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", pl.UUID), "1", 30*time.Second)
+	// Before any abort below, which all report "left exactly as it was".
+	recoverStrandedStash(serverPath, subName)
 
 	log.Printf("update_server_version: moving %s/%s (%d removals, %d installs)", pl.UUID, subName, len(pl.Remove), len(pl.Install))
 

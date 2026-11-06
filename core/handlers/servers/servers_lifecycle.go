@@ -484,7 +484,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
-	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
 		return
 	}
 	// Before the cooldown below is claimed: a refusal here is answered by
@@ -1030,7 +1030,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
-	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
 		return
 	}
 
@@ -1353,7 +1353,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
-	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
 		return
 	}
 
@@ -1748,6 +1748,11 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 			httpx.SendJSONError(w, "The node is still working on this server ("+busy+"). Try again when it has finished.", 409)
 			return
 		}
+	}
+	// A copy still in the node's stream holds no busy key yet, and a boot
+	// beside it writes the world the copy is walking. A stop touches no files.
+	if (req.Action == "start" || req.Action == "restart") && guard.RefuseIfCopyQueued(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
+		return
 	}
 	// A move between nodes is driven by Core, not held on the node for its
 	// whole length. Operators may still act on a migration that is stuck.
@@ -2447,7 +2452,7 @@ func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, s
 		httpx.SendJSONErrorCode(w, "External nodes need gateway routing; this server cannot be moved onto one on IP:Port.", "move_needs_gateway", http.StatusConflict)
 		return
 	}
-	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
 		return
 	}
 	if err := h.d.Migration.EnqueueMigration(r.Context(), srv.ID, target.ID, reason, requestedBy); err != nil {
@@ -2602,7 +2607,7 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
-	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
 		return
 	}
 

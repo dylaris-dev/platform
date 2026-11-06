@@ -145,3 +145,30 @@ func TestStartBeginsWithAnEmptyInputQueue(t *testing.T) {
 		t.Fatalf("%d stale command(s) left for the server to run on start", n)
 	}
 }
+
+// A copy waiting in the node's stream holds no busy key, so a start clicked
+// behind it was accepted and the container booted while the copy walked its
+// world. A start waits for the copy; a stop does not, it touches no files.
+func TestPowerStartWaitsForAQueuedCopy(t *testing.T) {
+	for _, c := range []struct {
+		status, action string
+		refused        bool
+	}{
+		{"stopped", "start", true},
+		{"online", "stop", false},
+		{"online", "kill", false},
+	} {
+		t.Run(c.action, func(t *testing.T) {
+			h, _ := powerStateFixture(t, c.status)
+			h.d.Redis.Set(context.Background(), services.CopyPendingKey("srv-uuid"), "main-old", 0)
+			rec := httptest.NewRecorder()
+			h.ServerPowerHandler(rec, serverPowerReq(1, c.action, "alice", false, "u1"))
+			if refused := rec.Code != http.StatusOK; refused != c.refused {
+				t.Fatalf("%s answered %d %s, want refused=%v", c.action, rec.Code, rec.Body.String(), c.refused)
+			}
+			if c.refused && queuedPowerCommands(t, h) != 0 {
+				t.Error("the start was sent to the node beside the copy")
+			}
+		})
+	}
+}

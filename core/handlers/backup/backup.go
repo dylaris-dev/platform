@@ -842,7 +842,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "The server is being moved. Restore it once the move has finished.", http.StatusConflict)
 		return
 	}
-	if guard.RefuseIfServerBusy(w, r, h.d.Redis, srv) {
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
 		return
 	}
 	node, err := h.d.Store.GetNodeByID(srv.NodeID)

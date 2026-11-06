@@ -117,6 +117,21 @@ func recoverStash(root *os.Root, dir string) {
 	})
 }
 
+// recoverStrandedStash is the recovery stashServerJars opens with, for a path
+// that can fail before it gets there: a move redelivered after the node died
+// mid-move aborted while staging, said the server was left as it was, and left
+// the old software in the stash with no jar at the root.
+func recoverStrandedStash(serverPath, sub string) {
+	root, err := os.OpenRoot(serverPath)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	dir := "." + sub + ".oldjars"
+	recoverStash(root, dir)
+	dropStash(root, dir)
+}
+
 // dropStash removes a stash. It is renamed away first, so a removal that fails
 // part-way leaves debris under another name rather than a half stash that
 // recoverStash would put back over a server that has moved on.

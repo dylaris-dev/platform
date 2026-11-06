@@ -59,10 +59,10 @@ func TestTheGuardsAnswerAsBeforeTheMove(t *testing.T) {
 		{"no server", func(w http.ResponseWriter) bool {
 			return RefuseIfSuspended(w, req(false, nil), suspended, time.Hour, nil)
 		}, 0},
-		{"moving", func(w http.ResponseWriter) bool { return RefuseIfServerBusy(w, req(false, nil), rdb, moving) }, http.StatusConflict},
-		{"moving, admin in the panel", func(w http.ResponseWriter) bool { return RefuseIfServerBusy(w, req(true, nil), rdb, moving) }, 0},
-		{"moving, no redis", func(w http.ResponseWriter) bool { return RefuseIfServerBusy(w, req(false, nil), nil, moving) }, http.StatusConflict},
-		{"idle", func(w http.ResponseWriter) bool { return RefuseIfServerBusy(w, req(false, nil), rdb, srv) }, 0},
+		{"moving", func(w http.ResponseWriter) bool { return RefuseIfServerBusy(w, req(false, nil), rdb, nil, moving) }, http.StatusConflict},
+		{"moving, admin in the panel", func(w http.ResponseWriter) bool { return RefuseIfServerBusy(w, req(true, nil), rdb, nil, moving) }, 0},
+		{"moving, no redis", func(w http.ResponseWriter) bool { return RefuseIfServerBusy(w, req(false, nil), nil, nil, moving) }, http.StatusConflict},
+		{"idle", func(w http.ResponseWriter) bool { return RefuseIfServerBusy(w, req(false, nil), rdb, nil, srv) }, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -83,12 +83,12 @@ func TestTheGuardsAnswerAsBeforeTheMove(t *testing.T) {
 	}
 	for _, admin := range []bool{false, true} {
 		rec := httptest.NewRecorder()
-		if !RefuseIfServerBusy(rec, req(admin, nil), rdb, srv) || rec.Code != http.StatusConflict {
+		if !RefuseIfServerBusy(rec, req(admin, nil), rdb, nil, srv) || rec.Code != http.StatusConflict {
 			t.Fatalf("admin=%v: node_busy did not refuse (code %d)", admin, rec.Code)
 		}
 	}
 	rec := httptest.NewRecorder()
-	if RefuseIfServerBusy(rec, req(false, nil), nil, srv) {
+	if RefuseIfServerBusy(rec, req(false, nil), nil, nil, srv) {
 		t.Fatal("without Redis the interlock cannot be read and must not refuse")
 	}
 }
