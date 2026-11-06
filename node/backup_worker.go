@@ -787,7 +787,7 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		}
 		archive := nodeLocalArchiveName(key)
 		full := filepath.Join(dir, archive)
-		// The write side of the same problem archiveInfo describes: this
+		// The write side of the same problem openArchive describes: this
 		// directory is inside the tenant's own bind mount, so O_CREATE|O_TRUNC
 		// would follow a symlink planted under the name the next run is about to
 		// use and write the archive through it. Remove first (that unlinks a

@@ -43,13 +43,19 @@ var globalSpoolDir string
 func spoolFileName(runID int) string { return spoolFilePrefix + strconv.Itoa(runID) + ".tar.gz" }
 
 // clearBackupSpool removes archives left by runs that a node restart ended.
-// No run survives a restart, so every spool file found at start is debris.
+// No run survives a restart, so every spool file of THIS node found at start is
+// debris. On storage another node also uses (the default spool sits in the
+// first storage path), a spool file may be that node's live upload, and the
+// names do not tell the two apart: left alone, like the other boot sweeps.
 func clearBackupSpool(dir string) {
 	if dir == "" {
 		return
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		log.Printf("backup spool: cannot create %s: %v", dir, err)
+		return
+	}
+	if sharedWithAnotherNode(filepath.Dir(dir)) {
 		return
 	}
 	entries, err := os.ReadDir(dir)

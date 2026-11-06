@@ -386,6 +386,20 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		return
 	}
 
+	// The live .active_server is carried across the swap, so a backup taken
+	// before the active sub-server existed restarted the server into a
+	// directory the swap had just deleted. Refused while the server's disk is
+	// still untouched (owner decision 2026-11-06).
+	if cmd.SubServer == "" {
+		if active := readActiveSubServer(rootDir); active != "" {
+			if st, err := os.Lstat(filepath.Join(stageDir, active)); err != nil || !st.IsDir() {
+				stageCleanup()
+				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", fmt.Sprintf(errRestoreMissingActive, active))
+				return
+			}
+		}
+	}
+
 	// A delete of the server is not ordered against a restore and ran beside
 	// it: the stage sits outside the removed directory, and the swap below put
 	// the deleted server's world back on disk, quota project and all.
@@ -453,6 +467,8 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 }
 
 const errRestoreServerDeleted = "the server was deleted during the restore"
+
+const errRestoreMissingActive = "this backup does not contain the active sub-server %q: switch to a sub-server that is in the backup first, then restore"
 
 // retagAfterRestore is a var so a test can see a full restore reach it. The
 // limit sits on the project id and did not move; it is lifted for the tag and
@@ -654,10 +670,7 @@ func downloadBackup(ctx context.Context, sm *StorageManager, serverUUID string, 
 		full := filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName, archive)
 		// The same check list and download take: an archive is a regular file
 		// the node wrote, never a link to be followed.
-		if _, err := archiveInfo(full); err != nil {
-			return nil, err
-		}
-		return os.Open(full)
+		return openArchive(full)
 
 	default:
 		return nil, fmt.Errorf("unknown provider %s", info.Provider)

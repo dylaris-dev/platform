@@ -68,6 +68,7 @@ func sweepServerDir(dir string, cutoff time.Time) int {
 		return 0
 	}
 	defer root.Close()
+	uuid := filepath.Base(dir)
 	removed := 0
 	var walk func(rel string, depth int)
 	walk = func(rel string, depth int) {
@@ -83,7 +84,7 @@ func sweepServerDir(dir string, cutoff time.Time) int {
 		for _, e := range entries {
 			name := path.Join(rel, e.Name())
 			if isLeftover(e.Name(), e.IsDir(), depth, rel) {
-				if olderThan(e, cutoff) && root.RemoveAll(name) == nil {
+				if removeLeftover(root, name, e, cutoff, uuid) {
 					removed++
 				}
 				continue
@@ -95,6 +96,24 @@ func sweepServerDir(dir string, cutoff time.Time) int {
 	}
 	walk(".", 1)
 	return removed
+}
+
+// removeLeftover removes one leftover past cutoff. A .partial archive goes
+// whatever its age unless a backup of the server is running: no backup outlives
+// a restart, and its mtime is the moment the node died, seconds before this
+// sweep, so the age check kept it until a restart six hours later. Checked and
+// removed under serverWorkMu, since a backup marks itself running before it
+// creates its .partial.
+func removeLeftover(root *os.Root, name string, e os.DirEntry, cutoff time.Time, uuid string) bool {
+	if !e.IsDir() && strings.HasSuffix(e.Name(), partialBackupSuffix) {
+		serverWorkMu.Lock()
+		defer serverWorkMu.Unlock()
+		if !olderThan(e, cutoff) && backupsInFlight.has("server:"+uuid) {
+			return false
+		}
+		return root.Remove(name) == nil
+	}
+	return olderThan(e, cutoff) && root.RemoveAll(name) == nil
 }
 
 // isLeftover reports whether an entry at depth (1 = in the server directory)

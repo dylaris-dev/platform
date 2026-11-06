@@ -58,7 +58,7 @@ func (h *StreamHandler) resolveBackupKey(serverUUID, key string) (string, error)
 	return filepath.Join(dir, key), nil
 }
 
-// archiveInfo Lstats a node-local archive and refuses anything that is not a
+// openArchive opens a node-local archive and refuses anything that is not a
 // plain file.
 //
 // .dylaris-backups sits INSIDE the server directory, and that directory is
@@ -71,15 +71,23 @@ func (h *StreamHandler) resolveBackupKey(serverUUID, key string) (string, error)
 // the node's process credentials. The node writes these archives itself and
 // never as a link, so a link is never something to resolve carefully; it is
 // something that has no business being here.
-func archiveInfo(path string) (os.FileInfo, error) {
-	fi, err := os.Lstat(path)
+//
+// Checked on the OPEN file, through a Root at the server directory: an Lstat
+// of the path and an Open of it later are two lookups, and a link swapped in
+// between (or .dylaris-backups itself replaced by a link) was followed by the
+// open. The Root refuses any link out of the server directory.
+func openArchive(archivePath string) (*os.File, error) {
+	serverDir := filepath.Dir(filepath.Dir(archivePath))
+	root, err := os.OpenRoot(serverDir)
 	if err != nil {
 		return nil, err
 	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("not a backup archive")
+	defer root.Close()
+	f, err := openRegularIn(root, filepath.Join(backupDirName, filepath.Base(archivePath)))
+	if err != nil {
+		return nil, fmt.Errorf("not a backup archive: %w", err)
 	}
-	return fi, nil
+	return f, nil
 }
 
 // handleBackupList walks .dylaris-backups/ and returns one BackupObject
@@ -104,7 +112,7 @@ func (h *StreamHandler) handleBackupList(reqID, serverUUID string) *pb.NodeMessa
 	objs := make([]*pb.BackupObject, 0, len(entries))
 	for _, e := range entries {
 		// Info() is Lstat-based, so a planted symlink shows as one here and is
-		// dropped rather than listed as a downloadable archive. See archiveInfo.
+		// dropped rather than listed as a downloadable archive. See openArchive.
 		info, err := e.Info()
 		if err != nil || !info.Mode().IsRegular() {
 			continue
@@ -168,6 +176,12 @@ func (h *StreamHandler) handleBackupUsage(reqID, serverUUID string) *pb.NodeMess
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
+		// Not a backup, as in the list. A run a node restart ended leaves its
+		// .partial until the boot sweep, and counted here it held the quota
+		// Core refuses new runs against, with no archive anyone could delete.
+		if strings.HasSuffix(e.Name(), partialBackupSuffix) {
+			continue
+		}
 		total += info.Size()
 		count++
 	}
@@ -192,10 +206,12 @@ func (h *StreamHandler) streamBackupArchive(reqID, serverUUID string, req *pb.Ba
 		sendFn(errorMsg(reqID, 400, err.Error()))
 		return
 	}
-	if _, err := archiveInfo(path); err != nil {
+	f, err := openArchive(path)
+	if err != nil {
 		sendFn(errorMsg(reqID, 404, "backup not found"))
 		return
 	}
+	defer f.Close()
 
 	// Leading metadata TransferDone — same protocol StreamFile uses, so
 	// Core's reader treats this identically.
@@ -210,13 +226,6 @@ func (h *StreamHandler) streamBackupArchive(reqID, serverUUID string, req *pb.Ba
 	}); err != nil {
 		return
 	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		sendFn(errorMsg(reqID, 500, "open backup: "+err.Error()))
-		return
-	}
-	defer f.Close()
 
 	buf := make([]byte, chunkSize)
 	var offset int64
