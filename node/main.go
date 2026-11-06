@@ -792,11 +792,17 @@ func firstPersistedStoragePath(pathsCSV string) string {
 // eventually answer with a rate limit instead of an address.
 const publicIPTTL = 5 * time.Minute
 
+// publicIPRetry spaces out lookups after a FAILED one. Without it an outage
+// re-ran all three services on every 5s beat - up to 9s per beat when they are
+// blackholed, against a 15s discovery TTL - and kept a rate limit in force.
+const publicIPRetry = time.Minute
+
 var (
-	publicIPMu   sync.Mutex
-	publicIPVal  string
-	publicIPAt   time.Time
-	publicIPWarn bool
+	publicIPMu     sync.Mutex
+	publicIPVal    string
+	publicIPAt     time.Time
+	publicIPFailAt time.Time
+	publicIPWarn   bool
 )
 
 // getOutboundIP returns the node's public IP address, cached for publicIPTTL.
@@ -818,9 +824,18 @@ func getOutboundIP() string {
 		return publicIPVal
 	}
 	last := publicIPVal
+	backoff := time.Since(publicIPFailAt) < publicIPRetry
 	publicIPMu.Unlock()
 
-	ip := publicIPLookup()
+	ip := ""
+	if !backoff {
+		ip = publicIPLookup()
+		if ip == "" {
+			publicIPMu.Lock()
+			publicIPFailAt = time.Now()
+			publicIPMu.Unlock()
+		}
+	}
 	if ip == "" && last != "" {
 		publicIPMu.Lock()
 		if !publicIPWarn {

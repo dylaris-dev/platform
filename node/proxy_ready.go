@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 
@@ -52,7 +53,14 @@ func (p *proxyReadyReporter) report(ctx context.Context, rdb *redis.Client, uuid
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	rdb.Set(ctx, proxyReadyKey(uuid), v, proxyReadyTTL)
+	if err := rdb.Set(ctx, proxyReadyKey(uuid), v, proxyReadyTTL).Err(); err != nil {
+		// Forget the answer so the next ping writes again: otherwise Redis keeps
+		// the old one until the refresh, and Core forwards the wrong way.
+		p.mu.Lock()
+		p.known = false
+		p.mu.Unlock()
+		log.Printf("proxy_ready: cannot write %s: %v", uuid, err)
+	}
 }
 
 // pingEitherWay pings with the header if preferProxy, else without; on a

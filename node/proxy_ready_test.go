@@ -140,3 +140,23 @@ func TestProxyReadyReporterWritesOnChangeAndRefresh(t *testing.T) {
 		t.Fatalf("ttl %v", ttl)
 	}
 }
+
+// M23: a changed answer whose write failed must be written on the next ping,
+// not after proxyReadyRefresh, or Core forwards the old way for 2 minutes.
+func TestProxyReadyReporterRetriesAFailedWrite(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	ctx := context.Background()
+	var p proxyReadyReporter
+	t0 := time.Unix(1_000_000, 0)
+
+	p.report(ctx, rdb, "u", false, t0)
+	mr.SetError("READONLY blip")
+	p.report(ctx, rdb, "u", true, t0.Add(5*time.Second))
+	mr.SetError("")
+	p.report(ctx, rdb, "u", true, t0.Add(10*time.Second))
+	if v, _ := mr.Get(proxyReadyKey("u")); v != "1" {
+		t.Fatalf("the failed write was not retried on the next ping: key=%q", v)
+	}
+}

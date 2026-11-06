@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"dylaris-pkg/validate"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -83,6 +85,38 @@ func guardKey(ctx context.Context, rdb *redis.Client, k guardedKey) bool {
 	return false
 }
 
+// shipperGuardMaxSubServers bounds the sub-server streams one server costs a
+// pass. The directory listing is the tenant's /data, so without a bound plugin
+// code could mkdir its way to one Redis round trip per inode, every 30s,
+// delaying the guard for every other server on the node.
+// ponytail: a server with more sub-servers than this has its inactive streams
+// skipped; they are written only while active, and the active one is first.
+const shipperGuardMaxSubServers = 64
+
+// shipperGuardSubServers lists the sub-server names whose console stream the
+// guard visits: the active one first, then other directories that are valid
+// sub-server names, at most shipperGuardMaxSubServers in all.
+func shipperGuardSubServers(serverDir string) []string {
+	var subs []string
+	active := readActiveSubServer(serverDir)
+	if active != "" {
+		subs = append(subs, active)
+	}
+	entries, err := os.ReadDir(serverDir)
+	if err != nil {
+		return subs
+	}
+	for _, e := range entries {
+		if len(subs) >= shipperGuardMaxSubServers {
+			break
+		}
+		if e.IsDir() && e.Name() != active && validate.IsSubServerName(e.Name()) {
+			subs = append(subs, e.Name())
+		}
+	}
+	return subs
+}
+
 // guardShipperKeys runs one pass over every running server on this node.
 func (dm *DockerManager) guardShipperKeys(ctx context.Context, rdb *redis.Client) {
 	running, err := dm.ListRunningMCContainers()
@@ -90,15 +124,7 @@ func (dm *DockerManager) guardShipperKeys(ctx context.Context, rdb *redis.Client
 		return
 	}
 	for _, c := range running {
-		var subs []string
-		if entries, rerr := os.ReadDir(dm.resolveLocalServerPath(c.UUID)); rerr == nil {
-			for _, e := range entries {
-				if e.IsDir() && e.Name() != "" && e.Name()[0] != '.' {
-					subs = append(subs, e.Name())
-				}
-			}
-		}
-		for _, k := range shipperGuardedKeys(c.UUID, subs) {
+		for _, k := range shipperGuardedKeys(c.UUID, shipperGuardSubServers(dm.resolveLocalServerPath(c.UUID))) {
 			guardKey(ctx, rdb, k)
 		}
 	}

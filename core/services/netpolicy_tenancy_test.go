@@ -122,3 +122,25 @@ func TestTheTenancyKeyIsTornDownWithTheNode(t *testing.T) {
 		t.Fatal("the tenancy flag outlives its node")
 	}
 }
+
+// M24: a single-owner EXTERNAL machine is outside the platform's fleet too, so
+// its owner's servers reach each other exactly as on a single-owner BYON one.
+func TestASingleOwnerExternalMachineGetsTheSameOwnerList(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	store := &fakeNetPolicyStore{
+		nodes:   []models.Node{{ID: 2, Token: "ext", Tags: "external"}},
+		servers: []models.Server{ownedSrv(1, "e1", 2, "alice", nil), ownedSrv(2, "e2", 2, "alice", nil)},
+	}
+	NewNetPolicyPublisher(store, rdb).RunOnce(context.Background())
+	raw, _ := mr.Get(NetPolicyKey("ext"))
+	var ext map[string][]string
+	json.Unmarshal([]byte(raw), &ext)
+	if len(ext["e1"]) != 1 || ext["e1"][0] != "e2" || len(ext["e2"]) != 1 || ext["e2"][0] != "e1" {
+		t.Errorf("single-owner external policy does not let the owner's servers reach each other: %v", ext)
+	}
+	if mr.Exists(NetPolicyTenancyKey("ext")) {
+		t.Error("a single-owner machine was flagged shared")
+	}
+}

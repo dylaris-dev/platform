@@ -15,12 +15,12 @@ func resetPublicIPCache(t *testing.T, lookup func() string) *int {
 		return lookup()
 	}
 	publicIPMu.Lock()
-	publicIPVal, publicIPAt, publicIPWarn = "", time.Time{}, false
+	publicIPVal, publicIPAt, publicIPFailAt, publicIPWarn = "", time.Time{}, time.Time{}, false
 	publicIPMu.Unlock()
 	t.Cleanup(func() {
 		publicIPLookup = prev
 		publicIPMu.Lock()
-		publicIPVal, publicIPAt, publicIPWarn = "", time.Time{}, false
+		publicIPVal, publicIPAt, publicIPFailAt, publicIPWarn = "", time.Time{}, time.Time{}, false
 		publicIPMu.Unlock()
 	})
 	return &calls
@@ -88,5 +88,30 @@ func TestPublicIPRefreshesAfterTheTTL(t *testing.T) {
 	}
 	if *calls != 2 {
 		t.Fatalf("the lookup ran %d times, want 2 (one initial, one after the TTL)", *calls)
+	}
+}
+
+// M03: a failed refresh must wait like a successful one, or every 5s beat
+// runs all three lookups (up to 9s when they are blackholed).
+func TestPublicIPFailureIsThrottled(t *testing.T) {
+	fail := false
+	calls := resetPublicIPCache(t, func() string {
+		if fail {
+			return ""
+		}
+		return "203.0.113.7"
+	})
+	getOutboundIP()
+	publicIPMu.Lock()
+	publicIPAt = time.Now().Add(-2 * publicIPTTL)
+	publicIPMu.Unlock()
+	fail = true
+	for range 10 {
+		if got := getOutboundIP(); got != "203.0.113.7" {
+			t.Fatalf("got %q", got)
+		}
+	}
+	if *calls != 2 {
+		t.Fatalf("the lookup ran %d times, want 2: a failure must not be retried on every beat", *calls)
 	}
 }
