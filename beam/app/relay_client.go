@@ -124,12 +124,18 @@ func relayTLSSkipVerify() bool {
 	return skip
 }
 
+// beamCallLimits lifts gRPC's 4 MiB receive default: the node returns a file of
+// up to 10 MiB in one ReadFileContent reply, and ListFiles is not paged, so a
+// large folder's listing is one message too.
+var beamCallLimits = grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(64 << 20))
+
 func ConnectBeamNode(relayAddr, ticket string) (*BeamNodeClient, error) {
 	if _, _, err := net.SplitHostPort(relayAddr); err != nil {
 		relayAddr = net.JoinHostPort(relayAddr, "25550")
 	}
 
 	conn, err := grpc.NewClient("passthrough:///beam-node",
+		beamCallLimits,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			// Bound the dial: without a timeout a dropped SYN (firewall
@@ -220,6 +226,7 @@ func ConnectBeamNodeDirect(addr, ticket, fingerprint string) (*BeamNodeClient, e
 	}
 
 	conn, err := grpc.NewClient("passthrough:///beam-node-lan",
+		beamCallLimits,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			d := &net.Dialer{Timeout: 3 * time.Second}

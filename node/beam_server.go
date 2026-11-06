@@ -192,6 +192,19 @@ const maxBeamReadContent = 10 << 20
 // beamMaxStreams bounds the RPCs one connection may run at once.
 const beamMaxStreams = 64
 
+// beamMaxRecvMsg lets SaveFileContent carry a file as large as ReadFileContent
+// serves; gRPC's 4 MiB default refused any save over it before the handler ran.
+const beamMaxRecvMsg = maxBeamReadContent + 1<<20
+
+// beamServerOptions is shared by the overlay and the LAN listener.
+func beamServerOptions(bs *beamServer) []grpc.ServerOption {
+	return []grpc.ServerOption{
+		grpc.MaxConcurrentStreams(beamMaxStreams),
+		grpc.MaxRecvMsgSize(beamMaxRecvMsg),
+		grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer, perms: &bs.permsByPeer, sess: &bs.sessionByPeer}),
+	}
+}
+
 // auditBeam sends one change made through Beam to Core's server audit trail,
 // on the channel SFTP uses. The panel's file operations were recorded there;
 // the same operations through Beam - the file path in production - were not.
@@ -354,7 +367,7 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 		jwtSecret:    jwtSecret,
 		nodeID:       nodeID,
 	}
-	srv := grpc.NewServer(grpc.MaxConcurrentStreams(beamMaxStreams), grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer, perms: &bs.permsByPeer, sess: &bs.sessionByPeer}))
+	srv := grpc.NewServer(beamServerOptions(bs)...)
 	pb.RegisterBeamNodeServiceServer(srv, bs)
 
 	log.Printf("beam-server: listening on %s (reachable via overlay; JWT-gated)", listenAddr)
@@ -427,11 +440,7 @@ func startBeamLANListener(ctx context.Context, bs *beamServer, nodeID string) {
 		}
 		return
 	}
-	tlsSrv := grpc.NewServer(
-		grpc.MaxConcurrentStreams(beamMaxStreams),
-		grpc.Creds(credentials.NewServerTLSFromCert(&cert)),
-		grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer, perms: &bs.permsByPeer, sess: &bs.sessionByPeer}),
-	)
+	tlsSrv := grpc.NewServer(append(beamServerOptions(bs), grpc.Creds(credentials.NewServerTLSFromCert(&cert)))...)
 	pb.RegisterBeamNodeServiceServer(tlsSrv, bs)
 	log.Printf("beam-server: LAN fast-path (TLS, pinned) listening on %s, fp=%s", addr, fp[:16]+"...")
 	go func() {
@@ -917,7 +926,7 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 		if e.Name() == ".active_server" || e.Name() == ".dylaris-backups" || e.Name() == ".dylaris.json" || e.Name() == ".node_config.json" || e.Name() == netGateFile {
 			continue
 		}
-		if strings.HasPrefix(e.Name(), ".pending-delete-") {
+		if strings.HasPrefix(e.Name(), ".pending-delete-") || strings.HasPrefix(e.Name(), renameStagePrefix) {
 			continue
 		}
 		info, err := e.Info()

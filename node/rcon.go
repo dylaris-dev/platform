@@ -78,12 +78,16 @@ func execRcon(addr, password, command string, timeout time.Duration) (string, er
 	if timeout <= 0 {
 		timeout = rconDefaultTimeout
 	}
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	// ONE deadline for dial, auth and exec. Core waits TimeoutMs+1s; separate
+	// budgets per phase let a slow server answer after Core already reported a
+	// command that ran as failed, and a retry runs it twice.
+	hardDeadline := time.Now().Add(timeout)
+	conn, err := (&net.Dialer{Deadline: hardDeadline}).Dial("tcp", addr)
 	if err != nil {
 		return "", fmt.Errorf("dial %s: %w", addr, err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(timeout))
+	_ = conn.SetDeadline(hardDeadline)
 
 	// --- Auth ---
 	if err := writeRconPacket(conn, rconRequestAuth, rconTypeAuth, password); err != nil {
@@ -134,10 +138,9 @@ func execRcon(addr, password, command string, timeout time.Duration) (string, er
 	// server.properties) and they pick what listens on it.
 	//
 	// hardDeadline bounds the whole exchange. The per-packet SetReadDeadline
-	// calls OVERRIDE the connection deadline set after the dial, so without it a
-	// peer sending one packet every rconIdleGap keeps this goroutine, and the
-	// buffer it is filling, alive indefinitely.
-	hardDeadline := time.Now().Add(timeout)
+	// calls OVERRIDE the connection deadline set after the dial, so without the
+	// cap a peer sending one packet every rconIdleGap keeps this goroutine, and
+	// the buffer it is filling, alive indefinitely.
 	var out strings.Builder
 	got := false
 	truncated := false

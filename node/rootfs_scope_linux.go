@@ -132,7 +132,7 @@ func renameNoFollow(rootDir, oldRel, newRel string) error {
 	if _, err := rand.Read(b); err != nil {
 		return err
 	}
-	tmp := ".pending-delete-mv-" + hex.EncodeToString(b)
+	tmp := renameStagePrefix + hex.EncodeToString(b)
 	if err := unix.Renameat(int(od.Fd()), ol, int(nd.Fd()), tmp); err != nil {
 		return &os.LinkError{Op: "rename", Old: oldRel, New: newRel, Err: err}
 	}
@@ -143,7 +143,10 @@ func renameNoFollow(rootDir, oldRel, newRel string) error {
 		return errLink
 	}
 	if err := unix.Renameat(int(nd.Fd()), tmp, int(nd.Fd()), nl); err != nil {
-		_ = unix.Renameat(int(nd.Fd()), tmp, int(od.Fd()), ol)
+		if rerr := unix.Renameat(int(nd.Fd()), tmp, int(od.Fd()), ol); rerr != nil {
+			return fmt.Errorf("rename %s to %s: %w; and moving it back failed (%v), it is parked as %s next to %s",
+				oldRel, newRel, err, rerr, tmp, path.Base(newRel))
+		}
 		return &os.LinkError{Op: "rename", Old: oldRel, New: newRel, Err: err}
 	}
 	return nil

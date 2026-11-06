@@ -638,24 +638,47 @@ type sftpServerSet struct {
 // one used to win, so a server someone invited you to could stand in for your
 // own of the same name and take your uploads. A shared name, or one with a
 // slash in it, is shown with the start of the server's id instead.
+//
+// A produced name can still collide with another server's literal name (an
+// inviter names theirs "Survival (1a2b3c4d)"), so every holder of a name that
+// is still shared falls back to the FULL id. Server ids are unique and hold no
+// parentheses, so those names cannot collide with each other.
 func newServerSet(servers []sftpServerRef) *sftpServerSet {
 	count := map[string]int{}
 	for _, s := range servers {
 		count[s.Name]++
 	}
-	out := &sftpServerSet{nameToRef: make(map[string]sftpServerRef, len(servers))}
-	for _, s := range servers {
+	clean := strings.NewReplacer("/", "_", "\\", "_")
+	names := make([]string, len(servers))
+	for i, s := range servers {
 		name := s.Name
 		if count[name] > 1 || name == "" || strings.ContainsAny(name, "/\\") {
 			short := s.UUID
 			if len(short) > 8 {
 				short = short[:8]
 			}
-			name = strings.NewReplacer("/", "_", "\\", "_").Replace(name) + " (" + short + ")"
+			name = clean.Replace(name) + " (" + short + ")"
 		}
-		s.Name = name
+		names[i] = name
+	}
+	for changed := true; changed; {
+		changed = false
+		count = map[string]int{}
+		for _, n := range names {
+			count[n]++
+		}
+		for i, s := range servers {
+			if full := clean.Replace(s.Name) + " (" + s.UUID + ")"; count[names[i]] > 1 && names[i] != full {
+				names[i] = full
+				changed = true
+			}
+		}
+	}
+	out := &sftpServerSet{nameToRef: make(map[string]sftpServerRef, len(servers))}
+	for i, s := range servers {
+		s.Name = names[i]
 		out.servers = append(out.servers, s)
-		out.nameToRef[name] = s
+		out.nameToRef[s.Name] = s
 	}
 	return out
 }

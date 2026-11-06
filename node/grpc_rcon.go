@@ -86,7 +86,12 @@ func (h *StreamHandler) handleRconExec(requestID, serverUUID string, req *pb.Rco
 	if err != nil {
 		return rconErrMsg(requestID, err.Error(), start)
 	}
-	out, err := execRcon(addr, req.RconPassword, req.Command, timeout)
+	// The container lookup spends from the same budget Core is waiting on.
+	remaining := timeout - time.Since(start)
+	if remaining <= 0 {
+		return rconErrMsg(requestID, "rcon timed out resolving the server's address", start)
+	}
+	out, err := execRcon(addr, req.RconPassword, req.Command, remaining)
 	if err != nil {
 		return rconErrMsg(requestID, err.Error(), start)
 	}

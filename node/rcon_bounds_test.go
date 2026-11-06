@@ -219,3 +219,41 @@ func TestExecRconReadsVanillaSizedPackets(t *testing.T) {
 		})
 	}
 }
+
+// Core waits TimeoutMs+1s for the reply. A slow auth followed by a slow command
+// reply must not stack into two (or three) full timeouts: the node would answer
+// after Core already reported failure for a command that ran.
+func TestExecRconHoldsOneDeadlineForTheWholeExchange(t *testing.T) {
+	const timeout = 400 * time.Millisecond
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lis.Close() })
+	go func() {
+		conn, err := lis.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, _, err := readRconPacket(conn); err != nil {
+			return
+		}
+		time.Sleep(timeout * 6 / 10)
+		if err := writeRconPacket(conn, rconRequestAuth, rconTypeAuthResp, ""); err != nil {
+			return
+		}
+		if _, _, _, err := readRconPacket(conn); err != nil {
+			return
+		}
+		time.Sleep(timeout * 6 / 10)
+		_ = writeRconPacket(conn, rconRequestExec, rconTypeRespValue, "late")
+		time.Sleep(timeout)
+	}()
+
+	start := time.Now()
+	_, _ = execRcon(lis.Addr().String(), "pw", "list", timeout)
+	if elapsed := time.Since(start); elapsed > timeout+150*time.Millisecond {
+		t.Errorf("execRcon ran for %v with a %v timeout: auth and exec each got their own budget", elapsed, timeout)
+	}
+}

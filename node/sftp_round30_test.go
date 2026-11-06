@@ -161,6 +161,46 @@ func TestServersOfOneNameAreBothReachable(t *testing.T) {
 	}
 }
 
+// A server literally named like another's disambiguated name took that slot:
+// "Survival" twice turns the victim's into "Survival (1a2b3c4d)", which an
+// inviter's own server already carried, and the last one in Core's list won.
+func TestADisambiguatedNameNeverLandsOnAnotherServer(t *testing.T) {
+	cases := []struct {
+		name    string
+		servers []sftpServerRef
+	}{
+		{"short suffix taken literally", []sftpServerRef{
+			{UUID: "1a2b3c4d-victim", Name: "Survival"},
+			{UUID: "eeeeeeee-attacker1", Name: "Survival"},
+			{UUID: "ffffffff-attacker2", Name: "Survival (1a2b3c4d)"},
+		}},
+		{"attacker listed first", []sftpServerRef{
+			{UUID: "ffffffff-attacker2", Name: "Survival (1a2b3c4d)"},
+			{UUID: "eeeeeeee-attacker1", Name: "Survival"},
+			{UUID: "1a2b3c4d-victim", Name: "Survival"},
+		}},
+		{"full suffix taken literally too", []sftpServerRef{
+			{UUID: "1a2b3c4d-victim", Name: "Survival"},
+			{UUID: "eeeeeeee-attacker1", Name: "Survival"},
+			{UUID: "ffffffff-attacker2", Name: "Survival (1a2b3c4d)"},
+			{UUID: "99999999-attacker3", Name: "Survival (1a2b3c4d-victim)"},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			set := newServerSet(tc.servers)
+			if len(set.nameToRef) != len(tc.servers) {
+				t.Fatalf("%d servers share %d names: %v", len(tc.servers), len(set.nameToRef), set.servers)
+			}
+			for _, s := range set.servers {
+				if got := set.nameToRef[s.Name].UUID; got != s.UUID {
+					t.Errorf("%q is listed for %s but resolves to %s", s.Name, s.UUID, got)
+				}
+			}
+		})
+	}
+}
+
 // The ceiling was computed per open and booked on close: twenty handles opened
 // at once each had the whole remaining allowance.
 func TestParallelSFTPUploadsShareOneAllowance(t *testing.T) {

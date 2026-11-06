@@ -1113,6 +1113,11 @@ func (h *StreamHandler) handleInspectOrphan(reqID, serverUUID string) *pb.NodeMe
 // or rename it through the regular file API. The dedicated backup RPCs
 // (handleBackupList/Open/Delete in grpc_backup.go) reach those files
 // without going through this guard.
+// renameStagePrefix names what renameNoFollow parks between its two renameat
+// calls. Protected like a tombstone, but NOT ".pending-delete-": the sweeper
+// deletes those, and a folder caught there by a node restart is the user's.
+const renameStagePrefix = ".dylaris-mv-"
+
 func isProtectedFile(path string) bool {
 	clean := filepath.Clean(path)
 	// The server root itself. An empty path is legal on the read side, where
@@ -1145,6 +1150,9 @@ func isProtectedFile(path string) bool {
 		// moves files out of them as root; a tenant who could reach in during
 		// the install could swap an entry for a symlink between two steps.
 		if strings.HasPrefix(part, ".technic-stage-") || strings.HasPrefix(part, ".technic-dl-") {
+			return true
+		}
+		if strings.HasPrefix(part, renameStagePrefix) {
 			return true
 		}
 	}
