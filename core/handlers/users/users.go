@@ -308,9 +308,12 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	// and the operator can retry: deleting the user first would strand all of it
 	// with no owner to look it up by.
 	//
-	// The Beam stamp goes first of all: once the grants are gone there is no
-	// list of what this account could reach left to stamp.
-	beamaccess.StampForUser(r.Context(), h.d.Store, h.d.Redis, id)
+	// The Beam reach is read first of all: once the grants are gone there is
+	// no list of what this account could reach left to stamp. Stamped now and
+	// again once the row is gone, because a ticket whose identity was read
+	// during the teardown is newer than the first stamp.
+	beamReach := beamaccess.ReachOf(h.d.Store, h.d.Redis, id)
+	beamaccess.StampUUIDs(r.Context(), h.d.Redis, beamReach)
 	// Read now, removed once the row is gone: the packs cascade with it.
 	packDirs := h.d.CoreStorage.PackDirsOfUser(id)
 	templates := h.d.CoreStorage.TemplatesOfUser(id)
@@ -344,6 +347,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	beamaccess.StampUUIDs(r.Context(), h.d.Redis, beamReach)
 	h.d.CoreStorage.DropPackDirs(packDirs)
 	h.d.CoreStorage.DropTemplateFiles(r.Context(), templates)
 

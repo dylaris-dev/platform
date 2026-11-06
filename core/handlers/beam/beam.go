@@ -23,10 +23,12 @@ import (
 	beamauth "dylaris-pkg/beam/auth"
 	"dylaris-pkg/fileperms"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-core/authz"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/beamaccess"
@@ -215,6 +217,17 @@ func sendBeamUpdateRequired(w http.ResponseWriter, minVer string) {
 func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	username := r.Context().Value("username").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
+	// The ticket is dated when the identity it is decided from was read, not
+	// when it is signed. The checks below (and the re-check after signing)
+	// decide from that identity, so they cannot see an account-level change
+	// that commits after it - a demotion, a password or 2FA reset, a deletion -
+	// and the node only refuses a ticket whose iat is no later than the stamp
+	// such a change writes. Taken before the body is read, so a held-open body
+	// cannot push the signing past a stamp either.
+	issuedAt := time.Now()
+	if t, ok := reqctx.IdentityLoadedAt(r); ok {
+		issuedAt = t
+	}
 
 	// Force-update gate: refuse to mint a ticket for a Beam build below the
 	// effective minimum. GetBeamTicket is the single pre-connection choke point
@@ -375,6 +388,9 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		// it the node had nothing to check and allowed every file operation to
 		// anyone holding a valid ticket.
 		Perms: &filePerms,
+		// Kept by both signatures below, so the re-sign after a narrowing
+		// re-check does not take a fresh iat that a later stamp would pass.
+		RegisteredClaims: jwt.RegisteredClaims{IssuedAt: jwt.NewNumericDate(issuedAt)},
 	}
 	// The same per-node secret that keys the LAN certificate also stamps a
 	// per-node proof into the ticket, so a node holding no fleet secret can

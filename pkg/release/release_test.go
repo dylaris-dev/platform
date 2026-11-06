@@ -258,6 +258,21 @@ func TestParseRejects(t *testing.T) {
 			"## 2026.08.28\n### Features\n- One thing. `core`\n  **Update required now**\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
 			"cannot continue the bullet above",
 		},
+		{
+			"a nested star bullet",
+			"## 2026.08.28\n### Features\n- Parent entry. `core`\n  * nested item `node`\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
+			"nested bullets are not supported",
+		},
+		{
+			"a nested numbered bullet",
+			"## 2026.08.28\n### Features\n- Parent entry.\n  1. nested item\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
+			"nested bullets are not supported",
+		},
+		{
+			"prose continuing after the service tags",
+			"## 2026.08.28\n### Features\n- Fix X `core`\n  and Y.\n### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n",
+			"must be on the bullet's last line",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -443,14 +458,17 @@ func TestWrappedBullets(t *testing.T) {
 		"  components are behind rather than a count of changelog lines.\n" +
 		"  `core` `panel`\n" +
 		"- A second entry. `node`\n" +
+		"- Code that wraps, `.disabled/`\n  and back. `core`\n" +
+		"- Tags that wrap. `core`\n  `node`\n" +
+		"- HTTP answers 404 instead of\n  200. Nothing else. `core`\n" +
 		"### Breaking\n- Nothing.\n### Security\n- Nothing.\n### Fixes\n- Nothing.\n"
 	rs, err := Parse([]byte(src))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 	f := rs[0].Features
-	if len(f) != 2 {
-		t.Fatalf("got %d features, want 2 - a continuation line was read as its own entry", len(f))
+	if len(f) != 5 {
+		t.Fatalf("got %d features, want 5 - a continuation line was read as its own entry", len(f))
 	}
 	want := "Updates now have a version, and the panel shows which of your components are behind rather than a count of changelog lines."
 	if f[0].Text != want {
@@ -462,6 +480,21 @@ func TestWrappedBullets(t *testing.T) {
 	}
 	if f[1].Text != "A second entry." {
 		t.Errorf("second entry = %q", f[1].Text)
+	}
+	// Wraps the J01 guard must keep allowing: prose code mid-sentence, a tag
+	// list split over two lines, and a wrapped line that starts with a number.
+	for i, w := range []struct {
+		text     string
+		services string
+	}{
+		{"Code that wraps, `.disabled/` and back.", "core"},
+		{"Tags that wrap.", "core node"},
+		{"HTTP answers 404 instead of 200. Nothing else.", "core"},
+	} {
+		e := f[2+i]
+		if e.Text != w.text || strings.Join(e.Services, " ") != w.services {
+			t.Errorf("entry %d = %q %v, want %q [%s]", 2+i, e.Text, e.Services, w.text, w.services)
+		}
 	}
 }
 

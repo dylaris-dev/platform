@@ -500,6 +500,9 @@ func (h *AuthHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// bad": that would log everyone out during a database blip and hide the
 		// outage.
 		if h.d.Store != nil {
+			// Before the read, so anything that commits after this moment
+			// is newer than the identity this request acts on.
+			ctx = reqctx.WithIdentityLoadedAt(ctx, time.Now())
 			user, err := h.d.Store.GetUserByUsername(claims.Username)
 			if errors.Is(err, sql.ErrNoRows) || (err == nil && user == nil) {
 				httpx.SendJSONError(w, "Account no longer exists", http.StatusUnauthorized)

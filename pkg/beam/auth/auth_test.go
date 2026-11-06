@@ -154,3 +154,38 @@ func TestValidateBeamTicket_AlgConfusionRejected(t *testing.T) {
 		})
 	}
 }
+
+// The caller may backdate iat to when it decided the ticket's rights; the
+// access epoch is compared against iat, so a fresh one taken at signing time
+// would pass a stamp written between that decision and the signature.
+func TestSignBeamTicketKeepsACallerIssuedAt(t *testing.T) {
+	past := time.Now().Add(-10 * time.Second).Truncate(time.Second)
+	for _, c := range []struct {
+		name string
+		iat  *jwt.NumericDate
+		want func(got time.Time) bool
+	}{
+		{"caller sets iat", jwt.NewNumericDate(past), func(got time.Time) bool { return got.Equal(past) }},
+		{"caller leaves it empty", nil, func(got time.Time) bool { return got.After(past) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cl := sampleClaims()
+			cl.IssuedAt = c.iat
+			secret := []byte("node-secret")
+			tok, err := SignBeamTicketWithNodeProof("s3cret", cl, time.Minute, secret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := ValidateBeamTicketByNodeProof(secret, tok)
+			if err != nil {
+				t.Fatalf("proof does not cover the iat it was signed with: %v", err)
+			}
+			if got.IssuedAt == nil || !c.want(got.IssuedAt.Time) {
+				t.Errorf("iat = %v, past = %v", got.IssuedAt, past)
+			}
+			if got.ExpiresAt == nil || got.ExpiresAt.Time.Before(time.Now()) {
+				t.Errorf("exp = %v, want measured from now", got.ExpiresAt)
+			}
+		})
+	}
+}

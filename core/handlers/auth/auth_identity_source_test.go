@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 
 	"github.com/alicebob/miniredis/v2"
@@ -180,5 +182,30 @@ func TestAuthMiddleware_SSETicketFailsClosed(t *testing.T) {
 				t.Errorf("isAdmin in context = %#v, want true (the row says so)", gotAdmin)
 			}
 		})
+	}
+}
+
+// The beam ticket is dated from this moment, so it must be taken BEFORE the row
+// is read: a change that commits after the read must be newer than it.
+func TestAuthMiddleware_RecordsWhenTheIdentityWasRead(t *testing.T) {
+	fake := &authResolveFakeStore{user: &models.User{ID: "user-1", Username: "alice"}}
+	h := &AuthHandler{d: Deps{StoreEnabled: true, Store: fake}, jwtKey: []byte(identitySourceSecret)}
+	token, err := h.IssueToken("alice", false, "")
+	if err != nil {
+		t.Fatalf("IssueToken: %v", err)
+	}
+	var got time.Time
+	var ok bool
+	next := func(w http.ResponseWriter, r *http.Request) { got, ok = reqctx.IdentityLoadedAt(r) }
+	before := time.Now()
+	req := httptest.NewRequest(http.MethodGet, "/api/beam/ticket", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.AuthMiddleware(next)(rec, req)
+	if rec.Code != http.StatusOK || !ok {
+		t.Fatalf("status = %d, identity time recorded = %v", rec.Code, ok)
+	}
+	if got.Before(before) || got.After(time.Now()) {
+		t.Errorf("identity read at %v, outside the request (%v..now)", got, before)
 	}
 }

@@ -232,6 +232,9 @@ var (
 	// END so a backticked term inside the prose stays prose.
 	trailingCodeRe = regexp.MustCompile("(?:\\s*`[^`]+`)+$")
 	codeTokenRe    = regexp.MustCompile("`([^`]+)`")
+	// Only "1." opens a list inside a paragraph (CommonMark), so a wrapped line
+	// that starts "200. Nothing ..." stays prose, as it already does in the notes.
+	listMarkerRe = regexp.MustCompile(`^([-*+]|1[.)])\s`)
 )
 
 // Parse reads a release-notes file. Releases come back newest first, in file
@@ -314,11 +317,18 @@ func Parse(src []byte) ([]Release, error) {
 			// Joining these would swallow a nested entry (and the services of
 			// the one above it, which are read only off the trailing code run)
 			// or a heading into prose that still validates.
-			if strings.HasPrefix(line, "- ") {
+			if listMarkerRe.MatchString(line) {
 				return nil, fmt.Errorf("line %d: an indented %q cannot continue the bullet above; nested bullets are not supported, make it its own unindented entry", ln, line)
 			}
 			if strings.HasPrefix(line, "### ") || strings.HasPrefix(line, "**Update required") {
 				return nil, fmt.Errorf("line %d: an indented %q cannot continue the bullet above; remove the indent", ln, line)
+			}
+			// Services are read only off the END of the joined text, so tags
+			// followed by more text would silently stop being tags. A code run
+			// that names something else (`.disabled/`) is prose and may wrap,
+			// and a line of nothing but more tags just wraps the tag list.
+			if endsInServiceTags(pending) && !onlyServiceTags(line) {
+				return nil, fmt.Errorf("line %d: %q continues a bullet that already ends in service tags; the tags must be on the bullet's last line", ln, line)
 			}
 			pending += " " + line
 			continue
@@ -402,6 +412,24 @@ func Parse(src []byte) ([]Release, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func endsInServiceTags(s string) bool {
+	loc := trailingCodeRe.FindStringIndex(s)
+	if loc == nil {
+		return false
+	}
+	for _, m := range codeTokenRe.FindAllStringSubmatch(s[loc[0]:], -1) {
+		if !knownService(strings.TrimSpace(m[1])) {
+			return false
+		}
+	}
+	return true
+}
+
+func onlyServiceTags(s string) bool {
+	loc := trailingCodeRe.FindStringIndex(s)
+	return loc != nil && strings.TrimSpace(s[:loc[0]]) == "" && endsInServiceTags(s)
 }
 
 // parseEntry splits a bullet into its text and its trailing service list. The

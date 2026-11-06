@@ -12,6 +12,7 @@ package reqctx
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"dylaris-core/models"
 )
@@ -27,6 +28,10 @@ const tokenPurposeKey contextKey = "tokenPurpose"
 // sessionClaimsKey carries the caller's session claims to handlers that hand
 // out a copy of the session (SessionToken), so the copy is the SAME session.
 const sessionClaimsKey contextKey = "sessionClaims"
+
+// identityLoadedAtKey carries the moment the middleware read the user row, so
+// a handler can date what it decides from that identity no later than that.
+const identityLoadedAtKey contextKey = "identityLoadedAt"
 
 type apiKeyCtxKey struct{}
 
@@ -91,6 +96,17 @@ func WithSessionClaims(ctx context.Context, claims any) context.Context {
 // it to *handlers.Claims.
 func SessionClaims(r *http.Request) any {
 	return r.Context().Value(sessionClaimsKey)
+}
+
+// WithIdentityLoadedAt records when the caller's user row was read.
+func WithIdentityLoadedAt(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, identityLoadedAtKey, t)
+}
+
+// IdentityLoadedAt returns what WithIdentityLoadedAt stored, if anything.
+func IdentityLoadedAt(r *http.Request) (time.Time, bool) {
+	t, ok := r.Context().Value(identityLoadedAtKey).(time.Time)
+	return t, ok
 }
 
 func IsAdmin(r *http.Request) bool {

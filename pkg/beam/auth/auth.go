@@ -85,9 +85,17 @@ func SignBeamTicketWithNodeProof(secret string, c BeamClaims, ttl time.Duration,
 	if secret == "" {
 		return "", errors.New("auth: empty secret")
 	}
+	// A caller-set iat is kept: it is when the caller decided the ticket's
+	// rights, and the node's access epoch is compared against it. Any stamp
+	// written after that decision then refuses the ticket, however late it
+	// is signed. Never later than now.
+	iat := time.Now()
+	if c.IssuedAt != nil && c.IssuedAt.Time.Before(iat) {
+		iat = c.IssuedAt.Time
+	}
 	c.RegisteredClaims = jwt.RegisteredClaims{
 		Issuer:    BeamIssuer,
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		IssuedAt:  jwt.NewNumericDate(iat),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 	}
 	// After the expiry is set, before the token is built: the proof covers the
