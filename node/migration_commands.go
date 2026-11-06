@@ -855,6 +855,9 @@ func resumeMigrationDiscards(storage *StorageManager, dm *DockerManager) {
 
 // discardMovedCopy is handleMigrateDiscard's removal, in the background.
 func discardMovedCopy(storage *StorageManager, dm *DockerManager, serverUUID, progressID string, wait time.Duration) {
+	// Read before the goroutine: nodeSecretDir is a package variable, and the
+	// background check must not race whoever sets it.
+	ids := nodeIdentities(nodeSecretDir)
 	go func() {
 		deadline := time.Now().Add(wait)
 		for {
@@ -873,7 +876,7 @@ func discardMovedCopy(storage *StorageManager, dm *DockerManager, serverUUID, pr
 		if dm != nil {
 			// Only a container of THIS node's: on a shared Docker daemon the
 			// source's mc_<uuid> is always there before cutover.
-			if info, err := dm.cli.ContainerInspect(dm.ctx, "mc_"+serverUUID); err == nil && (info.Config == nil || ownsContainer(info.Config.Labels, nodeIdentities(nodeSecretDir))) {
+			if info, err := dm.cli.ContainerInspect(dm.ctx, "mc_"+serverUUID); err == nil && (info.Config == nil || ownsContainer(info.Config.Labels, ids)) {
 				log.Printf("migrate_discard %s: a container exists for it here, keeping the directory", serverUUID)
 				return
 			}
