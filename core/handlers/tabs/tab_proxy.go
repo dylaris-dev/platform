@@ -666,6 +666,20 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// wsUpgradeHeader names the first subprotocol the browser offered in the 101.
+// A browser that offered one fails a handshake that names none, and the browser
+// is upgraded before the node dials the container, so the container's own
+// choice is not known yet. The offer still reaches the container (the header is
+// forwarded), and an app offering one protocol - the usual case - gets exactly
+// the one it will accept.
+func wsUpgradeHeader(r *http.Request) http.Header {
+	protos := websocket.Subprotocols(r)
+	if len(protos) == 0 {
+		return nil
+	}
+	return http.Header{"Sec-Websocket-Protocol": {protos[0]}}
+}
+
 // serveWS upgrades the browser connection and bridges it to the container WS
 // over the mesh: WsOpen, then WsFrame/WsClose in both directions. Application
 // messages are fragmented at coreWSFragmentSize and reassembled on the far side
@@ -685,7 +699,7 @@ var upgrader = websocket.Upgrader{
 // this handler's return, matching the SendRequestStreaming contract used by
 // every other mesh caller (see serveHTTP above).
 func (h *ProxyHandler) serveWS(w http.ResponseWriter, r *http.Request, tab *proxyTab) {
-	bconn, err := upgrader.Upgrade(w, r, nil)
+	bconn, err := upgrader.Upgrade(w, r, wsUpgradeHeader(r))
 	if err != nil {
 		return
 	}

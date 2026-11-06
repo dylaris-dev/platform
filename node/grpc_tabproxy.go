@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,9 +20,10 @@ import (
 )
 
 // proxyHTTPClient does NOT follow redirects (Core forwards 3xx to the browser
-// as-is) and caps the round trip so an unresponsive container surfaces fast.
+// as-is). It has no Client.Timeout: that one also covers reading the body, and
+// cut every SSE stream, long poll and slow download at 30 s. The head is bounded
+// by the transport (proxyTransport), the body by proxyIdleTimeout per read.
 var proxyHTTPClient = &http.Client{
-	Timeout:   30 * time.Second,
 	Transport: proxyTransport(),
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -148,12 +150,52 @@ func (h *StreamHandler) handleHTTPProxy(reqID, serverUUID string, req *pb.HttpPr
 	for _, kv := range nodeStripHopByHop(req.Headers) {
 		hreq.Header.Add(kv.Key, kv.Value)
 	}
-	resp, err := proxyHTTPClient.Do(hreq)
+	resp, err := doProxyRequest(hreq)
 	if err != nil {
 		send(errorMsg(reqID, 502, err.Error()))
 		return
 	}
 	h.streamProxyResponse(reqID, resp, send)
+}
+
+// proxyIdleTimeout ends a tab response body that has sent nothing for this
+// long. Time spent waiting for Core to take a chunk does not count: a slow
+// reader is flow control's to end (flowCreditWait), not this.
+var proxyIdleTimeout = 2 * time.Minute
+
+// doProxyRequest runs hreq with its body bounded by proxyIdleTimeout per read.
+func doProxyRequest(hreq *http.Request) (*http.Response, error) {
+	ctx, cancel := context.WithCancel(hreq.Context())
+	resp, err := proxyHTTPClient.Do(hreq.WithContext(ctx))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	timer := time.AfterFunc(proxyIdleTimeout, cancel)
+	timer.Stop()
+	resp.Body = &idleBody{ReadCloser: resp.Body, timer: timer, idle: proxyIdleTimeout, cancel: cancel}
+	return resp, nil
+}
+
+// idleBody cancels the request when one Read waits longer than idle.
+type idleBody struct {
+	io.ReadCloser
+	timer  *time.Timer
+	idle   time.Duration
+	cancel context.CancelFunc
+}
+
+func (b *idleBody) Read(p []byte) (int, error) {
+	b.timer.Reset(b.idle)
+	n, err := b.ReadCloser.Read(p)
+	b.timer.Stop()
+	return n, err
+}
+
+func (b *idleBody) Close() error {
+	b.timer.Stop()
+	b.cancel()
+	return b.ReadCloser.Close()
 }
 
 // streamProxyResponse writes the response head then the body in 64KB chunks.
@@ -208,5 +250,8 @@ func (h *StreamHandler) streamProxyResponse(reqID string, resp *http.Response, s
 func proxyTransport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.MaxResponseHeaderBytes = 64 << 10
+	// An unresponsive container still surfaces fast; the dial is bounded by the
+	// default transport's dialer.
+	t.ResponseHeaderTimeout = 30 * time.Second
 	return t
 }

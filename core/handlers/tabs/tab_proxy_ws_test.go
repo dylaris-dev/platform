@@ -1,6 +1,13 @@
 package tabs
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gorilla/websocket"
+)
 
 // TestWSReassemblyExceeded covers the DoS-mirror fix: the container->browser
 // reassembly loop in serveWS must stop growing rxBuf and tear the bridge down
@@ -67,6 +74,41 @@ func TestSplitProxyBytes(t *testing.T) {
 				if joined[i] != data[i] {
 					t.Fatalf("reassembled[%d] = %d, want %d", i, joined[i], data[i])
 				}
+			}
+		})
+	}
+}
+
+// The 101 named no subprotocol, so a browser that offered one (ttyd's "tty",
+// noVNC's "binary") failed the handshake and the tab's live connection never
+// opened.
+func TestTheTabWSUpgradeAnswersTheOfferedSubprotocol(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, wsUpgradeHeader(r))
+		if err == nil {
+			c.Close()
+		}
+	}))
+	defer srv.Close()
+	cases := []struct {
+		name    string
+		offered []string
+		want    string
+	}{
+		{"none offered", nil, ""},
+		{"one offered", []string{"tty"}, "tty"},
+		{"several offered, the first wins", []string{"binary", "base64"}, "binary"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := websocket.Dialer{Subprotocols: c.offered}
+			conn, _, err := d.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			if got := conn.Subprotocol(); got != c.want {
+				t.Fatalf("subprotocol = %q, want %q", got, c.want)
 			}
 		})
 	}

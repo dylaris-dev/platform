@@ -135,3 +135,28 @@ func remeasureServer(uuid string) {
 		publishDiskUsage(ctx, sm.rdb, uuid, usage, from, 10*time.Minute)
 	}
 }
+
+// remeasureRuns counts, per server, the remeasures asked for since the running
+// one began (uuid -> *atomic.Int64).
+var remeasureRuns sync.Map
+
+// remeasureServerSoon remeasures in the background, at most one walk per
+// server at a time: a panel bulk delete sends one request per file, and each
+// would otherwise start its own walk of the whole tree. A request made while
+// one runs is served by one more walk after it, which starts after the request.
+func remeasureServerSoon(uuid string) {
+	v, _ := remeasureRuns.LoadOrStore(uuid, new(atomic.Int64))
+	asked := v.(*atomic.Int64)
+	if asked.Add(1) > 1 {
+		return
+	}
+	go func() {
+		for {
+			n := asked.Load()
+			remeasureServer(uuid)
+			if asked.CompareAndSwap(n, 0) {
+				return
+			}
+		}
+	}()
+}

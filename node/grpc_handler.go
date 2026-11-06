@@ -386,6 +386,9 @@ const listPageBytes = coreMaxMessage - 4*1024
 // marked more. A folder of 2,500 entries (world/playerdata of 1,250 players)
 // was one message past Core's limit, and could never be listed.
 func pageListing(reply *pb.NodeMessage) []*pb.NodeMessage {
+	// Repaired here, not only in boundForCore: an invalid byte grows to three,
+	// and pages cut by the raw names went over the limit there.
+	pb.ValidUTF8(reply.ProtoReflect())
 	files := reply.GetListResp().GetFiles()
 	if files == nil || proto.Size(reply) <= coreMaxMessage {
 		return []*pb.NodeMessage{reply}
@@ -891,6 +894,9 @@ func (h *StreamHandler) handleDelete(reqID, serverUUID string, req *pb.DeleteFil
 	if err := root.RemoveAll(name); err != nil {
 		return errorMsg(reqID, 500, fmt.Sprintf("delete: %v", err))
 	}
+	// Nothing else lowers the gauge before the next sweep, and every upload
+	// check (Core's, Beam's, SFTP's) reads it.
+	remeasureServerSoon(serverUUID)
 
 	return &pb.NodeMessage{
 		RequestId: reqID,
