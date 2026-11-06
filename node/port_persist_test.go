@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -54,7 +55,7 @@ func TestRestorePortLedger_KeepsEachServersPortAfterRedisAndContainersAreGone(t 
 
 	// No containers survived: nothing to adopt from Docker.
 	pm.AdoptExistingBindings(map[string]int{})
-	dm.restorePortLedger(map[string]bool{})
+	dm.restorePortLedger(map[string]bool{}, map[string]int{})
 
 	// server-b comes up first, as it did on the VM. It must not take 25600.
 	if got := pm.GetPort("server-b"); got != 25601 {
@@ -83,7 +84,7 @@ func TestRestorePortLedger_BackfillsTheSavedConfigFromTheLedger(t *testing.T) {
 
 	// The running container still holds 25605; its config does not say so.
 	pm.AdoptExistingBindings(map[string]int{"server-a": 25605})
-	dm.restorePortLedger(map[string]bool{})
+	dm.restorePortLedger(map[string]bool{}, map[string]int{"server-a": 25605})
 
 	cfg := readSavedConfig(t, dir, "server-a")
 	if cfg.Docker.HostPort != 25605 {
@@ -105,7 +106,7 @@ func TestRestorePortLedger_ARunningContainerWinsOverAStaleSavedPort(t *testing.T
 	dm := &DockerManager{storageMgr: NewStorageManager(dir, nil), portMgr: pm}
 
 	pm.AdoptExistingBindings(map[string]int{"server-a": 25610, "server-b": 25600})
-	dm.restorePortLedger(map[string]bool{})
+	dm.restorePortLedger(map[string]bool{}, map[string]int{"server-a": 25610, "server-b": 25600})
 
 	if got := pm.GetPort("server-a"); got != 25610 {
 		t.Fatalf("server-a holds %d, want its container's 25610", got)
@@ -115,6 +116,34 @@ func TestRestorePortLedger_ARunningContainerWinsOverAStaleSavedPort(t *testing.T
 	}
 	if got := pm.GetPort("server-b"); got != 25600 {
 		t.Fatalf("server-b holds %d, want 25600", got)
+	}
+}
+
+// J45: the stale saved port is FREE here, so SetPort did not refuse it and the
+// server's own container binding lost: its live port went back to the range.
+func TestRestorePortLedger_AContainerBindingWinsOverItsOwnFreeSavedPort(t *testing.T) {
+	dir := t.TempDir()
+	writeSavedConfig(t, dir, "server-a", 25600) // stale: the container binds 25610
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	pm := NewPortManager(rdb, "node-1", 25600, 25699, seqMode)
+	dm := &DockerManager{storageMgr: NewStorageManager(dir, nil), portMgr: pm}
+
+	bound := map[string]int{"server-a": 25610}
+	pm.AdoptContainerBindings(bound)
+	dm.restorePortLedger(map[string]bool{"server-a": true}, bound)
+
+	if got := pm.GetPort("server-a"); got != 25610 {
+		t.Fatalf("server-a holds %d, want its container's 25610", got)
+	}
+	if got := readSavedConfig(t, dir, "server-a").Docker.HostPort; got != 25610 {
+		t.Fatalf("saved hostPort = %d, want it corrected to 25610", got)
+	}
+	for i := 0; i < 11; i++ {
+		if got, _ := pm.AllocatePort(fmt.Sprintf("new-%d", i)); got == 25610 {
+			t.Fatal("a new server was handed 25610, the port server-a's container binds")
+		}
 	}
 }
 
@@ -189,7 +218,7 @@ func TestRestorePortLedger_ReleasesThePortOfAServerThatIsGone(t *testing.T) {
 			pm := NewPortManager(rdb, "node-1", 25600, 25699, seqMode)
 			dm := &DockerManager{storageMgr: NewStorageManager(tc.storage(dir), nil), portMgr: pm}
 
-			dm.restorePortLedger(tc.containers)
+			dm.restorePortLedger(tc.containers, nil)
 
 			if got := pm.GetPort("ghost"); got != tc.wantGhost {
 				t.Fatalf("ghost holds %d, want %d", got, tc.wantGhost)

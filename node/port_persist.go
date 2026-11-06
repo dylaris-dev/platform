@@ -59,9 +59,17 @@ func savedHostPorts(storagePaths []string, rangeStart, rangeEnd int) map[string]
 // config, which backfills configs saved before they carried one.
 //
 // containers holds the uuid of every mc_ container on the host, nil when they
-// could not be listed.
-func (dm *DockerManager) restorePortLedger(containers map[string]bool) {
-	dm.portMgr.AdoptExistingBindings(savedHostPorts(dm.storageMgr.Paths(), dm.portMgr.rangeStart, dm.portMgr.rangeEnd))
+// could not be listed. bound is what AdoptContainerBindings was given: a server
+// whose container binds a port keeps it, because SetPort only refuses a port
+// held by ANOTHER server, so a free stale saved port would release the live one.
+func (dm *DockerManager) restorePortLedger(containers map[string]bool, bound map[string]int) {
+	saved := savedHostPorts(dm.storageMgr.Paths(), dm.portMgr.rangeStart, dm.portMgr.rangeEnd)
+	for uuid := range saved {
+		if bound[uuid] > 0 {
+			delete(saved, uuid)
+		}
+	}
+	dm.portMgr.AdoptExistingBindings(saved)
 	dm.releaseGonePorts(containers)
 	for uuid, port := range dm.portMgr.Snapshot() {
 		dm.rememberHostPort(uuid, port)

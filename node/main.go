@@ -405,7 +405,8 @@ func main() {
 	dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd, getPortMode)
 	// Redis holds the port ledger but is in-memory only, so a host reboot wipes
 	// it while the containers keep their ports. Rebuild it from them.
-	dockerMgr.portMgr.AdoptContainerBindings(dockerMgr.ExistingHostPortBindings())
+	bound := dockerMgr.ExistingHostPortBindings()
+	dockerMgr.portMgr.AdoptContainerBindings(bound)
 	var mcContainers map[string]bool
 	if cs, err := dockerMgr.ListAllMCContainers(); err == nil {
 		mcContainers = map[string]bool{}
@@ -413,7 +414,7 @@ func main() {
 			mcContainers[c.UUID] = true
 		}
 	}
-	dockerMgr.restorePortLedger(mcContainers)
+	dockerMgr.restorePortLedger(mcContainers, bound)
 
 	// Load routing modes from Redis, refresh every 30s
 	// Defaults before the first poll; setModes so nothing reads them unguarded.

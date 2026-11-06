@@ -260,23 +260,20 @@ func (pm *PortManager) SetPort(serverUUID string, port int) error {
 		return fmt.Errorf("port %d is already allocated to server %s", port, existingUUID)
 	}
 
-	// Release existing allocation for this server if different
-	for p, uuid := range pm.usedPorts {
-		if uuid == serverUUID && p != port {
-			key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			pm.forget(ctx, serverUUID, key)
-			cancel()
-			delete(pm.usedPorts, p)
-			break
-		}
-	}
-
 	key := fmt.Sprintf("dylaris:node:%s:port:%s", pm.nodeID, serverUUID)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := pm.persist(ctx, serverUUID, key, port); err != nil {
 		return fmt.Errorf("failed to persist port: %w", err)
+	}
+	// The old allocation goes only once the new one is stored: the caller keeps
+	// the container running on it when this fails. persist overwrote the same
+	// key and hash field, so Redis needs no separate forget.
+	for p, uuid := range pm.usedPorts {
+		if uuid == serverUUID && p != port {
+			delete(pm.usedPorts, p)
+			break
+		}
 	}
 	pm.usedPorts[port] = serverUUID
 	log.Printf("PortManager: set port %d for server %s", port, serverUUID)

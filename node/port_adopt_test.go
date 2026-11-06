@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -159,5 +160,47 @@ func TestAllocatePort_SkipsPortsTheNodeCannotPublish(t *testing.T) {
 				t.Fatalf("allocated %d past the publishable ports", got)
 			}
 		})
+	}
+}
+
+// J46: SetPort dropped the server's old port before the new one was stored, so
+// a failed persist left a live container's port free for the next server.
+func TestSetPort_AFailedPersistKeepsTheOldPort(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	pm := NewPortManager(rdb, "node-1", 25600, 25699, seqMode)
+	if err := pm.SetPort("alpha", 25600); err != nil {
+		t.Fatal(err)
+	}
+
+	mr.SetError("LOADING Redis is loading the dataset in memory")
+	if err := pm.SetPort("alpha", 25650); err == nil {
+		t.Fatal("SetPort succeeded against a failing Redis")
+	}
+	mr.SetError("")
+	rdb.Ping(context.Background()) // drops the connection the failed MULTI left unread data on
+
+	if got := pm.GetPort("alpha"); got != 25600 {
+		t.Fatalf("alpha holds %d after the refused move, want its old 25600", got)
+	}
+	if v, _ := mr.Get("dylaris:node:node-1:port:alpha"); v != "25600" {
+		t.Fatalf("alpha's key = %q, want 25600", v)
+	}
+	if got, err := pm.AllocatePort("beta"); err != nil || got == 25600 {
+		t.Fatalf("beta was handed %d (err %v), the port alpha's container binds", got, err)
+	}
+
+	// A move that does get stored still releases the old port.
+	if err := pm.SetPort("alpha", 25650); err != nil {
+		t.Fatal(err)
+	}
+	if got := pm.GetPort("alpha"); got != 25650 {
+		t.Fatalf("alpha holds %d, want 25650", got)
+	}
+	if v := mr.HGet("dylaris:node:node-1:ports", "alpha"); v != "25650" {
+		t.Fatalf("alpha's hash entry = %q, want 25650", v)
+	}
+	if got, err := pm.AllocatePort("gamma"); err != nil || got != 25600 {
+		t.Fatalf("gamma got %d (err %v), want the released 25600", got, err)
 	}
 }
