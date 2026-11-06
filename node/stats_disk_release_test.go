@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -21,7 +23,7 @@ func TestTheDiskGuardsStopIsNotTheServerStoppingItself(t *testing.T) {
 	t.Cleanup(func() { diskGuardTrips.Delete(uuid) })
 
 	before := time.Now().Add(-time.Minute)
-	holdForDiskFull(context.Background(), rdb, uuid, "live", &DiskUsagePayload{Total: 2, Limit: 1}, func() {})
+	holdForDiskFull(context.Background(), rdb, uuid, "live", &DiskUsagePayload{Total: 2, Limit: 1}, func() error { return nil })
 	after := time.Now().Add(time.Minute)
 
 	stoppedByGuard := &container.State{ExitCode: 0, StartedAt: before.Format(time.RFC3339Nano), FinishedAt: after.Format(time.RFC3339Nano)}
@@ -49,5 +51,29 @@ func TestTheDiskGuardsStopIsNotTheServerStoppingItself(t *testing.T) {
 	releaseDiskHold(context.Background(), rdb, uuid, "live", &DiskUsagePayload{Total: 0, Limit: 1}, true)
 	if stoppedByDiskGuard(uuid, stoppedByGuard) {
 		t.Error("a run still running at the release still counts as the guard's stop")
+	}
+}
+
+// L39: a guard stop that failed left the server running but held as
+// disk_full for the marker's hour. The trip must undo itself so the next disk
+// tick tries again.
+func TestAFailedDiskGuardStopDoesNotHold(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	const uuid = "dddddddd-1111-2222-3333-777777777777"
+	t.Cleanup(func() { diskGuardTrips.Delete(uuid) })
+
+	holdForDiskFull(context.Background(), rdb, uuid, "live", &DiskUsagePayload{Total: 2, Limit: 1}, func() error {
+		return errors.New("inspect: daemon busy")
+	})
+
+	if mr.Exists(diskFullKey(uuid)) {
+		t.Error("marker kept after a failed stop")
+	}
+	if _, ok := diskGuardTrips.Load(uuid); ok {
+		t.Error("trip recorded after a failed stop")
+	}
+	if mr.Exists(fmt.Sprintf("dylaris:server:%s:status", uuid)) {
+		t.Error("disk_full written for a server still running")
 	}
 }

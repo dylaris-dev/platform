@@ -146,3 +146,23 @@ func TestCacheGroupIndices(t *testing.T) {
 		}
 	}
 }
+
+// L38: a present but offline CPU (SMT off via nosmt) is not a core Docker
+// accepts, so the scan keeps only what /sys/devices/system/cpu/online lists.
+func TestOnlineCPUIDs(t *testing.T) {
+	all := []int{0, 1, 2, 3, 4, 5, 6, 7}
+	cases := []struct {
+		online string
+		want   []int
+	}{
+		{"0-3", []int{0, 1, 2, 3}},
+		{"0,2,4-5", []int{0, 2, 4, 5}},
+		{"0-7", all},
+		{"", all}, // unreadable: keep the directory scan
+	}
+	for _, c := range cases {
+		if got := onlineCPUIDs(all, c.online); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("onlineCPUIDs(%q) = %v, want %v", c.online, got, c.want)
+		}
+	}
+}

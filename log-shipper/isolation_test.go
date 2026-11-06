@@ -41,4 +41,12 @@ func TestTheNetGateWaitsForTheNodeAndThenGivesUp(t *testing.T) {
 	if !waitForNetGate(p, 2*time.Second, 10*time.Millisecond) {
 		t.Fatal("the gate did not open once the file appeared")
 	}
+
+	// L37: only the node's regular file opens it, not a directory a root
+	// tenant left at the name.
+	d := filepath.Join(t.TempDir(), "ready")
+	os.Mkdir(d, 0o755)
+	if waitForNetGate(d, 50*time.Millisecond, 10*time.Millisecond) {
+		t.Fatal("a directory opened the gate")
+	}
 }

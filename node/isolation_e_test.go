@@ -160,6 +160,15 @@ func TestTheStartGate(t *testing.T) {
 	if !isProtectedFile(netGateFile) {
 		t.Error("the marker can be written through the file manager")
 	}
+
+	// L37: a root tenant leaves a non-empty DIRECTORY at the name; a plain
+	// Remove failed on it and the shipper took it for an open gate.
+	os.Remove(marker)
+	os.MkdirAll(filepath.Join(marker, "x"), 0o755)
+	dm2.closeNetGate(uuid)
+	if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+		t.Fatalf("a directory at the marker survived closeNetGate: %v", err)
+	}
 }
 
 // H1, second layer: an oversized key the shipper credential can write is

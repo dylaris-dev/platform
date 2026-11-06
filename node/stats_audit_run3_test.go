@@ -96,7 +96,7 @@ func TestHoldForDiskFullSurvivesTheCollectorCancel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	holdForDiskFull(ctx, rdb, uuid, "live", &DiskUsagePayload{Total: 2, Limit: 1}, cancel)
+	holdForDiskFull(ctx, rdb, uuid, "live", &DiskUsagePayload{Total: 2, Limit: 1}, func() error { cancel(); return nil })
 
 	if !mr.Exists(diskFullKey(uuid)) {
 		t.Fatal("marker not set")

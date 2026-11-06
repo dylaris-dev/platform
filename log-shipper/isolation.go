@@ -49,11 +49,12 @@ const netGateEnv = "DYLARIS_NET_GATE"
 const netGateWait = 30 * time.Second
 
 // waitForNetGate polls for path until it exists or wait has passed, and
-// reports whether it appeared.
+// reports whether it appeared. Only a regular file counts: the node writes
+// one, and a directory or link at the name is something a tenant left there.
 func waitForNetGate(path string, wait, every time.Duration) bool {
 	deadline := time.Now().Add(wait)
 	for {
-		if _, err := os.Stat(path); err == nil {
+		if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() {
 			return true
 		}
 		if !time.Now().Before(deadline) {

@@ -239,8 +239,10 @@ func (dm *DockerManager) netGateContainerEnv() []string {
 }
 
 // closeNetGate removes the marker before a start, so the shipper waits.
+// RemoveAll, because a root tenant can leave a non-empty directory at the
+// name, which Remove refuses and which would otherwise read as an open gate.
 func (dm *DockerManager) closeNetGate(uuid string) {
-	if err := os.Remove(filepath.Join(dm.resolveLocalServerPath(uuid), netGateFile)); err != nil && !os.IsNotExist(err) {
+	if err := os.RemoveAll(filepath.Join(dm.resolveLocalServerPath(uuid), netGateFile)); err != nil && !os.IsNotExist(err) {
 		log.Printf("netpolicy: cannot reset the start gate of %s: %v", uuid, err)
 	}
 }

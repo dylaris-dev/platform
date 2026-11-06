@@ -146,3 +146,65 @@ func TestNodeRedisKeysCoverTheStatsStreams(t *testing.T) {
 		}
 	}
 }
+
+// L40: the consumer name is the Core's hostname, a new one on every redeploy.
+// A batch the old Core had read but not ACKed sat in ITS pending list, which
+// the new Core's "0" read never returns, so it was lost.
+func TestABatchLeftByAPreviousCoreIsClaimed(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+	const key = "dylaris:node:tok:stats:batch"
+	st := &statsRetryStore{}
+	s := NewStatsConsumerService(st, rdb, "core-new")
+	r := &statsStreamReader{key: key, group: "dylaris-core-stats", consumer: "core-new", nodeToken: "tok", block: 10 * time.Millisecond}
+	rdb.XGroupCreateMkStream(ctx, key, r.group, "0")
+	rdb.XAdd(ctx, &redis.XAddArgs{Stream: key, Values: map[string]interface{}{
+		"data": `{"ts":100,"stats":[{"uuid":"srv-1","cpu":1}]}`,
+	}})
+	// The old Core read it and went away before the ACK.
+	rdb.XReadGroup(ctx, &redis.XReadGroupArgs{Group: r.group, Consumer: "core-old", Streams: []string{key, ">"}, Count: 10})
+	mr.SetTime(time.Now().Add(2 * statsRetryEvery))
+
+	s.readStats(ctx, r)
+	if r.retryAt.IsZero() && len(st.inserted) == 0 {
+		t.Fatal("nothing claimed from the old consumer")
+	}
+	s.readStats(ctx, r)
+	if len(st.inserted) != 1 {
+		t.Fatalf("inserted %d rows, want the old Core's batch", len(st.inserted))
+	}
+	if p, _ := rdb.XPending(ctx, key, r.group).Result(); p.Count != 0 {
+		t.Errorf("%d entries still pending", p.Count)
+	}
+}
+
+type statsDBDownStore struct{ statsRetryStore }
+
+func (*statsDBDownStore) ListServersByNode(int) ([]models.Server, error) {
+	return nil, errors.New("pgbouncer: no server connection")
+}
+
+// L42: with the database down from the start, the allowed set was never
+// loaded, every batch produced zero rows, and zero rows were ACKed as done.
+func TestABatchIsNotAckedWhileTheServerListIsUnknown(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+	const key = "dylaris:node:tok:stats:batch"
+	st := &statsDBDownStore{}
+	s := NewStatsConsumerService(st, rdb, "core-1")
+	r := &statsStreamReader{key: key, group: "dylaris-core-stats", consumer: "core-1", nodeToken: "tok", block: 10 * time.Millisecond}
+	rdb.XGroupCreateMkStream(ctx, key, r.group, "0")
+	rdb.XAdd(ctx, &redis.XAddArgs{Stream: key, Values: map[string]interface{}{
+		"data": `{"ts":100,"stats":[{"uuid":"srv-1","cpu":1}]}`,
+	}})
+
+	s.readStats(ctx, r)
+	if p, _ := rdb.XPending(ctx, key, r.group).Result(); p.Count != 1 {
+		t.Fatalf("%d entries pending, want the batch kept for a retry", p.Count)
+	}
+	if r.retryAt.IsZero() {
+		t.Error("no retry scheduled")
+	}
+}

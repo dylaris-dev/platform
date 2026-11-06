@@ -218,6 +218,11 @@ type statsStreamReader struct {
 	// ACKed. Retried on a timer rather than before every new read, so a batch
 	// that keeps failing cannot hold back the ones after it.
 	retryAt time.Time
+
+	// claimedAt is when this consumer last took over entries another consumer
+	// of the group left pending. The consumer name is the Core's hostname, a
+	// new one on every redeploy, and "0" reads only this consumer's own list.
+	claimedAt time.Time
 }
 
 // statsRetryEvery is how long a failed batch waits for its next attempt.
@@ -230,6 +235,18 @@ const statsPendingMaxAge = time.Hour
 // readStats runs one read of the stream and stores what it got. It returns
 // false once the node is gone and the consumer should stop.
 func (s *StatsConsumerService) readStats(ctx context.Context, r *statsStreamReader) bool {
+	if time.Since(r.claimedAt) >= statsRetryEvery {
+		r.claimedAt = time.Now()
+		// Idle past a retry interval: a Core that went away, or one of ours
+		// that failed (claiming that from ourselves changes nothing).
+		ids, _, err := s.redis.XAutoClaimJustID(ctx, &redis.XAutoClaimArgs{
+			Stream: r.key, Group: r.group, Consumer: r.consumer,
+			MinIdle: statsRetryEvery, Start: "0-0", Count: 100,
+		}).Result()
+		if err == nil && len(ids) > 0 {
+			r.retryAt = time.Now()
+		}
+	}
 	from := ">"
 	retrying := !r.retryAt.IsZero() && !time.Now().Before(r.retryAt)
 	if retrying {
@@ -290,10 +307,17 @@ func (s *StatsConsumerService) readStats(ctx context.Context, r *statsStreamRead
 				continue
 			}
 
-			if time.Since(r.allowedAt) > time.Minute {
+			if time.Since(r.allowedAt) > time.Minute && !failed {
 				if a, err := s.nodeServerUUIDs(r.nodeToken); err == nil {
 					r.allowed, r.allowedAt = a, time.Now()
+				} else if r.allowed == nil {
+					failed = true
 				}
+			}
+			// Never loaded (the database was down from the start): no row
+			// would pass, and ACKing the batch would drop it for good.
+			if failed && r.allowed == nil {
+				continue // not ACKed: retried from the pending list
 			}
 			rows = append(rows, statsRows(batch, r.allowed)...)
 			ackIDs = append(ackIDs, msg.ID)

@@ -103,7 +103,11 @@ const (
 type startReadiness struct {
 	mu      sync.Mutex
 	started time.Time // the container's StartedAt, or when tracking began
-	ready   bool
+	// restartedAt is when the log-shipper restarted the JVM inside this same
+	// container, which leaves StartedAt where it was. The bound counts from
+	// the later of the two.
+	restartedAt time.Time
+	ready       bool
 }
 
 // observeStart records the container's start time. A different one than
@@ -141,11 +145,61 @@ func (r *startReadiness) pinged(ok bool) {
 	r.mu.Unlock()
 }
 
+// restartedInside starts readiness over for a JVM the log-shipper restarted
+// at the given time without the container restarting.
+func (r *startReadiness) restartedInside(at time.Time) {
+	r.mu.Lock()
+	r.ready, r.restartedAt = false, at
+	r.mu.Unlock()
+}
+
+func (r *startReadiness) isReady() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ready
+}
+
+// shipperRestartAfter reports whether the console stream holds the
+// log-shipper's crash-restart line after the entry id mark. No mark (nothing
+// read since the last answer) is "no": an old crash must not count again.
+func shipperRestartAfter(ctx context.Context, rdb *redis.Client, key, mark string) bool {
+	if mark == "" {
+		return false
+	}
+	msgs, err := rdb.XRevRangeN(ctx, key, "+", "("+mark, 5000).Result()
+	if err != nil {
+		return false
+	}
+	for _, m := range msgs {
+		if line, _ := m.Values["line"].(string); strings.HasPrefix(line, "[Server crashed (exit code") {
+			return true
+		}
+	}
+	return false
+}
+
+// newestStreamID is the id of the stream's newest entry, "0-0" for an empty
+// stream and "" when it cannot be read.
+func newestStreamID(ctx context.Context, rdb *redis.Client, key string) string {
+	msgs, err := rdb.XRevRangeN(ctx, key, "+", "-", 1).Result()
+	switch {
+	case err != nil:
+		return ""
+	case len(msgs) == 0:
+		return "0-0"
+	}
+	return msgs[0].ID
+}
+
 // status is "online" once ready or past readinessBound, "starting" before.
 func (r *startReadiness) status(now time.Time) string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.ready || now.Sub(r.started) >= readinessBound {
+	from := r.started
+	if r.restartedAt.After(from) {
+		from = r.restartedAt
+	}
+	if r.ready || now.Sub(from) >= readinessBound {
 		return "online"
 	}
 	return "starting"
@@ -493,6 +547,11 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	// One ping at a time: until the container is ready the 2 s tick pings too,
 	// and a ping can take up to pingTimeout.
 	var pinging atomic.Bool
+	// The console stream of the running sub-server, set by each inspect, and
+	// its newest entry at the last ping answer: a crash-restart line after
+	// that is a JVM the log-shipper restarted inside this container.
+	var logKey atomic.Value
+	var logMark string
 	// A server that stops answering pings (hung, crashed inside a running
 	// container, restarting) would otherwise keep reporting its last player
 	// count forever, and Core sums those into the platform's players online.
@@ -556,7 +615,14 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		go func() {
 			defer pinging.Store(false)
 			resp, err := pingOnce()
+			key, _ := logKey.Load().(string)
+			if err != nil && key != "" && readiness.isReady() && shipperRestartAfter(ctx, rdb, key, logMark) {
+				readiness.restartedInside(time.Now())
+			}
 			readiness.pinged(err == nil)
+			if err == nil && key != "" {
+				logMark = newestStreamID(ctx, rdb, key)
+			}
 			pingMu.Lock()
 			lastPing, pingFails = nextPingState(lastPing, pingFails, resp, err)
 			pingMu.Unlock()
@@ -597,6 +663,11 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 				if info.Config != nil {
 					workingDir = info.Config.WorkingDir
 				}
+				sub, _ := strings.CutPrefix(workingDir, "/data/")
+				if sub == workingDir {
+					sub = ""
+				}
+				logKey.Store(serverLogStreamKey(uuid, sub))
 				readiness.observeStart(started, func() bool { return statusPingDisabled(uuid, workingDir) })
 			}
 		}
@@ -727,7 +798,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 						// started the server again ten seconds after each stop.
 						if !isDiskFull(ctx, rdb, uuid) {
 							log.Printf("Disk quota full for %s — stopping server", uuid)
-							holdForDiskFull(ctx, rdb, uuid, liveKey, usage, func() { gracefulStop(rdb, uuid, dm) })
+							holdForDiskFull(ctx, rdb, uuid, liveKey, usage, func() error { return gracefulStop(rdb, uuid, dm) })
 						}
 					} else {
 						// Push disk warning via live channel so panel reacts immediately
@@ -756,12 +827,20 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 }
 
 // holdForDiskFull trips the disk guard: marker, stop, then disk_full.
-func holdForDiskFull(ctx context.Context, rdb *redis.Client, uuid, liveKey string, usage *DiskUsagePayload, stop func()) {
+func holdForDiskFull(ctx context.Context, rdb *redis.Client, uuid, liveKey string, usage *DiskUsagePayload, stop func() error) {
 	// Set BEFORE the stop: gracefulStop takes seconds and the
 	// reconciler ticks during them.
 	rdb.Set(ctx, diskFullKey(uuid), "1", diskFullMarkerTTL)
 	diskGuardTrips.Store(uuid, time.Now())
-	stop()
+	if err := stop(); err != nil {
+		// The server may still be running and writing. Undo the trip so the
+		// next disk tick tries again, instead of the marker holding a running
+		// server as disk_full for its whole TTL.
+		log.Printf("Disk guard could not stop %s, retrying on the next measurement: %v", uuid, err)
+		rdb.Del(context.Background(), diskFullKey(uuid))
+		diskGuardTrips.Delete(uuid)
+		return
+	}
 	// Not ctx: the scan cancels the collector as soon as the container is
 	// gone, which is right while the stop returns, and the lost write left
 	// Core at the "stopping" the stop announced.

@@ -69,6 +69,7 @@ func scanCPUTopology() *CPUTopology {
 		}
 		ids = append(ids, n)
 	}
+	ids = onlineCPUIDs(ids, readFileTrim(base+"/online"))
 	if len(ids) == 0 {
 		return uniformTopology()
 	}
@@ -176,6 +177,28 @@ func uniformTopology() *CPUTopology {
 }
 
 // readCPUSet parses a sysfs cpu list ("0-3,8,10-11") into a presence set.
+// onlineCPUIDs keeps the ids the kernel lists as online. An offline CPU still
+// has its cpuN directory but Docker refuses it in a cpuset, so offering it to
+// the pinning grid or auto-pinning leaves a server that cannot start. An
+// empty list (file unreadable) keeps every id, as before.
+func onlineCPUIDs(ids []int, online string) []int {
+	on := parseCPUList(online)
+	if len(on) == 0 {
+		return ids
+	}
+	set := make(map[int]bool, len(on))
+	for _, id := range on {
+		set[id] = true
+	}
+	kept := ids[:0:0]
+	for _, id := range ids {
+		if set[id] {
+			kept = append(kept, id)
+		}
+	}
+	return kept
+}
+
 func readCPUSet(path string) map[int]bool {
 	set := map[int]bool{}
 	for _, id := range parseCPUList(readFileTrim(path)) {

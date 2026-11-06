@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 // A container that runs is not a server that is up: it reports "starting"
@@ -89,5 +93,58 @@ func TestStartReadinessWithThePingDisabled(t *testing.T) {
 	enabled.observeStart(t0, func() bool { return false })
 	if got := enabled.status(t0.Add(time.Second)); got != "starting" {
 		t.Fatalf("ping enabled: %q, want starting until it answers", got)
+	}
+}
+
+// L41: the log-shipper restarts a crashed JVM inside the same container, so
+// the container's start time does not move. Its crash-restart line in the
+// console stream brings "starting" back until the next ping answer.
+func TestAJavaRestartInsideTheContainerIsStartingAgain(t *testing.T) {
+	t0 := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	r := &startReadiness{started: t0}
+	r.pinged(true)
+	crash := t0.Add(time.Hour)
+	r.restartedInside(crash)
+	if got := r.status(crash.Add(time.Second)); got != "starting" {
+		t.Fatalf("after an in-container restart: %q, want starting", got)
+	}
+	r.observeStart(t0, nil) // the next inspect sees the same container start
+	if got := r.status(crash.Add(time.Second)); got != "starting" {
+		t.Fatalf("the unchanged container start undid it: %q", got)
+	}
+	if got := r.status(crash.Add(readinessBound)); got != "online" {
+		t.Fatalf("the bound does not count from the restart: %q", got)
+	}
+	r.pinged(true)
+	if got := r.status(crash.Add(2 * time.Second)); got != "online" {
+		t.Fatalf("after the answer: %q, want online", got)
+	}
+}
+
+func TestShipperRestartAfter(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+	const key = "dylaris:server:x:logs"
+	add := func(line string) string {
+		id, _ := rdb.XAdd(ctx, &redis.XAddArgs{Stream: key, Values: map[string]interface{}{"line": line}}).Result()
+		return id
+	}
+	add("[Server crashed (exit code 1) - restarting automatically (1/3)...]")
+	mark := add("[12:00:00] [Server thread/INFO]: Done (3.1s)!")
+	if shipperRestartAfter(ctx, rdb, key, mark) {
+		t.Fatal("a crash before the mark counted")
+	}
+	add("[12:00:05] [Server thread/ERROR]: something")
+	if shipperRestartAfter(ctx, rdb, key, mark) {
+		t.Fatal("an ordinary line counted as a restart")
+	}
+	add("[Server crashed (exit code 137) - restarting automatically (2/3)...]")
+	add("[12:00:20] [main/INFO]: Loading libraries")
+	if !shipperRestartAfter(ctx, rdb, key, mark) {
+		t.Fatal("the crash-restart line after the mark was missed")
+	}
+	if shipperRestartAfter(ctx, rdb, key, "") {
+		t.Fatal("no mark must not read the whole stream")
 	}
 }
