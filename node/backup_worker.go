@@ -806,14 +806,15 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		// filename — the directory is server-scoped already so the prefix
 		// adds no information.
 		dir := filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName)
-		// Mkdir, not MkdirAll: the server may have been deleted while the
-		// backup waited for its save flush, and MkdirAll brought its directory
-		// back for good. A missing server root fails the run instead.
-		if err := os.Mkdir(dir, nodeOwnedDirMode); err != nil && !errors.Is(err, fs.ErrExist) {
+		// Not MkdirAll: the server may have been deleted while the backup
+		// waited for its save flush, and MkdirAll brought its directory back
+		// for good. A missing server root fails the run instead.
+		root, err := openBackupRoot(dir, true)
+		if err != nil {
 			return fmt.Errorf("create node-local backup dir: %w", err)
 		}
-		archive := nodeLocalArchiveName(key)
-		full := filepath.Join(dir, archive)
+		defer root.Close()
+		full := nodeLocalArchiveName(key)
 		// The write side of the same problem openArchive describes: this
 		// directory is inside the tenant's own bind mount, so O_CREATE|O_TRUNC
 		// would follow a symlink planted under the name the next run is about to
@@ -821,7 +822,7 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		// link, it does not follow one) and then insist on creating the file
 		// ourselves - O_EXCL fails on anything that reappeared in between, so
 		// the race ends in a failed backup rather than a write somewhere else.
-		if rerr := os.Remove(full); rerr != nil && !os.IsNotExist(rerr) {
+		if rerr := root.Remove(full); rerr != nil && !os.IsNotExist(rerr) {
 			return fmt.Errorf("clear previous archive: %w", rerr)
 		}
 		// Written under a temporary name and renamed when complete. Written
@@ -829,10 +830,10 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		// under the real name, which counted against the backup quota and no
 		// list ever showed. The boot sweep removes an old .partial.
 		partial := full + partialBackupSuffix
-		if rerr := os.Remove(partial); rerr != nil && !os.IsNotExist(rerr) {
+		if rerr := root.Remove(partial); rerr != nil && !os.IsNotExist(rerr) {
 			return fmt.Errorf("clear previous partial archive: %w", rerr)
 		}
-		f, err := os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		f, err := root.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
 			return err
 		}
@@ -843,13 +844,13 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		budget := nodeWriteBudget(dir)
 		defer budget.release()
 		if err := copyAndCommit(f, budget.reader(r)); err != nil {
-			os.Remove(partial)
+			root.Remove(partial)
 			return err
 		}
 		// Rename replaces the directory entry; it does not follow a link
 		// planted under the final name meanwhile.
-		if err := os.Rename(partial, full); err != nil {
-			os.Remove(partial)
+		if err := root.Rename(partial, full); err != nil {
+			root.Remove(partial)
 			return fmt.Errorf("finish archive: %w", err)
 		}
 		return nil
@@ -919,8 +920,10 @@ func deleteBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		}
 		os.Remove(filepath.Join(cfg.BasePath, filepath.Clean("/"+key)))
 	case "node-local":
-		archive := nodeLocalArchiveName(key)
-		os.Remove(filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName, archive))
+		if root, err := openBackupRoot(filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName), false); err == nil {
+			root.Remove(nodeLocalArchiveName(key))
+			root.Close()
+		}
 	}
 }
 

@@ -60,6 +60,14 @@ func TestIntegrationAbandonedRestoresAreListedAndClosedOnlyWhileOpen(t *testing.
 	if r, _ := st.GetBackupRestore(oldRunning); r.Status != "success" {
 		t.Fatalf("status %q, want the node's success to stand", r.Status)
 	}
+	// A redelivered restore that the node then reports failed must not
+	// overwrite a restore that already succeeded.
+	if err := st.UpdateBackupRestoreStatus(oldRunning, "failed", "restore is no longer running", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := st.GetBackupRestore(oldRunning); r.Status != "success" || r.ErrorMessage != "" {
+		t.Fatalf("status %q (%q), want a late failure not to overwrite success", r.Status, r.ErrorMessage)
+	}
 	if closed, err := st.CloseAbandonedBackupRestore(oldQueued, "reaped", time.Now()); err != nil || !closed {
 		t.Fatalf("an open abandoned restore was not closed: %v %v", closed, err)
 	}

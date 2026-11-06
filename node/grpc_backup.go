@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,17 +79,70 @@ func (h *StreamHandler) resolveBackupKey(serverUUID, key string) (string, error)
 // between (or .dylaris-backups itself replaced by a link) was followed by the
 // open. The Root refuses any link out of the server directory.
 func openArchive(archivePath string) (*os.File, error) {
-	serverDir := filepath.Dir(filepath.Dir(archivePath))
-	root, err := os.OpenRoot(serverDir)
+	root, err := openBackupRoot(filepath.Dir(archivePath), false)
 	if err != nil {
 		return nil, err
 	}
 	defer root.Close()
-	f, err := openRegularIn(root, filepath.Join(backupDirName, filepath.Base(archivePath)))
+	f, err := openRegularIn(root, filepath.Base(archivePath))
 	if err != nil {
 		return nil, fmt.Errorf("not a backup archive: %w", err)
 	}
 	return f, nil
+}
+
+// openBackupRoot opens the .dylaris-backups directory at dir as a Root, and
+// refuses it unless it is a real directory. A tenant that is root in its own
+// container (MC_RUN_AS=0) can replace the directory itself with a link; a write,
+// delete or list by path then went wherever the link pointed. Every operation
+// on the directory goes through the returned Root. create makes the directory
+// first; its parent must exist, so a deleted server is not brought back.
+func openBackupRoot(dir string, create bool) (*os.Root, error) {
+	parent, err := os.OpenRoot(filepath.Dir(dir))
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	name := filepath.Base(dir)
+	if create {
+		if err := parent.Mkdir(name, nodeOwnedDirMode); err != nil && !errors.Is(err, fs.ErrExist) {
+			return nil, err
+		}
+	}
+	st, err := parent.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !st.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", name)
+	}
+	root, err := parent.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	// OpenRoot follows a link that stays inside the server directory, so one
+	// swapped in after the Lstat is caught by comparing what was opened.
+	if cur, err := root.Stat("."); err != nil || !os.SameFile(st, cur) {
+		root.Close()
+		return nil, fmt.Errorf("%s changed while it was opened", name)
+	}
+	return root, nil
+}
+
+// readBackupDir lists the backup directory at dir without following a link
+// put in its place. Entries are Lstat-based, as from os.ReadDir.
+func readBackupDir(dir string) ([]os.DirEntry, error) {
+	root, err := openBackupRoot(dir, false)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	d, err := root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer d.Close()
+	return d.ReadDir(-1)
 }
 
 // handleBackupList walks .dylaris-backups/ and returns one BackupObject
@@ -97,7 +152,7 @@ func (h *StreamHandler) handleBackupList(reqID, serverUUID string) *pb.NodeMessa
 	if err != nil {
 		return errorMsg(reqID, 500, err.Error())
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := readBackupDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &pb.NodeMessage{
@@ -144,7 +199,12 @@ func (h *StreamHandler) handleBackupDelete(reqID, serverUUID string, req *pb.Bac
 	if err != nil {
 		return errorMsg(reqID, 400, err.Error())
 	}
-	if err := os.Remove(path); err != nil {
+	root, err := openBackupRoot(filepath.Dir(path), false)
+	if err == nil {
+		err = root.Remove(filepath.Base(path))
+		root.Close()
+	}
+	if err != nil {
 		if os.IsNotExist(err) {
 			return errorMsg(reqID, 404, "backup not found")
 		}
@@ -165,7 +225,7 @@ func (h *StreamHandler) handleBackupUsage(reqID, serverUUID string) *pb.NodeMess
 	if err != nil {
 		return errorMsg(reqID, 500, err.Error())
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := readBackupDir(dir)
 	if err != nil && !os.IsNotExist(err) {
 		return errorMsg(reqID, 500, "read backup dir: "+err.Error())
 	}

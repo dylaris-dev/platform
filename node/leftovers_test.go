@@ -79,7 +79,7 @@ func TestPartialArchivesAreNeitherFinalNorListed(t *testing.T) {
 		return strings.ReplaceAll(string(b), "\r\n", "\n")
 	}
 	w := read("backup_worker.go")
-	for _, want := range []string{"partial := full + partialBackupSuffix", "os.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL", "os.Rename(partial, full)"} {
+	for _, want := range []string{"partial := full + partialBackupSuffix", "root.OpenFile(partial, os.O_WRONLY|os.O_CREATE|os.O_EXCL", "root.Rename(partial, full)"} {
 		if !strings.Contains(w, want) {
 			t.Errorf("backup_worker.go no longer has %q", want)
 		}

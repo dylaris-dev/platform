@@ -143,6 +143,16 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			rdb.Set(context.Background(), fmt.Sprintf("dylaris:server:%s:status", cmd.ServerUUID), "stopped", 30*time.Second)
 		}
 	}()
+	// Reported once every deferred step below has run (the restart, the
+	// sub-server recount), not before them: the command is ACKed only when this
+	// returns, and a node killed after the report but before the ACK had the
+	// restore redelivered and applied again over everything played since.
+	succeeded := false
+	defer func() {
+		if succeeded {
+			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "success", "")
+		}
+	}()
 
 	// Stage the new content in a sibling directory so we can swap it in
 	// atomically. The sibling lives in the same filesystem as targetDir,
@@ -472,7 +482,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		retagAfterRestore(ctx, rdb, cmd.ServerUUID)
 	}
 
-	reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "success", "")
+	succeeded = true
 	log.Printf("Restore %d completed: %d files in %v", cmd.RunID, extracted, time.Since(started))
 }
 

@@ -846,8 +846,11 @@ func (s *PostgresStore) UpdateBackupRestoreStatus(id int, status, errorMsg strin
 	if completed.IsZero() {
 		completedArg = nil
 	}
+	// A success is final: a restore the node ran again after its success
+	// report (redelivered before the ACK) reports failed, and that must not
+	// turn a restore that worked into a failure in the panel.
 	_, err := s.db.Exec(
-		`UPDATE backup_restores SET status = $1, error_message = $2, completed_at = $3 WHERE id = $4`,
+		`UPDATE backup_restores SET status = $1, error_message = $2, completed_at = $3 WHERE id = $4 AND status <> 'success'`,
 		status, errorMsg, completedArg, id,
 	)
 	return err

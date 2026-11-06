@@ -219,6 +219,11 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 			if !b.reporterMatchesServer(msg.Channel, restore.ServerID, "restore result") {
 				continue
 			}
+			// Already final: a duplicate report must not re-run the installs
+			// and mods below, nor overwrite the row.
+			if restore.Status == "success" {
+				continue
+			}
 			completed := time.Time{}
 			if result.Status == "success" || result.Status == "failed" {
 				completed = time.Now()
