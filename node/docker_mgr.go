@@ -1171,9 +1171,12 @@ func (dm *DockerManager) recreate(config ServerConfig, start bool) error {
 func (dm *DockerManager) RecreateKeepingRunState(config ServerConfig) error {
 	containerName := fmt.Sprintf("mc_%s", config.UUID)
 	info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
-	if err != nil {
+	if client.IsErrNotFound(err) {
 		log.Printf("reconfigure: no container for %s yet; the new settings apply on the next start", config.UUID)
 		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", containerName, err)
 	}
 	wasRunning := info.State != nil && info.State.Running
 	if wasRunning && info.Config != nil && !ownsContainer(info.Config.Labels, nodeIdentities(nodeSecretDir)) {
@@ -1641,6 +1644,11 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 
 	// Inspect existing container to preserve image + active sub-server + binds.
 	info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
+	if err != nil && !client.IsErrNotFound(err) {
+		// Read as "no container", the change was reported applied while the
+		// running container kept its old settings.
+		return config, fmt.Errorf("inspect %s: %w", containerName, err)
+	}
 	if err == nil {
 		if config.Docker.Image == "" {
 			config.Docker.Image = info.Config.Image

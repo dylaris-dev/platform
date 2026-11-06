@@ -2594,9 +2594,18 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) error {
 	// had to be forced), and the flag also holds the stats collector's status
 	// writes (statusWriteHeld): left behind, the next start would sit on
 	// "starting" until the TTL ran out.
+	//
+	// :input goes too once the container is known down: a save-all and stop no
+	// log-shipper read (it could not reach Redis) stayed queued, and the next
+	// container's shipper fed them to the booting JVM, which stopped itself and
+	// was held down as stopped_by_server.
 	defer func() {
-		if cInfo, cErr := dm.cli.ContainerInspect(ctx, mcName); cErr != nil || cInfo.State == nil || !cInfo.State.Running {
+		cInfo, cErr := dm.cli.ContainerInspect(ctx, mcName)
+		if cErr != nil || cInfo.State == nil || !cInfo.State.Running {
 			rdb.Del(ctx, stopKey)
+		}
+		if client.IsErrNotFound(cErr) || (cErr == nil && (cInfo.State == nil || !cInfo.State.Running)) {
+			rdb.Del(ctx, inputKey)
 		}
 	}()
 
