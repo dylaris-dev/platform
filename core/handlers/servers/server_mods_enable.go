@@ -56,6 +56,9 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
+	if h.refuseIfModsLocked(w, r, srv) {
+		return
+	}
 	var req struct {
 		Enabled *bool `json:"enabled"`
 	}

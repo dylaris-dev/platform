@@ -150,6 +150,7 @@ func removeIfPresent(path string) error {
 var loaderLaunchDirs = []string{
 	"libraries/net/minecraftforge/forge",
 	"libraries/net/neoforged/neoforge",
+	"libraries/net/neoforged/forge", // NeoForge 1.20.1
 }
 
 func clearLoaderLaunchDirs(destDir string) error {

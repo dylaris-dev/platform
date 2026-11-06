@@ -25,7 +25,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -43,11 +45,21 @@ type versionUpdateFile struct {
 }
 
 type versionUpdatePayload struct {
-	UUID            string              `json:"uuid"`
-	ActiveSubServer string              `json:"activeSubServer"`
-	TargetDir       string              `json:"targetDir"`
-	Remove          []string            `json:"remove"`
-	Install         []versionUpdateFile `json:"install"`
+	UUID            string   `json:"uuid"`
+	ActiveSubServer string   `json:"activeSubServer"`
+	TargetDir       string   `json:"targetDir"`
+	Remove          []string `json:"remove"`
+	// RemoveFrom names each removal's own directory. An older Core sends only
+	// Remove, every name taken from TargetDir.
+	RemoveFrom []versionUpdateRemoval `json:"removeFrom"`
+	Install    []versionUpdateFile    `json:"install"`
+}
+
+// versionUpdateRemoval is one old jar and the directory under the sub-server
+// it is in.
+type versionUpdateRemoval struct {
+	Dir      string `json:"dir"`
+	FileName string `json:"fileName"`
 }
 
 // versionMoveInstallers is the installServer types a version move can target:
@@ -208,17 +220,11 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		return
 	}
 
-	modsRel := filepath.ToSlash(filepath.Join(subName, targetDir))
-	for _, name := range pl.Remove {
-		if !validate.IsPlainFileName(name) {
-			log.Printf("update_server_version: skipping invalid removal name %q", name)
-			continue
-		}
-		if err := stash.takeFile(filepath.Join(modsDir, name), modsRel+"/"+name); err != nil {
-			fail("setting "+name+" aside", err)
-			return
-		}
+	if name, err := takeVersionMoveRemovals(stash, serverPath, subName, targetDir, modsDir, pl); err != nil {
+		fail("setting "+name+" aside", err)
+		return
 	}
+	modsRel := filepath.ToSlash(filepath.Join(subName, targetDir))
 
 	for _, sj := range staged {
 		// Only a name this move created is removed again on a failure: one that
@@ -299,6 +305,42 @@ func abandonVersionUpdate(ctx context.Context, rdb *redis.Client, serverUUID, re
 	}
 	key := fmt.Sprintf("dylaris:server:%s:version_update_failed", serverUUID)
 	rdb.Set(ctx, key, reason, 5*time.Minute)
+}
+
+// takeVersionMoveRemovals sets every old jar aside into the stash, each from
+// its own directory, and names the one that failed. modsDir is the pinned
+// targetDir.
+func takeVersionMoveRemovals(stash *jarStash, serverPath, subName, targetDir, modsDir string, pl versionUpdatePayload) (string, error) {
+	removals := pl.RemoveFrom
+	if len(removals) == 0 {
+		for _, name := range pl.Remove {
+			removals = append(removals, versionUpdateRemoval{Dir: targetDir, FileName: name})
+		}
+	}
+	for _, rm := range removals {
+		if !validate.IsPlainFileName(rm.FileName) || !validSubDir(rm.Dir) {
+			log.Printf("update_server_version: skipping invalid removal %q in %q", rm.FileName, rm.Dir)
+			continue
+		}
+		dir := modsDir
+		if rm.Dir != targetDir {
+			// Pinned like modsDir, for the same reason: the tenant can swap the
+			// directory for a link while the move runs.
+			d, release, err := pinDir(serverPath, subName+"/"+rm.Dir, false)
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return rm.FileName, err
+			}
+			defer release()
+			dir = d
+		}
+		if err := stash.takeFile(filepath.Join(dir, rm.FileName), subName+"/"+rm.Dir+"/"+rm.FileName); err != nil {
+			return rm.FileName, err
+		}
+	}
+	return "", nil
 }
 
 // stageInstalls fetches and verifies every jar into a ".part" beside its final

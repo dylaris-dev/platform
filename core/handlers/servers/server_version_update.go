@@ -445,9 +445,15 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// Every mod is replaced, including the ones staying on the same version:
 	// the node drops the old jar and writes the resolved one, so a same-version
 	// resolve is a no-op rewrite rather than a special case.
+	//
+	// removeFrom names the directory each jar is in now, which is not always
+	// the one the move installs into (a Paper server re-declared as Fabric
+	// keeps its plugins/ rows). remove stays for a node that predates it.
 	remove := make([]string, 0, len(mods))
-	for _, m := range mods {
-		remove = append(remove, m.FileName)
+	removeFrom := make([]map[string]string, 0, len(mods))
+	for i := range mods {
+		remove = append(remove, mods[i].FileName)
+		removeFrom = append(removeFrom, map[string]string{"dir": uninstallTargetDir(&mods[i], srv.InstallerType), "fileName": mods[i].FileName})
 	}
 	targetDir := modcompat.DefaultTargetDirForLoader(loader)
 
@@ -466,6 +472,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		"activeSubServer": srv.ActiveSubServer,
 		"targetDir":       targetDir,
 		"remove":          remove,
+		"removeFrom":      removeFrom,
 		"install":         install,
 		"docker": map[string]interface{}{
 			"image":         javaImage,
@@ -523,6 +530,14 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	h.d.Store.UpdateServerStatus(serverID, "installing")
 
 	if err := h.d.Queue.SendCommand(context.Background(), node.Token, "update_server_version", configPayload, installerPayload); err != nil {
+		// No node got the command, so none will report a failure for the
+		// status watcher to undo: put the columns back here, or the server
+		// claims the target version and sits "installing" for good.
+		_ = h.d.Store.UpdateServerSetup(serverID, srv.GameImage, srv.StartCommand, srv.ActiveSubServer, srv.ExtraJvmFlags, srv.InstallerType, srv.MinecraftVersion, srv.BuildNumber)
+		h.d.Store.UpdateServerStatus(serverID, srv.Status)
+		if h.d.Redis != nil {
+			h.d.Redis.Del(context.Background(), services.VersionUpdateUndoKey(srv.UUID))
+		}
 		httpx.SendJSONError(w, "Failed to queue the version update", http.StatusInternalServerError)
 		return
 	}

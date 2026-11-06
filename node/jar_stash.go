@@ -69,8 +69,16 @@ func stashServerJars(serverPath, sub string) (*jarStash, error) {
 		}
 	}
 	s.complete = true
+	// Written down for recoverStash: a node that dies from here on may have
+	// run the install, and only a complete stash may clear what it wrote.
+	if f, err := root.Create(path.Join(s.dir, stashCompleteMark)); err == nil {
+		f.Close()
+	}
 	return s, nil
 }
+
+// stashCompleteMark is the file in the stash that says everything was taken.
+const stashCompleteMark = "complete"
 
 // stashAddedList is the file in the stash that lists what the attempt put in
 // place (add), so an attempt that dies before restore can still be undone.
@@ -90,6 +98,20 @@ const stashAddedList = "added.list"
 func recoverStash(root *os.Root, dir string) {
 	if st, err := root.Lstat(dir); err != nil || !st.IsDir() {
 		return
+	}
+	// A complete stash may have had an install run over it, whose launch dir
+	// and root jars sit beside the names the stash took back: cleared first,
+	// as restore does, or resolveLaunch could start the half-installed loader.
+	// A partial one ran no install; what is in place is the old server.
+	if _, err := root.Lstat(path.Join(dir, stashCompleteMark)); err == nil {
+		sub := strings.TrimSuffix(strings.TrimPrefix(dir, "."), ".oldjars")
+		CleanServerJars(filepath.Join(root.Name(), filepath.FromSlash(sub)))
+		for _, d := range loaderLaunchDirs {
+			root.RemoveAll(path.Join(sub, d))
+		}
+		// Once only: from here files leave the stash, and a second clear would
+		// delete what was already put back.
+		root.Remove(path.Join(dir, stashCompleteMark))
 	}
 	if b, err := root.ReadFile(path.Join(dir, stashAddedList)); err == nil {
 		for _, rel := range strings.Split(string(b), "\n") {
@@ -210,6 +232,9 @@ func (s *jarStash) restore() error {
 		for _, d := range loaderLaunchDirs {
 			s.root.RemoveAll(path.Join(s.sub, d))
 		}
+		// A stash kept after a failed rename below must not be cleared again
+		// by recoverStash: what was already put back has no copy in it.
+		s.root.Remove(path.Join(s.dir, stashCompleteMark))
 	}
 	var first error
 	for i := len(s.moved) - 1; i >= 0; i-- {

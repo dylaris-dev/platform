@@ -2403,7 +2403,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "install_mod":
 		runInstallMod(ctx, rdb, storage, payload)
 	case "remove_mod":
-		runRemoveMod(storage, payload)
+		runRemoveMod(ctx, rdb, storage, payload)
 
 	case "update_server_version":
 		runUpdateServerVersion(ctx, rdb, dm, storage, cmd, payload)

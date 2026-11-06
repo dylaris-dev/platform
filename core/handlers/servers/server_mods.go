@@ -191,6 +191,22 @@ func (h *ServerModsHandler) ModpackContents(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// refuseIfModsLocked refuses a mod change while a version move, reinstall,
+// restore, copy or server move works in the same tree. Their rollback restores
+// only what they stashed, so a jar written or removed beside them survived a
+// failed move on the old version. "installing" covers an install queued but
+// not yet started, which holds no busy key on the node.
+func (h *ServerModsHandler) refuseIfModsLocked(w http.ResponseWriter, r *http.Request, srv *models.Server) bool {
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
+		return true
+	}
+	if srv.Status == "installing" {
+		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
+		return true
+	}
+	return false
+}
+
 // Install POST /api/servers/{id}/mods - queues a mod install onto the active
 // sub-server. The reply says queued, and the mod only takes effect after a
 // restart.
@@ -202,6 +218,9 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
+		return
+	}
+	if h.refuseIfModsLocked(w, r, srv) {
 		return
 	}
 	var req installModRequest
@@ -503,6 +522,9 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
+		return
+	}
+	if h.refuseIfModsLocked(w, r, srv) {
 		return
 	}
 	modID, _ := strconv.Atoi(mux.Vars(r)["modId"])

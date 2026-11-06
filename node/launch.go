@@ -30,6 +30,7 @@ func resolveLaunch(subServerDir string) launchForm {
 	for _, glob := range []string{
 		"libraries/net/minecraftforge/forge/*/unix_args.txt",
 		"libraries/net/neoforged/neoforge/*/unix_args.txt",
+		"libraries/net/neoforged/forge/*/unix_args.txt", // NeoForge 1.20.1
 	} {
 		matches, _ := filepath.Glob(filepath.Join(subServerDir, glob))
 		if len(matches) > 0 {

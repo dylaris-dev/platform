@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"dylaris-pkg/validate"
 )
 
 // dockerManager is set once at boot by main.go so installers that need a
@@ -306,6 +308,112 @@ func installFabric(dir, mcVersion, loaderVersion string) error {
 	return downloadFile(url, filepath.Join(dir, "fabric-server-launch.jar"))
 }
 
+// installQuilt lays down what Quilt's own installer does for a server: the
+// libraries of Quilt's server launch profile under libraries/, a
+// quilt-server-launch.jar that is only a manifest naming them, and the vanilla
+// server.jar its launcher loads. Quilt's meta has no ready server jar the way
+// Fabric's does, and Fabric's cannot stand in: it has no Quilt loader versions.
+func installQuilt(dir, mcVersion, loaderVersion string) error {
+	var profile struct {
+		LauncherMainClass string `json:"launcherMainClass"`
+		Libraries         []struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"libraries"`
+	}
+	if err := fetchJSON(fmt.Sprintf("https://meta.quiltmc.org/v3/versions/loader/%s/%s/server/json",
+		url.PathEscape(mcVersion), url.PathEscape(loaderVersion)), &profile); err != nil {
+		return fmt.Errorf("quilt launch profile lookup failed: %v", err)
+	}
+	if profile.LauncherMainClass == "" || len(profile.Libraries) == 0 {
+		return fmt.Errorf("quilt launch profile for %s/%s is incomplete", mcVersion, loaderVersion)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	var classPath []string
+	for _, lib := range profile.Libraries {
+		rel, ok := mavenJarPath(lib.Name)
+		if !ok || !strings.HasPrefix(lib.URL, "https://") {
+			return fmt.Errorf("quilt library %q from %q refused", lib.Name, lib.URL)
+		}
+		rel = "libraries/" + rel
+		// Through the Root, so a planted libraries symlink is refused rather
+		// than followed by the download below.
+		if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+			return fmt.Errorf("quilt library %s: %w", lib.Name, err)
+		}
+		if err := downloadFile(strings.TrimSuffix(lib.URL, "/")+"/"+strings.TrimPrefix(rel, "libraries/"), filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
+			return fmt.Errorf("quilt library %s: %w", lib.Name, err)
+		}
+		classPath = append(classPath, rel)
+	}
+	f, err := createIn(root, "quilt-server-launch.jar", 0o644)
+	if err != nil {
+		return err
+	}
+	zw := zip.NewWriter(f)
+	w, err := zw.Create("META-INF/MANIFEST.MF")
+	if err == nil {
+		_, err = io.WriteString(w, manifestHeader("Manifest-Version", "1.0")+
+			manifestHeader("Main-Class", profile.LauncherMainClass)+
+			manifestHeader("Class-Path", strings.Join(classPath, " "))+"\r\n")
+	}
+	if cerr := zw.Close(); err == nil {
+		err = cerr
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return fmt.Errorf("writing quilt-server-launch.jar: %w", err)
+	}
+	log.Printf("Installed Quilt server launcher (mc=%s loader=%s)", mcVersion, loaderVersion)
+	return installVanilla(dir, mcVersion)
+}
+
+// mavenJarPath turns group:artifact:version[:classifier] into the jar's path
+// in a Maven repository (the classifier ignored, as Quilt's installer does).
+// Every segment must be a plain name: the coordinates come from a third party
+// and become a path inside the server.
+func mavenJarPath(name string) (string, bool) {
+	parts := strings.SplitN(name, ":", 4)
+	if len(parts) < 3 {
+		return "", false
+	}
+	group := strings.Split(parts[0], ".")
+	for _, seg := range append(group, parts[1], parts[2]) {
+		if !validate.IsPlainFileName(seg) {
+			return "", false
+		}
+	}
+	artifact, version := parts[1], parts[2]
+	return strings.Join(group, "/") + "/" + artifact + "/" + version + "/" + artifact + "-" + version + ".jar", true
+}
+
+// manifestHeader is one JAR manifest header, wrapped the way the format
+// requires: no line over 72 bytes, continuations start with a space. Java
+// refuses an over-long line, and a Class-Path of every library is far over.
+func manifestHeader(name, value string) string {
+	line := name + ": " + value
+	var b strings.Builder
+	for first := true; ; first = false {
+		n := 72
+		if !first {
+			b.WriteString(" ")
+			n = 71
+		}
+		if len(line) <= n {
+			b.WriteString(line + "\r\n")
+			return b.String()
+		}
+		b.WriteString(line[:n] + "\r\n")
+		line = line[n:]
+	}
+}
+
 // installForge resolves the recommended/latest Forge build via promotions_slim.json
 // (or uses the caller-supplied build), downloads the installer JAR and runs it
 // inside a one-shot container built from the user's chosen Java image. No
@@ -346,9 +454,21 @@ func installNeoForge(dir, version, javaImage, serverUUID string) error {
 		version = v
 	}
 
-	installerURL := fmt.Sprintf("https://maven.neoforged.net/releases/net/neoforged/neoforge/%s/neoforge-%s-installer.jar", version, version)
 	log.Printf("Downloading NeoForge installer (version=%s)", version)
-	return runLoaderInstaller(dir, "neoforge", installerURL, "_neoforge-installer.jar", javaImage, serverUUID, "--install-server")
+	return runLoaderInstaller(dir, "neoforge", neoForgeInstallerURL(version), "_neoforge-installer.jar", javaImage, serverUUID, "--install-server")
+}
+
+// neoForgeInstallerURL is the installer jar for a NeoForge build. The 1.20.1
+// line (47.x) predates the rename and is published as net.neoforged:forge
+// under 1.20.1-<build>; everything later is net.neoforged:neoforge:<build>.
+func neoForgeInstallerURL(version string) string {
+	if strings.HasPrefix(version, "47.") {
+		version = "1.20.1-" + version
+	}
+	if strings.HasPrefix(version, "1.20.1-") {
+		return fmt.Sprintf("https://maven.neoforged.net/releases/net/neoforged/forge/%s/forge-%s-installer.jar", version, version)
+	}
+	return fmt.Sprintf("https://maven.neoforged.net/releases/net/neoforged/neoforge/%s/neoforge-%s-installer.jar", version, version)
 }
 
 // resolveNeoForgeVersion reads the Maven metadata and picks the version a
@@ -894,6 +1014,7 @@ func DetectServerJar(destDir string) string {
 		// specific shapes so a 1.17+ directory still picks its shim.
 		"forge-*.jar",
 		"neoforge-*.jar",           // NeoForge
+		"quilt-server-launch.jar",  // Quilt
 		"fabric-server-launch.jar", // Fabric
 		"paper-*.jar",              // Paper
 		"purpur-*.jar",             // Purpur

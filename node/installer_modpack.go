@@ -275,25 +275,29 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 		}
 	}
 
-	// Chain into the loader install. Dependencies map gives us the MC
-	// version + loader version. Loader choice derives from which key is set.
-	mcVersion := idx.Dependencies["minecraft"]
+	return installMrpackLoader(destDir, idx.Dependencies, cfg)
+}
+
+// installMrpackLoader chains into the loader install. The dependencies map
+// gives the MC version + loader version; the loader is whichever key is set.
+func installMrpackLoader(destDir string, deps map[string]string, cfg InstallerConfig) error {
+	mcVersion := deps["minecraft"]
 	if mcVersion == "" {
 		return fmt.Errorf("modpack manifest missing minecraft dependency")
 	}
-	if fl := idx.Dependencies["fabric-loader"]; fl != "" {
+	if fl := deps["fabric-loader"]; fl != "" {
 		log.Printf("modpack: chaining fabric mc=%s loader=%s", mcVersion, fl)
 		return installFabric(destDir, mcVersion, fl)
 	}
-	if ql := idx.Dependencies["quilt-loader"]; ql != "" {
-		log.Printf("modpack: chaining quilt mc=%s loader=%s (using fabric installer as fallback)", mcVersion, ql)
-		return installFabric(destDir, mcVersion, ql)
+	if ql := deps["quilt-loader"]; ql != "" {
+		log.Printf("modpack: chaining quilt mc=%s loader=%s", mcVersion, ql)
+		return installQuilt(destDir, mcVersion, ql)
 	}
-	if fb := idx.Dependencies["forge"]; fb != "" {
+	if fb := deps["forge"]; fb != "" {
 		log.Printf("modpack: chaining forge mc=%s loader=%s", mcVersion, fb)
 		return installForge(destDir, mcVersion, fb, cfg.JavaImage, cfg.ServerUUID)
 	}
-	if nf := idx.Dependencies["neoforge"]; nf != "" {
+	if nf := deps["neoforge"]; nf != "" {
 		log.Printf("modpack: chaining neoforge loader=%s", nf)
 		return installNeoForge(destDir, nf, cfg.JavaImage, cfg.ServerUUID)
 	}

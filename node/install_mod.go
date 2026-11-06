@@ -98,6 +98,10 @@ func runInstallMod(ctx context.Context, rdb *redis.Client, storage *StorageManag
 		log.Printf("install_mod: %s", msg)
 		reportModInstall(ctx, rdb, pl, "failed", msg)
 	}
+	if modsHeld(ctx, rdb, pl.UUID) {
+		fail("the node is still working on this server (version change, reinstall, restore or copy); install the mod again when it has finished")
+		return
+	}
 	if err := validateModrinthURL(pl.DownloadURL); err != nil {
 		fail("%v", err)
 		return
@@ -237,12 +241,16 @@ func reportModInstall(ctx context.Context, rdb *redis.Client, pl installModPaylo
 	}
 }
 
-func runRemoveMod(storage *StorageManager, payload string) {
+func runRemoveMod(ctx context.Context, rdb *redis.Client, storage *StorageManager, payload string) {
 	var pl removeModPayload
 	if err := json.Unmarshal([]byte(payload), &struct {
 		Config *removeModPayload `json:"config"`
 	}{Config: &pl}); err != nil {
 		log.Printf("remove_mod: decode failed: %v", err)
+		return
+	}
+	if modsHeld(ctx, rdb, pl.UUID) {
+		log.Printf("remove_mod: %s is busy, not removing %q", pl.UUID, pl.FileName)
 		return
 	}
 	serverPath := storage.GetServerDir(pl.UUID)
@@ -282,6 +290,13 @@ func runRemoveMod(storage *StorageManager, payload string) {
 		return
 	}
 	log.Printf("remove_mod: removed %s", path)
+}
+
+// modsHeld reports whether a version move, reinstall, restore or copy holds
+// the server. Their rollback restores only what they stashed themselves, so a
+// jar written or removed beside them would survive it on the wrong version.
+func modsHeld(ctx context.Context, rdb *redis.Client, uuid string) bool {
+	return rdb != nil && isNodeBusy(ctx, rdb, uuid)
 }
 
 func validateModrinthURL(u string) error {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -31,7 +32,7 @@ func TestRemoveModRefusesASymlinkedModsDirectory(t *testing.T) {
 	}
 	mustSymlink(t, victimDir, filepath.Join(subDir, "mods"))
 
-	runRemoveMod(sm, mustModPayload(t, removeModPayload{
+	runRemoveMod(context.Background(), nil, sm, mustModPayload(t, removeModPayload{
 		UUID:            uuid,
 		ActiveSubServer: "survival",
 		TargetDir:       "mods",
@@ -59,7 +60,7 @@ func TestRemoveModStillRemovesAnOrdinaryMod(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runRemoveMod(sm, mustModPayload(t, removeModPayload{
+	runRemoveMod(context.Background(), nil, sm, mustModPayload(t, removeModPayload{
 		UUID:            uuid,
 		ActiveSubServer: "survival",
 		TargetDir:       "mods",
