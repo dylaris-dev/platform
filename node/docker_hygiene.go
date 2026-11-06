@@ -50,8 +50,11 @@ func currentLogConfig() container.LogConfig {
 // retired repository name. Removal is never forced, so one a container still
 // uses stays.
 func isStaleRuntimeImage(img dockerimage.Summary) bool {
+	// CI pushes <IMAGE_NAME>-mc-javaNN with IMAGE_NAME dylaris-dev/platform, the
+	// same names core allows (servers_lifecycle.go platformImagePrefix).
+	const runtimeRepo = "platform-mc-java"
 	ours := func(ref string) bool {
-		return strings.HasPrefix(ref, currentImagePrefix+"mc-java") || strings.HasPrefix(ref, legacyImagePrefix+"mc-java")
+		return strings.HasPrefix(ref, currentImagePrefix+runtimeRepo) || strings.HasPrefix(ref, legacyImagePrefix+runtimeRepo)
 	}
 	if len(img.RepoTags) == 0 {
 		for _, d := range img.RepoDigests {
@@ -62,7 +65,7 @@ func isStaleRuntimeImage(img dockerimage.Summary) bool {
 		return false
 	}
 	for _, t := range img.RepoTags {
-		if !strings.HasPrefix(t, legacyImagePrefix+"mc-java") {
+		if !strings.HasPrefix(t, legacyImagePrefix+runtimeRepo) {
 			return false
 		}
 	}

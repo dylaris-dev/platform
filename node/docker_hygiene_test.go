@@ -31,13 +31,14 @@ func TestStaleRuntimeImages(t *testing.T) {
 		img  dockerimage.Summary
 		want bool
 	}{
-		{"previous build", dockerimage.Summary{RepoDigests: []string{"ghcr.io/dylaris-dev/mc-java21@sha256:aa"}}, true},
-		{"current build", dockerimage.Summary{RepoTags: []string{"ghcr.io/dylaris-dev/mc-java21:latest"}}, false},
-		{"retired repository", dockerimage.Summary{RepoTags: []string{"ghcr.io/bartis-dev/dylaris-mc-java21:latest"}}, true},
+		{"previous build", dockerimage.Summary{RepoDigests: []string{"ghcr.io/dylaris-dev/platform-mc-java21@sha256:aa"}}, true},
+		{"current build", dockerimage.Summary{RepoTags: []string{"ghcr.io/dylaris-dev/platform-mc-java21:latest"}}, false},
+		{"retired repository", dockerimage.Summary{RepoTags: []string{"ghcr.io/bartis-dev/dylaris-platform-mc-java21:latest"}}, true},
 		{"our node image", dockerimage.Summary{RepoDigests: []string{"ghcr.io/dylaris-dev/platform-node@sha256:bb"}}, false},
 		{"someone else's", dockerimage.Summary{RepoDigests: []string{"docker.io/library/postgres@sha256:cc"}}, false},
+		{"retired previous build", dockerimage.Summary{RepoDigests: []string{"ghcr.io/bartis-dev/dylaris-platform-mc-java17@sha256:dd"}}, true},
 		{"untagged without digest", dockerimage.Summary{}, false},
-		{"retired and current tag", dockerimage.Summary{RepoTags: []string{"ghcr.io/bartis-dev/dylaris-mc-java21:latest", "ghcr.io/dylaris-dev/mc-java21:latest"}}, false},
+		{"retired and current tag", dockerimage.Summary{RepoTags: []string{"ghcr.io/bartis-dev/dylaris-platform-mc-java21:latest", "ghcr.io/dylaris-dev/platform-mc-java21:latest"}}, false},
 	}
 	for _, tt := range tests {
 		if got := isStaleRuntimeImage(tt.img); got != tt.want {
