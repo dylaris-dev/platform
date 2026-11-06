@@ -8,8 +8,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -25,7 +27,7 @@ import (
 // lines, reads as "restart it".
 func (dm *DockerManager) stoppedItself(ctx context.Context, rdb *redis.Client, uuid string) bool {
 	info, err := dm.cli.ContainerInspect(dm.ctx, "mc_"+uuid)
-	if err != nil || !exitedCleanlyAfter(info.State, nodeStartedAt) {
+	if err != nil || !exitedCleanlyAfter(info.State, nodeStartedAt) || stoppedByDiskGuard(uuid, info.State) {
 		return false
 	}
 	started, err := time.Parse(time.RFC3339Nano, info.State.StartedAt)
@@ -42,6 +44,30 @@ func (dm *DockerManager) stoppedItself(ctx context.Context, rdb *redis.Client, u
 		return false
 	}
 	return !logTailAsksRestart(ctx, rdb, serverLogStreamKey(uuid, sub))
+}
+
+// diskGuardTrips is when the disk guard last stopped each server (uuid ->
+// time.Time). Its stop exits 0 like "stop" in the console, and without this the
+// reconciler read it as the server stopping itself once the hold was lifted,
+// so a server whose owner freed space stayed down until someone pressed Start.
+// Node memory only: after a node restart the stop predates nodeStartedAt and
+// exitedCleanlyAfter already lets the server come back.
+var diskGuardTrips sync.Map
+
+// stoppedByDiskGuard reports whether st is the run the disk guard stopped:
+// it was running when the guard tripped and ended after.
+func stoppedByDiskGuard(uuid string, st *container.State) bool {
+	v, ok := diskGuardTrips.Load(uuid)
+	if !ok || st == nil {
+		return false
+	}
+	at := v.(time.Time)
+	started, err := time.Parse(time.RFC3339Nano, st.StartedAt)
+	if err != nil {
+		return false
+	}
+	finished, err := time.Parse(time.RFC3339Nano, st.FinishedAt)
+	return err == nil && started.Before(at) && !finished.Before(at)
 }
 
 // crashReportSince reports whether dir holds a file written after t.

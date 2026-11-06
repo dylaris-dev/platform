@@ -150,75 +150,129 @@ func (s *StatsConsumerService) scanNodes() {
 
 func (s *StatsConsumerService) consumeStream(streamKey string) {
 	ctx := context.Background()
-	group := "dylaris-core-stats"
-	consumer := s.coreID
+	r := &statsStreamReader{
+		key:      streamKey,
+		group:    "dylaris-core-stats",
+		consumer: s.coreID,
+		// The servers this node may report for, refreshed each minute.
+		nodeToken: strings.TrimSuffix(strings.TrimPrefix(streamKey, "dylaris:node:"), ":stats:batch"),
+		block:     10 * time.Second,
+		// Its own leftovers first: a Core that stopped mid-batch or failed one.
+		retryAt: time.Now(),
+	}
 
 	// XGroupCreateMkStream is idempotent — error on re-create is expected and ignored.
-	s.redis.XGroupCreateMkStream(ctx, streamKey, group, "0").Err()
+	s.redis.XGroupCreateMkStream(ctx, r.key, r.group, "0").Err()
 
 	log.Printf("Stats consumer started for stream %s", streamKey)
 
-	// The servers this node may report for, refreshed each minute.
-	nodeToken := strings.TrimSuffix(strings.TrimPrefix(streamKey, "dylaris:node:"), ":stats:batch")
-	var allowed map[string]bool
-	var allowedAt time.Time
-
 	for {
-		results, err := s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
-			Group:    group,
-			Consumer: consumer,
-			Streams:  []string{streamKey, ">"},
-			Count:    50,
-			Block:    10 * time.Second,
-		}).Result()
-		if err == redis.Nil {
-			continue
-		}
-		if err != nil {
-			// The group may have vanished (Redis restarted with no persistence).
-			// Recreating is idempotent - BUSYGROUP when it still exists - so this
-			// self-heals a NOGROUP loop instead of spinning until the Core restarts.
-			s.redis.XGroupCreateMkStream(ctx, streamKey, group, "0")
-			time.Sleep(5 * time.Second)
-			continue
-		}
+		s.readStats(ctx, r)
+	}
+}
 
-		for _, stream := range results {
-			var rows []models.ServerStatRow
-			var ackIDs []string
+// statsStreamReader is one node batch stream's consumer state.
+type statsStreamReader struct {
+	key, group, consumer, nodeToken string
+	block                           time.Duration
 
-			for _, msg := range stream.Messages {
-				data, ok := msg.Values["data"].(string)
-				if !ok {
-					s.redis.XAck(ctx, streamKey, group, msg.ID) // undeliverable: ack now
-					continue
-				}
+	allowed   map[string]bool
+	allowedAt time.Time
 
-				var batch statsBatchPayload
-				if err := json.Unmarshal([]byte(data), &batch); err != nil {
-					s.redis.XAck(ctx, streamKey, group, msg.ID) // undeliverable: ack now
-					continue
-				}
+	// retryAt, when set and due, reads this consumer's own un-ACKed entries
+	// ("0") instead of new ones (">"). ">" never hands an entry out twice, so
+	// a batch whose insert failed was lost for good although it was never
+	// ACKed. Retried on a timer rather than before every new read, so a batch
+	// that keeps failing cannot hold back the ones after it.
+	retryAt time.Time
+}
 
-				if time.Since(allowedAt) > time.Minute {
-					if a, err := s.nodeServerUUIDs(nodeToken); err == nil {
-						allowed, allowedAt = a, time.Now()
-					}
-				}
-				rows = append(rows, statsRows(batch, allowed)...)
-				ackIDs = append(ackIDs, msg.ID)
+// statsRetryEvery is how long a failed batch waits for its next attempt.
+const statsRetryEvery = time.Minute
+
+// statsPendingMaxAge is how long a failed batch is retried before it is
+// dropped: well past a database blip, and inside the ~3 h the node keeps.
+const statsPendingMaxAge = time.Hour
+
+// readStats runs one read of the stream and stores what it got.
+func (s *StatsConsumerService) readStats(ctx context.Context, r *statsStreamReader) {
+	from := ">"
+	retrying := !r.retryAt.IsZero() && !time.Now().Before(r.retryAt)
+	if retrying {
+		from = "0"
+	}
+	const count = 50
+	results, err := s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    r.group,
+		Consumer: r.consumer,
+		Streams:  []string{r.key, from},
+		Count:    count,
+		Block:    r.block,
+	}).Result()
+	if err == redis.Nil {
+		return
+	}
+	if err != nil {
+		// The group may have vanished (Redis restarted with no persistence).
+		// Recreating is idempotent - BUSYGROUP when it still exists - so this
+		// self-heals a NOGROUP loop instead of spinning until the Core restarts.
+		s.redis.XGroupCreateMkStream(ctx, r.key, r.group, "0")
+		time.Sleep(5 * time.Second)
+		return
+	}
+
+	read := 0
+	failed := false
+	for _, stream := range results {
+		read += len(stream.Messages)
+		var rows []models.ServerStatRow
+		var ackIDs []string
+
+		for _, msg := range stream.Messages {
+			// A pending entry the node's MAXLEN trim already removed comes back
+			// without values, and so does nothing else.
+			data, ok := msg.Values["data"].(string)
+			if !ok {
+				s.redis.XAck(ctx, r.key, r.group, msg.ID) // undeliverable: ack now
+				continue
+			}
+			if at, ok := streamIDTime(msg.ID); ok && time.Since(at) > statsPendingMaxAge {
+				log.Printf("Stats batch %s on %s failed for %s, dropping it", msg.ID, r.key, statsPendingMaxAge)
+				s.redis.XAck(ctx, r.key, r.group, msg.ID)
+				continue
 			}
 
-			if len(rows) > 0 {
-				if err := s.store.InsertStatsBatch(rows); err != nil {
-					log.Printf("Stats batch insert error: %v", err)
-					continue // don't ACK on failure so we retry
-				}
+			var batch statsBatchPayload
+			if err := json.Unmarshal([]byte(data), &batch); err != nil {
+				s.redis.XAck(ctx, r.key, r.group, msg.ID) // undeliverable: ack now
+				continue
 			}
 
-			if len(ackIDs) > 0 {
-				s.redis.XAck(ctx, streamKey, group, ackIDs...)
+			if time.Since(r.allowedAt) > time.Minute {
+				if a, err := s.nodeServerUUIDs(r.nodeToken); err == nil {
+					r.allowed, r.allowedAt = a, time.Now()
+				}
+			}
+			rows = append(rows, statsRows(batch, r.allowed)...)
+			ackIDs = append(ackIDs, msg.ID)
+		}
+
+		if len(rows) > 0 {
+			if err := s.store.InsertStatsBatch(rows); err != nil {
+				log.Printf("Stats batch insert error: %v", err)
+				failed = true
+				continue // not ACKed: retried from the pending list
 			}
 		}
+
+		if len(ackIDs) > 0 {
+			s.redis.XAck(ctx, r.key, r.group, ackIDs...)
+		}
+	}
+	switch {
+	case failed:
+		r.retryAt = time.Now().Add(statsRetryEvery)
+	case retrying && read < count:
+		r.retryAt = time.Time{} // the pending list is empty now
 	}
 }

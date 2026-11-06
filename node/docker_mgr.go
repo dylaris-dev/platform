@@ -1811,6 +1811,22 @@ func boundPorts(pm nat.PortMap, extraLabel string) (host, cont int) {
 	return 0, 0
 }
 
+// pingPort is the port the server listens on inside its container, resolved
+// the way the container was built: its own game binding, else the saved port,
+// else the node default. The default alone missed an admin-set port, and a
+// running container keeps its port when the default changes.
+func pingPort(info container.InspectResponse, saved func() int) int {
+	if info.ContainerJSONBase != nil && info.HostConfig != nil {
+		if _, c := boundPorts(info.HostConfig.PortBindings, containerLabel(info, extraPortsLabel)); c > 0 {
+			return c
+		}
+	}
+	if p := saved(); p > 0 {
+		return p
+	}
+	return getContainerPort()
+}
+
 // savedContainerPort is the container port in the server's .node_config.json,
 // or 0: the admin-set port for a rebuild whose payload carries none.
 func (dm *DockerManager) savedContainerPort(uuid string) int {

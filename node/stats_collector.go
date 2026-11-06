@@ -515,11 +515,16 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	// private IP) and SLP-pings it. Resolving via the daemon rather than dialling
 	// the container NAME is what makes this work on a host-net node (whose resolver
 	// is the host's, not Docker's) and removes the DNS-wildcard target the RCON/
-	// tab-proxy paths already dropped. Uses the admin-configurable global container
-	// port (default 25565) so the target stays in sync with MC's listen port.
+	// tab-proxy paths already dropped. The port is the container's own
+	// (pingPort), read with the CPU limit below; 0 until that first inspect.
 	var proxyReady proxyReadyReporter
+	var mcPort atomic.Int64
 	pingOnce := func() (*SLPResponse, error) {
-		addr, err := resolveMCAddr(uuid, getContainerPort())
+		port := int(mcPort.Load())
+		if port == 0 {
+			port = getContainerPort()
+		}
+		addr, err := resolveMCAddr(uuid, port)
 		if err != nil {
 			return nil, err
 		}
@@ -578,6 +583,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 		snap.mu.Lock()
 		snap.cpuLimit = cpuLimit
 		snap.mu.Unlock()
+		mcPort.Store(int64(pingPort(info, func() int { return dm.savedContainerPort(uuid) })))
 		if info.State != nil {
 			if started, err := time.Parse(time.RFC3339Nano, info.State.StartedAt); err == nil {
 				// The file is read when the server boots, so a change to it
@@ -749,6 +755,7 @@ func holdForDiskFull(ctx context.Context, rdb *redis.Client, uuid, liveKey strin
 	// Set BEFORE the stop: gracefulStop takes seconds and the
 	// reconciler ticks during them.
 	rdb.Set(ctx, diskFullKey(uuid), "1", diskFullMarkerTTL)
+	diskGuardTrips.Store(uuid, time.Now())
 	stop()
 	// Not ctx: the scan cancels the collector as soon as the container is
 	// gone, which is right while the stop returns, and the lost write left
@@ -775,6 +782,9 @@ func releaseDiskHold(ctx context.Context, rdb *redis.Client, uuid, liveKey strin
 	rdb.Del(ctx, diskFullKey(uuid))
 	if !running {
 		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
+	} else {
+		// The guard's stop did not take: a later stop of this run is the owner's.
+		diskGuardTrips.Delete(uuid)
 	}
 	evt, _ := json.Marshal(map[string]interface{}{
 		"type":    "disk_warning",

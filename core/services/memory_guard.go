@@ -174,8 +174,10 @@ func (m *MemoryGuardService) handle(ctx context.Context, uuid string, ev memoryE
 		taken := action
 		// Only a running server. Anything else is already on its way down or
 		// is being worked on (install, move), and a stop or restart would undo
-		// or interrupt that.
-		if action != models.MemoryGuardOff && srv.Status != "online" {
+		// or interrupt that. "starting" is a running JVM the node has not
+		// pinged yet, and the node does not repeat the event while memory stays
+		// high, so refusing it there dropped the action for that whole run.
+		if action != models.MemoryGuardOff && srv.Status != "online" && srv.Status != "starting" {
 			taken = "none"
 		}
 		if taken == models.MemoryGuardStop || taken == models.MemoryGuardRestart {

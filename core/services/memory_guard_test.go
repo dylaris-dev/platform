@@ -96,6 +96,9 @@ func TestMemoryGuardCritical(t *testing.T) {
 		{"restart restarts", "restart", "online", "restart", "online", "restarting", "was restarted"},
 		{"off only warns", "off", "online", "", "", "", "about to run out of memory"},
 		{"not running: no power action", "stop", "installing", "", "", "", "about to run out of memory"},
+		// J50: the node fires once and re-arms only below 93%, so a refusal while
+		// the readiness gate still says "starting" was the only chance.
+		{"still booting: the action runs", "restart", "starting", "restart", "online", "restarting", "was restarted"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
