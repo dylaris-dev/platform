@@ -312,12 +312,12 @@ func TestTheEULAIsNotWrittenThroughALinkToANodeFile(t *testing.T) {
 }
 
 // K34: a panel copy took no writer hold, so a move fenced while it ran.
+// A running move is refused outright now (L14); what is held here is the path
+// lookup, so the copy is caught after its hold and before it finishes.
 func TestAPanelFileChangeHoldsTheServerAgainstAMove(t *testing.T) {
 	h, uuid, _ := seedNodeOwned(t)
-	release, err := h.storageMgr.fenceMove(uuid)
-	if err != nil {
-		t.Fatal(err)
-	}
+	h.storageMgr.mu.Lock()
+	release := h.storageMgr.mu.Unlock
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

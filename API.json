@@ -320,7 +320,7 @@
       "path": "/api/admin/nodes/{id:[0-9]+}/orphan",
       "auth": "session",
       "authorization": "nodes.delete",
-      "description": "deletes an orphaned UUID folder from a node via gRPC.",
+      "description": "deletes an orphaned UUID folder from a node.",
       "handler": "NodeHandler.DeleteOrphanedFolder",
       "group": "admin",
       "external": false

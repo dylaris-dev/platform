@@ -964,8 +964,14 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// DeleteOrphanedFolder deletes an orphaned UUID folder from a node via gRPC.
+// DeleteOrphanedFolder deletes an orphaned UUID folder from a node.
 // DELETE /api/admin/nodes/{id}/orphan?uuid=
+//
+// Through the whole-server "delete" command, not a file delete of ".": every
+// node refuses the server root as a protected file (so an empty tenant path
+// cannot RemoveAll a server), and the orphan delete always failed on it. The
+// command is what a deleted server's data goes through on every node, old ones
+// included. It is queued, so success means the node was told, as for a server.
 func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	nodeID, _ := strconv.Atoi(vars["id"])
@@ -994,29 +1000,30 @@ func (h *NodeHandler) DeleteOrphanedFolder(w http.ResponseWriter, r *http.Reques
 	if !h.requireOrphan(w, orphanUUID) {
 		return
 	}
-
-	if h.d.GRPCRegistry == nil {
-		httpx.SendJSONError(w, "gRPC not available", 503)
+	// The node resolves only server ids to a directory and skips the delete of
+	// anything else, which would be reported here as done.
+	if !validate.IsServerUUID(orphanUUID) {
+		httpx.SendJSONError(w, "The node cannot delete a folder with this name; remove it on the host", 400)
 		return
 	}
 
-	resp, err := h.d.GRPCRegistry.SendRequest(nodeID, &pb.NodeMessage{
-		RequestId:  fmt.Sprintf("orphan-del-%s", orphanUUID),
-		ServerUuid: orphanUUID,
-		Payload:    &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: "."}},
-	}, 30*time.Second)
-	if err != nil {
-		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), 502)
+	if h.d.Queue == nil {
+		httpx.SendJSONError(w, "the command queue is unavailable", 503)
 		return
 	}
-	if errResp := resp.GetError(); errResp != nil {
-		httpx.SendJSONError(w, errResp.Message, 500)
+	node, err := h.d.Store.GetNodeByID(nodeID)
+	if err != nil || node == nil {
+		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
+		return
+	}
+	if err := h.d.Queue.SendCommand(r.Context(), node.Token, "delete", map[string]interface{}{"uuid": orphanUUID}, nil); err != nil {
+		httpx.SendJSONError(w, fmt.Sprintf("the delete command could not be queued: %v", err), 502)
 		return
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
-		"message": fmt.Sprintf("Orphaned folder %s deleted", orphanUUID),
+		"message": fmt.Sprintf("Orphaned folder %s is being deleted", orphanUUID),
 	})
 }
 

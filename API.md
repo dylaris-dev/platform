@@ -236,7 +236,7 @@ can still show what exists.
 | DELETE | `/api/admin/nodes/join-attempts/{token}` | session | `nodes.write` | - | `NodeAdmissionHandler.DismissJoinAttempt` | drop a row an operator has decided is not theirs to act on. |
 | POST | `/api/admin/nodes/join-attempts/{token}/approve` | session | `nodes.write` | - | `NodeAdmissionHandler.ApproveJoinAttempt` | let this machine back in, without touching the machine. |
 | GET | `/api/admin/nodes/{id:[0-9]+}/disk-analysis` | session | `nodes.read` | - | `NodeHandler.GetDiskAnalysis` | cross-references disk folders on a node with DB servers. |
-| DELETE | `/api/admin/nodes/{id:[0-9]+}/orphan` | session | `nodes.delete` | - | `NodeHandler.DeleteOrphanedFolder` | deletes an orphaned UUID folder from a node via gRPC. |
+| DELETE | `/api/admin/nodes/{id:[0-9]+}/orphan` | session | `nodes.delete` | - | `NodeHandler.DeleteOrphanedFolder` | deletes an orphaned UUID folder from a node. |
 | POST | `/api/admin/nodes/{id:[0-9]+}/reset-pairing` | session | `nodes.write` | - | `NodeAdmissionHandler.ResetPairing` | REVOKE: refuse the node's key, clear its secret and hard-cut its live Redis ACL. |
 | POST | `/api/admin/nodes/{id:[0-9]+}/roll-secret` | session | `nodes.write` | - | `NodeAdmissionHandler.RollSecret` | replace the node's key (the secret, for a node that has no key) and let it straight back in from the address it last authenticated from. |
 | GET | `/api/admin/panel-roles` | session | `panelroles.read` | - | `PanelRolesHandler.ListPanelRoles` | the level-1 staff roles and their capabilities. |

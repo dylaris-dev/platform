@@ -86,3 +86,44 @@ func TestAnUploadDuringAStorageMoveIsRefusedWithoutBlocking(t *testing.T) {
 		t.Errorf("a refused upload holds %d writer(s)", n)
 	}
 }
+
+// L14: a create, delete, rename or copy during a storage move took a file
+// slot, then waited inside the path lookup for the whole move. Core gave up
+// after 30s, and the operation still ran on the new location once the move
+// ended - twice after a retry. They are refused at once, as the upload is.
+func TestFileOperationsDuringAStorageMoveAreRefusedWithoutWaiting(t *testing.T) {
+	h, uuid, _ := seedNodeOwned(t)
+	release, err := h.storageMgr.fenceMove(uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ops := []struct {
+		name string
+		msg  *pb.NodeMessage
+	}{
+		{"create", &pb.NodeMessage{Payload: &pb.NodeMessage_CreateReq{CreateReq: &pb.CreateFileReq{Path: "survival/new.txt"}}}},
+		{"delete", &pb.NodeMessage{Payload: &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: "survival/plugins/ok.jar"}}}},
+		{"rename", &pb.NodeMessage{Payload: &pb.NodeMessage_RenameReq{RenameReq: &pb.RenameFileReq{OldPath: "survival/plugins/ok.jar", NewName: "b.jar"}}}},
+		{"copy", &pb.NodeMessage{Payload: &pb.NodeMessage_CopyReq{CopyReq: &pb.CopyFileReq{SrcPath: "survival/plugins/ok.jar", DstPath: "survival/c.jar"}}}},
+	}
+	for _, op := range ops {
+		t.Run(op.name, func(t *testing.T) {
+			op.msg.RequestId, op.msg.ServerUuid = op.name, uuid
+			got := make(chan []*pb.NodeMessage, 1)
+			go func() { got <- h.Handle(op.msg) }()
+			var reply []*pb.NodeMessage
+			select {
+			case reply = <-got:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the request waited for the storage move")
+			}
+			if len(reply) != 1 || reply[0].GetError().GetCode() != 409 {
+				t.Fatalf("got %v, want one 409", reply)
+			}
+			if n := h.storageMgr.writers[uuid]; n != 0 {
+				t.Errorf("a refused request holds %d writer(s)", n)
+			}
+		})
+	}
+}

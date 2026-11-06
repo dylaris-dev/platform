@@ -158,6 +158,34 @@ func (h *StreamHandler) handleHTTPProxy(reqID, serverUUID string, req *pb.HttpPr
 	h.streamProxyResponse(reqID, resp, send)
 }
 
+// proxiesPerServer and proxyNodeSlots cap the tab HTTP requests running at
+// once, as maxWSBridgesPerServer/maxWSBridges cap the WS sibling. Each holds a
+// goroutine, a container connection and its buffers, and since the body has no
+// overall timeout a container that trickles keeps it open: uncapped, one
+// tenant's script could exhaust this shared agent. Generous, because a map tab
+// loads many tiles at once over one HTTP/2 connection.
+var proxiesPerServer = 64
+var proxyNodeSlots = make(chan struct{}, 512)
+var proxySlots slotTable
+
+// acquireProxySlot takes a server and a node slot without waiting, or neither.
+func acquireProxySlot(serverUUID string) (func(), bool) {
+	server := proxySlots.of(serverUUID, proxiesPerServer)
+	nodeSlots := proxyNodeSlots
+	select {
+	case server <- struct{}{}:
+	default:
+		return nil, false
+	}
+	select {
+	case nodeSlots <- struct{}{}:
+	default:
+		<-server
+		return nil, false
+	}
+	return func() { <-nodeSlots; <-server }, true
+}
+
 // proxyIdleTimeout ends a tab response body that has sent nothing for this
 // long. Time spent waiting for Core to take a chunk does not count: a slow
 // reader is flow control's to end (flowCreditWait), not this.

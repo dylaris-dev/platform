@@ -18,6 +18,7 @@ type Deps struct {
 	Redis              *redis.Client
 	FeatureFlags       *services.FeatureFlags
 	GRPCRegistry       *nodegrpc.Registry
+	Queue              *services.QueueService
 	Gateway            services.GatewayProvider
 	WarpPeers          services.WarpPeerDisconnector
 	CoreStorage        *corestorage.Manager

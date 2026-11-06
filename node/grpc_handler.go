@@ -42,9 +42,18 @@ func (h *StreamHandler) Handle(msg *pb.NodeMessage) []*pb.NodeMessage {
 	// source tree the move then deleted, and was reported copied. Taken before
 	// the path is resolved. A WriteReq is held by the mesh, which owns its
 	// lifetime past this reply.
+	//
+	// Refused rather than waited for while a move runs: the lookup waited out
+	// the whole move inside a file slot, Core gave up after 30s, and the
+	// operation the user saw fail still ran on the new location - twice after
+	// a retry.
 	switch msg.Payload.(type) {
 	case *pb.NodeMessage_CreateReq, *pb.NodeMessage_DeleteReq, *pb.NodeMessage_RenameReq, *pb.NodeMessage_CopyReq:
-		defer h.storageMgr.holdWriter(msg.ServerUuid)()
+		unhold, ok := h.storageMgr.tryHoldWriter(msg.ServerUuid)
+		if !ok {
+			return []*pb.NodeMessage{errorMsg(msg.RequestId, 409, "The server's storage is being moved; try again when the move finishes")}
+		}
+		defer unhold()
 	}
 	switch p := msg.Payload.(type) {
 	case *pb.NodeMessage_ListReq:

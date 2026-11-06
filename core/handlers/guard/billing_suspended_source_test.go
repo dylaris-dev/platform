@@ -31,7 +31,9 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 	exempt := map[string]string{
 		"DeleteServer":    "deleting frees resources and is how a cut-off tenant leaves; blocking it would trap them",
 		"DeleteSubServer": "same as DeleteServer, one directory down",
-		"startBackupRun":  "the SCHEDULE keeps protecting a suspended tenant's data for the retention window; its on-demand caller TriggerJob carries the guard",
+		// L11: the admin's orphan cleanup, for a folder no server row (and so no tenant) owns
+		"DeleteOrphanedFolder": "an operator removing data no server row owns; there is no tenant whose suspension could apply, and deleting frees resources",
+		"startBackupRun":       "the SCHEDULE keeps protecting a suspended tenant's data for the retention window; its on-demand caller TriggerJob carries the guard",
 		// reaches the node only through startBackupRun (see indirectDispatch)
 		"startBackupRunForPlatform": "the operator's platform-wide backup run, not the tenant's; like the schedule it protects data rather than serving the tenant",
 	}
@@ -120,7 +122,7 @@ func TestEveryHandlerThatMakesANodeWorkChecksSuspension(t *testing.T) {
 	// Floors, measured: a move that hides some dispatch sites from this walk
 	// (but not all) would otherwise still pass. A change that really adds or
 	// removes a dispatching function updates the numbers in the same commit.
-	const wantChecked, wantGuarded = 18, 14
+	const wantChecked, wantGuarded = 19, 14
 	if checked != wantChecked || guarded != wantGuarded {
 		t.Errorf("saw %d dispatching functions, %d guarded; the pin expects %d and %d. "+
 			"If dispatch moved somewhere this walk does not reach, the guard has to move with it; "+

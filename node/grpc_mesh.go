@@ -698,8 +698,14 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 	// streams from concurrent proxy requests never interleave a single message.
 	if proxyReq := msg.GetHttpProxyReq(); proxyReq != nil {
 		reqID, serverUUID := msg.RequestId, msg.ServerUuid
+		release, ok := acquireProxySlot(serverUUID)
+		if !ok {
+			cc.send(errorMsg(reqID, 503, "too many tab requests are running on this server or node, try again"))
+			return
+		}
 		cc.openFlow(reqID, msg.FlowWindow)
 		go func() {
+			defer release()
 			defer cc.closeFlow(reqID)
 			m.handler.handleHTTPProxy(reqID, serverUUID, proxyReq, cc.send)
 		}()
