@@ -18,6 +18,10 @@ func TestParseCPUList(t *testing.T) {
 		{" 0 - 2 , 5 ", []int{0, 1, 2, 5}},
 		{"3-1", nil},      // inverted range ignored
 		{"x,2", []int{2}}, // junk token ignored
+		// The kernel takes a cpuset as a bit set, so overlapping or repeated parts
+		// name each core once; counting them twice understated CPU %.
+		{"0-3,2-5", []int{0, 1, 2, 3, 4, 5}},
+		{"0,0,1", []int{0, 1}},
 	}
 	for _, c := range cases {
 		got := parseCPUList(c.in)

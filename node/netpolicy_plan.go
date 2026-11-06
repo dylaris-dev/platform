@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -310,19 +311,42 @@ func (dm *DockerManager) egressPolicy() (*netEgress, error) {
 	if err != nil {
 		return nil, err
 	}
+	cur, err := resolveRedisDest(addr)
+	if err != nil {
+		return nil, err
+	}
+	// An earlier address that no longer resolves is skipped rather than failing
+	// the round: the current one is what new containers need.
+	var prior []redisDest
+	for _, a := range nodeRedis.used() {
+		sa, err := dm.sidecarRedisAddr(netID, a)
+		if err != nil {
+			continue
+		}
+		if d, err := resolveRedisDest(sa); err == nil && d != cur && !slices.Contains(prior, d) {
+			prior = append(prior, d)
+		}
+	}
+	_, _, _, gamePort, _, _ := getModes()
+	return &netEgress{overlay: subnet, redisIP: cur.ip, redisPort: cur.port, gamePort: gamePort, gateway: gateway, priorRedis: prior}, nil
+}
+
+// resolveRedisDest turns a host:port Redis address into the IPv4 and port the
+// egress chain names.
+func resolveRedisDest(addr string) (redisDest, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
-		return nil, fmt.Errorf("redis address %q: %w", addr, err)
+		return redisDest{}, fmt.Errorf("redis address %q: %w", addr, err)
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		return nil, fmt.Errorf("redis port %q: %w", portStr, err)
+		return redisDest{}, fmt.Errorf("redis port %q: %w", portStr, err)
 	}
 	ip := net.ParseIP(host)
 	if ip == nil {
 		ips, lerr := net.LookupIP(host)
 		if lerr != nil || len(ips) == 0 {
-			return nil, fmt.Errorf("resolve redis host %q: %v", host, lerr)
+			return redisDest{}, fmt.Errorf("resolve redis host %q: %v", host, lerr)
 		}
 		for _, cand := range ips {
 			if cand.To4() != nil {
@@ -331,11 +355,10 @@ func (dm *DockerManager) egressPolicy() (*netEgress, error) {
 			}
 		}
 		if ip == nil {
-			return nil, fmt.Errorf("redis host %q has no IPv4 address", host)
+			return redisDest{}, fmt.Errorf("redis host %q has no IPv4 address", host)
 		}
 	}
-	_, _, _, gamePort, _, _ := getModes()
-	return &netEgress{overlay: subnet, redisIP: ip.String(), redisPort: port, gamePort: gamePort, gateway: gateway}, nil
+	return redisDest{ip: ip.String(), port: port}, nil
 }
 
 // The host-level block of the cloud metadata address.

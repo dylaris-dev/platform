@@ -227,6 +227,15 @@ func parseCPUList(s string) []int {
 		return nil
 	}
 	var out []int
+	// The kernel reads a cpuset as a bit set, so an overlapping or repeated part
+	// ("0-3,2-5", "0,0") names each core once; callers count len() as cores.
+	seen := map[int]bool{}
+	add := func(n int) {
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
@@ -242,10 +251,10 @@ func parseCPUList(s string) []int {
 				if len(out) > maxCPUID {
 					return out
 				}
-				out = append(out, n)
+				add(n)
 			}
 		} else if n, err := strconv.Atoi(part); err == nil && n >= 0 && n <= maxCPUID && len(out) <= maxCPUID {
-			out = append(out, n)
+			add(n)
 		}
 	}
 	return out

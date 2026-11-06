@@ -86,6 +86,14 @@ type netEgress struct {
 	redisPort int
 	gamePort  int    // the container port game servers listen on
 	gateway   string // the shared network's gateway: on a bridge, the host itself
+	// priorRedis are the Redis addresses this node ran on before a runtime
+	// promotion, which containers created then still carry.
+	priorRedis []redisDest
+}
+
+type redisDest struct {
+	ip   string
+	port int
 }
 
 // platformPortLow..High is the range the platform's own services listen in.
@@ -205,6 +213,11 @@ func writeEgressChain(b *strings.Builder, eg *netEgress) {
 	b.WriteString("    ct state established,related accept\n")
 	b.WriteString("    oif lo accept\n")
 	b.WriteString(fmt.Sprintf("    ip daddr %s tcp dport %d accept\n", redis.String(), eg.redisPort))
+	for _, d := range eg.priorRedis {
+		if ip := net.ParseIP(d.ip); ip != nil && ip.To4() != nil && d.port >= 1 && d.port <= 65535 {
+			b.WriteString(fmt.Sprintf("    ip daddr %s tcp dport %d accept\n", ip.String(), d.port))
+		}
+	}
 	b.WriteString("    udp dport 53 accept\n")
 	b.WriteString("    tcp dport 53 accept\n")
 	if gw := net.ParseIP(eg.gateway); gw != nil && gw.To4() != nil {

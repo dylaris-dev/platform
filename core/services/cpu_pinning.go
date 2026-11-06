@@ -369,6 +369,9 @@ func parseCpusetList(s string) []int {
 		return nil
 	}
 	var out []int
+	// The kernel reads a cpuset as a bit set, so an overlapping or repeated part
+	// ("0-3,2-5", "0,0") names each core once; PinMismatch counts len() as cores.
+	seen := map[int]bool{}
 	for _, part := range strings.Split(s, ",") {
 		lo, hi, ok := parseCpusetPart(part)
 		if !ok {
@@ -378,7 +381,10 @@ func parseCpusetList(s string) []int {
 			if len(out) > maxCPUID {
 				return out
 			}
-			out = append(out, n)
+			if !seen[n] {
+				seen[n] = true
+				out = append(out, n)
+			}
 		}
 	}
 	return out

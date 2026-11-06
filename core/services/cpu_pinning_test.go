@@ -17,6 +17,9 @@ func TestParseCpusetList(t *testing.T) {
 		{"0-3,8", []int{0, 1, 2, 3, 8}},
 		{" 0 - 2 , 6 ", []int{0, 1, 2, 6}},
 		{"4-2", nil},
+		// Overlapping or repeated parts name each core once, as the kernel reads them.
+		{"0-3,2-5", []int{0, 1, 2, 3, 4, 5}},
+		{"0,0,1", []int{0, 1}},
 	}
 	for _, c := range cases {
 		if got := parseCpusetList(c.in); !reflect.DeepEqual(got, c.want) {

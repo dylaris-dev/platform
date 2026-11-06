@@ -31,6 +31,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -159,6 +160,11 @@ type redisAddrState struct {
 	mu     sync.Mutex
 	addr   string
 	onDisk bool // addr is what .redis_addr holds, so there is nothing to cache
+	// history is every address this process has handed out, oldest first. A
+	// running container keeps the REDIS_ADDR it was created with until the node
+	// restarts (ReconcileRedisEnv runs at boot only), so the egress chain must
+	// keep allowing all of them, not only the current one.
+	history []string
 
 	// promoteMu serialises validation, promotion and every write of the file.
 	// Two Core replicas answer the same node, usually with the same address; the
@@ -184,7 +190,17 @@ func (s *redisAddrState) current() string {
 func (s *redisAddrState) set(addr string, onDisk bool) {
 	s.mu.Lock()
 	s.addr, s.onDisk = addr, onDisk
+	if addr != "" && !slices.Contains(s.history, addr) {
+		s.history = append(s.history, addr)
+	}
 	s.mu.Unlock()
+}
+
+// used is every address this process has run on, oldest first.
+func (s *redisAddrState) used() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.history)
 }
 
 // persistIfNew caches the current address unless it came from the file. Called
