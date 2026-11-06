@@ -778,16 +778,21 @@ func TestAnUnreadableGraceLeavesTheLimitLifted(t *testing.T) {
 }
 
 // failGetHook fails a GET of one key while on, the way a Redis blip fails one
-// read in the middle of a recount.
+// read in the middle of a recount. cmd names another command than GET.
 type failGetHook struct {
 	key string
 	on  bool
+	cmd string
 }
 
 func (h *failGetHook) DialHook(next redis.DialHook) redis.DialHook { return next }
 func (h *failGetHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
-		if a := cmd.Args(); h.on && len(a) == 2 && a[0] == "get" && a[1] == h.key {
+		name := h.cmd
+		if name == "" {
+			name = "get"
+		}
+		if a := cmd.Args(); h.on && len(a) >= 2 && a[0] == name && a[1] == h.key {
 			err := fmt.Errorf("i/o timeout")
 			cmd.SetErr(err)
 			return err
@@ -797,4 +802,84 @@ func (h *failGetHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 }
 func (h *failGetHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return next
+}
+
+// L35: the lifted marker is what puts a lifted hard limit back after a crash.
+// A recount whose marker write failed lifted the limit anyway, and a counted
+// server with no marker is skipped by the boot, so the limit stayed off.
+func TestARecountThatCannotMarkTheLiftLeavesTheLimitOn(t *testing.T) {
+	rdb := newDiskGuardRedis(t)
+	ctx := context.Background()
+	rdb.Set(ctx, diskCountedKey("srv"), 1, 0)
+	rdb.AddHook(&failGetHook{key: diskLiftedKey("srv"), on: true, cmd: "setnx"})
+	q := &fakeQuota{before: usageOf(10*mib, 100*mib), after: usageOf(10*mib, 100*mib), limitMB: 100}
+	if err := countDiskUsage(ctx, rdb, q, "srv", 100, false); err == nil {
+		t.Fatal("the recount reported success without its crash marker")
+	}
+	for _, l := range q.setLimits {
+		if l == 0 {
+			t.Fatalf("the hard limit was lifted with no marker to put it back (limits set %v)", q.setLimits)
+		}
+	}
+}
+
+// L34: a marker a recount left before the server became unlimited was never
+// cleared - only a limited recount deleted it - so every boot walked the
+// whole tree again for a server with nothing left to put back.
+func TestAnUnlimitedRecountClearsTheLiftedMarker(t *testing.T) {
+	rdb := newDiskGuardRedis(t)
+	ctx := context.Background()
+	rdb.Set(ctx, diskCountedKey("srv"), 1, 0)
+	rdb.Set(ctx, diskLiftedKey("srv"), diskLiftedNoGrace, 0)
+	q := &fakeQuota{after: usageOf(10*mib, 0)}
+	countDiskUsage(ctx, rdb, q, "srv", 0, false)
+	if done, _ := reconcileServer(ctx, rdb, &fakeQuota{after: usageOf(10*mib, 0)}, "srv"); done {
+		t.Fatal("the boot walks an unlimited server again after its recount")
+	}
+}
+
+// L32: a new server's tree is under its project from birth. Left unmarked,
+// its first boot recount ran with the grace allowed, and a full server
+// writing while the walk lifted its limit was granted the once-only grace.
+func TestANewServerIsCountedAtCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		usage   *DiskUsagePayload
+		counted bool
+	}{
+		{"quota tags the new directory", usageOf(0, 0), true},
+		{"no quota on this path", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newDiskGuardRedis(t)
+			ctx := context.Background()
+			q := &fakeQuota{before: tc.usage, after: tc.usage}
+			assignNewServerQuota(ctx, rdb, q, "srv", 100)
+			if n, _ := rdb.Exists(ctx, diskCountedKey("srv")).Result(); (n == 1) != tc.counted {
+				t.Fatalf("counted = %v, want %v", n == 1, tc.counted)
+			}
+			if q.limitMB != 100 || loadDiskLimit(ctx, rdb, "srv") != 100 {
+				t.Fatalf("limit = %d MB, cached %d, want 100", q.limitMB, loadDiskLimit(ctx, rdb, "srv"))
+			}
+		})
+	}
+}
+
+// L33: a moved server arrives with no saved config (the archived one is
+// dropped) and the move records its limit only in the cache, so every later
+// save wrote 0. With the cache lost, the boot then took a graced server's
+// ceiling off the project as its limit for good.
+func TestASaveKeepsTheCachedDiskLimitOfAMovedServer(t *testing.T) {
+	prev := globalStorageMgr
+	t.Cleanup(func() { globalStorageMgr = prev })
+	rdb := newDiskGuardRedis(t)
+	globalStorageMgr = NewStorageManager(t.TempDir(), rdb)
+	ctx := context.Background()
+	const uuid = "aaaaaaaa-1111-2222-3333-444444444444"
+	recordDiskLimit(ctx, rdb, uuid, 100)
+	dir := t.TempDir()
+	saveNodeConfig(dir, ServerConfig{UUID: uuid})
+	if got := savedDiskLimitIn(dir); got != 100 {
+		t.Fatalf("saved disk limit = %d MB, want the cached 100", got)
+	}
 }

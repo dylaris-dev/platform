@@ -122,6 +122,17 @@ func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Requ
 	if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 		return
 	}
+	// The move copies the tree away and deletes it: under an install it pulls
+	// the directory out from under it, and under a move between nodes the
+	// staged archive stays on the old path, where nothing cleans it up.
+	switch srv.Status {
+	case "installing":
+		httpx.SendJSONError(w, "The server is installing. Move its storage when the install has finished.", http.StatusConflict)
+		return
+	case "migrating":
+		httpx.SendJSONError(w, "The server is being moved to another node. Move its storage when the move has finished.", http.StatusConflict)
+		return
+	}
 
 	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {

@@ -127,3 +127,42 @@ func TestFileOperationsDuringAStorageMoveAreRefusedWithoutWaiting(t *testing.T) 
 		})
 	}
 }
+
+// L30: migrate_storage stopped the server before the move's refusals, so a
+// move refused for a running upload or backup took the server and its players
+// down for nothing. CheckMigration makes those refusals up front and moves
+// nothing.
+func TestCheckMigrationRefusesWhatTheMoveWouldRefuse(t *testing.T) {
+	const uuid = "b083ff0c-fc16-47c5-9700-7b16486583e7"
+	for _, tc := range []struct {
+		name    string
+		create  bool
+		writer  bool
+		target  int
+		refused bool
+	}{
+		{"movable", true, false, 1, false},
+		{"write in progress", true, true, 1, true},
+		{"not on any path", false, false, 1, true},
+		{"already on the target", true, false, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sm, paths := newPlacementManager(t, 2)
+			if tc.create {
+				if err := os.MkdirAll(filepath.Join(paths[0], uuid), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.writer {
+				defer sm.holdWriter(uuid)()
+			}
+			err := sm.CheckMigration(uuid, paths[tc.target])
+			if (err != nil) != tc.refused {
+				t.Fatalf("CheckMigration = %v, want refused %v", err, tc.refused)
+			}
+			if _, err := os.Stat(filepath.Join(paths[1], uuid)); tc.target == 1 && !os.IsNotExist(err) {
+				t.Fatalf("the check wrote to the target: %v", err)
+			}
+		})
+	}
+}

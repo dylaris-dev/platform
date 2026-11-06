@@ -1,8 +1,14 @@
 package servers
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/gorilla/mux"
 )
 
 // TestStripStorageServerUUIDs proves the co-tenant identifiers are removed from
@@ -62,5 +68,36 @@ func TestStripStorageServerUUIDsPassesThroughUnexpectedShapes(t *testing.T) {
 		if string(a) != string(b) {
 			t.Errorf("input %s came back as %s", a, b)
 		}
+	}
+}
+
+// L31: a storage move under a running install or a move between nodes pulled
+// the tree out from under it. A move to another node staged its archive under
+// the old path, and its abort then looked under the new one and left the
+// full-size zip behind. UpdateServerResources refuses both; so does this.
+func TestMigrateServerStorage_RefusedWhileInstallingOrMigrating(t *testing.T) {
+	for _, tc := range []struct {
+		status  string
+		refused bool
+	}{
+		{"installing", true},
+		{"migrating", true},
+		{"stopped", false},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			fake := &resourcesFakeStore{server: resourcesServer(tc.status)}
+			h := &ServerHandler{d: testDeps(Deps{Store: fake})}
+
+			r := httptest.NewRequest(http.MethodPost, "/api/servers/1/migrate-storage", bytes.NewReader([]byte(`{"targetPath":"/mnt/b"}`)))
+			r = mux.SetURLVars(r, map[string]string{"id": "1"})
+			ctx := context.WithValue(r.Context(), "isAdmin", true)
+			ctx = context.WithValue(ctx, "userID", "admin-1")
+			rec := httptest.NewRecorder()
+			h.MigrateServerStorage(rec, r.WithContext(ctx))
+
+			if (rec.Code == http.StatusConflict) != tc.refused {
+				t.Fatalf("status = %d, want refused %v: %s", rec.Code, tc.refused, rec.Body.String())
+			}
+		})
 	}
 }

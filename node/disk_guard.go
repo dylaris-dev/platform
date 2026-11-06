@@ -171,6 +171,24 @@ type quotaAssigner interface {
 	GetDiskUsage(uuid string) *DiskUsagePayload
 }
 
+// assignNewServerQuota puts a new server's directory under its project and
+// limit. Its tree is counted from birth, so it is marked counted: unmarked,
+// its first boot recount ran with the grace allowed, and a full server
+// writing while the walk lifted its limit was granted the once-only grace.
+func assignNewServerQuota(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string, limitMB int64) {
+	if err := q.AssignQuota(uuid); err != nil {
+		log.Printf("Quota assign warning for %s: %v", uuid, err)
+	} else if rdb != nil && q.GetDiskUsage(uuid) != nil {
+		rdb.Set(ctx, diskCountedKey(uuid), 1, 0)
+	}
+	if limitMB > 0 {
+		recordDiskLimit(ctx, rdb, uuid, limitMB)
+		if err := q.SetLimit(uuid, limitMB); err != nil {
+			log.Printf("Quota limit warning for %s: %v", uuid, err)
+		}
+	}
+}
+
 // countDiskUsage tags a server's directory and everything in it with its
 // project, then leaves the project's hard limit where it belongs: limitMB, or
 // the ceiling while a grace holds. limitMB <= 0 leaves the hard limit alone.
@@ -206,7 +224,11 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 			if !allowGrace {
 				lifted = diskLiftedNoGrace
 			}
-			rdb.SetNX(ctx, diskLiftedKey(uuid), lifted, 0)
+			// Without the marker nothing puts a lifted limit back after a
+			// crash: the boot skips a counted server that has none.
+			if err := rdb.SetNX(ctx, diskLiftedKey(uuid), lifted, 0).Err(); err != nil {
+				return fmt.Errorf("mark the hard limit of %s lifted for the recount: %w", uuid, err)
+			}
 		}
 		if err := q.SetLimit(uuid, 0); err != nil {
 			log.Printf("quota: lift the limit of %s for the recount: %v", uuid, err)
@@ -244,6 +266,12 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 		}
 		if after != nil && !graceUnknown {
 			rdb.Set(ctx, diskCountedKey(uuid), 1, 0)
+		}
+		if limitMB <= 0 && !graceUnknown {
+			// No hard limit is what an unlimited server should have, so a
+			// marker from an earlier recount has nothing left to put back;
+			// kept, it had every boot walk the tree again.
+			rdb.Del(ctx, diskLiftedKey(uuid))
 		}
 	}
 	if limitMB > 0 && !graceUnknown {

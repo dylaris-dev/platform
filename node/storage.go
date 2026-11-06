@@ -479,7 +479,7 @@ func (sm *StorageManager) fenceMove(serverUUID string) (func(), error) {
 	sm.movingMu.Lock()
 	if n := sm.writers[serverUUID]; n > 0 {
 		sm.movingMu.Unlock()
-		return nil, fmt.Errorf("server %s has %d write(s) in progress (uploads, installs or a restore); retry the move once they finish", serverUUID, n)
+		return nil, writersInProgress(serverUUID, n)
 	}
 	if sm.moving == nil {
 		sm.moving = map[string]chan struct{}{}
@@ -492,6 +492,43 @@ func (sm *StorageManager) fenceMove(serverUUID string) (func(), error) {
 		sm.movingMu.Unlock()
 		close(ch)
 	}, nil
+}
+
+func writersInProgress(serverUUID string, n int) error {
+	return fmt.Errorf("server %s has %d write(s) in progress (uploads, installs or a restore); retry the move once they finish", serverUUID, n)
+}
+
+// CheckMigration makes the refusals MigrateServerPath would make, moving
+// nothing. The handler stops the server before the move, so a refusal that
+// came only after the stop took a live server down for nothing.
+func (sm *StorageManager) CheckMigration(serverUUID, targetPath string) error {
+	currentPath, err := sm.resolveMigration(serverUUID, targetPath)
+	if err != nil {
+		return err
+	}
+	sm.movingMu.Lock()
+	n := sm.writers[serverUUID]
+	sm.movingMu.Unlock()
+	if n > 0 {
+		return writersInProgress(serverUUID, n)
+	}
+	// The move clears a leftover copy at the target before its own check.
+	dstDir := filepath.Join(targetPath, serverUUID)
+	_, err = checkMigrationSpace(filepath.Join(currentPath, serverUUID), targetPath, uint64(dirSize(dstDir)))
+	return err
+}
+
+// checkMigrationSpace returns the size of srcDir, or an error when targetPath
+// cannot hold it. reclaim is what the move frees on the target before copying.
+func checkMigrationSpace(srcDir, targetPath string, reclaim uint64) (int64, error) {
+	srcSize := dirSize(srcDir) // int64, from stats_collector.go
+	const spaceBuffer = uint64(512 * 1024 * 1024)
+	free := getFreeSpace(targetPath) + reclaim
+	if srcSize > 0 && free < uint64(srcSize)+spaceBuffer {
+		return 0, fmt.Errorf("not enough free space on %s: need %s (+512MB buffer), have %s free",
+			targetPath, formatBytes(uint64(srcSize)), formatBytes(free))
+	}
+	return srcSize, nil
 }
 
 // holdWriter registers a write handle for the server until the returned func
@@ -574,13 +611,9 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 		return fmt.Errorf("clear the leftover copy at %s: %w", dstDir, err)
 	}
 
-	// Check free space (dirSize returns int64, getFreeSpace returns uint64)
-	srcSize := dirSize(srcDir) // int64, from stats_collector.go
-	const spaceBuffer = uint64(512 * 1024 * 1024)
-	free := getFreeSpace(targetPath)
-	if srcSize > 0 && free < uint64(srcSize)+spaceBuffer {
-		return fmt.Errorf("not enough free space on %s: need %s (+512MB buffer), have %s free",
-			targetPath, formatBytes(uint64(srcSize)), formatBytes(free))
+	srcSize, err := checkMigrationSpace(srcDir, targetPath, 0)
+	if err != nil {
+		return err
 	}
 
 	log.Printf("storage: migrating %s: %s → %s (%s)", serverUUID, currentPath, targetPath, formatBytes(uint64(srcSize)))

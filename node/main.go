@@ -972,6 +972,12 @@ func saveNodeConfig(serverDir string, config ServerConfig) {
 	// their 0 over it, and the saved one is what the boot recount falls back
 	// to when Redis lost the cache - a graced server then kept its ceiling.
 	config.Docker.DiskLimit = savedDiskLimitIn(serverDir)
+	if config.Docker.DiskLimit == 0 && globalStorageMgr != nil {
+		// A moved server arrives with no saved config and its limit only in
+		// the cache. An unlimited server has no cached limit, so this cannot
+		// put a cap back on one.
+		config.Docker.DiskLimit = loadDiskLimit(context.Background(), globalStorageMgr.rdb, config.UUID)
+	}
 	saveNodeConfigWithDiskLimit(serverDir, config)
 }
 
@@ -1569,15 +1575,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 
 		if quota != nil {
-			if err := quota.AssignQuota(cmd.Config.UUID); err != nil {
-				log.Printf("Quota assign warning for %s: %v", cmd.Config.UUID, err)
-			}
-			if cmd.Config.Docker.DiskLimit > 0 {
-				recordDiskLimit(ctx, rdb, cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
-				if err := quota.SetLimit(cmd.Config.UUID, cmd.Config.Docker.DiskLimit); err != nil {
-					log.Printf("Quota limit warning for %s: %v", cmd.Config.UUID, err)
-				}
-			}
+			assignNewServerQuota(ctx, rdb, quota, cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
 		}
 
 		if err := dm.CreateServerPodStopped(cmd.Config); err != nil {
@@ -2320,6 +2318,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		defer commandsInFlight.leave("migrate_storage:" + cmd.Config.UUID)
 		releaseMigrateBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
 		defer releaseMigrateBusy()
+
+		// The refusals first: made after the stop, they took a live server
+		// and its players down for a move that never ran, and reported it
+		// "stopped" like a finished one.
+		if err := storage.CheckMigration(cmd.Config.UUID, targetPath); err != nil {
+			log.Printf("Storage migration of %s refused: %v", cmd.Config.UUID, err)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+			return
+		}
 
 		// Stop the server first. MigrateServerPath copies the tree and deletes
 		// the source, so it must not run under a server still writing to it.
