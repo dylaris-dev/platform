@@ -640,7 +640,11 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 	// If this is a WriteReq, create temp file and register pending write
 	// BEFORE sending response so that chunks arriving immediately after won't be dropped.
 	if writeReq := msg.GetWriteReq(); writeReq != nil {
-		unhold := m.handler.storageMgr.holdWriter(msg.ServerUuid)
+		unhold, ok := m.handler.storageMgr.tryHoldWriter(msg.ServerUuid)
+		if !ok {
+			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{errorMsg(msg.RequestId, 409, "The server's storage is being moved; try again when the move finishes")})
+			return
+		}
 		tempFile, tempName, err := m.handler.createUploadTemp(msg.ServerUuid, writeReq.Path)
 		if err != nil {
 			unhold()

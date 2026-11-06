@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -213,5 +214,56 @@ func TestTabProxyLeaves304WithoutCacheControlAlone(t *testing.T) {
 	}
 	if got := w.Header().Values("Cache-Control"); len(got) != 0 {
 		t.Errorf("Cache-Control = %v, want none on a bare 304", got)
+	}
+}
+
+// streamingTabNode is a tab app whose response never ends (an SSE feed or a
+// live map): a head and one chunk, then nothing.
+type streamingTabNode struct {
+	grpc.ServerStream
+	conn *nodegrpc.NodeConnection
+}
+
+func (s *streamingTabNode) Context() context.Context       { return context.Background() }
+func (s *streamingTabNode) Recv() (*pb.NodeMessage, error) { select {} }
+func (s *streamingTabNode) Send(m *pb.NodeMessage) error {
+	if m.GetHttpProxyReq() == nil {
+		return nil
+	}
+	id, conn := m.RequestId, s.conn
+	go func() {
+		conn.RouteResponse(&pb.NodeMessage{RequestId: id, Payload: &pb.NodeMessage_HttpProxyRespHead{
+			HttpProxyRespHead: &pb.HttpProxyRespHead{StatusCode: 200}}})
+		conn.RouteResponse(&pb.NodeMessage{RequestId: id, Payload: &pb.NodeMessage_Chunk{Chunk: &pb.DataChunk{Data: []byte("data: 1\n\n")}}})
+	}()
+	return nil
+}
+
+// K09: a viewer who closed an endless tab response left Core's relay loop,
+// and with it the node's request and the container connection, running for
+// good. The loop ends when the browser's request does.
+func TestTabProxyStopsWhenTheBrowserLeaves(t *testing.T) {
+	reg := nodegrpc.NewRegistry()
+	node := &streamingTabNode{}
+	node.conn = reg.Register(7, "tok", node)
+	h := &ProxyHandler{d: Deps{GRPCRegistry: reg}}
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest(http.MethodGet, "http://tab.example/events", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	done := make(chan any)
+	go func() {
+		defer func() { done <- recover() }()
+		h.serveHTTP(w, r, &proxyTab{ID: 1, ServerUUID: "srv-1", NodeID: 7, TargetPort: 8100, TargetPath: "/"}, "events")
+	}()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case p := <-done:
+		if p != nil && p != http.ErrAbortHandler {
+			t.Fatalf("serveHTTP panicked with %v", p)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the relay kept running after the browser left")
 	}
 }

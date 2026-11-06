@@ -477,10 +477,28 @@ func (sm *StorageManager) fenceMove(serverUUID string) (func(), error) {
 // first then makes that lookup wait for the move, and one that comes later
 // sees the writer and is refused.
 func (sm *StorageManager) holdWriter(serverUUID string) func() {
+	unhold, _ := sm.holdWriterUnlessMoving(serverUUID, false)
+	return unhold
+}
+
+// tryHoldWriter is holdWriter for a caller that must not wait for a move: the
+// mesh read loop, which reads nothing else from that Core while it waits. It
+// returns ok=false, holding nothing, when a move of the server is running.
+// The check and the hold are one step under movingMu, so a move cannot fence
+// in between and make the lookup that follows wait after all.
+func (sm *StorageManager) tryHoldWriter(serverUUID string) (func(), bool) {
+	return sm.holdWriterUnlessMoving(serverUUID, true)
+}
+
+func (sm *StorageManager) holdWriterUnlessMoving(serverUUID string, refuseMoving bool) (func(), bool) {
 	if sm == nil {
-		return func() {}
+		return func() {}, true
 	}
 	sm.movingMu.Lock()
+	if refuseMoving && sm.moving[serverUUID] != nil {
+		sm.movingMu.Unlock()
+		return func() {}, false
+	}
 	if sm.writers == nil {
 		sm.writers = map[string]int{}
 	}
@@ -495,7 +513,7 @@ func (sm *StorageManager) holdWriter(serverUUID string) func() {
 			}
 			sm.movingMu.Unlock()
 		})
-	}
+	}, true
 }
 
 // moveInProgress returns the channel a lookup of this server waits on, or nil.

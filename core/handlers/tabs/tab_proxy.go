@@ -260,7 +260,20 @@ func (h *ProxyHandler) serveHTTP(w http.ResponseWriter, r *http.Request, tab *pr
 		}
 	}()
 
-	for resp := range ch {
+	for {
+		// The node stops only on the Cancel the deferred CleanupRequest sends,
+		// and an endless response (SSE, a live map) never idles out there, so
+		// a viewer who left must end this loop.
+		var resp *pb.NodeMessage
+		select {
+		case <-r.Context().Done():
+			return
+		case m, ok := <-ch:
+			if !ok {
+				return
+			}
+			resp = m
+		}
 		if nodegrpc.IsFinalTransferDone(resp) {
 			complete = true
 		}
