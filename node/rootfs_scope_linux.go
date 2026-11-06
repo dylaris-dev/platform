@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -20,7 +21,11 @@ import (
 // step already holds open, so there is no window in which a component can be
 // swapped for a link between a check and its use.
 func openParentNoFollow(rootDir, rel string, mkParents bool) (*os.File, string, error) {
-	rel = path.Clean("/" + strings.ReplaceAll(rel, "\\", "/"))[1:]
+	// Only the OS separator splits a name. Every guard (resolveWithinDir,
+	// isProtectedFile, reservedComponent) reads a backslash as part of a name
+	// on Linux, and rewriting it here opened "a\..\.node_config.json" - a
+	// harmless name to them - as the node's own file.
+	rel = path.Clean("/" + filepath.ToSlash(rel))[1:]
 	if rel == "" {
 		rel = "."
 	}
@@ -81,7 +86,7 @@ func writeScope(rootDir, rel string, mkParents bool) (*os.Root, string, error) {
 	// at the leaf can name .node_config.json without leaving the Root. The
 	// tenant cannot create one there (the server root is root's), only move one
 	// in by a rename, which renameNoFollow refuses; this is the second half.
-	if !strings.Contains(path.Clean("/" + strings.ReplaceAll(rel, "\\", "/"))[1:], "/") && isLinkAt(dir, leaf) {
+	if !strings.Contains(path.Clean("/" + filepath.ToSlash(rel))[1:], "/") && isLinkAt(dir, leaf) {
 		return nil, "", fmt.Errorf("%w: %q is a link, and a write does not follow links", os.ErrPermission, leaf)
 	}
 	sub, err := os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", dir.Fd()))

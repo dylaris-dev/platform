@@ -66,7 +66,14 @@ func sinceWrites(ws []unmeasuredWrite, cutoff time.Time) []unmeasuredWrite {
 // Without a gauge there is nothing to correct: the next measurement sees them.
 // Bounded in time: the mesh calls it on the loop that reads every Core message.
 func noteDiskWrite(ctx context.Context, rdb *redis.Client, uuid string, n int64) {
-	if rdb == nil || uuid == "" || n <= 0 {
+	if rdb == nil || uuid == "" || n == 0 {
+		return
+	}
+	// A replace that shrank the server: a delta cannot lower a gauge whose
+	// writes may already be in a newer measurement, so measure again, as a
+	// delete does. Dropped, the gauge kept the replaced file until the sweep.
+	if n < 0 {
+		remeasureServerSoon(uuid)
 		return
 	}
 	notedFor(uuid).Add(n)

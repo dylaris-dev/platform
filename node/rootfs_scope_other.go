@@ -7,7 +7,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 )
 
 // writeScope off Linux: no openat chain is available, so the write runs in a
@@ -18,7 +17,7 @@ func writeScope(rootDir, rel string, mkParents bool) (*os.Root, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	rel = path.Clean("/" + strings.ReplaceAll(rel, "\\", "/"))[1:]
+	rel = path.Clean("/" + filepath.ToSlash(rel))[1:]
 	if rel == "" {
 		rel = "."
 	}

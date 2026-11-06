@@ -721,6 +721,18 @@ func (v *virtualFS) resolve(path string) (string, string, sftpServerRef, error) 
 	return full, rel, ref, nil
 }
 
+// holdWriterFor is StorageManager.holdWriter for the server path p lands in,
+// found without resolving its directory. A path outside every server holds
+// nothing; resolve refuses it.
+func (v *virtualFS) holdWriterFor(p string) func() {
+	name := strings.SplitN(strings.TrimPrefix(filepath.ToSlash(filepath.Clean("/"+p)), "/"), "/", 2)[0]
+	ref, ok := v.current().nameToRef[name]
+	if !ok {
+		return func() {}
+	}
+	return v.storageMgr.holdWriter(ref.UUID)
+}
+
 // openRoot opens the server directory resolve landed in as an os.Root. The
 // operation then runs through it, so it stays inside the directory even if a
 // name changes between resolve's check and the operation (see rootfs.go).
@@ -1071,6 +1083,10 @@ func (m *meteredSFTPWriter) Close() error {
 // --- sftp.FileCmder ---
 
 func (v *virtualFS) Filecmd(r *sftp.Request) error {
+	// Every branch changes the tree, so it holds a storage move off as a write
+	// does, from before resolve's path lookup: one resolved just before a move
+	// fenced deleted or renamed inside the tree the copy was reading.
+	defer v.holdWriterFor(r.Filepath)()
 	switch r.Method {
 	case "Mkdir":
 		realPath, rel, ref, err := v.resolve(r.Filepath)

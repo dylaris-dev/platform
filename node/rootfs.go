@@ -750,6 +750,18 @@ func (b *writeBudget) release() {
 	b.used = 0
 }
 
+// releaseWritten is release for a budget that reserved more than reached the
+// disk: a declared upload size, refused, abandoned or ended short. release
+// books all of used as landed, and landed bytes count against every budget
+// still running, so a refused 10 TB reservation made every SFTP upload, copy
+// and extract on the node fail as out of space.
+func (b *writeBudget) releaseWritten(written int64) {
+	if d := b.used - max(written, 0); d > 0 {
+		b.unspend(d)
+	}
+	b.release()
+}
+
 // spend charges n and reports whether everything charged still fits, judged
 // on the shared counters after adding n, so of two writes at once the later
 // sees the earlier.
@@ -815,8 +827,10 @@ func (w *writeBudgetReader) Read(p []byte) (int, error) {
 	n, err := w.r.Read(p)
 	if n > 0 && !w.b.spend(int64(n)) {
 		// Hand back only what fit: io.Copy writes a read's bytes before it
-		// looks at the error.
-		return max(n+int(w.b.left), 0), w.b.err
+		// looks at the error. The rest is not written, so it is not charged.
+		fit := min(max(n+int(w.b.left), 0), n)
+		w.b.unspend(int64(n - fit))
+		return fit, w.b.err
 	}
 	return n, err
 }

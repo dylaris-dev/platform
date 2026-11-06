@@ -1011,7 +1011,8 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("daily upload quota reached: %d of %d bytes used today", used, *limit)}, nil
 	}
 	budget := nodeWriteBudget(serverDir)
-	defer budget.release()
+	var written int
+	defer func() { budget.releaseWritten(int64(written)) }()
 	if !budget.spend(size) {
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("not enough free space on the node for a save of %d bytes", size)}, nil
 	}
@@ -1020,7 +1021,7 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
-	_, err = f.Write([]byte(req.Content))
+	written, err = f.Write([]byte(req.Content))
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -1043,6 +1044,7 @@ func (s *beamServer) CreateFile(ctx context.Context, req *pb.BeamFileCreateReq) 
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
+	defer s.storageMgr.holdWriter(serverUUID)()
 	root, name, err := s.jailBeam(req.Path, serverUUID, "write")
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
@@ -1076,6 +1078,7 @@ func (s *beamServer) DeleteFile(ctx context.Context, req *pb.BeamFileDeleteReq) 
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
+	defer s.storageMgr.holdWriter(serverUUID)()
 	// Without parent creation, as RenameFile: a write scope made every missing
 	// directory of the path, also for a member who may delete and not write.
 	abs, err := s.validateBeamPathOp(req.Path, serverUUID, "write")
@@ -1109,6 +1112,7 @@ func (s *beamServer) RenameFile(ctx context.Context, req *pb.BeamFileRenameReq) 
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
+	defer s.storageMgr.holdWriter(serverUUID)()
 	oldPath, err := s.validateBeamPathOp(req.OldPath, serverUUID, "write")
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
@@ -1376,6 +1380,9 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	// have is how far the temp holds bytes: its size at Start, then the end of
 	// what this stream wrote. A chunk past it would leave a zero-filled hole.
 	var have int64
+	// tempGone: the temp this stream wrote into was removed, so none of it
+	// landed. Otherwise what it added, have - resumedAt, is on the disk.
+	var tempGone bool
 	// Released only after the kept bytes are noted, so no Start in between
 	// sees the headroom without them.
 	releaseServer, releaseUser, releaseBudget, releaseTemp := func() {}, func() {}, func() {}, func() {}
@@ -1431,6 +1438,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		}
 		tmpFile.Close()
 		upRoot.Remove(tmpName)
+		tempGone = true
 		log.Printf("beam-server: upload aborted, removed partial temp %s", path.Base(tmpName))
 	}()
 
@@ -1495,7 +1503,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// directory, so it is the same in every folder: the same id in a
 			// second folder took over the first folder's live upload. A write
 			// path follows no link, so its clean text names one directory.
-			relDir := path.Dir(path.Clean("/" + strings.ReplaceAll(remotePath, "\\", "/")))
+			relDir := path.Dir(path.Clean("/" + filepath.ToSlash(remotePath)))
 			tempKey := func(name string) string { return serverUUID + path.Join(relDir, path.Base(name)) }
 			if uploadID != "" {
 				tmpName = path.Join(path.Dir(destName), ".beam-upload-"+uploadID)
@@ -1521,7 +1529,13 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// in progress have claimed: the server's limit alone does not stop
 			// a node from filling for every tenant on it.
 			budget := nodeWriteBudget(s.storageMgr.GetServerDir(serverUUID))
-			releaseBudget = budget.release
+			releaseBudget = func() {
+				landed := max(have-resumedAt, 0)
+				if tempGone {
+					landed = 0
+				}
+				budget.releaseWritten(landed)
+			}
 			if !budget.spend(need) {
 				return status.Errorf(codes.ResourceExhausted, "not enough free space on the node for an upload of %d bytes", need)
 			}
@@ -1656,6 +1670,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		s.tempsMu.Unlock()
 		if err != nil {
 			upRoot.Remove(tmpName)
+			tempGone = true
 			return stream.SendAndClose(&pb.BeamOpResp{Success: false, Message: err.Error()})
 		}
 		// Count the completed upload against the user's daily quota by the final

@@ -116,8 +116,9 @@ type pendingWrite struct {
 }
 
 // release ends what the pending write holds: its disk budget and the server.
-func (pw *pendingWrite) release() {
-	pw.budget.release()
+// written is what of it is on the disk now, 0 once the temp is removed.
+func (pw *pendingWrite) release(written int64) {
+	pw.budget.releaseWritten(written)
 	pw.unhold()
 }
 
@@ -217,7 +218,7 @@ func (m *MeshManager) dropPendingWrites(drop func(*pendingWrite) bool) {
 			log.Printf("gRPC Mesh: Cleaning up abandoned upload (request_id=%s, path=%s)", reqID, pw.path)
 			pw.tempFile.Close()
 			m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
-			pw.release()
+			pw.release(0)
 			delete(m.pendingWrites, reqID)
 		}
 	}
@@ -573,7 +574,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				if !pw.budget.spend(more) {
 					pw.tempFile.Close()
 					m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
-					pw.release()
+					pw.release(0)
 					delete(m.pendingWrites, msg.RequestId)
 					m.writeMu.Unlock()
 					cc.send(errorMsg(msg.RequestId, 413, pw.budget.err.Error()))
@@ -587,7 +588,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				// TransferDone report success on a partial/corrupt file.
 				pw.tempFile.Close()
 				m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
-				pw.release()
+				pw.release(0)
 				delete(m.pendingWrites, msg.RequestId)
 				m.writeMu.Unlock()
 				if errors.Is(err, syscall.EDQUOT) {
@@ -609,11 +610,16 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		delete(m.pendingWrites, msg.RequestId)
 		m.writeMu.Unlock()
 		if ok {
-			defer pw.release()
+			var landed int64
+			defer func() { pw.release(landed) }()
 			// Truncate to exact size (file may be sparse from WriteAt). On the
 			// open file, not by name: the name is the tenant's to swap.
 			if done.TotalBytes > 0 {
 				pw.tempFile.Truncate(done.TotalBytes)
+			}
+			size := int64(0)
+			if st, err := pw.tempFile.Stat(); err == nil {
+				size = st.Size()
 			}
 			pw.tempFile.Close()
 			if grown, err := m.handler.commitUpload(pw.serverUUID, pw.path, pw.tempName); err != nil {
@@ -625,6 +631,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 					cc.send(errorMsg(msg.RequestId, 500, err.Error()))
 				}
 			} else {
+				landed = size
 				noteDiskWrite(context.Background(), m.rdb, pw.serverUUID, grown)
 				cc.send(&pb.NodeMessage{
 					RequestId: msg.RequestId,
@@ -661,7 +668,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		if !ok {
 			tempFile.Close()
 			m.handler.removeUploadTemp(msg.ServerUuid, writeReq.Path, tempName)
-			budget.release()
+			budget.releaseWritten(0)
 			unhold()
 			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{errorMsg(msg.RequestId, 413, budget.err.Error())})
 			return
