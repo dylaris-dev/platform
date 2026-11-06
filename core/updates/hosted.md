@@ -27,7 +27,7 @@ Newest release first. The format is fixed and checked in CI - see the
 - BYON: Kill and Stop now always win over a start that is still preparing, and server moves,
   restores and version changes no longer run against a server that could not be stopped. `node`
 - Restoring a full backup that does not contain the active sub-server is now refused with a clear
-  message; switch to a sub-server in the backup first. Tab apps with live connections work.
+  message; switch to a sub-server in the backup first. Tab apps such as live maps keep streaming.
 - Over 250 further fixes to uploads, quotas, backups, server moves, mod and modpack installs and
   server stats, on our side and on BYON nodes. `node`
 
