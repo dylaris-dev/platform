@@ -1606,9 +1606,7 @@ func (dm *DockerManager) RestartContainerInZone(uuid, tz string, ramMB int) erro
 	// Preserve the previous bind mounts verbatim so the world data on disk
 	// can't be lost to a storage-path resolution change between create and
 	// restart (e.g. storageMgr reseeded with a different host path cache).
-	if len(info.HostConfig.Binds) > 0 {
-		config.ExistingBinds = append([]string{}, info.HostConfig.Binds...)
-	}
+	config.ExistingBinds = ownBinds(info)
 
 	// Rebuild the start command from disk so the correct launch form (jar vs
 	// argfile) is always used. Extract any extra JVM flags from the old
@@ -1663,9 +1661,7 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 			strings.HasPrefix(info.Config.WorkingDir, "/data/") {
 			config.ActiveSubServer = strings.TrimPrefix(info.Config.WorkingDir, "/data/")
 		}
-		if len(info.HostConfig.Binds) > 0 {
-			config.ExistingBinds = append([]string{}, info.HostConfig.Binds...)
-		}
+		config.ExistingBinds = ownBinds(info)
 
 		// Rebuild start command from disk with the new RAM value so memory
 		// flags stay in sync. Fall back to the stored command on error.

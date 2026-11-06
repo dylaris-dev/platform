@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // deletedServers remembers which servers were deleted on this node, so work
@@ -97,4 +101,37 @@ func (dm *DockerManager) removeDeletedLeftovers(existing []MCContainerInfo) []MC
 		}
 	}
 	return kept
+}
+
+// dropLimitsIfDeleted undoes a quota and limit a command set for a server that
+// was deleted while it ran. The delete's own cleanup may have gone first, and
+// the limit key and lifted marker have no TTL, so nothing else would remove them.
+func dropLimitsIfDeleted(ctx context.Context, rdb *redis.Client, quota *QuotaSet, uuid string) {
+	if !serverDeleted(uuid) {
+		return
+	}
+	if quota != nil {
+		quota.RemoveQuota(uuid)
+	}
+	forgetDiskLimit(ctx, rdb, uuid)
+}
+
+// removeTreeVerified removes dir with a few retries and confirms it is gone: a
+// bind the kernel still holds (EBUSY) is often released a moment later. A var
+// so a test can make the removal fail.
+var removeTreeVerified = func(dir string) error {
+	var err error
+	for attempt := 1; attempt <= 4; attempt++ {
+		if err = os.RemoveAll(dir); err == nil {
+			if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
+				return nil
+			}
+			err = fmt.Errorf("dir still present after RemoveAll")
+		}
+		log.Printf("remove %s: attempt %d: %v", dir, attempt, err)
+		if attempt < 4 {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		}
+	}
+	return err
 }

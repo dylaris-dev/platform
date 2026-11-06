@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/docker/docker/api/types/container"
 )
 
 // Which MC containers on this Docker daemon are THIS node's.
@@ -160,4 +162,19 @@ func (dm *DockerManager) refuseForeignRunning(name string) error {
 		return fmt.Errorf("%s is running under node %s on this Docker daemon; not replacing it", name, owner)
 	}
 	return nil
+}
+
+// ownBinds returns the inspected container's binds for a recreate to reuse,
+// or nil when the container is another node's on a shared daemon. Those name
+// the other node's data directory: a moved server restarted on them ran on the
+// source's stale copy, which the source's migrate_cleanup then deleted. Without
+// them the recreate binds this node's own directory.
+func ownBinds(info container.InspectResponse) []string {
+	if info.HostConfig == nil || len(info.HostConfig.Binds) == 0 {
+		return nil
+	}
+	if info.Config != nil && !ownsContainer(info.Config.Labels, nodeIdentities(nodeSecretDir)) {
+		return nil
+	}
+	return append([]string{}, info.HostConfig.Binds...)
 }

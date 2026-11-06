@@ -1608,13 +1608,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 		if err := dm.CreateServerPodStopped(cmd.Config); err != nil {
 			log.Printf("Failed to create server pod %s: %v", cmd.Config.UUID, err)
-			if serverDeleted(cmd.Config.UUID) {
-				// The delete may have run before the quota and limit above.
-				if quota != nil {
-					quota.RemoveQuota(cmd.Config.UUID)
-				}
-				forgetDiskLimit(ctx, rdb, cmd.Config.UUID)
-			}
+			dropLimitsIfDeleted(ctx, rdb, quota, cmd.Config.UUID)
 		} else {
 			log.Printf("Server slot %s created (pending setup)", cmd.Config.UUID)
 			saveNodeConfigWithDiskLimit(serverPath, cmd.Config)
@@ -1981,6 +1975,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// never registered with this filesystem's quota, so a limit set on it
 		// alone enforced nothing.
 		applyDiskLimit(ctx, rdb, quota, cmd.Config.UUID, cmd.Config.Docker.DiskLimit)
+		dropLimitsIfDeleted(ctx, rdb, quota, cmd.Config.UUID)
 
 	case "delete":
 		// Mirrors the delete_sub_server guard below. This one deletes a whole
@@ -2008,7 +2003,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			log.Printf("delete %s: no server directory resolved, skipping the data removal", cmd.Config.UUID)
 			return
 		}
-		os.RemoveAll(serverPath)
+		if err := removeTreeVerified(serverPath); err != nil {
+			// The storage mapping and the limit stay, so the leftover can still
+			// be found and stays capped; the tombstone keeps it from starting.
+			log.Printf("delete %s: data NOT removed from %s: %v", cmd.Config.UUID, serverPath, err)
+			return
+		}
 		storage.RemoveServerPath(cmd.Config.UUID)
 		// The cached disk limit has no TTL and its only other delete fires when
 		// Core pushes "unlimited", so without this every deleted server left a
@@ -2139,19 +2139,8 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			// or ENOENT race) -- fall back to in-place
 			// RemoveAll with stat-verified retries.
 			log.Printf("delete_sub_server %s/%s: rename to tombstone failed (%v) -- falling back to in-place RemoveAll", cmd.Config.UUID, subName, renameErr)
-			var removeErr error
-			for attempt := 1; attempt <= 4; attempt++ {
-				removeErr = os.RemoveAll(subServerPath)
-				if removeErr == nil {
-					if _, statErr := os.Stat(subServerPath); os.IsNotExist(statErr) {
-						removed = true
-						break
-					}
-					removeErr = fmt.Errorf("dir still present after RemoveAll")
-				}
-				log.Printf("delete_sub_server %s/%s: remove attempt %d: %v", cmd.Config.UUID, subName, attempt, removeErr)
-				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
-			}
+			removeErr := removeTreeVerified(subServerPath)
+			removed = removeErr == nil
 			if !removed {
 				log.Printf("Failed to delete sub-server directory %s after retries: %v", subServerPath, removeErr)
 				return

@@ -22,6 +22,7 @@ import (
 	"dylaris-pkg/queue"
 	"dylaris-pkg/validate"
 
+	"github.com/docker/docker/client"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -975,8 +976,14 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 	// once Core set the server online for the target, this node's reconciler
 	// started it again on the data about to be deleted, and it ran on for good
 	// (and a later move back reused its stale image and binds).
+	// A failed removal stops here: past this point the archive goes, and
+	// with it the reconciler's reason to leave that container stopped.
 	if dm != nil {
-		dm.PowerAction(serverUUID, "delete")
+		if err := dm.PowerAction(serverUUID, "delete"); err != nil && !client.IsErrNotFound(err) {
+			log.Printf("migrate_cleanup %s: container not removed, keeping the data: %v", serverUUID, err)
+			setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("cleanup failed: container not removed: %v", err))
+			return
+		}
 	}
 
 	srcDir := filepath.Join(storagePath, serverUUID)
