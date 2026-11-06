@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -178,7 +179,12 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	// servers on this path write to, and region data barely compresses: so it
 	// is bounded by the free space the same way every other large write is,
 	// and held against the other writes while it is being made.
-	need := dirSize(srcDir)
+	// Reported while it runs: Core's stage wait restarts only on a changed
+	// byte count, and a tree of millions of files took longer to measure.
+	var measured atomic.Int64
+	stopMeasure := reportMigrationProgress(ctx, rdb, nodeToken, progressID, "staging", measured.Load)
+	need := migrateOutMeasure(srcDir, &measured)
+	stopMeasure()
 	if budget := restoreDiskBudget(storagePath) - inflightWrites.Load(); need > budget {
 		log.Printf("migrate_out %s: %d bytes to stage, %d bytes of free space to give", serverUUID, need, budget)
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf(
@@ -419,10 +425,14 @@ func receiveMovedServer(ctx context.Context, rdb *redis.Client, nodeToken, serve
 	// The size is known before the first byte: an archive that cannot fit was
 	// downloaded up to the free space four times over (the retries), holding
 	// that space against every other write here, and then failed vaguely.
-	if budget := restoreDiskBudget(targetPath) - inflightWrites.Load(); expectedSize > 0 && expectedSize > budget {
+	// Twice the size: the archive stays on disk while it is unpacked, and
+	// region data barely compresses, so the copy is at least as large again.
+	// Halving the budget rather than doubling a size the source node reports
+	// keeps a huge one from overflowing past the check.
+	if budget := restoreDiskBudget(targetPath) - inflightWrites.Load(); expectedSize > 0 && expectedSize > budget/2 {
 		log.Printf("%s %s: %d bytes announced, %d bytes of free space to give", cmd, serverUUID, expectedSize, budget)
-		fail(fmt.Sprintf("not enough free space on the target node to receive the move: need %s, can use %s",
-			formatBytes(uint64(expectedSize)), formatBytes(uint64(max(budget, 0)))))
+		fail(fmt.Sprintf("not enough free space on the target node to receive and unpack the move: need %s, can use %s",
+			formatBytes(2*uint64(expectedSize)), formatBytes(uint64(max(budget, 0)))))
 		return
 	}
 
@@ -641,9 +651,18 @@ func sweepStaleMigrationArchives(storage *StorageManager) {
 		if err != nil {
 			continue
 		}
+		shared := sharedWithAnotherNode(root)
 		for _, e := range entries {
 			info, err := e.Info()
-			if err != nil || e.IsDir() || time.Since(info.ModTime()) < stagedArchiveMaxAge {
+			if err != nil || e.IsDir() {
+				continue
+			}
+			// A half-written archive is no move's once its writer is gone: one
+			// from before this process started held its space against the
+			// redelivered migrate_out, which then refused for want of room.
+			// Unless another node stages here too.
+			deadPart := !shared && strings.HasSuffix(e.Name(), ".part") && info.ModTime().Before(nodeStartedAt)
+			if !deadPart && time.Since(info.ModTime()) < stagedArchiveMaxAge {
 				continue
 			}
 			p := filepath.Join(dir, e.Name())
@@ -686,6 +705,24 @@ func migrateAbortCount(uuid string) int64 {
 		return c.(*atomic.Int64).Load()
 	}
 	return 0
+}
+
+// migrateOutMeasure is stagedSize; a variable for tests.
+var migrateOutMeasure = stagedSize
+
+// stagedSize sums the file sizes under dir, adding each to counted as the walk
+// goes so the count can be reported before the total is known (du gives only
+// the total, at the end).
+func stagedSize(dir string, counted *atomic.Int64) int64 {
+	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				counted.Add(info.Size())
+			}
+		}
+		return nil
+	})
+	return counted.Load()
 }
 
 // migrateOutArchive is migration.Archive; a variable for tests.

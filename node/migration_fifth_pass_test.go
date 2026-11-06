@@ -117,7 +117,7 @@ func TestAMoveWithoutRoomFailsBeforeThePull(t *testing.T) {
 		wantPull bool
 	}{
 		{"larger than the free space", 11, false},
-		{"fits", 10, true},
+		{"fits with its unpacked copy", 5, true},
 		{"not announced by an older Core", 0, true},
 	}
 	for i, tc := range tests {

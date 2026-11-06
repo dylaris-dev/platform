@@ -98,13 +98,14 @@ func (f *flowStore) status() string {
 type flowGateway struct {
 	GatewayProvider
 	routeMoves *int
+	routeErr   error
 }
 
 func (g flowGateway) MigrateServerRoutes(uint, uint) error {
 	if g.routeMoves != nil {
 		*g.routeMoves++
 	}
-	return nil
+	return g.routeErr
 }
 
 // simNodes plays both nodes: it reads their command streams and answers the
@@ -502,5 +503,44 @@ func TestPostCutoverSendsDoNotDieWithTheLeader(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("missing: %s", want)
 		}
+	}
+}
+
+// L45: a route re-point that failed after the node flip left the server named
+// on the target with no config there and its copy on the source, uncleaned: the
+// source restarted that copy once its staged archive aged out, and players the
+// route still sent there reached data Core no longer managed. The route never
+// moved, so the move is undone onto the source.
+func TestARouteThatCannotBeRepointedUndoesTheMove(t *testing.T) {
+	o, fs, sim, rdb := newFlow(t, "stopped")
+	o.gateway = flowGateway{routeErr: errors.New("hub queue down")}
+	o.Migrate(context.Background(), MigrationRequest{ServerID: 5, TargetNodeID: 2, SourceNodeID: 1, Reason: "manual"})
+	deadline := time.Now().Add(2 * time.Second)
+	for len(sim.commands(flowTargetToken, "migrate_discard")) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	fs.mu.Lock()
+	cutovers, node := append([]int(nil), fs.cutovers...), fs.srv.NodeID
+	fs.mu.Unlock()
+	if len(cutovers) == 0 || cutovers[0] != 2 {
+		t.Fatalf("cutovers %v, want the move to have reached the node flip", cutovers)
+	}
+	if node != 1 {
+		t.Fatalf("server left on node %d, want back on the source", node)
+	}
+	if len(sim.commands(flowSourceToken, "migrate_cleanup")) != 0 {
+		t.Fatal("the source's copy was cleaned up while the route still points at it")
+	}
+	if len(sim.commands(flowTargetToken, "migrate_discard")) != 1 || len(sim.commands(flowSourceToken, "migrate_abort")) != 1 {
+		t.Fatal("the move was not rolled back: target copy kept or source archive kept")
+	}
+	if got := fs.status(); got != "stopped" {
+		t.Errorf("status %q, want stopped", got)
+	}
+	raw, _ := rdb.Get(context.Background(), "dylaris:migration:srv-flow:orchestration").Result()
+	var st orchestrationStatus
+	json.Unmarshal([]byte(raw), &st)
+	if st.Phase != "failed" {
+		t.Errorf("phase %q, want failed", st.Phase)
 	}
 }

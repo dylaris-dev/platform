@@ -751,12 +751,24 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 	if !o.gatewayEnabled() {
 		// nothing to re-point
 	} else if err := o.gateway.MigrateServerRoutes(uint(srv.ID), uint(targetNode.ID)); err != nil {
-		// node_id already flipped; data is on the target. Route re-point failed,
-		// but reverting node_id would point the route back at data the source is
-		// about to be told to keep — and we have not sent cleanup yet. Surface
-		// the failure; the route can be re-pointed manually / on retry. Do not
-		// revert node_id (target is authoritative now).
 		log.Printf("migration %s: MigrateServerRoutes failed post node-flip: %v", srv.UUID, err)
+		// The route still names the source, which still holds the data and has
+		// not been told to clean up: undo the flip and roll back. Stopping here
+		// with node_id on the target left the target without a config and the
+		// source copy uncleaned, which its reconciler restarted once the staged
+		// archive aged out - reachable through the old route, managed by no one.
+		if rerr := o.store.UpdateServerNode(srv.ID, sourceNode.ID); rerr == nil {
+			// The failed push may still have landed; say where it lives again.
+			if perr := o.gateway.MigrateServerRoutes(uint(srv.ID), uint(sourceNode.ID)); perr != nil {
+				log.Printf("migration %s: re-pointing the route back at the source failed: %v", srv.UUID, perr)
+			}
+			o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "route re-point failed: "+err.Error())
+			return
+		} else {
+			// Both writes failing is the database down; the stale-copy case
+			// remains for that, as before.
+			log.Printf("migration %s: reverting the node flip failed: %v", srv.UUID, rerr)
+		}
 		// Not left on "migrating": nothing but the orchestrator ends that
 		// status, and the server is on the target now, stopped.
 		o.store.UpdateServerStatus(srv.ID, "stopped")
