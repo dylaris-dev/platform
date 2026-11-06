@@ -96,8 +96,10 @@ var spoolReserveMu sync.Mutex
 // reserveSpool is spoolBudget against the node's shared write budget: free
 // less what other writes (restores, copies, other spools) hold. A spool that is
 // granted holds its source size in inflightWrites until release, so the next
-// run, restore or copy sees it as taken. release is idempotent.
-func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, func(), string) {
+// run, restore or copy sees it as taken. release is idempotent; landed is
+// what the spool file holds on the disk at that moment, booked as landed so a
+// budget measured before those bytes were there still counts them.
+func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, func(landed int64), string) {
 	spoolReserveMu.Lock()
 	defer spoolReserveMu.Unlock()
 	if held := inflightWrites.Load(); held > 0 {
@@ -105,11 +107,16 @@ func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, 
 	}
 	limit, why := spoolBudget(p, sourceBytes, freeBytes)
 	if limit <= 0 {
-		return 0, func() {}, why
+		return 0, func(int64) {}, why
 	}
 	inflightWrites.Add(sourceBytes)
 	var once sync.Once
-	return limit, func() { once.Do(func() { inflightWrites.Add(-sourceBytes) }) }, ""
+	return limit, func(landed int64) {
+		once.Do(func() {
+			inflightWrites.Add(-sourceBytes)
+			landedWrites.Add(max(landed, 0))
+		})
+	}, ""
 }
 
 var errSpoolFull = errors.New("the archive outgrew the space reserved for the spool")
@@ -134,6 +141,13 @@ func (b *boundedWriter) Write(p []byte) (int, error) {
 // file rewound for the upload. The file is returned whenever it was created,
 // so the caller removes it on every path.
 func spoolArchive(path string, limit int64, counter io.Writer, write func(io.Writer) (bool, error)) (*os.File, bool, error) {
+	// The name is this run's alone (run ids are Core-wide, a run goes to one
+	// node, backupsInFlight holds it here), so a file under it is what this
+	// run left when the node died. The boot sweep skips storage another node
+	// shares, and the redelivery failed on it for good.
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, false, err
+	}
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, false, err

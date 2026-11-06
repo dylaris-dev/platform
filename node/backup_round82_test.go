@@ -249,3 +249,21 @@ func TestARestoreGivesUpOnATricklingDownload(t *testing.T) {
 		t.Fatalf("report = %v, want failed", report)
 	}
 }
+
+// The restore measured the disk once: what another write put on it after
+// that (a second restore, a copy, a spool) never counted, and together they
+// filled the disk every server here runs on.
+func TestARestoreSeesWritesThatLandAfterItStarted(t *testing.T) {
+	prev := restoreDiskBudget
+	t.Cleanup(func() { restoreDiskBudget = prev })
+	restoreDiskBudget = func(string) int64 {
+		// A sibling write lands the moment this restore has measured.
+		landedWrites.Add(2 * restoreEntryCost)
+		return 2 * restoreEntryCost
+	}
+	g := inflightWrites.Load()
+	restoreFails(t, []tar.Header{{Name: "a.txt", Mode: 0o644, Typeflag: tar.TypeReg}})
+	if got := inflightWrites.Load(); got != g {
+		t.Fatalf("inflightWrites = %d after the restore, want %d", got, g)
+	}
+}

@@ -395,7 +395,7 @@ func TestSpoolReservationIsSharedAcrossRuns(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			inflightWrites.Store(tt.inflight)
 			limit, release, why := reserveSpool(on, 30*gb, 50*gb)
-			defer release()
+			defer release(0)
 			if (limit > 0) != tt.wantOK {
 				t.Fatalf("limit=%d why=%q, want ok=%v", limit, why, tt.wantOK)
 			}
@@ -408,11 +408,11 @@ func TestSpoolReservationIsSharedAcrossRuns(t *testing.T) {
 		t.Fatal("first run refused")
 	}
 	if l2, r2, why := reserveSpool(on, 30*gb, 50*gb); l2 > 0 {
-		r2()
+		r2(0)
 		t.Fatalf("second run of 30 GB spooled into 50 GB beside the first (limit %d, %q)", l2, why)
 	}
-	release()
-	release() // idempotent
+	release(0)
+	release(0) // idempotent
 	if got := inflightWrites.Load(); got != 0 {
 		t.Fatalf("inflightWrites = %d after release, want 0", got)
 	}
@@ -507,5 +507,55 @@ func TestConcurrentUploadsKeepTheFloorEach(t *testing.T) {
 		if got := p.up.Limit(); got < backupUploadFloorBps {
 			t.Fatalf("run %d of 7: up=%v, want at least the floor %d", i, got, backupUploadFloorBps)
 		}
+	}
+}
+
+// A run killed with the node left its spool file behind; on storage another
+// node shares, the boot sweep leaves it, and the redelivered run hit O_EXCL on
+// its own name and failed for good.
+func TestASpoolLeftByThisRunsDeadProcessIsReplaced(t *testing.T) {
+	path := filepath.Join(t.TempDir(), spoolFileName(812))
+	if err := os.WriteFile(path, []byte("half an archive from before the restart"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var counter countingWriter
+	f, _, err := spoolArchive(path, 100, &counter, func(w io.Writer) (bool, error) {
+		_, err := w.Write([]byte("archive"))
+		return true, err
+	})
+	if err != nil {
+		t.Fatalf("redelivered run: %v", err)
+	}
+	defer f.Close()
+	if got, _ := io.ReadAll(f); string(got) != "archive" {
+		t.Fatalf("spooled file reads %q", got)
+	}
+}
+
+// A finished spool file is on the disk through the paced upload. Releasing
+// the reservation without landing it gave a write budget started during the
+// packing the file's size back, on top of the disk it already used.
+func TestAReleasedSpoolLandsWhatItWrote(t *testing.T) {
+	on := &backupPolicy{SpoolEnabled: true, SpoolMaxGB: 100}
+	const gb = 1_000_000_000
+	const s = 10 * gb
+	prev := restoreDiskBudget
+	restoreDiskBudget = func(string) int64 { return 2 * s }
+	t.Cleanup(func() { restoreDiskBudget = prev })
+	g := inflightWrites.Load()
+
+	_, release, why := reserveSpool(on, s, 100*gb)
+	if why != "" {
+		t.Fatal(why)
+	}
+	b := nodeWriteBudget(t.TempDir()) // starts while the spool packs: s left
+	release(s)
+	if b.spend(s + 1) {
+		b.release()
+		t.Fatal("a write started during packing may use the space the spool file holds")
+	}
+	b.release()
+	if got := inflightWrites.Load(); got != g {
+		t.Fatalf("inflightWrites = %d, want %d", got, g)
 	}
 }

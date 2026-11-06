@@ -12,7 +12,6 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -274,14 +273,11 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// and two at once filled the disk every server here runs on. The server's
 	// own disk limit is NOT applied: a restore holds the old world beside the
 	// new one until the swap, so it would refuse any server past half its limit.
-	budget := restoreDiskBudget(filepath.Dir(stageDir)) - inflightWrites.Load()
-	var written int64
-	defer func() { inflightWrites.Add(-written) }()
-	extracted, entries := 0, 0
-	// The directories creating an entry makes, its own and the parents
-	// MkdirAll adds: an archive of deep paths built thousands of directories
-	// per counted entry.
-	madeDirs := map[string]bool{}
+	// Judged on the shared counters at every charge: a budget measured once
+	// never saw what another restore, copy or spool wrote after it started.
+	budget := nodeWriteBudget(filepath.Dir(stageDir))
+	defer budget.release()
+	extracted := 0
 	for {
 		hdr, terr := tr.Next()
 		if terr == io.EOF {
@@ -311,18 +307,13 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		// Every entry costs an inode and at least a block, which a byte budget
 		// over file contents never sees: an archive of millions of empty
 		// directories is small in the bucket and exhausts the node's inodes.
-		cost := 1
-		for d := path.Dir(name); d != "." && d != "/" && !madeDirs[d]; d = path.Dir(d) {
-			madeDirs[d] = true
-			cost++
-		}
+		// entryAt also charges the parents MkdirAll adds: an archive of deep
+		// paths built thousands of directories per counted entry.
+		berr := budget.entryAt(name)
 		if hdr.Typeflag == tar.TypeDir {
-			madeDirs[name] = true
+			budget.dirs[name] = true
 		}
-		entries += cost
-		written += int64(cost) * restoreEntryCost
-		inflightWrites.Add(int64(cost) * restoreEntryCost)
-		if entries > maxRestoreEntries || written > budget {
+		if berr != nil {
 			stageCleanup()
 			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", errRestoreDiskBudget.Error())
 			return
@@ -341,10 +332,8 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "open file: "+ferr.Error())
 				return
 			}
-			n, err := io.Copy(f, io.LimitReader(tr, budget-written+1))
-			written += n
-			inflightWrites.Add(n)
-			if err == nil && written > budget {
+			_, err := io.Copy(f, budget.reader(tr))
+			if errors.Is(err, errUnpackBudget) {
 				err = errRestoreDiskBudget
 			}
 			if err != nil {

@@ -91,8 +91,8 @@ func TestBackupAndRestoreWiring(t *testing.T) {
 	if !strings.Contains(worker, "budget := nodeWriteBudget(dir)") {
 		t.Error("a node-local archive is written with no disk budget")
 	}
-	if !strings.Contains(restore, "budget := restoreDiskBudget(filepath.Dir(stageDir)) - inflightWrites.Load()") ||
-		!strings.Contains(restore, "inflightWrites.Add(n)") {
+	if !strings.Contains(restore, "budget := nodeWriteBudget(filepath.Dir(stageDir))") ||
+		!strings.Contains(restore, "io.Copy(f, budget.reader(tr))") {
 		t.Error("a restore no longer shares the disk with the other writes")
 	}
 }

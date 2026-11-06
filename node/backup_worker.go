@@ -437,9 +437,9 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	pacer := newBackupPacer(cmd.UploadCapMbit)
 	defer pacer.done()
 	spoolPath, spoolMax := "", int64(0)
-	releaseSpool := func() {}
+	releaseSpool := func(int64) {}
 	// Deferred before the spool file's removal, so it runs after it.
-	defer func() { releaseSpool() }()
+	defer func() { releaseSpool(0) }()
 	if cmd.Upload == modeUploadMultipart {
 		if p := backupPolicyNow.Load(); p != nil && p.SpoolEnabled && globalSpoolDir != "" {
 			_, free := getDiskSpace(globalSpoolDir)
@@ -463,7 +463,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	} else {
 		// A stopped server has no save-off window to shorten.
 		spoolPath = ""
-		releaseSpool()
+		releaseSpool(0)
 	}
 	logBackupPace(cmd.RunID, pacer)
 
@@ -502,7 +502,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		}
 		// The file's bytes now count in the disk's free space; holding the
 		// reservation through the paced upload counted them twice.
-		releaseSpool()
+		releaseSpool(counter.Total())
 		addedAny = added
 		// The archive is complete on disk: the world may save again while the
 		// upload takes as long as the players need it to.
