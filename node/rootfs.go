@@ -148,11 +148,36 @@ func walkRoot(root *os.Root, start string, fn func(name string, info fs.FileInfo
 
 // createIn opens name inside root for writing, creating its parent
 // directories and truncating an existing file.
+//
+// A file with a second name is not written through: on a host without
+// fs.protected_hardlinks the tenant can link a node file (.node_config.json, a
+// backup) under a name the node then writes, eula.txt or a copy's target, and
+// O_TRUNC emptied the node's file. The name is replaced by a new file instead,
+// which leaves the other name's content as it was.
 func createIn(root *os.Root, name string, perm os.FileMode) (*os.File, error) {
 	if err := mkdirParentIn(root, name); err != nil {
 		return nil, err
 	}
-	return openWriteIn(root, name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	f, err := openWriteIn(root, name, os.O_WRONLY|os.O_CREATE, perm)
+	if err != nil {
+		return nil, err
+	}
+	st, err := f.Stat()
+	if err == nil && multiplyLinkedInfo(st) {
+		f.Close()
+		if err := root.Remove(name); err != nil {
+			return nil, err
+		}
+		return openWriteIn(root, name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	}
+	if err == nil {
+		err = f.Truncate(0)
+	}
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 // createNewIn is createIn for a file that must not exist yet: an existing one
@@ -603,6 +628,15 @@ type writeBudget struct {
 	srv  *atomic.Int64
 	uuid string
 	err  error
+	// gauged: the caller notes what it wrote into the gauge itself, so release
+	// neither notes nor remeasures.
+	gauged bool
+	// The bounds measured at creation, and the shared counters at that moment.
+	// spend decides against what the counters hold NOW: a budget that kept a
+	// private left saw nothing a sibling started at the same time wrote, so
+	// two copies started together each had the whole free space.
+	nodeCap, inflight0, landed0 int64
+	srvCap, srv0, sftp0, noted0 int64
 }
 
 // errServerDiskLimit ends a tenant's copy or install that would take the
@@ -614,6 +648,11 @@ var errServerDiskLimit = errors.New("this writes more than the server's disk lim
 // started together each saw the whole of it and together went past the
 // reserve.
 var inflightWrites atomic.Int64
+
+// landedWrites is what released budgets wrote, and only grows: those bytes
+// left inflightWrites but are on the disk, which a running budget measured
+// before they were there.
+var landedWrites atomic.Int64
 
 // serverInflight is inflightWrites per server (uuid -> *atomic.Int64): what
 // copies, extracts and installs have written, and the declared size panel and
@@ -667,35 +706,74 @@ func serverOfDir(bases []string, dir string) (uuid, serverDir string) {
 // without project quotas a tenant wrote past its own disk limit in one go, as
 // often as it liked, until the next disk sweep stopped the server.
 func newWriteBudget(dir string) *writeBudget {
-	b := &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
+	b := nodeWriteBudget(dir)
 	if uuid, left, ok := serverDiskHeadroom(dir); ok {
-		b.srv, b.uuid = serverInflightOf(uuid), uuid
-		if left -= b.srv.Load(); left < b.left {
-			b.left, b.err = left, errServerDiskLimit
-		}
+		b.boundServer(uuid, left)
 	}
 	return b
 }
 
+// nodeWriteBudget bounds a write by the node's free space less its reserve
+// and what other writes in progress hold.
+func nodeWriteBudget(dir string) *writeBudget {
+	g0, l0 := inflightWrites.Load(), landedWrites.Load()
+	c := restoreDiskBudget(dir) - g0
+	return &writeBudget{left: c, nodeCap: c, inflight0: g0, landed0: l0, dirs: map[string]bool{}, err: errUnpackBudget}
+}
+
+// boundServer also bounds it by headroom, what the server uuid may still
+// write as measured now, less what is reserved on it.
+func (b *writeBudget) boundServer(uuid string, headroom int64) {
+	b.srv, b.uuid = serverInflightOf(uuid), uuid
+	b.srv0, b.sftp0, b.noted0 = b.srv.Load(), uploadServerInflight(uuid).Load(), notedFor(uuid).Load()
+	b.srvCap = headroom - b.srv0
+	if b.srvCap < b.left {
+		b.left, b.err = b.srvCap, errServerDiskLimit
+	}
+}
+
 func (b *writeBudget) release() {
 	inflightWrites.Add(-b.used)
+	landedWrites.Add(b.used)
 	if b.srv != nil {
+		// Into the noted count before out of the in-flight one, as an SFTP or
+		// Beam close does: an open SFTP handle reads both, and a finished copy
+		// in neither let it write the copy's size again past the limit.
+		if !b.gauged && b.used > 0 {
+			notedFor(b.uuid).Add(b.used)
+		}
 		b.srv.Add(-b.used)
-		if b.used > 0 {
+		if !b.gauged && b.used > 0 {
 			remeasureServer(b.uuid)
 		}
 	}
 	b.used = 0
 }
 
+// spend charges n and reports whether everything charged still fits, judged
+// on the shared counters after adding n, so of two writes at once the later
+// sees the earlier.
 func (b *writeBudget) spend(n int64) bool {
-	b.left -= n
 	b.used += n
-	inflightWrites.Add(n)
+	g := inflightWrites.Add(n)
+	b.left, b.err = b.nodeCap-(g-b.inflight0)-(landedWrites.Load()-b.landed0), errUnpackBudget
 	if b.srv != nil {
-		b.srv.Add(n)
+		s := b.srv.Add(n)
+		if l := b.srvCap - (s - b.srv0) - (uploadServerInflight(b.uuid).Load() - b.sftp0) - (notedFor(b.uuid).Load() - b.noted0); l < b.left {
+			b.left, b.err = l, errServerDiskLimit
+		}
 	}
 	return b.left >= 0
+}
+
+// unspend gives back n of what spend charged and the write did not use.
+func (b *writeBudget) unspend(n int64) {
+	b.used -= n
+	b.left += n
+	inflightWrites.Add(-n)
+	if b.srv != nil {
+		b.srv.Add(-n)
+	}
 }
 
 // entry charges one created file or directory.

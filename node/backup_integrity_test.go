@@ -88,7 +88,7 @@ func TestBackupAndRestoreWiring(t *testing.T) {
 	if strings.Count(worker, "copyAndCommit(") < 3 {
 		t.Error("an archive write drops its sync or close error")
 	}
-	if !strings.Contains(worker, "budget := &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load()") {
+	if !strings.Contains(worker, "budget := nodeWriteBudget(dir)") {
 		t.Error("a node-local archive is written with no disk budget")
 	}
 	if !strings.Contains(restore, "budget := restoreDiskBudget(filepath.Dir(stageDir)) - inflightWrites.Load()") ||

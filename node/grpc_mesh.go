@@ -128,15 +128,13 @@ func (pw *pendingWrite) release() {
 // as the beam upload reads it: serverDiskHeadroom walks the server directory,
 // and this runs on the read loop for every file of a folder upload.
 func uploadBudget(rdb *redis.Client, dir, uuid string, size int64) (*writeBudget, bool) {
-	b := &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
+	b := nodeWriteBudget(dir)
 	if total, limit := serverDiskGauge(context.Background(), rdb, uuid); limit > 0 {
-		// b.uuid stays empty: release would remeasure the server by walking it,
-		// and commitUpload's noteDiskWrite already moved the gauge.
-		b.srv = serverInflightOf(uuid)
+		// gauged: release would remeasure the server by walking it, and
+		// commitUpload's noteDiskWrite already moved the gauge.
+		b.gauged = true
 		// Open SFTP handles are not in the gauge either.
-		if left := limit - total - b.srv.Load() - uploadServerInflight(uuid).Load(); left < b.left {
-			b.left, b.err = left, errServerDiskLimit
-		}
+		b.boundServer(uuid, limit-total-uploadServerInflight(uuid).Load())
 	}
 	return b, b.spend(size)
 }

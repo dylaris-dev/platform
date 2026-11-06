@@ -35,14 +35,19 @@ func openParentNoFollow(rootDir, rel string, mkParents bool) (*os.File, string, 
 		}
 		fd, oerr := unix.Openat(int(cur.Fd()), c, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if errors.Is(oerr, unix.ENOENT) && mkParents {
-			if merr := unix.Mkdirat(int(cur.Fd()), c, 0o755); merr != nil && !errors.Is(merr, unix.EEXIST) {
+			merr := unix.Mkdirat(int(cur.Fd()), c, 0o755)
+			if merr != nil && !errors.Is(merr, unix.EEXIST) {
 				cur.Close()
 				return nil, "", merr
 			}
-			if mcUser() != 0 {
-				_ = unix.Fchownat(int(cur.Fd()), c, mcUser(), mcUser(), unix.AT_SYMLINK_NOFOLLOW)
-			}
 			fd, oerr = unix.Openat(int(cur.Fd()), c, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			// Handed over only when this call made it, and on the directory it
+			// opened: after EEXIST the name may be a hard link to a node file
+			// the tenant raced in, and a chown by name gave that file to the
+			// container.
+			if merr == nil && oerr == nil && mcUser() != 0 {
+				_ = unix.Fchown(fd, mcUser(), mcUser())
+			}
 		}
 		cur.Close()
 		if oerr != nil {

@@ -157,6 +157,14 @@ func (s *beamServer) claimUploadTemp(root *os.Root, key, name string, me uint64)
 	return c, min(c.charged, size)
 }
 
+// uploadTempHeld reports whether a stream holds the temp under key.
+func (s *beamServer) uploadTempHeld(key string) bool {
+	s.tempsMu.Lock()
+	defer s.tempsMu.Unlock()
+	c := s.uploadTemps[key]
+	return c != nil && c.refs > 0
+}
+
 func (s *beamServer) ownsUploadTemp(c *uploadClaim, me uint64) bool {
 	s.tempsMu.Lock()
 	defer s.tempsMu.Unlock()
@@ -359,7 +367,7 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 	// container restart mid-stream can leak. Anything untouched for >15s
 	// is fair game — successful uploads rename atomically the moment the
 	// stream EOFs, so a live partial is always actively being written.
-	go sweepStaleUploadTemps(ctx, storageMgr)
+	go sweepStaleUploadTemps(ctx, storageMgr, bs.uploadTempHeld)
 
 	// LAN fast-path TLS listener (opt-in, default on). The plain :25521 listener
 	// above is reached only via the encrypted overlay (relay hop). Direct LAN
@@ -497,9 +505,11 @@ func publishBeamEndpoint(ctx context.Context, rdb *redis.Client, nodeID, port st
 // files. The UploadFile handler's defer normally removes them when a
 // session ends, but a process kill or sudden container shutdown can
 // leave them. Anything not modified for more than the grace period is
-// considered stale — a live upload is being actively written to, so its
-// mtime is always fresh.
-func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager) {
+// considered stale, unless held reports a stream still holds it (key as
+// claimUploadTemp's): a slow uplink or a shared throttle left a live upload's
+// mtime older than the grace, and the upload failed at its rename after the
+// whole transfer. nil = none is held.
+func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager, held func(key string) bool) {
 	const (
 		grace = 15 * time.Second
 		// Five minutes, not thirty seconds, because the pass below now walks
@@ -547,6 +557,9 @@ func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager) {
 					}
 					info, ierr := d.Info()
 					if ierr != nil || now.Sub(info.ModTime()) < grace {
+						return nil
+					}
+					if held != nil && held(e.Name()+"/"+name) {
 						return nil
 					}
 					if rerr := root.Remove(name); rerr == nil {
@@ -974,25 +987,35 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	// the size cap / disk limit / daily quota. Size is known up front.
 	size := int64(len(req.Content))
 	username := s.extractUsername(ctx)
-	if total, limit := serverDiskGauge(ctx, s.rdb, serverUUID); beamUploadExceedsDisk(total, limit, size) {
+	// What the file held before: an overwrite frees it, as SFTP credits it.
+	var prior int64
+	if st, err := root.Lstat(name); err == nil && st.Mode().IsRegular() {
+		prior = st.Size()
+	}
+	// Reserved on the counters uploads in progress hold, before checking, as
+	// UploadFile's Start does: a save read only the gauge and the booked
+	// quota, so it spent headroom and quota a running upload already had.
+	// Released after the write is noted and booked, by the defers.
+	serverTotal, releaseServer := reserveOn(serverInflightOf(serverUUID), size)
+	defer releaseServer()
+	serverTotal += uploadServerInflight(serverUUID).Load()
+	userTotal, releaseUser := reserveOn(uploadAccountInflight(username), size)
+	defer releaseUser()
+	if total, limit := serverDiskGauge(ctx, s.rdb, serverUUID); beamUploadExceedsDisk(total, limit, serverTotal-prior) {
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("disk limit reached: %d of %d bytes used", total, limit)}, nil
 	}
 	if ok, capBytes := quota.CheckSizeCap(ctx, s.rdb, size); !ok {
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("file of %d bytes exceeds the %d byte per-upload limit", size, *capBytes)}, nil
 	}
-	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, username, size); !ok {
+	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, username, userTotal); !ok {
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("daily upload quota reached: %d of %d bytes used today", used, *limit)}, nil
 	}
-	budget := &writeBudget{left: restoreDiskBudget(serverDir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
+	budget := nodeWriteBudget(serverDir)
 	defer budget.release()
 	if !budget.spend(size) {
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("not enough free space on the node for a save of %d bytes", size)}, nil
 	}
 
-	var prior int64
-	if st, err := root.Lstat(name); err == nil && st.Mode().IsRegular() {
-		prior = st.Size()
-	}
 	f, err := openTenantWriteIn(root, name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644, serverDir)
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
@@ -1053,7 +1076,18 @@ func (s *beamServer) DeleteFile(ctx context.Context, req *pb.BeamFileDeleteReq) 
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
-	root, name, err := s.jailBeam(req.Path, serverUUID, "write")
+	// Without parent creation, as RenameFile: a write scope made every missing
+	// directory of the path, also for a member who may delete and not write.
+	abs, err := s.validateBeamPathOp(req.Path, serverUUID, "write")
+	if err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
+	serverDir := s.storageMgr.GetServerDir(serverUUID)
+	rel, err := rootName(serverDir, abs)
+	if err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
+	root, name, err := writeScope(serverDir, rel, false)
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
@@ -1062,6 +1096,9 @@ func (s *beamServer) DeleteFile(ctx context.Context, req *pb.BeamFileDeleteReq) 
 	if err := root.RemoveAll(name); err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
+	// As the panel's delete: nothing else lowers the gauge before the next
+	// sweep, and every upload check reads it.
+	remeasureServerSoon(serverUUID)
 
 	s.auditBeam(ctx, serverUUID, "delete", req.Path)
 	return &pb.BeamOpResp{Success: true, Message: "deleted"}, nil
@@ -1483,7 +1520,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// The node's own free space, less its reserve and what other writes
 			// in progress have claimed: the server's limit alone does not stop
 			// a node from filling for every tenant on it.
-			budget := &writeBudget{left: restoreDiskBudget(s.storageMgr.GetServerDir(serverUUID)) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
+			budget := nodeWriteBudget(s.storageMgr.GetServerDir(serverUUID))
 			releaseBudget = budget.release
 			if !budget.spend(need) {
 				return status.Errorf(codes.ResourceExhausted, "not enough free space on the node for an upload of %d bytes", need)
@@ -1707,7 +1744,7 @@ func (s *beamServer) checkBeamDailyQuota(ctx context.Context, username string, i
 
 // recordBeamDailyUsage adds `n` bytes to the user's shared daily upload counter.
 func (s *beamServer) recordBeamDailyUsage(ctx context.Context, username string, n int64) {
-	quota.RecordDailyUsage(ctx, s.rdb, username, n)
+	bookDailyUsage(ctx, s.rdb, username, n)
 }
 
 func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.ServerStreamingServer[pb.BeamChunk]) error {

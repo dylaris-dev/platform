@@ -813,7 +813,7 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		// archive inside the server directory used to be written with no check
 		// at all, and a full disk stops every server on the node. Not by the
 		// server's own disk limit - a backup of a server near it would never fit.
-		budget := &writeBudget{left: restoreDiskBudget(dir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
+		budget := nodeWriteBudget(dir)
 		defer budget.release()
 		if err := copyAndCommit(f, budget.reader(r)); err != nil {
 			os.Remove(partial)

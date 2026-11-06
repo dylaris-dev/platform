@@ -63,7 +63,7 @@ func TestTheUploadSweeperFindsTempsAtEveryDepth(t *testing.T) {
 	// the ticker, so the sweep is exercised without waiting for one.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	sweepStaleUploadTemps(ctx, sm)
+	sweepStaleUploadTemps(ctx, sm, nil)
 
 	for _, rel := range stale {
 		if _, err := os.Stat(filepath.Join(serverDir, rel)); err == nil {

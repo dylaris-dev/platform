@@ -37,6 +37,15 @@ func NewStreamHandler(storageMgr *StorageManager) *StreamHandler {
 // Handle processes a NodeMessage and returns one or more response messages.
 // ReadReq is handled separately via HandleStreaming for memory-efficient streaming.
 func (h *StreamHandler) Handle(msg *pb.NodeMessage) []*pb.NodeMessage {
+	// A storage move refuses to start while this is held, as for Beam's and
+	// SFTP's writers (holdWriter): a panel copy of a world wrote into the
+	// source tree the move then deleted, and was reported copied. Taken before
+	// the path is resolved. A WriteReq is held by the mesh, which owns its
+	// lifetime past this reply.
+	switch msg.Payload.(type) {
+	case *pb.NodeMessage_CreateReq, *pb.NodeMessage_DeleteReq, *pb.NodeMessage_RenameReq, *pb.NodeMessage_CopyReq:
+		defer h.storageMgr.holdWriter(msg.ServerUuid)()
+	}
 	switch p := msg.Payload.(type) {
 	case *pb.NodeMessage_ListReq:
 		reply := h.handleList(msg.RequestId, msg.ServerUuid, p.ListReq)
