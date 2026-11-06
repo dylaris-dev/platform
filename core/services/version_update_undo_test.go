@@ -242,3 +242,39 @@ func TestConsumeVersionUpdateFailures_PutsTheImageAndTheInstallRecordBack(t *tes
 		})
 	}
 }
+
+// A move the node refused before its stop leaves the server running, and the
+// node reports it "online" ahead of the abandon signal. The undo used to land
+// "stopped" over that, so the edge turned logins away from a running server.
+// A server still on the busy hold's "installing" is stopped, as before.
+func TestConsumeVersionUpdateFailures_KeepsARunningServerOnline(t *testing.T) {
+	for _, c := range []struct {
+		status    string
+		wantWrite bool
+	}{
+		{"online", false},
+		{"installing", true},
+	} {
+		t.Run(c.status, func(t *testing.T) {
+			s, fs := newUndoTest(t)
+			ctx := context.Background()
+			srv := fs.serversByUUID["u-1"]
+			srv.Status = c.status
+			fs.serversByUUID["u-1"] = srv
+			seedUndo(t, s, "u-1", VersionUpdateUndo{InstallerType: "paper", MinecraftVersion: "1.21.4", SubServerName: "server"})
+			if err := s.redis.Set(ctx, VersionUpdateFailedKey("u-1"), "refused", 0).Err(); err != nil {
+				t.Fatal(err)
+			}
+			s.consumeVersionUpdateFailures(ctx)
+			wrote := false
+			for _, call := range fs.statusCalls {
+				if call.status == "stopped" {
+					wrote = true
+				}
+			}
+			if wrote != c.wantWrite {
+				t.Errorf("status %s: wrote stopped = %v, want %v (calls %+v)", c.status, wrote, c.wantWrite, fs.statusCalls)
+			}
+		})
+	}
+}

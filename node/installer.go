@@ -474,7 +474,12 @@ func neoForgeInstallerURL(version string) string {
 // resolveNeoForgeVersion reads the Maven metadata and picks the version a
 // blank build means for mc (pickNeoForgeVersion).
 func resolveNeoForgeVersion(mc string) (string, error) {
-	resp, err := installerMetaClient.Get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
+	metaURL := "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+	if mc == "1.20.1" {
+		// The 47.x line is only in the pre-rename artifact (neoForgeInstallerURL).
+		metaURL = "https://maven.neoforged.net/releases/net/neoforged/forge/maven-metadata.xml"
+	}
+	resp, err := installerMetaClient.Get(metaURL)
 	if err != nil {
 		return "", fmt.Errorf("neoforge metadata fetch failed: %v", err)
 	}
@@ -530,8 +535,17 @@ func pickNeoForgeVersion(meta neoForgeMetadata, mc string) string {
 		if c == mc {
 			return c
 		}
+		// The legacy forge artifact names its builds "1.20.1-47.1.106"; the
+		// build is what follows, and 47.x does not map through neoForgeMinecraft.
+		target := ""
+		if b, ok := strings.CutPrefix(c, "1.20.1-"); ok {
+			c, target = b, "1.20.1"
+		}
 		base, _, pre := strings.Cut(c, "-")
-		if neoForgeMinecraft(base) != mc {
+		if target == "" {
+			target = neoForgeMinecraft(base)
+		}
+		if target != mc {
 			continue
 		}
 		if !pre {

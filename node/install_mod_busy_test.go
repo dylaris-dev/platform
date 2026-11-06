@@ -12,8 +12,8 @@ import (
 
 // A version move, reinstall, restore or copy holds the node_busy key while it
 // rewrites the server's tree. A mod written or removed beside it is outside
-// that work's stash, so its rollback could not undo it: install_mod and
-// remove_mod refuse while the key is held.
+// that work's stash, so its rollback could not undo it: install_mod refuses
+// while the key is held, and remove_mod waits it out (TestRemoveModWaitsOutTheHold).
 func TestModCommandsRefuseWhileTheServerIsBusy(t *testing.T) {
 	for _, tc := range []struct {
 		name string

@@ -107,6 +107,19 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		return
 	}
 
+	statusKey := fmt.Sprintf("dylaris:server:%s:status", pl.UUID)
+	// Every abort before the stop leaves the server as it was, so it reports
+	// what Docker shows rather than the busy hold's "installing": Core landed
+	// that as "stopped" for a server that went on running. Written before the
+	// abandon signal, so Core reads the real status first. dm is nil only in
+	// tests that never reach Docker.
+	abort := func(reason string) {
+		if dm != nil {
+			rdb.Set(ctx, statusKey, statusAfterFailedStop(dm, pl.UUID), 30*time.Second)
+		}
+		abandonVersionUpdate(ctx, rdb, pl.UUID, reason)
+	}
+
 	if !commandsInFlight.enter("version_update:" + pl.UUID) {
 		log.Printf("update_server_version: an update of %s is already running on this node, ignoring the duplicate", pl.UUID)
 		return
@@ -118,17 +131,16 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	// refused before it touches anything.
 	if !commandsInFlight.enter("copy_sub:" + pl.UUID) {
 		log.Printf("update_server_version: a copy of %s is running on this node, refusing the move", pl.UUID)
+		// The copy's own hold reports its status; this one has written none.
 		abandonVersionUpdate(ctx, rdb, pl.UUID, "a copy of this server was still being made")
 		return
 	}
 	defer commandsInFlight.leave("copy_sub:" + pl.UUID)
 
-	statusKey := fmt.Sprintf("dylaris:server:%s:status", pl.UUID)
 	// Hold the reconciler off for the whole move, exactly like reinstall: the
 	// container is about to be stopped while its desired_state is still online.
 	releaseBusy := holdBusyStatus(rdb, pl.UUID, "installing", busyStatusTTL)
 	defer releaseBusy()
-	rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", pl.UUID))
 	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", pl.UUID), "1", 30*time.Second)
 	// Before any abort below, which all report "left exactly as it was".
 	recoverStrandedStash(serverPath, subName)
@@ -141,8 +153,20 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	// fail with "unknown installer type" on a server left with no jar.
 	if !versionMoveInstallers[cmd.Installer.Type] {
 		log.Printf("update_server_version: %s cannot be installed by this node, the move of %s is refused", cmd.Installer.Type, pl.UUID)
-		abandonVersionUpdate(ctx, rdb, pl.UUID, fmt.Sprintf("%q is not server software this node can install", cmd.Installer.Type))
+		abort(fmt.Sprintf("%q is not server software this node can install", cmd.Installer.Type))
 		return
+	}
+	// A blank NeoForge build is resolved here, not by InstallServer after the
+	// stop: a Minecraft version upstream has no build for took the server down
+	// before it was refused.
+	if cmd.Installer.Type == "neoforge" && cmd.Installer.Loader == "" && cmd.Installer.Version != "" {
+		build, err := resolveNeoForgeVersion(cmd.Installer.Version)
+		if err != nil {
+			log.Printf("update_server_version: %v; the move of %s is refused", err, pl.UUID)
+			abort(err.Error())
+			return
+		}
+		cmd.Installer.Loader = build
 	}
 
 	// Same traversal + symlink boundary install_mod goes through: the mods
@@ -150,7 +174,7 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	// planted there would otherwise redirect every write and delete below.
 	if _, err := resolveWithinDir(serverPath, filepath.Join(subName, targetDir)); err != nil {
 		log.Printf("update_server_version: %v", err)
-		abandonVersionUpdate(ctx, rdb, pl.UUID, err.Error())
+		abort(err.Error())
 		return
 	}
 	// Opened once, with no link followed, and worked in from here on: the
@@ -159,7 +183,7 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	modsDir, releaseMods, err := pinDir(serverPath, filepath.ToSlash(filepath.Join(subName, targetDir)), true)
 	if err != nil {
 		log.Printf("update_server_version: open the mods directory: %v", err)
-		abandonVersionUpdate(ctx, rdb, pl.UUID, "the mods directory could not be created")
+		abort("the mods directory could not be created")
 		return
 	}
 	defer releaseMods()
@@ -185,7 +209,7 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		// Core wrote the new version and the new mod rows before dispatching
 		// this. Nothing on disk moved, so those writes now describe a move that
 		// did not happen - tell Core to put them back.
-		abandonVersionUpdate(ctx, rdb, pl.UUID, err.Error())
+		abort(err.Error())
 		return
 	}
 	defer func() {
@@ -199,7 +223,17 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	// deleted until the new software is installed:
 	// the removed mods and the old server jars are moved aside, and a failure
 	// puts them back, so the server is left on the version it ran.
-	dm.PowerAction(pl.UUID, "stop")
+	//
+	// Through gracefulStop and its error, like reinstall: a bare docker stop
+	// skipped save-all and, when it failed, the jars were swapped under the
+	// running JVM. Nothing has been touched yet, so abandoning is exact.
+	if err := gracefulStop(rdb, pl.UUID, dm); err != nil {
+		log.Printf("update_server_version: the move of %s/%s is refused: the server could not be stopped: %v", pl.UUID, subName, err)
+		abort("the server could not be stopped: " + err.Error())
+		return
+	}
+	// The move ends by starting the server, like setup and reinstall.
+	clearRunBlockers(ctx, rdb, pl.UUID)
 	time.Sleep(3 * time.Second)
 
 	stash, err := stashServerJars(serverPath, subName)

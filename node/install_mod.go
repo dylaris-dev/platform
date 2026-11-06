@@ -180,6 +180,14 @@ func runInstallMod(ctx context.Context, rdb *redis.Client, storage *StorageManag
 			log.Printf("mc-user: cannot hand %s to uid %d: %v", cleanName, u, err)
 		}
 	}
+	// Asked again: a version move that took the server during the download
+	// would otherwise get an old-version jar renamed in beside its own, outside
+	// its stash.
+	if modsHeld(ctx, rdb, pl.UUID) {
+		os.Remove(tmpFile)
+		fail("the node started working on this server (version change, reinstall, restore or copy) during the download; install the mod again when it has finished")
+		return
+	}
 	if err := os.Rename(tmpFile, destFile); err != nil {
 		os.Remove(tmpFile)
 		fail("rename %s to %s: %v", tmpFile, destFile, err)
@@ -250,9 +258,44 @@ func runRemoveMod(ctx context.Context, rdb *redis.Client, storage *StorageManage
 		return
 	}
 	if modsHeld(ctx, rdb, pl.UUID) {
-		log.Printf("remove_mod: %s is busy, not removing %q", pl.UUID, pl.FileName)
+		// Not dropped: Core deleted the row when it queued this, so a dropped
+		// removal left the jar loading with nothing in the panel to remove it
+		// with. Waited out instead, so the jar goes against the tree the held
+		// work leaves, and in a goroutine, so it does not sit in one of the
+		// consumer's slots for the length of a restore.
+		log.Printf("remove_mod: %s is busy, removing %q once the work holding it ends", pl.UUID, pl.FileName)
+		go func() {
+			if waitModsReleased(ctx, rdb, pl.UUID) {
+				removeModFile(storage, pl)
+			} else {
+				log.Printf("remove_mod: %s stayed busy, %q was not removed", pl.UUID, pl.FileName)
+			}
+		}()
 		return
 	}
+	removeModFile(storage, pl)
+}
+
+// waitModsReleased blocks until modsHeld is false, false when it gave up.
+func waitModsReleased(ctx context.Context, rdb *redis.Client, uuid string) bool {
+	// ponytail: a node restart while waiting loses the removal, as a dropped one did.
+	deadline := time.Now().Add(modsHeldWaitMax)
+	t := time.NewTicker(modsHeldPoll)
+	defer t.Stop()
+	for modsHeld(ctx, rdb, uuid) {
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-t.C:
+		}
+	}
+	return true
+}
+
+func removeModFile(storage *StorageManager, pl removeModPayload) {
 	serverPath := storage.GetServerDir(pl.UUID)
 	if serverPath == "" {
 		log.Printf("remove_mod: storage lookup for %s returned empty path", pl.UUID)
@@ -415,3 +458,9 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// modsHeldPoll is how often a removal that arrived during a hold looks again,
+// and modsHeldWaitMax how long it waits at most.
+var modsHeldPoll = 2 * time.Second
+
+const modsHeldWaitMax = 2 * time.Hour

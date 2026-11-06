@@ -149,7 +149,13 @@ func (s *StatusWatcherService) consumeVersionUpdateFailures(ctx context.Context)
 				}
 			}
 			s.restoreServerMods(srv.ID, undo)
-			s.store.UpdateServerStatus(srv.ID, "stopped")
+			// A move refused before its stop left the server running, and a
+			// newer node reports that ahead of this signal; "stopped" over it
+			// turned logins away from a running server. An older node leaves
+			// the busy hold's "installing", which still lands as stopped.
+			if srv.Status != "online" {
+				s.store.UpdateServerStatus(srv.ID, "stopped")
+			}
 			// The panel only showed a stopped server on its old version; the
 			// reason sat in the node's log.
 			notifyServerOwner(s.store, srv, "Version change failed",
