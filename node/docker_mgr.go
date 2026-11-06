@@ -2060,6 +2060,11 @@ func (dm *DockerManager) GetContainerStats(containerName string, prev *PrevCPUSt
 	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
 		return nil, prev, fmt.Errorf("stats decode error: %v", err)
 	}
+	// For a container that is not running the daemon answers with only Name
+	// and Id; read as a sample it published a stopped server as online.
+	if stats.Read.IsZero() {
+		return nil, prev, fmt.Errorf("container %s is not running", containerName)
+	}
 
 	// Save current CPU counters for next call
 	currentTotal := stats.CPUStats.CPUUsage.TotalUsage

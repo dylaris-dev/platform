@@ -377,13 +377,23 @@ func restoreLostDiskGrace(ctx context.Context, rdb *redis.Client, uuid string, l
 func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string) (bool, error) {
 	allowGrace := true
 	if rdb != nil {
-		if n, err := rdb.Exists(ctx, diskCountedKey(uuid)).Result(); err == nil && n == 1 {
-			if l, err := rdb.Exists(ctx, diskLiftedKey(uuid)).Result(); err != nil || l == 0 {
+		// A read error is no answer: as "never counted" it re-walked a counted
+		// server with the once-only grace allowed. Skip it until the next boot.
+		n, err := rdb.Exists(ctx, diskCountedKey(uuid)).Result()
+		if err != nil {
+			return false, fmt.Errorf("read counted marker: %w", err)
+		}
+		if n == 1 {
+			// An error here recounts without a grace rather than leaving a
+			// limit a crash lifted off until some later boot.
+			if l, err := rdb.Exists(ctx, diskLiftedKey(uuid)).Result(); err == nil && l == 0 {
 				return false, nil
 			}
 			// Counted already: the grace stays once per server.
 			allowGrace = false
-		} else if v, _ := rdb.Get(ctx, diskLiftedKey(uuid)).Result(); v == diskLiftedNoGrace {
+		} else if v, err := rdb.Get(ctx, diskLiftedKey(uuid)).Result(); err != nil && err != redis.Nil {
+			return false, fmt.Errorf("read lifted marker: %w", err)
+		} else if v == diskLiftedNoGrace {
 			// Lifted by a recount that could not grant it, killed mid-tag:
 			// finishing it here is that recount, not the boot's first count.
 			allowGrace = false

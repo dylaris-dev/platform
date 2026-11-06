@@ -271,9 +271,8 @@ func (sm *StorageManager) orderedPaths() []string {
 // unmounted or full reports 0 and is skipped. Manual placement deliberately does
 // NOT balance beyond that - the admin chose the order, and second-guessing it
 // with a free-space heuristic would make the setting mean nothing.
-// Caller must hold sm.mu.
-func (sm *StorageManager) pickByPriority() string {
-	for _, p := range sm.orderedPaths() {
+func pickByPriority(ordered []string) string {
+	for _, p := range ordered {
 		if getFreeSpace(p) > 0 {
 			return p
 		}
@@ -284,10 +283,11 @@ func (sm *StorageManager) pickByPriority() string {
 // SelectStoragePath picks the path for a NEW server: an explicit request wins,
 // then the admin's manual order if configured, then most free space.
 // After selection, it creates the server directory and stores the assignment in Redis.
+//
+// sm.mu covers only the placement policy: statfs and MkdirAll on a hung NFS
+// path never return, and under the lock they stalled every GetServerPath on
+// the node. sm.paths is fixed after NewStorageManager.
 func (sm *StorageManager) SelectStoragePath(serverUUID string, preferredPath string) (string, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	// If admin explicitly chose a path, use it (if valid)
 	if preferredPath != "" {
 		for _, p := range sm.paths {
@@ -298,8 +298,13 @@ func (sm *StorageManager) SelectStoragePath(serverUUID string, preferredPath str
 		return "", fmt.Errorf("preferred path %q not available", preferredPath)
 	}
 
-	if sm.placementMode == placementManual {
-		if p := sm.pickByPriority(); p != "" {
+	sm.mu.RLock()
+	manual := sm.placementMode == placementManual
+	ordered := sm.orderedPaths()
+	sm.mu.RUnlock()
+
+	if manual {
+		if p := pickByPriority(ordered); p != "" {
 			return sm.assignPath(serverUUID, p)
 		}
 		// Every path in the order is gone or full. Fall through to free-space
@@ -328,7 +333,6 @@ func (sm *StorageManager) SelectStoragePath(serverUUID string, preferredPath str
 }
 
 // assignPath creates the server directory and stores the path in Redis.
-// Caller must hold sm.mu.
 func (sm *StorageManager) assignPath(serverUUID, storagePath string) (string, error) {
 	serverDir := filepath.Join(storagePath, serverUUID)
 	if err := os.MkdirAll(serverDir, 0755); err != nil {
@@ -349,15 +353,16 @@ func (sm *StorageManager) RemoveServerPath(serverUUID string) {
 }
 
 // GetStorageInfo returns disk usage info for all storage paths.
+//
+// No sm.mu: sm.paths is fixed after NewStorageManager, and statfs or ReadDir
+// on a hung NFS path held the read lock forever, which with a SetPlacement
+// queued behind it blocked every server's path lookup on the node.
 func (sm *StorageManager) GetStorageInfo() []StorageInfo {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
 	var infos []StorageInfo
 	for _, p := range sm.paths {
 		info := StorageInfo{Path: p}
 
-		total, free := getDiskSpace(p)
+		total, free := diskSpaceOf(p)
 		info.TotalBytes = total
 		info.FreeBytes = free
 		info.InodesTotal, info.InodesFree = getInodes(p)
@@ -395,9 +400,12 @@ func (sm *StorageManager) setRedisPath(serverUUID, storagePath string) error {
 	return nil
 }
 
+// diskSpaceOf is getDiskSpace; a test swaps it for a statfs that hangs.
+var diskSpaceOf = getDiskSpace
+
 // getFreeSpace returns the available bytes on the filesystem containing path.
 func getFreeSpace(path string) uint64 {
-	_, free := getDiskSpace(path)
+	_, free := diskSpaceOf(path)
 	return free
 }
 
