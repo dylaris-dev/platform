@@ -309,3 +309,27 @@ func TestPrepareNodeStorage_IndirectProviderWithoutBuilder_Errors(t *testing.T) 
 		})
 	}
 }
+
+// The move legs wait up to migrationProgressMaxWait on progress, and the node
+// cannot re-sign a migration part URL, so a lower operator TTL must not
+// shorten the URLs (or the sweep) below that wait.
+func TestMigrationTransferTTL(t *testing.T) {
+	floor := migrationProgressMaxWait + migrationTransferTTLMargin
+	cases := []struct {
+		name     string
+		settings map[string]string
+		want     time.Duration
+	}{
+		{"default stays above the wait", nil, floor},
+		{"low operator TTL is raised to the wait", map[string]string{PresignTTLBYONKey: "60"}, floor},
+		{"higher operator TTL is kept", map[string]string{PresignTTLBYONKey: "720"}, 720 * time.Minute},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := migrationTransferTTL(&storageFakeStore{settings: c.settings})
+			if got != c.want {
+				t.Errorf("migrationTransferTTL = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

@@ -158,8 +158,8 @@ const (
 	// migrationR2PhaseTimeout bounds each leg (upload, then download) of the
 	// cross-LAN BYON R2 fallback while the node reports no progress (a node
 	// older than the report never does). Longer than the LAN/overlay transfer
-	// because a BYON home uplink is slow. Each leg's URLs are signed for the
-	// BYON presign TTL (6h by default, the progress cap) as it starts.
+	// because a BYON home uplink is slow. Each leg's URLs are signed for
+	// migrationTransferTTL as it starts.
 	migrationR2PhaseTimeout    = 1 * time.Hour
 	migrationStartTimeout      = 90 * time.Second // best-effort online confirm
 	migrationPollInterval      = 2 * time.Second
@@ -1326,8 +1326,7 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 	// One key per attempt: the sweep below deletes it again after its URLs
 	// expire, and must never reach the object of a later move of the server.
 	key := fmt.Sprintf("migration-transfer/%s-%s.zip", srv.UUID, attempt)
-	// Use the BYON presign TTL (longer) since at least one leg is a slow home link.
-	ttl := presignTTL(o.store, true)
+	ttl := migrationTransferTTL(o.store)
 	// The PUT URL outlives the delete below: the source - a customer's node on
 	// this path - can upload again until it expires, and that object was left
 	// for good. Recorded before the URL exists, so no URL is ever untracked.
@@ -1407,6 +1406,18 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 		return fmt.Errorf("target R2 download failed (phase=%s): %s", phase, nerr)
 	}
 	return nil
+}
+
+// migrationTransferTTLMargin covers the last part that starts just before a
+// leg's wait runs out, and the sweep that must not abort it.
+const migrationTransferTTLMargin = 30 * time.Minute
+
+// migrationTransferTTL signs the R2 move URLs and dates their sweep entry. A
+// leg waits up to migrationProgressMaxWait while the node reports progress,
+// and the node cannot ask for a fresh part URL on this path, so the operator's
+// BYON presign TTL is only honoured where it is longer than that wait.
+func migrationTransferTTL(st store.Store) time.Duration {
+	return max(presignTTL(st, true), migrationProgressMaxWait+migrationTransferTTLMargin)
 }
 
 // migrationPutMaxSize is the S3/R2 single-PUT object limit. A staged archive
