@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"dylaris-pkg/retry"
+	"dylaris-pkg/validate"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -273,7 +274,7 @@ func getSecret(key, fallback string) string {
 	return getEnv(key, fallback)
 }
 
-// uuidRegex / subServerRegex validate the env vars that get interpolated into
+// uuidRegex / validSubServer validate the env vars that get interpolated into
 // Redis keys. Only Node sets these today, but unvalidated input could collide
 // key namespaces (e.g. SUB_SERVER=foo:logs) or inject separators.
 //
@@ -284,9 +285,13 @@ func getSecret(key, fallback string) string {
 // core-side rule in platform/pkg/validate (ServerUUID); a strict canonical regex
 // here rejected every panel-created server and crash-looped its container.
 var (
-	uuidRegex      = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,80}$`)
-	subServerRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	uuidRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,80}$`)
 )
+
+// validSubServer is Core's own rule, not a copy: a private copy here once lacked
+// the '+' Core accepts, and the shipper then exited before Java started, so a
+// sub-server named "paper+geyser" could never run.
+func validSubServer(s string) bool { return validate.IsSubServerName(s) }
 
 // connectRedis returns the client without waiting for Redis. The Minecraft
 // server must not wait for the console service: it used to, and a Redis that
@@ -820,8 +825,8 @@ func main() {
 	}
 
 	subServer := getEnv("SUB_SERVER", "")
-	if subServer != "" && !subServerRegex.MatchString(subServer) {
-		log.Fatalf("log-shipper: SUB_SERVER %q must match [A-Za-z0-9_-]{1,64}", subServer)
+	if subServer != "" && !validSubServer(subServer) {
+		log.Fatalf("log-shipper: SUB_SERVER %q must match %s", subServer, validate.SubServerName)
 	}
 	streamKey := fmt.Sprintf("dylaris:server:%s:logs", serverUUID)
 	if subServer != "" {

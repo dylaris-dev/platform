@@ -41,13 +41,17 @@ func TestAHostPortChangeWithoutAContainerIsClaimed(t *testing.T) {
 		apply   func(*DockerManager, ServerConfig) error
 		held    int // the server's ledger port before the change, 0 for none
 		taken   bool
+		deleted bool // a delete of the server already ran on this node
 		wantErr bool
 		want    int
 	}{
-		{"reconfigure after a move", func(dm *DockerManager, c ServerConfig) error { return dm.RecreateKeepingRunState(c) }, 0, false, false, 25610},
-		{"update_resources replaces the held port", func(dm *DockerManager, c ServerConfig) error { _, err := dm.UpdateResources(c); return err }, 25601, false, false, 25610},
-		{"reconfigure onto a port another server holds", func(dm *DockerManager, c ServerConfig) error { return dm.RecreateKeepingRunState(c) }, 0, true, true, 0},
-		{"update_resources onto a port another server holds", func(dm *DockerManager, c ServerConfig) error { _, err := dm.UpdateResources(c); return err }, 25601, true, true, 25601},
+		{"reconfigure after a move", func(dm *DockerManager, c ServerConfig) error { return dm.RecreateKeepingRunState(c) }, 0, false, false, false, 25610},
+		{"update_resources replaces the held port", func(dm *DockerManager, c ServerConfig) error { _, err := dm.UpdateResources(c); return err }, 25601, false, false, false, 25610},
+		{"reconfigure onto a port another server holds", func(dm *DockerManager, c ServerConfig) error { return dm.RecreateKeepingRunState(c) }, 0, true, false, true, 0},
+		{"update_resources onto a port another server holds", func(dm *DockerManager, c ServerConfig) error { _, err := dm.UpdateResources(c); return err }, 25601, true, false, true, 25601},
+		// Nothing frees a ledger entry of a deleted server until a restart.
+		{"reconfigure of a deleted server", func(dm *DockerManager, c ServerConfig) error { return dm.RecreateKeepingRunState(c) }, 0, false, true, false, 0},
+		{"update_resources of a deleted server", func(dm *DockerManager, c ServerConfig) error { _, err := dm.UpdateResources(c); return err }, 0, false, true, false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mr := miniredis.RunT(t)
@@ -62,6 +66,10 @@ func TestAHostPortChangeWithoutAContainerIsClaimed(t *testing.T) {
 				if err := dm.portMgr.SetPort(other, 25610); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if tc.deleted {
+				markServerDeleted(uuid)
+				t.Cleanup(func() { forgetTombstoneInMemory(uuid) })
 			}
 			cfg := ServerConfig{UUID: uuid}
 			cfg.Docker.HostPort = 25610

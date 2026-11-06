@@ -19,7 +19,9 @@ import (
 // container without a database row, so it kept its memory and its port.
 //
 // A UUID is never reused, so a tombstone is final; it is only aged out so the
-// map stays small. Nothing that was already running lasts a day.
+// map and the directory stay small. The lifetime is not "how long a command
+// runs": the queue redelivers a pending setup however old it is, so a node that
+// was off for days still sees it. A day was too short for a weekend outage.
 //
 // The map alone forgot every delete on a restart, while the queue redelivers
 // the setup that was still running (it was never ACKed). So each tombstone is
@@ -29,7 +31,7 @@ var deletedServers = struct {
 	at map[string]time.Time
 }{at: map[string]time.Time{}}
 
-const deletedServerMemory = 24 * time.Hour
+const deletedServerMemory = 90 * 24 * time.Hour
 
 func markServerDeleted(uuid string) {
 	deletedServers.Lock()

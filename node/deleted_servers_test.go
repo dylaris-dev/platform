@@ -28,6 +28,8 @@ func TestDeleteTombstoneSurvivesARestart(t *testing.T) {
 		want      bool
 	}{
 		{"fresh tombstone, persisted", true, 0, true},
+		// The queue redelivers a pending setup whatever its age.
+		{"node down over a long weekend", true, 4 * 24 * time.Hour, true},
 		{"aged out", true, deletedServerMemory + time.Hour, false},
 		{"no secret dir: memory only", false, 0, false},
 	}

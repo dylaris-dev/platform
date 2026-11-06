@@ -377,6 +377,11 @@ func (dm *DockerManager) claimHostPort(config ServerConfig) error {
 	if err := dm.portMgr.SetPort(config.UUID, port); err != nil {
 		return fmt.Errorf("%w: %w", errHostPortClaim, err)
 	}
+	// Checked after the booking, like the container build does: a delete runs
+	// beside this and nothing frees a deleted server's entry until a restart.
+	if serverDeleted(config.UUID) {
+		dm.portMgr.ReleasePort(config.UUID)
+	}
 	return nil
 }
 

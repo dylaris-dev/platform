@@ -169,6 +169,27 @@ func TestUUIDRegex(t *testing.T) {
 	}
 }
 
+// Core accepts '+' in a sub-server name (validate.SubServerName); a shipper that
+// refused it exited before Java started, so such a sub-server could never run.
+func TestValidSubServer(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"survival", true},
+		{"paper+geyser", true},
+		{"lobby_1-a", true},
+		{"foo:logs", false},  // colon = Redis-key injection
+		{"../etc", false},    // traversal
+		{"has space", false}, // whitespace
+	}
+	for _, c := range cases {
+		if got := validSubServer(c.in); got != c.want {
+			t.Errorf("validSubServer(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
 // The panel polls RCON continuously, and Minecraft logs a thread start and a
 // shutdown for every one of those connections. At the polling rate that pushes
 // the server's actual output out of the stream's line cap.
