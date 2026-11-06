@@ -212,7 +212,13 @@ func (s *beamServer) auditBeam(ctx context.Context, serverUUID, kind, rel string
 	if s.rdb == nil || serverUUID == "" {
 		return
 	}
-	a := newSFTPAudit(s.extractUsername(ctx), beamPeerAddr(ctx))
+	// The host only, as SFTP sends it: Core stores it as INET, which refuses
+	// "ip:port".
+	var ip string
+	if p, ok := peer.FromContext(ctx); ok && p != nil {
+		ip = remoteAddr(p.Addr)
+	}
+	a := newSFTPAudit(s.extractUsername(ctx), ip)
 	a.via = "beam"
 	a.note(serverUUID, kind, rel)
 	publishSFTPAudit(s.rdb, a)
@@ -573,6 +579,8 @@ func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager, held func(ke
 					}
 					if rerr := root.Remove(name); rerr == nil {
 						log.Printf("beam-server: sweeper removed stale temp %s/%s", e.Name(), name)
+						// A kept temp's bytes were booked into the gauge.
+						remeasureServerSoon(e.Name())
 					}
 					return nil
 				})
@@ -1680,6 +1688,10 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		if err != nil {
 			upRoot.Remove(tmpName)
 			tempGone = true
+			if resumedAt > 0 {
+				// An earlier stream booked these bytes into the gauge.
+				remeasureServerSoon(serverUUID)
+			}
 			return stream.SendAndClose(&pb.BeamOpResp{Success: false, Message: err.Error()})
 		}
 		// Count the completed upload against the user's daily quota by the final

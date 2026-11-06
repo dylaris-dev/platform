@@ -38,16 +38,16 @@ func TestSweepInterruptedWork(t *testing.T) {
 		mk("srv-1/survival/.technic-dl-9", true, true),
 		mk("srv-1/.creative.copying", true, true),
 		mk("srv-1/survival/mods/.upload-77.tmp", false, true),
+		mk("srv-1/survival/world/datapacks/pack/.upload-1.tmp", false, true), // P06: uploads land at any depth
 		mk("srv-1/.dylaris-backups/job-1.tar.gz.partial", false, true),
 		mk("srv-2.migration-in.zip", false, true),
 		mk(".migration-pull-123", false, true),
 	}
 	kept := []string{
-		mk("srv-1/.technic-stage-new", true, false),                       // a job since boot
-		mk(".migration-pull-456", false, false),                           // a download since boot
-		mk("srv-1/survival/world/region/deep/.upload-1.tmp", false, true), // deeper than uploads land
-		mk("srv-1/survival/world/.technic-stage-x", true, true),           // not where installs stage
-		mk("srv-1/.dylaris-backups/job-0.tar.gz", false, true),            // a finished archive
+		mk("srv-1/.technic-stage-new", true, false),             // a job since boot
+		mk(".migration-pull-456", false, false),                 // a download since boot
+		mk("srv-1/survival/world/.technic-stage-x", true, true), // not where installs stage
+		mk("srv-1/.dylaris-backups/job-0.tar.gz", false, true),  // a finished archive
 		mk("srv-1/survival/server.properties", false, true),
 		mk("srv-1/survival/.copying", true, true), // not at the server level
 	}

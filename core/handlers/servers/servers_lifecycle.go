@@ -2795,7 +2795,9 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Delete failed", 500)
 		return
 	}
-	beamaccess.StampUUIDs(r.Context(), h.d.Redis, backends)
+	// The server's own UUID too: nothing else ends an open Beam session on it,
+	// and its writes would recreate the deleted directory on the node.
+	beamaccess.StampUUIDs(r.Context(), h.d.Redis, append(backends, srv.UUID))
 
 	// Shared with the two node-delete paths, which used to do none of this: the
 	// same cleanup has to run whether one server goes or every server on a

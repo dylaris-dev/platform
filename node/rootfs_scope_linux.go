@@ -132,7 +132,7 @@ func renameNoFollow(rootDir, oldRel, newRel string) error {
 	if _, err := rand.Read(b); err != nil {
 		return err
 	}
-	tmp := renameStagePrefix + hex.EncodeToString(b)
+	tmp := renameStageOwn + hex.EncodeToString(b)
 	if err := unix.Renameat(int(od.Fd()), ol, int(nd.Fd()), tmp); err != nil {
 		return &os.LinkError{Op: "rename", Old: oldRel, New: newRel, Err: err}
 	}
@@ -149,6 +149,10 @@ func renameNoFollow(rootDir, oldRel, newRel string) error {
 		}
 		return &os.LinkError{Op: "rename", Old: oldRel, New: newRel, Err: err}
 	}
+	// rename(2) between two links to one file does nothing and succeeds, so
+	// tmp can still be there. Then nl is that same file: dropping tmp loses
+	// nothing, keeping it hid it from the tenant for good.
+	_ = unix.Unlinkat(int(nd.Fd()), tmp, 0)
 	return nil
 }
 

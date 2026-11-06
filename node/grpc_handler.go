@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -1117,6 +1118,10 @@ func (h *StreamHandler) handleInspectOrphan(reqID, serverUUID string) *pb.NodeMe
 // calls. Protected like a tombstone, but NOT ".pending-delete-": the sweeper
 // deletes those, and a folder caught there by a node restart is the user's.
 const renameStagePrefix = ".dylaris-mv-"
+
+// renameStageOwn starts every name THIS process parks, so the boot sweep can
+// give back what a killed one left without racing a rename still in flight.
+var renameStageOwn = renameStagePrefix + strconv.FormatInt(nodeStartedAt.UnixNano(), 36) + "-"
 
 func isProtectedFile(path string) bool {
 	clean := filepath.Clean(path)

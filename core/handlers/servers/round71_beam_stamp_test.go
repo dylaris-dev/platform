@@ -134,4 +134,9 @@ func TestDeletingAProxyStampsItsBackends(t *testing.T) {
 	if !mr.Exists(beamauth.AccessEpochKey("backend")) {
 		t.Fatal("the proxy's backend was not stamped")
 	}
+	// P15: an open Beam session on the deleted server itself kept working for
+	// up to a day, and its writes recreated the directory on the node.
+	if !mr.Exists(beamauth.AccessEpochKey("proxy")) {
+		t.Fatal("the deleted server itself was not stamped")
+	}
 }

@@ -62,8 +62,8 @@ func sweepInterruptedWork(roots []string) {
 	}
 }
 
-// sweepServerDir sweeps one server directory to the depth these jobs write at:
-// the server itself, its sub-servers, and one level below for uploads.
+// sweepServerDir sweeps one whole server directory: a panel upload stages next
+// to its destination and a rename parks next to its target, at any depth.
 func sweepServerDir(dir string, cutoff time.Time) int {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -85,19 +85,42 @@ func sweepServerDir(dir string, cutoff time.Time) int {
 		}
 		for _, e := range entries {
 			name := path.Join(rel, e.Name())
+			if strings.HasPrefix(e.Name(), renameStagePrefix) && !strings.HasPrefix(e.Name(), renameStageOwn) {
+				recoverParkedRename(root, rel, e)
+				continue
+			}
 			if isLeftover(e.Name(), e.IsDir(), depth, rel) {
 				if removeLeftover(root, name, e, cutoff, uuid) {
 					removed++
 				}
 				continue
 			}
-			if e.IsDir() && e.Type()&os.ModeSymlink == 0 && depth < 3 {
+			if e.IsDir() && e.Type()&os.ModeSymlink == 0 {
 				walk(name, depth+1)
 			}
 		}
 	}
 	walk(".", 1)
 	return removed
+}
+
+// recoverParkedRename gives back what a rename killed between its two renameat
+// calls left under renameStagePrefix, which every tenant path hides and
+// refuses. Same directory, visible name; a link is removed instead, since
+// renameNoFollow refuses to move one and parks it only to judge it.
+func recoverParkedRename(root *os.Root, rel string, e os.DirEntry) {
+	name := path.Join(rel, e.Name())
+	if e.Type()&os.ModeSymlink != 0 {
+		_ = root.Remove(name)
+		return
+	}
+	back := path.Join(rel, "recovered-"+strings.TrimPrefix(e.Name(), renameStagePrefix))
+	if _, err := root.Lstat(back); err == nil {
+		return
+	}
+	if err := root.Rename(name, back); err == nil {
+		log.Printf("cleanup: an interrupted rename left %s parked, given back as %s", name, back)
+	}
 }
 
 // removeLeftover removes one leftover past cutoff. A .partial archive goes

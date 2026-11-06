@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -65,6 +66,22 @@ func (s *SFTPAuditService) Start(ctx context.Context) {
 	}()
 }
 
+// auditIP turns what a node sent into something the INET column accepts, or
+// "" (stored as NULL). Older nodes send a Beam peer as "ip:port",
+// which Postgres refuses, and one bad field must not cost the whole row.
+func auditIP(s string) string {
+	if host, _, err := net.SplitHostPort(s); err == nil {
+		s = host
+	}
+	if net.ParseIP(s) != nil {
+		return s
+	}
+	if _, _, err := net.ParseCIDR(s); err == nil {
+		return s
+	}
+	return ""
+}
+
 // apply writes one record after checking that the node that sent it hosts the
 // server it names. An SFTP record must also come from one of ours: a customer's
 // machine serves no SFTP, so such a record is not a record of anything. It does
@@ -97,7 +114,7 @@ func (s *SFTPAuditService) apply(channel string, rec queue.SFTPAuditRecord) {
 	ev := &models.ServerAuditEvent{
 		ServerID:  srv.ID,
 		EventType: eventType,
-		IPAddress: rec.RemoteIP,
+		IPAddress: auditIP(rec.RemoteIP),
 		UserAgent: agent,
 		Metadata: map[string]interface{}{
 			"username": rec.Username, "writes": rec.Writes, "deletes": rec.Deletes,

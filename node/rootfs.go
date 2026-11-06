@@ -76,6 +76,11 @@ func openJailed(rootDir, reqPath string) (*os.Root, string, error) {
 // directory, and the old path-based writes created it on the way. rootDir is
 // the node's own path (storage path plus server UUID), never the tenant's.
 func openJailedForWrite(rootDir, reqPath string) (*os.Root, string, error) {
+	// A session opened before the delete (Beam lives up to a day) would
+	// otherwise recreate the directory, uncounted and owned by no server.
+	if serverDeleted(filepath.Base(rootDir)) {
+		return nil, "", fmt.Errorf("%w: this server has been deleted", os.ErrNotExist)
+	}
 	if err := os.MkdirAll(rootDir, 0o755); err != nil {
 		return nil, "", err
 	}

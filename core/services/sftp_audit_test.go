@@ -102,3 +102,23 @@ func TestABeamRecordFromACustomersMachineIsMarkedAsItsClaim(t *testing.T) {
 		}
 	}
 }
+
+// P14: a node sent the Beam peer as "ip:port", and InsertServerAudit casts it
+// to INET, so Postgres refused every Beam row. Old nodes still send it that way.
+func TestTheAuditAddressIsWhatAnInetColumnTakes(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"10.0.1.7:43122", "10.0.1.7"},
+		{"[fd00::5]:5100", "fd00::5"},
+		{"10.0.1.7", "10.0.1.7"},
+		{"2001:db8::/64", "2001:db8::/64"},
+		{"unknown", ""},
+		{"", ""},
+	} {
+		fs := &sftpAuditFakeStore{node: models.Node{Token: "n1"}}
+		NewSFTPAuditService(fs, nil, nil).apply(queue.SFTPAuditChannel("n1"),
+			queue.SFTPAuditRecord{ServerUUID: "srv", Username: "bob", Writes: 1, Via: "beam", RemoteIP: tc.in})
+		if len(fs.written) != 1 || fs.written[0].IPAddress != tc.want {
+			t.Errorf("RemoteIP %q: rows = %+v, want IPAddress %q", tc.in, fs.written, tc.want)
+		}
+	}
+}

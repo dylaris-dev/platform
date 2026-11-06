@@ -84,3 +84,30 @@ func TestATenantWriteRefusesALinkToANodeFile(t *testing.T) {
 		})
 	}
 }
+
+// P12: renaming one hard link onto another of the same file is a no-op for
+// rename(2), so the source stayed parked as a hidden .dylaris-mv- entry the
+// tenant could neither see nor delete.
+func TestRenamingOntoAHardLinkOfItselfLeavesNothingParked(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.yml"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(dir, "a.yml"), filepath.Join(dir, "b.yml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := renameNoFollow(dir, "a.yml", "b.yml"); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "b.yml" {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("entries after the rename = %v, want only b.yml", names)
+	}
+}
