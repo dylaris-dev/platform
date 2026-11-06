@@ -25,16 +25,35 @@ const floodgateKeyLen = 16
 //
 // Floodgate generates its own key on first start; ours must win so Geyser and
 // every Floodgate agree, hence the overwrite.
+//
+// The data folder Floodgate made is where it reads, so that wins over the
+// layout guess: a Paper server moved to Fabric keeps its plugins/ folder, and
+// the key went there while the Fabric mod read config/floodgate.
 func writeFloodgateKey(serverDir string, key []byte) error {
-	var rel string
-	switch {
-	case isDir(filepath.Join(serverDir, "plugins")):
-		rel = "plugins/floodgate/key.pem"
-	case isDir(filepath.Join(serverDir, "mods")):
-		rel = "config/floodgate/key.pem"
-	default:
-		return nil
+	var rels []string
+	if isDir(filepath.Join(serverDir, "plugins", "floodgate")) {
+		rels = append(rels, "plugins/floodgate/key.pem")
 	}
+	if isDir(filepath.Join(serverDir, "config", "floodgate")) {
+		rels = append(rels, "config/floodgate/key.pem")
+	}
+	if len(rels) == 0 {
+		switch {
+		case isDir(filepath.Join(serverDir, "plugins")):
+			rels = []string{"plugins/floodgate/key.pem"}
+		case isDir(filepath.Join(serverDir, "mods")):
+			rels = []string{"config/floodgate/key.pem"}
+		}
+	}
+	for _, rel := range rels {
+		if err := writeFloodgateKeyAt(serverDir, rel, key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeFloodgateKeyAt(serverDir, rel string, key []byte) error {
 	root, leaf, err := writeScope(serverDir, rel, true)
 	if err != nil {
 		return fmt.Errorf("floodgate key: %w", err)

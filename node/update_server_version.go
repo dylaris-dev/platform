@@ -156,11 +156,11 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		abort(fmt.Sprintf("%q is not server software this node can install", cmd.Installer.Type))
 		return
 	}
-	// A blank NeoForge build is resolved here, not by InstallServer after the
-	// stop: a Minecraft version upstream has no build for took the server down
-	// before it was refused.
-	if cmd.Installer.Type == "neoforge" && cmd.Installer.Loader == "" && cmd.Installer.Version != "" {
-		build, err := resolveNeoForgeVersion(cmd.Installer.Version)
+	// What the install will fetch is resolved here, not by InstallServer after
+	// the stop: a Minecraft version upstream has no build for took the server
+	// down before it was refused.
+	if cmd.Installer.Version != "" {
+		build, err := resolveVersionMoveTarget(cmd.Installer)
 		if err != nil {
 			log.Printf("update_server_version: %v; the move of %s is refused", err, pl.UUID)
 			abort(err.Error())
@@ -258,23 +258,9 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		fail("setting "+name+" aside", err)
 		return
 	}
-	modsRel := filepath.ToSlash(filepath.Join(subName, targetDir))
-
-	for _, sj := range staged {
-		// Only a name this move created is removed again on a failure: one that
-		// was already there and not on the removal list is not ours to delete.
-		// Recorded before the rename, so a node that dies right after it still
-		// leaves the name for the redelivery to take back.
-		if _, lerr := os.Lstat(sj.final); os.IsNotExist(lerr) {
-			stash.add(modsRel + "/" + filepath.Base(sj.final))
-		}
-		if err := os.Rename(sj.tmp, sj.final); err != nil {
-			// A rename failing after every download succeeded is a filesystem
-			// fault, not a content problem. Say which jar, so the gap in the
-			// mods directory has a name.
-			log.Printf("update_server_version: could not put %s in place: %v", sj.final, err)
-			continue
-		}
+	if name, err := placeStagedJars(stash, filepath.ToSlash(filepath.Join(subName, targetDir)), staged); err != nil {
+		fail("putting "+name+" in place", err)
+		return
 	}
 
 	subServerDir := filepath.Join(serverPath, subName)
@@ -312,6 +298,11 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	// recreate keeps it, as reinstall does: putting the old files back under a
 	// container that may already carry the new command would match neither.
 	stash.discard()
+	// Saved whatever the recreate does, as the new software is on disk either
+	// way: the reconciler rebuilds a missing container from this file, and the
+	// setup-time image and start command crash-looped the moved server.
+	saveNodeConfig(serverPath, cmd.Config)
+	refreshServerMetadata(serverPath, pl.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
 	if err := recreate(cmd.Config); err != nil {
 		log.Printf("update_server_version: failed to restart %s: %v", pl.UUID, err)
 		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
@@ -412,6 +403,25 @@ func stageInstalls(modsDir string, files []versionUpdateFile, fetch func(url, ds
 		}
 	}
 	return staged, nil
+}
+
+// placeStagedJars renames every staged jar into place and names the one that
+// failed. A failed rename used to be logged and skipped, so the server came up
+// without that mod while Core's rows said it was installed.
+func placeStagedJars(stash *jarStash, modsRel string, staged []stagedJar) (string, error) {
+	for _, sj := range staged {
+		// Only a name this move created is removed again on a failure: one that
+		// was already there and not on the removal list is not ours to delete.
+		// Recorded before the rename, so a node that dies right after it still
+		// leaves the name for the redelivery to take back.
+		if _, lerr := os.Lstat(sj.final); os.IsNotExist(lerr) {
+			stash.add(modsRel + "/" + filepath.Base(sj.final))
+		}
+		if err := os.Rename(sj.tmp, sj.final); err != nil {
+			return filepath.Base(sj.final), err
+		}
+	}
+	return "", nil
 }
 
 // stagedJar is one downloaded-and-verified jar waiting to be renamed into place.

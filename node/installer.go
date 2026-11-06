@@ -256,27 +256,11 @@ func installUploadSoftware(serverDataPath, subServerName string, config Installe
 // Result lands as fabric-server-launch.jar in destDir.
 func installFabric(dir, mcVersion, loaderVersion string) error {
 	if loaderVersion == "" {
-		var loaders []struct {
-			Loader struct {
-				Version string `json:"version"`
-				Stable  bool   `json:"stable"`
-			} `json:"loader"`
+		v, err := resolveFabricLoader(mcVersion, "")
+		if err != nil {
+			return err
 		}
-		if err := fetchJSON(fmt.Sprintf("https://meta.fabricmc.net/v2/versions/loader/%s", mcVersion), &loaders); err != nil {
-			return fmt.Errorf("fabric loader lookup failed: %v", err)
-		}
-		for _, l := range loaders {
-			if l.Loader.Stable {
-				loaderVersion = l.Loader.Version
-				break
-			}
-		}
-		if loaderVersion == "" && len(loaders) > 0 {
-			loaderVersion = loaders[0].Loader.Version
-		}
-		if loaderVersion == "" {
-			return fmt.Errorf("no Fabric loader available for MC %s", mcVersion)
-		}
+		loaderVersion = v
 	}
 
 	// Pick the most recent stable installer (server-launcher itself is the
@@ -306,6 +290,38 @@ func installFabric(dir, mcVersion, loaderVersion string) error {
 		mcVersion, loaderVersion, installerVersion)
 	log.Printf("Downloading Fabric server launcher (mc=%s loader=%s installer=%s)", mcVersion, loaderVersion, installerVersion)
 	return downloadFile(url, filepath.Join(dir, "fabric-server-launch.jar"))
+}
+
+// resolveFabricLoader is the loader a blank want means for mcVersion (the
+// newest stable, else the newest), or want itself once Fabric lists it for
+// that version.
+func resolveFabricLoader(mcVersion, want string) (string, error) {
+	var loaders []struct {
+		Loader struct {
+			Version string `json:"version"`
+			Stable  bool   `json:"stable"`
+		} `json:"loader"`
+	}
+	if err := fetchJSON(fmt.Sprintf("https://meta.fabricmc.net/v2/versions/loader/%s", mcVersion), &loaders); err != nil {
+		return "", fmt.Errorf("fabric loader lookup failed: %v", err)
+	}
+	if want != "" {
+		for _, l := range loaders {
+			if l.Loader.Version == want {
+				return want, nil
+			}
+		}
+		return "", fmt.Errorf("no Fabric loader %s for MC %s", want, mcVersion)
+	}
+	for _, l := range loaders {
+		if l.Loader.Stable {
+			return l.Loader.Version, nil
+		}
+	}
+	if len(loaders) > 0 && loaders[0].Loader.Version != "" {
+		return loaders[0].Loader.Version, nil
+	}
+	return "", fmt.Errorf("no Fabric loader available for MC %s", mcVersion)
 }
 
 // installQuilt lays down what Quilt's own installer does for a server: the
@@ -420,26 +436,81 @@ func manifestHeader(name, value string) string {
 // host-level Java install required.
 func installForge(dir, mcVersion, build, javaImage, serverUUID string) error {
 	if build == "" {
-		var promos struct {
-			Promos map[string]string `json:"promos"`
+		b, err := resolveForgeBuild(mcVersion)
+		if err != nil {
+			return err
 		}
-		if err := fetchJSON("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json", &promos); err != nil {
-			return fmt.Errorf("forge promotions lookup failed: %v", err)
-		}
-		if b, ok := promos.Promos[mcVersion+"-recommended"]; ok {
-			build = b
-		} else if b, ok := promos.Promos[mcVersion+"-latest"]; ok {
-			build = b
-		}
-		if build == "" {
-			return fmt.Errorf("no Forge build available for MC %s", mcVersion)
-		}
+		build = b
 	}
 
-	combined := mcVersion + "-" + build
-	installerURL := fmt.Sprintf("https://maven.minecraftforge.net/net/minecraftforge/forge/%s/forge-%s-installer.jar", combined, combined)
 	log.Printf("Downloading Forge installer (mc=%s build=%s)", mcVersion, build)
-	return runLoaderInstaller(dir, "forge", installerURL, "_forge-installer.jar", javaImage, serverUUID, "--installServer")
+	return runLoaderInstaller(dir, "forge", forgeInstallerURL(mcVersion, build), "_forge-installer.jar", javaImage, serverUUID, "--installServer")
+}
+
+// resolveForgeBuild is the build a blank Forge loader means for mcVersion:
+// the recommended promotion, else the latest.
+func resolveForgeBuild(mcVersion string) (string, error) {
+	var promos struct {
+		Promos map[string]string `json:"promos"`
+	}
+	if err := fetchJSON("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json", &promos); err != nil {
+		return "", fmt.Errorf("forge promotions lookup failed: %v", err)
+	}
+	if b := promos.Promos[mcVersion+"-recommended"]; b != "" {
+		return b, nil
+	}
+	if b := promos.Promos[mcVersion+"-latest"]; b != "" {
+		return b, nil
+	}
+	return "", fmt.Errorf("no Forge build available for MC %s", mcVersion)
+}
+
+func forgeInstallerURL(mcVersion, build string) string {
+	combined := mcVersion + "-" + build
+	return fmt.Sprintf("https://maven.minecraftforge.net/net/minecraftforge/forge/%s/forge-%s-installer.jar", combined, combined)
+}
+
+// resolveVersionMoveTarget asks upstream whether there is anything to install
+// for cfg, and returns the loader build the install is to use. A version move
+// calls it BEFORE the stop: the target list comes from Modrinth, not from the
+// loaders, so a version a loader has no build for yet could be chosen, and
+// the install only found out after every player had been disconnected.
+func resolveVersionMoveTarget(cfg InstallerConfig) (string, error) {
+	switch cfg.Type {
+	case "paper":
+		_, err := latestPaperMCBuild("paper", cfg.Version)
+		return cfg.Loader, err
+	case "fabric":
+		return resolveFabricLoader(cfg.Version, cfg.Loader)
+	case "forge":
+		if cfg.Loader == "" {
+			return resolveForgeBuild(cfg.Version)
+		}
+		return cfg.Loader, checkInstallerExists(forgeInstallerURL(cfg.Version, cfg.Loader))
+	case "neoforge":
+		if cfg.Loader == "" {
+			return resolveNeoForgeVersion(cfg.Version)
+		}
+		return cfg.Loader, checkInstallerExists(neoForgeInstallerURL(cfg.Loader))
+	}
+	return cfg.Loader, nil
+}
+
+// checkInstallerExists HEADs a loader installer jar without downloading it.
+func checkInstallerExists(u string) error {
+	req, err := http.NewRequest(http.MethodHead, u, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := installerMetaClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("installer lookup failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("no installer at %s (HTTP %d)", u, resp.StatusCode)
+	}
+	return nil
 }
 
 // installNeoForge resolves the requested NeoForge version (or latest if blank)
@@ -709,18 +780,33 @@ var paperMCLabels = map[string]string{"paper": "Paper", "velocity": "Velocity", 
 // installPaperMC is installPaper for any project on the Fill API: paper,
 // velocity and waterfall answer in the same shape.
 func installPaperMC(dir, project, version string) error {
+	b, err := latestPaperMCBuild(project, version)
+	if err != nil {
+		return err
+	}
+	log.Printf("Downloading %s %s build %d ...", paperMCLabels[project], version, b.id)
+	return installServerJar(dir, b.url, b.sha256)
+}
+
+type paperMCBuild struct {
+	id          int
+	url, sha256 string
+}
+
+// latestPaperMCBuild is the newest build Fill serves for a project version.
+func latestPaperMCBuild(project, version string) (paperMCBuild, error) {
 	label := paperMCLabels[project]
 	if label == "" {
-		return fmt.Errorf("unknown PaperMC project %q", project)
+		return paperMCBuild{}, fmt.Errorf("unknown PaperMC project %q", project)
 	}
 	apiURL := fmt.Sprintf("https://fill.papermc.io/v3/projects/%s/versions/%s/builds/latest", project, url.PathEscape(version))
 	resp, err := installerMetaClient.Get(apiURL)
 	if err != nil {
-		return fmt.Errorf("failed to query PaperMC API: %v", err)
+		return paperMCBuild{}, fmt.Errorf("failed to query PaperMC API: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("PaperMC API returned HTTP %d for version %s", resp.StatusCode, version)
+		return paperMCBuild{}, fmt.Errorf("PaperMC API returned HTTP %d for version %s", resp.StatusCode, version)
 	}
 
 	var result struct {
@@ -734,15 +820,13 @@ func installPaperMC(dir, project, version string) error {
 		} `json:"downloads"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("failed to parse PaperMC response: %v", err)
+		return paperMCBuild{}, fmt.Errorf("failed to parse PaperMC response: %v", err)
 	}
 	dl, ok := result.Downloads["server:default"]
 	if !ok || dl.URL == "" {
-		return fmt.Errorf("no server download available for %s %s", label, version)
+		return paperMCBuild{}, fmt.Errorf("no server download available for %s %s", label, version)
 	}
-
-	log.Printf("Downloading %s %s build %d ...", label, version, result.ID)
-	return installServerJar(dir, dl.URL, dl.Checksums.SHA256)
+	return paperMCBuild{id: result.ID, url: dl.URL, sha256: dl.Checksums.SHA256}, nil
 }
 
 // installServerJar downloads a server jar to server.jar.part and only then

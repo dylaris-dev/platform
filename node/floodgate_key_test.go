@@ -96,3 +96,46 @@ func TestWriteFloodgateKeyRefusesEscapingLink(t *testing.T) {
 		t.Errorf("the link target outside the server directory was written to: %v", entries)
 	}
 }
+
+// M12: the data folder Floodgate made wins over the plugins/mods heuristic. A
+// Paper server moved to Fabric keeps its plugins/ folder, and the key written
+// there never reached the Fabric mod, which reads config/floodgate.
+func TestWriteFloodgateKeyPrefersFloodgatesOwnFolder(t *testing.T) {
+	tests := []struct {
+		name string
+		dirs []string
+		want []string
+	}{
+		{"fabric after a paper move", []string{"plugins/floodgate", "mods", "config/floodgate"}, []string{"plugins/floodgate/key.pem", "config/floodgate/key.pem"}},
+		{"plugins dir left, mod folder made", []string{"plugins", "mods", "config/floodgate"}, []string{"config/floodgate/key.pem"}},
+		{"paper folder made", []string{"plugins/floodgate", "mods"}, []string{"plugins/floodgate/key.pem"}},
+		{"no folder yet, plugins", []string{"plugins", "mods"}, []string{"plugins/floodgate/key.pem"}},
+		{"no folder yet, mods", []string{"mods"}, []string{"config/floodgate/key.pem"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, d := range tc.dirs {
+				if err := os.MkdirAll(filepath.Join(dir, filepath.FromSlash(d)), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := writeFloodgateKey(dir, testFloodgateKey); err != nil {
+				t.Fatal(err)
+			}
+			for _, rel := range []string{"plugins/floodgate/key.pem", "config/floodgate/key.pem"} {
+				want := false
+				for _, w := range tc.want {
+					want = want || w == rel
+				}
+				got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+				if want && (err != nil || !bytes.Equal(got, testFloodgateKey)) {
+					t.Errorf("%s = %q, %v; want the key", rel, got, err)
+				}
+				if !want && err == nil {
+					t.Errorf("%s was written", rel)
+				}
+			}
+		})
+	}
+}

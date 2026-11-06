@@ -54,6 +54,8 @@ func TestVersionMoveAbortsWhenTheStopFails(t *testing.T) {
 	prevWait := gracefulStopWait
 	gracefulStopWait = 200 * time.Millisecond
 	t.Cleanup(func() { gracefulStopWait = prevWait })
+	// The move asks Fill for the build before it stops.
+	stubInstallerMeta(t, metaTransport{paperBuildsPath: paperBuildsBody})
 
 	root := t.TempDir()
 	const uuid = "srv-move-stopfail"

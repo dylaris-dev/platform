@@ -2313,6 +2313,8 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		// Best-effort metadata refresh regardless of RecreateWithCommand result
 		// (reinstall succeeded; the sub-server directory has new software).
+		// The config too: the reconciler rebuilds a missing container from it.
+		saveNodeConfig(serverPath, cmd.Config)
 		refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
 
 	case "migrate_storage":
