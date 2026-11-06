@@ -1387,6 +1387,28 @@ func commandRefusal(cmd NodeCommand) string {
 	return ""
 }
 
+// storageWriterActions write into the server directory they resolved once, for
+// as long as they run. A storage move that started meanwhile copied the tree
+// without what they wrote after and deleted the source under them, and a
+// restore or install reported done on a path that no longer existed.
+var storageWriterActions = map[string]bool{
+	"create": true, "setup": true, "reconfigure": true, "switch_server": true,
+	"update_resources": true, "delete": true, "delete_sub_server": true, "reinstall": true,
+	"backup_run": true, "backup_restore": true, "install_mod": true, "remove_mod": true,
+	"update_server_version": true, "copy_sub_server": true,
+}
+
+// holdCommandWriter holds a storage move of the command's server off until the
+// returned func runs (StorageManager.holdWriter). Taken before the command
+// resolves the server's path.
+func holdCommandWriter(storage *StorageManager, cmd NodeCommand) func() {
+	if !storageWriterActions[cmd.Action] {
+		return func() {}
+	}
+	uuid, _ := commandIdentifiers(cmd)
+	return storage.holdWriter(uuid)
+}
+
 func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *redis.Client, dm *DockerManager, id string, quota *QuotaSet, storage *StorageManager) {
 	log.Printf("Pulled command from queue: '%s'", cmd.Action)
 
@@ -1484,6 +1506,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		log.Printf("%s: refusing this command, %s", cmd.Action, problem)
 		return
 	}
+	defer holdCommandWriter(storage, cmd)()
 
 	switch cmd.Action {
 

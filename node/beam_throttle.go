@@ -237,7 +237,22 @@ func (t *ServerDataThrottle) limiter(ctx context.Context, uuid string) *rate.Lim
 	var bps int64
 	if t.rdb != nil {
 		v, err := t.rdb.Get(ctx, "dylaris:server:"+uuid+":data_bw").Int64()
-		if err == nil && v > 0 {
+		if failed(err) {
+			// Redis did not answer: keep what was last read, as
+			// BeamThrottle.reloadFromRedis does. Read as "no throttle", it
+			// lifted the cap for as long as Redis stayed away. Asked again
+			// after the cache period, not on every chunk; with nothing read
+			// yet (bps -1) there is no cap to keep.
+			t.mu.Lock()
+			defer t.mu.Unlock()
+			if e = t.m[uuid]; e == nil {
+				e = &serverDataLimit{bps: -1}
+				t.m[uuid] = e
+			}
+			e.at = time.Now()
+			return e.lim
+		}
+		if v > 0 {
 			bps = v
 		}
 	}

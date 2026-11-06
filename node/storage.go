@@ -37,8 +37,9 @@ type StorageManager struct {
 	// closed once the move is done. See fenceMove.
 	movingMu sync.Mutex
 	moving   map[string]chan struct{}
-	// writers counts, per server, write handles that outlive one call (SFTP).
-	// Under movingMu with moving: see holdWriter.
+	// writers counts, per server, writes that outlive one lookup: SFTP handles,
+	// Beam and panel uploads, restores, installs. Under movingMu with moving:
+	// see holdWriter.
 	writers map[string]int
 }
 
@@ -446,15 +447,15 @@ func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (strin
 // write resolved then landed in the tree the move deletes afterwards. The old
 // manager-wide lock gave the same wait, for every server on the node.
 //
-// A lookup made before the fence is past it: an open SFTP handle kept writing
-// into the source, the move deleted it, and the client saw a truncated upload
-// succeed. So the fence is refused while a writer holds the server.
+// A lookup made before the fence is past it: an open SFTP handle or a Beam
+// upload kept writing into the source, the move deleted it, and the client saw
+// the upload succeed. So the fence is refused while a writer holds the server.
 func (sm *StorageManager) fenceMove(serverUUID string) (func(), error) {
 	ch := make(chan struct{})
 	sm.movingMu.Lock()
 	if n := sm.writers[serverUUID]; n > 0 {
 		sm.movingMu.Unlock()
-		return nil, fmt.Errorf("server %s has %d file(s) open for writing over SFTP; close them and retry the move", serverUUID, n)
+		return nil, fmt.Errorf("server %s has %d write(s) in progress (uploads, installs or a restore); retry the move once they finish", serverUUID, n)
 	}
 	if sm.moving == nil {
 		sm.moving = map[string]chan struct{}{}
@@ -474,6 +475,9 @@ func (sm *StorageManager) fenceMove(serverUUID string) (func(), error) {
 // first then makes that lookup wait for the move, and one that comes later
 // sees the writer and is refused.
 func (sm *StorageManager) holdWriter(serverUUID string) func() {
+	if sm == nil {
+		return func() {}
+	}
 	sm.movingMu.Lock()
 	if sm.writers == nil {
 		sm.writers = map[string]int{}

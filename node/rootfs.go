@@ -359,6 +359,41 @@ func deniedIdentity(info fs.FileInfo, deny map[fileIdentity]bool) bool {
 	return ok && deny[id]
 }
 
+// openTenantWriteIn is openWriteIn for a write on a tenant's behalf into the
+// server at serverDir. On a host without fs.protected_hardlinks the container
+// can give one of the node's own files (.node_config.json, a backup) a second
+// name in a tenant folder, and a write to that name went into the node's file.
+// Refused by identity, so a link between two of the tenant's own files (a
+// restore makes them) is still written, and before O_TRUNC empties anything.
+func openTenantWriteIn(root *os.Root, name string, flag int, perm os.FileMode, serverDir string) (*os.File, error) {
+	f, err := openWriteIn(root, name, flag&^os.O_TRUNC, perm)
+	if err != nil {
+		return nil, err
+	}
+	if st, err := f.Stat(); err != nil || multiplyLinkedInfo(st) && nodeOwnedFileIn(serverDir, st) {
+		f.Close()
+		return nil, fs.ErrPermission
+	}
+	if flag&os.O_TRUNC != 0 {
+		if err := f.Truncate(0); err != nil {
+			f.Close()
+			return nil, err
+		}
+	}
+	return f, nil
+}
+
+// nodeOwnedFileIn reports whether info is one of the node's files of the
+// server at serverDir; true when that cannot be told.
+func nodeOwnedFileIn(serverDir string, info fs.FileInfo) bool {
+	r, err := os.OpenRoot(serverDir)
+	if err != nil {
+		return true
+	}
+	defer r.Close()
+	return deniedIdentity(info, nodeOwnedIdentities(r, true))
+}
+
 // openTenantReadIn is openRegularIn for a read on a tenant's behalf: a file
 // that turns out to be one of deny's is not found, however it was reached.
 // Judged on the open file, so a link swapped after a check cannot slip past.

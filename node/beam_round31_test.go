@@ -75,7 +75,7 @@ func TestParallelBeamUploadsShareTheDailyQuota(t *testing.T) {
 	p, _ := peer.FromContext(ctx)
 	bs.usernameByPeer.Store(p.Addr.String(), "carol")
 
-	_, release := bs.reserveUpload("u:carol", 60) // another of carol's uploads, still running
+	_, release := reserveOn(uploadAccountInflight("carol"), 60) // another of carol's uploads, still running
 	defer release()
 	stream := &fakeBeamUploadStream{ctx: ctx, msgs: []*pb.BeamUploadMsg{
 		{Payload: &pb.BeamUploadMsg_Start{Start: &pb.BeamUploadStart{Path: "survival", Filename: "w.zip", TotalSize: 60}}},

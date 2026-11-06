@@ -101,13 +101,6 @@ type beamServer struct {
 	// B's server.
 	sessionByPeer sync.Map // map[string]*beamSession
 
-	// inflight is the declared size of uploads in progress, per account
-	// ("u:<name>") and per server ("s:<uuid>"). The daily quota and the disk
-	// headroom were checked per upload against what was already BOOKED, and
-	// booking happens when an upload finishes - so N uploads started at once
-	// each saw the whole remaining allowance.
-	inflight sync.Map // map[string]*atomic.Int64
-
 	// uploadTemps are the upload temps streams have open, by server uuid +
 	// "/" + temp name. A second stream with the same upload id adopted a live
 	// one as already charged, renamed it into place, and neither the quota nor
@@ -204,13 +197,8 @@ func (s *beamServer) auditBeam(ctx context.Context, serverUUID, kind, rel string
 	publishSFTPAudit(s.rdb, a)
 }
 
-// reserveUpload adds n to the in-flight count under key and returns the new
-// total and a release. A nil release is never returned.
-func (s *beamServer) reserveUpload(key string, n int64) (int64, func()) {
-	v, _ := s.inflight.LoadOrStore(key, &atomic.Int64{})
-	return reserveOn(v.(*atomic.Int64), n)
-}
-
+// reserveOn adds n to c and returns the new total and a release. A nil release
+// is never returned.
 func reserveOn(c *atomic.Int64, n int64) (int64, func()) {
 	total := c.Add(n)
 	var once sync.Once
@@ -973,11 +961,13 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
+	defer s.storageMgr.holdWriter(serverUUID)()
 	root, name, err := s.jailBeam(req.Path, serverUUID, "write")
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 	defer root.Close()
+	serverDir := s.storageMgr.GetServerDir(serverUUID)
 
 	// A direct content save writes bytes to the server dir just like an upload,
 	// so the same admin caps apply — otherwise it would be a way to write past
@@ -993,12 +983,25 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, username, size); !ok {
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("daily upload quota reached: %d of %d bytes used today", used, *limit)}, nil
 	}
+	budget := &writeBudget{left: restoreDiskBudget(serverDir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}
+	defer budget.release()
+	if !budget.spend(size) {
+		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("not enough free space on the node for a save of %d bytes", size)}, nil
+	}
 
 	var prior int64
 	if st, err := root.Lstat(name); err == nil && st.Mode().IsRegular() {
 		prior = st.Size()
 	}
-	if err := writeFileIn(root, name, []byte(req.Content), 0644); err != nil {
+	f, err := openTenantWriteIn(root, name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644, serverDir)
+	if err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
+	_, err = f.Write([]byte(req.Content))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
 	// A NEW file is the node's (root) and the running server could not write
@@ -1126,6 +1129,7 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
+	defer s.storageMgr.holdWriter(serverUUID)()
 	srcPath, err := s.validateBeamPath(req.SrcPath, serverUUID)
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
@@ -1338,6 +1342,9 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	// Released only after the kept bytes are noted, so no Start in between
 	// sees the headroom without them.
 	releaseServer, releaseUser, releaseBudget, releaseTemp := func() {}, func() {}, func() {}, func() {}
+	// The stream writes through upRoot, resolved once at Start, until its
+	// rename: a storage move in between would delete the finished file.
+	releaseWriter := func() {}
 
 	defer func() {
 		defer func() {
@@ -1348,6 +1355,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			if upRoot != nil {
 				upRoot.Close()
 			}
+			releaseWriter()
 		}()
 		if tmpFile == nil {
 			return
@@ -1418,6 +1426,8 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				return status.Error(codes.FailedPrecondition, "upload already started")
 			}
 			remotePath := filepath.Join(p.Start.Path, p.Start.Filename)
+			releaseWriter()
+			releaseWriter = s.storageMgr.holdWriter(serverUUID)
 			root, name, err := s.jailBeam(remotePath, serverUUID, "write")
 			if err != nil {
 				return status.Error(codes.PermissionDenied, err.Error())
@@ -1468,7 +1478,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// them sees this one; plus what open SFTP handles wrote.
 			serverTotal, releaseServer = reserveOn(serverInflightOf(serverUUID), need)
 			serverTotal += uploadServerInflight(serverUUID).Load()
-			userTotal, releaseUser = s.reserveUpload("u:"+username, need)
+			userTotal, releaseUser = reserveOn(uploadAccountInflight(username), need)
 
 			// The node's own free space, less its reserve and what other writes
 			// in progress have claimed: the server's limit alone does not stop

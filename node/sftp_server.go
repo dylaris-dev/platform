@@ -46,12 +46,6 @@ type SFTPServer struct {
 	connMu  sync.Mutex
 	conns   int
 	perAddr map[string]int
-
-	// Bytes written through open SFTP handles and not yet booked against the
-	// account's quota, per account. Shared by every handle of the account so
-	// twenty uploads at once cannot each spend the same remaining allowance.
-	pendingMu sync.Mutex
-	pending   map[string]*atomic.Int64
 }
 
 const (
@@ -95,7 +89,7 @@ type sftpServerRef struct {
 
 func NewSFTPServer(rdb *redis.Client, storageMgr *StorageManager, nodeID string) *SFTPServer {
 	return &SFTPServer{rdb: rdb, storageMgr: storageMgr, nodeID: nodeID,
-		perAddr: map[string]int{}, pending: map[string]*atomic.Int64{}}
+		perAddr: map[string]int{}}
 }
 
 // admit counts a new connection from addr, or refuses it when the node or that
@@ -120,16 +114,16 @@ func (s *SFTPServer) release(addr string) {
 	}
 }
 
-// pendingFor is the account's shared count of written, unbooked bytes.
-func (s *SFTPServer) pendingFor(username string) *atomic.Int64 {
-	s.pendingMu.Lock()
-	defer s.pendingMu.Unlock()
-	p := s.pending[username]
-	if p == nil {
-		p = &atomic.Int64{}
-		s.pending[username] = p
-	}
-	return p
+// accountInflight is, per account, the bytes uploads in progress hold against
+// the daily quota and have not booked yet (username -> *atomic.Int64): what
+// open SFTP handles wrote and what Beam uploads declared. Usage is booked when
+// an upload ends, so each transport counting only its own let an upload over
+// each at once spend the same remaining allowance twice.
+var accountInflight sync.Map
+
+func uploadAccountInflight(username string) *atomic.Int64 {
+	c, _ := accountInflight.LoadOrStore(username, new(atomic.Int64))
+	return c.(*atomic.Int64)
 }
 
 // remoteAddr is the host part of a connection's peer address, as the unit the
@@ -473,7 +467,7 @@ func (s *SFTPServer) handleSession(channel ssh.Channel, requests <-chan *ssh.Req
 					req.Reply(true, nil)
 				}
 				vfs := &virtualFS{set: set, storageMgr: s.storageMgr, rdb: s.rdb, username: username,
-					audit: audit, pending: s.pendingFor(username)}
+					audit: audit}
 				handlers := sftp.Handlers{
 					FileGet:  vfs,
 					FilePut:  vfs,
@@ -609,10 +603,8 @@ type virtualFS struct {
 	// same identity the beam/HTTP upload paths use, so all three share one bucket.
 	rdb      *redis.Client
 	username string
-	// audit collects what this connection changed; pending is the account's
-	// shared count of unbooked written bytes. Either may be nil.
-	audit   *sftpAudit
-	pending *atomic.Int64
+	// audit collects what this connection changed. May be nil.
+	audit *sftpAudit
 }
 
 // sftpServerSet is a server list with the names a session addresses them by.
@@ -799,7 +791,8 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 			release()
 		}
 	}()
-	root, leaf, err := writeScope(v.storageMgr.GetServerDir(ref.UUID), filepath.ToSlash(rel), false)
+	serverDir := v.storageMgr.GetServerDir(ref.UUID)
+	root, leaf, err := writeScope(serverDir, filepath.ToSlash(rel), false)
 	if err != nil {
 		return nil, err
 	}
@@ -821,7 +814,7 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	if st, err := root.Lstat(leaf); err == nil && st.Mode().IsRegular() {
 		prior = st.Size()
 	}
-	f, err := openWriteIn(root, leaf, flags, 0644)
+	f, err := openTenantWriteIn(root, leaf, flags, 0644, serverDir)
 	if err != nil {
 		return nil, err
 	}
@@ -847,8 +840,10 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	noted0 := notedFor(ref.UUID).Load()
 	lim := sftpWriteLimits(context.Background(), v.rdb, ref.UUID, v.username)
 	w := &meteredSFTPWriter{f: f, prior: prior, noted0: noted0, ceil: lim.disk, reason: "server disk limit", fileCap: lim.file, dailyCap: lim.daily,
-		baseline: baseline, maxEnd: baseline, rdb: v.rdb, username: v.username, pending: v.pending,
-		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write }), release: release}
+		baseline: baseline, maxEnd: baseline, rdb: v.rdb, username: v.username, pending: uploadAccountInflight(v.username),
+		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write }), release: release,
+		// After the open, so the space a truncating overwrite freed is free.
+		budget: &writeBudget{left: restoreDiskBudget(serverDir) - inflightWrites.Load(), dirs: map[string]bool{}, err: errUnpackBudget}}
 	if lim.disk >= 0 {
 		w.srv, w.uuid = uploadServerInflight(ref.UUID), ref.UUID
 	}
@@ -932,14 +927,18 @@ type meteredSFTPWriter struct {
 	// bytes when the ceiling was read, so what was noted since counts too.
 	prior, noted0 int64
 	// pending is the account's added-but-unbooked bytes across every open
-	// handle. Usage is booked on close, so twenty handles opened at once each
-	// had the whole remaining daily quota. nil = this handle alone.
+	// handle and Beam upload (uploadAccountInflight). Usage is booked on close,
+	// so twenty handles opened at once each had the whole remaining daily
+	// quota. nil = this handle alone.
 	pending *atomic.Int64
 	// allowed reports whether the session may still write to this server.
 	allowed func() bool
 	// release drops the handle's hold on the server (StorageManager.holdWriter).
 	release func()
-	mu      sync.Mutex
+	// budget holds what the handle added against the node's free space less
+	// its reserve, shared with every other write in progress. nil = none.
+	budget *writeBudget
+	mu     sync.Mutex
 }
 
 func (m *meteredSFTPWriter) added() int64 {
@@ -969,7 +968,8 @@ func (m *meteredSFTPWriter) WriteAt(p []byte, off int64) (int, error) {
 		if m.srv != nil {
 			others = m.srv.Load() - before + serverInflightOf(m.uuid).Load() + notedFor(m.uuid).Load() - m.noted0
 		}
-		if others+after > m.ceil {
+		// The gauge behind ceil still counts what a truncating open freed.
+		if others+after-max(m.prior-m.baseline, 0) > m.ceil {
 			return 0, fmt.Errorf("SFTP write refused: %s exceeded", m.reason)
 		}
 	}
@@ -982,9 +982,15 @@ func (m *meteredSFTPWriter) WriteAt(p []byte, off int64) (int, error) {
 			return 0, fmt.Errorf("SFTP write refused: daily upload quota exceeded")
 		}
 	}
+	if m.budget != nil && after-before > m.budget.left {
+		return 0, fmt.Errorf("SFTP write refused: not enough free space on the node")
+	}
 	n, err := m.f.WriteAt(p, off)
 	if e := off + int64(n); e > m.maxEnd {
 		m.maxEnd = e
+		if m.budget != nil {
+			m.budget.spend(m.added() - before)
+		}
 		if m.pending != nil {
 			m.pending.Add(m.added() - before)
 		}
@@ -1007,6 +1013,9 @@ func (m *meteredSFTPWriter) Close() error {
 		// neither.
 		noteDiskWrite(context.Background(), m.rdb, m.uuid, m.maxEnd-m.prior)
 		m.srv.Add(-m.added())
+	}
+	if m.budget != nil {
+		m.budget.release()
 	}
 	err := m.f.Close()
 	if m.release != nil {
@@ -1123,12 +1132,13 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		if err != nil || realPath == "" || !ref.Write || protectedRel(rel) {
 			return os.ErrPermission
 		}
-		root, leaf, err := writeScope(v.storageMgr.GetServerDir(ref.UUID), filepath.ToSlash(rel), false)
+		serverDir := v.storageMgr.GetServerDir(ref.UUID)
+		root, leaf, err := writeScope(serverDir, filepath.ToSlash(rel), false)
 		if err != nil {
 			return err
 		}
 		defer root.Close()
-		f, err := openWriteIn(root, leaf, os.O_WRONLY, 0)
+		f, err := openTenantWriteIn(root, leaf, os.O_WRONLY, 0, serverDir)
 		if err != nil {
 			return err
 		}

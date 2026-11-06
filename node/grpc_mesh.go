@@ -110,6 +110,15 @@ type pendingWrite struct {
 	budget     *writeBudget
 	reserved   int64 // bytes the budget holds: the declared size, or the furthest chunk end past it
 	owner      *coreConnection
+	// unhold lets a storage move of the server run again (holdWriter): the
+	// temp is in the tree the upload resolved at its start.
+	unhold func()
+}
+
+// release ends what the pending write holds: its disk budget and the server.
+func (pw *pendingWrite) release() {
+	pw.budget.release()
+	pw.unhold()
 }
 
 // uploadBudget reserves a mesh upload's declared size against the node's free
@@ -210,7 +219,7 @@ func (m *MeshManager) dropPendingWrites(drop func(*pendingWrite) bool) {
 			log.Printf("gRPC Mesh: Cleaning up abandoned upload (request_id=%s, path=%s)", reqID, pw.path)
 			pw.tempFile.Close()
 			m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
-			pw.budget.release()
+			pw.release()
 			delete(m.pendingWrites, reqID)
 		}
 	}
@@ -566,7 +575,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				if !pw.budget.spend(more) {
 					pw.tempFile.Close()
 					m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
-					pw.budget.release()
+					pw.release()
 					delete(m.pendingWrites, msg.RequestId)
 					m.writeMu.Unlock()
 					cc.send(errorMsg(msg.RequestId, 413, pw.budget.err.Error()))
@@ -580,7 +589,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				// TransferDone report success on a partial/corrupt file.
 				pw.tempFile.Close()
 				m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
-				pw.budget.release()
+				pw.release()
 				delete(m.pendingWrites, msg.RequestId)
 				m.writeMu.Unlock()
 				if errors.Is(err, syscall.EDQUOT) {
@@ -602,7 +611,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		delete(m.pendingWrites, msg.RequestId)
 		m.writeMu.Unlock()
 		if ok {
-			defer pw.budget.release()
+			defer pw.release()
 			// Truncate to exact size (file may be sparse from WriteAt). On the
 			// open file, not by name: the name is the tenant's to swap.
 			if done.TotalBytes > 0 {
@@ -631,8 +640,10 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 	// If this is a WriteReq, create temp file and register pending write
 	// BEFORE sending response so that chunks arriving immediately after won't be dropped.
 	if writeReq := msg.GetWriteReq(); writeReq != nil {
+		unhold := m.handler.storageMgr.holdWriter(msg.ServerUuid)
 		tempFile, tempName, err := m.handler.createUploadTemp(msg.ServerUuid, writeReq.Path)
 		if err != nil {
+			unhold()
 			log.Printf("gRPC Mesh: Failed to create temp file (request_id=%s): %v", msg.RequestId, err)
 			// handleWrite maps the checks it shares with createUploadTemp; past
 			// them (the create itself) it answers "ready for chunks", and every
@@ -649,6 +660,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 			tempFile.Close()
 			m.handler.removeUploadTemp(msg.ServerUuid, writeReq.Path, tempName)
 			budget.release()
+			unhold()
 			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{errorMsg(msg.RequestId, 413, budget.err.Error())})
 			return
 		}
@@ -662,6 +674,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 			budget:     budget,
 			reserved:   writeReq.TotalSize,
 			owner:      cc,
+			unhold:     unhold,
 		}
 		m.writeMu.Unlock()
 	}
