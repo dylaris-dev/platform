@@ -886,6 +886,14 @@ func releaseDiskHold(ctx context.Context, rdb *redis.Client, uuid, liveKey strin
 // disk usage at all (this function simply returned nil), and it is the only
 // measurement the disk guard has to work with there.
 func getDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, quota *QuotaSet) *DiskUsagePayload {
+	// Every lookup of a server fenced for a storage move waits for the move,
+	// which can take an hour, and the sweeps measure one server after another:
+	// one fenced after the sweep listed it held every other gauge past its TTL.
+	// ponytail: a fence set between this check and the lookup still waits; a
+	// non-waiting GetServerPath variant closes that if it ever shows up.
+	if globalStorageMgr != nil && globalStorageMgr.moveInProgress(uuid) != nil {
+		return nil
+	}
 	var usage *DiskUsagePayload
 	enforceable := quota != nil && quota.IsAvailableFor(uuid)
 	if enforceable {

@@ -842,7 +842,16 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		// at all, and a full disk stops every server on the node. Not by the
 		// server's own disk limit - a backup of a server near it would never fit.
 		budget := nodeWriteBudget(dir)
-		defer budget.release()
+		// A failed run removes its partial: booked as landed, those bytes kept
+		// counting against every other write running on the node.
+		landed := false
+		defer func() {
+			if landed {
+				budget.release()
+			} else {
+				budget.releaseWritten(0)
+			}
+		}()
 		if err := copyAndCommit(f, budget.reader(r)); err != nil {
 			root.Remove(partial)
 			return err
@@ -853,6 +862,7 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 			root.Remove(partial)
 			return fmt.Errorf("finish archive: %w", err)
 		}
+		landed = true
 		return nil
 
 	default:

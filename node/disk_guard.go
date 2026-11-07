@@ -299,8 +299,20 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 		}
 	}
 	if limitMB > 0 && !graceUnknown {
-		if serr := q.SetLimit(uuid, enforceMB); serr != nil {
+		// Asked again here: the walk takes minutes, and a sub-server restore
+		// that lifted the limit meanwhile was failed with EDQUOT by the limit
+		// put back mid-extraction. And once more after the SetLimit, for a lift
+		// counted while it ran: liftDiskLimit counts itself before it lifts,
+		// so a lift neither check saw lifts after this. No lock across the
+		// SetLimit, which waits on a storage move of the server.
+		if diskLiftHeld(uuid) {
+			log.Printf("quota: %s started restoring during the recount; the limit goes back on when the restore ends", uuid)
+		} else if serr := q.SetLimit(uuid, enforceMB); serr != nil {
 			log.Printf("quota: limit %s: %v", uuid, serr)
+		} else if diskLiftHeld(uuid) {
+			if serr := q.SetLimit(uuid, 0); serr != nil {
+				log.Printf("quota: lift the limit of %s again for its restore: %v", uuid, serr)
+			}
 		} else if rdb != nil {
 			rdb.Del(ctx, diskLiftedKey(uuid))
 		}
@@ -346,16 +358,20 @@ func liftDiskLimit(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid
 		return false
 	}
 	recordDiskLimit(ctx, rdb, uuid, limitMB)
+	// Counted before the marker and the lift, not after: a recount running
+	// beside this checks the count after its own SetLimit, and one that put
+	// the limit back and dropped the marker between them undid this lift.
+	heldDiskLifts.Lock()
+	heldDiskLifts.n[uuid]++
+	heldDiskLifts.Unlock()
 	if err := rdb.SetNX(ctx, diskLiftedKey(uuid), diskLiftedNoGrace, 0).Err(); err != nil {
 		log.Printf("quota: mark the hard limit of %s lifted: %v - leaving it on", uuid, err)
+		endDiskLift(uuid)
 		return false
 	}
 	if err := q.SetLimit(uuid, 0); err != nil {
 		log.Printf("quota: lift the limit of %s: %v", uuid, err)
 	}
-	heldDiskLifts.Lock()
-	heldDiskLifts.n[uuid]++
-	heldDiskLifts.Unlock()
 	return true
 }
 

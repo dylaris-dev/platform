@@ -64,13 +64,28 @@ func createStageDir(targetDir string) (string, error) {
 	}
 	ownStages.Store(filepath.Base(dir), true)
 	// MkdirTemp creates 0700; the restored tree is handed to the MC container,
-	// which may not run as this process's user.
-	if err := os.Chmod(dir, 0o755); err != nil {
+	// which may not run as this process's user. Through a Root, not by path:
+	// the tenant can swap the new name for a link, and a chmod by path follows
+	// it.
+	root, err := openStageRoot(dir)
+	if err == nil {
+		err = root.Chmod(".", 0o755)
+		root.Close()
+	}
+	if err != nil {
 		os.RemoveAll(dir)
 		releaseStageDir(dir)
 		return "", fmt.Errorf("stage dir perms: %w", err)
 	}
 	return dir, nil
+}
+
+// openStageRoot opens a stage through a Root at its parent and refuses
+// anything but a real directory: the server stop and the Core round trip lie
+// between creating the stage and extracting into it, long enough for a root
+// tenant (MC_RUN_AS=0) to replace it with a link to another tenant's files.
+func openStageRoot(dir string) (*os.Root, error) {
+	return openBackupRoot(dir, false)
 }
 
 // RunRestore streams the archive from storage straight into a tar reader
@@ -258,7 +273,13 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		return
 	}
 	defer gr.Close()
-	stageRoot, err := openRootMk(stageDir)
+	stageRoot, err := openStageRoot(stageDir)
+	var stageSt os.FileInfo
+	if err == nil {
+		if stageSt, err = stageRoot.Stat("."); err != nil {
+			stageRoot.Close()
+		}
+	}
 	if err != nil {
 		stageCleanup()
 		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "open stage: "+err.Error())
@@ -287,7 +308,15 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// Judged on the shared counters at every charge: a budget measured once
 	// never saw what another restore, copy or spool wrote after it started.
 	budget := nodeWriteBudget(filepath.Dir(stageDir))
-	defer budget.release()
+	// Only a swapped-in stage stays on disk; every failure removes it, and
+	// bytes booked as landed count against every other write still running.
+	defer func() {
+		if succeeded {
+			budget.release()
+		} else {
+			budget.releaseWritten(0)
+		}
+	}()
 	extracted := 0
 	for {
 		hdr, terr := tr.Next()
@@ -429,6 +458,13 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// the only on-disk window where the world looks weird, and that's
 	// measured in milliseconds.
 	backupDir := targetDir + ".pre-restore-" + time.Now().UTC().Format("20060102-150405")
+	// The swap goes by path, and rename moves a link planted under the stage's
+	// name into the sub-server's place: it has to still be what was extracted.
+	if cur, err := os.Lstat(stageDir); err != nil || !os.SameFile(stageSt, cur) {
+		stageCleanup()
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "the staging directory was replaced during the restore")
+		return
+	}
 	if _, statErr := os.Stat(targetDir); statErr == nil {
 		if err := os.Rename(targetDir, backupDir); err != nil {
 			stageCleanup()
