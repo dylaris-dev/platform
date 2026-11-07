@@ -10,7 +10,7 @@ import "testing"
 // NEXT start rather than now.
 func TestWorldSaveGuardResumesExactlyOnce(t *testing.T) {
 	var sent []string
-	g := &worldSaveGuard{uuid: "srv-1", send: func(c string) { sent = append(sent, c) }}
+	g := &worldSaveGuard{uuid: "srv-1", send: func(c string) error { sent = append(sent, c); return nil }}
 
 	g.resume()
 	g.resume()

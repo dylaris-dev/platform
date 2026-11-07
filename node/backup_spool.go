@@ -93,10 +93,14 @@ func spoolBudget(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, s
 // it one step, so two runs started together cannot both see the space free.
 var spoolReserveMu sync.Mutex
 
+// spoolSlackBytes is what a spool may write past its source size: tar headers,
+// gzip framing, a log growing mid-run.
+var spoolSlackBytes int64 = 256 << 20
+
 // reserveSpool is spoolBudget against the node's shared write budget: free
 // less what other writes (restores, copies, other spools) hold. A spool that is
-// granted holds its source size in inflightWrites until release, so the next
-// run, restore or copy sees it as taken. release is idempotent; landed is
+// granted holds its source size plus slack in inflightWrites until release, so
+// the next run, restore or copy sees it as taken. release is idempotent; landed is
 // what the spool file holds on the disk at that moment, booked as landed so a
 // budget measured before those bytes were there still counts them.
 func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, func(landed int64), string) {
@@ -109,11 +113,15 @@ func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, 
 	if limit <= 0 {
 		return 0, func(int64) {}, why
 	}
-	inflightWrites.Add(sourceBytes)
+	// The file is bound by what it holds, not by the free space: the size is
+	// du's, which does not follow a link the archive takes as its target, and
+	// every byte past the reservation was invisible to the writes beside it.
+	held := min(limit, sourceBytes+spoolSlackBytes)
+	inflightWrites.Add(held)
 	var once sync.Once
-	return limit, func(landed int64) {
+	return held, func(landed int64) {
 		once.Do(func() {
-			inflightWrites.Add(-sourceBytes)
+			inflightWrites.Add(-held)
 			landedWrites.Add(max(landed, 0))
 		})
 	}, ""

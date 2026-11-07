@@ -294,7 +294,7 @@ type worldSaveGuard struct {
 	uuid string
 	// send is nil when saving was never paused, which is both the "server was
 	// not running" case and the guard's own record that there is nothing to undo.
-	send func(command string)
+	send func(command string) error
 }
 
 // pauseWorldSaves stops the server writing its world, flushes what it holds,
@@ -327,7 +327,7 @@ func pauseWorldSaves(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 		return g
 	}
 	inputKey := fmt.Sprintf("dylaris:server:%s:input", uuid)
-	g.send = func(command string) { rdb.RPush(context.Background(), inputKey, command) }
+	g.send = func(command string) error { return rdb.RPush(context.Background(), inputKey, command).Err() }
 	logKey := serverLogStreamKey(uuid, sub)
 	// From the newest line now, so an earlier save's confirmation is not read
 	// as this one's.
@@ -355,6 +355,14 @@ func pauseWorldSaves(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 // running server.
 var pauseSaves = pauseWorldSaves
 
+// save-on is retried for about half a minute: a Redis failover outlasts
+// go-redis's own retries, and a server left on save-off loses everything since
+// the backup on its next crash.
+var (
+	saveOnAttempts   = 5
+	saveOnRetryDelay = 2 * time.Second
+)
+
 // resume re-enables saving, once, however many times it is called.
 //
 // The command goes out on a background context on purpose: the caller's may
@@ -366,8 +374,19 @@ func (g *worldSaveGuard) resume() {
 	}
 	send := g.send
 	g.send = nil
-	send("save-on")
-	log.Printf("backup: server %s: saving resumed", g.uuid)
+	delay := saveOnRetryDelay
+	var err error
+	for i := 0; i < saveOnAttempts; i++ {
+		if i > 0 {
+			time.Sleep(delay)
+			delay *= 2
+		}
+		if err = send("save-on"); err == nil {
+			log.Printf("backup: server %s: saving resumed", g.uuid)
+			return
+		}
+	}
+	log.Printf("backup: server %s: ERROR: saving is still OFF, save-on could not be sent: %v; run save-on in the console or restart the server", g.uuid, err)
 }
 
 func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *DockerManager, cmd BackupRunCommand) {
@@ -491,26 +510,38 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 			return writeServerArchivePaced(w, serverRoot, rootDir, cmd.IncludePatterns, cmd.ExcludePatterns, cmd.Manifest, paceRead)
 		})
 		if f != nil {
+			path := spoolPath
 			defer func() {
 				f.Close()
-				os.Remove(spoolPath)
+				os.Remove(path)
 			}()
 		}
-		if err != nil {
+		switch {
+		case errors.Is(err, errSpoolFull):
+			// Larger than its estimate (links inside the server are archived as
+			// their targets): the direct upload below still takes it.
+			f.Close()
+			os.Remove(spoolPath)
+			releaseSpool(0)
+			counter.n.Store(0)
+			log.Printf("backup %d: the archive outgrew its spool reservation, uploading directly", cmd.RunID)
+		case err != nil:
 			reportBackup(ctx, rdb, cmd.RunID, "failed", "spool the archive: "+err.Error(), 0)
 			return
+		default:
+			// The file's bytes now count in the disk's free space; holding the
+			// reservation through the paced upload counted them twice.
+			releaseSpool(counter.Total())
+			addedAny = added
+			// The archive is complete on disk: the world may save again while the
+			// upload takes as long as the players need it to.
+			saves.resume()
+			pacer.savesResumed()
+			log.Printf("backup %d: archive spooled (%.2f MB), saving resumed, uploading", cmd.RunID, float64(counter.Total())/1024/1024)
+			src = f
 		}
-		// The file's bytes now count in the disk's free space; holding the
-		// reservation through the paced upload counted them twice.
-		releaseSpool(counter.Total())
-		addedAny = added
-		// The archive is complete on disk: the world may save again while the
-		// upload takes as long as the players need it to.
-		saves.resume()
-		pacer.savesResumed()
-		log.Printf("backup %d: archive spooled (%.2f MB), saving resumed, uploading", cmd.RunID, float64(counter.Total())/1024/1024)
-		src = f
-	} else {
+	}
+	if src == nil {
 		pr, pw := io.Pipe()
 		mw := io.MultiWriter(pw, counter)
 		go func() {
@@ -711,7 +742,9 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 			return err
 		}
 		hdr.Name = rel
-		if id, ok := identityOf(info); ok && !info.IsDir() {
+		id, hasID := identityOf(info)
+		hasID = hasID && !info.IsDir()
+		if hasID {
 			if stored[id] {
 				return nil
 			}
@@ -723,20 +756,33 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 				addedAny = true
 				return nil
 			}
+		}
+		// Opened before its header is written: that write can block on the
+		// upload for minutes, and a plugin's short-lived file (a journal, a
+		// tile written then renamed) removed in that window failed the whole
+		// backup. Gone before the open, it is left out like any file removed
+		// before the walk reached it; once open, its removal no longer matters.
+		var f *os.File
+		if !info.IsDir() {
+			var err error
+			f, err = openRegularIn(root, name)
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+		}
+		if hasID {
 			seen[id] = rel
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
-		if !info.IsDir() {
-			f, err := openRegularIn(root, name)
-			if err != nil {
+		if f != nil {
+			if err := copyExactly(tw, pace(f), hdr.Size); err != nil {
 				return err
-			}
-			copyErr := copyExactly(tw, pace(f), hdr.Size)
-			f.Close()
-			if copyErr != nil {
-				return copyErr
 			}
 		}
 		addedAny = true

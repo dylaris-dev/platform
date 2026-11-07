@@ -72,7 +72,7 @@ func TestRegularOpensRefusePipesAndStayBlocking(t *testing.T) {
 // through the regular-file helpers.
 func TestWalkReadsOpenOnlyRegularFiles(t *testing.T) {
 	for file, want := range map[string]string{
-		"backup_worker.go":     "f, err := openRegularIn(root, name)",
+		"backup_worker.go":     "f, err = openRegularIn(root, name)",
 		"rootfs.go":            "in, err := openTenantReadIn(src, srcName, deny)",
 		"installer_modpack.go": "zf, err := openNoFollow(path)",
 	} {
