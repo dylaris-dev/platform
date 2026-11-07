@@ -19,8 +19,10 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -46,6 +48,10 @@ type installModPayload struct {
 	// FileName when a version keeps the same name - in which case the rename
 	// has already replaced it and there is nothing left to remove.
 	PreviousFileName string `json:"previousFileName"`
+	// PreviousTargetDir is where that jar was installed. It differs from
+	// TargetDir after a loader change (plugins/ -> mods/). Empty from an older
+	// Core, which then means TargetDir.
+	PreviousTargetDir string `json:"previousTargetDir"`
 	// Identity for the report. Core cannot match a result to a row without it,
 	// and InstallID additionally tells a late answer about a superseded attempt
 	// apart from the answer to the current one.
@@ -205,23 +211,47 @@ func runInstallMod(ctx context.Context, rdb *redis.Client, storage *StorageManag
 	// JVM holds the inode, not the name, so it keeps reading the old file until
 	// it exits and picks the new one up on the next start - which is also why an
 	// install has always only taken effect after a restart.
-	if pl.PreviousFileName != "" && pl.PreviousFileName != cleanName {
-		switch old := filepath.Join(destDir, pl.PreviousFileName); {
-		case !validate.IsPlainFileName(pl.PreviousFileName):
-			log.Printf("install_mod: not deleting previous %q: not a plain file name", pl.PreviousFileName)
-		default:
-			if err := os.Remove(old); err != nil && !os.IsNotExist(err) {
-				// Still reported as installed below, because it IS: the new jar is
-				// in place and only the cleanup failed. Calling that "failed" would
-				// invite a retry that cannot help.
-				log.Printf("install_mod: removing previous %s: %v", old, err)
-			} else {
-				log.Printf("install_mod: removed previous %s", pl.PreviousFileName)
-			}
-		}
+	prevDir := pl.PreviousTargetDir
+	if prevDir == "" {
+		prevDir = pl.TargetDir
+	}
+	if pl.PreviousFileName != "" && (pl.PreviousFileName != cleanName || prevDir != pl.TargetDir) {
+		removePreviousJar(serverPath, destDir, pl.ActiveSubServer, pl.TargetDir, prevDir, pl.PreviousFileName)
 	}
 	log.Printf("install_mod: installed %s into %s/%s", cleanName, pl.ActiveSubServer, pl.TargetDir)
 	reportModInstall(ctx, rdb, pl, "installed", "")
+}
+
+// removePreviousJar deletes the jar an install replaced, from the directory it
+// was installed into. destDir is the pinned targetDir; another directory is
+// pinned the same way, because the tenant can swap it for a link.
+func removePreviousJar(serverPath, destDir, subName, targetDir, prevDir, name string) {
+	if !validate.IsPlainFileName(name) || !validSubDir(prevDir) {
+		log.Printf("install_mod: not deleting previous %q in %q: not a plain file name in mods/plugins", name, prevDir)
+		return
+	}
+	dir := destDir
+	if prevDir != targetDir {
+		d, release, err := pinDir(serverPath, filepath.ToSlash(filepath.Join(subName, prevDir)), false)
+		if errors.Is(err, fs.ErrNotExist) {
+			return
+		}
+		if err != nil {
+			log.Printf("install_mod: open %s to remove previous %s: %v", prevDir, name, err)
+			return
+		}
+		defer release()
+		dir = d
+	}
+	// Still reported as installed by the caller, because it IS: the new jar is
+	// in place and only the cleanup failed. Calling that "failed" would invite a
+	// retry that cannot help.
+	switch err := os.Remove(filepath.Join(dir, name)); {
+	case err == nil:
+		log.Printf("install_mod: removed previous %s/%s", prevDir, name)
+	case !os.IsNotExist(err):
+		log.Printf("install_mod: removing previous %s/%s: %v", prevDir, name, err)
+	}
 }
 
 // reportModInstall publishes the outcome on THIS node's own channel.

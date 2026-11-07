@@ -53,6 +53,13 @@ func TestVersionUpdateRefusesWhatItWouldBreak(t *testing.T) {
 			models.Server{ID: 1, ActiveSubServer: "main", Status: "stopped", InstallerType: "fabric"},
 			[]models.ServerMod{{ID: 2, Title: "Lithium", FileName: "lithium.jar", Disabled: true}},
 			`{"minecraft":"1.21.4","loader":"fabric"}`, "mods_switched_off"},
+		// Q07: the move builds its removals from the row, which already names
+		// the jar the install has not written yet, so the old one survived next
+		// to the target version's.
+		{"a mod still being installed",
+			models.Server{ID: 1, ActiveSubServer: "main", Status: "stopped", InstallerType: "fabric"},
+			[]models.ServerMod{{ID: 2, Title: "Lithium", FileName: "lithium-new.jar", Status: models.ServerModInstalling}},
+			`{"minecraft":"1.21.4","loader":"fabric"}`, "mods_installing"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -235,5 +242,48 @@ func TestVersionUpdateWaitsForARunningCopy(t *testing.T) {
 	}
 	if n, _ := rdb.Exists(context.Background(), services.VersionUpdateUndoKey("u-1")).Result(); n != 0 {
 		t.Error("the move was prepared while the copy ran")
+	}
+}
+
+// Q07: a moved row describes the jar the move placed. Keeping the install id
+// and the previous file let a late report about an earlier install match it
+// and put the pre-move file name back.
+func TestAMovedModRowForgetsTheEarlierInstall(t *testing.T) {
+	in := serverModTarget{FileName: "c.jar", SHA512: "c-hash", VersionID: "VC", mod: models.ServerMod{
+		ID: 2, FileName: "b.jar", TargetDir: "plugins", Status: models.ServerModFailed, InstallID: "I",
+		PreviousFileName: "a.jar", PreviousTargetDir: "plugins", PreviousSHA512: "a-hash",
+	}}
+	row := movedModRow(in, "mods")
+	if row.FileName != "c.jar" || row.SHA512 != "c-hash" || row.ModrinthVersionID != "VC" || row.TargetDir != "mods" {
+		t.Errorf("row = %+v, want it to name the moved jar", row)
+	}
+	if row.InstallID != "" || row.PreviousFileName != "" || row.PreviousTargetDir != "" || row.PreviousSHA512 != "" {
+		t.Errorf("row still carries the earlier install: id=%q previous=%q/%q/%q",
+			row.InstallID, row.PreviousTargetDir, row.PreviousFileName, row.PreviousSHA512)
+	}
+}
+
+// Q08: a move into software the node can configure for Real player IP has to
+// ask it to, as reinstall does. A Fabric server moved to Paper got Paper's own
+// paper-global.yml, with proxy-protocol false, while the gateway kept sending
+// the header: every join refused.
+func TestVersionUpdateAsksTheNodeToKeepRealPlayerIP(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	fs := &moveStore{}
+	fs.srv = models.Server{ID: 1, UUID: "u-1", NodeID: 3, ActiveSubServer: "main", Status: "stopped",
+		InstallerType: "fabric", MinecraftVersion: "1.21.1", ProxyProtocol: true}
+
+	rec := runMove(t, fs, rdb, `{"minecraft":"1.21.4","loader":"paper","javaImage":"`+platformImagePrefix+`21"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("answered %d %s", rec.Code, rec.Body.String())
+	}
+	cmd := readNodeCmdStream(t, rdb, "dylaris:node:tok:cmds")
+	inst, _ := cmd["installer"].(map[string]interface{})
+	if inst["proxyProtocol"] != true {
+		t.Errorf("installer payload = %v, want proxyProtocol true", inst)
+	}
+	if !mr.Exists("proxy_protocol_default:pending") || mr.HGet("proxy_protocol_default:pending", "u-1") == "" {
+		t.Error("the request was not recorded, so the node's answer could never be acted on")
 	}
 }

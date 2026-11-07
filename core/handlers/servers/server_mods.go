@@ -362,9 +362,11 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "This mod is switched off. Switch it on first, then update or roll it back.", http.StatusConflict)
 		return
 	}
-	previousFileName := ""
+	previousFileName, previousTargetDir := "", ""
 	if prev != nil {
-		previousFileName = prev.FileName
+		// Where the old jar IS, which after a loader change is not targetDir.
+		// A node older than this field deletes in targetDir, as it always did.
+		previousFileName, previousTargetDir = prev.FileName, uninstallTargetDir(prev, srv.InstallerType)
 	}
 
 	// One attempt, one id. The node echoes it back and Core only accepts a
@@ -427,16 +429,17 @@ func (h *ServerModsHandler) Install(w http.ResponseWriter, r *http.Request) {
 	}
 
 	configPayload := map[string]interface{}{
-		"uuid":             srv.UUID,
-		"activeSubServer":  srv.ActiveSubServer,
-		"targetDir":        targetDir,
-		"fileName":         cleanName,
-		"downloadUrl":      req.DownloadURL,
-		"sha512":           req.SHA512,
-		"previousFileName": previousFileName,
-		"installId":        installID,
-		"serverId":         serverID,
-		"projectId":        req.ProjectID,
+		"uuid":              srv.UUID,
+		"activeSubServer":   srv.ActiveSubServer,
+		"targetDir":         targetDir,
+		"fileName":          cleanName,
+		"downloadUrl":       req.DownloadURL,
+		"sha512":            req.SHA512,
+		"previousFileName":  previousFileName,
+		"previousTargetDir": previousTargetDir,
+		"installId":         installID,
+		"serverId":          serverID,
+		"projectId":         req.ProjectID,
 	}
 	if err := h.d.Queue.SendCommand(context.Background(), node.Token, "install_mod", configPayload, nil); err != nil {
 		// The row exists now and names an install the node never received. Failed

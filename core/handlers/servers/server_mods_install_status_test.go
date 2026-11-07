@@ -175,3 +175,40 @@ func TestInstallRecordsTheJarItReplaces(t *testing.T) {
 		t.Errorf("upserted row = %+v, want it to name the replaced jar", u)
 	}
 }
+
+// Q06: the node deletes the replaced jar in the directory Core names. After a
+// loader change targetDir is the NEW loader's directory, so Core has to say
+// where the old jar actually is, or it survives and no row can name it again.
+func TestInstallTellsTheNodeWhereTheReplacedJarIs(t *testing.T) {
+	cases := []struct {
+		name, recorded, want string
+	}{
+		{"installed as a plugin before the loader change", "plugins", "plugins"},
+		{"same directory", "mods", "mods"},
+		{"pre-column row follows the loader (fabric)", "", "mods"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: m.Addr()})
+			fs := &installStatusFakeStore{prev: &models.ServerMod{
+				ModrinthProjectID: "P1", ModrinthVersionID: "V1", FileName: "spark-old.jar", TargetDir: c.recorded,
+			}}
+			h := &ServerModsHandler{d: testDeps(Deps{Store: fs, Redis: rdb, Queue: services.NewQueueService(rdb)})}
+
+			body := `{"projectId":"P1","versionId":"V1","fileName":"spark.jar","downloadUrl":"https://cdn.modrinth.com/data/P1/versions/V1/spark.jar"}`
+			req := httptest.NewRequest(http.MethodPost, "/api/servers/7/mods", strings.NewReader(body))
+			req = req.WithContext(context.WithValue(req.Context(), "userID", "alice"))
+			rw := httptest.NewRecorder()
+			h.Install(rw, mux.SetURLVars(req, map[string]string{"id": "7"}))
+			if rw.Code != http.StatusOK {
+				t.Fatalf("status = %d, body %s", rw.Code, rw.Body.String())
+			}
+			cfg, _ := readNodeCmdStream(t, rdb, "dylaris:node:node-token:cmds")["config"].(map[string]interface{})
+			if cfg["targetDir"] != "mods" || cfg["previousFileName"] != "spark-old.jar" || cfg["previousTargetDir"] != c.want {
+				t.Errorf("payload targetDir=%v previousFileName=%v previousTargetDir=%v, want mods/spark-old.jar/%s",
+					cfg["targetDir"], cfg["previousFileName"], cfg["previousTargetDir"], c.want)
+			}
+		})
+	}
+}

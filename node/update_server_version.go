@@ -267,6 +267,11 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	installerCfg := cmd.Installer
 	installerCfg.JavaImage = cmd.Config.Docker.Image
 	installerCfg.ServerUUID = pl.UUID
+	// Same answer to a real-IP request as reinstall gives. Without it a loader
+	// change into Paper started on Paper's own config, which does not expect
+	// the header the gateway keeps sending, and every join was refused.
+	reportProxy := proxyProtocolReporter(ctx, rdb, installerCfg, pl.UUID, subName)
+	defer reportProxy(false)
 	_, err = InstallServer(serverPath, subName, installerCfg)
 	// Same as setup and reinstall: a delete that landed during the downloads
 	// removed the directory the install just recreated.
@@ -285,6 +290,9 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		return
 	}
 	cmd.Config.Docker.Command = startCmd
+	if installerCfg.ProxyProtocol {
+		reportProxy(writeProxyProtocolConfig(serverPath, subName, installerCfg))
+	}
 
 	// Started only while the platform still means to run it, as setup and
 	// reinstall do: a cutoff that lands during the downloads writes only the

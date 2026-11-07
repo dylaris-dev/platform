@@ -133,3 +133,71 @@ func TestAPreviousNameIsNeverJoinedBlindly(t *testing.T) {
 		t.Fatalf("a traversing previousFileName deleted a file outside mods/: %v", err)
 	}
 }
+
+// A loader change moves the target directory (Paper plugins/ -> Fabric mods/),
+// and the row still names the jar where it was installed. Deleting the previous
+// name inside the NEW directory found nothing, so the old jar stayed loaded and
+// no row could name it any more. An old Core sends no previousTargetDir; the
+// node then keeps the old behaviour and looks in targetDir.
+func TestThePreviousJarIsDeletedFromItsOwnDirectory(t *testing.T) {
+	cases := []struct {
+		name, prevDir, prevFile string
+		wantGone                string // relative to the sub-server dir
+	}{
+		{"from plugins/ into mods/", "plugins", "Chunky-Bukkit-1.4.jar", "plugins/Chunky-Bukkit-1.4.jar"},
+		{"same name, other directory", "plugins", "spark-1.1.jar", "plugins/spark-1.1.jar"},
+		{"old core sends no directory", "", "spark-1.0.jar", "mods/spark-1.0.jar"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stubDownload(t, nil)
+			sm, uuid, modsDir := installFixture(t)
+			sub := filepath.Dir(modsDir)
+			if c.prevDir != "" {
+				if err := os.MkdirAll(filepath.Join(sub, c.prevDir), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(sub, c.prevDir, c.prevFile), []byte("old"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var m map[string]map[string]interface{}
+			_ = json.Unmarshal([]byte(replacePayload(uuid, c.prevFile)), &m)
+			m["config"]["previousTargetDir"] = c.prevDir
+			b, _ := json.Marshal(m)
+
+			runInstallMod(context.Background(), nil, sm, string(b))
+
+			if _, err := os.Stat(filepath.Join(modsDir, "spark-1.1.jar")); err != nil {
+				t.Fatalf("the new jar is not there: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(sub, filepath.FromSlash(c.wantGone))); !os.IsNotExist(err) {
+				t.Errorf("%s survived the update", c.wantGone)
+			}
+		})
+	}
+}
+
+// A previousTargetDir is joined onto the server to delete in, so it gets the
+// same check as targetDir.
+func TestAnInvalidPreviousDirectoryDeletesNothing(t *testing.T) {
+	stubDownload(t, nil)
+	sm, uuid, modsDir := installFixture(t)
+	outside := filepath.Join(filepath.Dir(modsDir), "server.properties")
+	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]map[string]interface{}
+	_ = json.Unmarshal([]byte(replacePayload(uuid, "server.properties")), &m)
+	m["config"]["previousTargetDir"] = "."
+	b, _ := json.Marshal(m)
+
+	runInstallMod(context.Background(), nil, sm, string(b))
+
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatalf("an invalid previousTargetDir deleted a file outside mods/plugins: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(modsDir, "spark-1.1.jar")); err != nil {
+		t.Fatalf("the install itself should still land: %v", err)
+	}
+}

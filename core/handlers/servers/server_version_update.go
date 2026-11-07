@@ -395,7 +395,8 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// The update reinstalls the server like a setup does, so it needs the same
 	// answer setup gets: with Real player IP on, a target the node cannot
 	// configure to expect the header would refuse every player.
-	if _, refused := proxyProtocolInstallGate(w, h.d, srv, loader, req.Minecraft); refused {
+	proxyKeep, refused := proxyProtocolInstallGate(w, h.d, srv, loader, req.Minecraft)
+	if refused {
 		return
 	}
 
@@ -406,15 +407,28 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	}
 	// The update writes every mod's new jar into the loaded directory, so a
 	// switched-off one would come back on with its old jar left in .disabled/.
-	var off []string
+	//
+	// A mod still being installed is refused too: its row already names the
+	// jar the node has not written yet, so the move would leave the old one on
+	// disk beside the target version's. install_mod takes no node_busy, so
+	// RefuseIfServerBusy does not see it.
+	var off, installing []string
 	for _, m := range mods {
 		if m.Disabled {
 			off = append(off, m.Title+" ("+m.FileName+")")
+		}
+		if m.Status == models.ServerModInstalling {
+			installing = append(installing, m.Title)
 		}
 	}
 	if len(off) > 0 {
 		httpx.SendJSONErrorCode(w, fmt.Sprintf("Switch these mods on or remove them first: %s.", strings.Join(off, ", ")),
 			"mods_switched_off", http.StatusConflict)
+		return
+	}
+	if len(installing) > 0 {
+		httpx.SendJSONErrorCode(w, fmt.Sprintf("These mods are still being installed: %s. Wait until they have finished, then move the server.", strings.Join(installing, ", ")),
+			"mods_installing", http.StatusConflict)
 		return
 	}
 	install, unavailable, err := resolveServerModTargets(mods, loader, req.Minecraft)
@@ -489,6 +503,21 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		"version": req.Minecraft,
 		"loader":  req.InstallerVersion,
 	}
+	// keep means the node is asked to write the setting, as reinstall does: a
+	// loader change into Paper otherwise starts on Paper's own config, which
+	// does not expect the header the gateway keeps sending.
+	if proxyKeep {
+		installerPayload["proxyProtocol"] = true
+	}
+
+	// Recorded before anything is written, as in reinstall.
+	if proxyKeep && h.d.Redis != nil {
+		if err := services.TrackProxyProtocolInstall(r.Context(), h.d.Redis, srv.UUID, srv.ActiveSubServer, false); err != nil {
+			log.Printf("VersionUpdate: server %d: cannot record the real-IP request: %v", serverID, err)
+			httpx.SendJSONError(w, "Could not prepare the version update; try again in a moment", http.StatusServiceUnavailable)
+			return
+		}
+	}
 
 	// An undo record, written BEFORE the optimistic writes below.
 	//
@@ -537,6 +566,9 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		h.d.Store.UpdateServerStatus(serverID, srv.Status)
 		if h.d.Redis != nil {
 			h.d.Redis.Del(context.Background(), services.VersionUpdateUndoKey(srv.UUID))
+			if proxyKeep {
+				services.ForgetProxyProtocolInstall(context.WithoutCancel(r.Context()), h.d.Redis, srv.UUID)
+			}
 		}
 		httpx.SendJSONError(w, "Failed to queue the version update", http.StatusInternalServerError)
 		return
@@ -554,11 +586,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		}
 	}
 	for _, in := range install {
-		row := in.mod
-		row.ModrinthVersionID = in.VersionID
-		row.FileName = in.FileName
-		row.SHA512 = in.SHA512
-		row.TargetDir = targetDir
+		row := movedModRow(in, targetDir)
 		if _, err := h.d.Store.UpsertServerMod(&row); err != nil {
 			// The jar is on its way regardless; a stale row is visible and
 			// fixable, so this is logged through the response rather than
@@ -594,6 +622,20 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		"installed": len(install),
 		"removed":   unavailable,
 	})
+}
+
+// movedModRow is a mod's row as the move leaves it. The install id and the
+// previous jar belong to the install before the move: kept, a late report about
+// that attempt still matched the row and put the pre-move file name back.
+func movedModRow(in serverModTarget, targetDir string) models.ServerMod {
+	row := in.mod
+	row.ModrinthVersionID = in.VersionID
+	row.FileName = in.FileName
+	row.SHA512 = in.SHA512
+	row.TargetDir = targetDir
+	row.InstallID = ""
+	row.PreviousFileName, row.PreviousTargetDir, row.PreviousSHA512 = "", "", ""
+	return row
 }
 
 // refuseUntilCopyLanded holds a move back while a copy of the server is queued
