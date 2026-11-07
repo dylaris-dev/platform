@@ -442,8 +442,11 @@ func main() {
 	quotaProvider := NewQuotaSet(storageMgr)
 	globalQuotaSet = quotaProvider
 
-	// On startup, restart any running MC containers with stale Redis config
-	dockerMgr.ReconcileRedisEnv()
+	// On startup, restart any running MC containers with stale Redis config.
+	// In the background: each stale container sits out a full graceful stop,
+	// and inline that kept the heartbeat and the command listener down for
+	// minutes. It takes each server's power lock, so commands do not race it.
+	go dockerMgr.ReconcileRedisEnv()
 
 	// Shared agent monitor for heartbeat + system stats (single gopsutil instance)
 	mon, monErr := agent.NewMonitor(agent.MonitorConfig{})
@@ -1153,7 +1156,14 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 		// The Hub joins on it to publish beam:node:<uuid>, the mapping the beam
 		// relay resolves a ticket through. Core reads this heartbeat and ignores
 		// the field; nothing depends on it being stored.
-		"hostname": machineHostname(),
+	}
+	// Only a node holding CLUSTER_SECRET is a platform machine with a
+	// self-enrolled Link to join. A BYON owner picks NODE_HOSTNAME freely, and a
+	// name that matches a platform machine would move that machine's Link
+	// mapping onto the BYON node. Not the security boundary (a tenant can patch
+	// their node); it stops accidental collisions.
+	if clusterSecret != "" {
+		data["hostname"] = machineHostname()
 	}
 	// Auth: the node stamps a per-node HMAC signature instead of shipping the raw
 	// CLUSTER_SECRET over Redis. The secret is guaranteed non-nil after the

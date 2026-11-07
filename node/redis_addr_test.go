@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
 )
 
 func TestRedisAddrFileRoundTrip(t *testing.T) {
@@ -363,4 +365,42 @@ func TestRedisDialerDialsTheCurrentAddressAtDialTime(t *testing.T) {
 			t.Errorf("no connection reached %s, the current address", want.Addr())
 		}
 	}
+}
+
+// A promotion only reaches the node's own traffic through new dials, and the
+// connections the heartbeat and the command consumer keep busy are never idle
+// long enough to be closed. Without a lifetime the client would keep writing to
+// the old Redis for as long as it stays up.
+func TestNodeRedisClientMovesBusyConnectionsAfterAPromotion(t *testing.T) {
+	secret := []byte("node-secret")
+	a, b := miniredis.RunT(t), miniredis.RunT(t)
+	for _, mr := range []*miniredis.Miniredis{a, b} {
+		mr.RequireUserAuth(aclNodeUsername(nodeID), aclNodePassword(secret, nodeID))
+	}
+	prev, prevLife := nodeRedis, nodeRedisConnMaxLifetime
+	nodeRedis = &redisAddrState{}
+	nodeRedisConnMaxLifetime = 50 * time.Millisecond
+	t.Cleanup(func() { nodeRedis, nodeRedisConnMaxLifetime = prev, prevLife })
+
+	nodeRedis.set(a.Addr(), false)
+	rdb := newNodeRedisClient(secret)
+	defer rdb.Close()
+	ctx := context.Background()
+	if err := rdb.Set(ctx, "k", "a", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	nodeRedis.set(b.Addr(), false)
+	// Kept busy the whole time, the way the heartbeat keeps its connection.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := rdb.Set(ctx, "k", "b", 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+		if v, _ := b.Get("k"); v == "b" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("after the promotion the node's busy pooled connection still wrote to the old Redis")
 }

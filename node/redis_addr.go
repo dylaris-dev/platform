@@ -259,7 +259,7 @@ func (s *redisAddrState) offer(ctx context.Context, candidate string, secret []b
 		return
 	}
 	s.set(candidate, true)
-	log.Printf("redisaddr: switched from %s to %s (validated, cached); connections move as they are redialled", cur, candidate)
+	log.Printf("redisaddr: switched from %s to %s (validated, cached); this node's own connections move within %s as they are redialled", cur, candidate, nodeRedisConnMaxLifetime)
 	// Said out loud because it is the part with a cost: nothing running is
 	// touched now, and the next restart of this node is when it happens.
 	log.Printf("redisaddr: running MC containers and the Link keep %s until this node restarts; "+
@@ -303,9 +303,9 @@ func probeRedisAddr(ctx context.Context, addr string, secret []byte) error {
 // the client was built - and dials the node's CURRENT address at the moment of
 // each dial. That is what lets a promoted address take effect without rebuilding
 // a client the whole node holds. Connections already open stay where they are
-// until they close or fail, so the move happens as the pool turns over: the
-// right trade when the old address still works, which validation guarantees the
-// new one does too.
+// until they close, fail or reach nodeRedisConnMaxLifetime, so the move happens
+// as the pool turns over: the right trade when the old address still works,
+// which validation guarantees the new one does too.
 //
 // There is no TLS to Redis today. If it is ever added: go-redis wraps TLS inside
 // the dialer it builds for itself and installs that one only when
@@ -321,6 +321,13 @@ func redisDialer(addr func() string) func(ctx context.Context, network, _ string
 	}
 }
 
+// nodeRedisConnMaxLifetime bounds how long a promoted address waits to carry
+// the node's own traffic. The connections the heartbeat (every 5s) and the
+// command consumer keep busy are never idle, so ConnMaxIdleTime alone never
+// redials them and the node would run split across the old and the new Redis.
+// A var only so a test can shorten it.
+var nodeRedisConnMaxLifetime = 5 * time.Minute
+
 // newNodeRedisClient builds the node agent's own Redis client.
 func newNodeRedisClient(secret []byte) *redis.Client {
 	return redis.NewClient(&redis.Options{
@@ -330,6 +337,8 @@ func newNodeRedisClient(secret []byte) *redis.Client {
 		Username: aclNodeUsername(nodeID),
 		Password: aclNodePassword(secret, nodeID),
 		DB:       redisDB,
+
+		ConnMaxLifetime: nodeRedisConnMaxLifetime,
 	})
 }
 

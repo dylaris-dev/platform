@@ -148,6 +148,23 @@ func tryLockServerPower(uuid string) (func(), bool) {
 	}, true
 }
 
+// waitServerPower takes the server's lock like tryLockServerPower, but waits
+// for it instead of giving up: for work that must still happen once a running
+// command is done. It does not queue as a waiter, so it cannot replace one or
+// be replaced. False only when ctx ends.
+func waitServerPower(ctx context.Context, uuid string) (func(), bool) {
+	for {
+		if release, ok := tryLockServerPower(uuid); ok {
+			return release, true
+		}
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
 // startGuard sets the check the lock holder's bring-up makes right before
 // ContainerStart (startAbandoned), and returns its removal. Kill takes no lock,
 // so one pressed during a recreate - an image pull, an ownership walk - hit a

@@ -41,7 +41,7 @@ func TestJvmHeapMB(t *testing.T) {
 }
 
 func TestNeedsRecreate(t *testing.T) {
-	base := resourceShape{Memory: 4608 << 20, NanoCPUs: 2e9, Cpuset: "0-3", Image: "img:1", WorkDir: "/data/main", HostPort: 25601, ContainerPort: 25565}
+	base := resourceShape{Memory: 4608 << 20, RAMMB: 4096, PaddingMB: 512, NanoCPUs: 2e9, Cpuset: "0-3", Image: "img:1", WorkDir: "/data/main", HostPort: 25601, ContainerPort: 25565}
 	for _, tc := range []struct {
 		name string
 		edit func(*resourceShape)
@@ -51,6 +51,9 @@ func TestNeedsRecreate(t *testing.T) {
 		{"cpu limit", func(s *resourceShape) { s.NanoCPUs = 4e9 }, false},
 		{"cpuset", func(s *resourceShape) { s.Cpuset = "4-7" }, false},
 		{"memory", func(s *resourceShape) { s.Memory = 8704 << 20 }, true},
+		// Same total, so the limit alone cannot tell: the heap flag and the
+		// labels a restart reads the padding back from would stay stale.
+		{"ram and padding moved by the same amount", func(s *resourceShape) { s.RAMMB, s.PaddingMB = 4352, 256 }, true},
 		{"host port", func(s *resourceShape) { s.HostPort = 25650 }, true},
 		{"container port", func(s *resourceShape) { s.ContainerPort = 25566 }, true},
 		{"binding dropped (switch to gateway)", func(s *resourceShape) { s.HostPort, s.ContainerPort = 0, 0 }, true},

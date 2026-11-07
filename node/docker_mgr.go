@@ -1739,19 +1739,23 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 			config.Docker.RAMPaddingMB = &p
 		}
 		have := resourceShape{
-			Memory:   createdMemory(info.Config.Labels, info.HostConfig.Memory),
-			NanoCPUs: info.HostConfig.NanoCPUs,
-			Cpuset:   info.HostConfig.CpusetCpus,
-			Image:    info.Config.Image,
-			WorkDir:  info.Config.WorkingDir,
-			HostPort: curHost, ContainerPort: curCont,
+			Memory:    createdMemory(info.Config.Labels, info.HostConfig.Memory),
+			RAMMB:     ramFromContainer(info.Config.Labels, info.HostConfig.Memory),
+			PaddingMB: ramPaddingFromLabels(info.Config.Labels),
+			NanoCPUs:  info.HostConfig.NanoCPUs,
+			Cpuset:    info.HostConfig.CpusetCpus,
+			Image:     info.Config.Image,
+			WorkDir:   info.Config.WorkingDir,
+			HostPort:  curHost, ContainerPort: curCont,
 		}
 		want := resourceShape{
-			Memory:   int64(config.Docker.RAM+config.Docker.ramPadding()) * 1024 * 1024,
-			NanoCPUs: int64(config.Docker.CPULimit * 1e9),
-			Cpuset:   sanitizeCpusetForHost(config.Docker.CpusetCpus, config.UUID),
-			Image:    normalizeImageRef(config.Docker.Image),
-			WorkDir:  info.Config.WorkingDir,
+			Memory:    int64(config.Docker.RAM+config.Docker.ramPadding()) * 1024 * 1024,
+			RAMMB:     config.Docker.RAM,
+			PaddingMB: config.Docker.ramPadding(),
+			NanoCPUs:  int64(config.Docker.CPULimit * 1e9),
+			Cpuset:    sanitizeCpusetForHost(config.Docker.CpusetCpus, config.UUID),
+			Image:     normalizeImageRef(config.Docker.Image),
+			WorkDir:   info.Config.WorkingDir,
 		}
 		if config.ActiveSubServer != "" {
 			want.WorkDir = "/data/" + config.ActiveSubServer
@@ -1807,7 +1811,11 @@ func (dm *DockerManager) UpdateResources(config ServerConfig) (ServerConfig, err
 // resourceShape is what a container was created with, as far as a resource
 // change can alter it. Ports are the published binding; both are 0 for none.
 type resourceShape struct {
-	Memory, NanoCPUs        int64
+	Memory, NanoCPUs int64
+	// The booking and the padding on their own, not only their sum: moving
+	// both by the same amount keeps Memory equal while the heap flag and the
+	// labels a restart reads the padding back from are stale.
+	RAMMB, PaddingMB        int
 	Cpuset, Image, WorkDir  string
 	HostPort, ContainerPort int
 }
@@ -1820,6 +1828,8 @@ type resourceShape struct {
 // done live either.
 func needsRecreate(have, want resourceShape) bool {
 	return have.Memory != want.Memory ||
+		have.RAMMB != want.RAMMB ||
+		have.PaddingMB != want.PaddingMB ||
 		have.Image != want.Image ||
 		have.WorkDir != want.WorkDir ||
 		have.HostPort != want.HostPort ||
@@ -2404,21 +2414,34 @@ func (dm *DockerManager) ReconcileRedisEnv() {
 	}
 
 	for _, mc := range running {
-		info, err := dm.cli.ContainerInspect(dm.ctx, mc.ContainerName)
-		if err != nil {
-			continue
+		// main runs this beside the command listener, so the heartbeat does not
+		// wait out a graceful stop per stale server (the console stop goes to a
+		// shipper that cannot hear it). The lock keeps a user's command and this
+		// recreate apart; the inspect under it sees what that command left.
+		release, ok := waitServerPower(dm.ctx, mc.UUID)
+		if !ok {
+			return
 		}
+		dm.reconcileRedisEnvOne(mc, wantAddr)
+		release()
+	}
+}
 
-		// Built through buildRedisEnv rather than re-deriving the three values
-		// here, so there is exactly one producer of what a container should
-		// hold. The sub-server is irrelevant to this comparison (redisEnvDrift
-		// only reads the connection keys), so it is left empty.
-		want := buildRedisEnv(mc.UUID, "", wantAddr)
-		if key := redisEnvDrift(info.Config.Env, want); key != "" {
-			log.Printf("ReconcileRedisEnv: %s has a stale %s — restarting", mc.ContainerName, key)
-			if err := dm.RestartContainer(mc.UUID); err != nil {
-				log.Printf("ReconcileRedisEnv: failed to restart %s: %v", mc.ContainerName, err)
-			}
+func (dm *DockerManager) reconcileRedisEnvOne(mc MCContainer, wantAddr string) {
+	info, err := dm.cli.ContainerInspect(dm.ctx, mc.ContainerName)
+	if err != nil {
+		return
+	}
+
+	// Built through buildRedisEnv rather than re-deriving the three values
+	// here, so there is exactly one producer of what a container should
+	// hold. The sub-server is irrelevant to this comparison (redisEnvDrift
+	// only reads the connection keys), so it is left empty.
+	want := buildRedisEnv(mc.UUID, "", wantAddr)
+	if key := redisEnvDrift(info.Config.Env, want); key != "" {
+		log.Printf("ReconcileRedisEnv: %s has a stale %s — restarting", mc.ContainerName, key)
+		if err := dm.RestartContainer(mc.UUID); err != nil {
+			log.Printf("ReconcileRedisEnv: failed to restart %s: %v", mc.ContainerName, err)
 		}
 	}
 }

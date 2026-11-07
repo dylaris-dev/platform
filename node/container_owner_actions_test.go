@@ -80,6 +80,12 @@ func newSharedDaemon(t *testing.T, owner string, running bool, onPull func()) (*
 			w.Write([]byte(`{}`))
 		case strings.HasSuffix(p, "/images/json"):
 			w.Write([]byte(`[]`))
+		case r.Method == http.MethodGet && strings.HasSuffix(p, "/containers/json"):
+			if owner == "-" || !running {
+				w.Write([]byte(`[]`))
+				return
+			}
+			w.Write([]byte(`[{"Id":"c-id","Names":["/mc_` + sharedDaemonUUID + `"],"Labels":` + labels + `}]`))
 		case strings.HasSuffix(p, "/containers/create"):
 			d.mu.Lock()
 			missing := d.noImage && !d.pulled
@@ -414,5 +420,41 @@ func TestDeleteOfAMissingContainerRemovesNothingByName(t *testing.T) {
 	}
 	if got := dm.portMgr.GetPort(sharedDaemonUUID); got != 0 {
 		t.Errorf("port %d still held after the delete", got)
+	}
+}
+
+// Q04: the boot-time ReconcileRedisEnv runs beside the command listener now, so
+// the heartbeat does not wait out a graceful stop per stale server. A recreate
+// beside a command the user sent must not happen: it waits for the server's
+// power lock like the reconciler does, and then still recreates.
+func TestReconcileRedisEnvWaitsForTheServersPowerLock(t *testing.T) {
+	prev := nodeRedis
+	nodeRedis = &redisAddrState{}
+	nodeRedis.set("10.0.0.9:6379", false)
+	t.Cleanup(func() { nodeRedis = prev })
+
+	dm, d := newSharedDaemon(t, "node-a", true, nil)
+	d.env = []string{"REDIS_ADDR=10.0.0.1:6379"}
+
+	release, ok := tryLockServerPower(sharedDaemonUUID)
+	if !ok {
+		t.Fatal("power lock already held")
+	}
+	done := make(chan struct{})
+	go func() { dm.ReconcileRedisEnv(); close(done) }()
+
+	time.Sleep(300 * time.Millisecond)
+	if slices.Contains(d.changed(), "create") {
+		release()
+		t.Fatalf("recreated while a command held the power lock: %v", d.changed())
+	}
+	release()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("ReconcileRedisEnv did not finish after the lock came free")
+	}
+	if !slices.Contains(d.changed(), "create") {
+		t.Fatalf("stale container not recreated once the lock was free: %v", d.changed())
 	}
 }
