@@ -818,6 +818,21 @@ type copySubServerRequest struct {
 	TargetName string `json:"targetName"`
 }
 
+// copiedModRow is a source row as the copy's own, with the outcome settled: no
+// report will ever name the copy's sub-server, so an attempt id or previous_*
+// carried over could only be applied to the wrong row or never.
+func copiedModRow(m models.ServerMod, target string) models.ServerMod {
+	m.ID = 0
+	m.SubServerName = target
+	m.InstallID = ""
+	m.PreviousFileName, m.PreviousTargetDir, m.PreviousSHA512 = "", "", ""
+	if m.Status == models.ServerModInstalling {
+		// Only a stale one gets here; unknown counts as installed, as for an old node.
+		m.Status = models.ServerModInstalled
+	}
+	return m
+}
+
 // CopySubServer POST /api/servers/{id}/copy-sub-server
 //
 // Duplicates the active sub-server so a version move can be tried on the copy
@@ -863,6 +878,17 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	if inPowerTransition(srv.Status) {
 		httpx.SendJSONError(w, "The server is "+srv.Status+". Copy it once it has stopped: its world files are being written", http.StatusConflict)
 		return
+	}
+	// A row still installing would be cloned with its attempt id, and the node
+	// reports for the SOURCE only, so the copy's row would stay "installing"
+	// for good and its version move would be refused every time.
+	mods, _ := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer)
+	for i := range mods {
+		if modInstallInFlight(&mods[i], time.Now()) {
+			httpx.SendJSONErrorCode(w, "A mod is still being installed: "+mods[i].Title+". Copy the server when it has finished.",
+				"mods_installing", http.StatusConflict)
+			return
+		}
 	}
 
 	node, err := h.d.Store.GetNodeByID(srv.NodeID)
@@ -921,11 +947,8 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 	// The mod inventory is per sub-server, so the copy needs its own rows or it
 	// would look like a server with no mods installed while the jars are right
 	// there on disk.
-	mods, _ := h.d.Store.ListServerMods(serverID, srv.ActiveSubServer)
 	for _, m := range mods {
-		copied := m
-		copied.ID = 0
-		copied.SubServerName = req.TargetName
+		copied := copiedModRow(m, req.TargetName)
 		_, _ = h.d.Store.UpsertServerMod(&copied)
 	}
 

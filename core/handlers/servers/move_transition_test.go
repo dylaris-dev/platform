@@ -3,10 +3,12 @@ package servers
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/handlers/handlertest"
 
@@ -93,5 +95,63 @@ func TestADirectModeMoveRefusesWhatItCannotCarry(t *testing.T) {
 				t.Fatalf("status %d %s, want 409 move_needs_gateway", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+type copyModsFakeStore struct {
+	serverPowerFakeStore
+	mods []models.ServerMod
+}
+
+func (f *copyModsFakeStore) ListServerMods(int, string) ([]models.ServerMod, error) {
+	return f.mods, nil
+}
+
+// A copy taken while a mod was installing cloned the row's "installing" status
+// and attempt id; the node reports for the source only, so the copy's row stayed
+// installing for good and its version move was refused every time.
+func TestACopyWaitsForAModInstall(t *testing.T) {
+	cases := []struct {
+		name    string
+		age     time.Duration
+		refused bool
+	}{
+		{"install in flight", time.Minute, true},
+		{"report lost long ago", 2 * modInstallInFlightFor, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &copyModsFakeStore{
+				serverPowerFakeStore: serverPowerFakeStore{
+					server:  &models.Server{ID: 1, UUID: "srv-uuid", Status: "stopped", OwnerID: "u1", NodeID: 7, ActiveSubServer: "main"},
+					nodeErr: errors.New("no node in this test"),
+				},
+				mods: []models.ServerMod{{Title: "Spark", Status: models.ServerModInstalling, InstalledAt: time.Now().Add(-c.age)}},
+			}
+			h := &ServerModsHandler{d: testDeps(Deps{Store: fs})}
+			r := httptest.NewRequest("POST", "/api/servers/1/copy-sub-server", bytes.NewBufferString(`{"targetName":"copy"}`))
+			r = mux.SetURLVars(r.WithContext(context.WithValue(r.Context(), "isAdmin", false)), map[string]string{"id": "1"})
+			rec := httptest.NewRecorder()
+			h.CopySubServer(rec, r)
+			if refused := strings.Contains(rec.Body.String(), "mods_installing"); refused != c.refused {
+				t.Fatalf("status %d %s, want refused=%v", rec.Code, rec.Body.String(), c.refused)
+			}
+		})
+	}
+}
+
+func TestACopiedModRowCarriesNoPendingAttempt(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{models.ServerModInstalling, models.ServerModInstalled},
+		{models.ServerModInstalled, models.ServerModInstalled},
+		{models.ServerModFailed, models.ServerModFailed},
+	}
+	for _, c := range cases {
+		got := copiedModRow(models.ServerMod{ID: 9, SubServerName: "main", Status: c.in, InstallID: "x",
+			PreviousFileName: "a.jar", PreviousTargetDir: "mods", PreviousSHA512: "aa", FileName: "b.jar"}, "copy")
+		if got.ID != 0 || got.SubServerName != "copy" || got.InstallID != "" || got.Status != c.want ||
+			got.PreviousFileName != "" || got.PreviousTargetDir != "" || got.PreviousSHA512 != "" || got.FileName != "b.jar" {
+			t.Errorf("%s: copied row %+v", c.in, got)
+		}
 	}
 }

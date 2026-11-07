@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
@@ -170,7 +171,14 @@ func runInstallMod(ctx context.Context, rdb *redis.Client, storage *StorageManag
 	defer release()
 	// The .part file is opened with Remove + O_EXCL and destFile is only
 	// reached by os.Rename; neither follows a link at the leaf.
-	tmpFile := filepath.Join(destDir, cleanName+".part")
+	//
+	// Its name is per attempt: Core accepts a second install of the same jar
+	// while the first is running, and with one shared name the second
+	// attempt's Remove unlinked the first one's file and the first rename then
+	// moved the second's half-written download into place.
+	var suffix [8]byte
+	_, _ = rand.Read(suffix[:]) // crypto/rand.Read never returns an error
+	tmpFile := filepath.Join(destDir, cleanName+"."+hex.EncodeToString(suffix[:])+".part")
 	destFile := filepath.Join(destDir, cleanName)
 
 	if err := downloadModFile(pl.DownloadURL, tmpFile, pl.SHA512); err != nil {

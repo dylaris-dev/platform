@@ -207,6 +207,18 @@ func (h *ServerModsHandler) refuseIfModsLocked(w http.ResponseWriter, r *http.Re
 	return false
 }
 
+// modInstallInFlightFor is how long an "installing" row counts as a download
+// that may still be running. The node gives a download five minutes; past this
+// the report was lost (Core restarted while it was published), and the row must
+// not lock Remove or Copy for good.
+const modInstallInFlightFor = 15 * time.Minute
+
+// modInstallInFlight: install_mod takes no node_busy, so RefuseIfServerBusy
+// does not see it, and the node renames the jar into place whenever it finishes.
+func modInstallInFlight(m *models.ServerMod, now time.Time) bool {
+	return m.Status == models.ServerModInstalling && now.Sub(m.InstalledAt) < modInstallInFlightFor
+}
+
 // Install POST /api/servers/{id}/mods - queues a mod install onto the active
 // sub-server. The reply says queued, and the mod only takes effect after a
 // restart.
@@ -544,6 +556,12 @@ func (h *ServerModsHandler) Uninstall(w http.ResponseWriter, r *http.Request) {
 	}
 	if target == nil {
 		httpx.SendJSONError(w, "Mod not found", http.StatusNotFound)
+		return
+	}
+	// remove_mod would find nothing yet and the download would land after it,
+	// as a jar with no row.
+	if modInstallInFlight(target, time.Now()) {
+		httpx.SendJSONErrorCode(w, "This mod is still being installed. Remove it when it has finished.", "mods_installing", http.StatusConflict)
 		return
 	}
 

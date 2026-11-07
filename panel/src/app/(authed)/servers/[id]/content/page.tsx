@@ -1573,10 +1573,17 @@ export default function ServerContentPage() {
                                         >
                                             <ExternalLink size={12} />
                                         </a>
-                                        <button onClick={() => handleUninstall(m)} className="btn btn-secondary btn-sm">
-                                            <Trash2 size={12} className="text-(--error-light)" />
-                                            Remove
-                                        </button>
+                                        {/* Core refuses a Remove while the download may still run (it would land after
+                                            the removal); the button follows the job this session is watching. */}
+                                        {(() => {
+                                            const job = installs.jobFor(serverId, m.modrinthProjectId);
+                                            const downloading = m.status === 'installing' && !!job && isPending(job) && job.versionId === m.modrinthVersionId;
+                                            return <button onClick={() => handleUninstall(m)} className="btn btn-secondary btn-sm"
+                                                disabled={downloading} title={downloading ? 'Still installing. Remove it when it has finished.' : undefined}>
+                                                <Trash2 size={12} className="text-(--error-light)" />
+                                                Remove
+                                            </button>;
+                                        })()}
                                     </div>
                                 </article>
                             ))}

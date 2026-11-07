@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -199,5 +200,50 @@ func TestAnInvalidPreviousDirectoryDeletesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(modsDir, "spark-1.1.jar")); err != nil {
 		t.Fatalf("the install itself should still land: %v", err)
+	}
+}
+
+// Two attempts at the same jar ran at once and shared one "<name>.part": the
+// second attempt's Remove unlinked the first one's open file, and the first
+// rename then moved the second's half-written download into place. Each
+// attempt now writes its own temp file.
+func TestConcurrentInstallsOfOneJarDoNotShareATempFile(t *testing.T) {
+	sm, uuid, modsDir := installFixture(t)
+	orig := downloadModFile
+	t.Cleanup(func() { downloadModFile = orig })
+	var mu sync.Mutex
+	var dests []string
+	both := make(chan struct{})
+	downloadModFile = func(_, dest, _ string) error {
+		mu.Lock()
+		dests = append(dests, dest)
+		if len(dests) == 2 {
+			close(both)
+		}
+		mu.Unlock()
+		<-both // both attempts are mid-download together
+		return os.WriteFile(dest, []byte("new jar bytes"), 0o644)
+	}
+
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runInstallMod(context.Background(), nil, sm, replacePayload(uuid, ""))
+		}()
+	}
+	wg.Wait()
+
+	if dests[0] == dests[1] {
+		t.Fatalf("both attempts downloaded into %s, so one rename can move the other's partial file into place", dests[0])
+	}
+	if b, err := os.ReadFile(filepath.Join(modsDir, "spark-1.1.jar")); err != nil || string(b) != "new jar bytes" {
+		t.Fatalf("jar after two installs: %q, %v", b, err)
+	}
+	for _, d := range dests {
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Errorf("temp file %s left behind", d)
+		}
 	}
 }

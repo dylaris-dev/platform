@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -17,6 +18,7 @@ import (
 type uninstallModFakeStore struct {
 	store.Store
 	deleted bool
+	mods    []models.ServerMod // nil: one installed plugin
 }
 
 // The suspension guard reads the owner's billing before anything is queued.
@@ -30,6 +32,9 @@ func (f *uninstallModFakeStore) GetServerByID(id int) (*models.Server, error) {
 }
 
 func (f *uninstallModFakeStore) ListServerMods(serverID int, sub string) ([]models.ServerMod, error) {
+	if f.mods != nil {
+		return f.mods, nil
+	}
 	return []models.ServerMod{{ID: 5, ServerID: serverID, FileName: "some-plugin.jar", TargetDir: "plugins"}}, nil
 }
 
@@ -67,5 +72,38 @@ func TestUninstallRefusesRatherThanDroppingTheRowWithNoQueue(t *testing.T) {
 	if fs.deleted {
 		t.Error("the mod row was deleted even though the node was never told to remove the file; " +
 			"the jar keeps loading and the panel no longer lists it")
+	}
+}
+
+// Remove on a row whose jar is still downloading deleted the row and queued a
+// remove_mod that found nothing yet; the download then renamed the jar into
+// place with no row left to remove it with. A row whose report never came is
+// still removable once the install cannot be running any more.
+func TestUninstallWaitsForAnInstallInFlight(t *testing.T) {
+	cases := []struct {
+		name    string
+		age     time.Duration
+		refused bool
+	}{
+		{"just queued", time.Minute, true},
+		{"report lost long ago", 2 * modInstallInFlightFor, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &uninstallModFakeStore{mods: []models.ServerMod{{ID: 5, ServerID: 7, FileName: "some-plugin.jar",
+				TargetDir: "plugins", Status: models.ServerModInstalling, InstalledAt: time.Now().Add(-c.age)}}}
+			h := &ServerModsHandler{d: testDeps(Deps{Store: fs})} // no queue: past the guard it answers 503
+			rw := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodDelete, "/api/servers/7/mods/5", nil)
+			req = req.WithContext(context.WithValue(req.Context(), "userID", "alice"))
+			h.Uninstall(rw, mux.SetURLVars(req, map[string]string{"id": "7", "modId": "5"}))
+
+			if refused := rw.Code == http.StatusConflict; refused != c.refused {
+				t.Fatalf("status %d %s, want refused=%v", rw.Code, rw.Body.String(), c.refused)
+			}
+			if fs.deleted {
+				t.Error("the row was deleted")
+			}
+		})
 	}
 }
