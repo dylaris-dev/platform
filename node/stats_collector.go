@@ -679,20 +679,22 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	var prevCPU *PrevCPUStats
 	var memGuardState memGuard
 	var lastContainerID string
+	var sampleGap bool
 	var lastNet netSample
 	collectAndPublish := func() {
 		stats, newPrev, err := dm.GetContainerStats(containerName, prevCPU)
 		prevCPU = newPrev
 		if err != nil || stats == nil {
+			sampleGap = true
 			return
 		}
-		// A restart recreates the container under the same name, often faster
-		// than the 10 s scan notices it was gone, so this collector carries on
-		// across it. The new id is the sign; the inspect reads the new start
-		// time, which sends readiness back to "starting".
-		if stats.ID != "" && lastContainerID != "" && stats.ID != lastContainerID {
+		// A restart often outruns the 10 s scan, so this collector carries on
+		// across it; the inspect reads the new start time, which sends
+		// readiness back to "starting".
+		if reinspectAfterSample(sampleGap, lastContainerID, stats.ID) {
 			refreshCPULimit()
 		}
+		sampleGap = false
 		lastContainerID = stats.ID
 
 		pingMu.Lock()
@@ -786,7 +788,10 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 				defer measuring.Store(false)
 				measuredFrom := time.Now()
 				usage := getDiskUsage(ctx, rdb, uuid, quota)
-				if usage != nil {
+				// Cancelled by the scan mid-walk: every Redis read below would
+				// fail and read as "no grace, no hold", tripping on half the
+				// facts. A start over the limit is caught by the next collector.
+				if usage != nil && ctx.Err() == nil {
 					publishDiskUsage(ctx, rdb, uuid, usage, measuredFrom, 10*time.Minute)
 
 					graced := diskGraced(ctx, rdb, quota, uuid, usage)
@@ -826,11 +831,33 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	}
 }
 
+// reinspectAfterSample reports whether a good stats sample may belong to a new
+// run of the container. A recreate shows as a new id. A crash restart through
+// PowerAction("start") keeps the id, and only the failed samples while it was
+// down show it.
+func reinspectAfterSample(gap bool, lastID, id string) bool {
+	if id == "" {
+		return false
+	}
+	return gap || (lastID != "" && id != lastID)
+}
+
 // holdForDiskFull trips the disk guard: marker, stop, then disk_full.
-func holdForDiskFull(ctx context.Context, rdb *redis.Client, uuid, liveKey string, usage *DiskUsagePayload, stop func() error) {
+//
+// Not on ctx, all of it: the scan cancels the collector as soon as the
+// container is gone, which can be while the stop returns or before the marker
+// is written. The status write landing without the marker left a hold the
+// stopped-server sweep, which releases only on the marker, could never lift.
+func holdForDiskFull(_ context.Context, rdb *redis.Client, uuid, liveKey string, usage *DiskUsagePayload, stop func() error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	// Set BEFORE the stop: gracefulStop takes seconds and the
 	// reconciler ticks during them.
-	rdb.Set(ctx, diskFullKey(uuid), "1", diskFullMarkerTTL)
+	if err := rdb.Set(ctx, diskFullKey(uuid), "1", diskFullMarkerTTL).Err(); err != nil {
+		// No marker, no trip: disk_full without one is never released.
+		log.Printf("Disk guard could not mark %s, retrying on the next measurement: %v", uuid, err)
+		return
+	}
 	diskGuardTrips.Store(uuid, time.Now())
 	if err := stop(); err != nil {
 		// The server may still be running and writing. Undo the trip so the
@@ -841,10 +868,8 @@ func holdForDiskFull(ctx context.Context, rdb *redis.Client, uuid, liveKey strin
 		diskGuardTrips.Delete(uuid)
 		return
 	}
-	// Not ctx: the scan cancels the collector as soon as the container is
-	// gone, which is right while the stop returns, and the lost write left
-	// Core at the "stopping" the stop announced.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// A fresh timeout: the stop can take most of the first one.
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "disk_full", 30*time.Second)
 	// Publish disk_full event so panel reacts immediately
@@ -1207,6 +1232,12 @@ func localServerUUIDs() []string {
 			// Mid storage move it lives on neither path yet, and resolving it
 			// would hold this sweep for every other server until the copy ends.
 			if globalStorageMgr.moveInProgress(uuid) != nil {
+				continue
+			}
+			// A transfer landing here (or a cleanup or discard removing a
+			// copy): the server is hosted elsewhere, and its uuid-global keys
+			// are that node's, not this partial copy's.
+			if _, busy := migrateInFlight.Load(uuid); busy {
 				continue
 			}
 			// Only where this server actually lives: a copy left on another

@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"sync"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -114,12 +116,29 @@ func loadNetPolicy(ctx context.Context, rdb *redis.Client, nodeToken string) (ma
 // Resolved on every call, never cached: Docker hands a container a new
 // address whenever it is recreated, so a stored address can later belong to
 // somebody else's server.
-func (dm *DockerManager) infraPeers() []string {
+//
+// An error means a lookup failed and the set is incomplete: a missing node or
+// Link here is a lookup that failed, not one that is gone, and applying the
+// narrower set cut every player off for the round.
+func (dm *DockerManager) infraPeers() ([]string, error) {
 	var out []string
 	if dm.selfContainer != "" {
-		out = append(out, dm.containerAddrs(dm.selfContainer)...)
+		info, err := dm.cli.ContainerInspect(dm.ctx, dm.selfContainer)
+		switch {
+		case client.IsErrNotFound(err):
+			// The ref did not resolve (a hostname fallback): it never will,
+			// and this was never an address this set held.
+		case err != nil:
+			return nil, fmt.Errorf("inspect this node: %w", err)
+		case info.NetworkSettings != nil:
+			out = append(out, networkAddrs(info.NetworkSettings.Networks)...)
+		}
 	}
-	out = append(out, dm.linkAddrs()...)
+	links, err := dm.linkAddrs()
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, links...)
 	// A host-networked node or Link holds no address on the shared network, and
 	// what it sends to a server arrives from the network's gateway - the host.
 	// Without this a host-net node (the warp-proxy deployment of an external
@@ -131,7 +150,7 @@ func (dm *DockerManager) infraPeers() []string {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // containerAddrs returns every network address a container holds. All of them,
@@ -156,21 +175,17 @@ func (dm *DockerManager) containerAddrs(name string) []string {
 // warning) while contributing nothing here, so every server on the host drops
 // it and the only visible symptom is that nobody can join. Logged on the
 // transition into that state, not every pass - this loop runs every 15s.
-func (dm *DockerManager) linkAddrs() []string {
+func (dm *DockerManager) linkAddrs() ([]string, error) {
 	containers, err := dm.cli.ContainerList(dm.ctx, container.ListOptions{})
 	if err != nil {
-		// Matches ListRunningMCContainers' own list-error handling one pass
-		// down in reconcileNetPolicy: log it plainly, no rate limiter - list
-		// errors are rare enough that this does not spam.
-		log.Printf("netpolicy: cannot list containers to find the Link: %v", err)
-		return nil
+		return nil, fmt.Errorf("list containers to find the Link: %w", err)
 	}
 	addrs, addrless := linkContainerAddrs(containers)
 	unreachable := addrless > 0
 	if dm.linkAddrless.Swap(unreachable) != unreachable && unreachable {
 		log.Printf("netpolicy: WARNING: %d Link container(s) on this host hold no Docker address (host networking?); every game server will refuse them and players cannot join. Run the Link on the same Docker network as the servers.", addrless)
 	}
-	return addrs
+	return addrs, nil
 }
 
 // linkContainerAddrs picks the Link containers out of a ContainerList result

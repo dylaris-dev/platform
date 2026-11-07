@@ -52,6 +52,7 @@ type netPlan struct {
 	separate    bool // write the ingress allowlist
 	unpublished bool // this machine separates servers but Core has not spoken yet
 	noInfra     bool // it should separate them but cannot find node or Link
+	infraErr    bool // looking up node or Link failed: keep what is applied
 	policy      map[string][]string
 	// peerCache resolves each peer once per round. On a machine separated by
 	// owner every server lists every other server of its owner, so resolving
@@ -115,7 +116,16 @@ func (dm *DockerManager) planNetPolicy(ctx context.Context, rdb *redis.Client, n
 		plan.unpublished = true
 		return plan
 	}
-	plan.infra = dm.infraPeers()
+	infra, ierr := dm.infraPeers()
+	if ierr != nil {
+		// Not "no Link": the rules already in each server still name the
+		// last good set, and a round with a narrower one refuses every new
+		// player. A server starting now goes as with noInfra.
+		log.Printf("netpolicy: cannot look up this node or the Link, leaving the applied rules this round: %v", ierr)
+		plan.infraErr, plan.noInfra = true, true
+		return plan
+	}
+	plan.infra = infra
 	if len(plan.infra) == 0 {
 		// Without the node's and the Link's own addresses every allowlist would
 		// lock the server away from its own management and from every player.
@@ -163,6 +173,9 @@ func (dm *DockerManager) reconcileNetPolicy(ctx context.Context, rdb *redis.Clie
 	containers, lerr := dm.ListRunningMCContainers()
 	if lerr != nil {
 		log.Printf("netpolicy: cannot list containers: %v", lerr)
+		return
+	}
+	if plan.infraErr {
 		return
 	}
 	applied := 0
@@ -484,14 +497,19 @@ func linkAddrsKey(addrs []string) string {
 func (dm *DockerManager) watchLinkAddrs(ctx context.Context) {
 	t := time.NewTicker(linkWatchInterval)
 	defer t.Stop()
-	last := linkAddrsKey(dm.linkAddrs())
+	addrs, _ := dm.linkAddrs()
+	last := linkAddrsKey(addrs)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		}
-		if now := linkAddrsKey(dm.linkAddrs()); now != last {
+		addrs, err := dm.linkAddrs()
+		if err != nil {
+			continue // a failed list is no change of address
+		}
+		if now := linkAddrsKey(addrs); now != last {
 			last = now
 			log.Printf("netpolicy: the Link addresses changed (%s); applying rules now", now)
 			dm.kickNetPolicy()

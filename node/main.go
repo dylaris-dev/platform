@@ -371,6 +371,30 @@ func main() {
 		log.Printf("WARNING: using the local warp proxy (%s) but this node is NOT host-networked; 127.0.0.1 is this container, not the host where warp listens. Set REDIS_ADDR/CORE_GRPC_ADDR explicitly or run the node with network_mode: host.", nodeRedis.current())
 	}
 
+	// Port manager always active — routing mode (from Redis) decides at runtime whether to bind ports
+	dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd, getPortMode)
+	// Redis holds the port ledger but is in-memory only, so a host reboot wipes
+	// it while the containers keep their ports. Rebuild it from them.
+	bound := dockerMgr.ExistingHostPortBindings()
+	dockerMgr.portMgr.AdoptContainerBindings(bound)
+	var mcContainers map[string]bool
+	if cs, err := dockerMgr.ListAllMCContainers(); err == nil {
+		mcContainers = map[string]bool{}
+		for _, c := range cs {
+			mcContainers[c.UUID] = true
+		}
+	}
+	dockerMgr.restorePortLedger(mcContainers, bound)
+
+	// Load routing modes from Redis, refresh every 30s
+	// Defaults before the first poll; setModes so nothing reads them unguarded.
+	setModes("ip_port", "sftp", portMode, containerPort, ioWeight, pidsLimit)
+	loadModesFromRedis(ctx, rdb)
+
+	// After the first loadModesFromRedis: the first round runs at once, and
+	// on the compiled-in 25565 it dropped the admin-set game port between
+	// servers until the next round.
+	//
 	// Per-server ingress policy: a game server accepts the node, the Link, and
 	// whatever Core has allowed. See netpolicy.go for why it is enforced in the
 	// container's own namespace and why that needs no new privilege here.
@@ -401,25 +425,6 @@ func main() {
 		startNetPolicyReconciler(ctx, dockerMgr, rdb, nodeID)
 	}
 
-	// Port manager always active — routing mode (from Redis) decides at runtime whether to bind ports
-	dockerMgr.portMgr = NewPortManager(rdb, nodeID, portRangeStart, portRangeEnd, getPortMode)
-	// Redis holds the port ledger but is in-memory only, so a host reboot wipes
-	// it while the containers keep their ports. Rebuild it from them.
-	bound := dockerMgr.ExistingHostPortBindings()
-	dockerMgr.portMgr.AdoptContainerBindings(bound)
-	var mcContainers map[string]bool
-	if cs, err := dockerMgr.ListAllMCContainers(); err == nil {
-		mcContainers = map[string]bool{}
-		for _, c := range cs {
-			mcContainers[c.UUID] = true
-		}
-	}
-	dockerMgr.restorePortLedger(mcContainers, bound)
-
-	// Load routing modes from Redis, refresh every 30s
-	// Defaults before the first poll; setModes so nothing reads them unguarded.
-	setModes("ip_port", "sftp", portMode, containerPort, ioWeight, pidsLimit)
-	loadModesFromRedis(ctx, rdb)
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
