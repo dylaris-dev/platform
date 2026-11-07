@@ -1,16 +1,21 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"dylaris-pkg/fileperms"
 	pb "dylaris-proto/node"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/pkg/sftp"
+	"github.com/redis/go-redis/v9"
 )
 
 // H40: the move fence only holds back lookups made after it. An SFTP handle
@@ -164,5 +169,73 @@ func TestCheckMigrationRefusesWhatTheMoveWouldRefuse(t *testing.T) {
 				t.Fatalf("the check wrote to the target: %v", err)
 			}
 		})
+	}
+}
+
+// fenceOnLookup tries to fence a move of uuid at every storage-path lookup,
+// which is the moment a move the read loop would then wait for can start.
+type fenceOnLookup struct {
+	sm      **StorageManager
+	uuid    string
+	fenced  int
+	lookups int
+}
+
+func (f *fenceOnLookup) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (f *fenceOnLookup) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if cmd.Name() == "get" && strings.HasSuffix(fmt.Sprint(cmd.Args()[1]), ":server:"+f.uuid+":storage") {
+			f.lookups++
+			if release, err := (*f.sm).fenceMove(f.uuid); err == nil {
+				f.fenced++
+				release()
+			}
+		}
+		return next(ctx, cmd)
+	}
+}
+func (f *fenceOnLookup) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+// Q05: a staging file that could not be created released the writer hold
+// before handleWrite mapped the error, and handleWrite looks the server path
+// up again. A move that fenced in that gap made the read loop wait for the
+// whole move. Every lookup of that WriteReq now runs under the hold.
+func TestAFailedUploadStagingFileKeepsTheWriterHoldThroughItsReply(t *testing.T) {
+	const uuid = "84848484-8484-8484-8484-848484848484"
+	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	var sm *StorageManager
+	hook := &fenceOnLookup{sm: &sm, uuid: uuid}
+	rdb.AddHook(hook)
+	sm = NewStorageManager(t.TempDir(), rdb)
+	h := NewStreamHandler(sm)
+	root := sm.GetServerDir(uuid)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A file where the upload's parent directory should be: the staging
+	// create fails, and so does handleWrite's own mkdir.
+	if err := os.WriteFile(filepath.Join(root, "blocker"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hook.lookups, hook.fenced = 0, 0
+	stream := &fakeCoreStream{}
+	m := &MeshManager{handler: h, pendingWrites: map[string]*pendingWrite{}}
+	m.handleRequest(&coreConnection{stream: stream}, &pb.NodeMessage{RequestId: "w", ServerUuid: uuid, Payload: &pb.NodeMessage_WriteReq{WriteReq: &pb.WriteFileReq{Path: "blocker/a.txt", TotalSize: 3}}})
+
+	if hook.lookups < 2 {
+		t.Fatalf("expected the staging create and handleWrite to look the path up, saw %d lookup(s)", hook.lookups)
+	}
+	if hook.fenced != 0 {
+		t.Errorf("a move fenced %d time(s) while the failed WriteReq was still being answered", hook.fenced)
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if len(stream.sent) != 1 || stream.sent[0].GetError() == nil {
+		t.Fatalf("want one error reply, got %v", stream.sent)
+	}
+	if n := sm.writers[uuid]; n != 0 {
+		t.Errorf("the refused upload still holds %d writer(s)", n)
 	}
 }

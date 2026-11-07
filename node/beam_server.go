@@ -19,11 +19,13 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	beamauth "dylaris-pkg/beam/auth"
 	"dylaris-pkg/beam/quota"
 	"dylaris-pkg/fileperms"
 	pb "dylaris-proto/beam"
+	nodepb "dylaris-proto/node"
 
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
@@ -33,6 +35,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // 256 KiB: a quarter of the per-message overhead of 64 KiB on a fast LAN,
@@ -202,7 +205,36 @@ func beamServerOptions(bs *beamServer) []grpc.ServerOption {
 		grpc.MaxConcurrentStreams(beamMaxStreams),
 		grpc.MaxRecvMsgSize(beamMaxRecvMsg),
 		grpc.StatsHandler(&beamConnCleaner{uuid: &bs.serverUUIDByPeer, user: &bs.usernameByPeer, perms: &bs.permsByPeer, sess: &bs.sessionByPeer}),
+		grpc.UnaryInterceptor(beamValidUTF8Unary),
+		grpc.StreamInterceptor(beamValidUTF8Stream),
 	}
+}
+
+// File names, paths and error texts come off the disk as raw bytes, and proto3
+// refuses to marshal a string that is not UTF-8: one such name failed the whole
+// listing or download. Every reply is repaired on its way out, as the node does
+// for Core. A repaired name no longer matches the one on disk, so that one entry
+// cannot be addressed from Beam; the field stays a string so old clients keep
+// working.
+func beamValidUTF8Unary(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	resp, err := handler(ctx, req)
+	if m, ok := resp.(proto.Message); ok && m.ProtoReflect().IsValid() {
+		nodepb.ValidUTF8(m.ProtoReflect())
+	}
+	return resp, err
+}
+
+func beamValidUTF8Stream(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	return handler(srv, validUTF8ServerStream{ss})
+}
+
+type validUTF8ServerStream struct{ grpc.ServerStream }
+
+func (s validUTF8ServerStream) SendMsg(m any) error {
+	if pm, ok := m.(proto.Message); ok && pm.ProtoReflect().IsValid() {
+		nodepb.ValidUTF8(pm.ProtoReflect())
+	}
+	return s.ServerStream.SendMsg(m)
 }
 
 // auditBeam sends one change made through Beam to Core's server audit trail,
@@ -981,6 +1013,11 @@ func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadRe
 	}
 	if len(data) > maxBeamReadContent {
 		return &pb.BeamFileContentResp{Success: false, Message: "this file is too large to open here (over 10 MB); download it instead"}, nil
+	}
+
+	// Repaired text would be saved back over the original bytes.
+	if !utf8.Valid(data) {
+		return &pb.BeamFileContentResp{Success: false, Message: "this file is not UTF-8 text and cannot be edited here; download it instead"}, nil
 	}
 
 	return &pb.BeamFileContentResp{Success: true, Content: string(data)}, nil

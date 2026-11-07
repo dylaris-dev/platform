@@ -652,12 +652,14 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		}
 		tempFile, tempName, err := m.handler.createUploadTemp(msg.ServerUuid, writeReq.Path)
 		if err != nil {
-			unhold()
 			log.Printf("gRPC Mesh: Failed to create temp file (request_id=%s): %v", msg.RequestId, err)
 			// handleWrite maps the checks it shares with createUploadTemp; past
 			// them (the create itself) it answers "ready for chunks", and every
 			// chunk would be dropped while Core waited out its confirm.
+			// It looks the server path up again, so it runs under the hold: a
+			// move fenced before it would make the read loop wait out the move.
 			reply := m.handler.handleWrite(msg.RequestId, msg.ServerUuid, writeReq)
+			unhold()
 			if reply.GetError() == nil {
 				reply = uploadTempRefusal(msg.RequestId, err)
 			}
