@@ -914,3 +914,37 @@ func TestARecountThatCannotMarkTheLiftStillAppliesTheNewLimit(t *testing.T) {
 		})
 	}
 }
+
+// R15: Valkey runs without persistence, so a restart of it dropped every
+// counted marker, and the next node start walked every tree before its
+// heartbeat came up, with the once-only grace allowed again. The marker is on
+// disk too, and forgetting the server drops both.
+func TestTheCountedMarkerSurvivesARedisThatLostIt(t *testing.T) {
+	prev := nodeSecretDir
+	nodeSecretDir = t.TempDir()
+	t.Cleanup(func() { nodeSecretDir = prev })
+	rdb := newDiskGuardRedis(t)
+	ctx := context.Background()
+	recordDiskLimit(ctx, rdb, "srv", 100)
+	q := &fakeQuota{before: usageOf(10*mib, 100*mib), after: usageOf(150*mib, 100*mib), limitMB: 100}
+	if done, _ := reconcileServer(ctx, rdb, q, "srv"); !done || !q.assigned {
+		t.Fatal("the first boot did not count the server")
+	}
+	if err := rdb.FlushAll(ctx).Err(); err != nil {
+		t.Fatal(err)
+	}
+	recordDiskLimit(ctx, rdb, "srv", 100)
+	q2 := &fakeQuota{before: usageOf(10*mib, 100*mib), after: usageOf(150*mib, 100*mib), limitMB: 100}
+	if done, _ := reconcileServer(ctx, rdb, q2, "srv"); done || q2.assigned {
+		t.Fatal("a boot after Redis lost its keys walked the server again")
+	}
+	if n, _ := rdb.Exists(ctx, diskGraceKey("srv")).Result(); n != 0 {
+		t.Fatal("a boot after Redis lost its keys granted the grace again")
+	}
+
+	forgetDiskLimit(ctx, rdb, "srv")
+	q3 := &fakeQuota{after: usageOf(10*mib, 0)}
+	if done, _ := reconcileServer(ctx, rdb, q3, "srv"); !done {
+		t.Fatal("a forgotten server kept its counted marker on disk")
+	}
+}

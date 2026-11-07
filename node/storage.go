@@ -483,6 +483,10 @@ func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (strin
 // It is also what a move killed after its key flip reads like on redelivery.
 var errAlreadyOnPath = errors.New("is already on path")
 
+// errStorageKeyUnsure is a move whose key write failed after the copy: the key
+// may name either copy, so the server must not be started on the source.
+var errStorageKeyUnsure = errors.New("record the new storage path")
+
 // dropStaleCopies removes the server's directories on every storage path but
 // the one its storage key names: a move killed during the delete of its
 // source left that copy behind. Only the key can vouch for which copy is live,
@@ -717,7 +721,7 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 	// half-deleted tree. Both copies are whole here, so on a failed write
 	// neither is touched, whichever one the key ended up naming.
 	if err := sm.setRedisPath(serverUUID, targetPath); err != nil {
-		return fmt.Errorf("record the new storage path: %w", err)
+		return fmt.Errorf("%w: %w", errStorageKeyUnsure, err)
 	}
 
 	// Remove old directory (data is safe at target)

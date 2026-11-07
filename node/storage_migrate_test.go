@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -147,8 +150,10 @@ func TestMigrateServerPathKeepsTheSourceWhenTheKeyCannotMove(t *testing.T) {
 	}
 
 	mr.SetError("READONLY")
-	if err := sm.MigrateServerPath(uuid, paths[1]); err == nil {
-		t.Fatal("the move reported success without moving the storage key")
+	if err := sm.MigrateServerPath(uuid, paths[1]); !errors.Is(err, errStorageKeyUnsure) {
+		// The handler starts a server again after a failed move only when
+		// this is not the error: the key may name the target already.
+		t.Fatalf("MigrateServerPath = %v, want errStorageKeyUnsure", err)
 	}
 	if _, err := os.Stat(filepath.Join(srcDir, "level.dat")); err != nil {
 		t.Fatalf("the source was deleted although the key still names it: %v", err)
@@ -260,5 +265,80 @@ func TestGetServerPathPersistsOnlyAnUnambiguousScan(t *testing.T) {
 				t.Fatalf("storage key = %q, want %q", v, want)
 			}
 		})
+	}
+}
+
+// R13: a move walked a Root at the STORAGE PATH, so a tenant link that stays
+// inside it (../.node_secret, ../<other server>/...) was followed and its
+// target copied into the moved server as a plain file the container can read.
+func TestMigrateServerPathDoesNotFollowLinksOutOfTheServer(t *testing.T) {
+	const uuid = "b083ff0c-fc16-47c5-9700-7b16486583e7_xegpnft249"
+	const other = "c9a1d1a0-0000-4000-8000-000000000000_other00001"
+	for _, tc := range []struct {
+		name, target, outside string
+	}{
+		{"node secret", filepath.Join("..", ".node_secret"), ".node_secret"},
+		{"other tenant", filepath.Join("..", other, "world", "level.dat"), filepath.Join(other, "world", "level.dat")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sm, _ := newPlacementManager(t, 2)
+			paths := sm.Paths()
+			srcDir := filepath.Join(paths[0], uuid)
+			outside := filepath.Join(paths[0], tc.outside)
+			for full, body := range map[string]string{
+				outside: "SECRET",
+				// Large enough that the move's 90% size check is not decided
+				// by the few bytes of the link.
+				filepath.Join(srcDir, "survival", "server.properties"): strings.Repeat("m", 64<<10),
+			} {
+				if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(tc.target, filepath.Join(srcDir, "x")); err != nil {
+				t.Skipf("cannot create symlinks here: %v", err)
+			}
+
+			if err := sm.MigrateServerPath(uuid, paths[1]); err != nil {
+				t.Fatalf("MigrateServerPath: %v", err)
+			}
+			dstDir := filepath.Join(paths[1], uuid)
+			if body, err := os.ReadFile(filepath.Join(dstDir, "x")); err == nil {
+				t.Errorf("the move copied a file from outside the server through a link: %q", body)
+			}
+			if _, err := os.Stat(filepath.Join(dstDir, "survival", "server.properties")); err != nil {
+				t.Errorf("the server's own tree did not arrive: %v", err)
+			}
+		})
+	}
+}
+
+// R14: CheckMigration reads the writers once, then the stop takes up to a
+// minute, and an SFTP handle or an upload opened in that window made the
+// move's fence refuse after the server was down. Nothing started it again.
+// A failed move restarts a server that was running, except when the key write
+// failed and may already name the target.
+func TestMigrateStorageRestartsAServerTheFailedMoveStopped(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?s)case "migrate_storage":(.*?)\n\tcase "`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal(`case "migrate_storage" not found in the command switch`)
+	}
+	body := string(m[1])
+	run, stop := strings.Index(body, "wasRunning := containerRunning(dm, cmd.Config.UUID)"), strings.Index(body, "err := gracefulStop(")
+	if run < 0 || stop < 0 || run > stop {
+		t.Error("migrate_storage does not record whether the server ran before it stops it")
+	}
+	fail := regexp.MustCompile(`(?s)err := storage\.MigrateServerPath\(.*?\n\t\t\}\n`).FindString(body)
+	for _, want := range []string{"if wasRunning && !errors.Is(err, errStorageKeyUnsure)", "dm.RestartContainer(cmd.Config.UUID)"} {
+		if !strings.Contains(fail, want) {
+			t.Errorf("the failed-move branch lacks %q", want)
+		}
 	}
 }

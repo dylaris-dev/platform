@@ -2389,6 +2389,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 		// Stop the server first. MigrateServerPath copies the tree and deletes
 		// the source, so it must not run under a server still writing to it.
+		wasRunning := containerRunning(dm, cmd.Config.UUID)
 		if err := gracefulStop(rdb, cmd.Config.UUID, dm); err != nil {
 			log.Printf("Storage migration of %s refused: the server could not be stopped: %v", cmd.Config.UUID, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
@@ -2401,7 +2402,17 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		limitMB := knownDiskLimitMB(ctx, rdb, quota, cmd.Config.UUID)
 		if err := storage.MigrateServerPath(cmd.Config.UUID, targetPath); err != nil {
 			log.Printf("Storage migration failed for %s: %v", cmd.Config.UUID, err)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			// A writer that got in during the stop, a failed copy or a short
+			// one leave the source whole and the container bound to it, so a
+			// server that was running comes back instead of staying down for a
+			// move that never happened. Not when the key write failed: it may
+			// name the target already.
+			if wasRunning && !errors.Is(err, errStorageKeyUnsure) {
+				if rerr := dm.RestartContainer(cmd.Config.UUID); rerr != nil {
+					log.Printf("Storage migration of %s: could not start the server again: %v", cmd.Config.UUID, rerr)
+				}
+			}
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
 			return
 		}
 

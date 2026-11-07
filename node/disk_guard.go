@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/redis/go-redis/v9"
@@ -85,6 +87,30 @@ func diskGraceKey(uuid string) string { return fmt.Sprintf(diskGraceKeyFmt, node
 const diskCountedKeyFmt = "node:%s:server:%s:disk_counted"
 
 func diskCountedKey(uuid string) string { return fmt.Sprintf(diskCountedKeyFmt, nodeID, uuid) }
+
+// diskCountedPath is the counted marker on disk, beside the tombstones. Valkey
+// runs without persistence: a restart of it dropped every key, and the next
+// node start walked every tree before its heartbeat came up, with the
+// once-only grace allowed again. The key stays for an older node.
+func diskCountedPath(uuid string) string { return filepath.Join(nodeSecretDir, uuid+".counted") }
+
+func markDiskCounted(ctx context.Context, rdb *redis.Client, uuid string) {
+	rdb.Set(ctx, diskCountedKey(uuid), 1, 0)
+	if nodeSecretDir == "" {
+		return
+	}
+	if err := os.WriteFile(diskCountedPath(uuid), nil, 0o600); err != nil {
+		log.Printf("quota: counted marker of %s not persisted, a restart of Redis recounts it: %v", uuid, err)
+	}
+}
+
+func diskCountedOnDisk(uuid string) bool {
+	if nodeSecretDir == "" {
+		return false
+	}
+	_, err := os.Stat(diskCountedPath(uuid))
+	return err == nil
+}
 
 // diskLiftedKeyFmt marks a server whose hard limit a recount took off and has
 // not put back yet. A node killed during the tag left the limit off for good:
@@ -180,7 +206,7 @@ func assignNewServerQuota(ctx context.Context, rdb *redis.Client, q quotaAssigne
 	if err := q.AssignQuota(uuid); err != nil {
 		log.Printf("Quota assign warning for %s: %v", uuid, err)
 	} else if rdb != nil && q.GetDiskUsage(uuid) != nil {
-		rdb.Set(ctx, diskCountedKey(uuid), 1, 0)
+		markDiskCounted(ctx, rdb, uuid)
 	}
 	if limitMB > 0 {
 		recordDiskLimit(ctx, rdb, uuid, limitMB)
@@ -289,7 +315,7 @@ func countDiskUsage(ctx context.Context, rdb *redis.Client, q quotaAssigner, uui
 			log.Printf("quota: %s is over its limit now that its existing data is counted (%d of %d bytes) - warning, not stopping, with the hard limit lifted to %d MB until the limit changes or usage drops below it", uuid, after.Total, limit, enforceMB)
 		}
 		if after != nil && !graceUnknown {
-			rdb.Set(ctx, diskCountedKey(uuid), 1, 0)
+			markDiskCounted(ctx, rdb, uuid)
 		}
 		if limitMB <= 0 && !graceUnknown {
 			// No hard limit is what an unlimited server should have, so a
@@ -399,7 +425,7 @@ func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uu
 		if err != nil {
 			return false, fmt.Errorf("read counted marker: %w", err)
 		}
-		if n == 1 {
+		if n == 1 || diskCountedOnDisk(uuid) {
 			// An error here recounts without a grace rather than leaving a
 			// limit a crash lifted off until some later boot.
 			if l, err := rdb.Exists(ctx, diskLiftedKey(uuid)).Result(); err == nil && l == 0 {
@@ -499,7 +525,15 @@ func diskGraced(ctx context.Context, rdb *redis.Client, q diskLimiter, uuid stri
 // recordDiskLimit only deletes when Core pushes "unlimited", which a delete
 // never does, so the delete path has to say so explicitly.
 func forgetDiskLimit(ctx context.Context, rdb *redis.Client, uuid string) {
-	if rdb == nil || uuid == "" {
+	if uuid == "" {
+		return
+	}
+	if nodeSecretDir != "" {
+		if err := os.Remove(diskCountedPath(uuid)); err != nil && !os.IsNotExist(err) {
+			log.Printf("quota: counted marker of %s not removed: %v", uuid, err)
+		}
+	}
+	if rdb == nil {
 		return
 	}
 	rdb.Del(ctx, diskLimitKey(uuid), diskGraceKey(uuid), diskCountedKey(uuid), diskLiftedKey(uuid))

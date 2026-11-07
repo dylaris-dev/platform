@@ -598,7 +598,18 @@ func copyDirInto(src, dst string) error { return copyTreeAt(src, dst, true) }
 func copyTreeInto(src, dst string) error { return copyTreeAt(src, dst, false) }
 
 func copyTreeAt(src, dst string, forTenant bool) error {
-	srcRoot, err := os.OpenRoot(filepath.Dir(src))
+	srcDir, srcName := filepath.Dir(src), filepath.Base(src)
+	if !forTenant {
+		// A move copies a whole server, so its parent is the storage path,
+		// which holds .node_secret and every other server: a Root there
+		// followed a tenant link like x -> ../.node_secret and copied the
+		// target in as a plain file. Rooted at the server, such a link leaves
+		// the Root and is skipped. A tenant copy keeps the parent root: it
+		// copies a sub-server, and the deny map it builds needs the server's
+		// own top level.
+		srcDir, srcName = src, "."
+	}
+	srcRoot, err := os.OpenRoot(srcDir)
 	if err != nil {
 		return err
 	}
@@ -611,7 +622,7 @@ func copyTreeAt(src, dst string, forTenant bool) error {
 		return err
 	}
 	defer dstRoot.Close()
-	return copyWalkIn(srcRoot, filepath.Base(src), dstRoot, filepath.Base(dst), forTenant, dstRoot.Name())
+	return copyWalkIn(srcRoot, srcName, dstRoot, filepath.Base(dst), forTenant, dstRoot.Name())
 }
 
 // errUnpackBudget ends an extraction or copy that would fill the disk.
