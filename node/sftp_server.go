@@ -1203,8 +1203,22 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		if srcRef.UUID != dstRef.UUID {
 			return os.ErrPermission
 		}
-		if err := renameNoFollow(v.storageMgr.GetServerDir(srcRef.UUID), filepath.ToSlash(srcRel), filepath.ToSlash(dstRel)); err != nil {
+		serverDir := v.storageMgr.GetServerDir(srcRef.UUID)
+		// SFTP is the one rename path that may replace an existing file (Beam
+		// and the panel refuse an existing destination), and the bytes it frees
+		// lower the gauge only once something remeasures.
+		replaces := false
+		if root, leaf, err := writeScope(serverDir, filepath.ToSlash(dstRel), false); err == nil {
+			if st, err := root.Lstat(leaf); err == nil && st.Mode().IsRegular() {
+				replaces = true
+			}
+			root.Close()
+		}
+		if err := renameNoFollow(serverDir, filepath.ToSlash(srcRel), filepath.ToSlash(dstRel)); err != nil {
 			return err
+		}
+		if replaces {
+			remeasureServerSoon(srcRef.UUID)
 		}
 		v.audit.note(srcRef.UUID, "rename", srcRel+" -> "+dstRel)
 		return nil

@@ -176,8 +176,9 @@ func TestABeamSaveSeesWhatUploadsReserved(t *testing.T) {
 	}
 }
 
-// K28: Beam and SFTP deletes left the gauge where it was, so uploads were
-// refused for the space they had just freed until the next sweep.
+// K28: Beam and SFTP deletes (and an SFTP rename over a file) left the gauge
+// where it was, so uploads were refused for the space they had just freed
+// until the next sweep.
 func TestBeamAndSFTPDeletesRemeasureTheServer(t *testing.T) {
 	_, rdb := gaugeRedis(t)
 	prevSM, prevQ := globalStorageMgr, globalQuotaSet
@@ -199,8 +200,16 @@ func TestBeamAndSFTPDeletesRemeasureTheServer(t *testing.T) {
 			r := &sftp.Request{Method: "Setstat", Filepath: "s/world.dat", Flags: 0x01, Attrs: make([]byte, 8)} // size = 0
 			return newVirtualFS(refs, sm, rdb, "k28").Filecmd(r)
 		},
+		// R12: a rename onto an existing file frees the replaced one.
+		func(uuid string) error {
+			if err := os.WriteFile(filepath.Join(sm.GetServerDir(uuid), "small.dat"), []byte("x"), 0o644); err != nil {
+				return err
+			}
+			refs := []sftpServerRef{{UUID: uuid, Name: "s", Perms: fileperms.Full()}}
+			return newVirtualFS(refs, sm, rdb, "k28").Filecmd(&sftp.Request{Method: "Rename", Filepath: "s/small.dat", Target: "s/world.dat"})
+		},
 	} {
-		uuid := []string{"28282828-2828-2828-2828-282828282821", "28282828-2828-2828-2828-282828282822", "28282828-2828-2828-2828-282828282823"}[i]
+		uuid := []string{"28282828-2828-2828-2828-282828282821", "28282828-2828-2828-2828-282828282822", "28282828-2828-2828-2828-282828282823", "28282828-2828-2828-2828-282828282824"}[i]
 		serverDir := sm.GetServerDir(uuid)
 		if err := os.MkdirAll(serverDir, 0o755); err != nil {
 			t.Fatal(err)

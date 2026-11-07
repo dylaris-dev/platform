@@ -3,6 +3,7 @@ package nodegrpc
 import (
 	"bytes"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -166,6 +167,10 @@ func (r *Registry) IsConnected(nodeID int) bool {
 	return ok
 }
 
+// ErrResponseTimeout is SendRequest giving up on the answer. The request did
+// reach the node, which may still carry it out.
+var ErrResponseTimeout = errors.New("timeout waiting for response")
+
 // SendRequest sends a message over the gRPC stream and waits for a response
 // matching the same request_id. Returns error on timeout or if Node is not connected.
 //
@@ -219,7 +224,7 @@ func (r *Registry) SendRequest(nodeID int, msg *pb.NodeMessage, timeout time.Dur
 			}
 			parts = append(parts, list.Files...)
 		case <-deadline:
-			return nil, fmt.Errorf("timeout waiting for response from node %d (request %s)", nodeID, msg.RequestId)
+			return nil, fmt.Errorf("%w from node %d (request %s)", ErrResponseTimeout, nodeID, msg.RequestId)
 		}
 	}
 }

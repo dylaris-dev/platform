@@ -272,6 +272,23 @@ func (h *FileHandler) getNodeIDForServer(serverUUID string) (int, error) {
 	return srv.NodeID, nil
 }
 
+// treeOpWait is how long a copy or delete waits for the node. Either can walk
+// a multi-GB world, and the node finishes it whether or not Core still waits,
+// so the wait is as long as it can be while staying under a proxy's 100 s
+// origin timeout. A var so a test need not wait it out.
+var treeOpWait = 90 * time.Second
+
+// sendTreeOpError answers a copy or delete Core stopped waiting for. That is
+// not a failure: the node keeps going, so "failed" made a retried copy hit
+// "already exists" and a "failed" delete had deleted.
+func sendTreeOpError(w http.ResponseWriter, err error) {
+	if errors.Is(err, nodegrpc.ErrResponseTimeout) {
+		httpx.SendJSONError(w, "The node is still working on this and it may still finish. Refresh the file list before trying again.", http.StatusGatewayTimeout)
+		return
+	}
+	httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
+}
+
 // sendGRPCMsg sends a pre-built NodeMessage via gRPC and waits for a response.
 func (h *FileHandler) sendGRPCMsg(nodeID int, msg *pb.NodeMessage, timeout time.Duration) (*pb.NodeMessage, error) {
 	if h.d.GRPCRegistry == nil {
@@ -742,9 +759,9 @@ func (h *FileHandler) CopyFileHandler(w http.ResponseWriter, r *http.Request) {
 		RequestId:  uuid.NewString(),
 		ServerUuid: serverUUID,
 		Payload:    &pb.NodeMessage_CopyReq{CopyReq: &pb.CopyFileReq{SrcPath: req.OldPath, DstPath: req.NewPath}},
-	}, 60*time.Second)
+	}, treeOpWait)
 	if err != nil {
-		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
+		sendTreeOpError(w, err)
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
@@ -794,9 +811,9 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 		RequestId:  uuid.NewString(),
 		ServerUuid: serverUUID,
 		Payload:    &pb.NodeMessage_DeleteReq{DeleteReq: &pb.DeleteFileReq{Path: req.Path}},
-	}, 30*time.Second)
+	}, treeOpWait)
 	if err != nil {
-		httpx.SendJSONError(w, fmt.Sprintf("Node communication error: %v", err), http.StatusBadGateway)
+		sendTreeOpError(w, err)
 		return
 	}
 	if errResp := resp.GetError(); errResp != nil {
