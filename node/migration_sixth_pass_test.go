@@ -134,7 +134,7 @@ func TestMigrateOutReportsWhileItMeasures(t *testing.T) {
 	}
 	migrateOutArchive = func(string, string) (string, int64, error) { return "", 0, errors.New("stop here") }
 
-	handleMigrateOut(context.Background(), rdb, &StorageManager{paths: []string{root}}, "tok", stagingTestUUID, progress)
+	handleMigrateOut(context.Background(), rdb, &StorageManager{paths: []string{root}}, "tok", stagingTestUUID, progress, 0)
 	if !sawProgress {
 		t.Fatal("nothing reported while the server was measured")
 	}

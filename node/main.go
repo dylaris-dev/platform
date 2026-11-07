@@ -2433,7 +2433,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			log.Printf("migrate_out for %s dropped: queued too long ago, Core has given up on that move", cmd.Config.UUID)
 			break
 		}
-		handleMigrateOut(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt))
+		handleMigrateOut(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.IssuedAt)
 
 	case "migrate_in":
 		// Target side: pull the staged archive and extract it. No
@@ -2449,7 +2449,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "migrate_abort":
 		// Source side, failed move: drop the staged archive only. The server
 		// stays here and keeps its data.
-		handleMigrateAbort(storage, cmd.Config.UUID)
+		handleMigrateAbort(storage, cmd.Config.UUID, cmd.IssuedAt)
 
 	case "migrate_discard":
 		// Target side, failed move: drop the copy it pulled. Core sends this

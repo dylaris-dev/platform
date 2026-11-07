@@ -70,12 +70,12 @@ func (o *MigrationOrchestrator) SetConnection(fn func(connectionID int, prefix s
 // bucket the backups of that very server were going to.
 func openTransferStorage(ctx context.Context, bs *models.BackupStorage, connection func(int, string) (backupstorage.Storage, error)) (backupstorage.Storage, error) {
 	if bs == nil {
-		return nil, fmt.Errorf("cross-LAN BYON transfer requires an S3/R2 backup storage (none configured)")
+		return nil, refused("cross-LAN BYON transfer requires an S3/R2 backup storage (none configured)")
 	}
 	switch bs.Provider {
 	case "s3", "connection":
 	default:
-		return nil, fmt.Errorf("cross-LAN BYON transfer requires an S3/R2 backup storage (the default storage is %q)", bs.Provider)
+		return nil, refused("cross-LAN BYON transfer requires an S3/R2 backup storage (the default storage is %q)", bs.Provider)
 	}
 	prov, err := backupstorage.Open(ctx, bs, backupstorage.Deps{Connection: connection})
 	if err != nil {
@@ -697,7 +697,7 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 		if err := o.transferViaR2(ctx, srv, sourceNode, targetNode, attempt, meta.SHA256, meta.Size); err != nil {
 			// Still pre-cutover: node_id unchanged, source authoritative — roll back.
 			log.Printf("migration %s: R2 transfer failed: %v", srv.UUID, err)
-			o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, "r2 transfer failed: "+err.Error())
+			o.rollbackPreCutover(ctx, srv, sourceNode, targetNode, attempt, wasRunning, preStatus, writeStatus, migrationTransferReason(err))
 			return
 		}
 		// R2 transfer verified the archive on the target — fall through to cutover.
@@ -1376,7 +1376,7 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 		return fmt.Errorf("queue migrate_push_r2: %w", err)
 	}
 	if phase, nerr := o.waitForNodePhase(ctx, sourceNode.Token, progress, "pushed", migrationR2PhaseTimeout); phase != "pushed" {
-		return fmt.Errorf("source R2 upload failed (phase=%s): %s", phase, nerr)
+		return refused("source R2 upload failed (phase=%s): %s", phase, nerr)
 	}
 	if uploadID != "" {
 		if _, err := prov.CompleteMultipart(ctx, key, uploadID, backupPartSize); err != nil {
@@ -1403,9 +1403,18 @@ func (o *MigrationOrchestrator) transferViaR2(ctx context.Context, srv *models.S
 		return fmt.Errorf("queue migrate_pull_r2: %w", err)
 	}
 	if phase, nerr := o.waitForNodePhase(ctx, targetNode.Token, progress, "transferred", migrationR2PhaseTimeout); phase != "transferred" {
-		return fmt.Errorf("target R2 download failed (phase=%s): %s", phase, nerr)
+		return refused("target R2 download failed (phase=%s): %s", phase, nerr)
 	}
 	return nil
+}
+
+// migrationTransferReason is the move status for a failed R2 transfer. The
+// status is served to the server's owner and sub-users, and a storage error
+// carries the operator's endpoint, bucket and request ids: the caller has
+// logged it, and only a reason built for the reader (refused) gets through,
+// as on the backup path.
+func migrationTransferReason(err error) string {
+	return "r2 transfer failed: " + nodeMessage(err, "move the archive through transfer storage")
 }
 
 // migrationTransferTTLMargin covers the last part that starts just before a
@@ -1436,7 +1445,7 @@ func presignMigrationParts(ctx context.Context, prov backupstorage.Storage, key 
 	}
 	parts := (size + backupPartSize - 1) / backupPartSize
 	if parts > maxPartNumber {
-		return "", nil, fmt.Errorf("staged archive of %d bytes is larger than transfer storage can take in %d parts", size, maxPartNumber)
+		return "", nil, refused("staged archive of %d bytes is larger than transfer storage can take in %d parts", size, maxPartNumber)
 	}
 	uploadID, err := prov.CreateMultipart(ctx, key)
 	if err != nil {

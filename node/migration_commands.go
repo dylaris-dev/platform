@@ -80,6 +80,28 @@ func migrationAbortedPath(storagePath, serverUUID string) string {
 
 // migrationOriginPath is the stamp migrate_out drops next to the staged archive,
 // naming the node that staged it.
+// migrationAbortIssuedPath holds when Core queued the newest abort (unix
+// seconds, Core's clock). A migrate_out queued before it is that abort's even
+// when the two run concurrently after a restart and the abort finishes before
+// the run registers: the count and migrateOutLatest then miss each other.
+func migrationAbortIssuedPath(storagePath, serverUUID string) string {
+	return filepath.Join(storagePath, migrationStagingDir, serverUUID+".abort-issued")
+}
+
+// abortedAfter reports whether an abort queued after issuedAt was recorded.
+// 0 is a Core that stamps nothing, which no abort can be ordered against.
+func abortedAfter(storagePath, serverUUID string, issuedAt int64) bool {
+	if issuedAt == 0 {
+		return false
+	}
+	b, err := os.ReadFile(migrationAbortIssuedPath(storagePath, serverUUID))
+	if err != nil {
+		return false
+	}
+	at, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	return err == nil && at > issuedAt
+}
+
 func migrationOriginPath(storagePath, serverUUID string) string {
 	return filepath.Join(storagePath, migrationStagingDir, serverUUID+".origin")
 }
@@ -163,7 +185,7 @@ func writeMigrationStatus(ctx context.Context, rdb *redis.Client, nodeToken, ser
 // handleMigrateOut (source side) stages the server's data directory as a zip
 // and publishes its hash. The orchestrator guarantees the server is already
 // stopped before this runs, so we archive the dir as-is.
-func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID string) {
+func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID string, issuedAt int64) {
 	aborts := migrateAbortCount(serverUUID)
 	// A cancelled attempt can still be archiving when the retry runs, and
 	// both stamp the same path: only the latest run may remove the stamp.
@@ -182,6 +204,10 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	// would read as the aborted one.
 	if b, err := os.ReadFile(migrationAbortedPath(storagePath, serverUUID)); err == nil && progressID != serverUUID && string(b) == progressID {
 		log.Printf("migrate_out %s: attempt %s was aborted, not staging it", serverUUID, progressID)
+		return
+	}
+	if abortedAfter(storagePath, serverUUID, issuedAt) {
+		log.Printf("migrate_out %s: an abort was queued after attempt %s, not staging it", serverUUID, progressID)
 		return
 	}
 	srcDir := filepath.Join(storagePath, serverUUID)
@@ -711,10 +737,19 @@ func sweepStaleMigrationArchives(storage *StorageManager) {
 // of a move that did not happen - and nothing else: the server stays on this
 // node. The archive is a full copy of the server outside its disk quota, and
 // only the successful path's cleanup used to remove it.
-func handleMigrateAbort(storage *StorageManager, serverUUID string) {
+func handleMigrateAbort(storage *StorageManager, serverUUID string, issuedAt int64) {
 	c, _ := migrateAborts.LoadOrStore(serverUUID, new(atomic.Int64))
-	c.(*atomic.Int64).Add(1)
 	storagePath := storage.GetServerPath(serverUUID)
+	// Recorded before the count moves: a run that reads its baseline after
+	// the increment then reads this file, and one that read it before sees
+	// the count change.
+	if storagePath != "" && issuedAt != 0 {
+		os.MkdirAll(filepath.Join(storagePath, migrationStagingDir), 0755)
+		if err := os.WriteFile(migrationAbortIssuedPath(storagePath, serverUUID), []byte(strconv.FormatInt(issuedAt, 10)), 0644); err != nil {
+			log.Printf("migrate_abort %s: could not record the abort: %v", serverUUID, err)
+		}
+	}
+	c.(*atomic.Int64).Add(1)
 	if storagePath == "" {
 		return
 	}

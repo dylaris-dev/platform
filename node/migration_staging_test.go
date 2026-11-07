@@ -155,7 +155,7 @@ func TestMigrateOutRefusesWithoutFreeSpace(t *testing.T) {
 			rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
 			progress := queue.MigrationProgressID(stagingTestUUID, string(rune('a'+i)))
 
-			handleMigrateOut(context.Background(), rdb, &StorageManager{paths: []string{root}}, "tok", stagingTestUUID, progress)
+			handleMigrateOut(context.Background(), rdb, &StorageManager{paths: []string{root}}, "tok", stagingTestUUID, progress, 0)
 
 			st := readMigrationStatus(t, rdb, progress)
 			if st.Phase != tc.wantPhase {

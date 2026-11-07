@@ -179,14 +179,14 @@ func TestAMigrateOutAbortedWhileStagingLeavesNoArchive(t *testing.T) {
 	storage := &StorageManager{paths: []string{root}}
 	prev := migrateOutArchive
 	migrateOutArchive = func(src, dst string) (string, int64, error) {
-		handleMigrateAbort(storage, stagingTestUUID) // finds nothing yet
+		handleMigrateAbort(storage, stagingTestUUID, 0) // finds nothing yet
 		return migration.Archive(src, dst)
 	}
 	t.Cleanup(func() { migrateOutArchive = prev })
 	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
 	progress := queue.MigrationProgressID(stagingTestUUID, "a")
 
-	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, progress)
+	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, progress, 0)
 
 	if st := readMigrationStatusMaybe(rdb, progress); st.Phase == "staged" {
 		t.Fatal("an aborted attempt reported staged")
@@ -232,8 +232,8 @@ func TestALateAbortedMigrateOutLeavesTheRetrysArchive(t *testing.T) {
 				// A is still archiving: Core aborts it, and the retry runs
 				// to "staged" before A is done.
 				os.WriteFile(dst, []byte("half"), 0o644)
-				handleMigrateAbort(storage, stagingTestUUID)
-				handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptB)
+				handleMigrateAbort(storage, stagingTestUUID, 0)
+				handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptB, 0)
 				if tc.failsA {
 					return "", 0, errors.New("disk error")
 				}
@@ -241,7 +241,7 @@ func TestALateAbortedMigrateOutLeavesTheRetrysArchive(t *testing.T) {
 			}
 			t.Cleanup(func() { migrateOutArchive = prev })
 
-			handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptA)
+			handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptA, 0)
 
 			if st := readMigrationStatusMaybe(rdb, attemptB); st.Phase != "staged" {
 				t.Fatalf("retry status = %+v, want staged", st)
@@ -328,7 +328,7 @@ func TestAnAbortBeforeARestartStillStopsTheRedeliveredMigrateOut(t *testing.T) {
 	migrateOutArchive = func(src, dst string) (string, int64, error) {
 		if abortNow {
 			abortNow = false
-			handleMigrateAbort(storage, stagingTestUUID)
+			handleMigrateAbort(storage, stagingTestUUID, 0)
 		}
 		return migration.Archive(src, dst)
 	}
@@ -337,9 +337,9 @@ func TestAnAbortBeforeARestartStillStopsTheRedeliveredMigrateOut(t *testing.T) {
 	attemptA := queue.MigrationProgressID(stagingTestUUID, "restart-a")
 	attemptB := queue.MigrationProgressID(stagingTestUUID, "restart-b")
 
-	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptA)
+	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptA, 0)
 	migrateAborts.Delete(stagingTestUUID) // the node restarts
-	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptA)
+	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptA, 0)
 
 	if st := readMigrationStatusMaybe(rdb, attemptA); st.Phase == "staged" {
 		t.Fatal("the redelivered migrate_out of an aborted attempt reported staged")
@@ -348,8 +348,42 @@ func TestAnAbortBeforeARestartStillStopsTheRedeliveredMigrateOut(t *testing.T) {
 		t.Fatalf("the aborted attempt left an archive: %v", err)
 	}
 
-	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptB)
+	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptB, 0)
 	if st := readMigrationStatusMaybe(rdb, attemptB); st.Phase != "staged" {
 		t.Fatalf("the next attempt: %+v, want staged", st)
+	}
+}
+
+// Q19: after a restart the redelivered migrate_out and an abort Core queued
+// while the node was down run on parallel workers. An abort that finished
+// before the run registered was counted into the run's baseline and saw no
+// run to mark, so the run staged a full archive nothing removed. An abort
+// queued after the run's command now stops it; a retry queued after the
+// abort still stages.
+func TestAnAbortThatRanBeforeItsMigrateOutStopsIt(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, stagingTestUUID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(root, stagingTestUUID, "level.dat"), []byte("w"), 0o644)
+	storage := &StorageManager{paths: []string{root}}
+	t.Cleanup(func() { migrateAborts.Delete(stagingTestUUID) })
+	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	attemptA := queue.MigrationProgressID(stagingTestUUID, "early-a")
+	attemptB := queue.MigrationProgressID(stagingTestUUID, "early-b")
+
+	handleMigrateAbort(storage, stagingTestUUID, 200)
+	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptA, 100)
+
+	if st := readMigrationStatusMaybe(rdb, attemptA); st.Phase == "staged" {
+		t.Fatal("a migrate_out queued before its abort reported staged")
+	}
+	if _, err := os.Stat(stagedArchivePath(root, stagingTestUUID)); !os.IsNotExist(err) {
+		t.Fatalf("the aborted attempt left an archive: %v", err)
+	}
+
+	handleMigrateOut(context.Background(), rdb, storage, "tok", stagingTestUUID, attemptB, 300)
+	if st := readMigrationStatusMaybe(rdb, attemptB); st.Phase != "staged" {
+		t.Fatalf("the retry queued after the abort: %+v, want staged", st)
 	}
 }

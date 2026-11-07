@@ -5,6 +5,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-pkg/queue"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -482,5 +483,30 @@ func TestMigrationLifetimesOutlastTheLongestWait(t *testing.T) {
 	// The pull token is checked on every attempt of the LAN pull.
 	if migrationTokenTTL < migrationProgressMaxWait {
 		t.Errorf("migrationTokenTTL = %s, the LAN pull may run %s: its retries are refused", migrationTokenTTL, migrationProgressMaxWait)
+	}
+}
+
+// Q20: the R2 transfer's error went into the move status the server's owner
+// and sub-users read, and a storage error carries the operator's endpoint,
+// bucket, key and request ids. It stays in the Core log; the owner gets a
+// fixed line, unless the reason is one meant for them.
+func TestMigrationTransferReasonKeepsStorageDetailInTheLog(t *testing.T) {
+	_, _, tooBig := presignMigrationParts(context.Background(), &fakeMultipartStorage{}, "k", int64(maxPartNumber+1)*backupPartSize, time.Hour)
+	s3err := errors.New("s3 CompleteMultipartUpload acct123.r2.cloudflarestorage.com/bucket/migration-transfer/x.zip: AccessDenied, RequestID: abc")
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"raw storage error", fmt.Errorf("complete transfer upload: %w", s3err), "r2 transfer failed: Core could not move the archive through transfer storage; the Core log has the reason"},
+		{"archive too large", tooBig, "r2 transfer failed: " + tooBig.Error()},
+		{"node's own reason", refused("source R2 upload failed (phase=error): disk full"), "r2 transfer failed: source R2 upload failed (phase=error): disk full"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := migrationTransferReason(tc.err); got != tc.want {
+				t.Fatalf("reason = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

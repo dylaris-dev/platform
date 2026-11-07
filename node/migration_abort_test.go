@@ -36,7 +36,7 @@ func TestMigrateAbortDropsTheArchiveAndKeepsTheServer(t *testing.T) {
 		}
 	}
 
-	handleMigrateAbort(&StorageManager{paths: []string{root}}, uuid)
+	handleMigrateAbort(&StorageManager{paths: []string{root}}, uuid, 0)
 
 	for _, p := range []string{stagedArchivePath(root, uuid), migrationOriginPath(root, uuid)} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
