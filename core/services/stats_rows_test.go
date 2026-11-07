@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // A node's batch named any UUID it liked, as many times as it liked, and every
@@ -14,11 +15,11 @@ func TestStatsRowsKeepOnlyTheNodesOwnServersOnce(t *testing.T) {
 		{UUID: "someone-elses", CPU: 2},
 		{UUID: "mine", CPU: 3},
 	}}
-	rows := statsRows(batch, map[string]bool{"mine": true})
+	rows := statsRows(batch, "", map[string]bool{"mine": true})
 	if len(rows) != 1 || rows[0].ServerUUID != "mine" || rows[0].CPU != 1 {
 		t.Fatalf("rows = %+v, want one row for the node's own server", rows)
 	}
-	if rows := statsRows(batch, nil); len(rows) != 0 {
+	if rows := statsRows(batch, "", nil); len(rows) != 0 {
 		t.Fatalf("rows with no known servers = %+v, want none", rows)
 	}
 }
@@ -30,7 +31,7 @@ func TestStatsRowsCarryJavaHeap(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"ts":1,"stats":[{"uuid":"a","javaHeapUsed":1536},{"uuid":"b","javaHeapUsed":0}]}`), &batch); err != nil {
 		t.Fatal(err)
 	}
-	rows := statsRows(batch, map[string]bool{"a": true, "b": true})
+	rows := statsRows(batch, "", map[string]bool{"a": true, "b": true})
 	if len(rows) != 2 || rows[0].JavaHeapUsed == nil || *rows[0].JavaHeapUsed != 1536 {
 		t.Fatalf("rows = %+v, want a with heap 1536", rows)
 	}
@@ -48,7 +49,7 @@ func TestStatsRowsBoundPlayersToInt4(t *testing.T) {
 		{UUID: "neg", Players: -1, MaxPlayers: -7},
 		{UUID: "ok", Players: 3, MaxPlayers: 20},
 	}}
-	rows := statsRows(batch, map[string]bool{"big": true, "neg": true, "ok": true})
+	rows := statsRows(batch, "", map[string]bool{"big": true, "neg": true, "ok": true})
 	want := map[string][2]int{"big": {2147483647, 2147483647}, "neg": {0, 0}, "ok": {3, 20}}
 	if len(rows) != 3 {
 		t.Fatalf("rows = %+v, want 3", rows)
@@ -57,5 +58,29 @@ func TestStatsRowsBoundPlayersToInt4(t *testing.T) {
 		if w := want[r.ServerUUID]; r.Players != w[0] || r.MaxPlayers != w[1] {
 			t.Errorf("%s: players %d/%d, want %d/%d", r.ServerUUID, r.Players, r.MaxPlayers, w[0], w[1])
 		}
+	}
+}
+
+// R16: the row time was the batch's ts, the node's own clock, so a BYON node
+// running hours behind filed every row outside the 1h chart and one ahead filed
+// them in the future. The stream entry id is Redis's clock.
+func TestStatsRowsTakeTheTimeFromTheStreamEntry(t *testing.T) {
+	const nodeTS = 1_700_000_000 // two hours off
+	tests := []struct {
+		name  string
+		msgID string
+		want  time.Time
+	}{
+		{"redis id", "1700007200123-0", time.Unix(1_700_007_200, 0)},
+		{"unparsable id falls back to the node", "garbage", time.Unix(nodeTS, 0)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			batch := statsBatchPayload{TS: nodeTS, Stats: []statsBatchItem{{UUID: "a"}}}
+			rows := statsRows(batch, tc.msgID, map[string]bool{"a": true})
+			if len(rows) != 1 || !rows[0].Time.Equal(tc.want) {
+				t.Fatalf("rows = %+v, want time %v", rows, tc.want)
+			}
+		})
 	}
 }

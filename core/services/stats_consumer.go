@@ -66,8 +66,15 @@ func (s *StatsConsumerService) nodeServerUUIDs(token string) (map[string]bool, e
 // batch stream - a customer's machine, for a BYON node. It could write history
 // for any server whose UUID it knew, another tenant's or ours, and as many rows
 // per batch as it liked.
-func statsRows(batch statsBatchPayload, allowed map[string]bool) []models.ServerStatRow {
+//
+// The row time is the stream entry id's, Redis's clock, not the batch's ts:
+// that is the node's clock, and a BYON machine running hours off filed every
+// row outside the charts' window or in the future. Whole seconds, as before.
+func statsRows(batch statsBatchPayload, msgID string, allowed map[string]bool) []models.ServerStatRow {
 	ts := time.Unix(batch.TS, 0)
+	if at, ok := streamIDTime(msgID); ok {
+		ts = at.Truncate(time.Second)
+	}
 	seen := make(map[string]bool, len(batch.Stats))
 	var rows []models.ServerStatRow
 	for _, item := range batch.Stats {
@@ -319,7 +326,7 @@ func (s *StatsConsumerService) readStats(ctx context.Context, r *statsStreamRead
 			if failed && r.allowed == nil {
 				continue // not ACKed: retried from the pending list
 			}
-			rows = append(rows, statsRows(batch, r.allowed)...)
+			rows = append(rows, statsRows(batch, msg.ID, r.allowed)...)
 			ackIDs = append(ackIDs, msg.ID)
 		}
 

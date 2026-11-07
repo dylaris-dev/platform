@@ -398,6 +398,9 @@ func handleMigrateIn(ctx context.Context, rdb *redis.Client, storage *StorageMan
 	if refuseDiscardedAttempt(ctx, rdb, storage, nodeToken, serverUUID, progressID) {
 		return
 	}
+	if attemptLanded(ctx, rdb, storage, nodeToken, serverUUID, progressID) {
+		return
+	}
 
 	// Resolve where to pull from. The source node refreshes this key while it
 	// is up; if it is absent the source is unreachable/down and we cannot move.
@@ -527,6 +530,11 @@ func receiveMovedServer(ctx context.Context, rdb *redis.Client, nodeToken, serve
 		os.RemoveAll(targetDir)
 		fail(fmt.Sprintf("extract failed: %v", err))
 		return
+	}
+	// Before the deferred "transferred": once Core reads that it cuts over, and
+	// a redelivery of this command after a restart must find the marker.
+	if err := os.WriteFile(landedMarker(targetPath, serverUUID), []byte(progressID), 0o600); err != nil {
+		log.Printf("%s %s: could not mark the landed copy: %v", cmd, serverUUID, err)
 	}
 	log.Printf("%s %s: transferred into %s", cmd, serverUUID, targetDir)
 }
@@ -863,6 +871,32 @@ func markMovedIn(storagePath, serverUUID, progressID string) {
 	}
 }
 
+// landedMarker sits beside a server directory a move finished unpacking, and
+// names the attempt that did it.
+func landedMarker(storagePath, serverUUID string) string {
+	return filepath.Join(storagePath, serverUUID+".landed")
+}
+
+// attemptLanded answers a transfer of an attempt that already finished here,
+// which is a migrate_in / migrate_pull_r2 redelivered after a restart before
+// its ack. By then Core may have cut over and the server may be running on the
+// directory, so pulling again would reset it under the live server: report
+// "transferred" again instead. On disk because the status key expires and the
+// redelivery can come later than that. Every path, like refuseDiscardedAttempt.
+func attemptLanded(ctx context.Context, rdb *redis.Client, storage *StorageManager, nodeToken, serverUUID, progressID string) bool {
+	if !validate.IsServerUUID(serverUUID) {
+		return false
+	}
+	for _, p := range storage.Paths() {
+		if got, err := os.ReadFile(landedMarker(p, serverUUID)); err == nil && string(got) == progressID {
+			log.Printf("migrate %s: attempt %s already landed here, not transferring it again", serverUUID, progressID)
+			setMigrationStatus(ctx, rdb, nodeToken, progressID, "transferred", "")
+			return true
+		}
+	}
+	return false
+}
+
 // migrateDiscardWait bounds how long a discard waits for a pull still running.
 // Past Core's longest transfer wait (6h, its migrationProgressMaxWait): a
 // shorter one gave up on a pull that then finished and kept its copy for good.
@@ -1166,6 +1200,9 @@ func handleMigratePullR2(ctx context.Context, rdb *redis.Client, storage *Storag
 	}
 	defer migrateInFlight.Delete(serverUUID)
 	if refuseDiscardedAttempt(ctx, rdb, storage, nodeToken, serverUUID, progressID) {
+		return
+	}
+	if attemptLanded(ctx, rdb, storage, nodeToken, serverUUID, progressID) {
 		return
 	}
 
