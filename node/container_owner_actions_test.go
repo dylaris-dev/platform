@@ -278,6 +278,18 @@ func TestMigrateDiscardIgnoresAnotherNodesContainer(t *testing.T) {
 		if kept != c.kept {
 			t.Errorf("container owned by %q: copy kept = %v, want %v", c.owner, kept, c.kept)
 		}
+		// The discard goroutine releases migrateInFlight last, after it read
+		// nodeSecretDir in forgetDiskLimit. The next case swaps that variable,
+		// so wait for the release or -race reports the swap.
+		for deadline := time.Now().Add(5 * time.Second); ; {
+			if _, busy := migrateInFlight.Load(sharedDaemonUUID); !busy {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the discard goroutine did not finish")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	}
 }
 
