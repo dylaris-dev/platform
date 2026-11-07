@@ -469,6 +469,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 		return
 	}
 	noteUpdateRequirement(authResult)
+	rememberLegacyIdentity(nodeSecretDir, auth.NodeToken, currentSecret != nil, authResult.AssignedId)
 
 	log.Printf("gRPC Mesh: Connected to Core %s ✓", info.ID)
 	reportCoreRecovered(info.ID)

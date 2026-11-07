@@ -451,7 +451,7 @@ func main() {
 	// In the background: each stale container sits out a full graceful stop,
 	// and inline that kept the heartbeat and the command listener down for
 	// minutes. It takes each server's power lock, so commands do not race it.
-	go dockerMgr.ReconcileRedisEnv()
+	go dockerMgr.ReconcileRedisEnv(rdb)
 
 	// Shared agent monitor for heartbeat + system stats (single gopsutil instance)
 	mon, monErr := agent.NewMonitor(agent.MonitorConfig{})

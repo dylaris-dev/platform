@@ -1,11 +1,16 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	dockerimage "github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/client"
 )
 
 // A size cap only for drivers that take one: any other driver may refuse the
@@ -69,5 +74,45 @@ func TestDockerHygieneIsWired(t *testing.T) {
 	h := read("docker_hygiene.go")
 	if strings.Contains(h, "Force: true") {
 		t.Error("hygiene removes by force; an image or container in use must stay")
+	}
+}
+
+// R04: an installer still running when the agent restarts belongs to a process
+// that is gone, and the redelivered setup runs a new one in the same directory.
+// The startup sweep stops it and removes it, before any command is taken.
+func TestRemoveOrphanInstallersStopsRunningOnes(t *testing.T) {
+	var mu sync.Mutex
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		p := r.URL.Path
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(p, "/containers/json"):
+			w.Write([]byte(`[{"Id":"run1","State":"running"},{"Id":"done1","State":"exited"},{"Id":"new1","State":"created"}]`))
+		case strings.Contains(p, "/containers/"):
+			parts := strings.Split(p[strings.Index(p, "/containers/")+len("/containers/"):], "/")
+			verb := "remove"
+			if len(parts) > 1 {
+				verb = parts[1]
+			}
+			mu.Lock()
+			got = append(got, verb+" "+parts[0])
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+	cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithVersion("1.44"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+	dm := &DockerManager{cli: cli, ctx: t.Context()}
+	dm.removeOrphanInstallers(t.Context())
+	want := []string{"stop run1", "remove run1", "remove done1", "remove new1"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }

@@ -2398,7 +2398,7 @@ func (dm *DockerManager) wantSidecarRedisAddr() (string, error) {
 // the startup global: on the warp proxy that global is deliberately empty, and
 // comparing against it would restart every server on the machine on every node
 // start, forever, without ever converging.
-func (dm *DockerManager) ReconcileRedisEnv() {
+func (dm *DockerManager) ReconcileRedisEnv(rdb *redis.Client) {
 	running, err := dm.ListRunningMCContainers()
 	if err != nil {
 		log.Printf("ReconcileRedisEnv: failed to list containers: %v", err)
@@ -2422,14 +2422,21 @@ func (dm *DockerManager) ReconcileRedisEnv() {
 		if !ok {
 			return
 		}
-		dm.reconcileRedisEnvOne(mc, wantAddr)
+		dm.reconcileRedisEnvOne(rdb, mc, wantAddr)
 		release()
 	}
 }
 
-func (dm *DockerManager) reconcileRedisEnvOne(mc MCContainer, wantAddr string) {
+func (dm *DockerManager) reconcileRedisEnvOne(rdb *redis.Client, mc MCContainer, wantAddr string) {
 	info, err := dm.cli.ContainerInspect(dm.ctx, mc.ContainerName)
 	if err != nil {
+		return
+	}
+	// The list is from before the wait for the lock, possibly minutes old. A
+	// server stopped since (a user stop, the disk guard, a suspension) keeps
+	// its stale env when exited, and recreating it here STARTED it; its next
+	// start rebuilds it with the current env anyway (PowerAction "start").
+	if info.State == nil || !info.State.Running {
 		return
 	}
 
@@ -2439,8 +2446,31 @@ func (dm *DockerManager) reconcileRedisEnvOne(mc MCContainer, wantAddr string) {
 	// only reads the connection keys), so it is left empty.
 	want := buildRedisEnv(mc.UUID, "", wantAddr)
 	if key := redisEnvDrift(info.Config.Env, want); key != "" {
+		// Kill takes no lock, and a stop may already be on its way: either
+		// lands during the recreate's graceful stop, and the start is then
+		// left out like every other bring-up's (startAbandoned).
+		stops, _ := lastStopIssued.Load(mc.UUID)
+		leaveStopped := func() bool {
+			if now, _ := lastStopIssued.Load(mc.UUID); now != stops {
+				return true
+			}
+			desired, err := rdb.Get(dm.ctx, desiredStateKey(mc.UUID)).Result()
+			return err == nil && desired != "online"
+		}
+		if leaveStopped() {
+			log.Printf("ReconcileRedisEnv: %s has a stale %s but is meant to be stopped, left alone", mc.ContainerName, key)
+			return
+		}
 		log.Printf("ReconcileRedisEnv: %s has a stale %s — restarting", mc.ContainerName, key)
-		if err := dm.RestartContainer(mc.UUID); err != nil {
+		defer startGuard(mc.UUID, func() bool {
+			if !leaveStopped() {
+				return false
+			}
+			log.Printf("ReconcileRedisEnv: %s left stopped, a stop or kill came in during its recreate", mc.ContainerName)
+			rdb.Set(dm.ctx, fmt.Sprintf("dylaris:server:%s:status", mc.UUID), "stopped", 30*time.Second)
+			return true
+		})()
+		if err := dm.RestartContainer(mc.UUID); err != nil && !errors.Is(err, errStartAbandoned) {
 			log.Printf("ReconcileRedisEnv: failed to restart %s: %v", mc.ContainerName, err)
 		}
 	}

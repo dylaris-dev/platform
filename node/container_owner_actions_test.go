@@ -440,8 +440,9 @@ func TestReconcileRedisEnvWaitsForTheServersPowerLock(t *testing.T) {
 	if !ok {
 		t.Fatal("power lock already held")
 	}
+	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
 	done := make(chan struct{})
-	go func() { dm.ReconcileRedisEnv(); close(done) }()
+	go func() { dm.ReconcileRedisEnv(rdb); close(done) }()
 
 	time.Sleep(300 * time.Millisecond)
 	if slices.Contains(d.changed(), "create") {
@@ -456,5 +457,57 @@ func TestReconcileRedisEnvWaitsForTheServersPowerLock(t *testing.T) {
 	}
 	if !slices.Contains(d.changed(), "create") {
 		t.Fatalf("stale container not recreated once the lock was free: %v", d.changed())
+	}
+}
+
+// R02/R03: the boot-time ReconcileRedisEnv lists the running servers once and
+// may reach one minutes later. A server stopped in between (a user stop, the
+// disk guard, a suspension) was recreated AND started, because an exited
+// container keeps its stale env; and a kill during the recreate's own graceful
+// stop was overridden. Only a server still running and meant to be online is
+// recreated, and a stop noted during the recreate leaves it stopped.
+func TestReconcileRedisEnvLeavesAStoppedServerStopped(t *testing.T) {
+	prev := nodeRedis
+	nodeRedis = &redisAddrState{}
+	nodeRedis.set("10.0.0.9:6379", false)
+	t.Cleanup(func() { nodeRedis = prev })
+
+	for _, tc := range []struct {
+		name          string
+		running       bool
+		desired       string
+		killDuringRun bool
+		recreate      bool
+		start         bool
+	}{
+		{"running, meant online", true, "online", false, true, true},
+		{"running, no desired state (old core)", true, "", false, true, true},
+		{"stopped while it waited", false, "online", false, false, false},
+		{"running but desired stopped", true, "stopped", false, false, false},
+		{"kill during the recreate", true, "online", true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lastStopIssued.Delete(sharedDaemonUUID)
+			t.Cleanup(func() { lastStopIssued.Delete(sharedDaemonUUID) })
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			if tc.desired != "" {
+				mr.Set(desiredStateKey(sharedDaemonUUID), tc.desired)
+			}
+			var onPull func()
+			if tc.killDuringRun {
+				onPull = func() { noteStop(sharedDaemonUUID, time.Now().Unix()) }
+			}
+			dm, d := newSharedDaemon(t, "node-a", tc.running, onPull)
+			d.env = []string{"REDIS_ADDR=10.0.0.1:6379"}
+			dm.reconcileRedisEnvOne(rdb, MCContainer{UUID: sharedDaemonUUID, ContainerName: "mc_" + sharedDaemonUUID}, "10.0.0.9:6379")
+			ch := d.changed()
+			if got := slices.Contains(ch, "create"); got != tc.recreate {
+				t.Errorf("recreated = %v (%v), want %v", got, ch, tc.recreate)
+			}
+			if got := slices.Contains(ch, "start new-id-0123456789ab"); got != tc.start {
+				t.Errorf("started = %v (%v), want %v", got, ch, tc.start)
+			}
+		})
 	}
 }

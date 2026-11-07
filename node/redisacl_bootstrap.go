@@ -447,3 +447,25 @@ func dialIdentity(cachedID string, paired bool, legacyNodeID, fallback string) s
 	}
 	return fallback
 }
+
+// rememberLegacyIdentity saves the NODE_ID a pre-2026-07 node dials as (see
+// dialIdentity) once Core has accepted its secret proof for that name. Until
+// then nothing wrote it to .node_id, so the node stayed tied to the NODE_ID env
+// var: with it removed, the node dialled as its hostname, which Core does not
+// know.
+func rememberLegacyIdentity(dir, token string, proved bool, assigned string) {
+	if !proved || token == "" || token != strings.TrimSpace(os.Getenv("NODE_ID")) {
+		return
+	}
+	if assigned != "" && assigned != token {
+		return
+	}
+	if id, err := cachedNodeID(dir); err != nil || id != "" {
+		return
+	}
+	if err := saveNodeID(dir, token); err != nil {
+		log.Printf("redisacl: WARN could not save legacy node identity %s to .node_id: %v", token, err)
+		return
+	}
+	log.Printf("redisacl: saved legacy node identity %s to .node_id; NODE_ID is no longer needed", token)
+}

@@ -89,8 +89,13 @@ func (dm *DockerManager) startDockerHygiene(ctx context.Context) {
 	}
 	cancel()
 
+	// Before the command listener starts, so no installer of this process
+	// exists yet and every one found belongs to a process that is gone.
+	orphanCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	dm.removeOrphanInstallers(orphanCtx)
+	cancel()
+
 	go func() {
-		dm.removeOrphanInstallers(ctx)
 		t := time.NewTicker(staleImagePeriod)
 		defer t.Stop()
 		for {
@@ -118,12 +123,18 @@ func (dm *DockerManager) removeOrphanInstallers(ctx context.Context) {
 		return
 	}
 	for _, c := range list {
-		// Exited only. One still running, or created and about to start,
-		// belongs to an install in progress; it is removed at a later start.
-		if c.State == "exited" || c.State == "dead" {
-			if dm.cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{}) == nil {
-				log.Printf("cleanup: removed installer container %s left by a restart", shortID(c.ID))
+		// A running one too: the install it belonged to died with the previous
+		// process, its setup is redelivered, and that runs a second installer
+		// on the same directory while this one still writes there.
+		if c.State == "running" {
+			zero := 0
+			if err := dm.cli.ContainerStop(ctx, c.ID, container.StopOptions{Timeout: &zero}); err != nil {
+				log.Printf("cleanup: could not stop installer container %s left by a restart: %v", shortID(c.ID), err)
+				continue
 			}
+		}
+		if dm.cli.ContainerRemove(ctx, c.ID, container.RemoveOptions{}) == nil {
+			log.Printf("cleanup: removed installer container %s left by a restart", shortID(c.ID))
 		}
 	}
 }
