@@ -8,6 +8,30 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.08
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- A storage move no longer follows a link out of a server folder, which could copy the node's
+  secret or another server's files into that server. `node`
+- A BYON node no longer sends its hostname in its heartbeat, so it cannot claim the link mapping
+  of a platform machine with the same name. `node`
+- Beam file changes are recorded in the audit trail again; every Beam audit entry used to be
+  dropped. `core`
+
+### Fixes
+- A move the target already finished is never pulled again over the moved server, and a server
+  stopped while its node starts stays stopped. `node`
+- `MC_RUN_AS=0` runs servers as root as documented, and sub-servers with a `+` in their name start
+  once the Minecraft images are rebuilt. `node` `log-shipper`
+- Over 100 further fixes from the second node audit pass: disk limits, backups and restores, moves,
+  installers and mods, ports, stats and Beam. `node` `core`
+
 ## 2026.11.06
 
 ### Features

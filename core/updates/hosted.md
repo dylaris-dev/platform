@@ -11,6 +11,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.08
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- BYON: a storage move on your node can no longer copy files from outside a server's folder into
+  that server. Your node updates itself. `node`
+
+### Fixes
+- BYON: a server you stop while your node is starting stays stopped, and a finished server move is
+  never repeated over your server. Your node updates itself. `node`
+- A mod that is still downloading can no longer be removed or copied half-installed; the panel says
+  to wait until it has finished.
+- Over 100 further fixes to disk limits, backups, server moves, mod installs and stats, on our side
+  and on BYON nodes. `node`
+
 ## 2026.11.06
 
 ### Features
