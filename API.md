@@ -1084,11 +1084,11 @@ can still show what exists.
 | POST | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.MintLinkKit` | (tenant) creates a route-only "link kit": a key bound to the calling user plus an auto-generated link identity (node_id). |
 | DELETE | `/api/warp/link-kits/{linkID}` | session | _no capability_ | - | `WarpHandler.RevokeLinkKit` | owner or admin. |
 | POST | `/api/warp/link-kits/{linkID}/roll` | session | _no capability_ | - | `WarpHandler.RollLinkKit` | owner or admin. |
-| GET | `/api/warp/link/edges` | warp key | _no capability_ | Limit | `WarpHandler.LinkEdges` | every edge in sys:edges with a public tunnel address, and the certificate fingerprint it published. |
-| POST | `/api/warp/link/heartbeat` | warp key | _no capability_ | Limit | `WarpHandler.LinkHeartbeat` | a route-only link says it is running. |
-| POST | `/api/warp/link/stats` | warp key | _no capability_ | Limit | `WarpHandler.LinkStats` | one of the link's telemetry records, written to the stream every consumer already reads, dylaris:link:<link id>:stats. |
-| GET | `/api/warp/link/targets` | warp key | _no capability_ | Limit | `WarpHandler.LinkTargets` | the host:port pairs this link's routes point at. |
-| GET | `/api/warp/link/voice` | warp key | _no capability_ | Limit | `WarpHandler.LinkVoice` | the voice ports of this link's routes, and Core's clock: the relay refuses a REG more than 60 s off its own, and a customer's machine is the one that drifts. |
+| GET | `/api/warp/link/edges` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkEdges` | every edge in sys:edges with a public tunnel address, and the certificate fingerprint it published. |
+| POST | `/api/warp/link/heartbeat` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkHeartbeat` | a route-only link says it is running. |
+| POST | `/api/warp/link/stats` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkStats` | one of the link's telemetry records, written to the stream every consumer already reads, dylaris:link:<link id>:stats. |
+| GET | `/api/warp/link/targets` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkTargets` | the host:port pairs this link's routes point at. |
+| GET | `/api/warp/link/voice` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkVoice` | the voice ports of this link's routes, and Core's clock: the relay refuses a REG more than 60 s off its own, and a customer's machine is the one that drifts. |
 | GET | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.ListNodeWarpKeys` | the caller's own BYON node keys, metadata only (the secret is stored as a hash and is gone after minting). |
 | POST | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.MintNodeWarpKey` | tenant self-service. |
 | DELETE | `/api/warp/node-keys/{nodeID}` | session | _no capability_ | - | `WarpHandler.RevokeNodeWarpKey` | owner or admin. |

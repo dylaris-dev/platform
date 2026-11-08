@@ -1491,15 +1491,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		kitBootLimiter.Limit(300, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkBoot))).Methods("POST")
 	// A route-only link's steady traffic: an edge list and a heartbeat every
 	// 5s and a stats record every 3s, about 45 a minute. Its own limiter, so it
-	// can never drain the login budget of the same address. The ceiling leaves
-	// room for ~25 kits behind one IP: route-only is for people behind CGNAT,
-	// and a carrier puts many customers behind one address.
+	// can never drain the login budget of the same address. The per-IP ceiling
+	// is only a flood guard (room for ~130 kits behind one address: route-only is
+	// for people behind CGNAT); the real cap is per link key, 300 a minute,
+	// shared across replicas through Redis.
 	linkAPILimiter := httpx.NewIPRateLimiter()
-	api.HandleFunc("/warp/link/edges", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkEdges))).Methods("GET")
-	api.HandleFunc("/warp/link/heartbeat", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkHeartbeat))).Methods("POST")
-	api.HandleFunc("/warp/link/stats", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkStats))).Methods("POST")
-	api.HandleFunc("/warp/link/voice", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkVoice))).Methods("GET")
-	api.HandleFunc("/warp/link/targets", linkAPILimiter.Limit(1200, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkTargets))).Methods("GET")
+	api.HandleFunc("/warp/link/edges", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkEdges)))).Methods("GET")
+	api.HandleFunc("/warp/link/heartbeat", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkHeartbeat)))).Methods("POST")
+	api.HandleFunc("/warp/link/stats", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkStats)))).Methods("POST")
+	api.HandleFunc("/warp/link/voice", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkVoice)))).Methods("GET")
+	api.HandleFunc("/warp/link/targets", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkTargets)))).Methods("GET")
 	api.HandleFunc("/warp/link-kits/{linkID}", authHandler.AuthMiddleware(warpHandler.RevokeLinkKit)).Methods("DELETE")
 	api.HandleFunc("/warp/link-kits/{linkID}/roll", authHandler.AuthMiddleware(warpHandler.RollLinkKit)).Methods("POST")
 	// BYON node warp keys (tenant self-service; BYON + gateway gated inside the

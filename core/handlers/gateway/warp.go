@@ -36,8 +36,9 @@ const warpKeyCtx warpCtxKey = "warpAPIKey"
 
 // WarpHandler serves enrollment + admin warp endpoints.
 type WarpHandler struct {
-	d   Deps
-	svc *services.WarpService
+	d     Deps
+	svc   *services.WarpService
+	links linkKeyCache // route-only key + cut-off lookups, see link_key_cache.go
 }
 
 func NewWarpHandler(d Deps, svc *services.WarpService) *WarpHandler {
@@ -54,7 +55,15 @@ func (h *WarpHandler) WarpAPIKeyMiddleware(next http.HandlerFunc) http.HandlerFu
 			return
 		}
 		plaintext := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
-		key, err := h.d.Store.GetWarpAPIKeyByHash(services.HashAPIKey(plaintext))
+		hash := services.HashAPIKey(plaintext)
+		kp, err := h.links.getKey(hash, func() (store.WarpAPIKey, error) {
+			k, err := h.d.Store.GetWarpAPIKeyByHash(hash)
+			if err != nil {
+				return store.WarpAPIKey{}, err
+			}
+			return *k, nil
+		})
+		key := &kp
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.SendJSONError(w, "Invalid warp key", http.StatusUnauthorized)
 			return
@@ -73,6 +82,12 @@ func (h *WarpHandler) WarpAPIKeyMiddleware(next http.HandlerFunc) http.HandlerFu
 		ctx := context.WithValue(r.Context(), warpKeyCtx, *key)
 		next(w, r.WithContext(ctx))
 	}
+}
+
+// WarpKeyID is the row id of the key WarpAPIKeyMiddleware authenticated.
+func WarpKeyID(r *http.Request) (int, bool) {
+	key, ok := r.Context().Value(warpKeyCtx).(store.WarpAPIKey)
+	return key.ID, ok
 }
 
 // Enroll POST /api/warp/enroll - registers a warp client's public key and
@@ -527,6 +542,7 @@ func (h *WarpHandler) RevokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Failed to revoke key", http.StatusInternalServerError)
 		return
 	}
+	h.links.dropKeyID(id)
 	removed := 0
 	if h.svc != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -587,6 +603,7 @@ func (h *WarpHandler) RollExternalNodeKey(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Failed to roll the key", http.StatusInternalServerError)
 		return
 	}
+	h.links.dropKeyID(id)
 	log.Printf("warp: rolled External node key %d (%s); old secret valid for %s", id, key.NodeID, store.WarpKeyRollGrace)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "warp_key": plaintext, "node_id": key.NodeID})
@@ -1028,6 +1045,7 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 	// last - shared with the admin force-suspend path (billing_lifecycle.go
 	// SuspendNow) so the ordering has one source of truth. See its doc comment.
 	removed, rerr := services.RevokeLinkKitTeardown(ctx, h.d.Store, h.d.Gateway, h.d.Redis, linkID, key.OwnerID)
+	h.links.dropKeyID(key.ID)
 	if rerr != nil {
 		log.Printf("revoke link %s: %v", linkID, rerr)
 		httpx.SendJSONError(w, "Failed to revoke link", http.StatusInternalServerError)
@@ -1112,6 +1130,7 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 		httpx.SendJSONError(w, "Failed to roll the key", http.StatusInternalServerError)
 		return "", false
 	}
+	h.links.dropKeyID(key.ID)
 	log.Printf("rolled warp key %s (owner %s); identity and peer left in place", id, key.OwnerID)
 	return plaintext, true
 }
@@ -1641,6 +1660,7 @@ func (h *WarpHandler) RevokeNodeWarpKey(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Failed to revoke the node key", http.StatusInternalServerError)
 		return
 	}
+	h.links.dropKeyID(key.ID)
 	removed := 0
 	if h.svc != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)

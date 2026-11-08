@@ -63,16 +63,23 @@ func (h *WarpHandler) routeOnlyKey(w http.ResponseWriter, r *http.Request) (key 
 		httpx.SendJSONError(w, "Not a route-only link key", http.StatusForbidden)
 		return key, "", false, false
 	}
-	if !services.GatewayRoutingEnabled(h.d.Store) || h.d.Gateway == nil || h.d.Redis == nil {
+	if !h.links.routing(func() bool { return services.GatewayRoutingEnabled(h.d.Store) }) || h.d.Gateway == nil || h.d.Redis == nil {
 		httpx.SendJSONError(w, "Gateway routing is disabled", http.StatusConflict)
 		return key, "", false, false
 	}
 	token = h.d.Gateway.LinkToken(key.NodeID)
 	// Fail open on a DB fault, loudly, exactly as LinkBoot does: a blip must not
 	// take a paying tenant's link down.
-	if b, berr := h.d.Store.GetUserBilling(key.OwnerID); berr != nil {
+	cut, berr := h.links.cutOff(key.OwnerID, func() (bool, error) {
+		b, err := h.d.Store.GetUserBilling(key.OwnerID)
+		if err != nil {
+			return false, err
+		}
+		return store.OwnerCutOff(b, h.d.SuspendGrace, services.OverLimitGrace, time.Now()), nil
+	})
+	if berr != nil {
 		log.Printf("route-only link %s: billing lookup failed, suspension gate skipped: %v", key.NodeID, berr)
-	} else if store.OwnerCutOff(b, h.d.SuspendGrace, services.OverLimitGrace, time.Now()) {
+	} else if cut {
 		httpx.SendJSONError(w, "Account suspended", http.StatusForbidden)
 		return key, token, false, true
 	}

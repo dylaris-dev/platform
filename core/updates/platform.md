@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.08.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The link API serves route-only links from a 10 s cache and limits each link key to 300 calls a
+  minute instead of one budget per IP, so many links behind one address no longer slow each other. `core`
+
 ## 2026.11.08.2
 
 ### Features
