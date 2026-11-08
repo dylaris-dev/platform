@@ -39,6 +39,11 @@ type linkRouteFakeStore struct {
 	// servers by owner. Server 1 is linkRouteUserID's unless a test says
 	// otherwise, which is what CreateServerRoute's requests target.
 	servers map[string][]models.Server
+
+	coreRoutes []store.CoreLinkRoute
+	// mirror stands in for the durable table where a test seeds route-only
+	// entries through Redis: the real table is what Redis is a cache of.
+	mirror *redis.Client
 }
 
 func (f *linkRouteFakeStore) ListServersByOwner(ownerID string) ([]models.Server, error) {
@@ -62,6 +67,10 @@ func (f *linkRouteFakeStore) GetServerByID(id int) (*models.Server, error) {
 
 func (f *linkRouteFakeStore) ListWarpAPIKeysByOwner(ownerID string) ([]store.WarpAPIKey, error) {
 	return f.warpKeys, f.warpKeysErr
+}
+
+func (f *linkRouteFakeStore) GetGatewayCustomDomainLimit(string) (*models.GatewayCustomDomainLimit, error) {
+	return nil, errors.New("not found")
 }
 
 func (f *linkRouteFakeStore) GetGatewayRouteLimit(scope string) (*models.GatewayRouteLimit, error) {
@@ -100,6 +109,9 @@ type linkRouteFakeGateway struct {
 	createServerRouteErr    error
 	createRouteServerCalls  []linkRouteCreateCall
 	linkTokenFor            map[string]string
+	suspended               []string
+	deleted                 []string
+	suspendErr              error
 }
 
 type linkRouteCreateCall struct {
@@ -120,9 +132,12 @@ func (g *linkRouteFakeGateway) CreateRouteViaLink(ownerID string, domain string,
 	return g.createRouteViaLinkErr
 }
 
-func (g *linkRouteFakeGateway) DeleteCoreOwnedRoute(domain string) error { return nil }
-func (g *linkRouteFakeGateway) DeleteRoute(domain string) error          { return nil }
-func (g *linkRouteFakeGateway) DeleteServerRoutes(string) error          { return nil }
+func (g *linkRouteFakeGateway) DeleteCoreOwnedRoute(domain string) error {
+	g.deleted = append(g.deleted, domain)
+	return nil
+}
+func (g *linkRouteFakeGateway) DeleteRoute(domain string) error { return nil }
+func (g *linkRouteFakeGateway) DeleteServerRoutes(string) error { return nil }
 func (g *linkRouteFakeGateway) MigrateServerRoutes(serverID uint, newNodeID uint) error {
 	return nil
 }
@@ -141,6 +156,14 @@ func (g *linkRouteFakeGateway) SetServerProxyProtocol(string, bool) error {
 }
 func (g *linkRouteFakeGateway) SetCoreOwnedRouteProxyProtocol(string, bool) error {
 	return nil
+}
+func (g *linkRouteFakeGateway) SuspendCoreOwnedRoute(domain, reason string) (string, error) {
+	g.suspended = append(g.suspended, domain+"|"+reason)
+	return "owner-1", g.suspendErr
+}
+func (g *linkRouteFakeGateway) UnsuspendCoreOwnedRoute(domain string) (string, error) {
+	g.suspended = append(g.suspended, "lift|"+domain)
+	return "owner-1", g.suspendErr
 }
 
 func newLinkRouteRedis(t *testing.T) *redis.Client {
@@ -171,6 +194,7 @@ func (f *linkRouteFakeStore) GetUserBilling(userID string) (*store.UserBilling, 
 }
 
 func newLinkRouteHandler(fs *linkRouteFakeStore, gw *linkRouteFakeGateway, rdb *redis.Client) *GatewayHandler {
+	fs.mirror = rdb
 	return &GatewayHandler{d: Deps{Store: fs, Gateway: gw, Redis: rdb, FeatureFlags: services.NewFeatureFlags(routeOnlyOnFlags{})}}
 }
 
@@ -713,4 +737,44 @@ func TestCreateLinkRoute_CapsRoutesOnOwnDomains(t *testing.T) {
 			t.Fatalf("status %d, creates %d: %s", rec.Code, len(gw.createRouteViaLinkCalls), rec.Body.String())
 		}
 	})
+}
+
+func (f *linkRouteFakeStore) ListCoreLinkRoutesByOwner(ownerID string) ([]store.CoreLinkRoute, error) {
+	var out []store.CoreLinkRoute
+	for _, r := range f.coreRoutes {
+		if r.OwnerID == ownerID {
+			out = append(out, r)
+		}
+	}
+	if f.mirror != nil {
+		for _, rt := range services.GetRoutesFromRedis(context.Background(), f.mirror) {
+			if rt.CoreOwned && rt.OwnerID == ownerID {
+				out = append(out, store.CoreLinkRoute{Domain: rt.Domain, OwnerID: rt.OwnerID})
+			}
+		}
+	}
+	return out, nil
+}
+
+// The count comes from the caller's own rows. Redis is empty here, so a count
+// that still saw anything would be reading another owner's rows or the table.
+func TestOwnerRouteStatsReadsOwnerRows(t *testing.T) {
+	fs := baseLinkRouteStore()
+	fs.coreRoutes = []store.CoreLinkRoute{
+		{Domain: "a.example.com", OwnerID: linkRouteUserID},
+		{Domain: "b.other.net", OwnerID: linkRouteUserID},
+		{Domain: "c.example.com", OwnerID: "user-2"},
+		{Domain: "d.example.com", OwnerID: "user-2"},
+	}
+	h := newLinkRouteHandler(fs, &linkRouteFakeGateway{}, newLinkRouteRedis(t))
+	st, err := h.ownerRouteStats(linkRouteUserID, "A.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.ours != 1 || st.custom != 1 || !st.ownsDomain {
+		t.Fatalf("stats = %+v, want ours 1, custom 1, ownsDomain", st)
+	}
+	if st, _ := h.ownerRouteStats(linkRouteUserID, "c.example.com"); st.ownsDomain {
+		t.Fatal("another owner's domain must not count as ours")
+	}
 }

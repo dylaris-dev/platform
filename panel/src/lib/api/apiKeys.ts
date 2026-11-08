@@ -83,3 +83,16 @@ export async function revokeAPIKey(id: number): Promise<{ success: boolean; mess
         return handleResponse(res);
     } catch (err) { return handleError(err); }
 }
+
+// Roll replaces the secret and keeps the old one working for 24 h. Like create,
+// Core re-authenticates it. The new key is only ever returned here.
+export async function rollAPIKey(id: number, password: string, code?: string): Promise<{ success: boolean; key?: string; previousValidUntil?: string; message?: string }> {
+    try {
+        const res = await fetch(`${API_URL}/me/api-keys/${id}/roll`, {
+            method: 'POST',
+            headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password, code }),
+        });
+        return handleResponse(res) as any;
+    } catch (err) { return handleError(err) as any; }
+}

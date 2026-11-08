@@ -134,3 +134,58 @@ func TestProvision_RoutePool(t *testing.T) {
 		}
 	})
 }
+
+// TestProvisionMaxCustomDomains pins maxCustomDomains to the maxRoutes rules.
+// It lives in its own table, so no case may touch the route limit.
+func TestProvisionMaxCustomDomains(t *testing.T) {
+	const uid = "u1"
+	provision := func(t *testing.T, body map[string]interface{}) *storeLinkFakeStore {
+		t.Helper()
+		fs := &storeLinkFakeStore{users: map[string]*models.User{uid: {ID: uid}}}
+		h := newStoreLinkHandler(fs, newStoreLinkRedis(t), true)
+		rec := httptest.NewRecorder()
+		body["uuid"], body["action"] = uid, "activate"
+		h.Provision(rec, storeLinkPost("/api/store/provision", body, storeLinkTestKey))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		return fs
+	}
+	noRouteWrites := func(t *testing.T, fs *storeLinkFakeStore) {
+		t.Helper()
+		if len(fs.routeLimitSets)+len(fs.routeLimitDeletes) != 0 {
+			t.Fatalf("touched the route limit: sets=%+v deletes=%+v", fs.routeLimitSets, fs.routeLimitDeletes)
+		}
+	}
+
+	t.Run("a number is written to the user scope", func(t *testing.T) {
+		fs := provision(t, map[string]interface{}{"maxCustomDomains": 8})
+		if len(fs.customDomainSets) != 1 || fs.customDomainSets[0].scope != "user:"+uid || fs.customDomainSets[0].max == nil || *fs.customDomainSets[0].max != 8 {
+			t.Fatalf("sets = %+v, want one write of 8 on user:%s", fs.customDomainSets, uid)
+		}
+		noRouteWrites(t, fs)
+	})
+	t.Run("zero is written, not deleted", func(t *testing.T) {
+		fs := provision(t, map[string]interface{}{"maxCustomDomains": 0})
+		if len(fs.customDomainSets) != 1 || fs.customDomainSets[0].max == nil || *fs.customDomainSets[0].max != 0 || len(fs.customDomainDels) != 0 {
+			t.Fatalf("sets = %+v dels = %+v, want one write of 0", fs.customDomainSets, fs.customDomainDels)
+		}
+	})
+	t.Run("null deletes the row", func(t *testing.T) {
+		fs := provision(t, map[string]interface{}{"maxCustomDomains": nil})
+		if len(fs.customDomainSets) != 0 || len(fs.customDomainDels) != 1 || fs.customDomainDels[0] != "user:"+uid {
+			t.Fatalf("sets = %+v dels = %+v, want one delete of user:%s", fs.customDomainSets, fs.customDomainDels, uid)
+		}
+		noRouteWrites(t, fs)
+	})
+	t.Run("omitted touches nothing, and maxRoutes leaves the custom table alone", func(t *testing.T) {
+		fs := provision(t, map[string]interface{}{"maxRoutes": 5})
+		if len(fs.customDomainSets)+len(fs.customDomainDels) != 0 {
+			t.Fatalf("custom-domain cap touched: %+v %+v", fs.customDomainSets, fs.customDomainDels)
+		}
+		fs = provision(t, map[string]interface{}{"maxRoutes": nil})
+		if len(fs.customDomainSets)+len(fs.customDomainDels) != 0 {
+			t.Fatalf("a route clear touched the custom-domain cap")
+		}
+	})
+}

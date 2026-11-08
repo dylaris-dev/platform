@@ -691,6 +691,14 @@ type GatewayRouteLimit struct {
 	MaxRoutes *int   `json:"maxRoutes"`
 }
 
+// GatewayCustomDomainLimit caps routes on the tenant own domains for one
+// scope, with the same convention as GatewayRouteLimit: no row says nothing,
+// NULL is no cap, 0 is none, n is the cap.
+type GatewayCustomDomainLimit struct {
+	Scope            string `json:"scope"`
+	MaxCustomDomains *int64 `json:"maxCustomDomains"`
+}
+
 // MailTemplate is an operator's override of one outgoing mail. It exists only
 // once the mail has been edited: no row means the built-in wording, so "reset to
 // default" is a delete rather than a copy of the original text back in.

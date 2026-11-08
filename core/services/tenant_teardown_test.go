@@ -453,3 +453,18 @@ func TestNodeRedisKeysCoverTheCommandStreams(t *testing.T) {
 		}
 	}
 }
+
+func TestTeardownKeepsSuspendedAddresses(t *testing.T) {
+	now := time.Now()
+	fs := &teardownFakeStore{rows: []store.CoreLinkRoute{
+		{Domain: "live.example.com", OwnerID: "owner-1"},
+		{Domain: "held.example.com", OwnerID: "owner-1", SuspendedAt: &now},
+	}}
+	gw := &linkRevokeFakeGateway{deleteErrFor: map[string]error{}}
+	if err := TeardownTenantInfrastructure(context.Background(), fs, gw, newQueueTestRedis(t), redisacl.NewProvisioner(newQueueTestRedis(t)), &peerRecorder{}, "owner-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(gw.deletedDomains, ","); got != "live.example.com" {
+		t.Fatalf("deleted %q, want only live.example.com: a suspended domain must stay blocked", got)
+	}
+}

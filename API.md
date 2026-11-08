@@ -139,14 +139,14 @@ can still show what exists.
 
 ## At a glance
 
-- **622 routes** in 53 sections: 269 GET, 180 POST, 63 PUT, 41 PATCH, 70 DELETE.
+- **645 routes** in 53 sections: 275 GET, 190 POST, 66 PUT, 42 PATCH, 73 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **411** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **153** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **433** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **154** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **49** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (146)
+- [/api/admin](#apiadmin) (148)
 - [/api/auth](#apiauth) (23)
 - [/api/authz](#apiauthz) (3)
 - [/api/avatar](#apiavatar) (1)
@@ -156,14 +156,14 @@ can still show what exists.
 - [/api/backup-storages](#apibackup-storages) (7)
 - [/api/beam](#apibeam) (4)
 - [/api/disk](#apidisk) (4)
-- [/api/external](#apiexternal) (10)
+- [/api/external](#apiexternal) (28)
 - [/api/files](#apifiles) (10)
-- [/api/gateway](#apigateway) (25)
+- [/api/gateway](#apigateway) (27)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (47)
+- [/api/me](#apime) (48)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (16)
@@ -330,6 +330,8 @@ can still show what exists.
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.read` | RequireTenancyEnabled | `EntitlementHandler.GetForUser` | RequireCap("plans.read"). |
 | POST | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireTenancyEnabled | `EntitlementHandler.Grant` | RequireCap("plans.write"). |
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireTenancyEnabled | `EntitlementHandler.Revoke` | RequireCap("plans.write"). |
+| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets` | session | `users.write` | - | `GatewayHandler.GetPublicTargets` | whether this account's API keys may create gateway routes with public targets. |
+| PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets` | session | `users.write` | - | `GatewayHandler.SetPublicTargets` | body {"enabled": bool}, lets this account's API keys create gateway routes with public targets. |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides` | session | `plans.write` | RequireTenancyEnabled | `PlansHandler.SetUserLimitOverrides` | - |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag` | session | `settings.write` | - | `ModpackSettingsHandler.SetUserFlag` | PANEL settings.write (RequireCap at the route). |
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag` | session | `settings.write` | - | `ModpackSettingsHandler.ClearUserFlagOverride` | PANEL settings.write (RequireCap at the route). |
@@ -450,6 +452,24 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
+| POST | `/api/external/api-key/roll` | user API key | _no capability_ | Limit | `APIKeysHandler.RollSelf` | a key replaces its own secret. |
+| GET | `/api/external/gateway/custom-domains` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListCustomDomains` | the caller's own domain claims and their TXT records. |
+| POST | `/api/external/gateway/custom-domains` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.AddCustomDomain` | body {"domain": "play.example.com"}, returns the TXT record to publish. |
+| DELETE | `/api/external/gateway/custom-domains/{domain:[^/]+}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.DeleteCustomDomain` | removes the caller's claim; refused while a route uses it. |
+| POST | `/api/external/gateway/custom-domains/{domain:[^/]+}/txt-token` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.IssueCustomDomainTXTToken` | returns the claim's TXT record, minting it once. |
+| POST | `/api/external/gateway/custom-domains/{domain:[^/]+}/verify-txt` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.VerifyCustomDomainTXT` | checks the published TXT record now. |
+| GET | `/api/external/gateway/link-kits` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListLinkKits` | the caller's route-only link kits, without secrets, plus used and limit. |
+| POST | `/api/external/gateway/link-kits` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.MintLinkKit` | creates a link kit; link_key is shown once. |
+| DELETE | `/api/external/gateway/link-kits/{linkID}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.RevokeLinkKit` | revokes one of the caller's link kits and removes its routes. |
+| POST | `/api/external/gateway/link-kits/{linkID}/roll` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.RollLinkKit` | replaces a link kit's key; the old one keeps working for the grace period. |
+| GET | `/api/external/gateway/regions` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListRegions` | the gateway regions with their wildcard and liveness, plus the hoster domains and CNAME target. |
+| GET | `/api/external/gateway/routes` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListRoutes` | the caller's route-only addresses. |
+| POST | `/api/external/gateway/routes` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.CreateRoute` | creates or retargets an address on one of the caller's links. |
+| DELETE | `/api/external/gateway/routes/{domain:[^/]+}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.DeleteRoute` | removes one of the caller's addresses. |
+| PUT | `/api/external/gateway/routes/{domain:[^/]+}/bedrock` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.SetRouteBedrock` | body {"java": bool, "bedrock": bool}, the address's editions. |
+| PATCH | `/api/external/gateway/routes/{domain:[^/]+}/proxy-protocol` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.SetRouteProxyProtocol` | body {"enabled": bool}, real player IP forwarding. |
+| PUT | `/api/external/gateway/routes/{domain:[^/]+}/voice` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.SetRouteVoice` | body {"enabled": bool, "target_port": int}, voice chat relay. |
+| GET | `/api/external/gateway/usage` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.GetUsage` | the period's totals (as /api/external/usage) plus regions [{region, kind, bytes}]; ?period=YYYY-MM. |
 | POST | `/api/external/rcon/{uuid}/exec` | user API key | `rcon.exec` | - | `RconHandler.ExecExternal` | automation entry. |
 | GET | `/api/external/servers` | user API key | _no capability_ | - | `APIKeysHandler.ListExternalServers` | the servers this KEY may act on: the servers of its owner, narrowed to the allowlist of the key. |
 | GET | `/api/external/servers/{uuid}` | user API key | `overview.read` | - | `APIKeysHandler.GetExternalServer` | the record of one server. |
@@ -503,6 +523,8 @@ can still show what exists.
 | POST | `/api/gateway/routes/bulk-delete` | session | `topology.write` | - | `GatewayHandler.BulkDeleteRoutesBySuffix` | deletes every route whose domain equals OR ends with `.<suffix>`. |
 | GET | `/api/gateway/routes/suffixes` | session | `topology.read` | - | `GatewayHandler.GetRouteSuffixes` | returns the unique apex (1-dot) and parent (2-dot) suffixes across every route currently registered. |
 | DELETE | `/api/gateway/routes/{domain:.+}` | session | `topology.write` | - | `GatewayHandler.AdminDeleteRoute` | removes any route by domain, without the per-server ownership check its /api/servers twin applies. |
+| POST | `/api/gateway/routes/{domain:[^/]+}/suspend` | session | `topology.write` | - | `GatewayHandler.SuspendRoute` | body {"reason": "..."}, takes one route-only route off the edges until an admin lifts it. |
+| POST | `/api/gateway/routes/{domain:[^/]+}/unsuspend` | session | `topology.write` | - | `GatewayHandler.UnsuspendRoute` | lifts a suspension and publishes the route again right away. |
 | GET | `/api/gateway/stats` | session | `topology.read` | - | `GatewayHandler.GetStats` | counts only: links and edges, how many of each are online, and the route total. |
 | POST | `/api/gateway/sync` | session | `topology.write` | - | `GatewayHandler.TriggerSync` | a no-op kept for the panel button. |
 
@@ -544,6 +566,7 @@ can still show what exists.
 | GET | `/api/me/api-keys` | session | `apikeys.read` | - | `APIKeysHandler.List` | the calling user's own API keys, plus what they are allowed to mint. |
 | POST | `/api/me/api-keys` | session | `apikeys.write` | Limit, LimitBody | `APIKeysHandler.Create` | mints a key and returns its plaintext exactly once. |
 | DELETE | `/api/me/api-keys/{id:[0-9]+}` | session | `apikeys.delete` | - | `APIKeysHandler.Revoke` | revokes one of the caller's own keys. |
+| POST | `/api/me/api-keys/{id:[0-9]+}/roll` | session | `apikeys.write` | Limit, LimitBody | `APIKeysHandler.Roll` | replaces the secret of one of the caller's own keys. |
 | GET | `/api/me/backup-storages` | session | `backupstorage.read` | - | `BackupHandler.ListOwnStorages` | the caller's own storages, with secrets stripped, and which of them is their default. |
 | POST | `/api/me/backup-storages` | session | `backupstorage.write` | - | `BackupHandler.CreateOwnStorage` | connects a bucket of the caller's own. |
 | PATCH | `/api/me/backup-storages/{id:[0-9]+}` | session | `backupstorage.write` | - | `BackupHandler.UpdateOwnStorage` | - |

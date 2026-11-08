@@ -932,6 +932,9 @@ export interface GatewayRoute {
     server_name?: string;
     link_name?: string;
     proxy_protocol?: boolean;
+    core_owned?: boolean;
+    suspended?: boolean;
+    suspendedReason?: string;
 }
 
 export interface GatewayLog {
@@ -991,6 +994,10 @@ export interface GatewayRouteOptions {
 
 // Gateway Admin API (read-only for links/edges — they auto-register via Redis)
 export const getGatewayRoutes = () => fetchAPI('/gateway/routes');
+export const suspendGatewayRoute = (domain: string, reason: string) =>
+    fetchAPI(`/gateway/routes/${encodeURIComponent(domain)}/suspend`, { method: 'POST', body: JSON.stringify({ reason }) });
+export const unsuspendGatewayRoute = (domain: string) =>
+    fetchAPI(`/gateway/routes/${encodeURIComponent(domain)}/unsuspend`, { method: 'POST' });
 export const deleteGatewayRoute = (domain: string) => fetchAPI(`/gateway/routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });
 
 // Bulk route operations (admin)

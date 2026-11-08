@@ -402,6 +402,8 @@ func parseRoutePool(raw json.RawMessage) (*int64, bool, error) {
 //
 //	action "activate" -> billing active (+ optional plan assignment, + the
 //	                     node/route entitlement the tenant actually bought)
+//	                     (maxNodes, maxLinks, maxRoutes; maxCustomDomains is the cap on routes
+//	                     on their own domains, kept in gateway_custom_domain_limits)
 //	action "past_due" -> dunning grace window starts
 //	action "suspend"  -> mark suspended now; servers stop + route-only links
 //	                     are torn down after the grace window elapses (no data
@@ -441,6 +443,12 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// (scope "user:<uuid>"), not in user_billing: routes were already capped
 		// there by hand, and two caps for one thing is how they drift apart.
 		MaxRoutes json.RawMessage `json:"maxRoutes,omitempty"`
+		// MaxCustomDomains caps routes on the tenant own domains. It lives in
+		// gateway_custom_domain_limits (scope "user:<uuid>"), a table separate
+		// from max_routes so the two cannot disturb each other. Same rules as
+		// MaxRoutes: omitted leaves it alone, null deletes the row (the platform
+		// default answers), a number is written literally, 0 included.
+		MaxCustomDomains json.RawMessage `json:"maxCustomDomains,omitempty"`
 		// TrafficCeilingGB is where the tenant's free traffic ends (decimal GB,
 		// 10^9) and TrafficBillingEnabled whether they have agreed to be charged
 		// past it. Core does not enforce either - the store owns the money and
@@ -541,6 +549,24 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 					httpx.SendJSONError(w, "Activated but failed to apply the route pool", http.StatusInternalServerError)
 					return
 				}
+			}
+		}
+		domains, setDomains, derr := parseRoutePool(req.MaxCustomDomains)
+		if derr != nil {
+			httpx.SendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
+			return
+		}
+		if setDomains {
+			scope := storeclient.UserRouteScope(req.UUID)
+			var err error
+			if domains == nil {
+				err = h.d.Store.DeleteGatewayCustomDomainLimit(scope)
+			} else {
+				err = h.d.Store.SetGatewayCustomDomainLimit(scope, domains)
+			}
+			if err != nil {
+				httpx.SendJSONError(w, "Activated but failed to apply the custom-domain cap", http.StatusInternalServerError)
+				return
 			}
 		}
 	case "past_due":

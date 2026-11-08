@@ -124,6 +124,10 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
+	if rt.SuspendedAt != nil {
+		httpx.SendJSONError(w, services.ErrRouteSuspended.Error(), http.StatusConflict)
+		return
+	}
 	if msg := guard.OwnerRefusal(h.d.Store, h.d.SuspendGrace, r, rt.OwnerID); msg != "" {
 		httpx.SendJSONError(w, msg, http.StatusForbidden)
 		return

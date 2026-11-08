@@ -2436,6 +2436,38 @@ func (s *PostgresStore) SetGatewayRouteLimit(scope string, max *int) error {
 	return err
 }
 
+// GetGatewayCustomDomainLimit returns sql.ErrNoRows for a scope with no row,
+// which means the scope says nothing. A NULL cap is a row, and means no cap.
+func (s *PostgresStore) GetGatewayCustomDomainLimit(scope string) (*models.GatewayCustomDomainLimit, error) {
+	var l models.GatewayCustomDomainLimit
+	if err := s.db.QueryRow(`SELECT scope, max_custom_domains FROM gateway_custom_domain_limits WHERE scope = $1`, scope).
+		Scan(&l.Scope, &l.MaxCustomDomains); err != nil {
+		return nil, err
+	}
+	// A negative is the old spelling of unlimited everywhere else; read it so.
+	if l.MaxCustomDomains != nil && *l.MaxCustomDomains < 0 {
+		l.MaxCustomDomains = nil
+	}
+	return &l, nil
+}
+
+// SetGatewayCustomDomainLimit upserts one scope. nil stores NULL: set, and no cap.
+func (s *PostgresStore) SetGatewayCustomDomainLimit(scope string, max *int64) error {
+	if max != nil && *max < 0 {
+		max = nil
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO gateway_custom_domain_limits (scope, max_custom_domains) VALUES ($1, $2)
+		ON CONFLICT (scope) DO UPDATE SET max_custom_domains = EXCLUDED.max_custom_domains
+	`, scope, max)
+	return err
+}
+
+func (s *PostgresStore) DeleteGatewayCustomDomainLimit(scope string) error {
+	_, err := s.db.Exec(`DELETE FROM gateway_custom_domain_limits WHERE scope = $1`, scope)
+	return err
+}
+
 func (s *PostgresStore) ListGatewayRouteLimits() ([]models.GatewayRouteLimit, error) {
 	rows, err := s.db.Query(`SELECT id, scope, max_routes FROM gateway_route_limits ORDER BY id ASC`)
 	if err != nil {

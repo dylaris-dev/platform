@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Key, Plus, Copy, Trash2, AlertTriangle, Shield, X, EyeOff } from 'lucide-react';
+import { Key, Plus, Copy, Trash2, AlertTriangle, Shield, X, EyeOff, RefreshCw } from 'lucide-react';
 import { useAppData } from '@/lib/AppDataContext';
-import { listAPIKeys, createAPIKey, revokeAPIKey, type APIKey, type APIKeyOptions } from '@/lib/api/apiKeys';
+import { listAPIKeys, createAPIKey, revokeAPIKey, rollAPIKey, type APIKey, type APIKeyOptions } from '@/lib/api/apiKeys';
 import { getCatalog, type CatalogScope } from '@/lib/api/authzCatalog';
 import { SkeletonList } from '@/components/Skeleton';
 import { useBusy } from '@/lib/useBusy';
@@ -44,10 +44,12 @@ export default function ApiKeysPage() {
     const [reauthPassword, setReauthPassword] = useState('');
     const [reauthCode, setReauthCode] = useState('');
 
-    const [revealedKey, setRevealedKey] = useState<{ plaintext: string; name: string } | null>(null);
+    const [revealedKey, setRevealedKey] = useState<{ plaintext: string; name: string; rolled?: boolean } | null>(null);
     const [revoking, setRevoking] = useState<APIKey | null>(null);
     const [creatingKey, runCreate] = useBusy();
     const [revokingKey, runRevoke] = useBusy();
+    const [rolling, setRolling] = useState<APIKey | null>(null);
+    const [rollingKey, runRoll] = useBusy();
 
     const showToast = (msg: string, ok = true) => toast(msg, ok);
 
@@ -109,6 +111,20 @@ export default function ApiKeysPage() {
             refresh();
         } else {
             showToast(res.message || 'Create failed', false);
+        }
+    };
+
+    const handleRoll = async () => {
+        if (!rolling) return;
+        const res = await rollAPIKey(rolling.id, reauthPassword, reauthCode.replace(/\s/g, '') || undefined);
+        if (res.success && res.key) {
+            setRevealedKey({ plaintext: res.key, name: rolling.name, rolled: true });
+            setRolling(null);
+            setReauthPassword('');
+            setReauthCode('');
+            refresh();
+        } else {
+            showToast(res.message || 'Roll failed', false);
         }
     };
 
@@ -229,6 +245,12 @@ export default function ApiKeysPage() {
                                     </div>
                                 )}
                             </div>
+                            {!k.revokedAt && !(k.expiresAt && new Date(k.expiresAt).getTime() <= Date.now()) && (
+                                <button onClick={() => setRolling(k)} className="btn btn-secondary btn-sm shrink-0">
+                                    <RefreshCw size={12} />
+                                    Roll
+                                </button>
+                            )}
                             {!k.revokedAt && (
                                 <button onClick={() => setRevoking(k)} className="btn btn-secondary btn-sm shrink-0">
                                     <Trash2 size={12} className="text-(--error-light)" />
@@ -420,6 +442,12 @@ export default function ApiKeysPage() {
                                 This is the only time the full key will be shown. Copy it into your
                                 secret store now.
                             </p>
+                            {revealedKey.rolled && (
+                                <p className="text-sm text-(--base-07)">
+                                    The previous key keeps working for 24 hours so you can switch over
+                                    without downtime. Rolling again before then ends it immediately.
+                                </p>
+                            )}
                             <div className="flex items-center gap-2 p-3 rounded-md bg-(--base-02) border border-(--base-04) font-mono text-sm break-all">
                                 <span className="flex-1">{revealedKey.plaintext}</span>
                                 <button
@@ -436,6 +464,42 @@ export default function ApiKeysPage() {
                                 <EyeOff size={12} />
                                 Hide
                             </button>
+                        </div>
+                    </ModalPanel>
+                </div>
+            )}
+
+            {/* Roll confirmation: re-authenticates like create */}
+            {rolling && (
+                <div className="modal-overlay animate-fade-in" onClick={() => { setRolling(null); setReauthPassword(''); setReauthCode(''); }}>
+                    <ModalPanel onClose={() => { setRolling(null); setReauthPassword(''); setReauthCode(''); }} className="modal-panel max-w-sm" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3 className="modal-title flex items-center gap-2">
+                                <RefreshCw size={16} />
+                                Roll {rolling.name}?
+                            </h3>
+                        </div>
+                        <div className="modal-body space-y-3">
+                            <p className="text-sm text-(--base-07)">
+                                A new key is created and shown once. The current key keeps working for
+                                24 hours, then stops.
+                            </p>
+                            <p className="text-sm text-(--base-07)">
+                                Suspect the key leaked? Revoke it instead: a rolled key keeps working for 24 hours.
+                            </p>
+                            <ReauthFields
+                                idPrefix="apikey-roll"
+                                twoFactorEnabled={!!user?.is2FAEnabled}
+                                password={reauthPassword}
+                                code={reauthCode}
+                                onPassword={setReauthPassword}
+                                onCode={setReauthCode}
+                                disabled={rollingKey}
+                            />
+                        </div>
+                        <div className="modal-footer">
+                            <button onClick={() => { setRolling(null); setReauthPassword(''); setReauthCode(''); }} className="btn btn-secondary">Cancel</button>
+                            <button onClick={() => runRoll(handleRoll)} disabled={rollingKey || !reauthReady(!!user?.is2FAEnabled, reauthPassword, reauthCode)} className="btn btn-primary disabled:opacity-40">Roll key</button>
                         </div>
                     </ModalPanel>
                 </div>

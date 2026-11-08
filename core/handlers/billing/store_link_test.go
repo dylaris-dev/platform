@@ -46,6 +46,8 @@ type storeLinkFakeStore struct {
 
 	routeLimitSets    []storeLinkRouteLimitCall
 	routeLimitDeletes []string
+	customDomainSets  []storeLinkCustomDomainCall
+	customDomainDels  []string
 	routeLimitErr     error
 
 	// Which manual grants a provision call retired. A purchase ends the grant
@@ -147,6 +149,21 @@ type storeLinkRouteLimitCall struct {
 
 func (f *storeLinkFakeStore) SetGatewayRouteLimit(scope string, max *int) error {
 	f.routeLimitSets = append(f.routeLimitSets, storeLinkRouteLimitCall{scope, max})
+	return f.routeLimitErr
+}
+
+type storeLinkCustomDomainCall struct {
+	scope string
+	max   *int64
+}
+
+func (f *storeLinkFakeStore) SetGatewayCustomDomainLimit(scope string, max *int64) error {
+	f.customDomainSets = append(f.customDomainSets, storeLinkCustomDomainCall{scope, max})
+	return f.routeLimitErr
+}
+
+func (f *storeLinkFakeStore) DeleteGatewayCustomDomainLimit(scope string) error {
+	f.customDomainDels = append(f.customDomainDels, scope)
 	return f.routeLimitErr
 }
 

@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.08.2
+
+### Features
+- A gateway API for route-only customers: link kits, routes, custom domains, regions and usage
+  under `/api/external/gateway/*`, with keys that can be rolled. Do not roll keys or suspend
+  routes until every Core replica runs this version. `core`
+- Admins can suspend a single route-only route; it stays off the edges and nobody can re-create it
+  until an admin lifts the suspension. `core`
+- The custom-domain cap can be set per account, and public route targets through the API need
+  an admin to enable them per account. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.08
 
 ### Features

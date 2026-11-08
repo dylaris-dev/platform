@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.08.2
+
+### Features
+- Route-only: create an API key with the Gateway scopes under Account, API keys, and manage
+  your link kits, routes and custom domains from your own tools. Roll a key at any time; the
+  old one keeps working for 24 hours.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.08
 
 ### Features

@@ -20,6 +20,10 @@ type CoreLinkRoute struct {
 	// the route:<domain> value the edge reads.
 	ProxyProtocol bool
 	CreatedAt     time.Time
+	// SuspendedAt is set while an admin has the route taken down; nil is the
+	// normal case. The reason is shown to the owner.
+	SuspendedAt     *time.Time
+	SuspendedReason string
 }
 
 // UpsertCoreLinkRoute records a route-only entry, or rewrites the one already
@@ -41,7 +45,7 @@ func (s *PostgresStore) UpsertCoreLinkRoute(r CoreLinkRoute) error {
 
 func (s *PostgresStore) ListCoreLinkRoutes() ([]CoreLinkRoute, error) {
 	rows, err := s.db.Query(`
-		SELECT domain, owner_id, link_token, target_host, target_port, proxy_protocol, created_at
+		SELECT domain, owner_id, link_token, target_host, target_port, proxy_protocol, created_at, suspended_at, COALESCE(suspended_reason, '')
 		FROM core_link_routes ORDER BY domain`)
 	if err != nil {
 		return nil, err
@@ -50,7 +54,29 @@ func (s *PostgresStore) ListCoreLinkRoutes() ([]CoreLinkRoute, error) {
 	var out []CoreLinkRoute
 	for rows.Next() {
 		var r CoreLinkRoute
-		if err := rows.Scan(&r.Domain, &r.OwnerID, &r.LinkToken, &r.TargetHost, &r.TargetPort, &r.ProxyProtocol, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.Domain, &r.OwnerID, &r.LinkToken, &r.TargetHost, &r.TargetPort, &r.ProxyProtocol, &r.CreatedAt, &r.SuspendedAt, &r.SuspendedReason); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ListCoreLinkRoutesByOwner is ListCoreLinkRoutes for one account, served by
+// idx_core_link_routes_owner. Counting a tenant's routes used to scan every
+// route in Redis, which grows with the platform instead of with the tenant.
+func (s *PostgresStore) ListCoreLinkRoutesByOwner(ownerID string) ([]CoreLinkRoute, error) {
+	rows, err := s.db.Query(`
+		SELECT domain, owner_id, link_token, target_host, target_port, proxy_protocol, created_at, suspended_at, COALESCE(suspended_reason, '')
+		FROM core_link_routes WHERE owner_id = $1 ORDER BY domain`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CoreLinkRoute
+	for rows.Next() {
+		var r CoreLinkRoute
+		if err := rows.Scan(&r.Domain, &r.OwnerID, &r.LinkToken, &r.TargetHost, &r.TargetPort, &r.ProxyProtocol, &r.CreatedAt, &r.SuspendedAt, &r.SuspendedReason); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -61,4 +87,21 @@ func (s *PostgresStore) ListCoreLinkRoutes() ([]CoreLinkRoute, error) {
 func (s *PostgresStore) DeleteCoreLinkRoute(domain string) error {
 	_, err := s.db.Exec(`DELETE FROM core_link_routes WHERE domain = $1`, domain)
 	return err
+}
+
+// SetCoreLinkRouteSuspended suspends (at != nil) or unsuspends (nil) one route
+// and reports whether the domain has a row. Upsert never touches these columns,
+// so an owner re-saving the route cannot lift a suspension.
+func (s *PostgresStore) SetCoreLinkRouteSuspended(domain string, at *time.Time, reason string) (bool, error) {
+	var reasonArg any
+	if at != nil {
+		reasonArg = reason
+	}
+	res, err := s.db.Exec(`UPDATE core_link_routes SET suspended_at = $2, suspended_reason = $3 WHERE domain = $1`,
+		domain, at, reasonArg)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }

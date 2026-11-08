@@ -618,7 +618,9 @@ type Store interface {
 	// CoreLinkRoute.
 	UpsertCoreLinkRoute(r CoreLinkRoute) error
 	ListCoreLinkRoutes() ([]CoreLinkRoute, error)
+	ListCoreLinkRoutesByOwner(ownerID string) ([]CoreLinkRoute, error)
 	DeleteCoreLinkRoute(domain string) error
+	SetCoreLinkRouteSuspended(domain string, at *time.Time, reason string) (bool, error)
 	ListWarpLeadersByRegion(region string) ([]WarpLeader, error)
 	UpsertWarpLeader(leaderID, region, endpoint string, enabled bool) error
 	DeleteWarpLeader(leaderID string) (bool, error)
@@ -647,6 +649,9 @@ type Store interface {
 	SetGatewayRouteLimit(scope string, max *int) error
 	ListGatewayRouteLimits() ([]models.GatewayRouteLimit, error)
 	DeleteGatewayRouteLimit(scope string) error
+	GetGatewayCustomDomainLimit(scope string) (*models.GatewayCustomDomainLimit, error)
+	SetGatewayCustomDomainLimit(scope string, max *int64) error
+	DeleteGatewayCustomDomainLimit(scope string) error
 
 	// --- Regions ---
 	ListRegions(includeDisabled bool) ([]models.Region, error)
@@ -903,6 +908,11 @@ type Store interface {
 	ListAPIKeysByUser(userID string) ([]models.APIKey, error)
 	GetAPIKeyByHash(hash string) (*models.APIKey, error)
 	RevokeAPIKey(id int, userID string) error
+	// RollAPIKey swaps in newHash and keeps the old hash valid for grace. It
+	// only applies if the row still belongs to ownerID, is live and still holds
+	// expectHash (the hash the caller saw); otherwise ErrAPIKeyRollConflict, so
+	// two concurrent rolls cannot both succeed. Only one previous hash is kept.
+	RollAPIKey(ctx context.Context, id int, ownerID, expectHash, newHash string, grace time.Duration) error
 	TouchAPIKey(id int) error
 
 	// --- Installed Mods ---

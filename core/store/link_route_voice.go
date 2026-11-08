@@ -18,15 +18,18 @@ type LinkRouteVoice struct {
 	Port       int
 	TargetPort int
 	UplinkKey  []byte
+	// Suspended mirrors the route's suspension; a suspended route's port must
+	// not be published.
+	Suspended bool
 }
 
 const linkRouteVoiceSelect = `
-	SELECT v.domain, r.owner_id, r.link_token, r.target_host, v.region, v.port, v.target_port, v.uplink_key
+	SELECT v.domain, r.owner_id, r.link_token, r.target_host, v.region, v.port, v.target_port, v.uplink_key, r.suspended_at IS NOT NULL
 	FROM link_route_voice v JOIN core_link_routes r ON r.domain = v.domain`
 
 func scanLinkRouteVoice(row interface{ Scan(...any) error }) (LinkRouteVoice, error) {
 	var v LinkRouteVoice
-	err := row.Scan(&v.Domain, &v.OwnerID, &v.LinkToken, &v.TargetHost, &v.Region, &v.Port, &v.TargetPort, &v.UplinkKey)
+	err := row.Scan(&v.Domain, &v.OwnerID, &v.LinkToken, &v.TargetHost, &v.Region, &v.Port, &v.TargetPort, &v.UplinkKey, &v.Suspended)
 	return v, err
 }
 

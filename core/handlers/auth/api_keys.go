@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/demo"
+	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
 )
@@ -110,11 +112,20 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// Operator gate, checked before the delegation maths below. An operator
 		// who has not turned user keys on gets none minted, whatever the caller
 		// is otherwise entitled to.
-		if !h.userKeysAllowed(r) {
+		// A gateway-only key of a route-only customer is exempt from the gate and
+		// the whitelist; the same call decides it again on every request.
+		viaEntitlement := h.gatewayKeyEntitled(r, userID, req.Permissions)
+		// Nothing in a gateway-only key reads a server scope, so a list would
+		// only suggest a restriction that does not exist.
+		if viaEntitlement && len(req.Servers) > 0 {
+			httpx.SendJSONError(w, "Gateway keys cannot be limited to servers.", http.StatusBadRequest)
+			return
+		}
+		if !viaEntitlement && !h.userKeysAllowed(r) {
 			httpx.SendJSONError(w, "API keys are not enabled for users on this platform", http.StatusForbidden)
 			return
 		}
-		if allowed := h.allowedUserKeyCaps(r); allowed != nil {
+		if allowed := h.allowedUserKeyCaps(r); allowed != nil && !viaEntitlement {
 			for _, p := range req.Permissions {
 				if !allowed[p] {
 					httpx.SendJSONError(w, "This platform does not allow that permission on a user key: "+p, http.StatusForbidden)
@@ -315,6 +326,99 @@ func (h *APIKeysHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// apiKeyRollGrace is how long the old hash of a rolled key keeps working, so a
+// provider can swap the key in their config without downtime.
+const apiKeyRollGrace = 24 * time.Hour
+
+type rollAPIKeyRequest struct {
+	reauth.ReauthFields
+}
+
+// Roll POST /api/me/api-keys/{id}/roll - replaces the secret of one of the
+// caller's own keys. The new key is returned once; the old one keeps working for
+// 24 h, and a second roll inside that window drops it. Another user's key
+// answers 404, like Revoke. Re-authenticates like Create: a roll mints a
+// credential that outlives the session.
+func (h *APIKeysHandler) Roll(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value("userID").(string)
+	if userID == "" {
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	keyID, _ := strconv.Atoi(mux.Vars(r)["id"])
+	var req rollAPIKeyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	keys, err := h.d.Store.ListAPIKeysByUser(userID)
+	if err != nil {
+		httpx.SendJSONError(w, "Failed to load keys", http.StatusInternalServerError)
+		return
+	}
+	var key *models.APIKey
+	for i := range keys {
+		if keys[i].ID == keyID {
+			key = &keys[i]
+		}
+	}
+	if key == nil || key.RevokedAt != nil || (key.ExpiresAt != nil && time.Now().After(*key.ExpiresAt)) {
+		httpx.SendJSONError(w, "Key not found", http.StatusNotFound)
+		return
+	}
+	if rerr := reauth.RequireReauth(h.d.Store, ReauthCodeVerifier(h.d), userID, req.Password, req.Code); rerr != nil {
+		reauth.WriteReauthError(w, rerr)
+		return
+	}
+	h.rollKey(w, r, key, userID)
+}
+
+// RollSelf POST /api/external/api-key/roll - a key replaces its own secret. It
+// needs no capability: any valid key may roll itself, and it can only ever touch
+// the row it authenticated as (APIKeyOwnerRoute with an empty capability, the
+// narrowest shape that accepts every key). The old hash being usable during the
+// grace must not let a leaked old key take the account over, so only the
+// CURRENT key may roll.
+func (h *APIKeysHandler) RollSelf(w http.ResponseWriter, r *http.Request) {
+	key := reqctx.APIKeyFromContext(r)
+	if key == nil {
+		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if key.ViaPrevious {
+		httpx.SendJSONError(w, "Roll with the current key, not the previous one", http.StatusForbidden)
+		return
+	}
+	h.rollKey(w, r, key, key.UserID)
+}
+
+func (h *APIKeysHandler) rollKey(w http.ResponseWriter, r *http.Request, key *models.APIKey, userID string) {
+	plaintext, err := services.GeneratePlaintextKey()
+	if err != nil {
+		httpx.SendJSONError(w, "Failed to mint key", http.StatusInternalServerError)
+		return
+	}
+	until := time.Now().Add(apiKeyRollGrace)
+	if err := h.d.Store.RollAPIKey(r.Context(), key.ID, userID, key.KeyHash, services.HashAPIKey(plaintext), apiKeyRollGrace); err != nil {
+		if errors.Is(err, store.ErrAPIKeyRollConflict) {
+			httpx.SendJSONError(w, "The key was rolled meanwhile; use the newest key.", http.StatusConflict)
+			return
+		}
+		httpx.SendJSONError(w, "Failed to roll key", http.StatusInternalServerError)
+		return
+	}
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventAPIKeyRolled, userID, userID, map[string]interface{}{
+		"keyId": key.ID,
+		"name":  key.Name,
+	})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":            true,
+		"key":                "dyl_" + plaintext,
+		"id":                 key.ID,
+		"previousValidUntil": until.UTC().Format(time.RFC3339),
+	})
+}
+
 // --- API key middleware ---
 
 // keyRouteShape says what kind of route the middleware is guarding. It is
@@ -377,6 +481,33 @@ func (h *APIKeysHandler) userKeysAllowed(r *http.Request) bool {
 		return false
 	}
 	return h.d.FeatureFlags.UserAPIKeysEnabled(r.Context())
+}
+
+// gatewayKeyEntitled reports whether a NON-ADMIN owner may hold a key with these
+// permissions without the operator's user-key switch: every permission is a
+// gateway one (or usage.read), at least one is gateway.*, route-only is on, and
+// the owner's entitlement carries RouteOnly. Mint and ownerStillHolds both call
+// this, so they cannot drift; any error answers false (fail closed), and the
+// entitlement is re-read on every request so a lapse stops the key.
+func (h *APIKeysHandler) gatewayKeyEntitled(r *http.Request, ownerID string, perms []string) bool {
+	hasGateway := false
+	for _, p := range perms {
+		switch p {
+		case "gateway.read", "gateway.write":
+			hasGateway = true
+		case "usage.read":
+		default:
+			return false
+		}
+	}
+	// Without a store plane (self-hosted) there is nothing to be entitled by:
+	// EffectiveEntitlement would read that as unlimited, so these keys follow
+	// the ordinary user-key gate there.
+	if !hasGateway || !h.d.StoreEnabled || h.d.FeatureFlags == nil || h.d.Store == nil || !h.d.FeatureFlags.IsRouteOnlyEnabled(r.Context()) {
+		return false
+	}
+	ent, err := services.EffectiveEntitlement(h.d.Store, ownerID, time.Now(), h.d.StoreEnabled, false)
+	return err == nil && ent.RouteOnly
 }
 
 // allowedUserKeyCaps is the operator's capability whitelist for user keys, or
@@ -576,7 +707,8 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 	// is created would leave every key minted before the switch was turned off
 	// working afterwards, which is not what an operator who turned it off means.
 	// The owner is loaded here anyway, so this costs nothing extra.
-	if !owner.IsAdmin && !h.userKeysAllowed(r) {
+	viaEntitlement := !owner.IsAdmin && h.gatewayKeyEntitled(r, owner.ID, key.Scope.Permissions)
+	if !owner.IsAdmin && !viaEntitlement && !h.userKeysAllowed(r) {
 		httpx.SendJSONError(w, "API keys are not enabled for users on this platform", http.StatusForbidden)
 		return false
 	}
@@ -597,7 +729,7 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 	// as at mint: a capability taken off the list kept working on every key
 	// already minted with it, and so did the keys of a demoted admin, whose
 	// capabilities were never checked against the list at all.
-	if !owner.IsAdmin {
+	if !owner.IsAdmin && !viaEntitlement {
 		if allowed := h.allowedUserKeyCaps(r); allowed != nil && !allowed[requiredPerm] {
 			httpx.SendJSONError(w, "This platform no longer allows that permission on a user key", http.StatusForbidden)
 			return false

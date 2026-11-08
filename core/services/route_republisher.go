@@ -153,7 +153,45 @@ func coreOwnedRouteValue(r store.CoreLinkRoute) ([]byte, error) {
 	})
 }
 
+// withdrawCoreOwnedRoute removes the live entry of a suspended route, but only
+// when it is that owner's route-only entry: the domain may have been taken by
+// somebody else's entry since, and that is not ours to delete.
+func withdrawCoreOwnedRoute(ctx context.Context, rdb *redis.Client, r store.CoreLinkRoute) error {
+	live, err := rdb.Get(ctx, "route:"+r.Domain).Result()
+	if err == redis.Nil {
+		return rdb.SRem(ctx, "sys:index:routes", r.Domain).Err()
+	}
+	if err != nil {
+		return err
+	}
+	var holder struct {
+		CoreOwned bool   `json:"core_owned"`
+		OwnerID   string `json:"owner_id"`
+	}
+	if json.Unmarshal([]byte(live), &holder) != nil || !holder.CoreOwned || holder.OwnerID != r.OwnerID {
+		return nil
+	}
+	if err := rdb.Del(ctx, "route:"+r.Domain).Err(); err != nil {
+		return err
+	}
+	return rdb.SRem(ctx, "sys:index:routes", r.Domain).Err()
+}
+
 func (s *RouteRepublisher) republish(ctx context.Context, r store.CoreLinkRoute) republishOutcome {
+	if r.SuspendedAt != nil {
+		// Rollout caveat: a Core replica from before the suspend columns existed
+		// does not read them and will republish this route on its next tick,
+		// until it is replaced. Suspend is only reliable once every replica
+		// runs this version.
+		//
+		// Even on this version: a republisher pass that listed the row just
+		// before the suspend can still SETNX the key afterwards. The window is
+		// at most one tick (60 s), leader only, and the next pass withdraws it.
+		if err := withdrawCoreOwnedRoute(ctx, s.redis, r); err != nil {
+			logErrf("route-republisher", "withdraw suspended %s: %v", r.Domain, err)
+		}
+		return republishSkipped
+	}
 	data, err := coreOwnedRouteValue(r)
 	if err != nil {
 		return republishSkipped

@@ -231,8 +231,20 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 	for _, c := range claims {
 		known = known || c.Domain == domain
 	}
-	if !known && len(claims) >= maxClaimsPerUser {
-		httpx.SendJSONErrorCode(w, fmt.Sprintf("You can add up to %d domains.", maxClaimsPerUser), "too_many_domains", http.StatusConflict)
+	// A scoped cap above the claim bound would otherwise be unreachable (the
+	// claim must exist before a route on it can), and an account set to no cap
+	// is not bounded by the constant either.
+	claimCap := int64(maxClaimsPerUser)
+	unboundedClaims := false
+	if scopedCap, scoped := customDomainCapFor(h.d.Store, userID); scoped {
+		if scopedCap == nil {
+			unboundedClaims = true
+		} else if *scopedCap > claimCap {
+			claimCap = *scopedCap
+		}
+	}
+	if !known && !unboundedClaims && int64(len(claims)) >= claimCap {
+		httpx.SendJSONErrorCode(w, fmt.Sprintf("You can add up to %d domains.", claimCap), "too_many_domains", http.StatusConflict)
 		return
 	}
 	claim, err := h.d.Store.RequestCustomDomainClaim(userID, domain)

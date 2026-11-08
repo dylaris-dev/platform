@@ -345,6 +345,10 @@ func (v *VoiceService) reconcileLinkRoutes(ctx context.Context, keep map[string]
 		return fmt.Errorf("list route voice ports: %w", err)
 	}
 	for _, rv := range rows {
+		if rv.Suspended {
+			// Not kept, so the sweep after this removes its relay keys.
+			continue
+		}
 		// Same gate as the servers' revoked: no revoke wired, no revocation.
 		allowed, by, err := true, "", error(nil)
 		if v.revoke != nil {
@@ -366,7 +370,7 @@ func (v *VoiceService) reconcileLinkRoutes(ctx context.Context, keep map[string]
 			keep[VoicePortKey(rv.Region, rv.Port)] = true
 			continue
 		}
-		if cur == nil {
+		if cur == nil || cur.Suspended {
 			continue
 		}
 		keep[VoicePortKey(cur.Region, cur.Port)] = true

@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,9 @@ type addFakeStore struct {
 }
 
 func (f *addFakeStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
+func (f *addFakeStore) GetGatewayCustomDomainLimit(string) (*models.GatewayCustomDomainLimit, error) {
+	return nil, sql.ErrNoRows
+}
 func (f *addFakeStore) ListCustomDomainClaimsByUser(string) ([]store.CustomDomainClaim, error) {
 	var out []store.CustomDomainClaim
 	for _, c := range f.claims {

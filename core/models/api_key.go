@@ -25,6 +25,9 @@ type APIKey struct {
 	RevokedAt  *time.Time  `json:"revokedAt,omitempty"`
 	RatePerMin int         `json:"ratePerMin"`
 	CreatedAt  time.Time   `json:"createdAt"`
+	// ViaPrevious is set by the store when the request presented the old hash of
+	// a rolled key (still inside its grace). Never persisted or serialised.
+	ViaPrevious bool `json:"-"`
 }
 
 type APIKeyScope struct {

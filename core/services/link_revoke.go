@@ -44,6 +44,12 @@ func RevokeLinkKitTeardown(ctx context.Context, st store.Store, gw GatewayProvid
 	}
 	for _, rt := range rows {
 		if rt.OwnerID == ownerID && rt.LinkToken == tunnelToken {
+			if rt.SuspendedAt != nil {
+				// Revoking a kit must not lift a takedown: the row stays so the
+				// domain stays blocked until an admin deletes it.
+				log.Printf("revoke link %s: kept suspended route %s", linkID, rt.Domain)
+				continue
+			}
 			if derr := gw.DeleteCoreOwnedRoute(rt.Domain); derr != nil {
 				log.Printf("revoke link %s: delete route %s: %v", linkID, rt.Domain, derr)
 				continue

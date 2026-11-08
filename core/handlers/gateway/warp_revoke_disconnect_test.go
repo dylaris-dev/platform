@@ -345,6 +345,8 @@ func (linkRevokeFakeGateway) SetServerProxyProtocol(string, bool) error {
 func (linkRevokeFakeGateway) SetCoreOwnedRouteProxyProtocol(string, bool) error {
 	return nil
 }
+func (linkRevokeFakeGateway) SuspendCoreOwnedRoute(string, string) (string, error) { return "", nil }
+func (linkRevokeFakeGateway) UnsuspendCoreOwnedRoute(string) (string, error)       { return "", nil }
 
 // A kit key cannot enroll any more, but a kit from the warp era may still be an
 // overlay member, and revoking it must take that away as well.

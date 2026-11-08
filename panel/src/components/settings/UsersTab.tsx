@@ -5,6 +5,7 @@ import { toast as notifyToast } from '@/components/ui/Toast';
 import React, { useState, useEffect } from 'react';
 import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, cancelUserDeletion, setUserRole, setUserPermissions, setUserEmail, User } from '@/lib/api';
 import { adminResetTOTP } from '@/lib/api/auth';
+import GatewayPublicTargetsToggle from '@/components/settings/GatewayPublicTargetsToggle';
 import { setUserModpackFlag, clearUserModpackOverride } from '@/lib/api/modpackSettings';
 import {
     getUsernameHistory,
@@ -975,6 +976,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                             </button>
                                         </div>
                                     </div>
+                                    {settingsUser && <GatewayPublicTargetsToggle userId={settingsUser.id} />}
                                 </div>
                             )}
                         </div>

@@ -78,6 +78,11 @@ const (
 	AuditEventBillingStatusChanged = "billing_status_changed"
 	AuditEventServerOwnerChanged   = "server_owner_changed"
 	AuditEventMaintenanceToggled   = "maintenance_toggled"
+	// An operator letting an account's API keys point gateway routes at public addresses.
+	AuditEventGatewayPublicTargets = "gateway_public_targets_changed"
+	// An operator taking a route-only route off the edges, or putting it back.
+	AuditEventGatewayRouteSuspended   = "gateway_route_suspended"
+	AuditEventGatewayRouteUnsuspended = "gateway_route_unsuspended"
 
 	// Moving the platform's own data. These used to be filed under
 	// maintenance_toggled, all five of them, with the real action buried in a
@@ -99,6 +104,7 @@ const (
 	// realm, and its reads bundled per 10 minutes with a count.
 	AuditEventAPIKeyCreated     = "api_key_created"
 	AuditEventAPIKeyRevoked     = "api_key_revoked"
+	AuditEventAPIKeyRolled      = "api_key_rolled"
 	AuditEventAPIKeyDenied      = "api_key_denied"
 	AuditEventAPIKeyUsed        = "api_key_used"
 	AuditEventAPIKeyRead        = "api_key_read"

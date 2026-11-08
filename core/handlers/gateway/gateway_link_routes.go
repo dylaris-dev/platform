@@ -117,35 +117,67 @@ func (h *GatewayHandler) ownerRouteStats(userID, domain string) (routeStats, err
 	}
 	bases := h.ourBaseDomains()
 	domain = strings.ToLower(strings.TrimSpace(domain))
-	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.d.Redis) {
-		if !services.RouteHeldBy(rt, userID, owned) {
-			continue
-		}
-		// CoreOwned as well as owned BY THEM: a route-only entry is the only
-		// kind CreateRouteViaLink will overwrite, so it is the only kind an
-		// edit can be. A managed server's route on the same domain would
-		// otherwise wave the allowance check through for a request the gateway
-		// then refuses anyway.
-		if domain != "" && rt.CoreOwned && strings.EqualFold(rt.Domain, domain) {
-			st.ownsDomain = true
-		}
-		if services.DomainIsOurs(rt.Domain, bases) {
+	count := func(d string) {
+		if services.DomainIsOurs(d, bases) {
 			st.ours++
 		} else {
 			st.custom++
 		}
 	}
+	// Route-only entries come from their durable rows, by owner, so the cost
+	// follows the tenant and not the size of the platform's route table.
+	// ownsDomain is only ever true for these: a route-only entry is the only
+	// kind CreateRouteViaLink will overwrite, so it is the only kind an edit can
+	// be. A managed server's route on the same domain would otherwise wave the
+	// allowance check through for a request the gateway then refuses anyway.
+	mine, err := h.d.Store.ListCoreLinkRoutesByOwner(userID)
+	if err != nil {
+		return st, err
+	}
+	for _, rt := range mine {
+		if domain != "" && strings.EqualFold(rt.Domain, domain) {
+			st.ownsDomain = true
+		}
+		count(rt.Domain)
+	}
+	// Managed routes carry no owner, so they are still found through the
+	// servers the tenant owns.
+	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.d.Redis) {
+		if !rt.CoreOwned && services.RouteHeldBy(rt, userID, owned) {
+			count(rt.Domain)
+		}
+	}
 	return st, nil
 }
 
-func (h *GatewayHandler) customDomainCap() *int64 {
-	raw, _ := h.d.Store.GetSetting(services.SettingMaxCustomDomains)
-	return services.ParseLimitSetting(raw, services.DefaultMaxCustomDomains)
+// customDomainCapFor resolves the cap on routes on an account own domains:
+// admin:<id> -> user:<id> -> user_default -> global in
+// gateway_custom_domain_limits, the first ROW answering, NULL included (no cap
+// for this account). When no scope has a row the platform setting answers.
+// scoped reports that a row did, which the claim cap needs.
+func customDomainCapFor(st store.Store, userID string) (limit *int64, scoped bool) {
+	for _, scope := range []string{storeclient.AdminRouteScope(userID), storeclient.UserRouteScope(userID), "user_default", "global"} {
+		l, err := st.GetGatewayCustomDomainLimit(scope)
+		if err != nil || l == nil {
+			continue // no row here: ask the next scope
+		}
+		return l.MaxCustomDomains, true
+	}
+	raw, _ := st.GetSetting(services.SettingMaxCustomDomains)
+	return services.ParseLimitSetting(raw, services.DefaultMaxCustomDomains), false
+}
+
+// The external API maps these two messages to the public codes link_limit and
+// route_limit by fragment (externalErrorCodes); the tests build them here too.
+func linkLimitMessage(limit int64) string { return fmt.Sprintf("Link limit reached (%d)", limit) }
+
+func ourDomainsCapMessage(limit int64) string {
+	return fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead.", limit)
 }
 
 // customDomainCapError is the refusal for an account at its cap, or "".
-func (h *GatewayHandler) customDomainCapError(held int) string {
-	limit := h.customDomainCap()
+func (h *GatewayHandler) customDomainCapError(userID string, held int) string {
+	limit, _ := customDomainCapFor(h.d.Store, userID)
 	if !services.AtOrOver(limit, int64(held)) {
 		return ""
 	}
@@ -263,11 +295,11 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !stats.ownsDomain && services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && services.AtOrOver(limit, int64(stats.ours)) {
-		http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead.", *limit), http.StatusForbidden)
+		http.Error(w, ourDomainsCapMessage(*limit), http.StatusForbidden)
 		return
 	}
 	if !stats.ownsDomain && isCustomDomain && !reqctx.IsAdmin(r) {
-		if msg := h.customDomainCapError(stats.custom); msg != "" {
+		if msg := h.customDomainCapError(userID, stats.custom); msg != "" {
 			http.Error(w, msg, http.StatusForbidden)
 			return
 		}
@@ -291,7 +323,9 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	}
 	if err := h.d.Gateway.CreateRouteViaLink(userID, finalDomain, linkToken, host, req.TargetPort); err != nil {
 		msg := err.Error()
-		if errors.Is(err, services.ErrRouteDomainTaken) {
+		if errors.Is(err, services.ErrRouteSuspended) {
+			http.Error(w, msg, http.StatusConflict)
+		} else if errors.Is(err, services.ErrRouteDomainTaken) {
 			// Same wording the availability hint uses, and deliberately silent
 			// about who holds it.
 			http.Error(w, fmt.Sprintf("%s is already in use", finalDomain), http.StatusConflict)
@@ -308,6 +342,23 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Route created",
 		"domain": finalDomain, "ownershipNotice": ownershipNotice})
+}
+
+// routeSuspended reports whether the owner's stored row for that domain is
+// suspended. A read failure counts as suspended: refusing a delete is
+// recoverable, handing the owner a way around a takedown is not.
+func (h *GatewayHandler) routeSuspended(ownerID, domain string) bool {
+	rows, err := h.d.Store.ListCoreLinkRoutesByOwner(ownerID)
+	if err != nil {
+		log.Printf("route %s: read suspension: %v", domain, err)
+		return true
+	}
+	for _, rt := range rows {
+		if rt.Domain == domain {
+			return rt.SuspendedAt != nil
+		}
+	}
+	return false
 }
 
 // ownsCoreRoute reports whether this tenant may remove that route.
@@ -395,6 +446,30 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 			Voice: newLinkRouteVoiceView(voice[rt.Domain]), VoiceAllowed: allowed,
 			Bedrock: bedrock[rt.Domain], BedrockAllowed: bedrockAllowed, BedrockActive: bedrockActive})
 	}
+	// Suspended routes are not in Redis; list them from their rows so the owner
+	// sees what happened to the address instead of it silently disappearing.
+	if rows, err := h.d.Store.ListCoreLinkRoutesByOwner(userID); err != nil {
+		log.Printf("link routes: list suspended: %v", err)
+	} else {
+		for _, row := range rows {
+			if row.SuspendedAt == nil {
+				continue
+			}
+			dup := false
+			for i := range out {
+				if out[i].Domain == row.Domain {
+					out[i].Suspended, out[i].SuspendedReason = true, row.SuspendedReason
+					dup = true
+				}
+			}
+			if dup {
+				continue
+			}
+			out = append(out, linkRoute{PublicRoute: services.SuspendedPublicRoute(row), LinkID: linkIDByToken[row.LinkToken],
+				Voice: newLinkRouteVoiceView(voice[row.Domain]), VoiceAllowed: allowed,
+				BedrockAllowed: bedrockAllowed, BedrockActive: bedrockActive})
+		}
+	}
 	json.NewEncoder(w).Encode(out)
 }
 
@@ -409,6 +484,12 @@ func (h *GatewayHandler) DeleteLinkRoute(w http.ResponseWriter, r *http.Request)
 	}
 	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
 		http.Error(w, "Route not found", http.StatusNotFound)
+		return
+	}
+	// Deleting would let the owner lift the suspension by creating the route
+	// again. Only an admin removes a suspended route.
+	if !isAdmin && h.routeSuspended(userID, domain) {
+		http.Error(w, services.ErrRouteSuspended.Error(), http.StatusConflict)
 		return
 	}
 	if err := h.d.Gateway.DeleteCoreOwnedRoute(domain); err != nil {

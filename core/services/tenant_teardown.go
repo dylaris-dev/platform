@@ -225,6 +225,12 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 		if rt.OwnerID != userID {
 			continue
 		}
+		if rt.SuspendedAt != nil {
+			// Deleting the account must not release a suspended domain; an
+			// admin removes it explicitly.
+			log.Printf("tenant teardown %s: kept suspended route %s", userID, rt.Domain)
+			continue
+		}
 		if derr := gw.DeleteCoreOwnedRoute(rt.Domain); derr != nil {
 			// Durable: a route left behind keeps sending players to a machine
 			// whose owner no longer exists, and the republisher will put it back

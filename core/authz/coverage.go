@@ -97,6 +97,7 @@ var ExemptRoutes = map[string]bool{
 	"/api/external/rcon/{uuid}/exec":                                  true,
 	"/api/external/servers":                                           true,
 	"/api/external/usage":                                             true,
+	"/api/external/api-key/roll":                                      true,
 	"/api/external/servers/{uuid}":                                    true,
 	"/api/external/servers/{uuid}/power":                              true,
 	"/api/external/servers/{uuid}/console/history":                    true,
@@ -104,6 +105,21 @@ var ExemptRoutes = map[string]bool{
 	"/api/external/servers/{uuid}/stats/history":                      true,
 	"/api/external/servers/{uuid}/backup-jobs":                        true,
 	"/api/external/servers/{uuid}/backup-jobs/{jobId:[0-9]+}/trigger": true,
+	// The route-only product, gateway.read / gateway.write on the key.
+	"/api/external/gateway/link-kits":                                true,
+	"/api/external/gateway/link-kits/{linkID}":                       true,
+	"/api/external/gateway/link-kits/{linkID}/roll":                  true,
+	"/api/external/gateway/routes":                                   true,
+	"/api/external/gateway/routes/{domain:[^/]+}":                    true,
+	"/api/external/gateway/routes/{domain:[^/]+}/proxy-protocol":     true,
+	"/api/external/gateway/routes/{domain:[^/]+}/voice":              true,
+	"/api/external/gateway/routes/{domain:[^/]+}/bedrock":            true,
+	"/api/external/gateway/custom-domains":                           true,
+	"/api/external/gateway/custom-domains/{domain:[^/]+}":            true,
+	"/api/external/gateway/custom-domains/{domain:[^/]+}/txt-token":  true,
+	"/api/external/gateway/custom-domains/{domain:[^/]+}/verify-txt": true,
+	"/api/external/gateway/regions":                                  true,
+	"/api/external/gateway/usage":                                    true,
 
 	// The pack mirror a node downloads a panel-built pack from - registered on
 	// the ROOT router with no setup-lock/maintenance/auth middleware. The

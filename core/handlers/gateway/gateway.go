@@ -88,7 +88,15 @@ func (h *GatewayHandler) GetEdges(w http.ResponseWriter, r *http.Request) {
 func (h *GatewayHandler) GetAllRoutes(w http.ResponseWriter, r *http.Request) {
 	// PublicRoutes, not the stored shape: every route carries the tunnel token
 	// its link authenticates with, and this listing spans the whole fleet.
-	json.NewEncoder(w).Encode(services.PublicRoutes(services.GetRoutesFromRedis(h.ctx(), h.d.Redis)))
+	out := services.PublicRoutes(services.GetRoutesFromRedis(h.ctx(), h.d.Redis))
+	// Suspended routes are off Redis on purpose; without their rows the admin
+	// who suspended one could no longer find it to lift the suspension.
+	if suspended, err := services.SuspendedPublicRoutes(h.d.Store, ""); err != nil {
+		log.Printf("GetAllRoutes: list suspended: %v", err)
+	} else {
+		out = services.MergeSuspended(out, suspended)
+	}
+	json.NewEncoder(w).Encode(out)
 }
 
 // AdminDeleteRoute DELETE /api/gateway/routes/{domain} - removes any route by
@@ -450,11 +458,11 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if services.DomainIsOurs(finalDomain, h.ourBaseDomains()) && services.AtOrOver(limit, int64(stats.ours)) {
-			http.Error(w, fmt.Sprintf("You have used all %d addresses on our domains. Point your own domain at us instead.", *limit), http.StatusForbidden)
+			http.Error(w, ourDomainsCapMessage(*limit), http.StatusForbidden)
 			return
 		}
 		if isCustomDomain {
-			if msg := h.customDomainCapError(stats.custom); msg != "" {
+			if msg := h.customDomainCapError(account, stats.custom); msg != "" {
 				http.Error(w, msg, http.StatusForbidden)
 				return
 			}

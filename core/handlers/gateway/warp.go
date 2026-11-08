@@ -677,17 +677,26 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if services.AtOrOver(lim.MaxLinks, int64(used)) {
-			httpx.SendJSONError(w, fmt.Sprintf("Link limit reached (%d)", *lim.MaxLinks), http.StatusForbidden)
+			httpx.SendJSONError(w, linkLimitMessage(*lim.MaxLinks), http.StatusForbidden)
 			return
 		}
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name   string `json:"name"`
+		Region string `json:"region"`
 	}
 	json.NewDecoder(r.Body).Decode(&req)
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "Route-only link"
+	}
+	// A kit's region is the one its customer's addresses will live in, so it
+	// must name a region that has an edge up right now. Empty keeps today's
+	// behaviour: no region, the platform default.
+	region := strings.ToLower(strings.TrimSpace(req.Region))
+	if region != "" && !h.regionIsOnline(r.Context(), region) {
+		httpx.SendJSONError(w, "Unknown region "+region, http.StatusBadRequest)
+		return
 	}
 
 	nodeID, err := generateLinkIdentity()
@@ -710,6 +719,7 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 		OnNewConn: "kill_old",
 		NodeID:    nodeID,
 		OwnerID:   userID,
+		Region:    region,
 	}
 	if lim.MaxLinks != nil {
 		// The count above is the friendly answer; this is the one that holds
@@ -720,7 +730,7 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !created {
-			httpx.SendJSONError(w, fmt.Sprintf("Link limit reached (%d)", *lim.MaxLinks), http.StatusForbidden)
+			httpx.SendJSONError(w, linkLimitMessage(*lim.MaxLinks), http.StatusForbidden)
 			return
 		}
 	} else if _, err := h.d.Store.CreateWarpAPIKey(kit); err != nil {
@@ -734,6 +744,20 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 		"link_id":  nodeID,
 		"note":     "Shown once. Paste it as LINK_KEY into the route-only .env.",
 	})
+}
+
+// regionIsOnline reports whether an online edge advertises region (compared
+// lowercase, as kits store it).
+func (h *WarpHandler) regionIsOnline(ctx context.Context, region string) bool {
+	if h.d.Redis == nil {
+		return false
+	}
+	for _, e := range services.GetEdgesFromRedis(ctx, h.d.Redis) {
+		if e.Status == "online" && strings.EqualFold(e.Region, region) {
+			return true
+		}
+	}
+	return false
 }
 
 // LinkBoot POST /api/warp/link-boot - a Link presents its key and receives its

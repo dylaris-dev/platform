@@ -4,12 +4,12 @@ import { toast as notifyToast } from '@/components/ui/Toast';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-    getGatewayRoutes, deleteGatewayRoute, triggerGatewaySync,
+    getGatewayRoutes, deleteGatewayRoute, triggerGatewaySync, suspendGatewayRoute, unsuspendGatewayRoute,
     getRouteSuffixes, bulkDeleteRoutesBySuffix, RouteSuffix,
     GatewayRoute, GatewayEdge,
 } from '@/lib/api';
 import {
-    Trash2, RefreshCw, AlertTriangle, X, Search, Copy, Check, Layers,
+    Trash2, RefreshCw, Ban, Undo2, AlertTriangle, X, Search, Copy, Check, Layers,
 } from 'lucide-react';
 import { SkeletonTable, SkeletonText } from '@/components/Skeleton';
 import ModalPanel from '@/components/ui/ModalPanel';
@@ -33,6 +33,10 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
     const [search, setSearch] = useState('');
     const [deleteModal, setDeleteModal] = useState<GatewayRoute | null>(null);
     const [deleting, setDeleting] = useState(false);
+    const [suspendModal, setSuspendModal] = useState<GatewayRoute | null>(null);
+    const [suspendReason, setSuspendReason] = useState('');
+    const [suspending, setSuspending] = useState(false);
+    const [unsuspending, setUnsuspending] = useState<string | null>(null);
 
     const [copied, setCopied] = useState<string | null>(null);
 
@@ -117,6 +121,39 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
             }
         } finally {
             setDeleting(false);
+        }
+    };
+
+    const handleSuspend = async () => {
+        if (!suspendModal || !suspendReason.trim()) return;
+        setSuspending(true);
+        try {
+            const res = await suspendGatewayRoute(suspendModal.domain, suspendReason.trim());
+            if (res.success !== false) {
+                showToast('Route suspended');
+                setSuspendModal(null);
+                fetchRoutes();
+            } else {
+                showToast(res.message ?? res.error ?? 'Failed to suspend route', 'error');
+            }
+        } finally {
+            setSuspending(false);
+        }
+    };
+
+    const handleUnsuspend = async (route: GatewayRoute) => {
+        if (unsuspending) return;
+        setUnsuspending(route.domain);
+        try {
+            const res = await unsuspendGatewayRoute(route.domain);
+            if (res.success !== false) {
+                showToast('Route unsuspended');
+                fetchRoutes();
+            } else {
+                showToast(res.message ?? res.error ?? 'Failed to unsuspend route', 'error');
+            }
+        } finally {
+            setUnsuspending(null);
         }
     };
 
@@ -244,7 +281,7 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                                     <th className="mono-label text-left pb-2 pr-4 hidden md:table-cell">Link</th>
                                     <th className="mono-label text-left pb-2 pr-4 hidden lg:table-cell">Server</th>
                                     <th className="mono-label text-left pb-2 pr-4 hidden lg:table-cell">Owner</th>
-                                    <th className="pb-2 w-10"></th>
+                                    <th className="pb-2 w-16"></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -253,6 +290,11 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                                         <td className="py-2.5 pr-4">
                                             <div className="flex items-center gap-2">
                                                 <span className="text-(--base-09) font-medium">{route.domain}</span>
+                                                {route.suspended && (
+                                                    <span className="font-mono text-[9px] uppercase tracking-[0.08em] text-(--error-light) bg-(--error-ghost) border border-(--error-border) px-1.5 py-0.5 rounded" title={route.suspendedReason}>
+                                                        Suspended
+                                                    </span>
+                                                )}
                                                 <button
                                                     onClick={() => copyToClipboard(route.domain)}
                                                     className="text-(--base-05) hover:text-(--base-08) opacity-0 group-hover:opacity-100 transition-opacity p-0.5"
@@ -265,11 +307,36 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                                                 </button>
                                             </div>
                                         </td>
-                                        <td className="py-2.5 pr-4 text-(--base-07) font-mono text-xs">{route.target_ip}:{route.target_port}</td>
+                                        <td className="py-2.5 pr-4 text-(--base-07) font-mono text-xs">
+                                            {route.target_ip}:{route.target_port}
+                                            {route.suspended && route.suspendedReason && (
+                                                <div className="font-sans text-[11px] text-(--base-06) mt-0.5 max-w-xs truncate" title={route.suspendedReason}>{route.suspendedReason}</div>
+                                            )}
+                                        </td>
                                         <td className="py-2.5 pr-4 text-(--base-07) hidden md:table-cell">{route.link_name || '—'}</td>
                                         <td className="py-2.5 pr-4 text-(--base-07) hidden lg:table-cell">{route.server_name || '—'}</td>
                                         <td className="py-2.5 pr-4 text-(--base-07) hidden lg:table-cell">{route.owner_name || '—'}</td>
-                                        <td className="py-2.5">
+                                        <td className="py-2.5 whitespace-nowrap">
+                                            {route.core_owned && (route.suspended ? (
+                                                <button
+                                                    onClick={() => handleUnsuspend(route)}
+                                                    disabled={unsuspending !== null}
+                                                    className="text-(--base-05) hover:text-(--success-light) transition-colors p-1"
+                                                    title="Unsuspend route"
+                                                    aria-label={`Unsuspend ${route.domain}`}
+                                                >
+                                                    <Undo2 size={14} />
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    onClick={() => { setSuspendReason(''); setSuspendModal(route); }}
+                                                    className="text-(--base-05) hover:text-(--error-light) transition-colors p-1"
+                                                    title="Suspend route"
+                                                    aria-label={`Suspend ${route.domain}`}
+                                                >
+                                                    <Ban size={14} />
+                                                </button>
+                                            ))}
                                             <button
                                                 onClick={() => setDeleteModal(route)}
                                                 className="text-(--base-05) hover:text-(--error-light) transition-colors p-1"
@@ -285,6 +352,47 @@ export default function RoutesPanel({ onlineEdges }: RoutesPanelProps) {
                     )}
                 </div>
             </div>
+
+            {/* Suspend modal */}
+            {suspendModal && (
+                <div className="modal-overlay">
+                    <ModalPanel className="card w-full max-w-sm p-6 flex flex-col gap-4">
+                        <div className="flex items-center justify-between">
+                            <h2 className="font-display text-base font-bold text-(--base-09)">Suspend Route</h2>
+                            <button onClick={() => setSuspendModal(null)} className="p-1 text-(--base-06) hover:text-(--base-09)" aria-label="Close">
+                                <X size={15} />
+                            </button>
+                        </div>
+                        <p className="text-sm text-(--base-07)">
+                            <span className="text-(--base-09) font-medium">{suspendModal.domain}</span> goes offline at once and its owner cannot re-create it. The reason is stored with the route.
+                        </p>
+                        <textarea
+                            value={suspendReason}
+                            onChange={e => setSuspendReason(e.target.value)}
+                            maxLength={500}
+                            rows={3}
+                            placeholder="Reason (required)"
+                            aria-label="Reason"
+                            className="input-field w-full"
+                        />
+                        <div className="flex justify-end gap-2">
+                            <button
+                                onClick={() => setSuspendModal(null)}
+                                className="px-4 py-2 rounded-md text-sm text-(--base-07) hover:text-(--base-09) transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleSuspend}
+                                disabled={suspending || !suspendReason.trim()}
+                                className="px-4 py-2 rounded-md text-sm font-semibold bg-(--error) text-white hover:opacity-90 transition-opacity disabled:opacity-40"
+                            >
+                                {suspending ? 'Suspending...' : 'Suspend'}
+                            </button>
+                        </div>
+                    </ModalPanel>
+                </div>
+            )}
 
             {/* Delete confirm modal */}
             {deleteModal && (

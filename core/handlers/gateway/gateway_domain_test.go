@@ -29,6 +29,10 @@ func (f *gatewayDomainFakeStore) GetSetting(key string) (string, error) {
 	return f.settings[key], nil
 }
 
+func (f *gatewayDomainFakeStore) GetGatewayCustomDomainLimit(string) (*models.GatewayCustomDomainLimit, error) {
+	return nil, errors.New("not found")
+}
+
 func (f *gatewayDomainFakeStore) GetGatewayRouteLimit(scope string) (*models.GatewayRouteLimit, error) {
 	l, ok := f.routeLimits[scope]
 	if !ok {

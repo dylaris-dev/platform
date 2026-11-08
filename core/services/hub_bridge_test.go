@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -29,6 +30,10 @@ type hubBridgeFakeStore struct {
 	routeErr   error
 	upsertErr  error
 	upsertCall int
+	voice      map[string]store.LinkRouteVoice
+	// afterUpsert runs once the create path has written its row: the window an
+	// admin suspend can land in.
+	afterUpsert func(domain string)
 }
 
 func (f *hubBridgeFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
@@ -51,6 +56,9 @@ func (f *hubBridgeFakeStore) UpsertCoreLinkRoute(r store.CoreLinkRoute) error {
 		f.routes = map[string]store.CoreLinkRoute{}
 	}
 	f.routes[r.Domain] = r
+	if f.afterUpsert != nil {
+		f.afterUpsert(r.Domain)
+	}
 	return nil
 }
 
@@ -773,3 +781,32 @@ func TestDeleteServerRoutes_PushesQueueMessage(t *testing.T) {
 		t.Errorf("msg = %+v, want Action=delete_server_routes ServerUUID=uuid-gone", msgs[0])
 	}
 }
+
+func (f *hubBridgeFakeStore) ListCoreLinkRoutesByOwner(ownerID string) ([]store.CoreLinkRoute, error) {
+	var out []store.CoreLinkRoute
+	for _, r := range f.routes {
+		if r.OwnerID == ownerID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (f *hubBridgeFakeStore) SetCoreLinkRouteSuspended(domain string, at *time.Time, reason string) (bool, error) {
+	r, ok := f.routes[domain]
+	if !ok {
+		return false, nil
+	}
+	r.SuspendedAt, r.SuspendedReason = at, reason
+	f.routes[domain] = r
+	return true, nil
+}
+
+func (f *hubBridgeFakeStore) GetLinkRouteVoice(domain string) (*store.LinkRouteVoice, error) {
+	if v, ok := f.voice[domain]; ok {
+		return &v, nil
+	}
+	return nil, nil
+}
+
+func (f *hubBridgeFakeStore) RevokeWarpAPIKeyByNodeID(string) error { return nil }

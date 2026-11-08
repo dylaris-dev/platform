@@ -1062,6 +1062,30 @@ write one. `TestAPIDocIsCurrent` fails the build if the checked-in file no
 longer matches the router, and `TestAPIDocCoversEveryRegisteredRoute` fails if a
 registration exists that the generator did not recognise.
 
+### Gateway API for route-only customers
+
+`/api/external/gateway/*` exposes the route-only gateway to a user API key with
+the scopes `gateway.read` / `gateway.write`: link kits, routes, custom domains,
+regions and per-region usage. On a hosted install (a store is attached) a user
+with an active route-only entitlement may mint such a key even while user API
+keys are off; everywhere else the normal user-key switch applies. A key can be
+rolled (`POST /api/me/api-keys/{id}/roll`, or the key itself via
+`POST /api/external/api-key/roll`); the previous key keeps working for 24 hours.
+
+Rules worth knowing:
+
+- Every call runs as the key's owner, never as an admin, even for an admin's key.
+- Rate limits per key, shared across Core replicas through Redis: reads 120/min,
+  writes 30/min, kit/key minting 10/hour.
+- Route targets through this API must be one of your servers (`mc-<uuid>`) or a
+  private address; public targets need an admin to enable them for the account
+  (admin user settings, Gateway tab). The panel's own route form is unchanged.
+- Errors are JSON with a stable `code` (`route_limit`, `custom_domain_limit`,
+  `link_limit`, `target_not_allowed`, `route_suspended`, `domain_blocked`, ...).
+- Admins can suspend a single route-only route (`POST /api/gateway/routes/{domain}/suspend`);
+  it stays off the edges and cannot be re-created by anyone until an admin
+  unsuspends or deletes it. Players already connected are not disconnected.
+
 ## Custom-tab reverse proxy
 
 Custom tabs can run in two modes. A **direct** tab renders a browser-reachable

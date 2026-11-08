@@ -1249,6 +1249,26 @@
       "external": false
     },
     {
+      "method": "GET",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets",
+      "auth": "session",
+      "authorization": "users.write",
+      "description": "whether this account's API keys may create gateway routes with public targets.",
+      "handler": "GatewayHandler.GetPublicTargets",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets",
+      "auth": "session",
+      "authorization": "users.write",
+      "description": "body {\"enabled\": bool}, lets this account's API keys create gateway routes with public targets.",
+      "handler": "GatewayHandler.SetPublicTargets",
+      "group": "admin",
+      "external": false
+    },
+    {
       "method": "PATCH",
       "path": "/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides",
       "auth": "session",
@@ -1958,6 +1978,186 @@
     },
     {
       "method": "POST",
+      "path": "/api/external/api-key/roll",
+      "auth": "user API key",
+      "authorization": "no capability",
+      "description": "a key replaces its own secret.",
+      "handler": "APIKeysHandler.RollSelf",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/gateway/custom-domains",
+      "auth": "user API key",
+      "authorization": "gateway.read",
+      "description": "the caller's own domain claims and their TXT records.",
+      "handler": "ExternalGatewayHandler.ListCustomDomains",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/external/gateway/custom-domains",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "body {\"domain\": \"play.example.com\"}, returns the TXT record to publish.",
+      "handler": "ExternalGatewayHandler.AddCustomDomain",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/external/gateway/custom-domains/{domain:[^/]+}",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "removes the caller's claim; refused while a route uses it.",
+      "handler": "ExternalGatewayHandler.DeleteCustomDomain",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/external/gateway/custom-domains/{domain:[^/]+}/txt-token",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "returns the claim's TXT record, minting it once.",
+      "handler": "ExternalGatewayHandler.IssueCustomDomainTXTToken",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/external/gateway/custom-domains/{domain:[^/]+}/verify-txt",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "checks the published TXT record now.",
+      "handler": "ExternalGatewayHandler.VerifyCustomDomainTXT",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/gateway/link-kits",
+      "auth": "user API key",
+      "authorization": "gateway.read",
+      "description": "the caller's route-only link kits, without secrets, plus used and limit.",
+      "handler": "ExternalGatewayHandler.ListLinkKits",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/external/gateway/link-kits",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "creates a link kit; link_key is shown once.",
+      "handler": "ExternalGatewayHandler.MintLinkKit",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/external/gateway/link-kits/{linkID}",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "revokes one of the caller's link kits and removes its routes.",
+      "handler": "ExternalGatewayHandler.RevokeLinkKit",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/external/gateway/link-kits/{linkID}/roll",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "replaces a link kit's key; the old one keeps working for the grace period.",
+      "handler": "ExternalGatewayHandler.RollLinkKit",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/gateway/regions",
+      "auth": "user API key",
+      "authorization": "gateway.read",
+      "description": "the gateway regions with their wildcard and liveness, plus the hoster domains and CNAME target.",
+      "handler": "ExternalGatewayHandler.ListRegions",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/gateway/routes",
+      "auth": "user API key",
+      "authorization": "gateway.read",
+      "description": "the caller's route-only addresses.",
+      "handler": "ExternalGatewayHandler.ListRoutes",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/external/gateway/routes",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "creates or retargets an address on one of the caller's links.",
+      "handler": "ExternalGatewayHandler.CreateRoute",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/external/gateway/routes/{domain:[^/]+}",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "removes one of the caller's addresses.",
+      "handler": "ExternalGatewayHandler.DeleteRoute",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/external/gateway/routes/{domain:[^/]+}/bedrock",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "body {\"java\": bool, \"bedrock\": bool}, the address's editions.",
+      "handler": "ExternalGatewayHandler.SetRouteBedrock",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/external/gateway/routes/{domain:[^/]+}/proxy-protocol",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "body {\"enabled\": bool}, real player IP forwarding.",
+      "handler": "ExternalGatewayHandler.SetRouteProxyProtocol",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "PUT",
+      "path": "/api/external/gateway/routes/{domain:[^/]+}/voice",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "body {\"enabled\": bool, \"target_port\": int}, voice chat relay.",
+      "handler": "ExternalGatewayHandler.SetRouteVoice",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/gateway/usage",
+      "auth": "user API key",
+      "authorization": "gateway.read",
+      "description": "the period's totals (as /api/external/usage) plus regions [{region, kind, bytes}]; ?period=YYYY-MM.",
+      "handler": "ExternalGatewayHandler.GetUsage",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "POST",
       "path": "/api/external/rcon/{uuid}/exec",
       "auth": "user API key",
       "authorization": "rcon.exec",
@@ -2386,6 +2586,26 @@
       "external": false
     },
     {
+      "method": "POST",
+      "path": "/api/gateway/routes/{domain:[^/]+}/suspend",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "body {\"reason\": \"...\"}, takes one route-only route off the edges until an admin lifts it.",
+      "handler": "GatewayHandler.SuspendRoute",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/gateway/routes/{domain:[^/]+}/unsuspend",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "lifts a suspension and publishes the route again right away.",
+      "handler": "GatewayHandler.UnsuspendRoute",
+      "group": "gateway",
+      "external": false
+    },
+    {
       "method": "GET",
       "path": "/api/gateway/stats",
       "auth": "session",
@@ -2552,6 +2772,16 @@
       "authorization": "apikeys.delete",
       "description": "revokes one of the caller's own keys.",
       "handler": "APIKeysHandler.Revoke",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/me/api-keys/{id:[0-9]+}/roll",
+      "auth": "session",
+      "authorization": "apikeys.write",
+      "description": "replaces the secret of one of the caller's own keys.",
+      "handler": "APIKeysHandler.Roll",
       "group": "me",
       "external": false
     },
@@ -6183,15 +6413,15 @@
     }
   ],
   "counts": {
-    "total": 623,
+    "total": 646,
     "byAuth": {
       "none": 30,
-      "session": 575,
-      "user API key": 10,
+      "session": 580,
+      "user API key": 28,
       "warp key": 8
     },
     "byGroup": {
-      "admin": 146,
+      "admin": 148,
       "auth": 23,
       "authz": 3,
       "avatar": 1,
@@ -6201,15 +6431,15 @@
       "backup-storages": 7,
       "beam": 5,
       "disk": 4,
-      "external": 10,
+      "external": 28,
       "files": 10,
-      "gateway": 25,
+      "gateway": 27,
       "gateway-bandwidth": 4,
       "grants": 3,
       "healthz": 1,
       "infrastructure": 3,
       "maintenance": 1,
-      "me": 47,
+      "me": 48,
       "mirror": 1,
       "modrinth": 9,
       "modules": 6,
@@ -6245,6 +6475,6 @@
       "voice": 1,
       "warp": 23
     },
-    "external": 10
+    "external": 28
   }
 }

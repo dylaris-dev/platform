@@ -136,6 +136,60 @@ type PublicRoute struct {
 	// Always present, so the panel can show the switch without guessing what
 	// a missing field means.
 	ProxyProtocol bool `json:"proxy_protocol"`
+	// Set only on a route an admin has suspended. Such a route is not in
+	// Redis, so these come from the stored row.
+	Suspended       bool   `json:"suspended,omitempty"`
+	SuspendedReason string `json:"suspendedReason,omitempty"`
+}
+
+// SuspendedPublicRoutes lists the stored routes an admin has suspended, as they
+// appear in a route listing. They are absent from Redis by design, so a
+// listing built from Redis alone would make a suspended route vanish from its
+// owner and from the admin who suspended it. ownerID "" means every owner.
+func SuspendedPublicRoutes(st store.Store, ownerID string) ([]PublicRoute, error) {
+	var rows []store.CoreLinkRoute
+	var err error
+	if ownerID == "" {
+		rows, err = st.ListCoreLinkRoutes()
+	} else {
+		rows, err = st.ListCoreLinkRoutesByOwner(ownerID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []PublicRoute
+	for _, r := range rows {
+		if r.SuspendedAt == nil {
+			continue
+		}
+		out = append(out, SuspendedPublicRoute(r))
+	}
+	return out, nil
+}
+
+// MergeSuspended adds the suspended stored routes to a listing built from
+// Redis. A domain already listed (a stray key not yet withdrawn) is marked
+// suspended in place instead of appearing twice.
+func MergeSuspended(list []PublicRoute, suspended []PublicRoute) []PublicRoute {
+	at := make(map[string]int, len(list))
+	for i, r := range list {
+		at[r.Domain] = i
+	}
+	for _, s := range suspended {
+		if i, ok := at[s.Domain]; ok {
+			list[i].Suspended, list[i].SuspendedReason = true, s.SuspendedReason
+			continue
+		}
+		list = append(list, s)
+	}
+	return list
+}
+
+// SuspendedPublicRoute is one stored row as a listing shows it.
+func SuspendedPublicRoute(r store.CoreLinkRoute) PublicRoute {
+	return PublicRoute{Domain: r.Domain, TargetIP: r.TargetHost, TargetPort: r.TargetPort,
+		CoreOwned: true, OwnerID: r.OwnerID, ProxyProtocol: r.ProxyProtocol,
+		Suspended: true, SuspendedReason: r.SuspendedReason}
 }
 
 // Public strips the tunnel token off one route.
@@ -229,6 +283,10 @@ type GatewayProvider interface {
 	// origin, splice + rolling updates preserved.
 	CreateRouteViaLink(ownerID string, domain string, linkToken string, targetHost string, port int) error
 	DeleteCoreOwnedRoute(domain string) error
+	// SuspendCoreOwnedRoute / UnsuspendCoreOwnedRoute take a route-only route
+	// off the edges, or put it back, and return its owner for the audit trail.
+	SuspendCoreOwnedRoute(domain, reason string) (ownerID string, err error)
+	UnsuspendCoreOwnedRoute(domain string) (ownerID string, err error)
 	DeleteRoute(domain string) error
 	// DeleteServerRoutes tells the hub to drop every route of a deleted server,
 	// keyed by the server rather than by domains read back from Redis.
@@ -291,6 +349,13 @@ func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain s
 	if _, coreOwned, ok := g.coreOwnedRouteHolder(ctx, domain); ok && coreOwned {
 		return ErrRouteDomainTaken
 	}
+	// A suspended route-only entry has no Redis key, but its domain is still
+	// claimed.
+	if stored, err := g.storedRoute(domain); err != nil {
+		return err
+	} else if stored != nil && stored.SuspendedAt != nil {
+		return ErrRouteDomainTaken
+	}
 
 	// 5. Push to queue
 	sID := uint(serverID)
@@ -337,6 +402,111 @@ func ServerProxyProtocolKey(serverUUID string) string {
 // nothing to change.
 var ErrRouteNotStored = errors.New("route has no stored record")
 
+// ErrRouteSuspended is returned when a route-only domain is suspended by an
+// admin. It is refused for the owner and for every other tenant: the domain
+// stays claimed for the length of the suspension.
+var ErrRouteSuspended = errors.New("This route was suspended by an administrator. Contact support.")
+
+// ErrRouteNotCoreOwned is returned for a route that exists but is a managed
+// server route, which suspend does not cover.
+var ErrRouteNotCoreOwned = errors.New("route is a managed server route, not a route-only route")
+
+// ErrRouteAlreadySuspended / ErrRouteNotSuspended refuse a no-op change, so a
+// second suspend cannot overwrite the first reason.
+var (
+	ErrRouteAlreadySuspended = errors.New("route is already suspended")
+	ErrRouteNotSuspended     = errors.New("route is not suspended")
+)
+
+// ErrRouteChangeNotApplied wraps a failure that happened AFTER the stored row
+// changed (the Redis or voice step). The row is the truth, the republisher and
+// the voice reconcile repair the rest, and the caller must still audit it.
+var ErrRouteChangeNotApplied = errors.New("route row changed but the live state was not updated")
+
+// SuspendCoreOwnedRoute takes one route-only route off the edges: the columns
+// first, so the republisher can no longer put it back, then the Redis key and
+// index entry in the same call. Row first for the reason DeleteCoreOwnedRoute
+// gives: the worst case is a stale key that the next tick removes.
+func (g *RedisGateway) SuspendCoreOwnedRoute(domain, reason string) (ownerID string, err error) {
+	row, err := g.suspendableRow(domain)
+	if err != nil {
+		return "", err
+	}
+	if row.SuspendedAt != nil {
+		return row.OwnerID, ErrRouteAlreadySuspended
+	}
+	now := time.Now().UTC()
+	if _, err := g.store.SetCoreLinkRouteSuspended(domain, &now, reason); err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// The row has changed from here on; a failure below is reported as
+	// ErrRouteChangeNotApplied so the caller still audits it.
+	if err := withdrawCoreOwnedRoute(ctx, g.redis, *row); err != nil {
+		return row.OwnerID, fmt.Errorf("%w: %v", ErrRouteChangeNotApplied, err)
+	}
+	// Its voice port is a separate public listener on the relay.
+	if v, err := g.store.GetLinkRouteVoice(domain); err != nil {
+		return row.OwnerID, fmt.Errorf("%w: read voice: %v", ErrRouteChangeNotApplied, err)
+	} else if v != nil {
+		if err := UnpublishLinkRouteVoice(ctx, g.redis, *v); err != nil {
+			return row.OwnerID, fmt.Errorf("%w: %v", ErrRouteChangeNotApplied, err)
+		}
+	}
+	return row.OwnerID, nil
+}
+
+// UnsuspendCoreOwnedRoute clears the suspension and publishes the route right
+// away instead of waiting for the republisher tick.
+func (g *RedisGateway) UnsuspendCoreOwnedRoute(domain string) (ownerID string, err error) {
+	row, err := g.suspendableRow(domain)
+	if err != nil {
+		return "", err
+	}
+	if row.SuspendedAt == nil {
+		return row.OwnerID, ErrRouteNotSuspended
+	}
+	if _, err := g.store.SetCoreLinkRouteSuspended(domain, nil, ""); err != nil {
+		return "", err
+	}
+	row.SuspendedAt, row.SuspendedReason = nil, ""
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rp := &RouteRepublisher{store: g.store, redis: g.redis}
+	if rp.republish(ctx, *row) == republishSkipped {
+		return row.OwnerID, fmt.Errorf("%w: route %s not published", ErrRouteChangeNotApplied, domain)
+	}
+	if v, err := g.store.GetLinkRouteVoice(domain); err != nil {
+		return row.OwnerID, fmt.Errorf("%w: read voice: %v", ErrRouteChangeNotApplied, err)
+	} else if v != nil {
+		if err := PublishLinkRouteVoice(ctx, g.redis, *v); err != nil {
+			return row.OwnerID, fmt.Errorf("%w: %v", ErrRouteChangeNotApplied, err)
+		}
+	}
+	return row.OwnerID, nil
+}
+
+// suspendableRow returns the stored row, ErrRouteNotCoreOwned for a managed
+// route and ErrRouteNotStored for an unknown domain.
+func (g *RedisGateway) suspendableRow(domain string) (*store.CoreLinkRoute, error) {
+	row, err := g.storedRoute(domain)
+	if err != nil {
+		return nil, err
+	}
+	if row != nil {
+		return row, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if n, err := g.redis.Exists(ctx, "route:"+domain).Result(); err != nil {
+		return nil, err
+	} else if n > 0 {
+		return nil, ErrRouteNotCoreOwned
+	}
+	return nil, ErrRouteNotStored
+}
+
 // SetCoreOwnedRouteProxyProtocol rewrites the stored row with the new switch
 // and then publishes it the way the republisher does, so the next tick finds
 // nothing to correct and cannot flip it back.
@@ -351,6 +521,10 @@ func (g *RedisGateway) SetCoreOwnedRouteProxyProtocol(domain string, enabled boo
 	row.ProxyProtocol = enabled
 	if err := g.store.UpsertCoreLinkRoute(*row); err != nil {
 		return err
+	}
+	if row.SuspendedAt != nil {
+		// Saved; it goes out with the route when an admin lifts the suspension.
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -390,8 +564,13 @@ func (g *RedisGateway) CreateRouteViaLink(ownerID string, domain string, linkTok
 	if err != nil {
 		return err
 	}
+	// Ownership first: another tenant must not learn that this domain is
+	// suspended, only that it is taken.
 	if stored != nil && stored.OwnerID != ownerID {
 		return ErrRouteDomainTaken
+	}
+	if stored != nil && stored.SuspendedAt != nil {
+		return ErrRouteSuspended
 	}
 	row := store.CoreLinkRoute{
 		Domain: domain, OwnerID: ownerID, LinkToken: linkToken,
@@ -438,6 +617,15 @@ func (g *RedisGateway) CreateRouteViaLink(ownerID string, domain string, linkTok
 			g.redis.Del(ctx, "route:"+domain)
 		}
 		return err
+	}
+	// An admin may have suspended the route between the check above and the
+	// key being written. Re-read, and take the key back out rather than leave
+	// a suspended route live until the next republisher tick.
+	if again, err := g.storedRoute(domain); err == nil && again != nil && again.SuspendedAt != nil {
+		if err := withdrawCoreOwnedRoute(ctx, g.redis, row); err != nil {
+			log.Printf("route %s: withdraw after suspend race: %v", domain, err)
+		}
+		return ErrRouteSuspended
 	}
 	return g.redis.SAdd(ctx, "sys:index:routes", domain).Err()
 }

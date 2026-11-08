@@ -1608,3 +1608,19 @@ func TestServerDomainsRoutesNeedCaps(t *testing.T) {
 		}
 	}
 }
+
+func TestCap_GatewayPublicTargetsNeedsUsersWrite(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	fs.addUser("plain-id", "plain", false)
+	srv := newAuthzTestServer(t, fs)
+	path := "/api/admin/users/11111111-2222-3333-4444-555555555555/gateway-public-targets"
+	for _, m := range []string{"GET", "PUT"} {
+		if c := doAs(t, srv, m, path, testIdentity{UserID: "plain-id", Username: "plain"}); c != 403 {
+			t.Errorf("ordinary user %s %s = %d, want 403", m, path, c)
+		}
+		if c := doAs(t, srv, m, path, testIdentity{UserID: admin.ID, Username: "root", IsAdmin: true}); c == 403 {
+			t.Errorf("admin %s %s must not be 403", m, path)
+		}
+	}
+}

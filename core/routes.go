@@ -18,6 +18,7 @@ import (
 	"dylaris-core/handlers/files"
 	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/gateway"
+	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/health"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/mods"
@@ -323,18 +324,19 @@ var requiredCaps = map[string]string{
 	// listed here. See the panel-role escalation note at the route registration
 	// above: panelroles.write has no delegation check, accepted as safe-by-
 	// default for this cut-over.
-	"/api/users":                                           "users.read",
-	"/api/users/{id:[0-9a-f-]{36}}":                        "users.delete",
-	"/api/users/{id:[0-9a-f-]{36}}/password":               "users.write",
-	"/api/users/{id:[0-9a-f-]{36}}/2fa":                    "users.write",
-	"/api/users/{id:[0-9a-f-]{36}}/route-limit":            "users.read",
-	"/api/admin/users/{id:[0-9a-f-]{36}}/cancel-deletion":  "users.write",
-	"/api/admin/users/{id:[0-9a-f-]{36}}/role":             "users.write",
-	"/api/admin/users/{id:[0-9a-f-]{36}}/permissions":      "users.write",
-	"/api/admin/users/{id:[0-9a-f-]{36}}/username-history": "users.read",
-	"/api/admin/users/{id:[0-9a-f-]{36}}/username":         "users.write",
-	"/api/admin/users/{id:[0-9a-f-]{36}}/email":            "users.write",
-	"/api/admin/users/{id:[0-9a-f-]{36}}/panel-role":       "panelroles.write",
+	"/api/users":                                                 "users.read",
+	"/api/users/{id:[0-9a-f-]{36}}":                              "users.delete",
+	"/api/users/{id:[0-9a-f-]{36}}/password":                     "users.write",
+	"/api/users/{id:[0-9a-f-]{36}}/2fa":                          "users.write",
+	"/api/users/{id:[0-9a-f-]{36}}/route-limit":                  "users.read",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/cancel-deletion":        "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/role":                   "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/permissions":            "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/username-history":       "users.read",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/username":               "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/email":                  "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets": "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/panel-role":             "panelroles.write",
 	// A user's own storage targets: listing is a user read, removing one a
 	// user write, like the neighbouring per-user admin actions.
 	"/api/admin/users/{id:[0-9a-f-]{36}}/storage-targets":                    "users.read",
@@ -490,33 +492,35 @@ var requiredCaps = map[string]string{
 	// /api/warp/link/* (warp API-key auth, not a session) and /api/warp/link-kits/* (tenant
 	// self-service, BYON-gated + owner-filtered in-handler) are deliberately NOT
 	// listed here - they stay EXEMPT-authed (Phase 4 controller decision #2).
-	"/api/gateway/links":                     "topology.read",
-	"/api/gateway/edges":                     "topology.read",
-	"/api/gateway/routes":                    "topology.read",
-	"/api/gateway/dns-check":                 "topology.read",
-	"/api/gateway/routes/suffixes":           "topology.read",
-	"/api/gateway/routes/bulk-delete":        "topology.write",
-	"/api/gateway/routes/{domain:.+}":        "topology.write",
-	"/api/gateway/logs":                      "topology.read",
-	"/api/gateway/stats":                     "topology.read",
-	"/api/gateway/sync":                      "topology.write",
-	"/api/gateway/errors":                    "topology.read",
-	"/api/infrastructure/overview":           "topology.read",
-	"/api/infrastructure/players-online":     "topology.read",
-	"/api/admin/metrics/catalog":             "topology.read",
-	"/api/admin/metrics/series":              "topology.read",
-	"/api/admin/metrics/summary":             "topology.read",
-	"/api/admin/metrics/export":              "topology.read",
-	"/api/infrastructure/routing-migration":  "topology.read",
-	"/api/warp/regions":                      "topology.read",
-	"/api/warp/regions/{region}":             "topology.write",
-	"/api/warp/leaders":                      "topology.write",
-	"/api/warp/leaders/{leaderId}":           "topology.write",
-	"/api/admin/warp/keys":                   "topology.write",
-	"/api/admin/warp/keys/{id:[0-9]+}":       "topology.write",
-	"/api/admin/warp/keys/{id:[0-9]+}/purge": "topology.write",
-	"/api/admin/warp/keys/{id:[0-9]+}/roll":  "topology.write",
-	"/api/admin/warp/external-nodes":         "topology.write",
+	"/api/gateway/links":                           "topology.read",
+	"/api/gateway/edges":                           "topology.read",
+	"/api/gateway/routes":                          "topology.read",
+	"/api/gateway/dns-check":                       "topology.read",
+	"/api/gateway/routes/suffixes":                 "topology.read",
+	"/api/gateway/routes/bulk-delete":              "topology.write",
+	"/api/gateway/routes/{domain:.+}":              "topology.write",
+	"/api/gateway/routes/{domain:[^/]+}/suspend":   "topology.write",
+	"/api/gateway/routes/{domain:[^/]+}/unsuspend": "topology.write",
+	"/api/gateway/logs":                            "topology.read",
+	"/api/gateway/stats":                           "topology.read",
+	"/api/gateway/sync":                            "topology.write",
+	"/api/gateway/errors":                          "topology.read",
+	"/api/infrastructure/overview":                 "topology.read",
+	"/api/infrastructure/players-online":           "topology.read",
+	"/api/admin/metrics/catalog":                   "topology.read",
+	"/api/admin/metrics/series":                    "topology.read",
+	"/api/admin/metrics/summary":                   "topology.read",
+	"/api/admin/metrics/export":                    "topology.read",
+	"/api/infrastructure/routing-migration":        "topology.read",
+	"/api/warp/regions":                            "topology.read",
+	"/api/warp/regions/{region}":                   "topology.write",
+	"/api/warp/leaders":                            "topology.write",
+	"/api/warp/leaders/{leaderId}":                 "topology.write",
+	"/api/admin/warp/keys":                         "topology.write",
+	"/api/admin/warp/keys/{id:[0-9]+}":             "topology.write",
+	"/api/admin/warp/keys/{id:[0-9]+}/purge":       "topology.write",
+	"/api/admin/warp/keys/{id:[0-9]+}/roll":        "topology.write",
+	"/api/admin/warp/external-nodes":               "topology.write",
 
 	// Phase 4 Task 19: module mutations (PANEL settings.write - there is no
 	// dedicated modules.* cap). GET /api/modules is EXEMPT-authed (navbar
@@ -581,8 +585,9 @@ var requiredCaps = map[string]string{
 	// annotation batch. GET+POST share the read cap as the representative
 	// (the finer write/delete cap lives at the per-method RequireCap call
 	// above); DELETE gets its own delete-cap entry.
-	"/api/me/api-keys":             "apikeys.read",
-	"/api/me/api-keys/{id:[0-9]+}": "apikeys.delete",
+	"/api/me/api-keys":                  "apikeys.read",
+	"/api/me/api-keys/{id:[0-9]+}":      "apikeys.delete",
+	"/api/me/api-keys/{id:[0-9]+}/roll": "apikeys.write",
 
 	// Phase 4 Task 22: split-template entries. Each of these templates is
 	// shared by an authed-exempt GET (in ExemptRoutes, see coverage.go) and a
@@ -1076,6 +1081,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// make each number mean what it looks like, and would also hand an anonymous
 	// caller the SUM of them, so it is deliberately not done.
 	authLimiter := httpx.NewIPRateLimiter()
+	keyLimiter := guard.NewKeyClassLimiter(appState.Redis)
 
 	// --- PUBLIC ENDPOINTS ---
 	api.HandleFunc("/auth/login", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.LoginHandler))).Methods("POST")
@@ -1143,6 +1149,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// already holds - which is exactly the situation the check exists for.
 	api.HandleFunc("/me/api-keys", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.write")(apiKeysHandler.Create))))).Methods("POST")
 	api.HandleFunc("/me/api-keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.delete")(apiKeysHandler.Revoke))).Methods("DELETE")
+	// Roll hands out a new credential, so it carries Create's guards: throttle,
+	// body cap, the apikeys.write cap and the password re-check inside.
+	api.HandleFunc("/me/api-keys/{id:[0-9]+}/roll", authLimiter.Limit(10, httpx.LimitBody(httpx.CredentialBodyLimit, authHandler.AuthMiddleware(appState.Authz.RequireCap("apikeys.write")(apiKeysHandler.Roll))))).Methods("POST")
 	// The keys the caller signs in to SFTP with. Own account only, like the
 	// API keys above; adding one re-asks password and code, so it is throttled
 	// and body-capped for the same reason.
@@ -1163,6 +1172,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// the suspension, quota and audit guards inside those handlers keep
 	// applying to key traffic.
 	api.HandleFunc("/external/servers", apiKeysHandler.APIKeyOwnerRoute("")(apiKeysHandler.ListExternalServers)).Methods("GET")
+	// A key rolls itself: no capability, any valid key. Rate class mint.
+	api.HandleFunc("/external/api-key/roll", apiKeysHandler.APIKeyOwnerRoute("")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.RollSelf))).Methods("POST")
 	api.HandleFunc("/external/usage", apiKeysHandler.APIKeyOwnerRoute("usage.read")(apiKeysHandler.ExternalOwnerRoute(usageHandler.GetMyUsage))).Methods("GET")
 
 	api.HandleFunc("/external/servers/{uuid}", apiKeysHandler.APIKeyServerRoute("overview.read")(apiKeysHandler.GetExternalServer)).Methods("GET")
@@ -1871,6 +1882,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 
 	// --- Gateway Endpoints ---
 	gatewayHandler := gateway.NewGatewayHandler(gatewayDeps)
+	// One cap for both methods (the cap map is keyed by path): the toggle is a write control, and reading it is only ever done to show it.
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(gatewayHandler.GetPublicTargets))).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(gatewayHandler.SetPublicTargets))).Methods("PUT")
 	dnsHandler := health.NewDNSHandler(healthDeps)
 	trafficLimitHandler := billing.NewTrafficLimitHandler(billingDeps)
 	infrastructureHandler := health.NewInfrastructureHandler(healthDeps)
@@ -1884,6 +1898,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/gateway/dns-check", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(dnsHandler.CheckDNS))).Methods("GET")
 	api.HandleFunc("/gateway/routes/suffixes", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetRouteSuffixes))).Methods("GET")
 	api.HandleFunc("/gateway/routes/bulk-delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.BulkDeleteRoutesBySuffix))).Methods("POST")
+	api.HandleFunc("/gateway/routes/{domain:[^/]+}/suspend", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.SuspendRoute))).Methods("POST")
+	api.HandleFunc("/gateway/routes/{domain:[^/]+}/unsuspend", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.UnsuspendRoute))).Methods("POST")
 	api.HandleFunc("/gateway/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.AdminDeleteRoute))).Methods("DELETE")
 	// check-domain is an owner-facing route-creation helper (RouteDomainPicker in
 	// the new-server + routes UI): any authed user needs the domain-availability
@@ -1967,6 +1983,35 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/bedrock", authHandler.AuthMiddleware(gatewayHandler.SetLinkRouteBedrock)).Methods("PUT")
 	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/floodgate-key", authHandler.AuthMiddleware(gatewayHandler.GetLinkRouteFloodgateKey)).Methods("GET")
 	api.HandleFunc("/gateway/link-routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteLinkRoute)).Methods("DELETE")
+
+	// --- External gateway API: the route-only product for a user API key ---
+	//
+	// Registered here rather than in the external block above because the
+	// session handlers it adapts are only built in this section. Same shape as
+	// /external/usage: the key route checks the capability against the key and
+	// its owner, ExternalOwnerRoute makes the owner the caller, and the
+	// ExternalGatewayHandler method forces a NON-admin context and the external
+	// JSON shape (handlers/gateway/external.go). One line per route so each can
+	// take its own rate class.
+	extGatewayHandler := gateway.NewExternalGatewayHandler(warpHandler, gatewayHandler, customDomainHandler,
+		gates.RequireGatewayEnabled, settingsHandler.GetGatewayRouteOptions, usageHandler.GetMyUsage)
+	api.HandleFunc("/external/gateway/link-kits", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListLinkKits)))).Methods("GET")
+	api.HandleFunc("/external/gateway/link-kits", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.MintLinkKit)))).Methods("POST")
+	api.HandleFunc("/external/gateway/link-kits/{linkID}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.RevokeLinkKit)))).Methods("DELETE")
+	api.HandleFunc("/external/gateway/link-kits/{linkID}/roll", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.RollLinkKit)))).Methods("POST")
+	api.HandleFunc("/external/gateway/routes", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListRoutes)))).Methods("GET")
+	api.HandleFunc("/external/gateway/routes", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.CreateRoute)))).Methods("POST")
+	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.DeleteRoute)))).Methods("DELETE")
+	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/proxy-protocol", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.SetRouteProxyProtocol)))).Methods("PATCH")
+	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/voice", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.SetRouteVoice)))).Methods("PUT")
+	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/bedrock", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.SetRouteBedrock)))).Methods("PUT")
+	api.HandleFunc("/external/gateway/custom-domains", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListCustomDomains)))).Methods("GET")
+	api.HandleFunc("/external/gateway/custom-domains", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.AddCustomDomain)))).Methods("POST")
+	api.HandleFunc("/external/gateway/custom-domains/{domain:[^/]+}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.DeleteCustomDomain)))).Methods("DELETE")
+	api.HandleFunc("/external/gateway/custom-domains/{domain:[^/]+}/txt-token", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.IssueCustomDomainTXTToken)))).Methods("POST")
+	api.HandleFunc("/external/gateway/custom-domains/{domain:[^/]+}/verify-txt", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.VerifyCustomDomainTXT)))).Methods("POST")
+	api.HandleFunc("/external/gateway/regions", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListRegions)))).Methods("GET")
+	api.HandleFunc("/external/gateway/usage", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.GetUsage)))).Methods("GET")
 
 	// Infrastructure overview + migration status (PANEL topology.read; Phase 4 Task 18)
 	// Traffic limits: what a tenant may use and buy, per (region, kind). The

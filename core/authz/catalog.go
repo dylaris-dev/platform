@@ -176,6 +176,13 @@ var catalog = []Capability{
 	// live in the shared catalog, which is where key capabilities live.
 	{ID: "usage.read", Label: "View account usage", Category: "Usage", Scope: ScopeOwner, Verb: VerbRead},
 
+	// Managed-gateway provider API (/api/external/gateway/*). Key capabilities
+	// like usage.read: owner-scoped, the handlers bind to the key's owner. A key
+	// carrying only these (plus usage.read) may be minted while user keys are off
+	// if the owner holds a route-only entitlement (APIKeysHandler.gatewayKeyEntitled).
+	{ID: "gateway.read", Label: "View gateway routes, link kits and usage", Category: "Gateway", Scope: ScopeOwner, Verb: VerbRead},
+	{ID: "gateway.write", Label: "Manage gateway routes, link kits and domains", Category: "Gateway", Scope: ScopeOwner, Verb: VerbWrite},
+
 	{ID: "apikeys.read", Label: "View API keys", Category: "API keys", Scope: ScopeOwner, Verb: VerbRead},
 	{ID: "apikeys.write", Label: "Create API keys", Category: "API keys", Scope: ScopeOwner, Verb: VerbWrite},
 	{ID: "apikeys.delete", Label: "Revoke API keys", Category: "API keys", Scope: ScopeOwner, Verb: VerbDelete},

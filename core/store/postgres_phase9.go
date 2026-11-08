@@ -1,16 +1,22 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"dylaris-core/models"
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 // RCON config + API keys. Kept separate from main postgres.go so
 // the giant scan lists don't grow on every feature.
 
 var errAPIKeyNotFound = errors.New("api key not found")
+
+// ErrAPIKeyRollConflict: the key was rolled, revoked or expired since the
+// caller read it (or is not the caller's).
+var ErrAPIKeyRollConflict = errors.New("api key changed while rolling")
 
 // --- RCON config ---
 
@@ -113,14 +119,42 @@ func (s *PostgresStore) ListAPIKeysByUser(userID string) ([]models.APIKey, error
 	return out, rows.Err()
 }
 
+// GetAPIKeyByHash also matches the previous hash of a rolled key, but only
+// while the grace runs and the key itself is neither revoked nor expired: a
+// dead key's old hash is dead too. ViaPrevious tells the caller which one it
+// presented.
 func (s *PostgresStore) GetAPIKeyByHash(hash string) (*models.APIKey, error) {
 	row := s.db.QueryRow(`SELECT `+apiKeyCols+`
-		FROM api_keys WHERE key_hash=$1`, hash)
+		FROM api_keys WHERE key_hash=$1
+		OR (prev_key_hash=$1 AND prev_key_expires_at > NOW()
+			AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW()))`, hash)
 	k, err := scanAPIKey(row)
 	if err == sql.ErrNoRows {
 		return nil, errAPIKeyNotFound
 	}
+	if err == nil && k.KeyHash != hash {
+		k.ViaPrevious = true
+	}
 	return k, err
+}
+
+// RollAPIKey replaces the key's hash and keeps the old one valid for grace.
+// The two hashes move in one statement, so a reader never sees a key with no
+// valid hash; a second roll overwrites the previous hash (one old key only).
+func (s *PostgresStore) RollAPIKey(ctx context.Context, id int, ownerID, expectHash, newHash string, grace time.Duration) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE api_keys
+		SET prev_key_hash=key_hash, prev_key_expires_at=NOW() + make_interval(secs => $3),
+			key_hash=$2
+		WHERE id=$1 AND user_id=$4 AND key_hash=$5
+			AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())`,
+		id, newHash, grace.Seconds(), ownerID, expectHash)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrAPIKeyRollConflict
+	}
+	return nil
 }
 
 // RevokeAPIKey is user-scoped — owners can only revoke their own keys.
