@@ -643,6 +643,8 @@ type Store interface {
 	SetTrafficLimit(scope, region, kind string, includedGB, maxPurchaseGB *int64) error
 	ListTrafficLimits() ([]models.TrafficLimit, error)
 	DeleteTrafficLimit(scope, region, kind string) error
+	// ReplaceTrafficLimits makes rows the exact set one scope holds, in one transaction.
+	ReplaceTrafficLimits(scope string, rows []models.TrafficLimit) error
 
 	// --- Gateway Route Limits (still managed by Core, not Hub) ---
 	GetGatewayRouteLimit(scope string) (*models.GatewayRouteLimit, error)

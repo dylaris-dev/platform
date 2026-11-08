@@ -75,3 +75,26 @@ func (s *PostgresStore) DeleteTrafficLimit(scope, region, kind string) error {
 		scope, region, kind)
 	return err
 }
+
+// ReplaceTrafficLimits makes rows the exact set one scope holds: rows not in
+// the set are deleted, the rest upserted, all in one transaction so a failed
+// write never leaves a tenant with half of what the store sent.
+func (s *PostgresStore) ReplaceTrafficLimits(scope string, rows []models.TrafficLimit) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM traffic_limits WHERE scope = $1`, scope); err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if _, err := tx.Exec(`
+			INSERT INTO traffic_limits (scope, region, kind, included_gb, max_purchase_gb)
+			VALUES ($1,$2,$3,$4,$5)`,
+			scope, r.Region, r.Kind, r.IncludedGB, r.MaxPurchaseGB); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

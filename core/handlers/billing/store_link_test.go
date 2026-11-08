@@ -49,6 +49,7 @@ type storeLinkFakeStore struct {
 	customDomainSets  []storeLinkCustomDomainCall
 	customDomainDels  []string
 	routeLimitErr     error
+	trafficReplaces   []storeLinkTrafficReplace
 
 	// Which manual grants a provision call retired. A purchase ends the grant
 	// it covers, so this is part of what "activate" does now.
@@ -149,6 +150,16 @@ type storeLinkRouteLimitCall struct {
 
 func (f *storeLinkFakeStore) SetGatewayRouteLimit(scope string, max *int) error {
 	f.routeLimitSets = append(f.routeLimitSets, storeLinkRouteLimitCall{scope, max})
+	return f.routeLimitErr
+}
+
+type storeLinkTrafficReplace struct {
+	scope string
+	rows  []models.TrafficLimit
+}
+
+func (f *storeLinkFakeStore) ReplaceTrafficLimits(scope string, rows []models.TrafficLimit) error {
+	f.trafficReplaces = append(f.trafficReplaces, storeLinkTrafficReplace{scope, rows})
 	return f.routeLimitErr
 }
 

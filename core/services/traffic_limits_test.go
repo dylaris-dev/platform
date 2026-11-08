@@ -110,7 +110,12 @@ func TestResolveTrafficLimit_ScopeOrder(t *testing.T) {
 			}
 			assertPtr(t, "includedGB", got.IncludedGB, tt.wantIncl)
 			assertPtr(t, "maxPurchaseGB", got.MaxPurchaseGB, tt.wantPurch)
-			if len(f.asks) != tt.wantAskedUp {
+			// Distinct scopes: the user scope is asked twice (exact region, then "*").
+			distinct := map[string]bool{}
+			for _, s := range f.asks {
+				distinct[s] = true
+			}
+			if len(distinct) != tt.wantAskedUp {
 				t.Errorf("consulted %v, want %d scope(s)", f.asks, tt.wantAskedUp)
 			}
 		})
@@ -152,6 +157,46 @@ func TestResolveTrafficLimit_KindAndRegionAreThePair(t *testing.T) {
 	}
 	if got, _ := ResolveTrafficLimit(f, "u1", "ap-southeast", "edge"); got.Scope != "" {
 		t.Errorf("a eu-central limit answered for ap-southeast: %+v", got)
+	}
+}
+
+// A user's "*" edge row covers every region without an exact user row, beats
+// the operator default, and loses to an exact user row. The default scope's "*"
+// edge row stays dead, as it was before.
+func TestResolveTrafficLimit_UserWildcardRegion(t *testing.T) {
+	tests := []struct {
+		name      string
+		rows      map[string]*models.TrafficLimit
+		region    string
+		wantScope string
+		wantIncl  *int64
+	}{
+		{"wildcard answers any region", map[string]*models.TrafficLimit{
+			"user:u1|*|edge": {IncludedGB: gbPtr(5000), MaxPurchaseGB: gbPtr(10000)},
+		}, "us-east", "user:u1", gbPtr(5000)},
+		{"wildcard beats the default", map[string]*models.TrafficLimit{
+			"user:u1|*|edge":               {IncludedGB: gbPtr(5000)},
+			"user_default|eu-central|edge": {IncludedGB: gbPtr(1000)},
+		}, "eu-central", "user:u1", gbPtr(5000)},
+		{"exact user row beats the wildcard", map[string]*models.TrafficLimit{
+			"user:u1|*|edge":          {IncludedGB: gbPtr(5000)},
+			"user:u1|eu-central|edge": {IncludedGB: gbPtr(7000)},
+		}, "eu-central", "user:u1", gbPtr(7000)},
+		{"default wildcard stays dead", map[string]*models.TrafficLimit{
+			"user_default|*|edge": {IncludedGB: gbPtr(1000)},
+		}, "eu-central", "", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ResolveTrafficLimit(&fakeLimitReader{rows: tt.rows}, "u1", tt.region, "edge")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Scope != tt.wantScope {
+				t.Errorf("scope = %q, want %q", got.Scope, tt.wantScope)
+			}
+			assertPtr(t, "includedGB", got.IncludedGB, tt.wantIncl)
+		})
 	}
 }
 

@@ -113,6 +113,17 @@ func ResolveTrafficLimit(r TrafficLimitReader, userID, region, kind string) (Res
 		if err != nil {
 			return ResolvedTrafficLimit{}, err
 		}
+		// A user's own "*" row for a regional kind covers every region that user
+		// has no exact row for. The store writes it for a product that includes
+		// the same allowance in each region, and the store cannot know the region
+		// labels the edges emit. Only the user scope reads it: the operator's
+		// user_default rows stay exact, so no row they set before this answers
+		// for a new region by surprise.
+		if l == nil && region != TrafficRegionAny && scope != TrafficScopeDefault {
+			if l, err = r.GetTrafficLimit(scope, TrafficRegionAny, kind); err != nil {
+				return ResolvedTrafficLimit{}, err
+			}
+		}
 		if l == nil {
 			continue // this scope says nothing: ask the next one
 		}

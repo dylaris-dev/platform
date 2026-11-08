@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.08.4
+
+### Features
+- The store can now set traffic allowances per account, for one region or all of them, and mark
+  address and custom-domain caps as unlimited; nothing changes until the store sends them. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.08.3
 
 ### Features

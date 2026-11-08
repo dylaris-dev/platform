@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -15,6 +16,7 @@ import (
 	"dylaris-core/services/storeclient"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -397,6 +399,69 @@ func parseRoutePool(raw json.RawMessage) (*int64, bool, error) {
 	return &n, true, nil
 }
 
+// isUnlimited reports whether a cap field is the string "unlimited". Any other
+// string is an error; numbers, null and absent are left to parseRoutePool.
+func isUnlimited(raw json.RawMessage) (bool, error) {
+	var s string
+	// null also unmarshals into a string without error, so gate on the quote.
+	if len(raw) == 0 || raw[0] != '"' || json.Unmarshal(raw, &s) != nil {
+		return false, nil
+	}
+	if s != "unlimited" {
+		return false, errors.New("unknown cap string")
+	}
+	return true, nil
+}
+
+func unlimitedAsAbsent(raw json.RawMessage, unlimited bool) json.RawMessage {
+	if unlimited {
+		return nil
+	}
+	return raw
+}
+
+// parseTrafficLimits decodes the trafficLimits array into rows. nil raw or
+// JSON null = not set. Limits convention per value: null = no limit, 0 = none,
+// n = cap; negatives and duplicate (region, kind) pairs are refused.
+func parseTrafficLimits(raw json.RawMessage) ([]models.TrafficLimit, bool, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, false, nil
+	}
+	var in []struct {
+		Region        string `json:"region"`
+		Kind          string `json:"kind"`
+		IncludedGB    *int64 `json:"includedGb"`
+		MaxPurchaseGB *int64 `json:"maxPurchaseGb"`
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil, false, err
+	}
+	out := make([]models.TrafficLimit, 0, len(in))
+	seen := map[[2]string]bool{}
+	for _, r := range in {
+		region, kind := strings.TrimSpace(r.Region), strings.TrimSpace(r.Kind)
+		if region == "" || kind == "" || !validTrafficLabel(kind) {
+			return nil, false, errors.New("bad region or kind")
+		}
+		// Same fold as the admin handler: a non-regional kind is stored under
+		// the one region the resolver asks about.
+		region = services.TrafficLimitRegion(region, kind)
+		if region != services.TrafficRegionAny && !validTrafficLabel(region) {
+			return nil, false, errors.New("bad region")
+		}
+		if (r.IncludedGB != nil && *r.IncludedGB < 0) || (r.MaxPurchaseGB != nil && *r.MaxPurchaseGB < 0) {
+			return nil, false, errors.New("negative limit")
+		}
+		k := [2]string{region, kind}
+		if seen[k] {
+			return nil, false, errors.New("duplicate region and kind")
+		}
+		seen[k] = true
+		out = append(out, models.TrafficLimit{Region: region, Kind: kind, IncludedGB: r.IncludedGB, MaxPurchaseGB: r.MaxPurchaseGB})
+	}
+	return out, true, nil
+}
+
 // Provision POST /api/store/provision — store-key. The store (source of truth
 // for payment) drives the Core billing lifecycle for a linked tenant:
 //
@@ -455,6 +520,11 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// does the stopping. They are stored so the PANEL can warn the tenant
 		// while they can still act on it, which is the whole point of a ceiling
 		// that stops things rather than billing them.
+		// TrafficLimits is the tenant's per-(region, kind) traffic answer, written
+		// to the "user:<uuid>" rows of traffic_limits. Omitted (or null) leaves
+		// the rows alone; an array, EMPTY included, REPLACES them exactly.
+		TrafficLimits json.RawMessage `json:"trafficLimits,omitempty"`
+		// TrafficCeilingGB is unread, kept so the field stays documented.
 		TrafficCeilingGB      *int64 `json:"trafficCeilingGb,omitempty"`
 		TrafficBillingEnabled *bool  `json:"trafficBillingEnabled,omitempty"`
 		// BackupBillingEnabled is the SEPARATE consent for backup storage beyond
@@ -478,6 +548,15 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "activate":
+		// New fields are validated before the first write, so a bad one cannot
+		// leave a half-applied provision behind.
+		trafficRows, setTraffic, terr := parseTrafficLimits(req.TrafficLimits)
+		routesUnlimited, uerr := isUnlimited(req.MaxRoutes)
+		domainsUnlimited, uerr2 := isUnlimited(req.MaxCustomDomains)
+		if terr != nil || uerr != nil || uerr2 != nil {
+			httpx.SendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
+			return
+		}
 		// A suspension an operator imposed stays: paying, renewing or toggling a
 		// billing option on the store is not a review of why they were cut off.
 		// Reactivate records the payment underneath the hold instead, so lifting
@@ -528,10 +607,18 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		routes, setRoutes, rerr := parseRoutePool(req.MaxRoutes)
+		routes, setRoutes, rerr := parseRoutePool(unlimitedAsAbsent(req.MaxRoutes, routesUnlimited))
 		if rerr != nil {
 			httpx.SendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
 			return
+		}
+		if routesUnlimited {
+			// "unlimited" is a decided no-cap row (NULL), not the absent row
+			// that null writes: the user scope answers and the walk stops.
+			if err := h.d.Store.SetGatewayRouteLimit(storeclient.UserRouteScope(req.UUID), nil); err != nil {
+				httpx.SendJSONError(w, "Activated but failed to apply the route pool", http.StatusInternalServerError)
+				return
+			}
 		}
 		if setRoutes {
 			// Only an explicit NULL means "fall back to the user_default/global
@@ -551,10 +638,16 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		domains, setDomains, derr := parseRoutePool(req.MaxCustomDomains)
+		domains, setDomains, derr := parseRoutePool(unlimitedAsAbsent(req.MaxCustomDomains, domainsUnlimited))
 		if derr != nil {
 			httpx.SendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
 			return
+		}
+		if domainsUnlimited {
+			if err := h.d.Store.SetGatewayCustomDomainLimit(storeclient.UserRouteScope(req.UUID), nil); err != nil {
+				httpx.SendJSONError(w, "Activated but failed to apply the custom-domain cap", http.StatusInternalServerError)
+				return
+			}
 		}
 		if setDomains {
 			scope := storeclient.UserRouteScope(req.UUID)
@@ -566,6 +659,12 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 			}
 			if err != nil {
 				httpx.SendJSONError(w, "Activated but failed to apply the custom-domain cap", http.StatusInternalServerError)
+				return
+			}
+		}
+		if setTraffic {
+			if err := h.d.Store.ReplaceTrafficLimits(storeclient.UserRouteScope(req.UUID), trafficRows); err != nil {
+				httpx.SendJSONError(w, "Activated but failed to apply the traffic limits", http.StatusInternalServerError)
 				return
 			}
 		}
