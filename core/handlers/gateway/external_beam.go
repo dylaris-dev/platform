@@ -172,6 +172,23 @@ type externalBeamRelay struct {
 
 // ListBeamRelays GET /api/external/gateway/beam/relays - the beam relays a customer Core puts in its beam config [{region, public_host, client_port}]; ?region= narrows to one region.
 func (h *ExternalGatewayHandler) ListBeamRelays(w http.ResponseWriter, r *http.Request) {
+	owner := reqctx.ByonCallerID(r)
+	if owner == "" {
+		writeExternalError(w, http.StatusUnauthorized, "Unauthorized", "unauthorized")
+		return
+	}
+	// The relays serve managed-gateway tickets only; nobody else has a use
+	// for their addresses. Same gate as key registration.
+	managed, err := services.HasManagedProduct(h.gw.d.Store, owner)
+	if err != nil {
+		log.Printf("beam relay list %s: managed lookup: %v", owner, err)
+		writeExternalError(w, http.StatusInternalServerError, "Internal error. Try again later.", "internal")
+		return
+	}
+	if !managed {
+		writeExternalError(w, http.StatusForbidden, "Beam relays need a managed gateway plan", "managed_required")
+		return
+	}
 	region := strings.TrimSpace(r.URL.Query().Get("region"))
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()

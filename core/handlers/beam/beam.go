@@ -59,9 +59,11 @@ type BeamHandler struct {
 }
 
 // beamBudgetAckMinVersion is the first Beam app release that can send
-// ack_over_budget (App.ConnectToServerAck). An owner or admin on an older
-// build is let past their own budget without the ack rather than locked out
-// with no way to confirm; members stay refused either way.
+// ack_over_budget (App.ConnectToServerAck) and that drops its tunnel on a
+// refused ticket. Every caller on an older build is let past the budget: the
+// owner could not confirm, and a refused member would keep the previous
+// server's tunnel. The budget is the owner's soft limit; the store cap and
+// the throttles still apply.
 const beamBudgetAckMinVersion = "0.9.17"
 
 func NewBeamHandler(d Deps, jwtSecret, clusterSecret string) *BeamHandler {
@@ -548,15 +550,18 @@ func (h *BeamHandler) passDataBudget(w http.ResponseWriter, r *http.Request, srv
 		log.Printf("beam ticket: data budget for server %d unreadable, not gated: %v", srv.ID, err)
 		return true
 	}
-	switch services.DataBudgetGate(b, privileged, ack) {
+	code := services.DataBudgetGate(b, privileged, ack)
+	if code != "" && beamClientBelowMin(r.Header.Get("X-Beam-Version"), beamBudgetAckMinVersion) {
+		// Members too: an old build keeps the previous server's tunnel after a
+		// refused ticket, so its file ops would run against the wrong server.
+		h.logOldClientBudgetPass(userID, srv.ID)
+		return true
+	}
+	switch code {
 	case services.DataBudgetReachedCode:
 		httpx.SendJSONErrorCode(w, "The server owner's data budget for this month is used up. Ask the owner to raise it.", services.DataBudgetReachedCode, http.StatusForbidden)
 		return false
 	case services.DataBudgetAckRequiredCode:
-		if beamClientBelowMin(r.Header.Get("X-Beam-Version"), beamBudgetAckMinVersion) {
-			h.logOldClientBudgetPass(userID, srv.ID)
-			return true
-		}
 		httpx.SendJSONErrorCode(w, "Your data budget for this month is used up. Confirm the transfer to go past it.", services.DataBudgetAckRequiredCode, http.StatusForbidden)
 		return false
 	}
@@ -574,7 +579,7 @@ func (h *BeamHandler) logOldClientBudgetPass(userID string, serverID int) {
 		return
 	}
 	h.oldClientBudgetLog[userID] = time.Now()
-	log.Printf("beam ticket: user %s past the data budget of server %d without an ack: Beam build below %s cannot send one", userID, serverID, beamBudgetAckMinVersion)
+	log.Printf("beam ticket: user %s past the data budget of server %d, not gated: Beam build below %s", userID, serverID, beamBudgetAckMinVersion)
 }
 
 // beamConfigBudget is the data_budget field of GetBeamConfig.

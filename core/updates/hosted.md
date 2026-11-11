@@ -15,7 +15,7 @@ Newest release first. The format is fixed and checked in CI - see the
 
 ### Features
 - Set a monthly data budget under My infrastructure to keep traffic for your players. Past it, Beam
-  asks you before each transfer and never blocks you; your plan's traffic limit still applies first.
+  asks you before each transfer and, from Beam 0.9.17, stops your members; your plan's limit applies first.
 
 ### Breaking
 - Nothing.

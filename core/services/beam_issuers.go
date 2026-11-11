@@ -57,7 +57,7 @@ func ValidBeamKid(kid string) bool { return beamKidRe.MatchString(kid) }
 
 // BeamIssuerRecord is the v1 JSON at beam:issuer:<kid>. MaxConns follows the
 // limits convention: absent = no cap, 0 = none, n = the cap. BwBps (bytes/s)
-// is present only while the owner's shared pool is throttled (JudgeManagedPool);
+// is present only while the owner's shared pool is in grace (JudgeManagedPool);
 // absent = only the fleet cap. Never 0: the relay refuses a record with
 // bw_bps <= 0. DailyQuota (bytes per owner per UTC day, counted by the relays)
 // is present only in data grace mode, and the relay refuses it <= 0 likewise.
@@ -134,11 +134,8 @@ func PublishBeamIssuers(ctx context.Context, st store.Store, rdb *redis.Client, 
 		if err != nil {
 			return fmt.Errorf("pool verdict: %w", err)
 		}
-		switch bps := int64(DataThrottleMbit(st)) * 125_000; {
-		case v.Grace:
+		if v.Grace {
 			bwBps, dailyQuota = LimitPtr(GraceBps), LimitPtr(GraceDailyQuotaBytes)
-		case v.Throttled && bps > 0:
-			bwBps = &bps
 		}
 	}
 

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,7 +73,8 @@ func TestGraceModeEntersAtIncludedWithoutConsent(t *testing.T) {
 		{"at included", 100 * poolGB, false, true, true},
 		{"far past included", 900 * poolGB, false, true, true},
 		{"consent at included", 100 * poolGB, true, false, false},
-		{"consent at the store cap", 150 * poolGB, true, false, true},
+		{"consent inside the store cap", 149 * poolGB, true, false, false},
+		{"consent at the store cap", 150 * poolGB, true, true, true},
 	} {
 		v := JudgeManagedPool(c.used, i64(100), i64(50), c.consent)
 		if v.Grace != c.grace || v.Throttled != c.thrtl {
@@ -174,29 +176,81 @@ func TestGraceNeverBilledAfterConsent(t *testing.T) {
 	}
 }
 
-// With consent nothing changes: no grace spell, no daily quota, the configured
-// throttle only past included + max purchase.
-func TestConsentSkipsGrace(t *testing.T) {
+// With consent the pool is billed up to the store cap (included + max
+// purchase); there the same grace applies as without consent (owner decision
+// 2026-11-11): 50 Mbit/s and 30 GB per UTC day, those bytes in the stats but
+// in no pool, ceiling or bill. It ends when the cap rises or the month rolls.
+func TestConsentGraceAtStoreCap(t *testing.T) {
 	fs, agg, rdb, owners := graceFixture(t, true)
 	ctx := context.Background()
-	fs.usage = map[string]*store.TrafficUsage{"mg-1": mgUsage(100*poolGB, 20*poolGB)}
-	agg.evaluateDataThrottle(ctx, owners)
+	fs.usage = map[string]*store.TrafficUsage{"mg-1": mgUsage(100*poolGB, 35*poolGB)}
+	agg.evaluateDataThrottle(ctx, owners) // 135 of 150: billed, warned, not slowed
 	if err := PublishBeamIssuers(ctx, fs, rdb, 0, "mg-1"); err != nil {
 		t.Fatal(err)
 	}
 	if fs.usage["mg-1"].GraceSinceRelay != nil {
-		t.Fatal("grace opened with consent")
+		t.Fatal("grace opened inside the store cap")
 	}
 	if bw, quota := issuerLimits(t, rdb); bw != -1 || quota != -1 {
-		t.Fatalf("consent past included: bw %d quota %d, want neither", bw, quota)
+		t.Fatalf("consent inside the store cap: bw %d quota %d, want neither", bw, quota)
+	}
+	// The 90 % notice names the plan's maximum as where transfers slow and are
+	// limited per day: not a hard stop, not the included amount.
+	if len(fs.noteBodies) != 1 || !strings.Contains(fs.noteBodies[0], "plan's maximum of 150 GB") ||
+		!strings.Contains(fs.noteBodies[0], "50 Mbit/s and 30 GB per day") {
+		t.Fatalf("90 %% notice %q", fs.noteBodies)
 	}
 
 	setRelay(fs.usage["mg-1"], 50*poolGB) // at the store cap
 	agg.evaluateDataThrottle(ctx, owners)
-	if bw, quota := issuerLimits(t, rdb); bw != DataThrottleDefaultMbit*125_000 || quota != -1 {
-		t.Fatalf("consent at the store cap: bw %d quota %d, want the setting and no quota", bw, quota)
+	u := fs.usage["mg-1"]
+	if s := u.GraceSinceRelay; s == nil || *s != 50*poolGB {
+		t.Fatalf("grace snapshot %v, want the 50 GB of relay bytes at the cap", s)
 	}
+	if bw, quota := issuerLimits(t, rdb); bw != GraceBps || quota != GraceDailyQuotaBytes {
+		t.Fatalf("consent at the store cap: bw %d quota %d, want the grace %d / %d", bw, quota, GraceBps, GraceDailyQuotaBytes)
+	}
+	if rdb.Exists(ctx, DataBandwidthKey("srv-9")).Val() != 0 {
+		t.Fatal("grace at the store cap throttled the tenant's own server")
+	}
+	if last := fs.noteBodies[len(fs.noteBodies)-1]; !strings.Contains(last, "maximum traffic of 150 GB") ||
+		!strings.Contains(last, "not billed") || strings.Contains(last, "Turn on extra traffic billing") {
+		t.Fatalf("100 %% notice for a consent tenant: %q", last)
+	}
+
+	// Beam in grace: in the stats, not in the pool the store bills and cuts
+	// players off by (it reads ManagedPoolBytes as managedPool.relayBytes).
+	addRelay(u, 400*poolGB)
+	agg.evaluateDataThrottle(ctx, owners)
+	if u.RelayBytes != 450*poolGB || u.GraceRelayBytes() != 400*poolGB {
+		t.Fatalf("stats %d grace %d, want 450 / 400 GB", u.RelayBytes, u.GraceRelayBytes())
+	}
+	if p := ManagedPoolBytes(u); p != 150*poolGB {
+		t.Fatalf("pool %d, want it held at the 150 GB cap", p)
+	}
+
+	// A plan change raises the cap: grace ends, its bytes stay out for the month.
+	fs.managedLimit["mg-1"].MaxPurchaseGB = i64(500)
+	agg.evaluateDataThrottle(ctx, owners)
+	if u.GraceSinceRelay != nil || u.GraceExcludedBytes != 400*poolGB {
+		t.Fatalf("after the cap rose: since %v excluded %d, want closed with 400 GB kept out", u.GraceSinceRelay, u.GraceExcludedBytes)
+	}
+	if bw, quota := issuerLimits(t, rdb); bw != -1 || quota != -1 {
+		t.Fatalf("after the cap rose: bw %d quota %d, want neither", bw, quota)
+	}
+
+	// Back at the (old) cap, then a new month: no row yet, so no spell.
+	fs.managedLimit["mg-1"].MaxPurchaseGB = i64(50)
+	agg.evaluateDataThrottle(ctx, owners)
+	if u.GraceSinceRelay == nil {
+		t.Fatal("grace did not reopen at the cap")
+	}
+	fs.usage["mg-1"] = &store.TrafficUsage{}
+	agg.evaluateDataThrottle(ctx, owners)
 	if fs.usage["mg-1"].GraceSinceRelay != nil {
-		t.Fatal("grace opened with consent at the store cap")
+		t.Fatal("a new month started in grace")
+	}
+	if bw, quota := issuerLimits(t, rdb); bw != -1 || quota != -1 {
+		t.Fatalf("new month: bw %d quota %d, want neither", bw, quota)
 	}
 }

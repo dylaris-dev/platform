@@ -287,6 +287,19 @@ func (h *WarpHandler) LinkBeams(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Only a managed owner's kit carries beam (its tickets are the only ones
+	// the relays route to a kit). A DB fault answers 503: the link retries
+	// with backoff and keeps the tunnels it has.
+	managed, err := services.HasManagedProduct(h.d.Store, key.OwnerID)
+	if err != nil {
+		log.Printf("route-only link %s: managed lookup failed: %v", key.NodeID, err)
+		httpx.SendJSONError(w, "Beam relay list unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if !managed {
+		httpx.SendJSONErrorCode(w, "Beam relays need a managed gateway plan", "managed_required", http.StatusForbidden)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	beams, err := readLinkBeams(ctx, h.d.Redis, key.Region)

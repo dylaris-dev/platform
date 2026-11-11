@@ -25,8 +25,8 @@ type TrafficUsage struct {
 	// managed pool; beam and tab bytes of the tenant's servers on our fleet
 	// (server UUID subjects, product "byon") stay on the BYON data verdict.
 	ManagedRelayBytes int64 `json:"-"`
-	// Data grace mode (managed pool, no traffic consent, past the included
-	// amount): managed relay bytes from then on are tracked like any other but
+	// Data grace mode (managed pool past the included amount without traffic
+	// consent, past included + max purchase with it): managed relay bytes from then on are tracked like any other but
 	// kept out of the pool. GraceExcludedBytes holds the finished grace spells
 	// of the month; GraceSinceRelay is ManagedRelayBytes when the open one
 	// began, nil while none is open. Read through GraceRelayBytes.

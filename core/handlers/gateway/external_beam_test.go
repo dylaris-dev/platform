@@ -263,7 +263,8 @@ func TestLinkBeamsHidesPrivateIPsAndFiltersRegion(t *testing.T) {
 			"b2": {ID: "b2", Region: "us", PublicHost: "5.6.7.8", ServicePort: "25570"},
 		}},
 	} {
-		h, _, key, _ := routeOnlyKit(t)
+		h, fs, key, _ := routeOnlyKit(t)
+		fs.managed = map[string]bool{key.OwnerID: true}
 		seedBeams(t, h.d.Redis)
 		key.Region = c.region
 		rec := callAs(h.LinkBeams, http.MethodGet, "/api/warp/link/beams", "", key)
@@ -283,6 +284,35 @@ func TestLinkBeamsHidesPrivateIPsAndFiltersRegion(t *testing.T) {
 				t.Errorf("region %q: %+v, want %+v", c.region, b, c.want[b.ID])
 			}
 		}
+	}
+}
+
+// Review T2 M5: both relay lists answer only an owner with a managed product,
+// like key registration; everyone else gets 403 managed_required.
+func TestBeamRelayListsNeedAManagedProduct(t *testing.T) {
+	h, _, rdb := newBeamKeyHandler(t)
+	seedBeams(t, rdb)
+	rec := beamCall(h.ListBeamRelays, http.MethodGet, "/api/external/gateway/beam/relays", extTenantC, "", nil)
+	if rec.Code != http.StatusForbidden || extCode(t, rec) != "managed_required" || strings.Contains(rec.Body.String(), "beam-eu") {
+		t.Errorf("external list without a managed product: %d %s, want 403 managed_required", rec.Code, rec.Body.String())
+	}
+	if rec := beamCall(h.ListBeamRelays, http.MethodGet, "/api/external/gateway/beam/relays", extTenantA, "", nil); rec.Code != http.StatusOK {
+		t.Errorf("external list for a managed owner: %d", rec.Code)
+	}
+
+	lh, fs, key, _ := routeOnlyKit(t)
+	seedBeams(t, lh.d.Redis)
+	rec = callAs(lh.LinkBeams, http.MethodGet, "/api/warp/link/beams", "", key)
+	var body struct {
+		Code string `json:"code"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != http.StatusForbidden || body.Code != "managed_required" || strings.Contains(rec.Body.String(), "beam-eu") {
+		t.Errorf("kit list without a managed product: %d %s, want 403 managed_required", rec.Code, rec.Body.String())
+	}
+	fs.managed = map[string]bool{key.OwnerID: true}
+	if rec := callAs(lh.LinkBeams, http.MethodGet, "/api/warp/link/beams", "", key); rec.Code != http.StatusOK {
+		t.Errorf("kit list for a managed owner: %d", rec.Code)
 	}
 }
 

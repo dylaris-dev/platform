@@ -76,7 +76,7 @@ func TestStoreUsageManagedPool(t *testing.T) {
 // their own. edgeBytes and the region breakdown keep the full values.
 func TestStoreUsageReportsGraceApart(t *testing.T) {
 	inc := int64(100)
-	since := int64(40)
+	since, cap90 := int64(40), int64(90)
 	for _, c := range []struct {
 		name               string
 		usage              store.TrafficUsage
@@ -85,6 +85,8 @@ func TestStoreUsageReportsGraceApart(t *testing.T) {
 		{"no grace", store.TrafficUsage{EdgeBytes: 60, RelayBytes: 40, ManagedRelayBytes: 40}, "40", "0"},
 		{"open spell", store.TrafficUsage{EdgeBytes: 60, RelayBytes: 540, ManagedRelayBytes: 540, GraceSinceRelay: &since}, "40", "500"},
 		{"closed spell then billable", store.TrafficUsage{EdgeBytes: 60, RelayBytes: 570, ManagedRelayBytes: 570, GraceExcludedBytes: 500}, "70", "500"},
+		// A consent tenant's spell at the store cap is stored the same way.
+		{"consent spell at the store cap", store.TrafficUsage{EdgeBytes: 60, RelayBytes: 490, ManagedRelayBytes: 490, GraceSinceRelay: &cap90}, "90", "400"},
 	} {
 		u := c.usage
 		h := NewStoreHandler(Deps{Store: &poolUsageStore{managed: &models.TrafficLimit{IncludedGB: &inc}, usage: &u}, StoreEnabled: true, StoreSharedKey: "k"})
@@ -98,6 +100,13 @@ func TestStoreUsageReportsGraceApart(t *testing.T) {
 		}
 		if string(out["relayBytes"]) != c.wantRelay || string(out["graceRelayBytes"]) != c.wantGrc || string(out["edgeBytes"]) != "60" {
 			t.Errorf("%s: relay %s grace %s edge %s, want %s %s 60", c.name, out["relayBytes"], out["graceRelayBytes"], out["edgeBytes"], c.wantRelay, c.wantGrc)
+		}
+		// managedPool.relayBytes is what the website bills and cuts off by.
+		var pool struct {
+			RelayBytes json.RawMessage `json:"relayBytes"`
+		}
+		if err := json.Unmarshal(out["managedPool"], &pool); err != nil || string(pool.RelayBytes) != c.wantRelay {
+			t.Errorf("%s: managedPool.relayBytes %s (%v), want %s without grace bytes", c.name, pool.RelayBytes, err, c.wantRelay)
 		}
 	}
 }

@@ -44,6 +44,7 @@ type trafficFakeStore struct {
 	dataLimit       *models.TrafficLimit
 	dataConsent     map[string]bool
 	notifications   []string
+	noteBodies      []string
 	setBackupCalls  []trafficBackupCall
 	setBackupErrFor map[string]error
 
@@ -1138,6 +1139,7 @@ func (f *trafficFakeStore) GetUserDataBillingEnabled(userID string) (bool, error
 }
 func (f *trafficFakeStore) InsertNotification(n *models.Notification) (int64, error) {
 	f.notifications = append(f.notifications, n.Title)
+	f.noteBodies = append(f.noteBodies, n.Body)
 	return 1, nil
 }
 

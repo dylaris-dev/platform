@@ -47,7 +47,10 @@ func TestGetBeamTicket_DataBudget(t *testing.T) {
 		{"old build, owner past the budget: passes without ack", "1000", 1_000_000_000_000, "owner-id", false, nil, "", "0.9.16", ""},
 		{"old build, admin past the budget: passes without ack", "1000", 1_000_000_000_000, "admin-id", true, nil, "", "0.9.16", ""},
 		{"no version header counts as old: owner passes", "0", 0, "owner-id", false, nil, "", "none", ""},
-		{"old build, member: still refused", "1000", 1_000_000_000_000, "member-id", false, builder, "", "0.9.16", "data_budget_reached"},
+		// An old build keeps the previous server's tunnel after a refusal, so a
+		// member on it is let through too (the budget is the owner's soft limit).
+		{"old build, member: passes", "1000", 1_000_000_000_000, "member-id", false, builder, "", "0.9.16", ""},
+		{"no version header, member: passes", "1000", 1_000_000_000_000, "member-id", false, builder, "", "none", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

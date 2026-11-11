@@ -11,8 +11,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.11.11
 
 ### Features
-- Server owners can set a monthly data budget under My infrastructure. Past it, Beam asks the owner or
-  a panel admin before each transfer and refuses members; builds before 0.9.17 never block the owner. `core`
+- Server owners can set a monthly data budget under My infrastructure, shown where BYON or route-only
+  is on. Past it, Beam 0.9.17+ asks the owner or an admin per transfer and refuses members; older apps are not stopped. `core`
 
 ### Breaking
 - The traffic-limits admin API refuses a per-user edge row for all regions (`*`) with 400: the store

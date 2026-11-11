@@ -41,6 +41,15 @@ type nodeLinkFakeStore struct {
 
 	voice  []store.LinkRouteVoice
 	routes []store.CoreLinkRoute
+
+	managed map[string]bool // owners holding a managed product (user "*" edge row)
+}
+
+func (f *nodeLinkFakeStore) GetTrafficLimit(scope, region, kind string) (*models.TrafficLimit, error) {
+	if f.managed[strings.TrimPrefix(scope, "user:")] && region == services.TrafficRegionAny && kind == services.TrafficKindEdge {
+		return &models.TrafficLimit{}, nil
+	}
+	return nil, nil
 }
 
 func (f *nodeLinkFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) { return f.routes, nil }

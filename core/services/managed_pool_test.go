@@ -115,8 +115,8 @@ func TestManagedThrottleOnlyPastStoreCap(t *testing.T) {
 
 	fs.usage["mg-1"] = &store.TrafficUsage{EdgeBytes: 100 * poolGB, RelayBytes: 50 * poolGB, ManagedRelayBytes: 50 * poolGB} // at the store cap
 	agg.evaluateDataThrottle(ctx, owners)
-	if n, ok := bw(); !ok || n != DataThrottleDefaultMbit*125_000 {
-		t.Fatalf("bw_bps = %d (present %v), want %d", n, ok, DataThrottleDefaultMbit*125_000)
+	if n, ok := bw(); !ok || n != GraceBps { // grace at the store cap (owner decision 2026-11-11)
+		t.Fatalf("bw_bps = %d (present %v), want %d", n, ok, GraceBps)
 	}
 	// The pool's throttle paces the tenant's tickets only; their server on
 	// our fleet follows the BYON data verdict, which is not over.
