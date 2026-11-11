@@ -109,6 +109,14 @@ func (h *TrafficLimitHandler) ResolveTrafficLimit(w http.ResponseWriter, r *http
 	})
 }
 
+const storeOwnedTrafficRowMsg = "This row is managed by the store for managed-gateway plans; set per-region rows instead."
+
+// storeOwnedTrafficRow is the row shape only the store writes: user scope,
+// region "*", kind edge.
+func storeOwnedTrafficRow(scope, region, kind string) bool {
+	return strings.HasPrefix(scope, "user:") && region == services.TrafficRegionAny && kind == services.TrafficKindEdge
+}
+
 // SetTrafficLimit PUT /api/traffic-limits.
 //
 // "default" for BOTH values deletes the row, because a row that says nothing
@@ -149,6 +157,15 @@ func (h *TrafficLimitHandler) SetTrafficLimit(w http.ResponseWriter, r *http.Req
 	}
 	if !validTrafficLabel(req.Kind) {
 		http.Error(w, "kind must be lowercase letters, digits and dashes", http.StatusBadRequest)
+		return
+	}
+	// A user's "*" edge row IS the managed-gateway product: Core reads its
+	// existence as "managed" (services.HasManagedProduct, the shared pool) and
+	// the store is its only writer (handlers/billing/store.go). An admin row of
+	// that shape would turn a BYON tenant into a managed pool, so create,
+	// update and delete are all refused here.
+	if storeOwnedTrafficRow(req.Scope, req.Region, req.Kind) {
+		http.Error(w, storeOwnedTrafficRowMsg, http.StatusBadRequest)
 		return
 	}
 

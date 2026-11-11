@@ -268,8 +268,13 @@ func (a *TrafficAggregator) evaluateDataThrottle(ctx context.Context, owners map
 // issuer reconciler recomputes them every five minutes either way.
 func (a *TrafficAggregator) applyManagedThrottle(ctx context.Context, tenant string, servers []string, v DataThrottleVerdict, bps int64, now time.Time) {
 	if v.Warn && !v.Throttled {
-		a.notifyDataOnce(ctx, tenant, now, "90", "Gateway traffic at 90 %",
-			fmt.Sprintf("Player traffic and beam file transfers together have used %d of %d GB this month. At 100 %% file transfers slow to %d Mbit/s until the month resets.", v.UsedGB, v.IncludedGB, bps/125_000))
+		// v.IncludedGB is where the throttle starts: included + what may be
+		// bought with consent, the allowance itself without. Say which.
+		body := fmt.Sprintf("Player traffic and beam file transfers together have used %d of the %d GB your plan includes this month. At %d GB file transfers slow to %d Mbit/s until the month resets, unless extra traffic billing is on.", v.UsedGB, v.IncludedGB, v.IncludedGB, bps/125_000)
+		if v.Consent {
+			body = fmt.Sprintf("Player traffic and beam file transfers together have used %d GB this month. At %d GB, the most extra traffic your plan can buy, file transfers slow to %d Mbit/s until the month resets.", v.UsedGB, v.IncludedGB, bps/125_000)
+		}
+		a.notifyDataOnce(ctx, tenant, now, "90", "Gateway traffic nearly at its limit", body)
 	}
 	if !v.Throttled {
 		return
