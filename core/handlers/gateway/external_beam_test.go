@@ -208,6 +208,12 @@ func seedBeams(t *testing.T, rdb *redis.Client) {
 	// Only a private address: never handed out.
 	rdb.Set(ctx, "beam:registry:b3", `{"beam_id":"b3","private_ip":"10.0.0.3","region":"eu","service_port":"25570","client_port":"25571"}`, 0)
 	// b4: expired registry, left out.
+	// A relay whose public-IP probe failed advertises its docker_gwbridge
+	// address as ip; v6 link-local and ULA are just as undialable.
+	rdb.SAdd(ctx, "sys:beams", "b5", "b6", "b7")
+	rdb.Set(ctx, "beam:registry:b5", `{"beam_id":"b5","ip":"172.18.0.5","private_ip":"10.0.0.5","region":"eu","service_port":"25570","client_port":"25571"}`, 0)
+	rdb.Set(ctx, "beam:registry:b6", `{"beam_id":"b6","ip":"fe80::1","region":"us","service_port":"25570","client_port":"25571"}`, 0)
+	rdb.Set(ctx, "beam:registry:b7", `{"beam_id":"b7","ip":"fd00::7","public_host":"10.0.0.7","region":"us","service_port":"25570","client_port":"25571"}`, 0)
 }
 
 func TestListBeamRelaysHidesPrivateIPs(t *testing.T) {
@@ -225,7 +231,7 @@ func TestListBeamRelaysHidesPrivateIPs(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%q: %d", c.query, rec.Code)
 		}
-		if strings.Contains(rec.Body.String(), "10.0.0.") {
+		if leaksPrivate(rec.Body.String()) {
 			t.Errorf("%q: private address in %s", c.query, rec.Body.String())
 		}
 		var got struct{ Items []externalBeamRelay }
@@ -261,7 +267,7 @@ func TestLinkBeamsHidesPrivateIPsAndFiltersRegion(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("region %q: %d %s", c.region, rec.Code, rec.Body.String())
 		}
-		if strings.Contains(rec.Body.String(), "10.0.0.") {
+		if leaksPrivate(rec.Body.String()) {
 			t.Errorf("region %q: private address in %s", c.region, rec.Body.String())
 		}
 		var got struct{ Beams []linkBeam }
@@ -273,6 +279,34 @@ func TestLinkBeamsHidesPrivateIPsAndFiltersRegion(t *testing.T) {
 			if c.want[b.ID] != b {
 				t.Errorf("region %q: %+v, want %+v", c.region, b, c.want[b.ID])
 			}
+		}
+	}
+}
+
+func leaksPrivate(body string) bool {
+	for _, p := range []string{"10.0.0.", "172.18.", "fe80::", "fd00::"} {
+		if strings.Contains(body, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPublicBeamHost(t *testing.T) {
+	for _, c := range []struct{ publicHost, ip, want string }{
+		{"beam.example.com", "172.18.0.5", "beam.example.com"},
+		{"", "1.2.3.4", "1.2.3.4"},
+		{"", "172.18.0.5", ""},
+		{"", "100.64.1.1", ""},
+		{"", "127.0.0.1", ""},
+		{"", "fe80::1", ""},
+		{"", "fd12::1", ""},
+		{"", "2a01:4f8::1", "2a01:4f8::1"},
+		{"192.168.1.1", "5.6.7.8", "5.6.7.8"},
+		{"", "", ""},
+	} {
+		if got := publicBeamHost(c.publicHost, c.ip); got != c.want {
+			t.Errorf("publicBeamHost(%q, %q) = %q, want %q", c.publicHost, c.ip, got, c.want)
 		}
 	}
 }

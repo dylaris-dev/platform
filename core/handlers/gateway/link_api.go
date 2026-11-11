@@ -336,12 +336,9 @@ func readLinkBeams(ctx context.Context, rdb *redis.Client, region string) ([]lin
 		if region != "" && !strings.EqualFold(strings.TrimSpace(reg.Region), region) {
 			continue
 		}
-		host := strings.TrimSpace(reg.PublicHost)
+		host := publicBeamHost(reg.PublicHost, reg.IP)
 		if host == "" {
-			host = strings.TrimSpace(reg.IP)
-		}
-		if host == "" {
-			continue // only a private address: not a path a link outside our network could take
+			continue // no public address: not a path a link outside our network could take
 		}
 		b := linkBeam{ID: reg.BeamID, Region: reg.Region, PublicHost: host, ServicePort: reg.ServicePort}
 		if b.ID == "" {

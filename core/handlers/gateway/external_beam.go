@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -180,7 +181,7 @@ func (h *ExternalGatewayHandler) ListBeamRelays(w http.ResponseWriter, r *http.R
 		if region != "" && !strings.EqualFold(strings.TrimSpace(info.Region), region) {
 			continue
 		}
-		host := publicRelayHost(info)
+		host := publicBeamHost(info.PublicHost, info.IP)
 		port := info.ClientPort
 		if port == "" {
 			port = info.ServicePort // a relay predating client_port serves clients there
@@ -202,11 +203,21 @@ func (h *ExternalGatewayHandler) ListBeamRelays(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "items": out})
 }
 
-// publicRelayHost is the relay's public name, else its advertised public IP.
-// Never private_ip: these answers leave our network.
-func publicRelayHost(info beamaccess.BeamRelayInfo) string {
-	if h := strings.TrimSpace(info.PublicHost); h != "" {
+// publicBeamHost is the address a relay may be handed out under outside our
+// network: its public name, else its registry ip - but never a literal private
+// or reserved address. The registry ip is NOT always public: a relay whose
+// public-IP probes all failed advertises its outbound address, which inside a
+// Swarm task is the docker_gwbridge (172.18.x). "" = leave the relay out.
+// Shared by the customer relay list and the kit link's beam list.
+func publicBeamHost(publicHost, ip string) string {
+	for _, h := range []string{strings.TrimSpace(publicHost), strings.TrimSpace(ip)} {
+		if h == "" {
+			continue
+		}
+		if lit := net.ParseIP(h); lit != nil && hubAddrIsPrivateOrReserved(lit) {
+			continue
+		}
 		return h
 	}
-	return strings.TrimSpace(info.IP)
+	return ""
 }
