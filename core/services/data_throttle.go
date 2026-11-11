@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -136,6 +137,54 @@ func DataTrafficVerdictFor(st store.Store, userID string, now time.Time) (DataTh
 	return JudgeDataTraffic(used, lim.IncludedGB, TrafficUnits(b, now), consent), nil
 }
 
+// JudgeManagedPool is the managed-gateway verdict: ONE pool of player and data
+// bytes against the user's "*" edge row (owner decision 2026-11-11). With the
+// traffic consent the store bills past the allowance up to maxPurchaseGB, so
+// data slows only past included + max purchase (nil max purchase: never).
+// Without it nothing is billed, so data slows at the allowance itself. The
+// row's numbers are the account's total (the store sends units = 1), so they
+// are not multiplied by TrafficUnits.
+func JudgeManagedPool(usedBytes int64, includedGB, maxPurchaseGB *int64, consent bool) DataThrottleVerdict {
+	v := DataThrottleVerdict{UsedGB: usedBytes / 1_000_000_000, Consent: consent}
+	if includedGB == nil {
+		return v
+	}
+	v.Limited = true
+	limit := *includedGB
+	if consent {
+		if maxPurchaseGB == nil {
+			v.IncludedGB = limit
+			return v
+		}
+		limit += *maxPurchaseGB
+	}
+	v.IncludedGB = limit
+	limitBytes := limit * 1_000_000_000
+	v.Throttled = usedBytes >= limitBytes
+	v.Warn = usedBytes*10 >= limitBytes*9
+	return v
+}
+
+// ManagedPoolVerdictFor judges a managed tenant's pool; managed is false (and
+// the verdict empty) for anyone without the user "*" edge row, who keeps the
+// BYON / route-only data verdict.
+func ManagedPoolVerdictFor(st store.Store, userID string, now time.Time) (v DataThrottleVerdict, managed bool, err error) {
+	l, err := st.GetTrafficLimit("user:"+userID, TrafficRegionAny, TrafficKindEdge)
+	if err != nil || l == nil {
+		return DataThrottleVerdict{}, false, err
+	}
+	u, err := st.GetTrafficUsage(userID, monthStartUTC(now))
+	if err != nil {
+		return DataThrottleVerdict{}, true, fmt.Errorf("usage: %w", err)
+	}
+	b, err := st.GetUserBilling(userID)
+	if err != nil {
+		return DataThrottleVerdict{}, true, fmt.Errorf("billing: %w", err)
+	}
+	consent := b != nil && b.TrafficBillingEnabled
+	return JudgeManagedPool(u.EdgeBytes+u.RelayBytes, l.IncludedGB, l.MaxPurchaseGB, consent), true, nil
+}
+
 // evaluateDataThrottle runs after a tick's usage is written: throttles the
 // tenants over their data allowance, releases the ones that are not, and
 // tells each tenant once a month at 90 % and at 100 %.
@@ -148,9 +197,19 @@ func (a *TrafficAggregator) evaluateDataThrottle(ctx context.Context, owners map
 	bps := int64(DataThrottleMbit(a.store)) * 125_000
 	throttledNow := map[string]bool{}
 	for tenant, servers := range serversOf {
-		v, err := DataTrafficVerdictFor(a.store, tenant, now)
+		v, managed, err := ManagedPoolVerdictFor(a.store, tenant, now)
+		if err == nil && !managed {
+			v, err = DataTrafficVerdictFor(a.store, tenant, now)
+		}
 		if err != nil {
 			logErrf("data-throttle", "verdict for %s: %v", tenant, err)
+			continue
+		}
+		if managed {
+			a.applyManagedThrottle(ctx, tenant, servers, v, bps, now)
+			if v.Throttled {
+				throttledNow[tenant] = true
+			}
 			continue
 		}
 		if v.Warn {
@@ -193,8 +252,48 @@ func (a *TrafficAggregator) evaluateDataThrottle(ctx context.Context, owners map
 			logErrf("data-throttle", "release %s: %v", tenant, err)
 			continue
 		}
+		// Drops bw_bps from a managed tenant's issuer records; for anyone
+		// without keys it is one query and nothing written.
+		if err := PublishBeamIssuers(ctx, a.store, a.redis, a.suspendGrace, tenant); err != nil {
+			logErrf("data-throttle", "release %s: issuer records: %v", tenant, err)
+		}
 		log.Printf("data-throttle: released %s", tenant)
 	}
+}
+
+// applyManagedThrottle is evaluateDataThrottle for a managed tenant. Their
+// relay sessions are paced by bw_bps in the beam issuer records (a foreign
+// node never reads our Redis), their own servers, if any, by the usual key.
+// The records are republished when the tenant enters the throttled set; the
+// issuer reconciler recomputes them every five minutes either way.
+func (a *TrafficAggregator) applyManagedThrottle(ctx context.Context, tenant string, servers []string, v DataThrottleVerdict, bps int64, now time.Time) {
+	if v.Warn && !v.Throttled {
+		a.notifyDataOnce(ctx, tenant, now, "90", "Gateway traffic at 90 %",
+			fmt.Sprintf("Player traffic and beam file transfers together have used %d of %d GB this month. At 100 %% file transfers slow to %d Mbit/s until the month resets.", v.UsedGB, v.IncludedGB, bps/125_000))
+	}
+	if !v.Throttled {
+		return
+	}
+	was := IsDataThrottled(ctx, a.redis, tenant)
+	pipe := a.redis.TxPipeline()
+	for _, uuid := range servers {
+		if strings.HasPrefix(uuid, trafficOwnerSubjectPrefix) {
+			continue
+		}
+		pipe.Set(ctx, DataBandwidthKey(uuid), bps, dataThrottleTTL)
+	}
+	pipe.SAdd(ctx, dataThrottledSet, tenant)
+	if _, err := pipe.Exec(ctx); err != nil {
+		logErrf("data-throttle", "throttle %s: %v", tenant, err)
+		return
+	}
+	if !was {
+		if err := PublishBeamIssuers(ctx, a.store, a.redis, a.suspendGrace, tenant); err != nil {
+			logErrf("data-throttle", "throttle %s: issuer records: %v", tenant, err)
+		}
+	}
+	a.notifyDataOnce(ctx, tenant, now, "100", "Gateway traffic limit reached",
+		fmt.Sprintf("Beam file transfers are slowed to %d Mbit/s until the month resets on %s.", bps/125_000, monthStartUTC(now).AddDate(0, 1, 0).Format("2 January")))
 }
 
 // notifyDataOnce sends one in-app notification per tenant, level and month.

@@ -90,6 +90,10 @@ func (f *beamIssuerFakeStore) ListWarpAPIKeysByOwner(owner string) ([]store.Warp
 
 func (f *beamIssuerFakeStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
 
+func (f *beamIssuerFakeStore) GetTrafficUsage(userID string, period time.Time) (*store.TrafficUsage, error) {
+	return &store.TrafficUsage{UserID: userID, Period: period}, nil
+}
+
 func beamIssuerFixture(t *testing.T) (*beamIssuerFakeStore, *redis.Client) {
 	t.Helper()
 	now := time.Now()

@@ -280,8 +280,21 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	// the pricing page came to promise a traffic allowance nothing enforced.
 	billing, _ := h.d.Store.GetUserBilling(uuid)
 	includedGB, bookableGB := billedBackupAllowance(h.d.Store, billing)
+	// A managed-gateway tenant has ONE pool: edgeBytes + relayBytes (relay
+	// includes their beam sessions through our relay, owner:<id>) against the
+	// user "*" edge row. Sent as that row so the store bills the same numbers
+	// the data throttle judges (services.ManagedPoolVerdictFor). null for
+	// everyone else.
+	var managedPool interface{}
+	if pool, err := h.d.Store.GetTrafficLimit("user:"+uuid, services.TrafficRegionAny, services.TrafficKindEdge); err != nil {
+		httpx.SendJSONError(w, "Failed to resolve traffic limits", http.StatusInternalServerError)
+		return
+	} else if pool != nil {
+		managedPool = map[string]interface{}{"includedGb": pool.IncludedGB, "maxPurchaseGb": pool.MaxPurchaseGB}
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":          true,
+		"managedPool":      managedPool,
 		"period":           period.Format("2006-01-02"),
 		"backupIncludedGb": includedGB,
 		"backupBookableGb": bookableGB,

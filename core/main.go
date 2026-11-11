@@ -498,6 +498,7 @@ func main() {
 	// traffic_usage. No-op in solo/hoster mode (feature_byon_enabled off).
 	trafficAggregator := services.NewTrafficAggregator(pgStore, redisClient, appState.FeatureFlags)
 	trafficAggregator.SetLeader(coreLeader)
+	trafficAggregator.SetSuspendGrace(cfg.SuspendGrace)
 	trafficAggregator.Start(bgCtx)
 
 	// Custom tab traffic is data traffic: counted here, paced when the tenant

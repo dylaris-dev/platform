@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,6 +46,12 @@ type trafficFakeStore struct {
 	notifications   []string
 	setBackupCalls  []trafficBackupCall
 	setBackupErrFor map[string]error
+
+	// Managed gateway: issuer keys, the user "*" edge row, totals, billing.
+	issuerKeys   []models.BeamIssuerKey
+	managedLimit map[string]*models.TrafficLimit
+	usage        map[string]*store.TrafficUsage
+	billing      map[string]*store.UserBilling
 }
 
 type trafficUsageCall struct {
@@ -1114,9 +1121,15 @@ func (f *trafficFakeStore) GetTrafficLimit(scope, region, kind string) (*models.
 	if f.dataLimit != nil && kind == store.TrafficKindRelay && scope == "user_default" {
 		return f.dataLimit, nil
 	}
+	if l := f.managedLimit[strings.TrimPrefix(scope, "user:")]; l != nil && region == TrafficRegionAny && kind == store.TrafficKindEdge {
+		return l, nil
+	}
 	return nil, nil
 }
 func (f *trafficFakeStore) GetUserBilling(userID string) (*store.UserBilling, error) {
+	if b := f.billing[userID]; b != nil {
+		return b, nil
+	}
 	one := int64(1)
 	return &store.UserBilling{UserID: userID, MaxNodes: &one}, nil
 }
@@ -1129,6 +1142,36 @@ func (f *trafficFakeStore) InsertNotification(n *models.Notification) (int64, er
 }
 
 func (f *trafficFakeStore) ListLinkRouteVoice() ([]store.LinkRouteVoice, error) { return f.voice, nil }
+
+func (f *trafficFakeStore) ListBeamIssuerOwners() ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, k := range f.issuerKeys {
+		if !seen[k.OwnerID] {
+			seen[k.OwnerID] = true
+			out = append(out, k.OwnerID)
+		}
+	}
+	return out, nil
+}
+func (f *trafficFakeStore) ListBeamIssuerKeysByOwner(owner string) ([]models.BeamIssuerKey, error) {
+	var out []models.BeamIssuerKey
+	for _, k := range f.issuerKeys {
+		if k.OwnerID == owner {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+func (f *trafficFakeStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
+	return nil, nil
+}
+func (f *trafficFakeStore) GetTrafficUsage(userID string, period time.Time) (*store.TrafficUsage, error) {
+	if u := f.usage[userID]; u != nil {
+		return u, nil
+	}
+	return &store.TrafficUsage{UserID: userID, Period: period}, nil
+}
 
 // A route-only voice port meters under its own subject (LinkRouteVoiceSubject);
 // those bytes are the route owner's route-only traffic like any other.

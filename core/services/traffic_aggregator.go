@@ -79,6 +79,9 @@ type TrafficAggregator struct {
 	flags    *FeatureFlags
 	leader   leader.Election
 	interval time.Duration
+	// suspendGrace is what PublishBeamIssuers needs when a managed tenant's
+	// throttle flips; the same value the issuer reconciler runs with.
+	suspendGrace time.Duration
 }
 
 func NewTrafficAggregator(st store.Store, r *redis.Client, flags *FeatureFlags) *TrafficAggregator {
@@ -87,6 +90,9 @@ func NewTrafficAggregator(st store.Store, r *redis.Client, flags *FeatureFlags) 
 
 // SetLeader wires the leader-election gate. Call once at boot.
 func (a *TrafficAggregator) SetLeader(l leader.Election) { a.leader = l }
+
+// SetSuspendGrace wires the grace the beam issuer records are published with.
+func (a *TrafficAggregator) SetSuspendGrace(d time.Duration) { a.suspendGrace = d }
 
 func (a *TrafficAggregator) Start(ctx context.Context) {
 	if a.redis == nil {
@@ -316,6 +322,20 @@ func (a *TrafficAggregator) subjectOwners() (map[string]string, error) {
 	for _, v := range voice {
 		if v.OwnerID != "" {
 			owners[LinkRouteVoiceSubject(v.OwnerID, v.Domain)] = v.OwnerID
+		}
+	}
+	// A managed-gateway tenant's beam sessions through our relay meter under
+	// relay:owner:<id> (the relay knows the issuer's owner, not a server of
+	// ours). Without this they were skipped, and the shared pool missed them.
+	// Every owner with a key row, revoked or not: a rotation's last bytes are
+	// still theirs.
+	issuers, err := a.store.ListBeamIssuerOwners()
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range issuers {
+		if id != "" {
+			owners[trafficOwnerSubjectPrefix+id] = id
 		}
 	}
 	return owners, nil

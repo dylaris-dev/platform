@@ -75,6 +75,9 @@ func (f *beamKeyStore) GetTrafficLimit(scope, region, kind string) (*models.Traf
 
 func (f *beamKeyStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) { return nil, nil }
 func (f *beamKeyStore) GetSetting(string) (string, error)                         { return "", nil }
+func (f *beamKeyStore) GetTrafficUsage(userID string, period time.Time) (*store.TrafficUsage, error) {
+	return &store.TrafficUsage{UserID: userID, Period: period}, nil
+}
 
 func newBeamKeyHandler(t *testing.T) (*ExternalGatewayHandler, *beamKeyStore, *redis.Client) {
 	t.Helper()
