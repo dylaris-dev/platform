@@ -29,19 +29,25 @@ func TestGetBeamTicket_DataBudget(t *testing.T) {
 		isAdmin  bool
 		caps     []string
 		query    string
+		ver      string // X-Beam-Version; "" = an ack-capable build
 		wantCode string // "" = a ticket
 	}{
-		{"budget unset: no gate", "", 9_000_000_000_000, "member-id", false, builder, "", ""},
-		{"budget unlimited: no gate", "unlimited", 9_000_000_000_000, "member-id", false, builder, "", ""},
-		{"below the budget: no gate", "1000", 999_000_000_000, "member-id", false, builder, "", ""},
-		{"reached, member: refused", "1000", 1_000_000_000_000, "member-id", false, builder, "", "data_budget_reached"},
-		{"reached, member with ack: still refused", "1000", 1_000_000_000_000, "member-id", false, builder, "&ack_over_budget=true", "data_budget_reached"},
-		{"reached, owner without ack", "1000", 1_000_000_000_000, "owner-id", false, nil, "", "data_budget_ack_required"},
-		{"reached, owner with ack", "1000", 1_000_000_000_000, "owner-id", false, nil, "&ack_over_budget=true", ""},
-		{"reached, admin without ack", "1000", 1_000_000_000_000, "admin-id", true, nil, "", "data_budget_ack_required"},
-		{"reached, admin with ack", "1000", 1_000_000_000_000, "admin-id", true, nil, "&ack_over_budget=true", ""},
-		{"zero budget: owner needs the ack at 0 bytes", "0", 0, "owner-id", false, nil, "", "data_budget_ack_required"},
-		{"zero budget: ack passes", "0", 0, "owner-id", false, nil, "&ack_over_budget=true", ""},
+		{"budget unset: no gate", "", 9_000_000_000_000, "member-id", false, builder, "", "", ""},
+		{"budget unlimited: no gate", "unlimited", 9_000_000_000_000, "member-id", false, builder, "", "", ""},
+		{"below the budget: no gate", "1000", 999_000_000_000, "member-id", false, builder, "", "", ""},
+		{"reached, member: refused", "1000", 1_000_000_000_000, "member-id", false, builder, "", "", "data_budget_reached"},
+		{"reached, member with ack: still refused", "1000", 1_000_000_000_000, "member-id", false, builder, "&ack_over_budget=true", "", "data_budget_reached"},
+		{"reached, owner without ack", "1000", 1_000_000_000_000, "owner-id", false, nil, "", "", "data_budget_ack_required"},
+		{"reached, owner with ack", "1000", 1_000_000_000_000, "owner-id", false, nil, "&ack_over_budget=true", "", ""},
+		{"reached, admin without ack", "1000", 1_000_000_000_000, "admin-id", true, nil, "", "", "data_budget_ack_required"},
+		{"reached, admin with ack", "1000", 1_000_000_000_000, "admin-id", true, nil, "&ack_over_budget=true", "", ""},
+		{"zero budget: owner needs the ack at 0 bytes", "0", 0, "owner-id", false, nil, "", "", "data_budget_ack_required"},
+		{"zero budget: ack passes", "0", 0, "owner-id", false, nil, "&ack_over_budget=true", "", ""},
+		// A Beam build that cannot send the ack must not lock its owner out.
+		{"old build, owner past the budget: passes without ack", "1000", 1_000_000_000_000, "owner-id", false, nil, "", "0.9.16", ""},
+		{"old build, admin past the budget: passes without ack", "1000", 1_000_000_000_000, "admin-id", true, nil, "", "0.9.16", ""},
+		{"no version header counts as old: owner passes", "0", 0, "owner-id", false, nil, "", "none", ""},
+		{"old build, member: still refused", "1000", 1_000_000_000_000, "member-id", false, builder, "", "0.9.16", "data_budget_reached"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -50,6 +56,13 @@ func TestGetBeamTicket_DataBudget(t *testing.T) {
 			h := newBeamAccessHandler(fs)
 
 			r := httptest.NewRequest("GET", "/api/beam/ticket?server_uuid=srv-uuid"+c.query, nil)
+			switch c.ver {
+			case "":
+				r.Header.Set("X-Beam-Version", beamBudgetAckMinVersion)
+			case "none":
+			default:
+				r.Header.Set("X-Beam-Version", c.ver)
+			}
 			ctx := context.WithValue(r.Context(), "username", "u")
 			ctx = context.WithValue(ctx, "isAdmin", c.isAdmin)
 			ctx = context.WithValue(ctx, "userID", c.userID)

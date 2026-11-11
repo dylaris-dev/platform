@@ -51,7 +51,18 @@ type BeamHandler struct {
 	minCacheMu  sync.Mutex
 	minCacheVal string
 	minCacheAt  time.Time
+
+	// oldClientBudgetLog rate-limits the log line for an owner let past
+	// their budget because their Beam build cannot send the ack.
+	oldClientBudgetMu  sync.Mutex
+	oldClientBudgetLog map[string]time.Time
 }
+
+// beamBudgetAckMinVersion is the first Beam app release that can send
+// ack_over_budget (App.ConnectToServerAck). An owner or admin on an older
+// build is let past their own budget without the ack rather than locked out
+// with no way to confirm; members stay refused either way.
+const beamBudgetAckMinVersion = "0.9.17"
 
 func NewBeamHandler(d Deps, jwtSecret, clusterSecret string) *BeamHandler {
 	return &BeamHandler{d: d, jwtSecret: jwtSecret, clusterSecret: clusterSecret}
@@ -314,7 +325,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 
 	// The owner's own data budget. Never a substitute for the store cap, only
 	// a gate in front of it.
-	if !h.passDataBudget(w, server, userID, isAdmin, ackOverBudget) {
+	if !h.passDataBudget(w, r, server, userID, isAdmin, ackOverBudget) {
 		return
 	}
 
@@ -531,7 +542,7 @@ func (h *BeamHandler) serverBudget(srv *models.Server, userID string, isAdmin bo
 // caller has not confirmed (or may not). A budget that cannot be read lets the
 // ticket through: it is the owner's own soft limit, and the store allowance
 // and the data throttle still apply.
-func (h *BeamHandler) passDataBudget(w http.ResponseWriter, srv *models.Server, userID string, isAdmin, ack bool) bool {
+func (h *BeamHandler) passDataBudget(w http.ResponseWriter, r *http.Request, srv *models.Server, userID string, isAdmin, ack bool) bool {
 	b, privileged, err := h.serverBudget(srv, userID, isAdmin)
 	if err != nil {
 		log.Printf("beam ticket: data budget for server %d unreadable, not gated: %v", srv.ID, err)
@@ -542,10 +553,28 @@ func (h *BeamHandler) passDataBudget(w http.ResponseWriter, srv *models.Server, 
 		httpx.SendJSONErrorCode(w, "The server owner's data budget for this month is used up. Ask the owner to raise it.", services.DataBudgetReachedCode, http.StatusForbidden)
 		return false
 	case services.DataBudgetAckRequiredCode:
+		if beamClientBelowMin(r.Header.Get("X-Beam-Version"), beamBudgetAckMinVersion) {
+			h.logOldClientBudgetPass(userID, srv.ID)
+			return true
+		}
 		httpx.SendJSONErrorCode(w, "Your data budget for this month is used up. Confirm the transfer to go past it.", services.DataBudgetAckRequiredCode, http.StatusForbidden)
 		return false
 	}
 	return true
+}
+
+// logOldClientBudgetPass logs at most once per user per hour.
+func (h *BeamHandler) logOldClientBudgetPass(userID string, serverID int) {
+	h.oldClientBudgetMu.Lock()
+	defer h.oldClientBudgetMu.Unlock()
+	if h.oldClientBudgetLog == nil {
+		h.oldClientBudgetLog = map[string]time.Time{}
+	}
+	if t, ok := h.oldClientBudgetLog[userID]; ok && time.Since(t) < time.Hour {
+		return
+	}
+	h.oldClientBudgetLog[userID] = time.Now()
+	log.Printf("beam ticket: user %s past the data budget of server %d without an ack: Beam build below %s cannot send one", userID, serverID, beamBudgetAckMinVersion)
 }
 
 // beamConfigBudget is the data_budget field of GetBeamConfig.
@@ -575,6 +604,7 @@ func (h *BeamHandler) configBudget(r *http.Request) *beamConfigBudget {
 	}
 	b, privileged, err := h.serverBudget(srv, userID, isAdmin)
 	if err != nil {
+		log.Printf("beam config: data budget of %s unreadable: %v", srv.OwnerID, err)
 		return nil
 	}
 	return &beamConfigBudget{DataBudget: b, CanConfirm: privileged}

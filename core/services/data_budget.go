@@ -20,6 +20,10 @@ const (
 	DataBudgetAckRequiredCode = "data_budget_ack_required"
 )
 
+// DataBudgetMaxGB is the largest budget the panel may store (1 PB); it keeps
+// the GB-to-bytes product far from int64 overflow.
+const DataBudgetMaxGB int64 = 1_000_000
+
 // DataBudget is one owner's budget state this month. BudgetGB nil = no budget.
 type DataBudget struct {
 	BudgetGB  *int64 `json:"budget_gb"`
@@ -53,6 +57,9 @@ func DataBudgetFor(st store.Store, ownerID string, now time.Time) (DataBudget, e
 	budget := ParseLimitSetting(raw, nil)
 	if budget == nil {
 		return DataBudget{}, nil
+	}
+	if *budget > DataBudgetMaxGB {
+		budget = LimitPtr(DataBudgetMaxGB) // a hand-edited row past the cap
 	}
 	used, err := DataBudgetUsageBytes(st, ownerID, now)
 	if err != nil {

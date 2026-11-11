@@ -887,6 +887,10 @@ func (a *App) connectToServer(serverUUID string, ack bool) error {
 
 	ticket, err := client.GetBeamTicket(serverUUID, ack)
 	if err != nil {
+		// A refused ticket is a failed switch too (a data budget makes it
+		// routine): the previous server's tunnel must not stay installed, or
+		// file ops for serverUUID would run against that other server.
+		a.dropTunnel()
 		// A mid-session raise of beam.min_version surfaces here as a typed 426:
 		// show the mandatory screen instead of a generic error.
 		var ure *UpdateRequiredError
@@ -908,11 +912,7 @@ func (a *App) connectToServer(serverUUID string, ack bool) error {
 		// installed - they would misrepresent the now-selected server. Tear the stale
 		// connection down so file ops fall back to Core REST for the correct server and
 		// the connection-mode badge clears.
-		a.stopHealthCheck()
-		if old := a.setRelay(nil); old != nil {
-			old.Close()
-		}
-		a.setConnMode("")
+		a.dropTunnel()
 
 		if lastErr != nil {
 			return fmt.Errorf("could not reach the server over LAN, relay, or a direct connection: %w", lastErr)
@@ -925,12 +925,42 @@ func (a *App) connectToServer(serverUUID string, ack bool) error {
 		return fmt.Errorf("node not reachable: no gateway/relay is configured and Core provided no pinned-TLS direct target - open the node's beam port (%s) so this client can reach it, or add a gateway/relay to route the connection", port)
 	}
 
+	// The tunnel is for the server that was asked for; relayFor checks it.
+	rc.ServerUUID = serverUUID
 	a.setConnMode(mode)
 	if old := a.setRelay(rc); old != nil {
 		old.Close()
 	}
 	a.startHealthCheck(serverUUID)
 	return nil
+}
+
+// dropTunnel tears down the installed tunnel and its badge.
+func (a *App) dropTunnel() {
+	a.stopHealthCheck()
+	if old := a.setRelay(nil); old != nil {
+		old.Close()
+	}
+	a.setConnMode("")
+}
+
+// relayFor is the installed tunnel when it serves serverUUID, else nil and the
+// caller falls back to Core REST for the server it was asked about. An empty
+// serverUUID (an older page) keeps the old behaviour.
+func (a *App) relayFor(serverUUID string) *BeamNodeClient {
+	rc := a.getRelay()
+	if rc == nil || (serverUUID != "" && rc.ServerUUID != serverUUID) {
+		return nil
+	}
+	return rc
+}
+
+// clearBudgetAck ends a confirmation: it covers one transfer and its own
+// retries, never the next transfer.
+func (a *App) clearBudgetAck() {
+	a.ackMu.Lock()
+	a.budgetAcked = ""
+	a.ackMu.Unlock()
 }
 
 // dialBeamPlan walks the preference chain: LAN fast-path first (even with a
@@ -1052,7 +1082,7 @@ func (a *App) ListFiles(path string, serverUUID string) (*FileListResult, error)
 	if client == nil {
 		return nil, fmt.Errorf("not logged in")
 	}
-	if relay := a.getRelay(); relay != nil {
+	if relay := a.relayFor(serverUUID); relay != nil {
 		return relay.ListFiles(path)
 	}
 	return client.ListFiles(path, serverUUID)
@@ -1063,7 +1093,7 @@ func (a *App) GetFileContent(path string, serverUUID string) (*FileContentResult
 	if client == nil {
 		return nil, fmt.Errorf("not logged in")
 	}
-	if relay := a.getRelay(); relay != nil {
+	if relay := a.relayFor(serverUUID); relay != nil {
 		return relay.GetFileContent(path)
 	}
 	return client.GetFileContent(path, serverUUID)
@@ -1074,7 +1104,7 @@ func (a *App) SaveFile(path string, content string, serverUUID string) error {
 	if client == nil {
 		return fmt.Errorf("not logged in")
 	}
-	if relay := a.getRelay(); relay != nil {
+	if relay := a.relayFor(serverUUID); relay != nil {
 		return relay.SaveFile(path, content)
 	}
 	return client.SaveFile(path, content, serverUUID)
@@ -1085,7 +1115,7 @@ func (a *App) CreateFile(path string, isDir bool, serverUUID string) error {
 	if client == nil {
 		return fmt.Errorf("not logged in")
 	}
-	if relay := a.getRelay(); relay != nil {
+	if relay := a.relayFor(serverUUID); relay != nil {
 		return relay.CreateFile(path, isDir)
 	}
 	return client.CreateFile(path, isDir, serverUUID)
@@ -1096,7 +1126,7 @@ func (a *App) DeleteFile(path string, serverUUID string) error {
 	if client == nil {
 		return fmt.Errorf("not logged in")
 	}
-	if relay := a.getRelay(); relay != nil {
+	if relay := a.relayFor(serverUUID); relay != nil {
 		return relay.DeleteFile(path)
 	}
 	return client.DeleteFile(path, serverUUID)
@@ -1107,7 +1137,7 @@ func (a *App) RenameFile(oldPath string, newPath string, serverUUID string) erro
 	if client == nil {
 		return fmt.Errorf("not logged in")
 	}
-	if relay := a.getRelay(); relay != nil {
+	if relay := a.relayFor(serverUUID); relay != nil {
 		// BeamNodeService takes just the new filename, not the full path
 		return relay.RenameFile(oldPath, filepath.Base(newPath))
 	}
@@ -1119,7 +1149,7 @@ func (a *App) CopyFile(srcPath string, dstPath string, serverUUID string) error 
 	if client == nil {
 		return fmt.Errorf("not logged in")
 	}
-	if relay := a.getRelay(); relay != nil {
+	if relay := a.relayFor(serverUUID); relay != nil {
 		return relay.CopyFile(srcPath, dstPath)
 	}
 	return client.CopyFile(srcPath, dstPath, serverUUID)
@@ -1130,6 +1160,7 @@ func (a *App) CopyFile(srcPath string, dstPath string, serverUUID string) error 
 // DownloadFile downloads a single file (or zipped directory) from the server.
 // Opens a native save dialog so the user picks where to save it.
 func (a *App) DownloadFile(path string, serverUUID string, isDir bool) error {
+	defer a.clearBudgetAck()
 	client := a.getClient()
 	if client == nil {
 		return fmt.Errorf("not logged in")
@@ -1148,7 +1179,7 @@ func (a *App) DownloadFile(path string, serverUUID string, isDir bool) error {
 		return nil // user cancelled
 	}
 
-	if relay := a.getRelay(); relay != nil {
+	if relay := a.relayFor(serverUUID); relay != nil {
 		return a.relayDownload(relay, serverUUID, savePath, func(ctx context.Context, rc *BeamNodeClient, onProgress func(loaded, total int64)) error {
 			return rc.DownloadFile(ctx, path, isDir, savePath, onProgress)
 		})
@@ -1286,6 +1317,7 @@ func (a *App) CancelDownload(savePath string) {
 // SelectiveDownload downloads selected files/folders as a zip.
 // Opens a native save dialog so the user picks where to save it.
 func (a *App) SelectiveDownload(basePath string, selected []string, selectAll bool, serverUUID string) error {
+	defer a.clearBudgetAck()
 	client := a.getClient()
 	if client == nil {
 		return fmt.Errorf("not logged in")
@@ -1299,7 +1331,7 @@ func (a *App) SelectiveDownload(basePath string, selected []string, selectAll bo
 		return nil // user cancelled
 	}
 
-	if relay := a.getRelay(); relay != nil {
+	if relay := a.relayFor(serverUUID); relay != nil {
 		return a.relayDownload(relay, serverUUID, savePath, func(ctx context.Context, rc *BeamNodeClient, onProgress func(loaded, total int64)) error {
 			return rc.SelectiveDownload(ctx, basePath, selected, selectAll, savePath, onProgress)
 		})
@@ -1417,6 +1449,7 @@ func (a *App) BeamUploadChunk(uploadID, dataB64 string, offset int64) error {
 }
 
 func (a *App) BeamUploadFinish(uploadID string) error {
+	defer a.clearBudgetAck()
 	a.uploadsMu.Lock()
 	sess := a.uploads[uploadID]
 	delete(a.uploads, uploadID)
@@ -1431,6 +1464,7 @@ func (a *App) BeamUploadFinish(uploadID string) error {
 // cleanup when an upload aborts mid-stream (network blip, user cancel).
 // Returning an error here just clutters the FileBrowser error path.
 func (a *App) BeamUploadCancel(uploadID string) {
+	defer a.clearBudgetAck()
 	a.uploadsMu.Lock()
 	sess := a.uploads[uploadID]
 	delete(a.uploads, uploadID)

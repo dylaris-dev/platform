@@ -14,8 +14,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.11.11
 
 ### Features
-- Set your own monthly data budget under My infrastructure to keep traffic for your players. Past it,
-  every Beam transfer asks you to confirm; your plan's traffic limit still applies first.
+- Set a monthly data budget under My infrastructure to keep traffic for your players. Past it, Beam
+  asks you before each transfer and never blocks you; your plan's traffic limit still applies first.
 
 ### Breaking
 - Nothing.

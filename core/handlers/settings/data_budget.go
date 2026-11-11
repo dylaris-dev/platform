@@ -57,8 +57,8 @@ func (h *DataBudgetHandler) SetMine(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
-	if req.BudgetGB != nil && *req.BudgetGB < 0 {
-		httpx.SendJSONError(w, "budget_gb must be 0 or more, or null for no budget", http.StatusBadRequest)
+	if req.BudgetGB != nil && (*req.BudgetGB < 0 || *req.BudgetGB > services.DataBudgetMaxGB) {
+		httpx.SendJSONError(w, "budget_gb must be between 0 and 1000000, or null for no budget", http.StatusBadRequest)
 		return
 	}
 	if err := h.d.Store.SetUserDataBudget(userID, services.FormatLimitSetting(req.BudgetGB)); err != nil {

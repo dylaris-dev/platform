@@ -11,8 +11,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ## 2026.11.11
 
 ### Features
-- Server owners can set their own monthly data budget under My infrastructure. Past it, every
-  Beam upload and download asks the owner or a panel admin to confirm, and members are refused. `core`
+- Server owners can set a monthly data budget under My infrastructure. Past it, Beam asks the owner or
+  a panel admin before each transfer and refuses members; builds before 0.9.17 never block the owner. `core`
 
 ### Breaking
 - Nothing.

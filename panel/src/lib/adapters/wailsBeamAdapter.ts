@@ -346,10 +346,10 @@ export async function ensureWailsConnection(
     // failed half-connect as "still good".
     lastConnectedServer = '';
     try {
-        if (opts.ack) {
-            if (typeof app.ConnectToServerAck !== 'function') {
-                throw new Error('Update the Beam app to confirm transfers past your data budget.');
-            }
+        // A build without ConnectToServerAck cannot send the ack; Core lets
+        // the owner of such a build past their budget without one
+        // (beamBudgetAckMinVersion), so the confirmation asked above holds.
+        if (opts.ack && typeof app.ConnectToServerAck === 'function') {
             await app.ConnectToServerAck(serverUuid);
         } else {
             await app.ConnectToServer(serverUuid);
@@ -487,6 +487,10 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 typeof app.BeamUploadStart === 'function' &&
                 typeof app.BeamUploadChunk === 'function' &&
                 typeof app.BeamUploadFinish === 'function';
+            // Before the HTTP fallback too: every upload asks. The native path
+            // re-dials below anyway, so the gate only asks here.
+            const gate = await gateTransfer(serverUuid, false);
+            if (!gate.ok) return { success: false, message: gate.message };
             if (!hasNative) {
                 devLog('beam.upload', 'warn', 'native bindings missing — falling back to HTTP upload via Core');
                 return apiUploadFiles(path, files, onProgress, strategy, mergeConflict, serverUuid);
@@ -495,9 +499,6 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 devLog('beam.upload', 'info', 'uploadFiles: empty file list, no-op');
                 return { success: true };
             }
-            // The upload re-dials below anyway, so the gate only asks here.
-            const gate = await gateTransfer(serverUuid, false);
-            if (!gate.ok) return { success: false, message: gate.message };
             // FileBrowser zips folders into a single .zip before calling
             // the adapter, so we always upload exactly one File here.
             const file = files[0];
