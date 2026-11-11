@@ -41,6 +41,10 @@ type BeamClaims struct {
 	// so a node that holds no fleet secret can still trust it. Empty on a ticket
 	// minted for a node whose secret Core could not load. See node_proof.go.
 	NodeProof string `json:"node_proof,omitempty"`
+	// Kit names the managed-gateway kit a tenant-signed (EdDSA) ticket claims to
+	// belong to. Deliberately NOT part of proofPayload: the relay checks it, the
+	// node does not use it.
+	Kit string `json:"kit,omitempty"`
 	// Perms is what this account may do to the server's files, resolved by Core
 	// from the same capability catalog the HTTP file API enforces.
 	//

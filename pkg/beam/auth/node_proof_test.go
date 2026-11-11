@@ -127,6 +127,7 @@ func TestNodeProofCoversEveryAccessClaim(t *testing.T) {
 	// decide which it is.
 	cannotBeCovered := map[string]string{
 		"NodeProof": "it IS the proof and cannot cover itself",
+		"Kit":       "decided by the relay against the tenant key's kits; the node authorizes by node_id and never reads it",
 	}
 	ty := reflect.TypeOf(BeamClaims{})
 	for i := 0; i < ty.NumField(); i++ {
