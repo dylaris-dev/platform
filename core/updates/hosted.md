@@ -21,7 +21,8 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Security
-- Nothing.
+- Built with Go 1.26.11, which fixes a flaw in Go's HTTP stack (GO-2026-6859). Your node picks it
+  up with its normal update. `node`
 
 ### Fixes
 - Nothing.

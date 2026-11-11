@@ -15,10 +15,11 @@ Newest release first. The format is fixed and checked in CI - see the
   a panel admin before each transfer and refuses members; builds before 0.9.17 never block the owner. `core`
 
 ### Breaking
-- Nothing.
+- The traffic-limits admin API refuses a per-user edge row for all regions (`*`) with 400: the store
+  owns that row for managed-gateway plans. Per-region user rows and relay rows work as before. `core`
 
 ### Security
-- Nothing.
+- Built with Go 1.26.11, which fixes GO-2026-6859 in Go's net/http. `core` `node`
 
 ### Fixes
 - Nothing.
