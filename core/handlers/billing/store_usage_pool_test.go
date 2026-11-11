@@ -16,6 +16,7 @@ type poolUsageStore struct {
 	store.Store
 	managed *models.TrafficLimit
 	usage   *store.TrafficUsage
+	cells   []store.RegionUsage
 }
 
 func (f *poolUsageStore) GetTrafficUsage(userID string, p time.Time) (*store.TrafficUsage, error) {
@@ -25,7 +26,7 @@ func (f *poolUsageStore) GetTrafficUsage(userID string, p time.Time) (*store.Tra
 	return &store.TrafficUsage{UserID: userID, Period: p, EdgeBytes: 7, RelayBytes: 5}, nil
 }
 func (f *poolUsageStore) GetTrafficUsageRegions(string, time.Time) ([]store.RegionUsage, error) {
-	return nil, nil
+	return f.cells, nil
 }
 func (f *poolUsageStore) GetTrafficLimit(scope, region, kind string) (*models.TrafficLimit, error) {
 	if scope == "user:u1" && region == "*" && kind == "edge" {
@@ -46,7 +47,7 @@ func TestStoreUsageManagedPool(t *testing.T) {
 		managed *models.TrafficLimit
 		want    string
 	}{
-		{"managed", &models.TrafficLimit{IncludedGB: &inc, MaxPurchaseGB: &max}, `{"includedGb":5000,"maxPurchaseGb":10000}`},
+		{"managed", &models.TrafficLimit{IncludedGB: &inc, MaxPurchaseGB: &max}, `{"includedGb":5000,"maxPurchaseGb":10000,"relayBytes":0}`},
 		{"byon", nil, `null`},
 	} {
 		h := NewStoreHandler(Deps{Store: &poolUsageStore{managed: c.managed}, StoreEnabled: true, StoreSharedKey: "k"})
@@ -81,9 +82,9 @@ func TestStoreUsageReportsGraceApart(t *testing.T) {
 		usage              store.TrafficUsage
 		wantRelay, wantGrc string
 	}{
-		{"no grace", store.TrafficUsage{EdgeBytes: 60, RelayBytes: 40}, "40", "0"},
-		{"open spell", store.TrafficUsage{EdgeBytes: 60, RelayBytes: 540, GraceSinceRelay: &since}, "40", "500"},
-		{"closed spell then billable", store.TrafficUsage{EdgeBytes: 60, RelayBytes: 570, GraceExcludedBytes: 500}, "70", "500"},
+		{"no grace", store.TrafficUsage{EdgeBytes: 60, RelayBytes: 40, ManagedRelayBytes: 40}, "40", "0"},
+		{"open spell", store.TrafficUsage{EdgeBytes: 60, RelayBytes: 540, ManagedRelayBytes: 540, GraceSinceRelay: &since}, "40", "500"},
+		{"closed spell then billable", store.TrafficUsage{EdgeBytes: 60, RelayBytes: 570, ManagedRelayBytes: 570, GraceExcludedBytes: 500}, "70", "500"},
 	} {
 		u := c.usage
 		h := NewStoreHandler(Deps{Store: &poolUsageStore{managed: &models.TrafficLimit{IncludedGB: &inc}, usage: &u}, StoreEnabled: true, StoreSharedKey: "k"})
@@ -97,6 +98,53 @@ func TestStoreUsageReportsGraceApart(t *testing.T) {
 		}
 		if string(out["relayBytes"]) != c.wantRelay || string(out["graceRelayBytes"]) != c.wantGrc || string(out["edgeBytes"]) != "60" {
 			t.Errorf("%s: relay %s grace %s edge %s, want %s %s 60", c.name, out["relayBytes"], out["graceRelayBytes"], out["edgeBytes"], c.wantRelay, c.wantGrc)
+		}
+	}
+}
+
+// Own-ticket relay bytes (product route) are the managed pool's: reported in
+// managedPool.relayBytes without grace, and kept out of the region breakdown
+// the BYON data overage bills from, managed or not (a cancelled plan).
+func TestStoreUsageKeepsManagedRelayOutOfTheBreakdown(t *testing.T) {
+	inc := int64(100)
+	since := int64(40)
+	cells := []store.RegionUsage{
+		{Region: "eu-central", Kind: "relay", Product: store.TrafficProductRoute, Bytes: 540},
+		{Region: "eu-central", Kind: "relay", Product: store.TrafficProductBYON, Bytes: 70},
+		{Region: "eu-central", Kind: "edge", Product: store.TrafficProductBYON, Bytes: 60},
+	}
+	usage := store.TrafficUsage{EdgeBytes: 60, RelayBytes: 610, ManagedRelayBytes: 540, GraceSinceRelay: &since}
+	for _, c := range []struct {
+		name    string
+		managed *models.TrafficLimit
+		pool    string
+	}{
+		{"managed", &models.TrafficLimit{IncludedGB: &inc}, `{"includedGb":100,"maxPurchaseGb":null,"relayBytes":40}`},
+		{"cancelled", nil, `null`},
+	} {
+		u := usage
+		h := NewStoreHandler(Deps{Store: &poolUsageStore{managed: c.managed, usage: &u, cells: cells}, StoreEnabled: true, StoreSharedKey: "k"})
+		req := httptest.NewRequest(http.MethodGet, "/api/store/usage?uuid=u1", nil)
+		req.Header.Set("X-Store-Key", "k")
+		rec := httptest.NewRecorder()
+		h.GetUsage(rec, req)
+		var out struct {
+			ManagedPool json.RawMessage `json:"managedPool"`
+			Regions     []struct {
+				Kind  string `json:"kind"`
+				Bytes int64  `json:"bytes"`
+			} `json:"regions"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("%s: %v %s", c.name, err, rec.Body.String())
+		}
+		if string(out.ManagedPool) != c.pool {
+			t.Errorf("%s: managedPool %s, want %s", c.name, out.ManagedPool, c.pool)
+		}
+		for _, r := range out.Regions {
+			if r.Kind == "relay" && r.Bytes != 70 {
+				t.Errorf("%s: relay breakdown %d bytes, want only the 70 server bytes", c.name, r.Bytes)
+			}
 		}
 	}
 }

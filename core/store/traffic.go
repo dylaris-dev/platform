@@ -19,20 +19,26 @@ type TrafficUsage struct {
 	RelayBytes  int64     `json:"relayBytes"`
 	BackupBytes int64     `json:"backupBytes"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	// ManagedRelayBytes is the part of RelayBytes that went through our relay
+	// on a managed-gateway tenant's own tickets (relay subject owner:<id>,
+	// product "route" in traffic_usage_region). Only these bytes are in the
+	// managed pool; beam and tab bytes of the tenant's servers on our fleet
+	// (server UUID subjects, product "byon") stay on the BYON data verdict.
+	ManagedRelayBytes int64 `json:"-"`
 	// Data grace mode (managed pool, no traffic consent, past the included
-	// amount): relay bytes from then on are tracked in RelayBytes like any
-	// other but kept out of the pool. GraceExcludedBytes holds the finished
-	// grace spells of the month; GraceSinceRelay is RelayBytes when the open
-	// one began, nil while none is open. Read through GraceRelayBytes.
+	// amount): managed relay bytes from then on are tracked like any other but
+	// kept out of the pool. GraceExcludedBytes holds the finished grace spells
+	// of the month; GraceSinceRelay is ManagedRelayBytes when the open one
+	// began, nil while none is open. Read through GraceRelayBytes.
 	GraceExcludedBytes int64  `json:"-"`
 	GraceSinceRelay    *int64 `json:"-"`
 }
 
-// GraceRelayBytes is the month's relay bytes accrued in data grace mode.
+// GraceRelayBytes is the month's managed relay bytes accrued in data grace mode.
 func (u *TrafficUsage) GraceRelayBytes() int64 {
 	n := u.GraceExcludedBytes
-	if u.GraceSinceRelay != nil && u.RelayBytes > *u.GraceSinceRelay {
-		n += u.RelayBytes - *u.GraceSinceRelay
+	if u.GraceSinceRelay != nil && u.ManagedRelayBytes > *u.GraceSinceRelay {
+		n += u.ManagedRelayBytes - *u.GraceSinceRelay
 	}
 	return n
 }
@@ -235,9 +241,9 @@ func (s *PostgresStore) SetTrafficBackupBytes(userID string, period time.Time, b
 func (s *PostgresStore) GetTrafficUsage(userID string, period time.Time) (*TrafficUsage, error) {
 	u := &TrafficUsage{UserID: userID, Period: period}
 	err := s.db.QueryRow(`
-		SELECT edge_bytes, relay_bytes, backup_bytes, updated_at, grace_excluded_bytes, grace_since_relay
+		SELECT edge_bytes, relay_bytes, backup_bytes, updated_at, grace_excluded_bytes, grace_since_relay, `+managedRelaySQL+`
 		FROM traffic_usage WHERE user_id = $1 AND period = $2`,
-		userID, period).Scan(&u.EdgeBytes, &u.RelayBytes, &u.BackupBytes, &u.UpdatedAt, &u.GraceExcludedBytes, &u.GraceSinceRelay)
+		userID, period).Scan(&u.EdgeBytes, &u.RelayBytes, &u.BackupBytes, &u.UpdatedAt, &u.GraceExcludedBytes, &u.GraceSinceRelay, &u.ManagedRelayBytes)
 	if err == sql.ErrNoRows {
 		return u, nil
 	}
@@ -247,12 +253,19 @@ func (s *PostgresStore) GetTrafficUsage(userID string, period time.Time) (*Traff
 	return u, nil
 }
 
-// StartTrafficGrace opens a data grace spell at the row's current relay_bytes,
-// read inside the statement so a concurrent tick cannot slip between the read
-// and the write. started is false when one was already open (or no row yet).
+// managedRelaySQL is a traffic_usage row's managed relay bytes: the relay cells
+// the aggregator wrote for owner:<id> subjects. A tick writes the total and its
+// cells in one transaction (AddTrafficTick), so this sum is never half a tick.
+const managedRelaySQL = `(SELECT COALESCE(SUM(r.bytes), 0) FROM traffic_usage_region r
+		WHERE r.user_id = traffic_usage.user_id AND r.period = traffic_usage.period
+		  AND r.kind = '` + TrafficKindRelay + `' AND r.product = '` + TrafficProductRoute + `')`
+
+// StartTrafficGrace opens a data grace spell at the row's current managed relay
+// bytes, read inside the statement so a concurrent tick cannot slip between the
+// read and the write. started is false when one was already open (or no row yet).
 func (s *PostgresStore) StartTrafficGrace(userID string, period time.Time) (started bool, err error) {
 	res, err := s.db.Exec(`
-		UPDATE traffic_usage SET grace_since_relay = relay_bytes
+		UPDATE traffic_usage SET grace_since_relay = `+managedRelaySQL+`
 		WHERE user_id = $1 AND period = $2 AND grace_since_relay IS NULL`,
 		userID, period)
 	if err != nil {
@@ -267,7 +280,7 @@ func (s *PostgresStore) StartTrafficGrace(userID string, period time.Time) (star
 func (s *PostgresStore) EndTrafficGrace(userID string, period time.Time) (ended bool, err error) {
 	res, err := s.db.Exec(`
 		UPDATE traffic_usage SET
-			grace_excluded_bytes = grace_excluded_bytes + GREATEST(relay_bytes - grace_since_relay, 0),
+			grace_excluded_bytes = grace_excluded_bytes + GREATEST(`+managedRelaySQL+` - grace_since_relay, 0),
 			grace_since_relay    = NULL
 		WHERE user_id = $1 AND period = $2 AND grace_since_relay IS NOT NULL`,
 		userID, period)

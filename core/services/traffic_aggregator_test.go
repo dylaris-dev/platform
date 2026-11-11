@@ -1179,7 +1179,7 @@ func (f *trafficFakeStore) StartTrafficGrace(userID string, _ time.Time) (bool, 
 	if u == nil || u.GraceSinceRelay != nil {
 		return false, nil
 	}
-	since := u.RelayBytes
+	since := u.ManagedRelayBytes
 	u.GraceSinceRelay = &since
 	return true, nil
 }
@@ -1188,7 +1188,7 @@ func (f *trafficFakeStore) EndTrafficGrace(userID string, _ time.Time) (bool, er
 	if u == nil || u.GraceSinceRelay == nil {
 		return false, nil
 	}
-	u.GraceExcludedBytes += max(u.RelayBytes-*u.GraceSinceRelay, 0)
+	u.GraceExcludedBytes += max(u.ManagedRelayBytes-*u.GraceSinceRelay, 0)
 	u.GraceSinceRelay = nil
 	return true, nil
 }

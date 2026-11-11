@@ -250,6 +250,13 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	agg := map[aggKey]int64{}
 	order := make([]aggKey, 0, len(cells))
 	for _, c := range cells {
+		// A managed tenant's own-ticket relay bytes are the managed pool's and
+		// go out in managedPool.relayBytes. Leaving them in this breakdown would
+		// let the BYON data overage bill them (with their grace bytes) as soon
+		// as the managed plan is cancelled.
+		if c.Kind == services.TrafficKindRelay && c.Product == store.TrafficProductRoute {
+			continue
+		}
 		k := aggKey{services.TrafficLimitRegion(c.Region, c.Kind), c.Kind}
 		if _, seen := agg[k]; !seen {
 			order = append(order, k)
@@ -290,7 +297,9 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Failed to resolve traffic limits", http.StatusInternalServerError)
 		return
 	} else if pool != nil {
-		managedPool = map[string]interface{}{"includedGb": pool.IncludedGB, "maxPurchaseGb": pool.MaxPurchaseGB}
+		// relayBytes: the pool's data part, own-ticket relay bytes without grace.
+		managedPool = map[string]interface{}{"includedGb": pool.IncludedGB, "maxPurchaseGb": pool.MaxPurchaseGB,
+			"relayBytes": usage.ManagedRelayBytes - usage.GraceRelayBytes()}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":          true,

@@ -38,7 +38,7 @@ func TestManagedPoolSumsEdgeAndRelay(t *testing.T) {
 		{"edge plus relay over", 60 * poolGB, 50 * poolGB, true},
 		{"relay alone over", 0, 100 * poolGB, true},
 	} {
-		fs.usage = map[string]*store.TrafficUsage{"mg-1": {EdgeBytes: c.edge, RelayBytes: c.relay}}
+		fs.usage = map[string]*store.TrafficUsage{"mg-1": {EdgeBytes: c.edge, RelayBytes: c.relay, ManagedRelayBytes: c.relay}}
 		v, managed, err := ManagedPoolVerdictFor(fs, "mg-1", time.Now())
 		if err != nil || !managed {
 			t.Fatalf("%s: managed %v err %v", c.name, managed, err)
@@ -107,19 +107,21 @@ func TestManagedThrottleOnlyPastStoreCap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fs.usage = map[string]*store.TrafficUsage{"mg-1": {EdgeBytes: 100 * poolGB, RelayBytes: 40 * poolGB}} // billed, not slowed
+	fs.usage = map[string]*store.TrafficUsage{"mg-1": {EdgeBytes: 100 * poolGB, RelayBytes: 40 * poolGB, ManagedRelayBytes: 40 * poolGB}} // billed, not slowed
 	agg.evaluateDataThrottle(ctx, owners)
 	if _, ok := bw(); ok || IsDataThrottled(ctx, rdb, "mg-1") {
 		t.Fatal("throttled inside the purchasable range")
 	}
 
-	fs.usage["mg-1"] = &store.TrafficUsage{EdgeBytes: 100 * poolGB, RelayBytes: 50 * poolGB} // at the store cap
+	fs.usage["mg-1"] = &store.TrafficUsage{EdgeBytes: 100 * poolGB, RelayBytes: 50 * poolGB, ManagedRelayBytes: 50 * poolGB} // at the store cap
 	agg.evaluateDataThrottle(ctx, owners)
 	if n, ok := bw(); !ok || n != DataThrottleDefaultMbit*125_000 {
 		t.Fatalf("bw_bps = %d (present %v), want %d", n, ok, DataThrottleDefaultMbit*125_000)
 	}
-	if v, _ := rdb.Get(ctx, DataBandwidthKey("srv-9")).Int64(); v != DataThrottleDefaultMbit*125_000 {
-		t.Fatalf("the tenant's own server data_bw = %d", v)
+	// The pool's throttle paces the tenant's tickets only; their server on
+	// our fleet follows the BYON data verdict, which is not over.
+	if rdb.Exists(ctx, DataBandwidthKey("srv-9")).Val() != 0 {
+		t.Fatal("the managed pool throttled the tenant's own server")
 	}
 	// The reconciler recomputes the same answer.
 	if err := PublishBeamIssuers(ctx, fs, rdb, 0, "mg-1"); err != nil {

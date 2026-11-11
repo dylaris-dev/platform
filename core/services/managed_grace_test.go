@@ -28,6 +28,14 @@ func graceFixture(t *testing.T, consent bool) (*trafficFakeStore, *TrafficAggreg
 	return fs, agg, rdb, map[string]string{"owner:mg-1": "mg-1", "srv-9": "mg-1"}
 }
 
+// mgUsage is a managed tenant whose relay bytes are all own-ticket (owner:)
+// bytes; addRelay moves both counters the way an aggregator tick does.
+func mgUsage(edge, relay int64) *store.TrafficUsage {
+	return &store.TrafficUsage{EdgeBytes: edge, RelayBytes: relay, ManagedRelayBytes: relay}
+}
+func addRelay(u *store.TrafficUsage, n int64) { u.RelayBytes += n; u.ManagedRelayBytes += n }
+func setRelay(u *store.TrafficUsage, n int64) { u.RelayBytes, u.ManagedRelayBytes = n, n }
+
 // issuerLimits reads bw_bps and daily_quota_bytes off the published record;
 // -1 means the field is absent.
 func issuerLimits(t *testing.T, rdb *redis.Client) (bw, quota int64) {
@@ -74,13 +82,13 @@ func TestGraceModeEntersAtIncludedWithoutConsent(t *testing.T) {
 
 	fs, agg, rdb, owners := graceFixture(t, false)
 	ctx := context.Background()
-	fs.usage = map[string]*store.TrafficUsage{"mg-1": {EdgeBytes: 60 * poolGB, RelayBytes: 39 * poolGB}}
+	fs.usage = map[string]*store.TrafficUsage{"mg-1": mgUsage(60*poolGB, 39*poolGB)}
 	agg.evaluateDataThrottle(ctx, owners)
 	if fs.usage["mg-1"].GraceSinceRelay != nil {
 		t.Fatal("grace opened below the included amount")
 	}
 
-	fs.usage["mg-1"].RelayBytes = 40 * poolGB
+	setRelay(fs.usage["mg-1"], 40*poolGB)
 	agg.evaluateDataThrottle(ctx, owners)
 	if s := fs.usage["mg-1"].GraceSinceRelay; s == nil || *s != 40*poolGB {
 		t.Fatalf("grace snapshot %v, want the 40 GB of relay bytes at entry", s)
@@ -88,8 +96,8 @@ func TestGraceModeEntersAtIncludedWithoutConsent(t *testing.T) {
 	if bw, quota := issuerLimits(t, rdb); bw != 6_250_000 || quota != 30_000_000_000 {
 		t.Fatalf("grace record bw_bps %d daily_quota_bytes %d, want 6250000 / 30000000000", bw, quota)
 	}
-	if v, _ := rdb.Get(ctx, DataBandwidthKey("srv-9")).Int64(); v != GraceBps {
-		t.Fatalf("own server data_bw %d, want the fixed grace %d", v, GraceBps)
+	if rdb.Exists(ctx, DataBandwidthKey("srv-9")).Val() != 0 {
+		t.Fatal("grace mode throttled the tenant's own server; it is not in the pool")
 	}
 	// The setting does not move the grace speed.
 	fs.settings[DataThrottleSettingKey] = "200"
@@ -106,10 +114,10 @@ func TestGraceModeEntersAtIncludedWithoutConsent(t *testing.T) {
 func TestGraceBytesExcludedFromPoolButInStats(t *testing.T) {
 	fs, agg, _, owners := graceFixture(t, false)
 	ctx := context.Background()
-	fs.usage = map[string]*store.TrafficUsage{"mg-1": {EdgeBytes: 60 * poolGB, RelayBytes: 40 * poolGB}}
+	fs.usage = map[string]*store.TrafficUsage{"mg-1": mgUsage(60*poolGB, 40*poolGB)}
 	agg.evaluateDataThrottle(ctx, owners) // enters grace at 40 GB relay
 
-	fs.usage["mg-1"].RelayBytes += 500 * poolGB // 500 GB of beam in grace mode
+	addRelay(fs.usage["mg-1"], 500*poolGB) // 500 GB of beam in grace mode
 	agg.evaluateDataThrottle(ctx, owners)
 	u := fs.usage["mg-1"]
 	if u.RelayBytes != 540*poolGB {
@@ -135,9 +143,9 @@ func TestGraceBytesExcludedFromPoolButInStats(t *testing.T) {
 func TestGraceNeverBilledAfterConsent(t *testing.T) {
 	fs, agg, rdb, owners := graceFixture(t, false)
 	ctx := context.Background()
-	fs.usage = map[string]*store.TrafficUsage{"mg-1": {EdgeBytes: 60 * poolGB, RelayBytes: 40 * poolGB}}
+	fs.usage = map[string]*store.TrafficUsage{"mg-1": mgUsage(60*poolGB, 40*poolGB)}
 	agg.evaluateDataThrottle(ctx, owners)
-	fs.usage["mg-1"].RelayBytes += 500 * poolGB
+	addRelay(fs.usage["mg-1"], 500*poolGB)
 
 	fs.billing["mg-1"].TrafficBillingEnabled = true
 	agg.evaluateDataThrottle(ctx, owners)
@@ -153,14 +161,14 @@ func TestGraceNeverBilledAfterConsent(t *testing.T) {
 		t.Fatalf("consent inside the store cap still limited: bw %d quota %d", bw, quota)
 	}
 
-	u.RelayBytes += 30 * poolGB // billable now
+	addRelay(u, 30*poolGB) // billable now
 	if got := ManagedPoolBytes(u) - baseline; got != 30*poolGB {
 		t.Fatalf("billable growth %d, want only the 30 GB after consent", got)
 	}
 	// Consent off again later the same month: a new spell, the old one kept.
 	fs.billing["mg-1"].TrafficBillingEnabled = false
 	agg.evaluateDataThrottle(ctx, owners)
-	u.RelayBytes += 10 * poolGB
+	addRelay(u, 10*poolGB)
 	if g := u.GraceRelayBytes(); g != 510*poolGB {
 		t.Fatalf("grace bytes %d after a second spell, want 510 GB", g)
 	}
@@ -171,7 +179,7 @@ func TestGraceNeverBilledAfterConsent(t *testing.T) {
 func TestConsentSkipsGrace(t *testing.T) {
 	fs, agg, rdb, owners := graceFixture(t, true)
 	ctx := context.Background()
-	fs.usage = map[string]*store.TrafficUsage{"mg-1": {EdgeBytes: 100 * poolGB, RelayBytes: 20 * poolGB}}
+	fs.usage = map[string]*store.TrafficUsage{"mg-1": mgUsage(100*poolGB, 20*poolGB)}
 	agg.evaluateDataThrottle(ctx, owners)
 	if err := PublishBeamIssuers(ctx, fs, rdb, 0, "mg-1"); err != nil {
 		t.Fatal(err)
@@ -183,7 +191,7 @@ func TestConsentSkipsGrace(t *testing.T) {
 		t.Fatalf("consent past included: bw %d quota %d, want neither", bw, quota)
 	}
 
-	fs.usage["mg-1"].RelayBytes = 50 * poolGB // at the store cap
+	setRelay(fs.usage["mg-1"], 50*poolGB) // at the store cap
 	agg.evaluateDataThrottle(ctx, owners)
 	if bw, quota := issuerLimits(t, rdb); bw != DataThrottleDefaultMbit*125_000 || quota != -1 {
 		t.Fatalf("consent at the store cap: bw %d quota %d, want the setting and no quota", bw, quota)
