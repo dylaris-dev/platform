@@ -241,7 +241,10 @@ func (s *PostgresStore) SetTrafficBackupBytes(userID string, period time.Time, b
 func (s *PostgresStore) GetTrafficUsage(userID string, period time.Time) (*TrafficUsage, error) {
 	u := &TrafficUsage{UserID: userID, Period: period}
 	err := s.db.QueryRow(`
-		SELECT edge_bytes, relay_bytes, backup_bytes, updated_at, grace_excluded_bytes, grace_since_relay, `+managedRelaySQL+`
+		SELECT edge_bytes, relay_bytes, backup_bytes, updated_at, grace_excluded_bytes, grace_since_relay,
+			(SELECT COALESCE(SUM(r.bytes), 0) FROM traffic_usage_region r
+			WHERE r.user_id = traffic_usage.user_id AND r.period = traffic_usage.period
+			  AND r.kind = 'relay' AND r.product = 'route')
 		FROM traffic_usage WHERE user_id = $1 AND period = $2`,
 		userID, period).Scan(&u.EdgeBytes, &u.RelayBytes, &u.BackupBytes, &u.UpdatedAt, &u.GraceExcludedBytes, &u.GraceSinceRelay, &u.ManagedRelayBytes)
 	if err == sql.ErrNoRows {
@@ -253,19 +256,23 @@ func (s *PostgresStore) GetTrafficUsage(userID string, period time.Time) (*Traff
 	return u, nil
 }
 
-// managedRelaySQL is a traffic_usage row's managed relay bytes: the relay cells
-// the aggregator wrote for owner:<id> subjects. A tick writes the total and its
-// cells in one transaction (AddTrafficTick), so this sum is never half a tick.
-const managedRelaySQL = `(SELECT COALESCE(SUM(r.bytes), 0) FROM traffic_usage_region r
-		WHERE r.user_id = traffic_usage.user_id AND r.period = traffic_usage.period
-		  AND r.kind = '` + TrafficKindRelay + `' AND r.product = '` + TrafficProductRoute + `')`
+// The managed relay bytes of a traffic_usage row are the relay cells the
+// aggregator wrote for owner:<id> subjects: kind 'relay' (TrafficKindRelay),
+// product 'route' (TrafficProductRoute). A tick writes the total and its cells
+// in one transaction (AddTrafficTick), so the sum is never half a tick. The
+// subquery is spelled out in each of the three statements (GetTrafficUsage,
+// StartTrafficGrace, EndTrafficGrace) rather than concatenated from a const,
+// so TestEverySQLStatementPrepares sees and prepares each one whole;
+// TestManagedRelaySQLMatchesTheConstants keeps the three copies in step.
 
 // StartTrafficGrace opens a data grace spell at the row's current managed relay
 // bytes, read inside the statement so a concurrent tick cannot slip between the
 // read and the write. started is false when one was already open (or no row yet).
 func (s *PostgresStore) StartTrafficGrace(userID string, period time.Time) (started bool, err error) {
 	res, err := s.db.Exec(`
-		UPDATE traffic_usage SET grace_since_relay = `+managedRelaySQL+`
+		UPDATE traffic_usage SET grace_since_relay = (SELECT COALESCE(SUM(r.bytes), 0) FROM traffic_usage_region r
+			WHERE r.user_id = traffic_usage.user_id AND r.period = traffic_usage.period
+			  AND r.kind = 'relay' AND r.product = 'route')
 		WHERE user_id = $1 AND period = $2 AND grace_since_relay IS NULL`,
 		userID, period)
 	if err != nil {
@@ -280,7 +287,9 @@ func (s *PostgresStore) StartTrafficGrace(userID string, period time.Time) (star
 func (s *PostgresStore) EndTrafficGrace(userID string, period time.Time) (ended bool, err error) {
 	res, err := s.db.Exec(`
 		UPDATE traffic_usage SET
-			grace_excluded_bytes = grace_excluded_bytes + GREATEST(`+managedRelaySQL+` - grace_since_relay, 0),
+			grace_excluded_bytes = grace_excluded_bytes + GREATEST((SELECT COALESCE(SUM(r.bytes), 0) FROM traffic_usage_region r
+			WHERE r.user_id = traffic_usage.user_id AND r.period = traffic_usage.period
+			  AND r.kind = 'relay' AND r.product = 'route') - grace_since_relay, 0),
 			grace_since_relay    = NULL
 		WHERE user_id = $1 AND period = $2 AND grace_since_relay IS NOT NULL`,
 		userID, period)
