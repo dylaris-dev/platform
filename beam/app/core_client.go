@@ -195,10 +195,21 @@ type BeamTicket struct {
 	LANFingerprint string
 }
 
-func (c *CoreClient) GetBeamTicket(serverUUID string) (*BeamTicket, error) {
+// beamTicketPath is the ticket request. ackOverBudget is the user's
+// confirmation to transfer past the owner's data budget; Core honours it only
+// for the owner or a panel admin.
+func beamTicketPath(serverUUID string, ackOverBudget bool) string {
+	p := "/beam/ticket?server_uuid=" + url.QueryEscape(serverUUID)
+	if ackOverBudget {
+		p += "&ack_over_budget=true"
+	}
+	return p
+}
+
+func (c *CoreClient) GetBeamTicket(serverUUID string, ackOverBudget bool) (*BeamTicket, error) {
 	// GET, not POST: a CDN/WAF in front of Core was handing the desktop
 	// app's POSTs an HTML challenge page. GET /beam/* goes through.
-	data, err := c.get("/beam/ticket?server_uuid=" + url.QueryEscape(serverUUID))
+	data, err := c.get(beamTicketPath(serverUUID, ackOverBudget))
 	if err != nil {
 		return nil, err
 	}

@@ -1124,6 +1124,10 @@ type Store interface {
 	GetUserUpdatesSeen(userID string) (version string, err error)
 	GetUserTimePreferences(userID string) (timezone, timeFormat string, err error)
 	SetUserTimePreferences(userID, timezone, timeFormat string) error
+	// The owner's self-set monthly data budget, raw as ParseLimitSetting reads
+	// it: "" never set, "unlimited" none, a number of GB.
+	GetUserDataBudget(userID string) (string, error)
+	SetUserDataBudget(userID, raw string) error
 	// MinecraftEulaAccepted reports whether the user has accepted the
 	// Minecraft EULA; AcceptMinecraftEula records it (the first time only).
 	MinecraftEulaAccepted(userID string) (bool, error)

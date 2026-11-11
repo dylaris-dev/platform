@@ -1891,7 +1891,7 @@
       "path": "/api/beam/config",
       "auth": "session",
       "authorization": "no capability",
-      "description": "returns the Beam relay address and branding info.",
+      "description": "returns the Beam relay address, branding info and the data budget of the owner of ?server_uuid= (the caller's own without one).",
       "handler": "BeamHandler.GetBeamConfig",
       "group": "beam",
       "external": false
@@ -2899,6 +2899,26 @@
       "authorization": "no capability",
       "description": "the caller's lifecycle state for the banner.",
       "handler": "BillingHandler.GetMyBilling",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/me/data-budget",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "{budget_gb, used_gb, reached, allowance_gb}.",
+      "handler": "DataBudgetHandler.GetMine",
+      "group": "me",
+      "external": false
+    },
+    {
+      "method": "PUT",
+      "path": "/api/me/data-budget",
+      "auth": "session",
+      "authorization": "no capability",
+      "description": "body {budget_gb: n | null}; null removes the budget, 0 makes every transfer ask.",
+      "handler": "DataBudgetHandler.SetMine",
       "group": "me",
       "external": false
     },
@@ -6463,10 +6483,10 @@
     }
   ],
   "counts": {
-    "total": 651,
+    "total": 653,
     "byAuth": {
       "none": 30,
-      "session": 580,
+      "session": 582,
       "user API key": 32,
       "warp key": 9
     },
@@ -6489,7 +6509,7 @@
       "healthz": 1,
       "infrastructure": 3,
       "maintenance": 1,
-      "me": 48,
+      "me": 50,
       "mirror": 1,
       "modrinth": 9,
       "modules": 6,

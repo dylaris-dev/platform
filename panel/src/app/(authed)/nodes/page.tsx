@@ -34,6 +34,7 @@ import RouteOnlyPanel from '@/components/infra/RouteOnlyPanel';
 import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
 import ExternalNodesPanel from '@/components/infra/ExternalNodesPanel';
 import TrafficPools from '@/components/infra/TrafficPools';
+import DataBudgetCard from '@/components/infra/DataBudgetCard';
 import RemoveMachineDialog from '@/components/infra/RemoveMachineDialog';
 import NodeBackupThrottle from '@/components/settings/NodeBackupThrottle';
 import { fmtDate } from '@/lib/time';
@@ -473,6 +474,7 @@ function MyNodesInner() {
             {/* Above the tabs, because it is about everything below them: the
                 allowances are the tenant's, not any one location's. */}
             <TrafficPools />
+            <DataBudgetCard />
 
             {/* A bar with one tab is decoration. It appears only where the reader
                 actually has somewhere else to go. */}

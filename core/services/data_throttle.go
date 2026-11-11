@@ -125,12 +125,12 @@ func TrafficUnits(b *store.UserBilling, now time.Time) *int64 {
 	return &n
 }
 
-// DataTrafficVerdictFor reads one tenant's data usage, allowance and consent.
-func DataTrafficVerdictFor(st store.Store, userID string, now time.Time) (DataThrottleVerdict, error) {
-	period := monthStartUTC(now)
-	cells, err := st.GetTrafficUsageRegions(userID, period)
+// DataTrafficUsedBytes is one tenant's data traffic this month: the relay
+// bytes the data allowance is judged on.
+func DataTrafficUsedBytes(st store.Store, userID string, now time.Time) (int64, error) {
+	cells, err := st.GetTrafficUsageRegions(userID, monthStartUTC(now))
 	if err != nil {
-		return DataThrottleVerdict{}, err
+		return 0, err
 	}
 	var used int64
 	for _, c := range cells {
@@ -139,6 +139,15 @@ func DataTrafficVerdictFor(st store.Store, userID string, now time.Time) (DataTh
 		if c.Kind == store.TrafficKindRelay && c.Product != store.TrafficProductRoute {
 			used += c.Bytes
 		}
+	}
+	return used, nil
+}
+
+// DataTrafficVerdictFor reads one tenant's data usage, allowance and consent.
+func DataTrafficVerdictFor(st store.Store, userID string, now time.Time) (DataThrottleVerdict, error) {
+	used, err := DataTrafficUsedBytes(st, userID, now)
+	if err != nil {
+		return DataThrottleVerdict{}, err
 	}
 	lim, err := ResolveTrafficLimit(st, userID, "*", store.TrafficKindRelay)
 	if err != nil {

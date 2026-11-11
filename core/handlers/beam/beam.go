@@ -256,12 +256,15 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// were observed handing its POSTs an HTML page instead of routing
 	// them through, and GET goes straight to the handler.
 	serverUUID := r.URL.Query().Get("server_uuid")
+	ackOverBudget := r.URL.Query().Get("ack_over_budget") == "true"
 	if serverUUID == "" && r.Body != nil {
 		var req struct {
-			ServerUUID string `json:"server_uuid"`
+			ServerUUID    string `json:"server_uuid"`
+			AckOverBudget bool   `json:"ack_over_budget"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		serverUUID = req.ServerUUID
+		ackOverBudget = ackOverBudget || req.AckOverBudget
 	}
 	if serverUUID == "" {
 		httpx.SendJSONError(w, "server_uuid required", http.StatusBadRequest)
@@ -306,6 +309,12 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	if demo {
 		httpx.SendJSONError(w, "Not available in the demo", http.StatusForbidden)
+		return
+	}
+
+	// The owner's own data budget. Never a substitute for the store cap, only
+	// a gate in front of it.
+	if !h.passDataBudget(w, server, userID, isAdmin, ackOverBudget) {
 		return
 	}
 
@@ -511,7 +520,68 @@ func buildBeamDirectHints(relayAddr string, lanIPs []string, publicIP, port, fin
 	return h
 }
 
-// GetBeamConfig returns the Beam relay address and branding info.
+// serverBudget reads the data budget of srv's owner; privileged is whether
+// the caller may confirm past it (the owner or a panel admin).
+func (h *BeamHandler) serverBudget(srv *models.Server, userID string, isAdmin bool) (b services.DataBudget, privileged bool, err error) {
+	b, err = services.DataBudgetFor(h.d.Store, srv.OwnerID, time.Now())
+	return b, isAdmin || (userID != "" && userID == srv.OwnerID), err
+}
+
+// passDataBudget refuses the ticket when the owner's budget is reached and the
+// caller has not confirmed (or may not). A budget that cannot be read lets the
+// ticket through: it is the owner's own soft limit, and the store allowance
+// and the data throttle still apply.
+func (h *BeamHandler) passDataBudget(w http.ResponseWriter, srv *models.Server, userID string, isAdmin, ack bool) bool {
+	b, privileged, err := h.serverBudget(srv, userID, isAdmin)
+	if err != nil {
+		log.Printf("beam ticket: data budget for server %d unreadable, not gated: %v", srv.ID, err)
+		return true
+	}
+	switch services.DataBudgetGate(b, privileged, ack) {
+	case services.DataBudgetReachedCode:
+		httpx.SendJSONErrorCode(w, "The server owner's data budget for this month is used up. Ask the owner to raise it.", services.DataBudgetReachedCode, http.StatusForbidden)
+		return false
+	case services.DataBudgetAckRequiredCode:
+		httpx.SendJSONErrorCode(w, "Your data budget for this month is used up. Confirm the transfer to go past it.", services.DataBudgetAckRequiredCode, http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// beamConfigBudget is the data_budget field of GetBeamConfig.
+type beamConfigBudget struct {
+	services.DataBudget
+	CanConfirm bool `json:"can_confirm"`
+}
+
+// configBudget answers for ?server_uuid= (that server's owner, only to a
+// caller who may beam to it) or, without one, for the caller's own budget.
+func (h *BeamHandler) configBudget(r *http.Request) *beamConfigBudget {
+	userID, _ := r.Context().Value("userID").(string)
+	isAdmin, _ := r.Context().Value("isAdmin").(bool)
+	srv := &models.Server{OwnerID: userID}
+	if uuid := r.URL.Query().Get("server_uuid"); uuid != "" {
+		s, err := h.d.Store.GetServerByUUID(uuid)
+		if err != nil || s == nil {
+			return nil
+		}
+		if ok, _ := h.canBeam(r, s.ID); !ok {
+			return nil
+		}
+		srv = s
+	}
+	if srv.OwnerID == "" {
+		return nil
+	}
+	b, privileged, err := h.serverBudget(srv, userID, isAdmin)
+	if err != nil {
+		return nil
+	}
+	return &beamConfigBudget{DataBudget: b, CanConfirm: privileged}
+}
+
+// GetBeamConfig returns the Beam relay address, branding info and the data
+// budget of the owner of ?server_uuid= (the caller's own without one).
 // GET /api/beam/config
 func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 	getSetting := func(key string) string {
@@ -551,6 +621,8 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 			"name":     brandName,
 			"logo_url": brandLogoURL,
 		},
+		// The owner's self-set budget; null when it could not be answered.
+		"data_budget": h.configBudget(r),
 	})
 }
 

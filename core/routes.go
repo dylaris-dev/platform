@@ -2278,6 +2278,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// Own time zone and clock format (own data).
 	api.HandleFunc("/me/time-preferences", authHandler.AuthMiddleware(timezoneHandler.GetMine)).Methods("GET")
 	api.HandleFunc("/me/time-preferences", authHandler.AuthMiddleware(timezoneHandler.SetMine)).Methods("PUT")
+	dataBudgetHandler := settings.NewDataBudgetHandler(settingsDeps)
+	api.HandleFunc("/me/data-budget", authHandler.AuthMiddleware(dataBudgetHandler.GetMine)).Methods("GET")
+	api.HandleFunc("/me/data-budget", authHandler.AuthMiddleware(dataBudgetHandler.SetMine)).Methods("PUT")
 
 	// --- Backup Endpoints ---
 	// backup-storages are platform-shared storage-provider configs -> PANEL

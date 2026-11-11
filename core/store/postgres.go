@@ -616,6 +616,25 @@ func (s *PostgresStore) SetUserTimePreferences(userID, timezone, timeFormat stri
 	return nil
 }
 
+// GetUserDataBudget returns the raw users.data_budget_gb ("" = never set).
+func (s *PostgresStore) GetUserDataBudget(userID string) (string, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT data_budget_gb FROM users WHERE id = $1`, userID).Scan(&v)
+	return v, err
+}
+
+// SetUserDataBudget stores it; the caller formats it with FormatLimitSetting.
+func (s *PostgresStore) SetUserDataBudget(userID, raw string) error {
+	res, err := s.db.Exec(`UPDATE users SET data_budget_gb = $2 WHERE id = $1`, userID, raw)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("user not found")
+	}
+	return nil
+}
+
 func (s *PostgresStore) MinecraftEulaAccepted(userID string) (bool, error) {
 	var accepted bool
 	err := s.db.QueryRow(`SELECT minecraft_eula_accepted_at IS NOT NULL FROM users WHERE id = $1`, userID).Scan(&accepted)

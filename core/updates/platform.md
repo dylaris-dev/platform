@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.11
+
+### Features
+- Server owners can set their own monthly data budget under My infrastructure. Past it, every
+  Beam upload and download asks the owner or a panel admin to confirm, and members are refused. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.08.4
 
 ### Features

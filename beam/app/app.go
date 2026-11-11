@@ -53,6 +53,14 @@ type App struct {
 	downloadsMu sync.Mutex
 	downloads   map[string]context.CancelFunc
 
+	// budgetAcked is the server whose owner's data budget the user last
+	// confirmed going past (ConnectToServerAck). The app's own reconnects for
+	// that transfer (upload resume, download retry) repeat the ack, or a
+	// relay blip mid-transfer would refuse the ticket the user already
+	// confirmed. Cleared by a plain ConnectToServer to another server.
+	ackMu       sync.Mutex
+	budgetAcked string
+
 	// cookies is the shell's cookie jar for the proxied Panel. The session is
 	// an HttpOnly cookie and Beam keeps it here rather than in the webview;
 	// see applyShellCookies in proxy.go.
@@ -846,12 +854,38 @@ func (a *App) GetServers() ([]BeamServer, error) {
 // GETs (not POSTs): a CDN/WAF in front of Core was handing the desktop app's POSTs an
 // HTML challenge page; GET /beam/* goes through cleanly.
 func (a *App) ConnectToServer(serverUUID string) error {
+	a.ackMu.Lock()
+	if a.budgetAcked != serverUUID {
+		a.budgetAcked = ""
+	}
+	a.ackMu.Unlock()
+	return a.connectToServer(serverUUID, false)
+}
+
+// ConnectToServerAck is ConnectToServer after the user confirmed transferring
+// past the owner's data budget: the ticket request carries the ack. The page
+// calls it before each transfer while the budget is reached.
+func (a *App) ConnectToServerAck(serverUUID string) error {
+	a.ackMu.Lock()
+	a.budgetAcked = serverUUID
+	a.ackMu.Unlock()
+	return a.connectToServer(serverUUID, true)
+}
+
+// budgetAckFor reports whether the user already confirmed serverUUID.
+func (a *App) budgetAckFor(serverUUID string) bool {
+	a.ackMu.Lock()
+	defer a.ackMu.Unlock()
+	return serverUUID != "" && a.budgetAcked == serverUUID
+}
+
+func (a *App) connectToServer(serverUUID string, ack bool) error {
 	client := a.getClient()
 	if client == nil {
 		return fmt.Errorf("not logged in")
 	}
 
-	ticket, err := client.GetBeamTicket(serverUUID)
+	ticket, err := client.GetBeamTicket(serverUUID, ack)
 	if err != nil {
 		// A mid-session raise of beam.min_version surfaces here as a typed 426:
 		// show the mandatory screen instead of a generic error.
@@ -941,7 +975,7 @@ func (a *App) dialServer(serverUUID string) (*BeamNodeClient, error) {
 	if client == nil {
 		return nil, fmt.Errorf("not logged in")
 	}
-	ticket, err := client.GetBeamTicket(serverUUID)
+	ticket, err := client.GetBeamTicket(serverUUID, a.budgetAckFor(serverUUID))
 	if err != nil {
 		return nil, fmt.Errorf("ticket: %w", err)
 	}
@@ -1351,7 +1385,7 @@ func (a *App) BeamUploadResume(uploadID, serverUUID, path, filename, strategy st
 	a.uploadsMu.Unlock()
 	// Force a fresh ConnectToServer — if the relay died, the cached
 	// relayClient is dead too and would just fail again.
-	if err := a.ConnectToServer(serverUUID); err != nil {
+	if err := a.connectToServer(serverUUID, a.budgetAckFor(serverUUID)); err != nil {
 		return fmt.Errorf("reconnect: %w", err)
 	}
 	relay := a.getRelay()

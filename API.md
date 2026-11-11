@@ -139,9 +139,9 @@ can still show what exists.
 
 ## At a glance
 
-- **650 routes** in 53 sections: 278 GET, 191 POST, 66 PUT, 42 PATCH, 74 DELETE.
+- **652 routes** in 53 sections: 279 GET, 191 POST, 67 PUT, 42 PATCH, 74 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **437** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **155** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **437** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **157** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **49** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -163,7 +163,7 @@ can still show what exists.
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
 - [/api/maintenance](#apimaintenance) (1)
-- [/api/me](#apime) (48)
+- [/api/me](#apime) (50)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
 - [/api/nodes](#apinodes) (16)
@@ -434,7 +434,7 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/beam/config` | session | _no capability_ | - | `BeamHandler.GetBeamConfig` | returns the Beam relay address and branding info. |
+| GET | `/api/beam/config` | session | _no capability_ | - | `BeamHandler.GetBeamConfig` | returns the Beam relay address, branding info and the data budget of the owner of ?server_uuid= (the caller's own without one). |
 | GET | `/api/beam/download` | **none** | _public_ | Limit | `BeamHandler.GetBeamDownload` | streams a Beam binary through Core. |
 | GET | `/api/beam/servers` | session | _no capability_ | - | `BeamHandler.GetBeamServers` | returns the server list with node_id for Beam clients. |
 | GET, POST | `/api/beam/ticket` | session | _no capability_ | Limit | `BeamHandler.GetBeamTicket` | signs a JWT ticket for a specific server. |
@@ -579,6 +579,8 @@ can still show what exists.
 | GET | `/api/me/backup-storages/{id:[0-9]+}/speedtest-nodes` | session | `backupstorage.write` | - | `BackupHandler.SpeedTestOwnNodes` | - |
 | POST | `/api/me/backup-storages/{id:[0-9]+}/test` | session | `backupstorage.write` | - | `BackupHandler.TestOwnStorage` | the same round trip the admin path runs, against the caller's own storage only. |
 | GET | `/api/me/billing` | session | _no capability_ | - | `BillingHandler.GetMyBilling` | the caller's lifecycle state for the banner. |
+| GET | `/api/me/data-budget` | session | _no capability_ | - | `DataBudgetHandler.GetMine` | {budget_gb, used_gb, reached, allowance_gb}. |
+| PUT | `/api/me/data-budget` | session | _no capability_ | - | `DataBudgetHandler.SetMine` | body {budget_gb: n \| null}; null removes the budget, 0 makes every transfer ask. |
 | GET | `/api/me/entitlement` | session | _no capability_ | - | `EntitlementHandler.GetMine` | the caller's own entitlement. |
 | GET | `/api/me/modrinth-favorites` | session | _no capability_ | - | `PacksHandler.Favorites` | is the authenticated caller's own public Modrinth bookmarks. |
 | PUT | `/api/me/modrinth-favorites` | session | _no capability_ | Limit | `PacksHandler.Favorites` | is the authenticated caller's own public Modrinth bookmarks. |

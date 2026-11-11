@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.11
+
+### Features
+- Set your own monthly data budget under My infrastructure to keep traffic for your players. Past it,
+  every Beam transfer asks you to confirm; your plan's traffic limit still applies first.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.08.2
 
 ### Features

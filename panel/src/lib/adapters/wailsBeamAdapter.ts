@@ -12,7 +12,7 @@ import { uploadFiles as apiUploadFiles, getUserLimits as apiGetUserLimits } from
 import { isFatalBeamUploadError, cleanBeamGrpcMessage } from './beamUploadErrors';
 import { devLog } from '@/lib/devLog';
 import { cacheSuccess } from '@/lib/cacheSuccess';
-import { API_URL } from '@/lib/api/core';
+import { API_URL, getAuthHeader } from '@/lib/api/core';
 import {
     reportUploadStart,
     reportUploadProgress,
@@ -20,6 +20,8 @@ import {
     reportUploadUpdate,
     isServerUploadLocked,
 } from '@/lib/uploadManager';
+import { budgetConfirmText, budgetErrorMessage, createBudgetGate, type BeamDataBudget, type GateResult } from '@/lib/beamDataBudget';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
 
 // uploadLockedError is the error every mutating Beam op throws when the
 // target server is currently being written to by an active upload. The
@@ -65,6 +67,9 @@ export interface WailsAppBindings {
     Logout(): Promise<void>;
     GetBeamConfig(): Promise<{ relay_address: string }>;
     ConnectToServer(serverUUID: string): Promise<void>;
+    // ConnectToServer with the user's confirmation to transfer past the owner's
+    // data budget. Optional - older app builds cannot send the ack.
+    ConnectToServerAck?(serverUUID: string): Promise<void>;
     // Read-only: the active beam transport ("lan-fastpath" | "relay" | "direct") for
     // the live tunnel, or "" when not connected. Optional - older app builds omit it.
     GetConnectionMode?(): Promise<string>;
@@ -315,7 +320,7 @@ async function doSyncSession(): Promise<SessionSync> {
 let lastConnectedServer = '';
 export async function ensureWailsConnection(
     serverUuid: string,
-    opts: { force?: boolean } = {},
+    opts: { force?: boolean; ack?: boolean } = {},
 ): Promise<void> {
     devLog('beam.connect', 'info', `ensureWailsConnection: serverUuid=${serverUuid}, force=${opts.force ?? false}`);
     const app = getWailsApp();
@@ -341,7 +346,14 @@ export async function ensureWailsConnection(
     // failed half-connect as "still good".
     lastConnectedServer = '';
     try {
-        await app.ConnectToServer(serverUuid);
+        if (opts.ack) {
+            if (typeof app.ConnectToServerAck !== 'function') {
+                throw new Error('Update the Beam app to confirm transfers past your data budget.');
+            }
+            await app.ConnectToServerAck(serverUuid);
+        } else {
+            await app.ConnectToServer(serverUuid);
+        }
         lastConnectedServer = serverUuid;
         devLog('beam.connect', 'info', 'ConnectToServer OK — relay tunnel established');
     } catch (err) {
@@ -361,6 +373,53 @@ export async function connectWailsToServer(serverUuid: string): Promise<void> {
     } catch (err) {
         console.warn('Wails ConnectToServer failed:', err);
     }
+}
+
+// The data budget gate in front of every beam upload and download. The budget is
+// re-read at most once a minute; the question is asked every time.
+const budgetGate = createBudgetGate({
+    fetchBudget: async (serverUuid): Promise<BeamDataBudget | null> => {
+        const res = await fetch(`${API_URL}/beam/config?server_uuid=${encodeURIComponent(serverUuid)}`, { headers: getAuthHeader() });
+        if (!res.ok) return null;
+        const data = await res.json().catch(() => null);
+        return data?.data_budget ?? null;
+    },
+    confirm: b => confirmDialog({
+        ...budgetConfirmText(b),
+        confirmLabel: 'Transfer anyway',
+        destructive: false,
+        focusCancel: true,
+    }),
+});
+
+// gateTransfer runs the budget gate for one transfer. With a confirmation the
+// tunnel is re-dialed with the ack, so the transfer runs on a ticket Core
+// issued past the budget.
+async function gateTransfer(serverUuid: string | undefined, redial: boolean): Promise<GateResult> {
+    if (!serverUuid) return { ok: true, ack: false };
+    const g = await budgetGate.check(serverUuid);
+    if (g.ok && g.ack && redial) await ensureWailsConnection(serverUuid, { force: true, ack: true });
+    return g;
+}
+
+// gatedDownload asks before a download and reports a refusal as the download's
+// error, which the download manager shows.
+async function gatedDownload(serverUuid: string | undefined, run: () => Promise<void>): Promise<void> {
+    try {
+        const g = await gateTransfer(serverUuid, true);
+        if (!g.ok) throw new Error(g.message);
+        await run();
+    } catch (err) {
+        throw new Error(budgetFailure(serverUuid, err instanceof Error ? err.message : String(err)));
+    }
+}
+
+// budgetFailure rewrites Core's ticket refusal into a sentence and forgets the
+// cached budget, so the next attempt reads it fresh and asks.
+function budgetFailure(serverUuid: string | undefined, message: string): string {
+    const friendly = budgetErrorMessage(message);
+    if (friendly && serverUuid) budgetGate.invalidate(serverUuid);
+    return friendly ?? message;
 }
 
 export function createWailsBeamAdapter(): FileBrowserAdapter {
@@ -436,6 +495,9 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 devLog('beam.upload', 'info', 'uploadFiles: empty file list, no-op');
                 return { success: true };
             }
+            // The upload re-dials below anyway, so the gate only asks here.
+            const gate = await gateTransfer(serverUuid, false);
+            if (!gate.ok) return { success: false, message: gate.message };
             // FileBrowser zips folders into a single .zip before calling
             // the adapter, so we always upload exactly one File here.
             const file = files[0];
@@ -480,7 +542,7 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 // upfront with the real reason.
                 if (serverUuid) {
                     devLog('beam.upload', 'info', 'forcing fresh ConnectToServer before upload');
-                    await ensureWailsConnection(serverUuid, { force: true });
+                    await ensureWailsConnection(serverUuid, { force: true, ack: gate.ack });
                 }
                 devLog('beam.upload', 'info', `BeamUploadStart: opening gRPC stream (strategy="${strategy ?? ''}")`);
                 await app.BeamUploadStart!(uploadID, path, file.name, strategy ?? '', file.size);
@@ -590,7 +652,7 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
                 return { success: true };
             } catch (err) {
                 try { await app.BeamUploadCancel?.(uploadID); } catch { /* best-effort */ }
-                const message = err instanceof Error ? err.message : String(err);
+                const message = budgetFailure(serverUuid, err instanceof Error ? err.message : String(err));
                 devLog('beam.upload', 'error', `upload "${file.name}" FAILED: ${message}`);
                 reportUploadFinish(
                     uploadID,
@@ -603,10 +665,10 @@ export function createWailsBeamAdapter(): FileBrowserAdapter {
         downloadFile: async (path, serverUuid, isDir, onProgress) => {
             // Wails opens its own native save dialog and writes the file
             // itself; progress comes back as app events.
-            await withNativeProgress(onProgress, () => app.DownloadFile(path, serverUuid ?? '', !!isDir));
+            await gatedDownload(serverUuid, () => withNativeProgress(onProgress, () => app.DownloadFile(path, serverUuid ?? '', !!isDir)));
         },
         selectiveDownload: async (basePath, selected, selectAll, serverUuid, onProgress) => {
-            await withNativeProgress(onProgress, () => app.SelectiveDownload(basePath, selected, selectAll, serverUuid ?? ''));
+            await gatedDownload(serverUuid, () => withNativeProgress(onProgress, () => app.SelectiveDownload(basePath, selected, selectAll, serverUuid ?? '')));
         },
         // Limits in Wails mode follow the active upload transport:
         //   * native gRPC available → unlimited (Node throttles itself)

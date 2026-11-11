@@ -57,6 +57,10 @@ type beamAccessFakeStore struct {
 
 	secretEnc string
 	settings  map[string]string
+
+	// The owner's raw data budget and this month's data bytes (beam_data_budget_test.go).
+	dataBudget string
+	relayBytes int64
 }
 
 // billingStatus is what the suspension guard reads; empty means a paying
