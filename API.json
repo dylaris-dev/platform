@@ -1988,6 +1988,46 @@
     },
     {
       "method": "GET",
+      "path": "/api/external/gateway/beam/keys",
+      "auth": "user API key",
+      "authorization": "gateway.read",
+      "description": "the caller's live beam keys.",
+      "handler": "ExternalGatewayHandler.ListBeamKeys",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "POST",
+      "path": "/api/external/gateway/beam/keys",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "body {\"public_key\": base64 Ed25519 public key}; returns the kid to put in ticket headers.",
+      "handler": "ExternalGatewayHandler.RegisterBeamKey",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/external/gateway/beam/keys/{kid}",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "revokes one of the caller's beam keys; the relay refuses its tickets at once.",
+      "handler": "ExternalGatewayHandler.RevokeBeamKey",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/gateway/beam/relays",
+      "auth": "user API key",
+      "authorization": "gateway.read",
+      "description": "the beam relays a customer Core puts in its beam config [{region, public_host, client_port}]; ?region= narrows to one region.",
+      "handler": "ExternalGatewayHandler.ListBeamRelays",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
       "path": "/api/external/gateway/custom-domains",
       "auth": "user API key",
       "authorization": "gateway.read",
@@ -6283,6 +6323,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/warp/link/beams",
+      "auth": "warp key",
+      "authorization": "no capability",
+      "description": "the beam relays a managed-gateway kit's link holds a tunnel to: every relay in sys:beams in the kit's region (all of them for a kit with no region), with its public address and the certificate fingerprint it published.",
+      "handler": "WarpHandler.LinkBeams",
+      "group": "warp",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/warp/link/edges",
       "auth": "warp key",
       "authorization": "no capability",
@@ -6413,12 +6463,12 @@
     }
   ],
   "counts": {
-    "total": 646,
+    "total": 651,
     "byAuth": {
       "none": 30,
       "session": 580,
-      "user API key": 28,
-      "warp key": 8
+      "user API key": 32,
+      "warp key": 9
     },
     "byGroup": {
       "admin": 148,
@@ -6431,7 +6481,7 @@
       "backup-storages": 7,
       "beam": 5,
       "disk": 4,
-      "external": 28,
+      "external": 32,
       "files": 10,
       "gateway": 27,
       "gateway-bandwidth": 4,
@@ -6473,8 +6523,8 @@
       "users": 7,
       "versions": 3,
       "voice": 1,
-      "warp": 23
+      "warp": 24
     },
-    "external": 28
+    "external": 32
   }
 }

@@ -172,6 +172,7 @@ var maintenanceExemptMachinePaths = map[string]bool{
 	"/api/warp/assignment":     true,
 	"/api/warp/link-boot":      true,
 	"/api/warp/link/edges":     true,
+	"/api/warp/link/beams":     true,
 	"/api/warp/link/heartbeat": true,
 	"/api/warp/link/stats":     true,
 	"/api/warp/link/voice":     true,

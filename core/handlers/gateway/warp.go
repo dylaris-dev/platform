@@ -754,6 +754,8 @@ func (h *WarpHandler) MintLinkKit(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Failed to create link kit", http.StatusInternalServerError)
 		return
 	}
+	// A managed-gateway customer's beam tickets may name the new kit.
+	publishBeamIssuers(r.Context(), h.d, userID)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
@@ -1058,6 +1060,9 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 		peers = h.svc.DisconnectKeyPeers(ctx, key.ID)
 	}
 	log.Printf("revoke link %s: revoked, %d route(s) removed, %d peer(s) disconnected", linkID, removed, peers)
+	// The kit leaves the owner's beam issuer records (its beam:ext key went
+	// with the teardown).
+	publishBeamIssuers(r.Context(), h.d, key.OwnerID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})

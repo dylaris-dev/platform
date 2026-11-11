@@ -75,3 +75,8 @@ func TestLiftingAHoldReturnsToWhatThePaymentsSay(t *testing.T) {
 		})
 	}
 }
+
+// No beam issuer keys: the publish after a kit or billing change is a no-op here.
+func (*liftHoldStore) ListBeamIssuerKeysByOwner(string) ([]models.BeamIssuerKey, error) {
+	return nil, nil
+}

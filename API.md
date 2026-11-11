@@ -139,9 +139,9 @@ can still show what exists.
 
 ## At a glance
 
-- **645 routes** in 53 sections: 275 GET, 190 POST, 66 PUT, 42 PATCH, 73 DELETE.
+- **650 routes** in 53 sections: 278 GET, 191 POST, 66 PUT, 42 PATCH, 74 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **433** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **154** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **437** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **155** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **49** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -156,7 +156,7 @@ can still show what exists.
 - [/api/backup-storages](#apibackup-storages) (7)
 - [/api/beam](#apibeam) (4)
 - [/api/disk](#apidisk) (4)
-- [/api/external](#apiexternal) (28)
+- [/api/external](#apiexternal) (32)
 - [/api/files](#apifiles) (10)
 - [/api/gateway](#apigateway) (27)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
@@ -196,7 +196,7 @@ can still show what exists.
 - [/api/users](#apiusers) (7)
 - [/api/versions](#apiversions) (3)
 - [/api/voice](#apivoice) (1)
-- [/api/warp](#apiwarp) (23)
+- [/api/warp](#apiwarp) (24)
 - [/healthz](#healthz) (1)
 - [/mirror/{rest:.*}](#mirrorrest) (1)
 
@@ -453,6 +453,10 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | POST | `/api/external/api-key/roll` | user API key | _no capability_ | Limit | `APIKeysHandler.RollSelf` | a key replaces its own secret. |
+| GET | `/api/external/gateway/beam/keys` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListBeamKeys` | the caller's live beam keys. |
+| POST | `/api/external/gateway/beam/keys` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.RegisterBeamKey` | body {"public_key": base64 Ed25519 public key}; returns the kid to put in ticket headers. |
+| DELETE | `/api/external/gateway/beam/keys/{kid}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.RevokeBeamKey` | revokes one of the caller's beam keys; the relay refuses its tickets at once. |
+| GET | `/api/external/gateway/beam/relays` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListBeamRelays` | the beam relays a customer Core puts in its beam config [{region, public_host, client_port}]; ?region= narrows to one region. |
 | GET | `/api/external/gateway/custom-domains` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListCustomDomains` | the caller's own domain claims and their TXT records. |
 | POST | `/api/external/gateway/custom-domains` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.AddCustomDomain` | body {"domain": "play.example.com"}, returns the TXT record to publish. |
 | DELETE | `/api/external/gateway/custom-domains/{domain:[^/]+}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.DeleteCustomDomain` | removes the caller's claim; refused while a route uses it. |
@@ -1084,6 +1088,7 @@ can still show what exists.
 | POST | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.MintLinkKit` | (tenant) creates a route-only "link kit": a key bound to the calling user plus an auto-generated link identity (node_id). |
 | DELETE | `/api/warp/link-kits/{linkID}` | session | _no capability_ | - | `WarpHandler.RevokeLinkKit` | owner or admin. |
 | POST | `/api/warp/link-kits/{linkID}/roll` | session | _no capability_ | - | `WarpHandler.RollLinkKit` | owner or admin. |
+| GET | `/api/warp/link/beams` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkBeams` | the beam relays a managed-gateway kit's link holds a tunnel to: every relay in sys:beams in the kit's region (all of them for a kit with no region), with its public address and the certificate fingerprint it published. |
 | GET | `/api/warp/link/edges` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkEdges` | every edge in sys:edges with a public tunnel address, and the certificate fingerprint it published. |
 | POST | `/api/warp/link/heartbeat` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkHeartbeat` | a route-only link says it is running. |
 | POST | `/api/warp/link/stats` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkStats` | one of the link's telemetry records, written to the stream every consumer already reads, dylaris:link:<link id>:stats. |

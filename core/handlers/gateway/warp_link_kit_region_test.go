@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -66,4 +67,9 @@ func TestMintLinkKitRejectsUnknownRegion(t *testing.T) {
 			t.Fatalf("%s: external code = %q", region, code)
 		}
 	}
+}
+
+// No beam issuer keys: the publish after a kit or billing change is a no-op here.
+func (*kitMintStore) ListBeamIssuerKeysByOwner(string) ([]models.BeamIssuerKey, error) {
+	return nil, nil
 }

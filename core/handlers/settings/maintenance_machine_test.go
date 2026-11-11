@@ -27,6 +27,7 @@ func TestMaintenanceNeverBlocksTheKitEndpoints(t *testing.T) {
 		{"GET", "/api/warp/assignment"},
 		{"POST", "/api/warp/link-boot"},
 		{"GET", "/api/warp/link/edges"},
+		{"GET", "/api/warp/link/beams"},
 		{"POST", "/api/warp/link/heartbeat"},
 		{"POST", "/api/warp/link/stats"},
 	} {

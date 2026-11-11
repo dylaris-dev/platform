@@ -33,6 +33,7 @@ var settingsReadRe = regexp.MustCompile(`\b[gG]etSetting\("([a-zA-Z0-9_.]+)"`)
 // offers - so "nobody can set it from the UI" is the intended state, and the
 // default is what is actually in force.
 var settingsReadWithoutWriter = map[string]string{
+	"beam.tenant_max_conns":     "operator override for the per-tenant beam relay connection cap (ParseLimitSetting); defaults to 16",
 	"beam.release_manifest":     "per-deploy manifest override; defaults to defaultBeamManifestURL",
 	"branding.name":             "white-label override served to Beam; defaults to \"Dylaris\"",
 	"branding.logo_url":         "white-label override served to Beam; empty means no logo",

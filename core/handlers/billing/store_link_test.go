@@ -540,3 +540,8 @@ func TestBackupDefaultsNeedsTheStoreKey(t *testing.T) {
 		t.Fatalf("status %d without the key, want 401", rec.Code)
 	}
 }
+
+// No beam issuer keys: the publish after a kit or billing change is a no-op here.
+func (*storeLinkFakeStore) ListBeamIssuerKeysByOwner(string) ([]models.BeamIssuerKey, error) {
+	return nil, nil
+}

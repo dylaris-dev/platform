@@ -707,6 +707,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		StoreEnabled:   appState.StoreEnabled,
 		StoreURL:       appState.StoreURL,
 		StoreSharedKey: appState.StoreSharedKey,
+		SuspendGrace:   appState.SuspendGrace,
 	}
 	packsDeps := packs.Deps{
 		Store:         appState.Store,
@@ -1497,6 +1498,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// shared across replicas through Redis.
 	linkAPILimiter := httpx.NewIPRateLimiter()
 	api.HandleFunc("/warp/link/edges", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkEdges)))).Methods("GET")
+	api.HandleFunc("/warp/link/beams", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkBeams)))).Methods("GET")
 	api.HandleFunc("/warp/link/heartbeat", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkHeartbeat)))).Methods("POST")
 	api.HandleFunc("/warp/link/stats", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkStats)))).Methods("POST")
 	api.HandleFunc("/warp/link/voice", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkVoice)))).Methods("GET")
@@ -2013,6 +2015,13 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/external/gateway/custom-domains/{domain:[^/]+}/verify-txt", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.VerifyCustomDomainTXT)))).Methods("POST")
 	api.HandleFunc("/external/gateway/regions", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListRegions)))).Methods("GET")
 	api.HandleFunc("/external/gateway/usage", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.GetUsage)))).Methods("GET")
+	// Managed gateway: the customer Core's beam ticket keys and the relays its
+	// beam config names. Register and revoke share the mint class: a key is a
+	// credential, and churning them is what the 10/hour budget exists to stop.
+	api.HandleFunc("/external/gateway/beam/keys", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListBeamKeys)))).Methods("GET")
+	api.HandleFunc("/external/gateway/beam/keys", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.RegisterBeamKey)))).Methods("POST")
+	api.HandleFunc("/external/gateway/beam/keys/{kid}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.RevokeBeamKey)))).Methods("DELETE")
+	api.HandleFunc("/external/gateway/beam/relays", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListBeamRelays)))).Methods("GET")
 
 	// Infrastructure overview + migration status (PANEL topology.read; Phase 4 Task 18)
 	// Traffic limits: what a tenant may use and buy, per (region, kind). The

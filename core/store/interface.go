@@ -445,6 +445,16 @@ type Store interface {
 	AddSSHKey(k *models.SSHKey, maxPerUser int) (added bool, err error)
 	DeleteSSHKey(userID string, id int) (found bool, err error)
 	DeleteAllSSHKeys(userID string) (int, error)
+
+	// --- Beam issuer keys: managed-gateway customers' beam ticket keys ---
+	// CreateBeamIssuerKeyUnderCap inserts a key only while the owner holds fewer
+	// than cap live keys; false (no error) when the cap is reached.
+	CreateBeamIssuerKeyUnderCap(k models.BeamIssuerKey, cap int) (bool, error)
+	// ListBeamIssuerKeysByOwner includes revoked keys.
+	ListBeamIssuerKeysByOwner(ownerID string) ([]models.BeamIssuerKey, error)
+	RevokeBeamIssuerKey(ownerID, kid string) (found bool, err error)
+	ListBeamIssuerOwners() ([]string, error)
+	ListBeamIssuerKids() ([]string, error)
 	// BackupRunRestoring reports whether a queued or running restore (requested
 	// in the last six hours) is waiting on the run's archive.
 	BackupRunRestoring(runID int) (bool, error)

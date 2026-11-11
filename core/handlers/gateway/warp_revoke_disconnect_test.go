@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -369,4 +370,9 @@ func TestRevokeLinkKitDisconnectsThePeer(t *testing.T) {
 	if len(fs.revoked) != 1 {
 		t.Errorf("the durable revoke did not run: %v", fs.revoked)
 	}
+}
+
+// No beam issuer keys: the publish after a kit or billing change is a no-op here.
+func (*revokeFakeStore) ListBeamIssuerKeysByOwner(string) ([]models.BeamIssuerKey, error) {
+	return nil, nil
 }

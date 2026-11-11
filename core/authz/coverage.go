@@ -73,6 +73,7 @@ var ExemptRoutes = map[string]bool{
 	"/api/warp/assignment": true,
 	// A route-only link's own API: its kit key is the credential.
 	"/api/warp/link/edges":     true,
+	"/api/warp/link/beams":     true,
 	"/api/warp/link/heartbeat": true,
 	"/api/warp/link/stats":     true,
 	"/api/warp/link/voice":     true,
@@ -120,6 +121,9 @@ var ExemptRoutes = map[string]bool{
 	"/api/external/gateway/custom-domains/{domain:[^/]+}/verify-txt": true,
 	"/api/external/gateway/regions":                                  true,
 	"/api/external/gateway/usage":                                    true,
+	"/api/external/gateway/beam/keys":                                true,
+	"/api/external/gateway/beam/keys/{kid}":                          true,
+	"/api/external/gateway/beam/relays":                              true,
 
 	// The pack mirror a node downloads a panel-built pack from - registered on
 	// the ROOT router with no setup-lock/maintenance/auth middleware. The

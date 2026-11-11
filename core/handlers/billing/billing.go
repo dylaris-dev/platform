@@ -288,6 +288,7 @@ func (h *BillingHandler) SetBillingStatus(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Update failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.d.publishBeamIssuers(r.Context(), userID)
 	actorID, _ := r.Context().Value("userID").(string)
 	audit.LogIdentity(h.d.Store, r, audit.AuditEventBillingStatusChanged, actorID, userID, map[string]interface{}{"status": status, "requested": req.Status})
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": status})

@@ -108,7 +108,7 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if cutOff {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		if err := h.d.Redis.Del(ctx, "link:"+token, "online_link:"+token).Err(); err != nil {
+		if err := h.d.Redis.Del(ctx, "link:"+token, "online_link:"+token, services.BeamExtKeyPrefix+key.NodeID).Err(); err != nil {
 			log.Printf("route-only link %s: cut off, deleting its tunnel key failed: %v", key.NodeID, err)
 		}
 	}
@@ -125,6 +125,10 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 	_, err := h.d.Redis.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Set(ctx, "link:"+token, "valid", linkTokenTTL)
 		p.Set(ctx, "online_link:"+token, presence, linkOnlineTTL)
+		// The beam relay finds a managed-gateway kit's tunnel by this token: it
+		// is the string the kit's link sends the relay (link-boot's link_token),
+		// the same one link:<token> is keyed by. Same TTL, same writer.
+		p.Set(ctx, services.BeamExtKeyPrefix+key.NodeID, token, linkTokenTTL)
 		return nil
 	})
 	if err != nil {
@@ -138,7 +142,7 @@ func (h *WarpHandler) LinkHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// If it sees it revoked, the delete may already have run before the write,
 	// so this undoes the write itself. Either way no revoked token survives.
 	if h.linkRevoked(key.NodeID) {
-		h.d.Redis.Del(ctx, "link:"+token, "online_link:"+token)
+		h.d.Redis.Del(ctx, "link:"+token, "online_link:"+token, services.BeamExtKeyPrefix+key.NodeID)
 		httpx.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
 		return
 	}
@@ -260,6 +264,91 @@ func readLinkEdges(ctx context.Context, rdb *redis.Client) ([]linkEdge, error) {
 		}
 		e.Fingerprint, _ = fps[i].Result()
 		out = append(out, e)
+	}
+	return out, nil
+}
+
+// linkBeam is one beam relay as a route-only link needs it: where to dial its
+// service port and which certificate to expect there.
+type linkBeam struct {
+	ID          string `json:"id"`
+	Region      string `json:"region,omitempty"`
+	PublicHost  string `json:"public_host"`
+	ServicePort string `json:"service_port"`
+	CertSHA256  string `json:"cert_sha256,omitempty"`
+}
+
+// LinkBeams GET /api/warp/link/beams - the beam relays a managed-gateway kit's
+// link holds a tunnel to: every relay in sys:beams in the kit's region (all of
+// them for a kit with no region), with its public address and the certificate
+// fingerprint it published. PUBLIC addresses only, as LinkEdges.
+func (h *WarpHandler) LinkBeams(w http.ResponseWriter, r *http.Request) {
+	key, _, ok, _ := h.routeOnlyKey(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	beams, err := readLinkBeams(ctx, h.d.Redis, key.Region)
+	if err != nil {
+		log.Printf("route-only link %s: reading the beam relay list failed: %v", key.NodeID, err)
+		httpx.SendJSONError(w, "Beam relay list unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"beams": beams})
+}
+
+func readLinkBeams(ctx context.Context, rdb *redis.Client, region string) ([]linkBeam, error) {
+	ids, err := rdb.SMembers(ctx, "sys:beams").Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]linkBeam, 0, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	pipe := rdb.Pipeline()
+	regs := make([]*redis.StringCmd, len(ids))
+	fps := make([]*redis.StringCmd, len(ids))
+	for i, id := range ids {
+		regs[i] = pipe.Get(ctx, "beam:registry:"+id)
+		fps[i] = pipe.Get(ctx, "beam:cert:fingerprint:"+id)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, err
+	}
+	for i, id := range ids {
+		raw, err := regs[i].Result()
+		if err != nil {
+			continue
+		}
+		var reg struct {
+			BeamID      string `json:"beam_id"`
+			IP          string `json:"ip"`
+			PublicHost  string `json:"public_host"`
+			Region      string `json:"region"`
+			ServicePort string `json:"service_port"`
+		}
+		if json.Unmarshal([]byte(raw), &reg) != nil || reg.ServicePort == "" {
+			continue
+		}
+		if region != "" && !strings.EqualFold(strings.TrimSpace(reg.Region), region) {
+			continue
+		}
+		host := strings.TrimSpace(reg.PublicHost)
+		if host == "" {
+			host = strings.TrimSpace(reg.IP)
+		}
+		if host == "" {
+			continue // only a private address: not a path a link outside our network could take
+		}
+		b := linkBeam{ID: reg.BeamID, Region: reg.Region, PublicHost: host, ServicePort: reg.ServicePort}
+		if b.ID == "" {
+			b.ID = id
+		}
+		b.CertSHA256, _ = fps[i].Result()
+		out = append(out, b)
 	}
 	return out, nil
 }

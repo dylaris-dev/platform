@@ -59,6 +59,13 @@ func TestLinkHeartbeatWritesTheKeysTheReadersRead(t *testing.T) {
 	if d := ttl(t, rdb, "online_link:"+token); d != 15*time.Second {
 		t.Errorf("online_link:<token> TTL %v, want 15s", d)
 	}
+	// The beam relay's kit route: the same token, keyed by the kit id.
+	if v, _ := rdb.Get(context.Background(), "beam:ext:"+key.NodeID).Result(); v != token {
+		t.Errorf("beam:ext:<kitID> = %q, want the kit's link token %q", v, token)
+	}
+	if d := ttl(t, rdb, "beam:ext:"+key.NodeID); d != 24*time.Hour {
+		t.Errorf("beam:ext:<kitID> TTL %v, want 24h", d)
+	}
 }
 
 // A cut-off owner's heartbeat is refused AND takes the keys down at once, so the
@@ -69,6 +76,7 @@ func TestLinkHeartbeatOfACutOffOwnerTakesTheTunnelDown(t *testing.T) {
 	ctx := context.Background()
 	h.d.Redis.Set(ctx, "link:"+token, "valid", time.Hour)
 	h.d.Redis.Set(ctx, "online_link:"+token, "1", time.Hour)
+	h.d.Redis.Set(ctx, "beam:ext:"+key.NodeID, token, time.Hour)
 	past := time.Now().Add(-72 * time.Hour)
 	fs.billing = &store.UserBilling{Status: "suspended", SuspendedAt: &past}
 
@@ -76,7 +84,7 @@ func TestLinkHeartbeatOfACutOffOwnerTakesTheTunnelDown(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status %d, want 403", rec.Code)
 	}
-	if n, _ := h.d.Redis.Exists(ctx, "link:"+token, "online_link:"+token).Result(); n != 0 {
+	if n, _ := h.d.Redis.Exists(ctx, "link:"+token, "online_link:"+token, "beam:ext:"+key.NodeID).Result(); n != 0 {
 		t.Errorf("%d key(s) survived the cut-off heartbeat", n)
 	}
 }
@@ -109,7 +117,7 @@ func TestLinkHeartbeatNeverLeavesARevokedTokenValid(t *testing.T) {
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("status %d, want 401", rec.Code)
 			}
-			if n, _ := h.d.Redis.Exists(context.Background(), "link:"+token, "online_link:"+token).Result(); n != 0 {
+			if n, _ := h.d.Redis.Exists(context.Background(), "link:"+token, "online_link:"+token, "beam:ext:"+key.NodeID).Result(); n != 0 {
 				t.Errorf("a revoked kit's token is still valid (%d key(s))", n)
 			}
 		})

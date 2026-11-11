@@ -685,6 +685,9 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unknown action", http.StatusBadRequest)
 		return
 	}
+	// A plan change can add or remove the managed product, a suspension can
+	// cut the owner off; either changes their beam issuer records.
+	h.d.publishBeamIssuers(r.Context(), req.UUID)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "action": req.Action})
 }

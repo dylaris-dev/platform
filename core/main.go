@@ -643,6 +643,13 @@ func main() {
 	routeRepublisher.SetLeader(coreLeader)
 	routeRepublisher.Start(bgCtx)
 
+	// Managed-gateway beam issuer records (beam:issuer:<kid>) are republished
+	// every five minutes, so a missed publish or a graced suspension that has
+	// since elapsed heals without anyone calling it.
+	beamIssuers := services.NewBeamIssuerReconciler(pgStore, redisClient, cfg.SuspendGrace)
+	beamIssuers.SetLeader(coreLeader)
+	beamIssuers.Start(bgCtx)
+
 	// Tells each node which of its servers may be reached by which other server.
 	// The node refuses everything else at the container itself; see
 	// services/netpolicy_publisher.go and platform/node/netpolicy.go.
