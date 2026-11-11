@@ -128,6 +128,8 @@ type Store interface {
 	ListVoiceUsage(period time.Time) ([]VoiceUsageRow, error)
 	SetTrafficBackupBytes(userID string, period time.Time, backupBytes int64) error
 	GetTrafficUsage(userID string, period time.Time) (*TrafficUsage, error)
+	StartTrafficGrace(userID string, period time.Time) (started bool, err error)
+	EndTrafficGrace(userID string, period time.Time) (ended bool, err error)
 	ListTrafficUsage(period time.Time) ([]TrafficUsage, error)
 	// --- BYON billing lifecycle ---
 	GetUserBilling(userID string) (*UserBilling, error)

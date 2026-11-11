@@ -59,7 +59,8 @@ func ValidBeamKid(kid string) bool { return beamKidRe.MatchString(kid) }
 // limits convention: absent = no cap, 0 = none, n = the cap. BwBps (bytes/s)
 // is present only while the owner's shared pool is throttled (JudgeManagedPool);
 // absent = only the fleet cap. Never 0: the relay refuses a record with
-// bw_bps <= 0.
+// bw_bps <= 0. DailyQuota (bytes per owner per UTC day, counted by the relays)
+// is present only in data grace mode, and the relay refuses it <= 0 likewise.
 type BeamIssuerRecord struct {
 	V        int      `json:"v"`
 	Owner    string   `json:"owner"`
@@ -67,6 +68,9 @@ type BeamIssuerRecord struct {
 	Kits     []string `json:"kits"`
 	MaxConns *int64   `json:"max_conns,omitempty"`
 	BwBps    *int64   `json:"bw_bps,omitempty"`
+	// Old relays ignore the field: they keep the bandwidth cap and simply do
+	// not stop at the day's quota.
+	DailyQuota *int64 `json:"daily_quota_bytes,omitempty"`
 }
 
 // HasManagedProduct reports whether the owner holds a managed-gateway product.
@@ -108,7 +112,7 @@ func PublishBeamIssuers(ctx context.Context, st store.Store, rdb *redis.Client, 
 	allowed := managed && !store.OwnerCutOff(b, suspendGrace, OverLimitGrace, time.Now())
 
 	var kits []string
-	var maxConns, bwBps *int64
+	var maxConns, bwBps, dailyQuota *int64
 	if allowed {
 		wk, err := st.ListWarpAPIKeysByOwner(ownerID)
 		if err != nil {
@@ -130,7 +134,10 @@ func PublishBeamIssuers(ctx context.Context, st store.Store, rdb *redis.Client, 
 		if err != nil {
 			return fmt.Errorf("pool verdict: %w", err)
 		}
-		if bps := int64(DataThrottleMbit(st)) * 125_000; v.Throttled && bps > 0 {
+		switch bps := int64(DataThrottleMbit(st)) * 125_000; {
+		case v.Grace:
+			bwBps, dailyQuota = LimitPtr(GraceBps), LimitPtr(GraceDailyQuotaBytes)
+		case v.Throttled && bps > 0:
 			bwBps = &bps
 		}
 	}
@@ -145,7 +152,7 @@ func PublishBeamIssuers(ctx context.Context, st store.Store, rdb *redis.Client, 
 			pipe.Del(ctx, rkey)
 			continue
 		}
-		data, err := json.Marshal(BeamIssuerRecord{V: 1, Owner: ownerID, Pub: k.PublicKey, Kits: kits, MaxConns: maxConns, BwBps: bwBps})
+		data, err := json.Marshal(BeamIssuerRecord{V: 1, Owner: ownerID, Pub: k.PublicKey, Kits: kits, MaxConns: maxConns, BwBps: bwBps, DailyQuota: dailyQuota})
 		if err != nil {
 			return fmt.Errorf("marshal issuer %s: %w", k.ID, err)
 		}

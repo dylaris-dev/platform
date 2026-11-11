@@ -19,6 +19,22 @@ type TrafficUsage struct {
 	RelayBytes  int64     `json:"relayBytes"`
 	BackupBytes int64     `json:"backupBytes"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	// Data grace mode (managed pool, no traffic consent, past the included
+	// amount): relay bytes from then on are tracked in RelayBytes like any
+	// other but kept out of the pool. GraceExcludedBytes holds the finished
+	// grace spells of the month; GraceSinceRelay is RelayBytes when the open
+	// one began, nil while none is open. Read through GraceRelayBytes.
+	GraceExcludedBytes int64  `json:"-"`
+	GraceSinceRelay    *int64 `json:"-"`
+}
+
+// GraceRelayBytes is the month's relay bytes accrued in data grace mode.
+func (u *TrafficUsage) GraceRelayBytes() int64 {
+	n := u.GraceExcludedBytes
+	if u.GraceSinceRelay != nil && u.RelayBytes > *u.GraceSinceRelay {
+		n += u.RelayBytes - *u.GraceSinceRelay
+	}
+	return n
 }
 
 // TenantServerOwners returns serverUUID -> owning tenant (user id) for every
@@ -219,9 +235,9 @@ func (s *PostgresStore) SetTrafficBackupBytes(userID string, period time.Time, b
 func (s *PostgresStore) GetTrafficUsage(userID string, period time.Time) (*TrafficUsage, error) {
 	u := &TrafficUsage{UserID: userID, Period: period}
 	err := s.db.QueryRow(`
-		SELECT edge_bytes, relay_bytes, backup_bytes, updated_at
+		SELECT edge_bytes, relay_bytes, backup_bytes, updated_at, grace_excluded_bytes, grace_since_relay
 		FROM traffic_usage WHERE user_id = $1 AND period = $2`,
-		userID, period).Scan(&u.EdgeBytes, &u.RelayBytes, &u.BackupBytes, &u.UpdatedAt)
+		userID, period).Scan(&u.EdgeBytes, &u.RelayBytes, &u.BackupBytes, &u.UpdatedAt, &u.GraceExcludedBytes, &u.GraceSinceRelay)
 	if err == sql.ErrNoRows {
 		return u, nil
 	}
@@ -229,6 +245,37 @@ func (s *PostgresStore) GetTrafficUsage(userID string, period time.Time) (*Traff
 		return nil, err
 	}
 	return u, nil
+}
+
+// StartTrafficGrace opens a data grace spell at the row's current relay_bytes,
+// read inside the statement so a concurrent tick cannot slip between the read
+// and the write. started is false when one was already open (or no row yet).
+func (s *PostgresStore) StartTrafficGrace(userID string, period time.Time) (started bool, err error) {
+	res, err := s.db.Exec(`
+		UPDATE traffic_usage SET grace_since_relay = relay_bytes
+		WHERE user_id = $1 AND period = $2 AND grace_since_relay IS NULL`,
+		userID, period)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// EndTrafficGrace closes the open spell: its bytes move into
+// grace_excluded_bytes, so they stay out of the pool for the rest of the month.
+func (s *PostgresStore) EndTrafficGrace(userID string, period time.Time) (ended bool, err error) {
+	res, err := s.db.Exec(`
+		UPDATE traffic_usage SET
+			grace_excluded_bytes = grace_excluded_bytes + GREATEST(relay_bytes - grace_since_relay, 0),
+			grace_since_relay    = NULL
+		WHERE user_id = $1 AND period = $2 AND grace_since_relay IS NOT NULL`,
+		userID, period)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // ListTrafficUsage returns every tenant's usage for a period, busiest first.

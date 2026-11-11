@@ -34,6 +34,13 @@ const (
 	// dataThrottledSet lists the tenants currently throttled, so a release can
 	// find the keys it has to remove.
 	dataThrottledSet = "dylaris:traffic:data_throttled"
+
+	// Data grace mode (owner decision 2026-11-11): a managed pool without the
+	// traffic consent that reaches its included amount keeps beam at a FIXED
+	// 50 Mbit/s (not traffic.data_throttle_mbit) and 30 GB per owner per UTC
+	// day, enforced by the relay. Those bytes stay out of the pool.
+	GraceBps             int64 = 6_250_000
+	GraceDailyQuotaBytes int64 = 30_000_000_000
 )
 
 // DataBandwidthKey is where a server's data throttle (bytes/s) is published.
@@ -59,6 +66,9 @@ type DataThrottleVerdict struct {
 	Consent            bool // data overage is billed instead of throttled
 	Warn               bool // >= 90 %
 	Throttled          bool // >= 100 %
+	// Grace is the managed no-consent state past the included amount:
+	// Throttled too, at GraceBps plus GraceDailyQuotaBytes.
+	Grace bool
 }
 
 // JudgeDataTraffic is the pure decision: no allowance means nothing to judge,
@@ -141,9 +151,10 @@ func DataTrafficVerdictFor(st store.Store, userID string, now time.Time) (DataTh
 // bytes against the user's "*" edge row (owner decision 2026-11-11). With the
 // traffic consent the store bills past the allowance up to maxPurchaseGB, so
 // data slows only past included + max purchase (nil max purchase: never).
-// Without it nothing is billed, so data slows at the allowance itself. The
-// row's numbers are the account's total (the store sends units = 1), so they
-// are not multiplied by TrafficUnits.
+// Without it nothing is billed, so data enters grace mode at the allowance
+// itself. The row's numbers are the account's total (the store sends
+// units = 1), so they are not multiplied by TrafficUnits. usedBytes is the
+// pool WITHOUT grace bytes.
 func JudgeManagedPool(usedBytes int64, includedGB, maxPurchaseGB *int64, consent bool) DataThrottleVerdict {
 	v := DataThrottleVerdict{UsedGB: usedBytes / 1_000_000_000, Consent: consent}
 	if includedGB == nil {
@@ -161,8 +172,16 @@ func JudgeManagedPool(usedBytes int64, includedGB, maxPurchaseGB *int64, consent
 	v.IncludedGB = limit
 	limitBytes := limit * 1_000_000_000
 	v.Throttled = usedBytes >= limitBytes
+	v.Grace = v.Throttled && !consent
 	v.Warn = usedBytes*10 >= limitBytes*9
 	return v
+}
+
+// ManagedPoolBytes is the pool a managed tenant is judged and billed on: player
+// and data bytes, minus the data bytes moved in grace mode. Those stay in
+// RelayBytes and traffic_usage_region for the statistics.
+func ManagedPoolBytes(u *store.TrafficUsage) int64 {
+	return u.EdgeBytes + u.RelayBytes - u.GraceRelayBytes()
 }
 
 // ManagedPoolVerdictFor judges a managed tenant's pool; managed is false (and
@@ -182,7 +201,19 @@ func ManagedPoolVerdictFor(st store.Store, userID string, now time.Time) (v Data
 		return DataThrottleVerdict{}, true, fmt.Errorf("billing: %w", err)
 	}
 	consent := b != nil && b.TrafficBillingEnabled
-	return JudgeManagedPool(u.EdgeBytes+u.RelayBytes, l.IncludedGB, l.MaxPurchaseGB, consent), true, nil
+	return JudgeManagedPool(ManagedPoolBytes(u), l.IncludedGB, l.MaxPurchaseGB, consent), true, nil
+}
+
+// syncManagedGrace makes the stored grace spell follow the verdict: opened at
+// the current relay bytes when the pool enters grace, closed (its bytes kept
+// out of the pool for the month) when it leaves through consent, a plan change
+// or anything else. A new month has no row and so no spell. changed reports a
+// transition, so the issuer records are republished at once.
+func syncManagedGrace(st store.Store, tenant string, now time.Time, v DataThrottleVerdict) (changed bool, err error) {
+	if v.Grace {
+		return st.StartTrafficGrace(tenant, monthStartUTC(now))
+	}
+	return st.EndTrafficGrace(tenant, monthStartUTC(now))
 }
 
 // evaluateDataThrottle runs after a tick's usage is written: throttles the
@@ -206,7 +237,11 @@ func (a *TrafficAggregator) evaluateDataThrottle(ctx context.Context, owners map
 			continue
 		}
 		if managed {
-			a.applyManagedThrottle(ctx, tenant, servers, v, bps, now)
+			changed, err := syncManagedGrace(a.store, tenant, now, v)
+			if err != nil {
+				logErrf("data-throttle", "grace for %s: %v", tenant, err)
+			}
+			a.applyManagedThrottle(ctx, tenant, servers, v, bps, changed, now)
 			if v.Throttled {
 				throttledNow[tenant] = true
 			}
@@ -266,11 +301,14 @@ func (a *TrafficAggregator) evaluateDataThrottle(ctx context.Context, owners map
 // node never reads our Redis), their own servers, if any, by the usual key.
 // The records are republished when the tenant enters the throttled set; the
 // issuer reconciler recomputes them every five minutes either way.
-func (a *TrafficAggregator) applyManagedThrottle(ctx context.Context, tenant string, servers []string, v DataThrottleVerdict, bps int64, now time.Time) {
+func (a *TrafficAggregator) applyManagedThrottle(ctx context.Context, tenant string, servers []string, v DataThrottleVerdict, bps int64, graceChanged bool, now time.Time) {
+	if v.Grace {
+		bps = GraceBps
+	}
 	if v.Warn && !v.Throttled {
 		// v.IncludedGB is where the throttle starts: included + what may be
 		// bought with consent, the allowance itself without. Say which.
-		body := fmt.Sprintf("Player traffic and beam file transfers together have used %d of the %d GB your plan includes this month. At %d GB file transfers slow to %d Mbit/s until the month resets, unless extra traffic billing is on.", v.UsedGB, v.IncludedGB, v.IncludedGB, bps/125_000)
+		body := fmt.Sprintf("Player traffic and beam file transfers together have used %d of the %d GB your plan includes this month. At %d GB file transfers slow to %d Mbit/s and %d GB per day until the month resets, unless extra traffic billing is on.", v.UsedGB, v.IncludedGB, v.IncludedGB, GraceBps/125_000, GraceDailyQuotaBytes/1_000_000_000)
 		if v.Consent {
 			body = fmt.Sprintf("Player traffic and beam file transfers together have used %d GB this month. At %d GB, the most extra traffic your plan can buy, file transfers slow to %d Mbit/s until the month resets.", v.UsedGB, v.IncludedGB, bps/125_000)
 		}
@@ -292,13 +330,19 @@ func (a *TrafficAggregator) applyManagedThrottle(ctx context.Context, tenant str
 		logErrf("data-throttle", "throttle %s: %v", tenant, err)
 		return
 	}
-	if !was {
+	if !was || graceChanged {
 		if err := PublishBeamIssuers(ctx, a.store, a.redis, a.suspendGrace, tenant); err != nil {
 			logErrf("data-throttle", "throttle %s: issuer records: %v", tenant, err)
 		}
 	}
+	resets := monthStartUTC(now).AddDate(0, 1, 0).Format("2 January")
+	if v.Grace {
+		a.notifyDataOnce(ctx, tenant, now, "100", "Gateway traffic allowance reached",
+			fmt.Sprintf("Your plan's included traffic is used. Until the month resets on %s, beam file transfers run at %d Mbit/s and up to %d GB per day (UTC); past that, beam is unavailable until midnight UTC. These transfers do not count against your plan and are not billed. Turn on extra traffic billing in your store account to lift this.", resets, GraceBps/125_000, GraceDailyQuotaBytes/1_000_000_000))
+		return
+	}
 	a.notifyDataOnce(ctx, tenant, now, "100", "Gateway traffic limit reached",
-		fmt.Sprintf("Beam file transfers are slowed to %d Mbit/s until the month resets on %s.", bps/125_000, monthStartUTC(now).AddDate(0, 1, 0).Format("2 January")))
+		fmt.Sprintf("Beam file transfers are slowed to %d Mbit/s until the month resets on %s.", bps/125_000, resets))
 }
 
 // notifyDataOnce sends one in-app notification per tenant, level and month.

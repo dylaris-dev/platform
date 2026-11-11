@@ -299,8 +299,13 @@ func (h *StoreHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 		"backupIncludedGb": includedGB,
 		"backupBookableGb": bookableGB,
 		"edgeBytes":        usage.EdgeBytes,
-		"relayBytes":       usage.RelayBytes,
-		"backupBytes":      usage.BackupBytes,
+		// Without the data grace bytes, which the store must never count: they
+		// are not in the pool, cannot cut players off and are never billed,
+		// also not after a later consent (its baseline is taken on this number).
+		// An older store ignores graceRelayBytes and bills the right pool.
+		"relayBytes":      usage.RelayBytes - usage.GraceRelayBytes(),
+		"graceRelayBytes": usage.GraceRelayBytes(),
+		"backupBytes":     usage.BackupBytes,
 		// What they keep on a bucket of their OWN. Reported separately and never
 		// added to backupBytes: it is not billed and not capped, but leaving it
 		// off the response entirely would make a tenant storing 400 GB read as

@@ -1173,6 +1173,26 @@ func (f *trafficFakeStore) GetTrafficUsage(userID string, period time.Time) (*st
 	return &store.TrafficUsage{UserID: userID, Period: period}, nil
 }
 
+// The grace pair mirrors the SQL: an UPDATE of an existing row, no-op otherwise.
+func (f *trafficFakeStore) StartTrafficGrace(userID string, _ time.Time) (bool, error) {
+	u := f.usage[userID]
+	if u == nil || u.GraceSinceRelay != nil {
+		return false, nil
+	}
+	since := u.RelayBytes
+	u.GraceSinceRelay = &since
+	return true, nil
+}
+func (f *trafficFakeStore) EndTrafficGrace(userID string, _ time.Time) (bool, error) {
+	u := f.usage[userID]
+	if u == nil || u.GraceSinceRelay == nil {
+		return false, nil
+	}
+	u.GraceExcludedBytes += max(u.RelayBytes-*u.GraceSinceRelay, 0)
+	u.GraceSinceRelay = nil
+	return true, nil
+}
+
 // A route-only voice port meters under its own subject (LinkRouteVoiceSubject);
 // those bytes are the route owner's route-only traffic like any other.
 func TestTrafficAggregator_RouteVoiceBilledToTheRouteOwner(t *testing.T) {
