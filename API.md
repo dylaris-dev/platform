@@ -473,7 +473,7 @@ can still show what exists.
 | PUT | `/api/external/gateway/routes/{domain:[^/]+}/bedrock` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.SetRouteBedrock` | body {"java": bool, "bedrock": bool}, the address's editions. |
 | PATCH | `/api/external/gateway/routes/{domain:[^/]+}/proxy-protocol` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.SetRouteProxyProtocol` | body {"enabled": bool}, real player IP forwarding. |
 | PUT | `/api/external/gateway/routes/{domain:[^/]+}/voice` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.SetRouteVoice` | body {"enabled": bool, "target_port": int}, voice chat relay. |
-| GET | `/api/external/gateway/usage` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.GetUsage` | the period's totals (as /api/external/usage) plus regions [{region, kind, bytes}]; ?period=YYYY-MM. |
+| GET | `/api/external/gateway/usage` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.GetUsage` | the period's totals (as /api/external/usage) plus regions [{region, kind, bytes}], final (false while the month runs: an estimate as of asOf) and, for the running month of a managed plan, pool {includedGb, maxPurchaseGb, usedBytes, percent}; ?period=YYYY-MM. |
 | POST | `/api/external/rcon/{uuid}/exec` | user API key | `rcon.exec` | - | `RconHandler.ExecExternal` | automation entry. |
 | GET | `/api/external/servers` | user API key | _no capability_ | - | `APIKeysHandler.ListExternalServers` | the servers this KEY may act on: the servers of its owner, narrowed to the allowlist of the key. |
 | GET | `/api/external/servers/{uuid}` | user API key | `overview.read` | - | `APIKeysHandler.GetExternalServer` | the record of one server. |
@@ -483,7 +483,7 @@ can still show what exists.
 | GET | `/api/external/servers/{uuid}/console/history` | user API key | `console.read` | ExternalServerRoute | `ConsoleHandler.GetHistory` | Returns up to ?count= (default and max 1000) log lines from the Redis Stream, oldest first, with their stream IDs. |
 | POST | `/api/external/servers/{uuid}/power` | user API key | _no capability_ | APIKeyPowerGate, ExternalServerRoute | `ServerHandler.ServerPowerHandler` | Controls Start, Stop, Kill and Restart |
 | GET | `/api/external/servers/{uuid}/stats/history` | user API key | `stats.read` | ExternalServerRoute | `StatsHandler.GetHistory` | Returns historical stats data points from PostgreSQL. |
-| GET | `/api/external/usage` | user API key | `usage.read` | ExternalOwnerRoute | `UsageHandler.GetMyUsage` | the caller's metered usage for the period. |
+| GET | `/api/external/usage` | user API key | `usage.read` | Limit, ExternalOwnerRoute | `UsageHandler.GetMyUsage` | the caller's metered usage for the period. |
 
 ## /api/files
 

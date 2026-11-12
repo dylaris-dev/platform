@@ -50,6 +50,22 @@ type extStore struct {
 	routes   []store.CoreLinkRoute
 	claims   []store.CustomDomainClaim
 	regions  map[string][]store.RegionUsage
+	usage    map[string]*store.TrafficUsage  // by user id, any period
+	limits   map[string]*models.TrafficLimit // by scope ("user:<id>")
+}
+
+func (f *extStore) GetTrafficUsage(userID string, period time.Time) (*store.TrafficUsage, error) {
+	if u := f.usage[userID]; u != nil {
+		return u, nil
+	}
+	return &store.TrafficUsage{UserID: userID, Period: period}, nil
+}
+
+func (f *extStore) GetTrafficLimit(scope, region, kind string) (*models.TrafficLimit, error) {
+	if region != "*" || kind != "edge" {
+		return nil, nil
+	}
+	return f.limits[scope], nil
 }
 
 func (f *extStore) GetSetting(key string) (string, error) { return f.settings[key], nil }
@@ -656,4 +672,74 @@ func TestServeExternalMasksForeignServiceUnavailable(t *testing.T) {
 	if rec.Code != 503 || out["code"] != "internal" || out["error"] != "Internal error. Try again later." {
 		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
 	}
+}
+
+// The usage answer says whether its numbers can still grow, as of when, and
+// where a managed plan stands against its one allowance.
+func TestExternalUsageSaysEstimateOrFinal(t *testing.T) {
+	f := newExtFixture(t)
+	five := int64(5000)
+	asOf := time.Date(2026, 11, 12, 10, 30, 0, 0, time.UTC)
+	f.st.usage = map[string]*store.TrafficUsage{
+		extTenantB: {UserID: extTenantB, EdgeBytes: 1_000_000_000_000, ManagedRelayBytes: 250_000_000_000, UpdatedAt: asOf},
+	}
+	f.st.limits = map[string]*models.TrafficLimit{"user:" + extTenantB: {IncludedGB: &five}}
+
+	get := func(t *testing.T, tenant, query string) map[string]interface{} {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		f.h.GetUsage(rec, extReq("GET", "/"+query, tenant, false, nil, nil))
+		if rec.Code != 200 {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		return decodeExt(t, rec)
+	}
+
+	t.Run("the running month is an estimate", func(t *testing.T) {
+		out := get(t, extTenantB, "")
+		if out["final"] != false || out["asOf"] != "2026-11-12T10:30:00Z" {
+			t.Fatalf("final %v asOf %v, want false and the last aggregation time", out["final"], out["asOf"])
+		}
+	})
+	t.Run("a month that ended is final", func(t *testing.T) {
+		if out := get(t, extTenantB, "?period=2020-01"); out["final"] != true {
+			t.Fatalf("final = %v for January 2020, want true", out["final"])
+		}
+	})
+	t.Run("a month that has not started is not final", func(t *testing.T) {
+		if out := get(t, extTenantB, "?period=2999-01"); out["final"] != false {
+			t.Fatalf("final = %v for a future month, want false", out["final"])
+		}
+	})
+	t.Run("a managed plan gets its pool", func(t *testing.T) {
+		pool, _ := get(t, extTenantB, "")["pool"].(map[string]interface{})
+		if pool == nil || pool["includedGb"] != float64(5000) || pool["usedBytes"] != float64(1_250_000_000_000) || pool["percent"] != float64(25) {
+			t.Fatalf("pool = %v, want 5000 GB included, 1.25 TB used, 25 %%", pool)
+		}
+		if v, ok := pool["maxPurchaseGb"]; !ok || v != nil {
+			t.Fatalf("maxPurchaseGb = %v (present %v), want an explicit null: no cap", v, ok)
+		}
+	})
+	t.Run("an earlier month has no pool: the plan may have been another", func(t *testing.T) {
+		if out := get(t, extTenantB, "?period=2020-01"); out["pool"] != nil {
+			t.Fatalf("pool for January 2020 = %v, want none", out["pool"])
+		}
+	})
+	t.Run("no managed plan, no pool, nothing of another tenant", func(t *testing.T) {
+		out := get(t, extTenantC, "")
+		if _, ok := out["pool"]; ok {
+			t.Fatalf("a tenant without the plan got a pool: %v", out["pool"])
+		}
+		if _, ok := out["asOf"]; ok {
+			t.Fatalf("a tenant with no traffic got an asOf: %v", out["asOf"])
+		}
+	})
+	t.Run("an allowance of none is full at the first byte", func(t *testing.T) {
+		zero := int64(0)
+		f.st.limits["user:"+extTenantB] = &models.TrafficLimit{IncludedGB: &zero}
+		pool, _ := get(t, extTenantB, "")["pool"].(map[string]interface{})
+		if pool == nil || pool["percent"] != float64(100) {
+			t.Fatalf("pool = %v, want 100 %%", pool)
+		}
+	})
 }

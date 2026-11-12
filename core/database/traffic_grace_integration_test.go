@@ -21,7 +21,7 @@ func TestIntegrationTrafficGraceSpell(t *testing.T) {
 		if err := st.AddTrafficTick(f.user.ID, period, 0, managed+server, []store.TrafficTickCell{
 			{Region: "eu-central", Kind: store.TrafficKindRelay, Product: store.TrafficProductRoute, Bytes: managed},
 			{Region: "eu-central", Kind: store.TrafficKindRelay, Product: store.TrafficProductBYON, Bytes: server},
-		}); err != nil {
+		}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

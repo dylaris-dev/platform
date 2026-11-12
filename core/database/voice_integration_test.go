@@ -295,7 +295,7 @@ func TestIntegrationBedrockUsageAccumulatesAndCascades(t *testing.T) {
 	// The subset column is separate from voice_bytes and from bytes.
 	if err := st.AddTrafficTick(f.user.ID, period, 500, 0, []store.TrafficTickCell{
 		{Region: "eu-central", Kind: "edge", Product: "byon", Bytes: 500, Voice: 50, Bedrock: 70},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	cells, _ := st.GetTrafficUsageRegions(f.user.ID, period)

@@ -180,7 +180,7 @@ type externalRegionUsage struct {
 	Bytes  int64  `json:"bytes"`
 }
 
-// GetUsage GET /api/external/gateway/usage - the period's totals (as /api/external/usage) plus regions [{region, kind, bytes}]; ?period=YYYY-MM.
+// GetUsage GET /api/external/gateway/usage - the period's totals (as /api/external/usage) plus regions [{region, kind, bytes}], final (false while the month runs: an estimate as of asOf) and, for the running month of a managed plan, pool {includedGb, maxPurchaseGb, usedBytes, percent}; ?period=YYYY-MM.
 func (h *ExternalGatewayHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	// The panel helper falls back to this month on a bad period; a script
 	// asking for March and silently getting November is worse than a 400.
@@ -209,8 +209,52 @@ func (h *ExternalGatewayHandler) GetUsage(w http.ResponseWriter, r *http.Request
 		}
 		sort.SliceStable(out, func(a, b int) bool { return out[a].Bytes > out[b].Bytes })
 		obj["regions"] = out
-		return nil
+		return h.usageStanding(reqctx.ByonCallerID(r), httpx.UsagePeriod(r), time.Now().UTC(), obj)
 	})
+}
+
+// externalPool is a managed-gateway plan's one allowance for the period.
+type externalPool struct {
+	IncludedGB    int64  `json:"includedGb"`
+	MaxPurchaseGB *int64 `json:"maxPurchaseGb"`
+	UsedBytes     int64  `json:"usedBytes"`
+	Percent       int64  `json:"percent"`
+}
+
+// usageStanding says how far the numbers can be trusted, and where a managed
+// plan stands against its allowance.
+//
+// final is true once the month has ended: counters are added to the month the
+// aggregator runs in, so nothing is ever added to a month that is over. Until
+// then every figure is an estimate that grows, as of asOf.
+func (h *ExternalGatewayHandler) usageStanding(userID string, period, now time.Time, obj map[string]interface{}) error {
+	st := h.gw.d.Store
+	obj["final"] = !period.AddDate(0, 1, 0).After(now)
+	u, err := st.GetTrafficUsage(userID, period)
+	if err != nil {
+		return err
+	}
+	if !u.UpdatedAt.IsZero() {
+		obj["asOf"] = u.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	l, err := st.GetTrafficLimit("user:"+userID, services.TrafficRegionAny, services.TrafficKindEdge)
+	if err != nil {
+		return err
+	}
+	// Only the running month: the row is today's plan, and an earlier month
+	// measured against it would show a percentage that was never true.
+	running := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if l == nil || l.IncludedGB == nil || !period.Equal(running) {
+		return nil // not a managed plan: no single pool to stand against
+	}
+	p := externalPool{IncludedGB: *l.IncludedGB, MaxPurchaseGB: l.MaxPurchaseGB, UsedBytes: services.ManagedPoolBytes(u)}
+	if limit := p.IncludedGB * 1_000_000_000; limit > 0 {
+		p.Percent = p.UsedBytes * 100 / limit
+	} else if p.UsedBytes > 0 {
+		p.Percent = 100 // an allowance of none is used up by the first byte
+	}
+	obj["pool"] = p
+	return nil
 }
 
 // externalGateway runs a session handler for a key caller: non-admin, and

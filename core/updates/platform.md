@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.12
+
+### Features
+- Data traffic notices now also go out by mail and start at 75 %, then 90 % and 100 %, once each per
+  month. Needs mail configured; without it the panel notice still appears. `core`
+- `GET /api/external/gateway/usage` says whether a month is `final` or an estimate `asOf` a time, and
+  shows a managed plan's `pool` with the percent used. `core`
+
+### Breaking
+- `GET /api/external/usage` is now limited to 120 requests a minute per API key, like the other key
+  routes. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- Traffic could be counted twice when Core stopped between saving usage and marking it counted, or
+  when Redis lost its data. Both are now saved together in Postgres; no action needed. `core`
+
 ## 2026.11.11
 
 ### Features

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"dylaris-core/mailer"
 	"dylaris-core/store"
 
 	"github.com/redis/go-redis/v9"
@@ -68,6 +69,7 @@ type DataThrottleVerdict struct {
 	UsedGB, IncludedGB int64
 	Limited            bool // an allowance exists
 	Consent            bool // data overage is billed instead of throttled
+	Notice             bool // >= 75 %
 	Warn               bool // >= 90 %
 	Throttled          bool // >= 100 %
 	// Grace is the managed state past the throttle point: Throttled too, at
@@ -92,6 +94,7 @@ func JudgeDataTraffic(usedBytes int64, includedGB *int64, units *int64, consent 
 	limitBytes := total * 1_000_000_000
 	v.Throttled = usedBytes >= limitBytes
 	v.Warn = usedBytes*10 >= limitBytes*9
+	v.Notice = usedBytes*4 >= limitBytes*3
 	return v
 }
 
@@ -189,6 +192,7 @@ func JudgeManagedPool(usedBytes int64, includedGB, maxPurchaseGB *int64, consent
 	v.Throttled = usedBytes >= limitBytes
 	v.Grace = v.Throttled
 	v.Warn = usedBytes*10 >= limitBytes*9
+	v.Notice = usedBytes*4 >= limitBytes*3
 	return v
 }
 
@@ -235,7 +239,9 @@ func syncManagedGrace(st store.Store, tenant string, now time.Time, v DataThrott
 
 // evaluateDataThrottle runs after a tick's usage is written: throttles the
 // tenants over their data allowance, releases the ones that are not, and
-// tells each tenant once a month at 90 % and at 100 %.
+// tells each tenant once a month at 75 %, 90 % and 100 %, in the panel and by
+// mail. Only the highest level reached is announced: a tenant who jumps past a
+// level never gets its message late.
 func (a *TrafficAggregator) evaluateDataThrottle(ctx context.Context, owners map[string]string) {
 	now := time.Now().UTC()
 	serversOf := map[string][]string{}
@@ -273,8 +279,15 @@ func (a *TrafficAggregator) evaluateDataThrottle(ctx context.Context, owners map
 			logErrf("data-throttle", "verdict for %s: %v", tenant, err)
 			continue
 		}
-		if v.Warn {
+		switch {
+		case v.Throttled:
+			a.markNotified(ctx, tenant, now, "75", "90")
+		case v.Warn:
+			a.markNotified(ctx, tenant, now, "75")
 			a.notifyDataOnce(ctx, tenant, now, "90", "Data traffic at 90 %",
+				fmt.Sprintf("Beam and custom tabs have used %d of %d GB this month. At 100 %% they slow to %d Mbit/s until the month resets, unless data overage is on.", v.UsedGB, v.IncludedGB, bps/125_000))
+		case v.Notice:
+			a.notifyDataOnce(ctx, tenant, now, "75", "Data traffic at 75 %",
 				fmt.Sprintf("Beam and custom tabs have used %d of %d GB this month. At 100 %% they slow to %d Mbit/s until the month resets, unless data overage is on.", v.UsedGB, v.IncludedGB, bps/125_000))
 		}
 		if !v.Throttled {
@@ -343,6 +356,23 @@ func (a *TrafficAggregator) applyManagedThrottle(ctx context.Context, tenant str
 	// levels: a tenant who turns consent on after the no-consent notices must
 	// still hear about the plan's maximum.
 	grace := fmt.Sprintf("beam file transfers through the gateway run at %d Mbit/s and up to %d GB per day (UTC); past that, they are unavailable until midnight UTC. These transfers do not count against your plan and are not billed.", GraceBps/125_000, GraceDailyQuotaBytes/1_000_000_000)
+	// The consent and no-consent texts keep separate levels at every step.
+	prefix := "managed-"
+	if v.Consent {
+		prefix = "managed-cap-"
+	}
+	switch {
+	case v.Throttled:
+		a.markNotified(ctx, tenant, now, prefix+"75", prefix+"90")
+	case v.Warn:
+		a.markNotified(ctx, tenant, now, prefix+"75")
+	case v.Notice && v.Consent:
+		a.notifyDataOnce(ctx, tenant, now, "managed-cap-75", "Gateway traffic at 75 % of your plan's maximum",
+			fmt.Sprintf("Player traffic and beam file transfers together have used %d GB this month. Once your plan's maximum of %d GB is reached, file transfers slow to %d Mbit/s and %d GB per day until the month resets.", v.UsedGB, v.IncludedGB, GraceBps/125_000, GraceDailyQuotaBytes/1_000_000_000))
+	case v.Notice:
+		a.notifyDataOnce(ctx, tenant, now, "managed-75", "Gateway traffic at 75 %",
+			fmt.Sprintf("Player traffic and beam file transfers together have used %d of the %d GB your plan includes this month. At %d GB file transfers slow to %d Mbit/s and %d GB per day until the month resets, unless extra traffic billing is on.", v.UsedGB, v.IncludedGB, v.IncludedGB, GraceBps/125_000, GraceDailyQuotaBytes/1_000_000_000))
+	}
 	if v.Warn && !v.Throttled {
 		if v.Consent {
 			a.notifyDataOnce(ctx, tenant, now, "managed-cap-90", "Gateway traffic nearly at your plan's maximum",
@@ -375,14 +405,54 @@ func (a *TrafficAggregator) applyManagedThrottle(ctx context.Context, tenant str
 		fmt.Sprintf("Your plan's included traffic is used. Until the month resets on %s, %s Turn on extra traffic billing in your store account to lift this.", resets, grace))
 }
 
-// notifyDataOnce sends one in-app notification per tenant, level and month.
-func (a *TrafficAggregator) notifyDataOnce(ctx context.Context, tenant string, now time.Time, level, title, body string) {
+// claimNotice reports whether level has not been announced to tenant this month,
+// and marks it announced.
+//
+// ponytail: the mark lives in Redis only, so a flushed Redis repeats one notice
+// and one mail per level per month. Move it into Postgres if that ever matters.
+func (a *TrafficAggregator) claimNotice(ctx context.Context, tenant string, now time.Time, level string) bool {
 	key := fmt.Sprintf("dylaris:traffic:data_notified:%s:%s:%s", tenant, now.Format("2006-01"), level)
 	ok, err := a.redis.SetNX(ctx, key, 1, 40*24*time.Hour).Result()
-	if err != nil || !ok {
+	return err == nil && ok
+}
+
+// markNotified marks levels as announced without announcing them: the levels a
+// tenant has already passed, so their messages cannot arrive after a later one.
+func (a *TrafficAggregator) markNotified(ctx context.Context, tenant string, now time.Time, levels ...string) {
+	for _, level := range levels {
+		a.claimNotice(ctx, tenant, now, level)
+	}
+}
+
+// notifyDataOnce tells a tenant once per level and month, in the panel and by
+// mail. The mail is sent once and never retried: a warning that did not arrive
+// costs less than one that arrives every minute from the billing ticker.
+func (a *TrafficAggregator) notifyDataOnce(ctx context.Context, tenant string, now time.Time, level, title, body string) {
+	if !a.claimNotice(ctx, tenant, now, level) {
 		return
 	}
 	notify(a.store, tenant, title, body, "/infrastructure")
+	if a.mail != nil {
+		a.mail(tenant, title, body)
+	}
+}
+
+// sendNoticeMail mails a traffic notice to the account's address. No address
+// and no configured mail are ordinary states (a self-hosted panel often has
+// neither), so they are silent.
+func (a *TrafficAggregator) sendNoticeMail(userID, subject, body string) {
+	usr, err := a.store.GetUserByID(userID)
+	if err != nil || usr == nil || usr.Email == "" {
+		return
+	}
+	transport, err := mailer.Load(a.store, "auth")
+	if err != nil {
+		return
+	}
+	text := fmt.Sprintf("Hi %s,\n\n%s\n\nYour current usage is in the panel under My infrastructure.\n", usr.Username, body)
+	if err := transport.Send(mailer.Message{To: usr.Email, Subject: subject, Body: text}); err != nil {
+		logErrf("data-throttle", "notice mail %q to %s: %v", subject, userID, err)
+	}
 }
 
 // IsDataThrottled reports whether the tenant is currently throttled.

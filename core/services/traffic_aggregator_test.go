@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,15 @@ import (
 // trafficFakeStore embeds store.Store (nil) so it satisfies the full
 // interface at compile time; only the methods TrafficAggregator touches are
 // overridden. Any other call would panic - the tests never make one.
+type trafficMail struct{ userID, subject, body string }
+
 type trafficFakeStore struct {
+	mails []trafficMail
+	// seen is the marker table; AddTrafficTick moves it with the usage, as the
+	// real transaction does.
+	seen        map[string]int64
+	loadSeenErr error
+	pruneCalls  []time.Time
 	store.Store
 
 	owners     map[string]string
@@ -116,7 +125,7 @@ func (f *trafficFakeStore) AddTrafficUsage(userID string, period time.Time, edge
 // AddTrafficTick is the real store's transaction: any part failing writes
 // nothing, which is what the aggregator's retry relies on. Calls are recorded
 // only for a tick that landed.
-func (f *trafficFakeStore) AddTrafficTick(userID string, period time.Time, edge, relay int64, cells []store.TrafficTickCell) error {
+func (f *trafficFakeStore) AddTrafficTick(userID string, period time.Time, edge, relay int64, cells []store.TrafficTickCell, seen []store.TrafficSeen) error {
 	f.tickAttempts++
 	if err := f.addUsageErrFor[userID]; err != nil {
 		return err
@@ -141,7 +150,37 @@ func (f *trafficFakeStore) AddTrafficTick(userID string, period time.Time, edge,
 			f.addBedrockCalls = append(f.addBedrockCalls, trafficRegionCall{userID, period, c.Region, c.Kind, c.Product, c.Bedrock})
 		}
 	}
+	if f.seen == nil {
+		f.seen = map[string]int64{}
+	}
+	for _, m := range seen {
+		f.seen[m.Key] = m.Val
+	}
 	return nil
+}
+
+func (f *trafficFakeStore) LoadTrafficSeen() (map[string]int64, error) {
+	if f.loadSeenErr != nil {
+		return nil, f.loadSeenErr
+	}
+	out := make(map[string]int64, len(f.seen))
+	for k, v := range f.seen {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (f *trafficFakeStore) SetTrafficSeen(key string, val int64) error {
+	if f.seen == nil {
+		f.seen = map[string]int64{}
+	}
+	f.seen[key] = val
+	return nil
+}
+
+func (f *trafficFakeStore) PruneTrafficSeen(olderThan time.Time) (int64, error) {
+	f.pruneCalls = append(f.pruneCalls, olderThan)
+	return 0, nil
 }
 
 func (f *trafficFakeStore) SetTrafficBackupBytes(userID string, period time.Time, backupBytes int64) error {
@@ -172,6 +211,11 @@ func newTrafficAggregatorTest(t *testing.T, fs *trafficFakeStore, byonEnabled bo
 	}
 	flags := NewFeatureFlags(fs)
 	agg := NewTrafficAggregator(fs, rdb, flags)
+	// The real sender looks the user up and loads the mail settings; the fake
+	// store has neither.
+	agg.mail = func(userID, subject, body string) {
+		fs.mails = append(fs.mails, trafficMail{userID, subject, body})
+	}
 	return agg, rdb
 }
 
@@ -1300,6 +1344,9 @@ func TestSubsetsTogetherNeverExceedTheRegionDelta(t *testing.T) {
 	if err := rdb.Del(ctx, "dylaris:traffic:agg:seen:voice:srv-1#eu", "dylaris:traffic:agg:seen:bedrock:srv-1#eu").Err(); err != nil {
 		t.Fatal(err)
 	}
+	// The table holds the markers now, so that is where the skew has to be made.
+	delete(fs.seen, "dylaris:traffic:agg:seen:voice:srv-1#eu")
+	delete(fs.seen, "dylaris:traffic:agg:seen:bedrock:srv-1#eu")
 	fs.addRegionCalls, fs.addVoiceCalls, fs.addBedrockCalls = nil, nil, nil
 
 	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1060}) // +60 billed
@@ -1322,11 +1369,271 @@ func TestBedrockGetsWhatVoiceLeft(t *testing.T) {
 	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1000, "vrx:eu": 30, "brx:eu": 80})
 	agg.runOnce(ctx)
 	rdb.Del(ctx, "dylaris:traffic:agg:seen:voice:srv-1#eu", "dylaris:traffic:agg:seen:bedrock:srv-1#eu")
+	// The table holds the markers now, so that is where the skew has to be made.
+	delete(fs.seen, "dylaris:traffic:agg:seen:voice:srv-1#eu")
+	delete(fs.seen, "dylaris:traffic:agg:seen:bedrock:srv-1#eu")
 	fs.addRegionCalls, fs.addVoiceCalls, fs.addBedrockCalls = nil, nil, nil
 
 	mustHSet(t, rdb, "dylaris:traffic:edge:srv-1", map[string]interface{}{"rx:eu": 1060})
 	agg.runOnce(ctx)
 	if len(fs.addVoiceCalls) != 1 || fs.addVoiceCalls[0].bytes != 30 || len(fs.addBedrockCalls) != 1 || fs.addBedrockCalls[0].bytes != 30 {
 		t.Fatalf("voice %+v bedrock %+v, want 30 and 30 (60 minus voice)", fs.addVoiceCalls, fs.addBedrockCalls)
+	}
+}
+
+// The gap-analysis reproduction (managed gateway stage 5, M1): 1,000 bytes in a
+// counter, the Redis markers lost between two ticks, and the second tick used
+// to commit the same 1,000 bytes again.
+func TestTrafficAggregator_MarkerLostInRedisDoesNotRecount(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-uuid-1": "tenant-a"}, backupBytes: map[string]int64{}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx:eu": "600", "tx:eu": "400"})
+
+	agg.runOnce(ctx)
+	keys, err := rdb.Keys(ctx, "dylaris:traffic:agg:*").Result()
+	if err != nil || len(keys) == 0 {
+		t.Fatalf("no legacy markers written to delete (%v)", err)
+	}
+	if err := rdb.Del(ctx, keys...).Err(); err != nil {
+		t.Fatal(err)
+	}
+	agg.runOnce(ctx)
+
+	var edge, region int64
+	for _, c := range fs.addUsageCalls {
+		edge += c.edge
+	}
+	for _, c := range fs.addRegionCalls {
+		region += c.bytes
+	}
+	if edge != 1000 || region != 1000 {
+		t.Fatalf("committed %d total and %d in region cells after the markers were lost, want 1000 each", edge, region)
+	}
+}
+
+// The other way to the same defect: the usage is committed and Core dies
+// before any Redis marker is written. The next leader starts with the same
+// counter and no Redis markers at all.
+func TestTrafficAggregator_CrashBetweenCommitAndMarkerDoesNotRecount(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-uuid-1": "tenant-a"}, backupBytes: map[string]int64{}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+	counter := map[string]interface{}{"rx:eu": "1000"}
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", counter)
+	agg.runOnce(ctx)
+
+	next, rdb2 := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb2, "dylaris:traffic:edge:srv-uuid-1", counter)
+	next.runOnce(ctx)
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 1000 {
+		t.Fatalf("usage calls %+v, want the 1000 bytes once", fs.addUsageCalls)
+	}
+}
+
+// A Core taking over from one that kept its markers in Redis finds an empty
+// table. It must continue from the Redis markers: reading "not in the table"
+// as "never billed" would bill every counter's whole life on the first tick.
+func TestTrafficAggregator_SeenFallsBackToLegacyRedisMarker(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-uuid-1": "tenant-a"}, backupBytes: map[string]int64{}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx:eu": "1000"})
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1", "700")
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1#eu", "700")
+	mustSet(t, rdb, "dylaris:traffic:agg:rinit:edge:srv-uuid-1", "1")
+
+	agg.runOnce(ctx)
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 300 {
+		t.Fatalf("usage calls %+v, want one of 300", fs.addUsageCalls)
+	}
+	if len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].bytes != 300 {
+		t.Fatalf("region calls %+v, want one of 300 (a known subject is billed, not seeded)", fs.addRegionCalls)
+	}
+	for key, want := range map[string]int64{
+		"dylaris:traffic:agg:seen:edge:srv-uuid-1":    1000,
+		"dylaris:traffic:agg:seen:edge:srv-uuid-1#eu": 1000,
+		"dylaris:traffic:agg:rinit:edge:srv-uuid-1":   1,
+	} {
+		if got, ok := fs.seen[key]; !ok || got != want {
+			t.Errorf("table marker %s = %d (present %v), want %d", key, got, ok, want)
+		}
+	}
+}
+
+// A Core one release older reads only Redis. While one can still take over
+// (a rollback, the other replica mid-deploy) the Redis copy has to be current.
+func TestTrafficAggregator_TickStillWritesLegacyRedisMarkers(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-uuid-1": "tenant-a"}, backupBytes: map[string]int64{}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx:eu": "1000"})
+
+	agg.runOnce(context.Background())
+
+	if len(fs.seen) == 0 {
+		t.Fatal("no table markers written")
+	}
+	for key, val := range fs.seen {
+		assertRedisString(t, rdb, key, strconv.FormatInt(val, 10))
+	}
+}
+
+// Redis flushed, table kept: the counter starts again below its marker. That
+// is a reset, and the new counter is billed once from zero.
+func TestTrafficAggregator_RedisFlushCountsNewCounterOnce(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners: map[string]string{"srv-uuid-1": "tenant-a"}, backupBytes: map[string]int64{},
+		seen: map[string]int64{
+			"dylaris:traffic:agg:seen:edge:srv-uuid-1":    1000,
+			"dylaris:traffic:agg:seen:edge:srv-uuid-1#eu": 1000,
+			"dylaris:traffic:agg:rinit:edge:srv-uuid-1":   1,
+		},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx:eu": "200"})
+
+	agg.runOnce(ctx)
+	agg.runOnce(ctx)
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 200 {
+		t.Fatalf("usage calls %+v, want the new counter's 200 once", fs.addUsageCalls)
+	}
+	if got := fs.seen["dylaris:traffic:agg:seen:edge:srv-uuid-1"]; got != 200 {
+		t.Fatalf("marker = %d, want 200", got)
+	}
+}
+
+// Markers that cannot be read are not markers that say zero.
+func TestTrafficAggregator_UnreadableMarkerTableSkipsTheTick(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners: map[string]string{"srv-uuid-1": "tenant-a"}, backupBytes: map[string]int64{},
+		loadSeenErr: errors.New("db down"),
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx:eu": "1000"})
+
+	agg.runOnce(context.Background())
+
+	if fs.tickAttempts != 0 {
+		t.Fatalf("%d ticks attempted without markers, want 0", fs.tickAttempts)
+	}
+}
+
+// A failed tick moves neither copy of the markers.
+func TestTrafficAggregator_FailedTickLeavesTableMarkers(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners: map[string]string{"srv-uuid-1": "tenant-a"}, backupBytes: map[string]int64{},
+		addUsageErrFor: map[string]error{"tenant-a": errors.New("db down")},
+		seen:           map[string]int64{"dylaris:traffic:agg:seen:edge:srv-uuid-1": 200},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx:eu": "1000"})
+
+	agg.runOnce(context.Background())
+
+	if got := fs.seen["dylaris:traffic:agg:seen:edge:srv-uuid-1"]; got != 200 || len(fs.seen) != 1 {
+		t.Fatalf("table markers after a failed tick: %v, want only the old 200", fs.seen)
+	}
+}
+
+// The deploy the first version of the table markers got wrong: this Core
+// bills, a Core one release older takes over and bills further (moving only
+// the Redis marker), then this Core is back. Its own table marker is the older
+// one now, and trusting it billed the older Core's bytes a second time.
+func TestTrafficAggregator_OlderCoreBilledInBetween(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-uuid-1": "tenant-a"}, backupBytes: map[string]int64{}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+	counter := "dylaris:traffic:edge:srv-uuid-1"
+	mustHSet(t, rdb, counter, map[string]interface{}{"rx:eu": "1200"})
+	agg.runOnce(ctx) // this Core: 1200
+
+	// The older Core: counter at 1500, it bills 300 and moves Redis only.
+	mustHSet(t, rdb, counter, map[string]interface{}{"rx:eu": "1500"})
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1", "1500")
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1#eu", "1500")
+
+	mustHSet(t, rdb, counter, map[string]interface{}{"rx:eu": "1600"})
+	fs.addUsageCalls, fs.addRegionCalls = nil, nil
+	agg.runOnce(ctx)
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 100 {
+		t.Fatalf("usage calls %+v, want 100: the 300 in between were billed by the older Core", fs.addUsageCalls)
+	}
+	if len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].bytes != 100 {
+		t.Fatalf("region calls %+v, want 100", fs.addRegionCalls)
+	}
+}
+
+// The same handover across a counter reset: the older Core billed the new
+// counter up to 200, so its marker is the LOWER one, and the table's 1000
+// describes a counter that no longer exists.
+func TestTrafficAggregator_OlderCoreBilledAfterACounterReset(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners: map[string]string{"srv-uuid-1": "tenant-a"}, backupBytes: map[string]int64{},
+		seen: map[string]int64{
+			"dylaris:traffic:agg:seen:edge:srv-uuid-1":    1000,
+			"dylaris:traffic:agg:seen:edge:srv-uuid-1#eu": 1000,
+			"dylaris:traffic:agg:rinit:edge:srv-uuid-1":   1,
+		},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx:eu": "300"})
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1", "200")
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1#eu", "200")
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 1 || fs.addUsageCalls[0].edge != 100 {
+		t.Fatalf("usage calls %+v, want 100 (300 minus the 200 the older Core billed)", fs.addUsageCalls)
+	}
+}
+
+// A Redis mirror that is behind the table is a mirror write that failed: the
+// table is the truth and nothing is billed again.
+func TestTrafficAggregator_StaleRedisMirrorIsNotBelieved(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners: map[string]string{"srv-uuid-1": "tenant-a"}, backupBytes: map[string]int64{},
+		seen: map[string]int64{
+			"dylaris:traffic:agg:seen:edge:srv-uuid-1":    1000,
+			"dylaris:traffic:agg:seen:edge:srv-uuid-1#eu": 1000,
+			"dylaris:traffic:agg:rinit:edge:srv-uuid-1":   1,
+		},
+	}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx:eu": "1000"})
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1", "700")
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1#eu", "700")
+
+	agg.runOnce(context.Background())
+
+	if len(fs.addUsageCalls) != 0 {
+		t.Fatalf("usage calls %+v, want none: the table says all 1000 are billed", fs.addUsageCalls)
+	}
+}
+
+// A region marker that is not a number starts over instead of leaving its
+// region unbilled for good.
+func TestTrafficAggregator_CorruptRegionMarkerStartsOver(t *testing.T) {
+	fs := &trafficFakeStore{owners: map[string]string{"srv-uuid-1": "tenant-a"}, backupBytes: map[string]int64{}}
+	agg, rdb := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx:eu": "1000"})
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1", "900")
+	mustSet(t, rdb, "dylaris:traffic:agg:rinit:edge:srv-uuid-1", "1")
+	mustSet(t, rdb, "dylaris:traffic:agg:seen:edge:srv-uuid-1#eu", "garbage")
+
+	agg.runOnce(ctx)
+	if got := fs.seen["dylaris:traffic:agg:seen:edge:srv-uuid-1#eu"]; got != 1000 {
+		t.Fatalf("region marker = %d, want restarted at 1000", got)
+	}
+	mustHSet(t, rdb, "dylaris:traffic:edge:srv-uuid-1", map[string]interface{}{"rx:eu": "1050"})
+	fs.addRegionCalls = nil
+	agg.runOnce(ctx)
+	if len(fs.addRegionCalls) != 1 || fs.addRegionCalls[0].bytes != 50 {
+		t.Fatalf("region calls %+v, want 50 after the restart", fs.addRegionCalls)
 	}
 }

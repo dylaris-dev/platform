@@ -5,6 +5,7 @@ import (
 	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
 	"errors"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -82,10 +83,20 @@ type TrafficAggregator struct {
 	// suspendGrace is what PublishBeamIssuers needs when a managed tenant's
 	// throttle flips; the same value the issuer reconciler runs with.
 	suspendGrace time.Duration
+	// dbSeen is the marker table as of the start of the running tick. Only
+	// runOnce's goroutine touches it.
+	dbSeen map[string]int64
+	// mail sends a traffic notice to a tenant; a field so tests can watch it.
+	mail func(userID, subject, body string)
 }
 
 func NewTrafficAggregator(st store.Store, r *redis.Client, flags *FeatureFlags) *TrafficAggregator {
-	return &TrafficAggregator{store: st, redis: r, flags: flags, interval: 60 * time.Second}
+	a := &TrafficAggregator{store: st, redis: r, flags: flags, interval: 60 * time.Second}
+	// Off the tick: a mail server that hangs must not hold up the throttles
+	// and releases of every tenant after this one. The notice is already
+	// claimed, so the mail goes out once whether or not it is slow.
+	a.mail = func(userID, subject, body string) { go a.sendNoticeMail(userID, subject, body) }
+	return a
 }
 
 // SetLeader wires the leader-election gate. Call once at boot.
@@ -168,10 +179,59 @@ func trafficProductOf(subject string) string {
 	return store.TrafficProductUnknown
 }
 
-// seenUpdate is a `seen` key write deferred until the tenant's DB row is written.
+// seenUpdate is a marker write that commits with the tenant's usage.
 type seenUpdate struct {
 	key string
 	val int64
+}
+
+var errMarkerNotANumber = errors.New("marker is not a number")
+
+// marker returns the counter value already billed under key, for a counter
+// that now stands at current; found is false when nothing was ever billed.
+//
+// A marker commits to the table with the usage it stands for, and is mirrored
+// to Redis afterwards for a Core one release older, which reads only Redis.
+// While such a Core can still take over (a rollback, the other replica during
+// an update) either copy may be the newer one:
+//
+//	the mirror write failed, or Core died before it   table is ahead
+//	an older Core billed since                        Redis is ahead
+//	Redis lost its data                               only the table has it
+//
+// A counter only grows, so the truth is the larger of the two - as long as it
+// is not past the counter itself. A copy above current belongs to a counter
+// that has since been reset and says nothing about this one. If both are
+// above, the larger is returned and the caller's reset rule applies.
+func (a *TrafficAggregator) marker(ctx context.Context, key string, current int64) (val int64, found bool, err error) {
+	table, inTable := a.dbSeen[key]
+	raw, err := a.redis.Get(ctx, key).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return 0, false, err
+	}
+	inRedis := err == nil
+	var mirror int64
+	if inRedis {
+		if mirror, err = strconv.ParseInt(raw, 10, 64); err != nil {
+			if !inTable {
+				return 0, false, fmt.Errorf("%w: %q", errMarkerNotANumber, raw)
+			}
+			inRedis = false // the table knows; a broken mirror is rewritten after the tick
+		}
+	}
+	switch {
+	case !inTable && !inRedis:
+		return 0, false, nil
+	case !inRedis:
+		return table, true, nil
+	case !inTable:
+		return mirror, true, nil
+	}
+	lo, hi := min(table, mirror), max(table, mirror)
+	if hi > current && lo <= current {
+		return lo, true, nil
+	}
+	return hi, true, nil
 }
 
 func (a *TrafficAggregator) runOnce(ctx context.Context) {
@@ -186,6 +246,15 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 	if len(owners) == 0 {
 		return
 	}
+
+	// Without the markers there is no telling what was billed, and reading
+	// "unknown" as "nothing" bills every counter's whole life again.
+	seen, err := a.store.LoadTrafficSeen()
+	if err != nil {
+		logErrf("traffic-aggregator", "loading markers: %v; tick skipped", err)
+		return
+	}
+	a.dbSeen = seen
 
 	perTenant := map[string]*trafficAcc{}
 	tenantSeen := map[string][]seenUpdate{}
@@ -224,13 +293,31 @@ func (a *TrafficAggregator) runOnce(ctx context.Context) {
 		for _, c := range orphans {
 			cells = append(cells, c)
 		}
-		if err := a.store.AddTrafficTick(tenant, period, acc.edge, acc.relay, cells); err != nil {
+		markers := make([]store.TrafficSeen, 0, len(tenantSeen[tenant]))
+		for _, su := range tenantSeen[tenant] {
+			markers = append(markers, store.TrafficSeen{Key: su.key, Val: su.val})
+		}
+		if err := a.store.AddTrafficTick(tenant, period, acc.edge, acc.relay, cells, markers); err != nil {
 			logErrf("traffic-aggregator", "add usage for %s: %v", tenant, err)
 			continue
 		}
+		// The markers are committed. The copy in Redis is for a Core one
+		// release older taking over again (a rollback, or the other replica
+		// mid-deploy): it reads only these. Nothing here depends on it, so a
+		// failure is logged and no more. Remove once no such Core can run.
+		pipe := a.redis.Pipeline()
 		for _, su := range tenantSeen[tenant] {
-			a.redis.Set(ctx, su.key, su.val, trafficSeenTTL)
+			pipe.Set(ctx, su.key, su.val, trafficSeenTTL)
 		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			logErrf("traffic-aggregator", "legacy markers for %s: %v", tenant, err)
+		}
+	}
+
+	// ponytail: one DELETE per tick over a table of a few rows per subject;
+	// move to an hourly pass if the table ever grows large.
+	if _, err := a.store.PruneTrafficSeen(time.Now().Add(-trafficSeenTTL)); err != nil {
+		logErrf("traffic-aggregator", "pruning markers: %v", err)
 	}
 
 	a.evaluateDataThrottle(ctx, owners)
@@ -368,21 +455,22 @@ func (a *TrafficAggregator) collect(ctx context.Context, prefix string, owners m
 			// Only a key that is not there is zero. Any other failure read as
 			// 0 billed the counter's whole life - months, for a busy server -
 			// into this month a second time.
-			raw, err := a.redis.Get(ctx, seenKey).Result()
-			if err != nil && !errors.Is(err, redis.Nil) {
-				logErrf("traffic-aggregator", "reading %s: %v; skipped this tick", seenKey, err)
-				continue
-			}
-			var last int64
-			if err == nil {
-				if last, err = strconv.ParseInt(raw, 10, 64); err != nil {
-					// Nothing but this loop writes it, so a value that is not a
-					// number cannot say what was billed. Skipping it would bill
-					// this subject never again; it starts over from here.
-					logErrf("traffic-aggregator", "%s holds %q, not a count; restarted from the current %d", seenKey, raw, current)
-					a.redis.Set(ctx, seenKey, current, trafficSeenTTL)
+			last, _, err := a.marker(ctx, seenKey, current)
+			if errors.Is(err, errMarkerNotANumber) {
+				// Nothing but this loop writes it, so a value that is not a
+				// number cannot say what was billed. Skipping it would bill
+				// this subject never again; it starts over from here.
+				logErrf("traffic-aggregator", "%s: %v; restarted from the current %d", seenKey, err, current)
+				if err := a.store.SetTrafficSeen(seenKey, current); err != nil {
+					logErrf("traffic-aggregator", "restarting %s: %v", seenKey, err)
 					continue
 				}
+				a.redis.Set(ctx, seenKey, current, trafficSeenTTL)
+				continue
+			}
+			if err != nil {
+				logErrf("traffic-aggregator", "reading %s: %v; skipped this tick", seenKey, err)
+				continue
 			}
 			delta := current - last
 			if delta < 0 {
@@ -526,11 +614,16 @@ func (a *TrafficAggregator) collectRegions(
 	tenant string,
 ) {
 	initKey := trafficRegionInitPrefix + kind + ":" + subject
-	initialised, err := a.redis.Get(ctx, initKey).Result()
-	subjectKnown := err == nil && initialised != ""
+	// The init marker is a flag, not a count: 1 once set.
+	_, subjectKnown, err := a.marker(ctx, initKey, 1)
+	if err != nil && !errors.Is(err, errMarkerNotANumber) {
+		// Not knowing is not "never split": that would seed, and drop, the
+		// first bytes of a new region. The regions are read next tick.
+		return
+	}
 	// Deferred like every other marker, so a failed DB write leaves it unset and
 	// the whole initialisation is retried next tick. Written on every read, not
-	// only the first: the write renews its TTL, and an init marker that expired
+	// only the first: the write renews its age, and an init marker that was pruned
 	// would seed (drop) the next new region's bytes.
 	tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: initKey, val: 1})
 
@@ -540,12 +633,20 @@ func (a *TrafficAggregator) collectRegions(
 
 	for region, current := range regionBytes(fields) {
 		seenKey := trafficSeenPrefix + kind + ":" + subject + trafficRegionSeenSep + region
-		last, err := a.redis.Get(ctx, seenKey).Int64()
-		if err != nil && !errors.Is(err, redis.Nil) {
+		last, found, err := a.marker(ctx, seenKey, current)
+		if errors.Is(err, errMarkerNotANumber) {
+			// As for the total: it cannot say what was billed, and skipping it
+			// would leave this region unbilled for good. It starts over here.
+			logErrf("traffic-aggregator", "%s: %v; restarted from the current %d", seenKey, err, current)
+			billed[region] = 0
+			tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
+			continue
+		}
+		if err != nil {
 			continue
 		}
 		billed[region] = 0
-		missing := err != nil
+		missing := !found
 		if missing && !subjectKnown && hadTotalSeen {
 			// Seeding this subject's history away, once. Only reachable while
 			// the subject has never been split before.
@@ -609,8 +710,12 @@ func (a *TrafficAggregator) collectSubset(
 			continue // the region was not read this tick; neither is its voice
 		}
 		seenKey := trafficSeenPrefix + seenKind + ":" + subject + trafficRegionSeenSep + region
-		last, err := a.redis.Get(ctx, seenKey).Int64()
-		if err != nil && !errors.Is(err, redis.Nil) {
+		last, _, err := a.marker(ctx, seenKey, current)
+		if errors.Is(err, errMarkerNotANumber) {
+			tenantSeen[tenant] = append(tenantSeen[tenant], seenUpdate{key: seenKey, val: current})
+			continue
+		}
+		if err != nil {
 			continue
 		}
 		delta := current - last

@@ -91,8 +91,10 @@ func TestDataThrottleEvaluator(t *testing.T) {
 		t.Fatal("throttled tenant not listed")
 	}
 	agg.evaluateDataThrottle(ctx, fs.owners)
-	if len(fs.notifications) != 2 { // 90 % and 100 %, once each
-		t.Fatalf("notifications %v, want the 90 %% and 100 %% one once each", fs.notifications)
+	// Straight past 75 and 90 to 120 %: only the level reached is announced,
+	// once, in the panel and by mail.
+	if len(fs.notifications) != 1 || len(fs.mails) != 1 || fs.mails[0].userID != "tenant-a" || fs.mails[0].subject != "Data traffic limit reached" {
+		t.Fatalf("notifications %v mails %+v, want the 100 %% one once each, to tenant-a", fs.notifications, fs.mails)
 	}
 
 	fs.dataConsent["tenant-a"] = true
@@ -147,5 +149,97 @@ func TestTabTrafficMeterFlushes(t *testing.T) {
 	got, _ := rdb.HGetAll(context.Background(), "dylaris:traffic:relay:srv").Result()
 	if got["tab_up:eu-central"] != "100" || got["tab_down:eu-central"] != "1000" {
 		t.Fatalf("relay counter %v", got)
+	}
+}
+
+// 75, 90 and 100 % each announce once as the month goes on, the mail carries
+// the notice's text, and a level that was jumped over never arrives late.
+func TestTrafficNoticesStepThroughTheLevels(t *testing.T) {
+	hundred := int64(100)
+	usage := func(gb int64) map[string][]store.RegionUsage {
+		return map[string][]store.RegionUsage{"tenant-a": {{Region: "eu-central", Kind: store.TrafficKindRelay, Bytes: gb * 1_000_000_000}}}
+	}
+	fs := &trafficFakeStore{
+		owners:      map[string]string{"srv-1": "tenant-a"},
+		dataLimit:   &models.TrafficLimit{IncludedGB: &hundred},
+		dataUsage:   usage(74),
+		dataConsent: map[string]bool{},
+	}
+	agg, _ := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+
+	steps := []struct {
+		gb      int64
+		subject string // "" = nothing new
+	}{
+		{74, ""},
+		{75, "Data traffic at 75 %"},
+		{80, ""},
+		{90, "Data traffic at 90 %"},
+		{95, ""},
+		{100, "Data traffic limit reached"},
+		{130, ""},
+	}
+	sent := 0
+	for _, st := range steps {
+		fs.dataUsage = usage(st.gb)
+		agg.evaluateDataThrottle(ctx, fs.owners)
+		agg.evaluateDataThrottle(ctx, fs.owners) // a second tick at the same level says nothing
+		if st.subject != "" {
+			sent++
+		}
+		if len(fs.mails) != sent || len(fs.notifications) != sent {
+			t.Fatalf("at %d GB: %d mails and %d notices, want %d of each (%+v)", st.gb, len(fs.mails), len(fs.notifications), sent, fs.mails)
+		}
+		if st.subject != "" {
+			m := fs.mails[sent-1]
+			if m.userID != "tenant-a" || m.subject != st.subject || m.body == "" {
+				t.Fatalf("at %d GB: mail %+v, want %q to tenant-a with the notice text", st.gb, m, st.subject)
+			}
+		}
+	}
+}
+
+// Jumping from under 75 % to 92 % announces 90 only; falling back under 90
+// later in the tick sequence must not bring the 75 % message out after it.
+func TestTrafficNoticeSkippedLevelNeverArrivesLate(t *testing.T) {
+	hundred := int64(100)
+	usage := func(gb int64) map[string][]store.RegionUsage {
+		return map[string][]store.RegionUsage{"tenant-a": {{Region: "eu-central", Kind: store.TrafficKindRelay, Bytes: gb * 1_000_000_000}}}
+	}
+	fs := &trafficFakeStore{
+		owners:      map[string]string{"srv-1": "tenant-a"},
+		dataLimit:   &models.TrafficLimit{IncludedGB: &hundred},
+		dataUsage:   usage(92),
+		dataConsent: map[string]bool{},
+	}
+	agg, _ := newTrafficAggregatorTest(t, fs, true)
+	ctx := context.Background()
+
+	agg.evaluateDataThrottle(ctx, fs.owners)
+	// The allowance was raised: the same bytes are now 76 %.
+	bigger := int64(121)
+	fs.dataLimit = &models.TrafficLimit{IncludedGB: &bigger}
+	agg.evaluateDataThrottle(ctx, fs.owners)
+
+	if len(fs.mails) != 1 || fs.mails[0].subject != "Data traffic at 90 %" {
+		t.Fatalf("mails %+v, want only the 90 %% one", fs.mails)
+	}
+}
+
+func TestJudgeNoticeAt75Percent(t *testing.T) {
+	hundred, one := int64(100), int64(1)
+	for _, c := range []struct {
+		gb                     int64
+		notice, warn, throttle bool
+	}{{74, false, false, false}, {75, true, false, false}, {90, true, true, false}, {100, true, true, true}} {
+		v := JudgeDataTraffic(c.gb*1_000_000_000, &hundred, &one, false)
+		if v.Notice != c.notice || v.Warn != c.warn || v.Throttled != c.throttle {
+			t.Errorf("data %d GB: %+v", c.gb, v)
+		}
+		m := JudgeManagedPool(c.gb*1_000_000_000, &hundred, nil, false)
+		if m.Notice != c.notice || m.Warn != c.warn || m.Throttled != c.throttle {
+			t.Errorf("managed %d GB: %+v", c.gb, m)
+		}
 	}
 }

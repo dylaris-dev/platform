@@ -123,7 +123,14 @@ type Store interface {
 	RotateVoiceUplinkKey(serverID int, key []byte) (*VoicePort, error)
 	GetUserDataBillingEnabled(userID string) (bool, error)
 	SetUserDataBillingEnabled(userID string, v bool) error
-	AddTrafficTick(userID string, period time.Time, edgeBytes, relayBytes int64, cells []TrafficTickCell) error
+	// seen are the aggregator's markers for exactly these bytes. They commit
+	// with the usage, so a tick is never billed without being marked billed.
+	AddTrafficTick(userID string, period time.Time, edgeBytes, relayBytes int64, cells []TrafficTickCell, seen []TrafficSeen) error
+	// The aggregator's markers: every row (one read per tick), one upsert
+	// outside a tick, and the cleanup of markers nothing has moved since.
+	LoadTrafficSeen() (map[string]int64, error)
+	SetTrafficSeen(key string, val int64) error
+	PruneTrafficSeen(olderThan time.Time) (int64, error)
 	AddVoiceUsage(serverID int, period time.Time, region string, rx, tx int64) error
 	ListVoiceUsage(period time.Time) ([]VoiceUsageRow, error)
 	SetTrafficBackupBytes(userID string, period time.Time, backupBytes int64) error

@@ -1175,7 +1175,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/external/servers", apiKeysHandler.APIKeyOwnerRoute("")(apiKeysHandler.ListExternalServers)).Methods("GET")
 	// A key rolls itself: no capability, any valid key. Rate class mint.
 	api.HandleFunc("/external/api-key/roll", apiKeysHandler.APIKeyOwnerRoute("")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.RollSelf))).Methods("POST")
-	api.HandleFunc("/external/usage", apiKeysHandler.APIKeyOwnerRoute("usage.read")(apiKeysHandler.ExternalOwnerRoute(usageHandler.GetMyUsage))).Methods("GET")
+	api.HandleFunc("/external/usage", apiKeysHandler.APIKeyOwnerRoute("usage.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(usageHandler.GetMyUsage)))).Methods("GET")
 
 	api.HandleFunc("/external/servers/{uuid}", apiKeysHandler.APIKeyServerRoute("overview.read")(apiKeysHandler.GetExternalServer)).Methods("GET")
 	// POWER carries no route capability for the same reason the panel route

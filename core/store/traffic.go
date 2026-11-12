@@ -331,11 +331,61 @@ type TrafficTickCell struct {
 	Bytes, Voice, Bedrock int64
 }
 
+// TrafficSeen is one aggregator marker: the counter value under Key that has
+// been billed. Key is the marker's old Redis key, verbatim.
+type TrafficSeen struct {
+	Key string
+	Val int64
+}
+
+func setTrafficSeen(x trafficExecer, key string, val int64) error {
+	_, err := x.Exec(`
+		INSERT INTO traffic_seen (key, val, updated_at) VALUES ($1, $2, NOW())
+		ON CONFLICT (key) DO UPDATE SET val = EXCLUDED.val, updated_at = NOW()`, key, val)
+	return err
+}
+
+// SetTrafficSeen writes one marker outside a tick.
+func (s *PostgresStore) SetTrafficSeen(key string, val int64) error {
+	return setTrafficSeen(s.db, key, val)
+}
+
+// LoadTrafficSeen returns every marker. One read per tick instead of one per
+// counter: the table holds a handful of rows per metered subject.
+func (s *PostgresStore) LoadTrafficSeen() (map[string]int64, error) {
+	rows, err := s.db.Query(`SELECT key, val FROM traffic_seen`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var k string
+		var v int64
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
+}
+
+// PruneTrafficSeen deletes markers not written since olderThan and reports how
+// many. A marker is rewritten whenever its counter moves, and a counter that
+// stops moving expires within days, so an old marker describes nothing.
+func (s *PostgresStore) PruneTrafficSeen(olderThan time.Time) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM traffic_seen WHERE updated_at < $1`, olderThan)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // AddTrafficTick writes one tenant's tick - the total, its region cells and
 // their voice subsets - in one transaction. Overage is billed off the region
 // cells, so they are as much the bill as the total is: all of it lands or none
 // of it does, and the caller retries the whole delta.
-func (s *PostgresStore) AddTrafficTick(userID string, period time.Time, edgeBytes, relayBytes int64, cells []TrafficTickCell) error {
+func (s *PostgresStore) AddTrafficTick(userID string, period time.Time, edgeBytes, relayBytes int64, cells []TrafficTickCell, seen []TrafficSeen) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -359,6 +409,11 @@ func (s *PostgresStore) AddTrafficTick(userID string, period time.Time, edgeByte
 			if err := addTrafficUsageRegionBedrock(tx, userID, period, c.Region, c.Kind, c.Product, c.Bedrock); err != nil {
 				return fmt.Errorf("bedrock %s/%s/%s: %w", c.Region, c.Kind, c.Product, err)
 			}
+		}
+	}
+	for _, m := range seen {
+		if err := setTrafficSeen(tx, m.Key, m.Val); err != nil {
+			return fmt.Errorf("marker %s: %w", m.Key, err)
 		}
 	}
 	return tx.Commit()

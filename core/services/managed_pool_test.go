@@ -167,3 +167,63 @@ func TestByonVerdictUnchanged(t *testing.T) {
 		t.Fatalf("issuer records %v for a BYON tenant", n)
 	}
 }
+
+// A managed pool announces 75 %, 90 % and 100 % once each as it fills, by mail
+// too, and a level that was jumped over never arrives afterwards.
+func TestManagedPoolNoticesStepThroughTheLevels(t *testing.T) {
+	fs := &trafficFakeStore{
+		owners:       map[string]string{"mg-1": "mg-1"},
+		issuerKeys:   []models.BeamIssuerKey{{ID: beamKidA1, OwnerID: "mg-1", PublicKey: make([]byte, 32)}},
+		managedLimit: map[string]*models.TrafficLimit{"mg-1": {IncludedGB: i64(100)}},
+		billing:      map[string]*store.UserBilling{"mg-1": {UserID: "mg-1", Status: "active"}},
+		dataConsent:  map[string]bool{},
+	}
+	agg, _ := newTrafficAggregatorTest(t, fs, true)
+	fs.settings[BeamTenantMaxConnsKey] = ""
+	ctx := context.Background()
+	owners := map[string]string{"owner:mg-1": "mg-1"}
+
+	steps := []struct {
+		gb      int64
+		subject string
+	}{
+		{70, ""},
+		{76, "Gateway traffic at 75 %"},
+		{92, "Gateway traffic nearly at its limit"},
+		{100, "Gateway traffic allowance reached"},
+		{120, ""},
+	}
+	sent := 0
+	for _, st := range steps {
+		fs.usage = map[string]*store.TrafficUsage{"mg-1": {EdgeBytes: st.gb * poolGB}}
+		agg.evaluateDataThrottle(ctx, owners)
+		agg.evaluateDataThrottle(ctx, owners)
+		if st.subject != "" {
+			sent++
+		}
+		if len(fs.mails) != sent {
+			t.Fatalf("at %d GB: %d mails, want %d (%+v)", st.gb, len(fs.mails), sent, fs.mails)
+		}
+		if st.subject != "" && fs.mails[sent-1].subject != st.subject {
+			t.Fatalf("at %d GB: mail %q, want %q", st.gb, fs.mails[sent-1].subject, st.subject)
+		}
+	}
+
+	// Straight to 95 % in a new account: 90 only, and 75 never follows.
+	fs2 := &trafficFakeStore{
+		owners:       map[string]string{"mg-2": "mg-2"},
+		managedLimit: map[string]*models.TrafficLimit{"mg-2": {IncludedGB: i64(100)}},
+		billing:      map[string]*store.UserBilling{"mg-2": {UserID: "mg-2", Status: "active"}},
+		dataConsent:  map[string]bool{},
+		usage:        map[string]*store.TrafficUsage{"mg-2": {EdgeBytes: 95 * poolGB}},
+	}
+	agg2, _ := newTrafficAggregatorTest(t, fs2, true)
+	fs2.settings[BeamTenantMaxConnsKey] = ""
+	owners2 := map[string]string{"owner:mg-2": "mg-2"}
+	agg2.evaluateDataThrottle(ctx, owners2)
+	fs2.managedLimit["mg-2"] = &models.TrafficLimit{IncludedGB: i64(120)} // the same bytes are 79 % now
+	agg2.evaluateDataThrottle(ctx, owners2)
+	if len(fs2.mails) != 1 || fs2.mails[0].subject != "Gateway traffic nearly at its limit" {
+		t.Fatalf("mails %+v, want only the 90 %% one", fs2.mails)
+	}
+}

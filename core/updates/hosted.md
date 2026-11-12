@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.12
+
+### Features
+- You now get a mail when your data traffic reaches 75 %, 90 % and 100 % of your allowance, once
+  each per month, in addition to the notice in the panel.
+- The usage API (`/api/external/gateway/usage`) says whether a month is final or still an estimate,
+  and as of when.
+
+### Breaking
+- `/api/external/usage` accepts 120 requests a minute per API key. A script polling faster gets 429.
+
+### Security
+- Nothing.
+
+### Fixes
+- In rare cases traffic could be counted twice after a restart on our side. That can no longer
+  happen. Nothing to do on your end.
+
 ## 2026.11.11
 
 ### Features
