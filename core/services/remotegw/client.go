@@ -131,13 +131,15 @@ type AccountLimits struct {
 }
 
 // Kit is one link kit. Online is nil when the provider could not tell.
+// RetireAt is set on a retired kit: the provider revokes it then.
 type Kit struct {
-	ID     int      `json:"id"`
-	Name   string   `json:"name"`
-	LinkID string   `json:"link_id"`
-	Region string   `json:"region"`
-	Online *bool    `json:"online"`
-	Caps   []string `json:"caps"`
+	ID       int        `json:"id"`
+	Name     string     `json:"name"`
+	LinkID   string     `json:"link_id"`
+	Region   string     `json:"region"`
+	Online   *bool      `json:"online"`
+	Caps     []string   `json:"caps"`
+	RetireAt *time.Time `json:"retire_at,omitempty"`
 }
 
 type MintedKit struct {
@@ -326,6 +328,25 @@ func (c *Client) RevokeKit(ctx context.Context, linkID string) error {
 		return err
 	}
 	return c.do(ctx, http.MethodDelete, "/link-kits/"+seg, nil, nil)
+}
+
+// RetireKit retires a kit: it stops counting toward the link limit at once and
+// the provider revokes it at the returned time.
+func (c *Client) RetireKit(ctx context.Context, linkID string) (time.Time, error) {
+	seg, err := segment(linkID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var out struct {
+		RetireAt time.Time `json:"retire_at"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/link-kits/"+seg+"/retire", nil, &out); err != nil {
+		return time.Time{}, err
+	}
+	if out.RetireAt.IsZero() {
+		return time.Time{}, fmt.Errorf("%w: retire answer without retire_at", ErrBadAnswer)
+	}
+	return out.RetireAt, nil
 }
 
 func (c *Client) Routes(ctx context.Context) ([]Route, error) {

@@ -242,3 +242,13 @@ func ServerHostname(uuid string) string {
 	}
 	return name
 }
+
+// IsServerHostname reports whether s is a name ServerHostname can produce.
+// Defined through ServerHostname itself so a gateway provider checking route
+// targets accepts exactly the names a customer Core sends, and the two cannot
+// drift: the remainder after "mc-" maps to itself only when it has no
+// underscore and no uppercase letter.
+func IsServerHostname(s string) bool {
+	rest, ok := strings.CutPrefix(s, "mc-")
+	return ok && ServerHostname(rest) == s
+}

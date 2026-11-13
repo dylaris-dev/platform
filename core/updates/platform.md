@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.13.2
+
+### Features
+- With the managed gateway a node can be replaced without losing its addresses or hitting the host
+  limit: its link keeps working for 8 hours while you move its servers. `core` `panel`
+- Settings > Gateway lists links the provider holds that this platform does not know, for example
+  after a lost database, and can revoke them. `core` `panel`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The managed gateway now gives addresses to servers created in the panel, and the settings say when
+  the routing mode or the provider's real player IP setting stands in the way. `core` `panel`
+
 ## 2026.11.13
 
 ### Features

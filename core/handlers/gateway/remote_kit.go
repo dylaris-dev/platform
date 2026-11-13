@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
@@ -43,6 +44,33 @@ func (h *RemoteKitHandler) activeRemote(w http.ResponseWriter) (*services.Remote
 	return rg, true
 }
 
+// allowAdmin applies the per-admin limit every managed-link endpoint shares.
+func (h *RemoteKitHandler) allowAdmin(w http.ResponseWriter, r *http.Request) (string, bool) {
+	userID, _ := r.Context().Value("userID").(string)
+	if !h.views.Allow("managed-link:"+userID, managedLinkViewsPerMinute) {
+		w.Header().Set("Retry-After", "60")
+		httpx.SendJSONErrorCode(w, "Too many requests, try again in a minute.", "rate_limited", http.StatusTooManyRequests)
+		return "", false
+	}
+	return userID, true
+}
+
+// ownNode is the node id of the {id} path variable, or false after a 404: a
+// customer's machine is theirs, so an operator acts on no kit of it.
+func (h *RemoteKitHandler) ownNode(w http.ResponseWriter, r *http.Request) (int, bool) {
+	id, err := strconv.Atoi(mux.Vars(r)["id"])
+	if err != nil {
+		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
+		return 0, false
+	}
+	node, err := h.d.Store.GetNodeByID(id)
+	if err != nil || node == nil || access.OwnedByOther(h.d.FeatureFlags, r, node) {
+		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
+		return 0, false
+	}
+	return node.ID, true
+}
+
 // ManagedLink GET /api/nodes/{id}/managed-link returns the node's managed-gateway
 // link kit (id and key) for its deploy file. topology.write at the route, like
 // the other admin endpoints that hand out a link or warp key. Mints the
@@ -54,10 +82,8 @@ func (h *RemoteKitHandler) ManagedLink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID, _ := r.Context().Value("userID").(string)
-	if !h.views.Allow("managed-link:"+userID, managedLinkViewsPerMinute) {
-		w.Header().Set("Retry-After", "60")
-		httpx.SendJSONErrorCode(w, "Too many requests, try again in a minute.", "rate_limited", http.StatusTooManyRequests)
+	userID, ok := h.allowAdmin(w, r)
+	if !ok {
 		return
 	}
 	id, err := strconv.Atoi(mux.Vars(r)["id"])
@@ -108,7 +134,7 @@ func (h *RemoteKitHandler) ManagedLink(w http.ResponseWriter, r *http.Request) {
 		"linkId": kit.LinkID,
 	})
 	w.Header().Set("Cache-Control", "no-store")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	out := map[string]interface{}{
 		"success":      true,
 		"linkId":       kit.LinkID,
 		"linkKey":      kit.LinkKey,
@@ -117,7 +143,110 @@ func (h *RemoteKitHandler) ManagedLink(w http.ResponseWriter, r *http.Request) {
 		"networkKnown": false,
 		"networkHint":  networkHint,
 		"online":       online,
+	}
+	if kit.RetireAt != nil {
+		out["retireAt"] = kit.RetireAt.UTC().Format(time.RFC3339)
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
+// RetireManagedLink POST /api/nodes/{id}/managed-link/retire replaces the
+// node's managed link: the provider keeps it working for 8 hours, then removes
+// it with every route still on it. Meanwhile it no longer counts toward the
+// plan's host limit, so another node can get a link. Answers {retireAt}.
+// topology.write at the route; the provider's refusals (retire_limit,
+// retire_budget, retire_not_needed) pass through with their codes.
+func (h *RemoteKitHandler) RetireManagedLink(w http.ResponseWriter, r *http.Request) {
+	rg, ok := h.activeRemote(w)
+	if !ok {
+		return
+	}
+	userID, ok := h.allowAdmin(w, r)
+	if !ok {
+		return
+	}
+	nodeID, ok := h.ownNode(w, r)
+	if !ok {
+		return
+	}
+	at, err := rg.RetireNodeKit(r.Context(), uint(nodeID))
+	if err != nil {
+		if gate.GatewayProviderError(w, err) {
+			return
+		}
+		log.Printf("managed link: retire node %d: %v", nodeID, err)
+		httpx.SendJSONError(w, "Failed to replace the node's link", http.StatusInternalServerError)
+		return
+	}
+	meta := map[string]interface{}{"nodeId": nodeID, "retireAt": at.UTC().Format(time.RFC3339)}
+	if k, _ := h.d.Store.GetRemoteKit(uint(nodeID)); k != nil {
+		meta["linkId"] = k.LinkID
+	}
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventManagedLinkKitRetired, userID, "", meta)
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "retireAt": at.UTC().Format(time.RFC3339)})
+}
+
+// OrphanKits GET /api/gateway/provider/orphan-kits lists the links the
+// provider holds for this account that no node of this platform has (after a
+// lost or restored database), from the 30 s kit cache. A second installation
+// using the same provider account shows up here too. topology.write at the
+// route.
+func (h *RemoteKitHandler) OrphanKits(w http.ResponseWriter, r *http.Request) {
+	rg, ok := h.activeRemote(w)
+	if !ok {
+		return
+	}
+	if _, ok := h.allowAdmin(w, r); !ok {
+		return
+	}
+	kits, err := rg.OrphanKits(r.Context())
+	if err != nil {
+		if gate.GatewayProviderError(w, err) {
+			return
+		}
+		log.Printf("orphan kits: %v", err)
+		httpx.SendJSONError(w, "Failed to list the provider's links", http.StatusInternalServerError)
+		return
+	}
+	items := make([]map[string]interface{}, 0, len(kits))
+	for _, k := range kits {
+		it := map[string]interface{}{"linkId": k.LinkID, "name": k.Name, "region": k.Region, "online": k.Online}
+		if k.RetireAt != nil {
+			it["retireAt"] = k.RetireAt.UTC().Format(time.RFC3339)
+		}
+		items = append(items, it)
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "items": items})
+}
+
+// RevokeOrphanKit DELETE /api/gateway/provider/orphan-kits/{linkId} revokes a
+// link the provider holds that no node here has; one a node here holds is
+// refused (409 kit_known). Answers {queued}: true when the provider could not
+// be reached and the revoke waits in the outbox. topology.write at the route.
+func (h *RemoteKitHandler) RevokeOrphanKit(w http.ResponseWriter, r *http.Request) {
+	rg, ok := h.activeRemote(w)
+	if !ok {
+		return
+	}
+	userID, ok := h.allowAdmin(w, r)
+	if !ok {
+		return
+	}
+	linkID := mux.Vars(r)["linkId"]
+	queued, err := rg.RevokeOrphanKit(r.Context(), linkID)
+	if err != nil {
+		if gate.GatewayProviderError(w, err) {
+			return
+		}
+		log.Printf("orphan kits: revoke %s: %v", linkID, err)
+		httpx.SendJSONError(w, "Failed to revoke the link", http.StatusInternalServerError)
+		return
+	}
+	audit.LogIdentity(h.d.Store, r, audit.AuditEventProviderOrphanKitRevoked, userID, "", map[string]interface{}{
+		"linkId": linkID,
+		"queued": queued,
 	})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "queued": queued})
 }
 
 // ProviderUsage GET /api/gateway/provider/usage returns the managed gateway

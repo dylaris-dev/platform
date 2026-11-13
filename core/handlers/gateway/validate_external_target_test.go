@@ -54,6 +54,10 @@ func TestValidateExternalTarget(t *testing.T) {
 		{"localhost", false, nil},
 		{"mc-" + uuid, false, nil},
 		{"MC-" + uuid, false, nil},
+		{"mc-12-abc123def456", false, nil}, // a panel-created server, id 12_abc123def456
+		{"mc-12-abc123def456.example.com", false, errTargetNotAllowed},
+		{"mc-12-abc123def456-", false, errors.New("any")},           // not a DNS label
+		{"mc-" + strings.Repeat("a", 61), false, errors.New("any")}, // 64 bytes: not a DNS label
 		{"172.32.0.1", false, errTargetNotAllowed},
 		{"100.128.0.1", false, errTargetNotAllowed},
 		{"8.8.8.8", false, errTargetNotAllowed},
@@ -61,7 +65,7 @@ func TestValidateExternalTarget(t *testing.T) {
 		{"::ffff:8.8.8.8", false, errTargetNotAllowed},
 		{"play.example.com", false, errTargetNotAllowed},
 		{"mc_" + uuid, false, errors.New("any")}, // refused earlier as a malformed host
-		{"mc-" + uuid + "x", false, errTargetNotAllowed},
+		{"mc-" + uuid + "x", false, nil},         // any server id, not only a canonical uuid
 		{"::1", false, errors.New("any")},
 		{"", false, errors.New("any")},
 		{"8.8.8.8", true, nil},
@@ -107,6 +111,15 @@ func TestExternalCreateRouteRespectsPublicFlag(t *testing.T) {
 	f.h.CreateRoute(rec, extReq("POST", "/", extTenantB, false, nil, body))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("public target with the flag = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+
+	// A server created in the panel (id <ownerId>_<12 base36>) needs no flag.
+	f = newExtFixture(t)
+	body["targetHost"] = "mc-12-abc123def456"
+	rec = httptest.NewRecorder()
+	f.h.CreateRoute(rec, extReq("POST", "/", extTenantB, false, nil, body))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("panel-shaped server target = %d, want 201: %s", rec.Code, rec.Body.String())
 	}
 
 	// A private target needs no flag, and the body still reaches the handler intact.

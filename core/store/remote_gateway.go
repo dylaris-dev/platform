@@ -27,6 +27,11 @@ type RemoteKit struct {
 	LinkID  string
 	LinkKey string
 	Region  string
+	// RetireAt is when the provider revokes this retired kit; nil while it is
+	// in normal use.
+	RetireAt *time.Time
+	// CreatedAt is read, never written: when the row was inserted.
+	CreatedAt time.Time
 }
 
 // RemoteRoute is one route the provider holds on our behalf.
@@ -60,7 +65,7 @@ func (s *PostgresStore) SetRemoteKitEncryptionKey(clusterSecret string) {
 }
 
 func (s *PostgresStore) GetRemoteKit(nodeID uint) (*RemoteKit, error) {
-	row := s.db.QueryRow(`SELECT node_id, link_id, link_key, region FROM remote_link_kits WHERE node_id = $1`, nodeID)
+	row := s.db.QueryRow(`SELECT node_id, link_id, link_key, region, retire_at, created_at FROM remote_link_kits WHERE node_id = $1`, nodeID)
 	k, err := s.scanRemoteKit(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -72,7 +77,7 @@ func (s *PostgresStore) GetRemoteKit(nodeID uint) (*RemoteKit, error) {
 }
 
 func (s *PostgresStore) ListRemoteKits() ([]RemoteKit, error) {
-	rows, err := s.db.Query(`SELECT node_id, link_id, link_key, region FROM remote_link_kits ORDER BY node_id`)
+	rows, err := s.db.Query(`SELECT node_id, link_id, link_key, region, retire_at, created_at FROM remote_link_kits ORDER BY node_id`)
 	if err != nil {
 		return nil, fmt.Errorf("remote gateway: list kits: %w", err)
 	}
@@ -91,8 +96,12 @@ func (s *PostgresStore) ListRemoteKits() ([]RemoteKit, error) {
 func (s *PostgresStore) scanRemoteKit(row interface{ Scan(...any) error }) (*RemoteKit, error) {
 	var k RemoteKit
 	var enc string
-	if err := row.Scan(&k.NodeID, &k.LinkID, &enc, &k.Region); err != nil {
+	var retire sql.NullTime
+	if err := row.Scan(&k.NodeID, &k.LinkID, &enc, &k.Region, &retire, &k.CreatedAt); err != nil {
 		return nil, err
+	}
+	if retire.Valid {
+		k.RetireAt = &retire.Time
 	}
 	if s.remoteKitKey == nil {
 		return nil, errNoRemoteKitKey
@@ -143,6 +152,15 @@ func (s *PostgresStore) InsertRemoteKit(k RemoteKit) (inserted bool, err error) 
 		return false, fmt.Errorf("remote gateway: insert kit for node %d: %w", k.NodeID, err)
 	}
 	return n == 1, nil
+}
+
+// SetRemoteKitRetireAt stamps the node's kit as retiring, only while it is
+// still the kit with linkID: a kit minted since is not the one retired.
+func (s *PostgresStore) SetRemoteKitRetireAt(nodeID uint, linkID string, at time.Time) error {
+	if _, err := s.db.Exec(`UPDATE remote_link_kits SET retire_at = $3 WHERE node_id = $1 AND link_id = $2`, nodeID, linkID, at); err != nil {
+		return fmt.Errorf("remote gateway: retire kit of node %d: %w", nodeID, err)
+	}
+	return nil
 }
 
 func (s *PostgresStore) DeleteRemoteKit(nodeID uint) error {
@@ -345,4 +363,29 @@ func (s *PostgresStore) CountOpenOutbox() (int, time.Time, error) {
 		return 0, time.Time{}, fmt.Errorf("remote gateway: count outbox: %w", err)
 	}
 	return n, oldest.Time, nil
+}
+
+// ListRefusedOutbox returns up to limit open route changes the provider
+// refused, newest first: what the panel lists under "changes are waiting". A
+// refusal is a 4xx other than 429, read off the stored text, which is
+// remotegw.APIError's ("gateway provider answered <status> <code>: ..."); a
+// network error or a 5xx only waits. Op, Domain and LastError are set.
+func (s *PostgresStore) ListRefusedOutbox(limit int) ([]OutboxItem, error) {
+	rows, err := s.db.Query(`SELECT op, domain, last_error FROM gateway_outbox
+		WHERE done_at IS NULL AND op <> 'revoke_kit'
+			AND last_error LIKE 'gateway provider answered 4%' AND last_error NOT LIKE 'gateway provider answered 429 %'
+		ORDER BY id DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("remote gateway: refused outbox: %w", err)
+	}
+	defer rows.Close()
+	var out []OutboxItem
+	for rows.Next() {
+		var it OutboxItem
+		if err := rows.Scan(&it.Op, &it.Domain, &it.LastError); err != nil {
+			return nil, fmt.Errorf("remote gateway: refused outbox: %w", err)
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
 }

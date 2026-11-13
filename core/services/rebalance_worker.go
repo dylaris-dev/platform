@@ -35,6 +35,8 @@ type RebalanceWorker struct {
 	// leader is set by main.go after construction. nil = run unconditionally
 	// (single-Core dev mode); non-nil = only act when this Core holds the lease.
 	leader leader.Election
+	// gatewayRemote is the provider mode; nil = always local.
+	gatewayRemote func() (remote, known bool)
 }
 
 const (
@@ -63,6 +65,10 @@ func NewRebalanceWorker(s store.Store, r *redis.Client, o *MigrationOrchestrator
 // SetLeader wires the leader-election gate. The loop only acts on the elected
 // Core; followers idle.
 func (w *RebalanceWorker) SetLeader(l leader.Election) { w.leader = l }
+
+// SetGatewayRemote wires the provider mode, so a node whose managed link is
+// being replaced is never a move target.
+func (w *RebalanceWorker) SetGatewayRemote(f func() (remote, known bool)) { w.gatewayRemote = f }
 
 // Start launches the ticker loop in its own goroutine. Returns immediately.
 func (w *RebalanceWorker) Start(ctx context.Context) {
@@ -123,6 +129,13 @@ func (w *RebalanceWorker) tick(ctx context.Context) {
 		return
 	}
 	heartbeats := LoadHeartbeats(ctx, w.redis)
+	// The draining node is the emptiest and would be picked every tick, each
+	// attempt copying the whole archive only to roll back at the cutover.
+	retiring, err := RetiringKitNodes(w.store, w.gatewayRemote)
+	if err != nil {
+		logErrf("rebalance", "nodes with a link being replaced could not be read, skipping this pass: %v", err)
+		return
+	}
 
 	// (c) Compute every online node's load%. Build a candidate-target pool of
 	// nodes that are below threshold so we don't recompute it per overloaded node.
@@ -144,14 +157,14 @@ func (w *RebalanceWorker) tick(ctx context.Context) {
 		if loads[src.ID] <= float64(threshold) {
 			continue
 		}
-		w.relieveNode(ctx, src, nodes, loads, heartbeats, threshold)
+		w.relieveNode(ctx, src, nodes, loads, heartbeats, threshold, retiring)
 	}
 }
 
 // relieveNode picks one eligible server on the overloaded source node and a
 // capacity-checked target, then enqueues the move. At most one move per node
 // per tick (logged so the cap is never silent).
-func (w *RebalanceWorker) relieveNode(ctx context.Context, src *models.Node, nodes []models.Node, loads map[int]float64, heartbeats map[string]*NodeHeartbeat, threshold int) {
+func (w *RebalanceWorker) relieveNode(ctx context.Context, src *models.Node, nodes []models.Node, loads map[int]float64, heartbeats map[string]*NodeHeartbeat, threshold int, retiring map[int]bool) {
 	candidate := w.pickCandidate(ctx, src)
 	if candidate == nil {
 		log.Printf("rebalance: node %d overloaded (%.0f%% > %d%%) but no eligible 0-player auto_move server to move; skipping",
@@ -159,7 +172,7 @@ func (w *RebalanceWorker) relieveNode(ctx context.Context, src *models.Node, nod
 		return
 	}
 
-	target := w.pickTarget(ctx, candidate, src, nodes, loads, heartbeats, threshold)
+	target := w.pickTarget(ctx, candidate, src, nodes, loads, heartbeats, threshold, retiring)
 	if target == nil {
 		log.Printf("rebalance: node %d overloaded (%.0f%%), server %s eligible but no target with capacity; skipping",
 			src.ID, loads[src.ID], candidate.UUID)
@@ -271,14 +284,14 @@ func (w *RebalanceWorker) migrationLocked(ctx context.Context, serverUUID string
 // the source, honoring the source's region/tag constraints, with room for the
 // server's RAM+CPU under overcommit, and below the overload threshold. Among
 // valid targets the lowest-load node wins. Returns nil when none qualify.
-func (w *RebalanceWorker) pickTarget(ctx context.Context, srv *models.Server, src *models.Node, nodes []models.Node, loads map[int]float64, heartbeats map[string]*NodeHeartbeat, threshold int) *models.Node {
+func (w *RebalanceWorker) pickTarget(ctx context.Context, srv *models.Server, src *models.Node, nodes []models.Node, loads map[int]float64, heartbeats map[string]*NodeHeartbeat, threshold int, retiring map[int]bool) *models.Node {
 	gatewayOn := w.gatewayEnabled()
 
 	var best *models.Node
 	bestLoad := 0.0
 	for i := range nodes {
 		t := &nodes[i]
-		if t.ID == src.ID || t.Status != "online" {
+		if t.ID == src.ID || t.Status != "online" || retiring[t.ID] {
 			continue
 		}
 		// External/home nodes only route via gateway+beam; never target one when

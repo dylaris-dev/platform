@@ -102,3 +102,22 @@ func TestIntegrationAPIKeyRollColumns(t *testing.T) {
 		t.Fatal("previous hash of an expired key accepted")
 	}
 }
+
+// The mint answer shows the key as stored, so its createdAt is the row's, not
+// the zero time.
+func TestIntegrationCreateAPIKeyReturnsCreatedAt(t *testing.T) {
+	_, st := integrationDB(t)
+	f := newFixture(t, st)
+	k := &models.APIKey{UserID: f.user.ID, Name: "created", KeyHash: uniqueName("hc_"), RatePerMin: 60}
+	id, err := st.CreateAPIKey(k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := st.GetAPIKeyByHash(k.KeyHash)
+	if err != nil || stored.ID != id {
+		t.Fatalf("stored: %+v %v", stored, err)
+	}
+	if k.CreatedAt.IsZero() || !k.CreatedAt.Equal(stored.CreatedAt) {
+		t.Fatalf("createdAt = %v, stored %v", k.CreatedAt, stored.CreatedAt)
+	}
+}

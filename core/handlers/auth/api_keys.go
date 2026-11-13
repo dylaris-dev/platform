@@ -490,6 +490,20 @@ func (h *APIKeysHandler) userKeysAllowed(r *http.Request) bool {
 // this, so they cannot drift; any error answers false (fail closed), and the
 // entitlement is re-read on every request so a lapse stops the key.
 func (h *APIKeysHandler) gatewayKeyEntitled(r *http.Request, ownerID string, perms []string) bool {
+	hasGateway := gatewayOnlyKey(perms)
+	// Without a store plane (self-hosted) there is nothing to be entitled by:
+	// EffectiveEntitlement would read that as unlimited, so these keys follow
+	// the ordinary user-key gate there.
+	if !hasGateway || !h.d.StoreEnabled || h.d.FeatureFlags == nil || h.d.Store == nil || !h.d.FeatureFlags.IsRouteOnlyEnabled(r.Context()) {
+		return false
+	}
+	ent, err := services.EffectiveEntitlement(h.d.Store, ownerID, time.Now(), h.d.StoreEnabled, false)
+	return err == nil && ent.RouteOnly
+}
+
+// gatewayOnlyKey: the key carries a gateway scope and nothing beyond the
+// gateway and usage scopes, the shape gatewayKeyEntitled admits.
+func gatewayOnlyKey(perms []string) bool {
 	hasGateway := false
 	for _, p := range perms {
 		switch p {
@@ -500,14 +514,7 @@ func (h *APIKeysHandler) gatewayKeyEntitled(r *http.Request, ownerID string, per
 			return false
 		}
 	}
-	// Without a store plane (self-hosted) there is nothing to be entitled by:
-	// EffectiveEntitlement would read that as unlimited, so these keys follow
-	// the ordinary user-key gate there.
-	if !hasGateway || !h.d.StoreEnabled || h.d.FeatureFlags == nil || h.d.Store == nil || !h.d.FeatureFlags.IsRouteOnlyEnabled(r.Context()) {
-		return false
-	}
-	ent, err := services.EffectiveEntitlement(h.d.Store, ownerID, time.Now(), h.d.StoreEnabled, false)
-	return err == nil && ent.RouteOnly
+	return hasGateway
 }
 
 // allowedUserKeyCaps is the operator's capability whitelist for user keys, or
@@ -709,7 +716,14 @@ func (h *APIKeysHandler) ownerStillHolds(w http.ResponseWriter, r *http.Request,
 	// The owner is loaded here anyway, so this costs nothing extra.
 	viaEntitlement := !owner.IsAdmin && h.gatewayKeyEntitled(r, owner.ID, key.Scope.Permissions)
 	if !owner.IsAdmin && !viaEntitlement && !h.userKeysAllowed(r) {
-		httpx.SendJSONError(w, "API keys are not enabled for users on this platform", http.StatusForbidden)
+		// On a platform with a store, a gateway-only key works through its
+		// owner's plan alone, so its refusal here means that plan is
+		// suspended or gone, not a switch. Without a store no plan admits it.
+		msg := "API keys are not enabled for users on this platform"
+		if h.d.StoreEnabled && gatewayOnlyKey(key.Scope.Permissions) {
+			msg = "This account's gateway access is suspended or has ended."
+		}
+		httpx.SendJSONError(w, msg, http.StatusForbidden)
 		return false
 	}
 	// A key in use is an account in use, as a login is: an automation-only

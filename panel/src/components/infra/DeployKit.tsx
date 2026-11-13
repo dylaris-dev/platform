@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink, Link2 as LinkIcon, CircleAlert } from 'lucide-react';
+import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink, Link2 as LinkIcon, CircleAlert, Loader2, RefreshCcw } from 'lucide-react';
 import {
     nodeCompose, routeOnlyCompose, deployCli, deployIntro, composeFileName,
     DEPLOY_PORTAINER_NOTE, kitInput, watchtowerNote, managedLinkCompose, LINK_IMAGE,
 } from '@/lib/warpDeploy';
-import { getManagedLink, type ManagedLinkKit as ManagedLinkKitData } from '@/lib/api/gatewayProvider';
-import { isDockerNetworkName } from '@/lib/gatewayProvider';
+import { getManagedLink, retireManagedLink, type ManagedLinkKit as ManagedLinkKitData } from '@/lib/api/gatewayProvider';
+import { isDockerNetworkName, canReplaceLink, retiringLine, RETIRE_CONFIRM } from '@/lib/gatewayProvider';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import { toast } from '@/components/ui/Toast';
+import { fmtDateTime } from '@/lib/time';
 import { linkState } from '@/lib/linkState';
 import LinkBadge from '@/components/infra/LinkBadge';
 import { Skeleton } from '@/components/Skeleton';
@@ -311,6 +314,19 @@ export function ManagedLinkKit({ nodeId }: { nodeId: number }) {
     const [loading, setLoading] = useState(true);
     const [slow, setSlow] = useState(false);
     const [network, setNetwork] = useState('');
+    const [retiring, setRetiring] = useState(false);
+    const [retireError, setRetireError] = useState('');
+
+    const replace = async () => {
+        if (!(await confirmDialog(RETIRE_CONFIRM))) return;
+        setRetiring(true);
+        setRetireError('');
+        const res = await retireManagedLink(nodeId);
+        setRetiring(false);
+        if (!res.success) { setRetireError(res.message); return; }
+        setKit(k => (k ? { ...k, retireAt: res.retireAt } : k));
+        toast("The node's link is being replaced.");
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -362,6 +378,30 @@ export function ManagedLinkKit({ nodeId }: { nodeId: number }) {
                 <LinkBadge state={state} />
                 <span>{state.label}</span>
             </div>
+            {kit.retireAt && (
+                <div className="alert alert-warning text-xs" role="status">
+                    <CircleAlert size={14} className="shrink-0 mt-0.5" />
+                    <span>{retiringLine(kit.retireAt, v => fmtDateTime(v))} Move this node&apos;s servers to another node before then.</span>
+                </div>
+            )}
+            {canReplaceLink(kit) && (
+                <div className="flex flex-wrap items-center gap-3">
+                    <button
+                        type="button"
+                        onClick={() => void replace()}
+                        disabled={retiring}
+                        className="btn btn-secondary btn-sm disabled:opacity-40 inline-flex items-center gap-1.5"
+                    >
+                        {retiring ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" /> : <RefreshCcw size={13} />}
+                        Replace this node&apos;s link
+                    </button>
+                    {retireError && (
+                        <span className="inline-flex items-start gap-1.5 text-xs text-(--error-light)" role="alert">
+                            <CircleAlert size={13} className="shrink-0 mt-0.5" /><span>{retireError}</span>
+                        </span>
+                    )}
+                </div>
+            )}
             <p className="text-xs text-(--base-06)">Run this on the node&apos;s host. It connects the node to the gateway.</p>
             <div>
                 <label className="input-label" htmlFor={`managed-link-net-${nodeId}`}>Docker network</label>
@@ -379,12 +419,12 @@ export function ManagedLinkKit({ nodeId }: { nodeId: number }) {
                 {/* Directly under the field, so the error sits where the eye is. */}
                 {!netOk && (
                     <p id={warnId} className="text-xs text-(--error-light) mt-1.5">
-                        Enter the name of a Docker network: letters, digits and _ . - only, no spaces. Words like true or null and numbers alone are not accepted.
+                        Enter the name of a Docker network: letters, digits and _ . - only, no spaces. Words like true or null and numbers alone are not accepted. The name usually ends in <code className="font-mono">dylaris_net</code>.
                     </p>
                 )}
                 {!known && (
                     <p id={hintId} className="text-xs text-(--base-06) mt-1.5">
-                        The network your game servers run on. Check with: <code className="font-mono break-all">docker network ls | grep dylaris_net</code>
+                        The network your game servers run on. Find it with: <code className="font-mono break-all">docker network ls --filter name=dylaris_net</code>
                     </p>
                 )}
             </div>

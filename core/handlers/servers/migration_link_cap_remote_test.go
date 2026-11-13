@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -87,5 +88,45 @@ func TestRemoteMovePrecheckUsesKitCaps(t *testing.T) {
 	fake.FailNext(1, 500, "http_500", 0)
 	if !refused(newHandler()) {
 		t.Fatal("a provider error did not fail closed")
+	}
+}
+
+// A move onto a node whose link is being replaced is refused whatever the
+// server's real-IP switch: the provider takes no route onto that link and
+// removes it within hours. A move onto a node with a link in normal use passes.
+func TestRemoteMovePrecheckRefusesRetiringTarget(t *testing.T) {
+	_, base, rdb := newProxyProtoHandler(t, true)
+	fake := remotegw.NewFake(t)
+	api := remotegw.New(fake.URL(), fake.Key)
+	fs := &remoteMoveStore{migrationCapStore: migrationCapStore{proxyProtoFakeStore: *base}, kits: map[uint]store.RemoteKit{}}
+	remote := func() (bool, bool) { return true, true }
+	rg := services.NewRemoteGateway(fs, func() *remotegw.Client { return api })
+	h := &ServerHandler{d: testDeps(Deps{Store: fs, Redis: rdb, GatewayRemote: remote, RemoteGateway: rg,
+		Gateway: services.NewSwitchingGateway(nil, rg, remote)})}
+	srv := &models.Server{ID: 7, UUID: "srv-7", NodeID: 1, Status: "stopped"}
+	target := &models.Node{ID: 2, Status: "online", Token: "node-dst"}
+	rdb.Set(t.Context(), services.NodeBusyKey(srv.UUID), "test", 0)
+	at := time.Now().Add(8 * time.Hour)
+	fs.kits[2] = store.RemoteKit{NodeID: 2, LinkID: "link-old", RetireAt: &at}
+
+	move := func() (int, string) {
+		rec := httptest.NewRecorder()
+		h.queueMigration(rec, httptest.NewRequest(http.MethodPost, "/", nil), srv, target, "manual", "tester")
+		return rec.Code, rec.Body.String()
+	}
+	if code, body := move(); code != http.StatusConflict || !strings.Contains(body, `"code":"kit_retiring"`) {
+		t.Fatalf("move onto a retiring link: %d %s", code, body)
+	}
+	srv.ProxyProtocol = true
+	if code, body := move(); code != http.StatusConflict || !strings.Contains(body, `"code":"kit_retiring"`) {
+		t.Fatalf("move with real IP onto a retiring link: %d %s", code, body)
+	}
+	srv.ProxyProtocol = false
+	fs.kits[2] = store.RemoteKit{NodeID: 2, LinkID: "link-new"}
+	if _, body := move(); strings.Contains(body, "kit_retiring") || !strings.Contains(body, "still working on this server") {
+		t.Fatalf("move onto a link in use stopped elsewhere: %s", body)
+	}
+	if len(fake.Calls()) != 0 {
+		t.Fatalf("the precheck called the provider: %v", fake.Calls())
 	}
 }

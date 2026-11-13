@@ -159,7 +159,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{1: 10}
 
-		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
+		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil); got != nil {
 			t.Errorf("expected nil (only candidate is the source itself), got node %d", got.ID)
 		}
 	})
@@ -173,7 +173,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 10}
 
-		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
+		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil); got != nil {
 			t.Errorf("expected nil (region mismatch), got node %d", got.ID)
 		}
 	})
@@ -187,7 +187,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 10}
 
-		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
+		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil); got != nil {
 			t.Errorf("expected nil (missing required tag), got node %d", got.ID)
 		}
 	})
@@ -206,7 +206,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 86, 3: 85}
 
-		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
+		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil)
 		if got == nil || got.ID != 3 {
 			t.Fatalf("expected node 3 (load==threshold accepted, load>threshold rejected), got %+v", got)
 		}
@@ -225,7 +225,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 10, 3: 10}
 
-		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
+		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil)
 		if got == nil || got.ID != 3 {
 			t.Fatalf("expected node 3 (only one with capacity for 1024MB), got %+v", got)
 		}
@@ -242,7 +242,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 50, 3: 30, 4: 70}
 
-		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
+		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil)
 		if got == nil || got.ID != 3 {
 			t.Fatalf("expected node 3 (lowest load 30), got %+v", got)
 		}
@@ -262,7 +262,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{3: 10, 4: 10}
 
-		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
+		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil); got != nil {
 			t.Fatalf("expected nil, got %+v", got)
 		}
 	})
@@ -280,7 +280,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		t.Run("routing_mode=ip_port (gateway off)", func(t *testing.T) {
 			fs := &rebalanceFakeStore{settings: map[string]string{"routing_mode": ""}}
 			w := &RebalanceWorker{store: fs}
-			if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
+			if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil); got != nil {
 				t.Errorf("expected nil (external excluded when routing is ip_port), got %+v", got)
 			}
 		})
@@ -293,7 +293,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		t.Run("routing_mode=gateway (gateway on)", func(t *testing.T) {
 			fs := &rebalanceFakeStore{settings: map[string]string{"routing_mode": "gateway"}}
 			w := &RebalanceWorker{store: fs}
-			got := w.pickTarget(context.Background(), srv, extSrc, extNodes, loads, nil, 85)
+			got := w.pickTarget(context.Background(), srv, extSrc, extNodes, loads, nil, 85, nil)
 			if got == nil || got.ID != 2 {
 				t.Errorf("expected node 2 (external only excluded when gateway is off), got %+v", got)
 			}
@@ -312,16 +312,16 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		outside := models.Node{ID: 3, Status: "online", Tags: "external", TotalRAMMB: 8192, RAMOvercommitRatio: 1.0}
 
 		platformSrc := &models.Node{ID: 1, Status: "online"}
-		got := w.pickTarget(context.Background(), srv, platformSrc, []models.Node{*platformSrc, inside, outside}, map[int]float64{2: 50, 3: 5}, nil, 85)
+		got := w.pickTarget(context.Background(), srv, platformSrc, []models.Node{*platformSrc, inside, outside}, map[int]float64{2: 50, 3: 5}, nil, 85, nil)
 		if got == nil || got.ID != 2 {
 			t.Errorf("platform source: expected node 2 (inside), got %+v", got)
 		}
 		externalSrc := &models.Node{ID: 1, Status: "online", Tags: "external"}
-		got = w.pickTarget(context.Background(), srv, externalSrc, []models.Node{*externalSrc, inside, outside}, map[int]float64{2: 5, 3: 50}, nil, 85)
+		got = w.pickTarget(context.Background(), srv, externalSrc, []models.Node{*externalSrc, inside, outside}, map[int]float64{2: 5, 3: 50}, nil, 85, nil)
 		if got == nil || got.ID != 3 {
 			t.Errorf("External source: expected node 3 (another External node), got %+v", got)
 		}
-		if got := w.pickTarget(context.Background(), srv, platformSrc, []models.Node{*platformSrc, outside}, map[int]float64{3: 5}, nil, 85); got != nil {
+		if got := w.pickTarget(context.Background(), srv, platformSrc, []models.Node{*platformSrc, outside}, map[int]float64{3: 5}, nil, 85, nil); got != nil {
 			t.Errorf("platform source with only an External node: expected no target, got node %d", got.ID)
 		}
 	})
@@ -341,7 +341,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 10, 3: 10, 4: 10}
 
-		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
+		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil)
 		if got == nil || got.ID != 4 {
 			t.Fatalf("expected node 4 (same tenant), got %+v", got)
 		}
@@ -366,7 +366,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 5, 3: 50}
 
-		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85)
+		got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil)
 		if got == nil || got.ID != 3 {
 			t.Fatalf("expected node 3 (the platform node), got %+v", got)
 		}
@@ -388,7 +388,7 @@ func TestRebalanceWorker_PickTarget(t *testing.T) {
 		srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
 		loads := map[int]float64{2: 5, 3: 5}
 
-		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85); got != nil {
+		if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil); got != nil {
 			t.Fatalf("expected no target, got node %d", got.ID)
 		}
 	})
@@ -477,5 +477,24 @@ func TestRebalanceWorker_PickCandidateSkipsProxyBoundInDirectMode(t *testing.T) 
 				t.Fatalf("pickCandidate = %+v, want %s", got, want)
 			}
 		})
+	}
+}
+
+// A node whose managed link is being replaced is the emptiest while it drains,
+// and is never the move target.
+func TestRebalancePickTargetSkipsRetiringNode(t *testing.T) {
+	fs := &rebalanceFakeStore{settings: map[string]string{"routing_mode": "gateway"}}
+	w := &RebalanceWorker{store: fs}
+	src := &models.Node{ID: 1, Status: "online"}
+	draining := models.Node{ID: 2, Status: "online", TotalRAMMB: 8192, RAMOvercommitRatio: 1.0}
+	other := models.Node{ID: 3, Status: "online", TotalRAMMB: 8192, RAMOvercommitRatio: 1.0}
+	nodes := []models.Node{*src, draining, other}
+	srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1024}
+	loads := map[int]float64{2: 1, 3: 50}
+	if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil); got == nil || got.ID != 2 {
+		t.Fatalf("control: want the emptiest node 2, got %+v", got)
+	}
+	if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, map[int]bool{2: true}); got == nil || got.ID != 3 {
+		t.Fatalf("want node 3 with node 2's link being replaced, got %+v", got)
 	}
 }

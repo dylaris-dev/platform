@@ -124,6 +124,19 @@ func (h *ServerHandler) CreateServer(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
+	// A node named by hand skips the scheduler, which already passes over a
+	// node whose link is being replaced; the provider would refuse its address.
+	if rg, _ := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway); rg != nil {
+		retiring, err := rg.NodeKitRetiring(uint(node.ID))
+		if err != nil {
+			httpx.SendJSONError(w, "Failed to read the node's link", http.StatusInternalServerError)
+			return
+		}
+		if retiring {
+			gate.WriteGatewayError(w, http.StatusConflict, "kit_retiring", "This node's link is being replaced. Choose another node.")
+			return
+		}
+	}
 
 	// Placement: a tenant may only deploy on their OWN node, and every other
 	// node is operator territory (canPlaceOnNode). This used to run only while
@@ -2446,6 +2459,19 @@ func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, s
 	rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway)
 	if srv.ProxyProtocol && gate.GatewayModeError(w, merr) {
 		return
+	}
+	// The provider takes no route onto a link being replaced and removes it
+	// within hours: the moved server would end up unreachable.
+	if rg != nil {
+		retiring, err := rg.NodeKitRetiring(uint(target.ID))
+		if err != nil {
+			httpx.SendJSONError(w, "Failed to read the target node's link", http.StatusInternalServerError)
+			return
+		}
+		if retiring {
+			gate.WriteGatewayError(w, http.StatusConflict, "kit_retiring", "The target node's link is being replaced. Choose another node.")
+			return
+		}
 	}
 	if srv.ProxyProtocol && rg != nil {
 		// A target with no kit yet is fine: the move mints it, and the switch

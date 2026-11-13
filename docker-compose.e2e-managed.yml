@@ -1,0 +1,318 @@
+# -----------------------------------------------------------------------------
+# LOCAL END-TO-END STACK for the DYLARIS Managed Gateway (test only, one host).
+#
+# Two platforms on one Docker host:
+#   PROVIDER  p-core (+ p-db, p-redis), the gateway hub (+ hub-db), one edge
+#             that spawns its host-networked splice on :25565.
+#   CUSTOMER  c-core (+ c-db, c-redis) with its panel, node1 (node2 and node3 under
+#             their profiles). Each node has its own server network, the way
+#             two machines would; the managed link kit joins that network.
+#
+# Nothing here reaches production. Images are built locally from exported
+# commits (docs/ops/managed-gateway-local-e2e.md, "Build"), never pulled from
+# ghcr.io. Secrets and the local CA come from E2E_RUN, which the start script
+# (docs/ops/scripts/e2e_managed_up.sh) generates and which is never committed.
+#
+#   E2E_RUN=<dir> HOST_IP=<this host's LAN/WSL address> \
+#     docker compose -p e2e7c --env-file <dir>/secrets.env \
+#       -f docker-compose.e2e-managed.yml up -d
+#
+# HOST_IP is load-bearing: the edge advertises it to links, and the customer
+# Core and the links reach the provider's TLS port on it. Containers on one
+# bridge reach another bridge's PUBLISHED port through the host address, not
+# through a bridge gateway (measured on this host, Docker 29).
+#
+# Do not name any network here "*_dylaris_net" except the node networks: a node
+# without NODE_DOCKER_NETWORK adopts the FIRST network with that suffix.
+# -----------------------------------------------------------------------------
+
+x-platform-core: &platform-core
+  image: e2e7c/platform-core:${E2E_PLATFORM_TAG:-6b207695}
+  pull_policy: never
+  restart: unless-stopped
+  stop_grace_period: 90s
+
+services:
+  # ---------------------------------------------------------------- PROVIDER
+  p-db:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dylaris
+      POSTGRES_PASSWORD: "${P_DB_PASSWORD:?}"
+      POSTGRES_DB: dylaris
+    volumes: [p_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dylaris -d dylaris"]
+      interval: 5s
+      retries: 20
+    networks: [prov_net]
+
+  p-redis:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    environment:
+      ADMIN_PW: "${P_REDIS_PASSWORD:?}"
+    # The aclfile is seeded once, then left to ACL SAVE (the Hub and Core both
+    # provision scoped users into it).
+    entrypoint: ["sh", "-c", "[ -f /data/users.acl ] || printf 'user default on >%s ~* &* +@all\\n' \"$$ADMIN_PW\" > /data/users.acl; exec docker-entrypoint.sh valkey-server --save '' --appendonly no --aclfile /data/users.acl --maxmemory 512mb --maxmemory-policy volatile-lru"]
+    # Loopback: the host-networked splice reaches Redis at 127.0.0.1:6379.
+    ports: ["127.0.0.1:6379:6379"]
+    volumes: [p_redis:/data]
+    networks: [prov_net]
+
+  p-core:
+    <<: *platform-core
+    depends_on:
+      p-db: {condition: service_healthy}
+      p-redis: {condition: service_started}
+    environment:
+      API_PORT: "25500"
+      FRONTEND_URL: "https://${HOST_IP:?}:26443"
+      JWT_SECRET: "${P_JWT_SECRET:?}"
+      BEAM_JWT_SECRET: "${P_BEAM_JWT_SECRET:?}"
+      CLUSTER_SECRET: "${P_CLUSTER_SECRET:?}"
+      DYLARIS_REGION: "e2e"
+      DB_HOST: p-db
+      DB_PORT: "5432"
+      DB_USER: dylaris
+      DB_PASSWORD: "${P_DB_PASSWORD:?}"
+      DB_NAME: dylaris
+      DB_TYPE: timescaledb
+      DB_SSLMODE: disable
+      REDIS_ADDR: "p-redis:6379"
+      REDIS_PASSWORD: "${P_REDIS_PASSWORD:?}"
+      REDIS_DB: "0"
+      DYLARIS_GRPC_PORT: "25501"
+      GRPC_TLS_ENABLED: "true"
+      # Store plane on, with nothing behind STORE_URL: the shared key is what
+      # lets the seed script call POST /api/store/provision like the store does.
+      STORE_URL: "http://127.0.0.1:9"
+      STORE_SHARED_KEY: "${STORE_SHARED_KEY:?}"
+      PANEL_TLS: files
+      PANEL_TLS_CERT_FILE: /e2e/tls/provider.pem
+      PANEL_TLS_KEY_FILE: /e2e/tls/provider.key
+      # Empty = the release notes embedded in the image, no GitHub fetch.
+      UPDATES_URL_PLATFORM: ""
+      UPDATES_URL_HOSTED: ""
+    # Anything that still tries the production provider lands on loopback.
+    extra_hosts: ["panel.dylaris.com:127.0.0.1"]
+    ports:
+      - "127.0.0.1:26500:25500"
+      - "0.0.0.0:26443:25443"
+    volumes:
+      - p_core_data:/app/dylaris_data
+      - ${E2E_RUN:?}/tls:/e2e/tls:ro
+    networks: [prov_net]
+
+  hub-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hub
+      POSTGRES_PASSWORD: "${HUB_DB_PASSWORD:?}"
+      POSTGRES_DB: dylaris_gateway
+    volumes: [hub_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hub -d dylaris_gateway"]
+      interval: 5s
+      retries: 20
+    networks: [prov_net]
+
+  hub:
+    image: e2e7c/gateway-hub:${E2E_GATEWAY_TAG:-cd910633}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on:
+      hub-db: {condition: service_healthy}
+      p-redis: {condition: service_started}
+    environment:
+      PORT: "25530"
+      CLUSTER_SECRET: "${P_CLUSTER_SECRET:?}"
+      # The provider Core's Redis: Core and the edges must share it (Core
+      # writes link:<token>, the edge checks it before accepting a tunnel).
+      REDIS_ADDR: "p-redis:6379"
+      REDIS_USER: default
+      REDIS_PASS: "${P_REDIS_PASSWORD:?}"
+      DB_DSN: "host=hub-db user=hub password=${HUB_DB_PASSWORD:?} dbname=dylaris_gateway sslmode=disable"
+      HUB_API_ENABLED: "false"
+      HUB_ADMIN_UI_ENABLED: "false"
+      HUB_SIDECAR_REDIS_ADDR: "127.0.0.1:6379"
+    # Loopback only (unauthenticated-transport /internal/*); the splice uses it.
+    ports: ["127.0.0.1:25530:25530"]
+    networks: [prov_net]
+
+  edge:
+    image: e2e7c/gateway-edge:${E2E_GATEWAY_TAG:-cd910633}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on: [hub, p-redis]
+    environment:
+      EDGE_NAME: e2e-edge-01
+      EDGE_REGION: e2e
+      REDIS_ADDR: "p-redis:6379"
+      HUB_INTERNAL_URL: "http://hub:25530"
+      CLUSTER_SECRET: "${P_CLUSTER_SECRET:?}"
+      # Otherwise the edge probes for the PC's public IP.
+      ADVERTISE_IP: "${HOST_IP:?}"
+      # The splice is built from the same exported commit as this edge.
+      SPLICE_IMAGE: "e2e7c/gateway-edge:${E2E_GATEWAY_TAG:-cd910633}"
+      NODE_HOSTNAME: e2e-host
+      BANDWIDTH_MBIT: "1000"
+      GOMEMLIMIT: 400MiB
+    mem_limit: 512m
+    ports:
+      - "127.0.0.1:25566:25566"  # splice -> edge
+      - "0.0.0.0:25560:25560"    # link tunnels (ADVERTISE_IP:25560)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - edge_data:/app/data
+      - edge_state:/app/state
+    networks: [prov_net]
+
+  # ---------------------------------------------------------------- CUSTOMER
+  c-db:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dylaris
+      POSTGRES_PASSWORD: "${C_DB_PASSWORD:?}"
+      POSTGRES_DB: dylaris
+    volumes: [c_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dylaris -d dylaris"]
+      interval: 5s
+      retries: 20
+    networks: [cust_net]
+
+  c-redis:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    environment:
+      ADMIN_PW: "${C_REDIS_PASSWORD:?}"
+    entrypoint: ["sh", "-c", "[ -f /data/users.acl ] || printf 'user default on >%s ~* &* +@all\\n' \"$$ADMIN_PW\" > /data/users.acl; exec docker-entrypoint.sh valkey-server --save '' --appendonly no --aclfile /data/users.acl --maxmemory 512mb --maxmemory-policy volatile-lru"]
+    volumes: [c_redis:/data]
+    # The game containers' log shipper reaches Redis on the server network.
+    networks: [cust_net, node1_dylaris_net, node2_dylaris_net, node3_dylaris_net]
+
+  c-core:
+    <<: *platform-core
+    depends_on:
+      c-db: {condition: service_healthy}
+      c-redis: {condition: service_started}
+    environment:
+      API_PORT: "25500"
+      FRONTEND_URL: "http://localhost:27500"
+      JWT_SECRET: "${C_JWT_SECRET:?}"
+      BEAM_JWT_SECRET: "${C_BEAM_JWT_SECRET:?}"
+      CLUSTER_SECRET: "${C_CLUSTER_SECRET:?}"
+      DB_HOST: c-db
+      DB_PORT: "5432"
+      DB_USER: dylaris
+      DB_PASSWORD: "${C_DB_PASSWORD:?}"
+      DB_NAME: dylaris
+      DB_TYPE: timescaledb
+      DB_SSLMODE: disable
+      REDIS_ADDR: "c-redis:6379"
+      REDIS_PASSWORD: "${C_REDIS_PASSWORD:?}"
+      REDIS_DB: "0"
+      DYLARIS_GRPC_PORT: "25501"
+      GRPC_TLS_ENABLED: "true"
+      CORE_SERVICE_NAME: c-core
+      # Go reads SSL_CERT_FILE: system roots plus the local CA that signed the
+      # provider's certificate. No image change needed.
+      SSL_CERT_FILE: /e2e/tls/ca-bundle.pem
+      UPDATES_URL_PLATFORM: ""
+      UPDATES_URL_HOSTED: ""
+    extra_hosts: ["panel.dylaris.com:127.0.0.1"]
+    ports: ["0.0.0.0:27500:25500"]
+    volumes:
+      - c_core_data:/app/dylaris_data
+      - ${E2E_RUN:?}/tls:/e2e/tls:ro
+    networks: [cust_net, node1_dylaris_net, node2_dylaris_net, node3_dylaris_net]
+
+  c-node1:
+    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-6b207695}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on: [c-core]
+    environment:
+      CLUSTER_SECRET: "${C_CLUSTER_SECRET:?}"
+      CORE_GRPC_ADDR: "c-core:25501"
+      NODE_ENROLL_TOKEN: "${NODE1_ENROLL_TOKEN:-}"
+      NODE_HOSTNAME: e2e-node-1
+      PORT_RANGE: "26600-26649"
+      NODE_DOCKER_NETWORK: e2e7c_node1_dylaris_net
+      GRPC_TLS_ENABLED: "true"
+      BEAM_JWT_SECRET: "${C_BEAM_JWT_SECRET:?}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - node1_data:/app/dylaris_data
+    # A move pulls the server from the source node's migration endpoint, which
+    # the node publishes on its server-network address. Two machines on the
+    # managed gateway share a Swarm overlay (README); here each node also
+    # joins the others' server networks to stand in for it.
+    networks: [cust_net, node1_dylaris_net, node2_dylaris_net, node3_dylaris_net]
+
+  c-node2:
+    profiles: [node2]
+    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-6b207695}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on: [c-core]
+    environment:
+      CLUSTER_SECRET: "${C_CLUSTER_SECRET:?}"
+      CORE_GRPC_ADDR: "c-core:25501"
+      NODE_ENROLL_TOKEN: "${NODE2_ENROLL_TOKEN:-}"
+      NODE_HOSTNAME: e2e-node-2
+      PORT_RANGE: "26650-26699"
+      NODE_DOCKER_NETWORK: e2e7c_node2_dylaris_net
+      GRPC_TLS_ENABLED: "true"
+      BEAM_JWT_SECRET: "${C_BEAM_JWT_SECRET:?}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - node2_data:/app/dylaris_data
+    networks: [cust_net, node2_dylaris_net, node1_dylaris_net, node3_dylaris_net]
+
+  # Third node: the "replace a node" case (the plan allows 2 links, so its
+  # link is only minted once node 1's link is retiring).
+  c-node3:
+    profiles: [node3]
+    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-6b207695}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on: [c-core]
+    environment:
+      CLUSTER_SECRET: "${C_CLUSTER_SECRET:?}"
+      CORE_GRPC_ADDR: "c-core:25501"
+      NODE_ENROLL_TOKEN: "${NODE3_ENROLL_TOKEN:-}"
+      NODE_HOSTNAME: e2e-node-3
+      PORT_RANGE: "26700-26749"
+      NODE_DOCKER_NETWORK: e2e7c_node3_dylaris_net
+      GRPC_TLS_ENABLED: "true"
+      BEAM_JWT_SECRET: "${C_BEAM_JWT_SECRET:?}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - node3_data:/app/dylaris_data
+    networks: [cust_net, node3_dylaris_net, node1_dylaris_net, node2_dylaris_net]
+
+volumes:
+  p_db:
+  p_redis:
+  p_core_data:
+  hub_db:
+  edge_data:
+  edge_state:
+  c_db:
+  c_redis:
+  c_core_data:
+  node1_data:
+  node2_data:
+  node3_data:
+
+networks:
+  prov_net:
+  cust_net:
+  node1_dylaris_net:
+  node2_dylaris_net:
+  node3_dylaris_net:

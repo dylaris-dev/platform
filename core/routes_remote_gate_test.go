@@ -68,6 +68,7 @@ var remoteGated = []struct{ method, tpl string }{
 	{"POST", "/api/external/gateway/link-kits"},
 	{"DELETE", "/api/external/gateway/link-kits/{linkID}"},
 	{"POST", "/api/external/gateway/link-kits/{linkID}/roll"},
+	{"POST", "/api/external/gateway/link-kits/{linkID}/retire"},
 	{"GET", "/api/external/gateway/routes"},
 	{"POST", "/api/external/gateway/routes"},
 	{"DELETE", "/api/external/gateway/routes/{domain:[^/]+}"},
@@ -152,11 +153,14 @@ var remoteAware = map[string]string{
 	"GET /api/warp/deploy-config":                        "DB settings and the gRPC certificate fingerprint only, no gateway state; node deploy snippets read it",
 	// The managed gateway's own endpoints: they refuse in LOCAL mode instead
 	// (TestManagedOnlyRoutesRefuseInLocalMode).
-	"GET /api/nodes/{id:[0-9]+}/managed-link":  "the node's provider link kit (EnsureKit); 409 gateway_local in local mode",
-	"GET /api/gateway/provider/usage":          "the provider's usage (RemoteGateway.Usage); 409 gateway_local in local mode",
-	"GET /api/settings/gateway/provider":       "chooses the provider: settings and, with a key set, the provider's account",
-	"POST /api/settings/gateway/provider":      "chooses the provider: checks the account before remote, deletes nothing on local",
-	"POST /api/settings/gateway/provider/test": "chooses the provider: one account call with the given or stored key, persists nothing",
+	"GET /api/nodes/{id:[0-9]+}/managed-link":           "the node's provider link kit (EnsureKit); 409 gateway_local in local mode",
+	"GET /api/gateway/provider/usage":                   "the provider's usage (RemoteGateway.Usage); 409 gateway_local in local mode",
+	"POST /api/nodes/{id:[0-9]+}/managed-link/retire":   "retires the node's provider link kit (RetireNodeKit); 409 gateway_local in local mode",
+	"GET /api/gateway/provider/orphan-kits":             "provider kits no local remote_link_kits row names (OrphanKits); 409 gateway_local in local mode",
+	"DELETE /api/gateway/provider/orphan-kits/{linkId}": "revokes a provider kit after re-reading the local rows (RevokeOrphanKit); 409 gateway_local in local mode",
+	"GET /api/settings/gateway/provider":                "chooses the provider: settings and, with a key set, the provider's account",
+	"POST /api/settings/gateway/provider":               "chooses the provider: checks the account before remote, deletes nothing on local",
+	"POST /api/settings/gateway/provider/test":          "chooses the provider: one account call with the given or stored key, persists nothing",
 }
 
 // gatewayPackageHandlers is every "Type.Method" declared in handlers/gateway,
@@ -338,14 +342,20 @@ func TestRemoteModeGatesEveryLocalOnlyRoute(t *testing.T) {
 // The managed gateway's own routes have nothing to serve on a local gateway.
 func TestManagedOnlyRoutesRefuseInLocalMode(t *testing.T) {
 	local, admin := remoteGateServer(t, func() (bool, bool) { return false, true })
-	for _, path := range []string{"/api/nodes/1/managed-link", "/api/gateway/provider/usage"} {
-		rec := serveAs(t, local, "GET", path, admin)
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/nodes/1/managed-link"},
+		{"GET", "/api/gateway/provider/usage"},
+		{"POST", "/api/nodes/1/managed-link/retire"},
+		{"GET", "/api/gateway/provider/orphan-kits"},
+		{"DELETE", "/api/gateway/provider/orphan-kits/link-x"},
+	} {
+		rec := serveAs(t, local, c.method, c.path, admin)
 		var body struct {
 			Code string `json:"code"`
 		}
 		_ = json.Unmarshal(rec.Body.Bytes(), &body)
 		if rec.Code != http.StatusConflict || body.Code != "gateway_local" {
-			t.Errorf("local mode: GET %s answered %d %s, want 409 gateway_local", path, rec.Code, rec.Body.String())
+			t.Errorf("local mode: %s %s answered %d %s, want 409 gateway_local", c.method, c.path, rec.Code, rec.Body.String())
 		}
 	}
 }
@@ -355,7 +365,14 @@ func TestManagedOnlyRoutesRefuseInLocalMode(t *testing.T) {
 func TestManagedLinkEndpointIsAdminOnly(t *testing.T) {
 	srv, _ := remoteGateServer(t, func() (bool, bool) { return true, true })
 	member := testIdentity{UserID: "member-id", Username: "member"}
-	if rec := serveAs(t, srv, "GET", "/api/nodes/1/managed-link", member); rec.Code != http.StatusForbidden {
-		t.Fatalf("non-admin: %d %s, want 403", rec.Code, rec.Body.String())
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/nodes/1/managed-link"},
+		{"POST", "/api/nodes/1/managed-link/retire"},
+		{"GET", "/api/gateway/provider/orphan-kits"},
+		{"DELETE", "/api/gateway/provider/orphan-kits/link-x"},
+	} {
+		if rec := serveAs(t, srv, c.method, c.path, member); rec.Code != http.StatusForbidden {
+			t.Errorf("non-admin: %s %s answered %d %s, want 403", c.method, c.path, rec.Code, rec.Body.String())
+		}
 	}
 }

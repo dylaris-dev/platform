@@ -766,6 +766,7 @@ func main() {
 	// No-op unless auto-move is enabled AND gateway routing is active.
 	rebalanceWorker := services.NewRebalanceWorker(pgStore, redisClient, migrationOrchestrator, appState.FeatureFlags)
 	rebalanceWorker.SetLeader(coreLeader)
+	rebalanceWorker.SetGatewayRemote(gatewayRemote)
 	rebalanceWorker.Start(bgCtx)
 
 	// Warp rebalancer — leader-gated ticker that relieves saturated warp leaders
@@ -885,6 +886,9 @@ func main() {
 	extras.warpService.StartResyncWatcher(func() bool {
 		return coreLeader.IsLeader() && services.LocalGatewayErr(gatewayRemote) == nil
 	})
+	// Retired link kits are revoked at their deadline (leader only, every
+	// minute), through the owner's own kit revoke.
+	services.StartKitRetirement(bgCtx, pgStore, extras.warpHandler.RevokeRetiredKit, coreLeader)
 	// Imported Modrinth packs pick up newly published versions (leader only).
 	extras.packsHandler.StartModrinthSync(bgCtx, coreLeader)
 	// Server packs live in a local temp cache for an hour, never in storage.

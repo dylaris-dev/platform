@@ -245,7 +245,7 @@ func TestCountLinkKitsByOwner_HappyPath(t *testing.T) {
 	s := NewPostgresStore(db)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`SELECT COUNT(*) FROM warp_api_keys
-		WHERE owner_id = $1::uuid AND revoked_at IS NULL AND node_id LIKE 'link-%'`)).
+		WHERE owner_id = $1::uuid AND revoked_at IS NULL AND retire_at IS NULL AND node_id LIKE 'link-%'`)).
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
 

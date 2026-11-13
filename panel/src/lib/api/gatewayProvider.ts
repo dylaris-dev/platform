@@ -33,7 +33,11 @@ export interface ProviderSettings {
     keyFromEnv: boolean;
     urlFromEnv: boolean;
     keyUnreadable?: boolean;
-    outbox?: { open: number; oldestAt?: string };
+    // False while the routing mode is IP:Port, where the managed gateway gives
+    // no server an address. Absent from an older Core.
+    routingModeOk?: boolean;
+    // refused: open changes the provider refused, newest first, at most 5.
+    outbox?: { open: number; oldestAt?: string; refused?: { op: string; domain: string; error: string }[] };
     account?: ProviderAccount;
     error?: ProviderProblem;
 }
@@ -154,8 +158,29 @@ export interface ManagedLinkKit {
     networkKnown?: boolean;
     networkHint?: string;
     online?: boolean | null;
+    // Set while the link is being replaced: the provider removes it then.
+    retireAt?: string;
 }
 
 /** Mints the kit on first call. The answer holds the link's key. */
 export const getManagedLink = (nodeId: number) =>
     call<ManagedLinkKit>(`/nodes/${nodeId}/managed-link`, { cache: 'no-store' });
+
+/** Replaces the node's link: it keeps working until retireAt, then the provider removes it. */
+export const retireManagedLink = (nodeId: number) =>
+    call<{ retireAt: string }>(`/nodes/${nodeId}/managed-link/retire`, { method: 'POST' });
+
+/** A link the provider holds that no node of this platform has. */
+export interface OrphanKit {
+    linkId: string;
+    name: string;
+    region: string;
+    online?: boolean | null;
+    retireAt?: string;
+}
+
+export const getOrphanKits = () => call<{ items: OrphanKit[] }>('/gateway/provider/orphan-kits');
+
+/** queued: the provider could not be reached; the revoke is retried on its own. */
+export const revokeOrphanKit = (linkId: string) =>
+    call<{ queued: boolean }>(`/gateway/provider/orphan-kits/${encodeURIComponent(linkId)}`, { method: 'DELETE' });

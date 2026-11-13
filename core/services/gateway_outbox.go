@@ -94,6 +94,13 @@ func (l *outboxLoop) tick(ctx context.Context) {
 	if _, err := l.st.PurgeDoneOutbox(now.Add(-outboxKeepDone)); err != nil {
 		log.Printf("[gateway-outbox] purge: %v", err)
 	}
+	// Before the routes: a removed kit's routes died with it on the provider,
+	// and the route repair below would try to put them back on it.
+	if n, err := reconcileRemoteKits(ctx, l.st, c, now); err != nil {
+		log.Printf("[gateway-outbox] link kits: %v", err)
+	} else if n > 0 {
+		log.Printf("[gateway-outbox] forgot %d link kit(s) the provider has removed", n)
+	}
 	adopted, repaired, foreign, err := reconcileRemoteRoutes(ctx, l.st, c)
 	if err != nil {
 		log.Printf("[gateway-outbox] reconcile: %v", err)
@@ -220,6 +227,11 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 			log.Printf("[gateway-outbox] route %s not repaired: node %d has no link kit or the server id is no gateway target", r.Domain, r.NodeID)
 			continue
 		}
+		// The provider takes nothing onto a link being replaced and would
+		// refuse this on every sweep.
+		if kit.RetireAt != nil {
+			continue
+		}
 		pctx, cancel := context.WithTimeout(ctx, remoteCallTimeout)
 		err = c.PutRoute(pctx, kit.LinkID, r.Domain, host, r.Port)
 		cancel()
@@ -275,6 +287,88 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 	return adopted, repaired, foreign, nil
 }
 
+// remoteKitLostAge protects a kit another replica minted a moment ago: the
+// provider list read here may be older than its mint.
+const remoteKitLostAge = 10 * time.Minute
+
+// reconcileRemoteKits makes the local kit rows follow the provider's kit list,
+// read fresh once per sweep and only when there are rows:
+//
+//   - A row without retire_at whose kit the provider lists as retiring gets the
+//     provider's deadline (a retire whose answer or local stamp was lost).
+//   - A row whose kit the provider no longer lists is forgotten once its
+//     retire deadline has passed, or once it is older than remoteKitLostAge:
+//     the provider removed it, and its routes with it. The node's route rows
+//     go too, except one with an open outbox item, which the drain settles (a
+//     queued move re-homes it). EnsureKit then mints a fresh kit for the node.
+//
+// Nothing is forgotten unless the list call succeeded.
+func reconcileRemoteKits(ctx context.Context, st store.Store, c *remotegw.Client, now time.Time) (forgotten int, err error) {
+	local, err := st.ListRemoteKits()
+	if err != nil || len(local) == 0 {
+		return 0, err
+	}
+	kctx, cancel := context.WithTimeout(ctx, remoteCallTimeout)
+	provider, err := c.Kits(kctx)
+	cancel()
+	if err != nil {
+		return 0, fmt.Errorf("list provider kits: %w", err)
+	}
+	listed := make(map[string]remotegw.Kit, len(provider))
+	for _, k := range provider {
+		listed[k.LinkID] = k
+	}
+	var routes []store.RemoteRoute
+	routesRead := false
+	for _, k := range local {
+		if p, ok := listed[k.LinkID]; ok {
+			if k.RetireAt == nil && p.RetireAt != nil {
+				if err := st.SetRemoteKitRetireAt(k.NodeID, k.LinkID, *p.RetireAt); err != nil {
+					return forgotten, err
+				}
+				log.Printf("[gateway-outbox] node %d's link %s is being replaced on the provider until %s; recorded here", k.NodeID, k.LinkID, p.RetireAt.UTC().Format(time.RFC3339))
+			}
+			continue
+		}
+		retired := k.RetireAt != nil && !now.Before(*k.RetireAt)
+		// A zero CreatedAt is a row that could not say its age: not old.
+		lost := !retired && !k.CreatedAt.IsZero() && now.Sub(k.CreatedAt) >= remoteKitLostAge
+		if !retired && !lost {
+			continue
+		}
+		if !routesRead {
+			if routes, err = st.ListRemoteRoutes(); err != nil {
+				return forgotten, err
+			}
+			routesRead = true
+		}
+		for _, r := range routes {
+			if r.NodeID != k.NodeID {
+				continue
+			}
+			open, err := st.HasOpenOutbox(r.Domain, "")
+			if err != nil {
+				return forgotten, err
+			}
+			if open {
+				continue
+			}
+			if err := st.DeleteRemoteRoute(r.Domain); err != nil {
+				return forgotten, err
+			}
+			logErrf("gateway-outbox", "address %s of server %s removed: it was still on node %d's link %s, which the gateway provider has removed with its addresses; create it again", r.Domain, r.ServerUUID, k.NodeID, k.LinkID)
+		}
+		if err := st.DeleteRemoteKit(k.NodeID); err != nil {
+			return forgotten, err
+		}
+		if lost {
+			logErrf("gateway-outbox", "the gateway provider no longer has node %d's link %s; deploy a new one", k.NodeID, k.LinkID)
+		}
+		forgotten++
+	}
+	return forgotten, nil
+}
+
 // reconcileNoKitLogged keeps the "node has no kit" drift report to once per
 // node and process; it would otherwise repeat every sweep.
 var reconcileNoKitLogged sync.Map
@@ -299,6 +393,9 @@ func queueRouteDrift(st store.Store, row store.RemoteRoute, p remotegw.Route, sr
 			if _, seen := reconcileNoKitLogged.LoadOrStore(node, true); !seen {
 				log.Printf("[gateway-outbox] route %s sits on node %d's link, its server is on node %d, which has no link kit yet; not moved", row.Domain, row.NodeID, node)
 			}
+		case kit.RetireAt != nil:
+			// A link being replaced takes no route; the provider would refuse
+			// the move on every sweep.
 		case host != "":
 			if err := st.EnqueueOutbox(OutboxOpMove, row.Domain, OutboxMove{LinkID: kit.LinkID, NodeID: node, TargetHost: host, Port: row.Port}); err != nil {
 				return err

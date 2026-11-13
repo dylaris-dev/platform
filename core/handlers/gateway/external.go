@@ -3,7 +3,9 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"sort"
@@ -13,6 +15,9 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
+	"dylaris-core/store"
+
+	"github.com/gorilla/mux"
 )
 
 // The route-only product as a machine API: /api/external/gateway/*, reached
@@ -52,7 +57,7 @@ func NewExternalGatewayHandler(warp *WarpHandler, gw *GatewayHandler, domains *C
 		requireGateway: requireGateway, routeOptions: routeOptions, usage: usage}
 }
 
-// ListLinkKits GET /api/external/gateway/link-kits - the caller's route-only link kits, without secrets, plus used and limit.
+// ListLinkKits GET /api/external/gateway/link-kits - the caller's route-only link kits, without secrets, plus used (live kits), retiring and limit; a retiring kit carries retire_at.
 func (h *ExternalGatewayHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 	serveExternal(w, r, h.warp.ListLinkKits, renameList("kits"))
 }
@@ -72,12 +77,48 @@ func (h *ExternalGatewayHandler) RollLinkKit(w http.ResponseWriter, r *http.Requ
 	externalGateway(h.warp.RollLinkKit)(w, r)
 }
 
+// RetireLinkKit POST /api/external/gateway/link-kits/{linkID}/retire - retires one of the caller's link kits to replace a node, irreversibly: it stops counting toward maxLinks at once, keeps working but takes no new routes, voice or Bedrock, and is revoked with its routes at retire_at, 8 hours later; 409 kit_already_retiring (with retire_at), retire_not_needed (no host limit), retire_limit (as many retiring as hosts) or retire_budget (4 per host per UTC month).
+func (h *ExternalGatewayHandler) RetireLinkKit(w http.ResponseWriter, r *http.Request) {
+	owner := reqctx.ByonCallerID(r)
+	if owner == "" {
+		writeExternalError(w, http.StatusUnauthorized, "Unauthorized", "unauthorized")
+		return
+	}
+	linkID := mux.Vars(r)["linkID"]
+	if !strings.HasPrefix(linkID, "link-") {
+		writeExternalError(w, http.StatusNotFound, "Link not found", "link_not_found")
+		return
+	}
+	retireAt, err := services.RetireLinkKit(h.warp.d.Store, owner, linkID, time.Now())
+	switch {
+	case err == nil:
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "link_id": linkID, "retire_at": retireAt.UTC().Format(time.RFC3339)})
+	case errors.Is(err, sql.ErrNoRows):
+		writeExternalError(w, http.StatusNotFound, "Link not found", "link_not_found")
+	case errors.Is(err, store.ErrLinkKitRetiring):
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "error": "This link is already retiring.",
+			"code": "kit_already_retiring", "retire_at": retireAt.UTC().Format(time.RFC3339)})
+	case errors.Is(err, services.ErrRetireNotNeeded):
+		writeExternalError(w, http.StatusConflict, "Your account has no host limit to make room under: mint the new link, then revoke the old one when it is empty.", "retire_not_needed")
+	case errors.Is(err, services.ErrRetireLimit):
+		writeExternalError(w, http.StatusConflict, "As many links are retiring as your plan has hosts. Wait for one to finish.", "retire_limit")
+	case errors.Is(err, services.ErrRetireBudget):
+		writeExternalError(w, http.StatusConflict, "This month's link retirements are used up.", "retire_budget")
+	default:
+		log.Printf("external gateway retire %s for %s: %v", linkID, owner, err)
+		writeExternalError(w, http.StatusInternalServerError, "Internal error. Try again later.", "internal")
+	}
+}
+
 // ListRoutes GET /api/external/gateway/routes - the caller's route-only addresses.
 func (h *ExternalGatewayHandler) ListRoutes(w http.ResponseWriter, r *http.Request) {
 	externalGateway(h.gw.ListLinkRoutes)(w, r)
 }
 
-// CreateRoute POST /api/external/gateway/routes - creates or retargets an address on one of the caller's links.
+// CreateRoute POST /api/external/gateway/routes - creates or retargets an address on one of the caller's links; a retiring link takes no route changes except removing an address or moving it to another link (409 kit_retiring).
 func (h *ExternalGatewayHandler) CreateRoute(w http.ResponseWriter, r *http.Request) {
 	if !h.checkExternalTarget(w, r) {
 		return

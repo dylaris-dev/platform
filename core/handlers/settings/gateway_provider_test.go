@@ -22,9 +22,16 @@ type providerFakeStore struct {
 	store.Store
 	settings map[string]string
 	audit    []*models.AuditEventIdentity
+	// routingMode answers routing_mode while settings has no such key, so the
+	// tests' "nothing was stored" checks stay exact; "" reads as never saved.
+	routingMode string
+	refused     []store.OutboxItem
 }
 
 func (f *providerFakeStore) GetSetting(k string) (string, error) {
+	if _, ok := f.settings[k]; !ok && k == "routing_mode" && f.routingMode != "" {
+		return f.routingMode, nil
+	}
 	v, ok := f.settings[k]
 	if !ok {
 		return "", sql.ErrNoRows
@@ -35,6 +42,9 @@ func (f *providerFakeStore) SetSetting(k, v string) error { f.settings[k] = v; r
 func (f *providerFakeStore) DeleteSetting(k string) error { delete(f.settings, k); return nil }
 func (f *providerFakeStore) CountOpenOutbox() (int, time.Time, error) {
 	return 0, time.Time{}, nil
+}
+func (f *providerFakeStore) ListRefusedOutbox(limit int) ([]store.OutboxItem, error) {
+	return f.refused[:min(limit, len(f.refused))], nil
 }
 func (f *providerFakeStore) InsertAuditIdentity(ev *models.AuditEventIdentity) error {
 	f.audit = append(f.audit, ev)
@@ -51,7 +61,7 @@ type providerFixture struct {
 // newProviderFixture: env is the GATEWAY_PROVIDER_* config; settings start as given.
 func newProviderFixture(t *testing.T, env config.Config, settings map[string]string) *providerFixture {
 	t.Helper()
-	f := &providerFixture{st: &providerFakeStore{settings: settings}, fake: remotegw.NewFake(t)}
+	f := &providerFixture{st: &providerFakeStore{settings: settings, routingMode: "gateway"}, fake: remotegw.NewFake(t)}
 	f.h = NewGatewayProviderHandler(Deps{
 		Store:                 f.st,
 		FeatureFlags:          services.NewFeatureFlags(f.st),
@@ -275,5 +285,65 @@ func TestProviderTestConnectionReportsRejectedKey(t *testing.T) {
 	// Save shares the bucket.
 	if code, out, raw := f.call(t, f.h.Save, http.MethodPost, `{"mode":"local"}`); code != http.StatusTooManyRequests || out["code"] != "rate_limited" {
 		t.Fatalf("save after 10 tests: %d %s", code, raw)
+	}
+}
+
+// The managed gateway hands out addresses only in the gateway and both routing
+// modes; in ip_port (the install default) every route create is refused, so
+// the switch is refused instead of failing later.
+func TestProviderSettingsRefuseRemoteInIPPortMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		want int
+	}{{"", 409}, {"ip_port", 409}, {"gateway", 200}, {"both", 200}} {
+		t.Run(tc.mode, func(t *testing.T) {
+			f := newProviderFixture(t, config.Config{}, map[string]string{})
+			f.st.routingMode = tc.mode
+			body := fmt.Sprintf(`{"mode":"remote","url":%s,"key":%s}`, jsonStr(f.fake.URL()), jsonStr(f.fake.Key()))
+			code, out, raw := f.call(t, f.h.Save, http.MethodPost, body)
+			if code != tc.want {
+				t.Fatalf("%d %s, want %d", code, raw, tc.want)
+			}
+			if tc.want == 409 {
+				if out["code"] != "routing_mode" || out["message"] != "Switch the routing mode to Gateway or Both first. Servers get their addresses from the gateway only in those modes." {
+					t.Fatalf("refusal: %s", raw)
+				}
+				if len(f.st.settings) != 0 || len(f.fake.Calls()) != 0 {
+					t.Fatalf("refused save stored %v or called %v", f.st.settings, f.fake.Calls())
+				}
+			}
+			_, out, raw = f.call(t, f.h.Get, http.MethodGet, "")
+			if out["routingModeOk"] != (tc.want == 200) {
+				t.Fatalf("get: %s", raw)
+			}
+		})
+	}
+	// Local is never refused, whatever the routing mode.
+	f := newProviderFixture(t, config.Config{}, map[string]string{})
+	f.st.routingMode = "ip_port"
+	if code, _, raw := f.call(t, f.h.Save, http.MethodPost, `{"mode":"local"}`); code != 200 {
+		t.Fatalf("local: %d %s", code, raw)
+	}
+}
+
+func TestProviderSettingsListRefusedChanges(t *testing.T) {
+	f := newProviderFixture(t, config.Config{}, map[string]string{})
+	_, out, raw := f.call(t, f.h.Get, http.MethodGet, "")
+	if ob, _ := out["outbox"].(map[string]interface{}); ob == nil || ob["refused"] == nil || len(ob["refused"].([]interface{})) != 0 {
+		t.Fatalf("no refusals must be an empty list: %s", raw)
+	}
+	for i := 0; i < 7; i++ {
+		f.st.refused = append(f.st.refused, store.OutboxItem{Op: "proxy", Domain: fmt.Sprintf("d%d.example.com", i),
+			LastError: "gateway provider answered 409 proxy_protocol_disabled: Real player IP forwarding is not enabled on this platform."})
+	}
+	_, out, raw = f.call(t, f.h.Get, http.MethodGet, "")
+	ob, _ := out["outbox"].(map[string]interface{})
+	list, _ := ob["refused"].([]interface{})
+	if len(list) != 5 {
+		t.Fatalf("refused = %s, want 5 items", raw)
+	}
+	first, _ := list[0].(map[string]interface{})
+	if first["op"] != "proxy" || first["domain"] != "d0.example.com" || !strings.Contains(first["error"].(string), "proxy_protocol_disabled") || len(first) != 3 {
+		t.Fatalf("item = %v", first)
 	}
 }

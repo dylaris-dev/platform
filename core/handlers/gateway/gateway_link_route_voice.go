@@ -132,6 +132,10 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONError(w, msg, http.StatusForbidden)
 		return
 	}
+	if h.linkTokenRetiring(rt.OwnerID, rt.LinkToken) {
+		httpx.SendJSONErrorCode(w, kitRetiringMessage, "kit_retiring", http.StatusConflict)
+		return
+	}
 	if !h.linkRouteVoiceAllowed(rt.OwnerID) {
 		httpx.SendJSONErrorCode(w, "Voice chat is not available for this account.", "voice_not_allowed", http.StatusConflict)
 		return

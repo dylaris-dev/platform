@@ -31,9 +31,10 @@ func (s *PostgresStore) CreateLinkKitUnderCap(k WarpAPIKey, cap int64) (bool, er
 	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('link-kit-cap:' || $1))`, k.OwnerID); err != nil {
 		return false, fmt.Errorf("lock link kits of %s: %w", k.OwnerID, err)
 	}
+	// Same "live kit" as CountLinkKitsByOwner: a retiring kit has given its slot up.
 	var n int64
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM warp_api_keys
-		WHERE owner_id = $1::uuid AND revoked_at IS NULL AND node_id LIKE 'link-%'`, k.OwnerID).Scan(&n); err != nil {
+		WHERE owner_id = $1::uuid AND revoked_at IS NULL AND retire_at IS NULL AND node_id LIKE 'link-%'`, k.OwnerID).Scan(&n); err != nil {
 		return false, err
 	}
 	if n >= cap {
@@ -54,12 +55,12 @@ func (s *PostgresStore) GetWarpAPIKeyByHash(hash string) (*WarpAPIKey, error) {
 	err := s.db.QueryRow(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
-		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
+		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at, retire_at
 		FROM warp_api_keys
 		WHERE key_hash = $1 OR (prev_key_hash = $1 AND prev_key_expires_at > NOW())
 		ORDER BY key_hash = $1 DESC LIMIT 1`, hash).
 		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &ownerID, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt)
+			&fixedIP, &nodeID, &region, &ownerID, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt, &k.RetireAt)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +97,7 @@ func (s *PostgresStore) warpAPIKeysByOwner(ownerID string, includeRevoked bool) 
 	rows, err := s.db.Query(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
-		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
+		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at, retire_at
 		FROM warp_api_keys
 		WHERE `+where+`
 		ORDER BY created_at DESC`, ownerID)
@@ -109,7 +110,7 @@ func (s *PostgresStore) warpAPIKeysByOwner(ownerID string, includeRevoked bool) 
 		var k WarpAPIKey
 		var fixedIP, nodeID, region, owner sql.NullString
 		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &owner, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt); err != nil {
+			&fixedIP, &nodeID, &region, &owner, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt, &k.RetireAt); err != nil {
 			return nil, err
 		}
 		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
@@ -127,7 +128,7 @@ func (s *PostgresStore) ListWarpAPIKeys() ([]WarpAPIKey, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
-		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
+		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at, retire_at
 		FROM warp_api_keys
 		WHERE owner_id IS NULL
 		ORDER BY created_at DESC`)
@@ -140,7 +141,7 @@ func (s *PostgresStore) ListWarpAPIKeys() ([]WarpAPIKey, error) {
 		var k WarpAPIKey
 		var fixedIP, nodeID, region, owner sql.NullString
 		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &owner, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt); err != nil {
+			&fixedIP, &nodeID, &region, &owner, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt, &k.RetireAt); err != nil {
 			return nil, err
 		}
 		k.FixedWGIP, k.NodeID, k.Region, k.OwnerID = fixedIP.String, nodeID.String, region.String, owner.String
@@ -156,10 +157,10 @@ func (s *PostgresStore) GetWarpAPIKeyByID(id int) (*WarpAPIKey, error) {
 	err := s.db.QueryRow(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
-		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
+		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at, retire_at
 		FROM warp_api_keys WHERE id = $1`, id).
 		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &nodeID, &region, &owner, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt)
+			&fixedIP, &nodeID, &region, &owner, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt, &k.RetireAt)
 	if err != nil {
 		return nil, err
 	}
@@ -555,10 +556,10 @@ func (s *PostgresStore) GetWarpAPIKeyByNodeID(nodeID string) (*WarpAPIKey, error
 	err := s.db.QueryRow(`
 		SELECT id, name, key_hash, policy, max_conns, on_new_conn,
 		       COALESCE(fixed_wg_ip,''), COALESCE(node_id,''), COALESCE(region,''),
-		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at
+		       COALESCE(owner_id::text,''), COALESCE(bound_node_id, 0), revoked_at, created_at, retire_at
 		FROM warp_api_keys WHERE node_id = $1`, nodeID).
 		Scan(&k.ID, &k.Name, &k.KeyHash, &k.Policy, &k.MaxConns, &k.OnNewConn,
-			&fixedIP, &node, &region, &ownerID, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt)
+			&fixedIP, &node, &region, &ownerID, &k.BoundNodeID, &k.RevokedAt, &k.CreatedAt, &k.RetireAt)
 	if err != nil {
 		return nil, err
 	}
@@ -620,7 +621,8 @@ const WarpKeyRollGrace = "1 hour"
 
 // RollWarpAPIKeyHash replaces the secret of a live key IN PLACE, keeping its
 // row, its id and its node_id. sql.ErrNoRows when there is no live key with
-// that identity, so a caller cannot read "rotated" off a no-op.
+// that identity, so a caller cannot read "rotated" off a no-op. A retiring link
+// kit counts as not live here: it is on its way out and gets no new secret.
 //
 // An UPDATE and not revoke-then-insert, and that is load-bearing rather than a
 // style choice: GetWarpAPIKeyByNodeID selects on node_id with NO revoked_at
@@ -635,7 +637,7 @@ const WarpKeyRollGrace = "1 hour"
 func (s *PostgresStore) RollWarpAPIKeyHash(nodeID, newHash string) error {
 	res, err := s.db.Exec(
 		`UPDATE warp_api_keys SET prev_key_hash = key_hash, prev_key_expires_at = NOW() + $3::interval, key_hash = $2
-		 WHERE node_id = $1 AND revoked_at IS NULL`,
+		 WHERE node_id = $1 AND revoked_at IS NULL AND retire_at IS NULL`,
 		nodeID, newHash, WarpKeyRollGrace)
 	if err != nil {
 		return err
@@ -648,4 +650,93 @@ func (s *PostgresStore) RollWarpAPIKeyHash(nodeID, newHash string) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// ErrLinkKitRetiring is RetireLinkKit's answer for a kit that is already
+// retiring; the time it returns beside it is the existing deadline.
+var ErrLinkKitRetiring = errors.New("link kit is already retiring")
+
+// RetireLinkKit marks one of the owner's live link kits as retiring: retire_at
+// is set to retireAt and a warp_kit_retirements row records it at now. Both in
+// one transaction, so no kit ends up with one and not the other.
+//
+// It takes the same per-owner lock as CreateLinkKitUnderCap, so a retire and a
+// mint of the same owner are serialised: the mint either sees the slot this
+// frees or does not, never half of it. allow gets the owner's kits retiring
+// right now and their retirements since monthStart, under that lock, and its
+// error is returned as is.
+//
+// sql.ErrNoRows when the owner has no live link kit with that id (someone
+// else's, revoked, or a node key: one answer for all of them).
+func (s *PostgresStore) RetireLinkKit(ownerID, linkID string, now, retireAt, monthStart time.Time, allow func(retiring, thisMonth int64) error) (time.Time, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext('link-kit-cap:' || $1))`, ownerID); err != nil {
+		return time.Time{}, fmt.Errorf("lock link kits of %s: %w", ownerID, err)
+	}
+	// FOR UPDATE: a revoke or a roll of this row waits for the commit, then
+	// re-checks its own WHERE against what this wrote.
+	var id int
+	var existing *time.Time
+	if err := tx.QueryRow(`SELECT id, retire_at FROM warp_api_keys
+		WHERE node_id = $1 AND owner_id = $2::uuid AND revoked_at IS NULL AND node_id LIKE 'link-%'
+		FOR UPDATE`, linkID, ownerID).Scan(&id, &existing); err != nil {
+		return time.Time{}, err
+	}
+	if existing != nil {
+		return *existing, ErrLinkKitRetiring
+	}
+	var retiring, thisMonth int64
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM warp_api_keys
+		WHERE owner_id = $1::uuid AND revoked_at IS NULL AND retire_at IS NOT NULL AND node_id LIKE 'link-%'`, ownerID).Scan(&retiring); err != nil {
+		return time.Time{}, err
+	}
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM warp_kit_retirements
+		WHERE owner_id = $1 AND retired_at >= $2`, ownerID, monthStart).Scan(&thisMonth); err != nil {
+		return time.Time{}, err
+	}
+	if err := allow(retiring, thisMonth); err != nil {
+		return time.Time{}, err
+	}
+	if _, err := tx.Exec(`UPDATE warp_api_keys SET retire_at = $2 WHERE id = $1`, id, retireAt); err != nil {
+		return time.Time{}, err
+	}
+	if _, err := tx.Exec(`INSERT INTO warp_kit_retirements (owner_id, link_id, retired_at) VALUES ($1, $2, $3)`,
+		ownerID, linkID, now); err != nil {
+		return time.Time{}, err
+	}
+	return retireAt, tx.Commit()
+}
+
+// ListDueRetiringLinkKits returns the live kits whose retire_at has passed, as
+// (NodeID, OwnerID) only. Runs every minute on the leader; the partial index
+// idx_warp_api_keys_retire_at holds only retiring rows.
+func (s *PostgresStore) ListDueRetiringLinkKits(now time.Time) ([]WarpAPIKey, error) {
+	rows, err := s.db.Query(`SELECT node_id, owner_id::text FROM warp_api_keys
+		WHERE retire_at IS NOT NULL AND retire_at <= $1 AND revoked_at IS NULL
+		ORDER BY retire_at`, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WarpAPIKey
+	for rows.Next() {
+		var k WarpAPIKey
+		if err := rows.Scan(&k.NodeID, &k.OwnerID); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+// PurgeKitRetirements deletes the retirement records older than before. They
+// outlive their kit on purpose (the monthly budget counts them); a month's
+// budget never looks back further than this.
+func (s *PostgresStore) PurgeKitRetirements(before time.Time) error {
+	_, err := s.db.Exec(`DELETE FROM warp_kit_retirements WHERE retired_at < $1`, before)
+	return err
 }

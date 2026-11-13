@@ -9,15 +9,20 @@ import { CONN_TEST_TIMEOUT_MS } from '@/lib/connectionTest';
 import { formatDecimalBytes } from '@/lib/format';
 import { fmtDateTime } from '@/lib/time';
 import {
-    getGatewayProvider, saveGatewayProvider, testGatewayProvider, getProviderUsage,
+    getGatewayProvider, saveGatewayProvider, testGatewayProvider, getProviderUsage, getOrphanKits, revokeOrphanKit,
     providerSaveBody, providerTestBody,
-    type ProviderSettings, type ProviderAccount, type ProviderUsage,
+    type ProviderSettings, type ProviderAccount, type ProviderUsage, type OrphanKit,
 } from '@/lib/api/gatewayProvider';
 import {
     providerErrorText, outboxWarning, barPercent, switchConfirm, purchaseNote, usageFinalLabel, providerGbToBytes,
-    productLabel, testedAccount,
+    productLabel, testedAccount, routingModeWarning, refusalLine,
+    ORPHAN_INTRO, showOrphanSection, orphanRevokeConfirm,
 } from '@/lib/gatewayProvider';
 import { useAppData } from '@/lib/AppDataContext';
+import { confirmDialog } from '@/components/ui/ConfirmDialog';
+import { toast } from '@/components/ui/Toast';
+import { linkState } from '@/lib/linkState';
+import LinkBadge from '@/components/infra/LinkBadge';
 
 // Which gateway this platform uses. The settings GET calls the provider on
 // every load (uncached for a rolled key, rate limited), so it is read on mount
@@ -154,6 +159,93 @@ function UsagePanel() {
     );
 }
 
+// Links the provider holds that no node here has. Loaded with the card and on
+// the refresh button only: every load reads the provider's kit list.
+function OrphanKitsPanel() {
+    const [items, setItems] = useState<OrphanKit[] | null>(null);
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [revoking, setRevoking] = useState('');
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        setError('');
+        const res = await getOrphanKits();
+        if (res.success) setItems(res.items ?? []);
+        else setError(res.message);
+        setLoading(false);
+    }, []);
+
+    useEffect(() => { void load(); }, [load]);
+
+    const revoke = async (kit: OrphanKit) => {
+        if (!(await confirmDialog(orphanRevokeConfirm(kit.name)))) return;
+        setRevoking(kit.linkId);
+        const res = await revokeOrphanKit(kit.linkId);
+        setRevoking('');
+        if (!res.success) { toast(res.message, false); return; }
+        toast(res.queued ? 'The provider could not be reached. The revoke is retried on its own.' : 'Link revoked');
+        if (!res.queued) setItems(list => (list ? list.filter(k => k.linkId !== kit.linkId) : list));
+    };
+
+    if (!showOrphanSection(items, error)) return null;
+
+    return (
+        <SettingsGroup title="Links the provider holds that this platform does not know">
+            <div className="flex items-start justify-between gap-3">
+                <p className="text-xs text-(--base-06) min-w-0">{ORPHAN_INTRO}</p>
+                <button
+                    type="button"
+                    onClick={() => void load()}
+                    disabled={loading || !!revoking}
+                    className="btn btn-secondary btn-sm shrink-0 disabled:opacity-40 inline-flex items-center gap-1.5"
+                    aria-label="Refresh the unknown links"
+                >
+                    <RefreshCw size={13} className={loading ? 'animate-spin motion-reduce:animate-none' : ''} /> Refresh
+                </button>
+            </div>
+            {error && (
+                <p className="flex items-start gap-1.5 text-xs text-(--error-light)" role="alert">
+                    <CircleAlert size={13} className="shrink-0 mt-0.5" /><span>{error}</span>
+                </p>
+            )}
+            {!error && items && (
+                <ul className="space-y-2" aria-busy={loading}>
+                    {items.map(kit => {
+                        const state = linkState(kit.online);
+                        return (
+                            <li key={kit.linkId} className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-md bg-(--base-02)">
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2 text-sm text-(--base-09)">
+                                        <LinkBadge state={state} />
+                                        <span className="truncate">{kit.name || 'Unnamed link'}</span>
+                                    </div>
+                                    <div className="text-xs text-(--base-06) mt-0.5">
+                                        <span className="font-mono" title={kit.linkId}>
+                                            {kit.linkId.length > 20 ? `${kit.linkId.slice(0, 20)}…` : kit.linkId}
+                                        </span>
+                                        {kit.region && <span> · {kit.region}</span>}
+                                        {kit.retireAt && <span className="text-(--warning-light)"> · being replaced until {fmtDateTime(kit.retireAt)}</span>}
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => void revoke(kit)}
+                                    disabled={!!revoking || loading}
+                                    className="btn btn-danger btn-sm shrink-0 disabled:opacity-40 inline-flex items-center gap-1.5"
+                                >
+                                    {revoking === kit.linkId && <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />}
+                                    Revoke
+                                </button>
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
+        </SettingsGroup>
+    );
+}
+
 export default function GatewayProviderCard() {
     const [view, setView] = useState<ProviderSettings | null>(null);
     const { refreshFeatureFlags, gatewayVisibility } = useAppData();
@@ -219,6 +311,8 @@ export default function GatewayProviderCard() {
     const saveBlockedReason = remoteChosen && !keyAvailable ? 'Enter the API key first' : undefined;
     const shownAccount = testedAccount(test, remoteSaved ? view?.account : undefined);
     const outbox = outboxWarning(view?.outbox, Date.now());
+    const refused = view?.outbox?.refused ?? [];
+    const routingWarning = routingModeWarning(view?.routingModeOk, remoteChosen, remoteSaved);
 
     return (
         <SettingsCard
@@ -274,13 +368,40 @@ export default function GatewayProviderCard() {
                         </div>
                     )}
 
-                    {outbox && (
+                    {routingWarning && (
                         <div className="alert alert-warning text-xs" role="status">
                             <CircleAlert size={14} className="shrink-0 mt-0.5" />
                             <span>
-                                {outbox}
-                                {view.outbox?.oldestAt && ` The oldest is from ${fmtDateTime(view.outbox.oldestAt)}.`}
+                                {routingWarning} The routing mode is under{' '}
+                                <a href="#traffic-routing" className="underline rounded-sm hover:text-(--base-09) focus-visible:outline-none focus-visible:[box-shadow:var(--focus-ring)]">
+                                    Traffic Routing
+                                </a>{' '}
+                                below.
                             </span>
+                        </div>
+                    )}
+
+                    {(outbox || refused.length > 0) && (
+                        <div className="alert alert-warning text-xs" role="status">
+                            <CircleAlert size={14} className="shrink-0 mt-0.5" />
+                            <div className="min-w-0 space-y-1.5">
+                                {outbox && (
+                                    <p>
+                                        {outbox}
+                                        {view.outbox?.oldestAt && ` The oldest is from ${fmtDateTime(view.outbox.oldestAt)}.`}
+                                    </p>
+                                )}
+                                {refused.length > 0 && (
+                                    <>
+                                        <p>The provider refused:</p>
+                                        <ul className="list-disc pl-4 space-y-0.5">
+                                            {refused.map((it, i) => (
+                                                <li key={`${it.op}-${it.domain}-${i}`} className="break-words">{refusalLine(it)}</li>
+                                            ))}
+                                        </ul>
+                                    </>
+                                )}
+                            </div>
                         </div>
                     )}
 
@@ -367,6 +488,7 @@ export default function GatewayProviderCard() {
                     )}
 
                     {remoteSaved && gatewayVisibility.providerUsage && <UsagePanel />}
+                    {remoteSaved && gatewayVisibility.managedLinkKit && <OrphanKitsPanel />}
                 </>
             )}
 

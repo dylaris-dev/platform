@@ -323,6 +323,42 @@ func TestIntegrationCountOpenOutboxSkipsKitRevokes(t *testing.T) {
 	}
 }
 
+// Only open route changes the provider refused (a 4xx other than 429) are
+// listed, newest first, capped; waits, done rows and kit revokes are not.
+func TestIntegrationListRefusedOutbox(t *testing.T) {
+	db, st := integrationDB(t)
+	if _, err := db.Exec(`DELETE FROM gateway_outbox`); err != nil {
+		t.Fatal(err)
+	}
+	refusal := "gateway provider answered 409 proxy_protocol_disabled: off"
+	for _, c := range []struct{ op, domain, lastErr string }{
+		{"proxy", "old.example.test", refusal},
+		{"proxy", "wait.example.test", "gateway provider answered 429 rate_limited: slow"},
+		{"move", "net.example.test", "remotegw: provider unreachable: dial tcp: connection refused"},
+		{"revoke_kit", "link-abc", "gateway provider answered 403 forbidden: no"},
+		{"proxy", "done.example.test", refusal},
+		{"move", "new.example.test", "gateway provider answered 403 kit_retiring: retiring"},
+	} {
+		if err := st.EnqueueOutbox(c.op, c.domain, struct{}{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`UPDATE gateway_outbox SET last_error = $1 WHERE domain = $2`, c.lastErr, c.domain); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE gateway_outbox SET done_at = NOW() WHERE domain = 'done.example.test'`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListRefusedOutbox(5)
+	if err != nil || len(got) != 2 || got[0].Domain != "new.example.test" || got[1].Domain != "old.example.test" ||
+		got[1].Op != "proxy" || got[1].LastError != refusal {
+		t.Fatalf("refused = %+v, %v", got, err)
+	}
+	if got, err := st.ListRefusedOutbox(1); err != nil || len(got) != 1 || got[0].Domain != "new.example.test" {
+		t.Fatalf("capped = %+v, %v", got, err)
+	}
+}
+
 // The claim is the only arbiter of an address between the servers of one
 // customer Core: a second server never takes a held domain, and the first
 // keeps its row untouched.
@@ -384,4 +420,52 @@ func reflectEqualCoreRoute(a, b store.CoreLinkRoute) bool {
 	return a.Domain == b.Domain && a.OwnerID == b.OwnerID && a.LinkToken == b.LinkToken && a.TargetHost == b.TargetHost &&
 		a.TargetPort == b.TargetPort && a.ProxyProtocol == b.ProxyProtocol && a.CreatedAt.Equal(b.CreatedAt) &&
 		(a.SuspendedAt == nil) == (b.SuspendedAt == nil) && a.SuspendedReason == b.SuspendedReason
+}
+
+// remote_link_kits.retire_at: NULL for a kit in use, stamped only on the kit
+// that was retired (not one minted since), read back by both reads, and a
+// second boot of the migration is a no-op. Skipped without DYLARIS_TEST_DB_HOST.
+func TestIntegrationRemoteKitRetireAt(t *testing.T) {
+	db, st := integrationDB(t)
+	if err := applyRemoteKitRetire(db); err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	st.SetRemoteKitEncryptionKey("cluster-secret-a")
+	f := newFixture(t, st)
+	id := uint(f.node.ID)
+	t.Cleanup(func() { _ = st.DeleteRemoteKit(id) })
+
+	linkID := "lk_" + strings.ToLower(strings.ReplaceAll(t.Name(), "/", "_"))
+	if err := st.SaveRemoteKit(store.RemoteKit{NodeID: id, LinkID: linkID, LinkKey: "key"}); err != nil {
+		t.Fatal(err)
+	}
+	if k, err := st.GetRemoteKit(id); err != nil || k == nil || k.RetireAt != nil {
+		t.Fatalf("fresh kit = %+v, %v; want retire_at NULL", k, err)
+	}
+	at := time.Date(2026, 11, 13, 20, 0, 0, 0, time.UTC)
+	if err := st.SetRemoteKitRetireAt(id, linkID+"_other", at); err != nil {
+		t.Fatal(err)
+	}
+	if k, _ := st.GetRemoteKit(id); k == nil || k.RetireAt != nil {
+		t.Fatalf("stamp for another link id landed: %+v", k)
+	}
+	if err := st.SetRemoteKitRetireAt(id, linkID, at); err != nil {
+		t.Fatal(err)
+	}
+	if k, _ := st.GetRemoteKit(id); k == nil || k.RetireAt == nil || !k.RetireAt.Equal(at) {
+		t.Fatalf("GetRemoteKit after the stamp = %+v", k)
+	}
+	kits, err := st.ListRemoteKits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, k := range kits {
+		if k.NodeID == id {
+			found = k.RetireAt != nil && k.RetireAt.Equal(at)
+		}
+	}
+	if !found {
+		t.Fatalf("ListRemoteKits lacks the stamp: %+v", kits)
+	}
 }

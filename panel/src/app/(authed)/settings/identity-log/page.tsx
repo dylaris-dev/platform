@@ -50,6 +50,8 @@ const LABELS: Record<string, string> = {
     gateway_route_unsuspended: 'Route suspension lifted by an operator',
     gateway_provider_changed: 'Gateway provider changed',
     managed_link_kit_viewed: 'Managed link deploy kit viewed',
+    managed_link_kit_retired: "Node's managed link replaced",
+    provider_orphan_kit_revoked: 'Unknown provider link revoked',
     user_role_changed: 'Role changed',
     user_permissions_changed: 'Permissions changed',
     '2fa_admin_reset': 'Two-factor reset by an operator',

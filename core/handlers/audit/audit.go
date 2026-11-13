@@ -87,6 +87,10 @@ const (
 	// node's managed link kit shown with its key.
 	AuditEventGatewayProviderChanged = "gateway_provider_changed"
 	AuditEventManagedLinkKitViewed   = "managed_link_kit_viewed"
+	// A node's managed link retired to replace the node, and a provider link
+	// no node here holds revoked from the cleanup view.
+	AuditEventManagedLinkKitRetired    = "managed_link_kit_retired"
+	AuditEventProviderOrphanKitRevoked = "provider_orphan_kit_revoked"
 
 	// Moving the platform's own data. These used to be filed under
 	// maintenance_toggled, all five of them, with the real action buried in a

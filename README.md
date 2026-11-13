@@ -232,7 +232,9 @@ your Core ---+ HTTPS: routes, link kits, usage
 
 - **Opt-in.** Settings > Gateway offers "This platform's own gateway" (the
   default) or "DYLARIS Managed Gateway". The managed one needs that choice AND
-  an API key; without a key Core makes no call to the provider.
+  an API key; without a key Core makes no call to the provider. It also needs
+  the routing mode set to Gateway or Both first (IP:Port, the install default,
+  gives no server a gateway address, so the switch is refused there).
 - **Configuration.** The provider address (default `https://panel.dylaris.com`,
   or `GATEWAY_PROVIDER_URL`) and the API key, set in the panel or by
   `GATEWAY_PROVIDER_KEY` / `GATEWAY_PROVIDER_KEY_FILE`. The environment wins. A
@@ -242,6 +244,17 @@ your Core ---+ HTTPS: routes, link kits, usage
   addresses on the provider's domains are created, moved with the server and
   removed with it. Real player IP (on/off) works. A change the provider cannot
   take at once is retried and shown as pending.
+- **Replicas, moving, recovery.** Several Core replicas on one database work;
+  only the leader sends queued changes to the provider. A moved Core needs its
+  database AND the same `CLUSTER_SECRET` (link keys and the provider key are
+  sealed with a key derived from it), plus `GATEWAY_PROVIDER_KEY` again if the
+  key came from the environment. After a lost database the old links still
+  exist on the provider: the Gateway provider card lists links no node here
+  has, to revoke them before deploying new ones. To replace a node, "Replace
+  this node's link" keeps the old link working for 8 hours while it no longer
+  counts toward the host limit (at most as many at once as the plan has hosts,
+  4 per host per UTC month). Details:
+  [the managed edge docs](https://dylaris.com/docs/managed-edge).
 - **Not available with it yet:** voice chat routing, Bedrock, own domains, the
   edge MOTD, automatic real-IP mode, and BYON / route-only (those two belong to
   a platform's own gateway).

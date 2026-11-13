@@ -8,11 +8,11 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"dylaris-core/handlers/audit"
 	"dylaris-core/handlers/httpx"
+	"dylaris-pkg/validate"
 )
 
 // publicTargetsKey is the per-account switch an admin flips to let external
@@ -22,8 +22,6 @@ func publicTargetsKey(userID string) string { return "gateway_public_targets:" +
 var errTargetNotAllowed = errors.New("target not allowed")
 
 const targetNotAllowedMsg = "This target is not allowed. Use one of your servers (mc-<uuid>) or a private address; public targets need to be enabled for your account."
-
-var ownServerHost = regexp.MustCompile(`^mc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // externalPrivateNets are the ranges a key-created route may target by IP.
 var externalPrivateNets = func() []*net.IPNet {
@@ -37,9 +35,10 @@ var externalPrivateNets = func() []*net.IPNet {
 
 // validateExternalTarget is validateLocalTarget plus the policy for routes made
 // with an API key: a key can leak and a script can loop, so by default it may
-// only aim a route at the customer's own servers or a private network. A DNS
-// name other than localhost is refused because it can resolve to a public
-// address after the check. The panel keeps the looser rule.
+// only aim a route at the customer's own servers (any name
+// validate.ServerHostname gives, which is what a customer Core sends) or a
+// private network. A DNS name other than localhost is refused because it can
+// resolve to a public address after the check. The panel keeps the looser rule.
 func validateExternalTarget(host string, publicAllowed bool) error {
 	if err := validateLocalTarget(host); err != nil {
 		return err
@@ -48,7 +47,7 @@ func validateExternalTarget(host string, publicAllowed bool) error {
 		return nil
 	}
 	host = strings.TrimSpace(strings.ToLower(host))
-	if host == "localhost" || ownServerHost.MatchString(host) {
+	if host == "localhost" || validate.IsServerHostname(host) {
 		return nil
 	}
 	if ip := net.ParseIP(host); ip != nil {

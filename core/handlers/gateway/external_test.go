@@ -52,6 +52,9 @@ type extStore struct {
 	regions  map[string][]store.RegionUsage
 	usage    map[string]*store.TrafficUsage  // by user id, any period
 	limits   map[string]*models.TrafficLimit // by scope ("user:<id>")
+	// retiredThisMonth: retirements already used this month beyond the kits
+	// retiring now, for the budget refusal.
+	retiredThisMonth int64
 }
 
 func (f *extStore) GetTrafficUsage(userID string, period time.Time) (*store.TrafficUsage, error) {
@@ -106,7 +109,13 @@ func (f *extStore) ListWarpAPIKeysByOwner(owner string) ([]store.WarpAPIKey, err
 
 func (f *extStore) CountLinkKitsByOwner(owner string) (int, error) {
 	kits, _ := f.ListWarpAPIKeysByOwner(owner)
-	return len(kits), nil
+	n := 0
+	for _, k := range kits {
+		if k.RetireAt == nil { // like the SQL: a retiring kit gave its slot up
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (f *extStore) GetWarpAPIKeyByNodeID(nodeID string) (*store.WarpAPIKey, error) {

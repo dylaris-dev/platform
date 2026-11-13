@@ -100,6 +100,10 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 			httpx.SendJSONError(w, msg, http.StatusForbidden)
 			return
 		}
+		if h.linkTokenRetiring(rt.OwnerID, rt.LinkToken) {
+			httpx.SendJSONErrorCode(w, kitRetiringMessage, "kit_retiring", http.StatusConflict)
+			return
+		}
 		if !services.GatewayRoutingEnabled(h.d.Store) || h.d.Redis == nil {
 			gate.GatewayDisabledResponse(w)
 			return

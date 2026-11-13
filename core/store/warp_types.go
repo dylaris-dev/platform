@@ -18,6 +18,9 @@ type WarpAPIKey struct {
 	BoundNodeID int
 	RevokedAt   *time.Time
 	CreatedAt   time.Time
+	// RetireAt is set on a link kit its owner retired: it no longer counts
+	// toward the link cap and is revoked at this time. nil = not retiring.
+	RetireAt *time.Time
 }
 
 // WarpPeer is one enrolled client: pubkey -> allocated WG IP, pinned to a region.

@@ -76,11 +76,20 @@ const PROVIDER_ERRORS: Record<string, string> = {
     account_suspended: 'This provider account is suspended.',
     missing_scope: 'This key lacks the gateway.write permission.',
     tenancy_enabled: 'Turn off BYON and route-only under Features first. They need the platform\'s own gateway.',
+    routing_mode: 'Switch the routing mode to Gateway or Both first. Servers get their addresses from the gateway only in those modes.',
     provider_error: 'The provider answered with an error. Try again, or contact DYLARIS support if it persists.',
     provider_key_rejected: 'The provider rejected the API key. Check it under Settings, Gateway.',
     provider_unreachable: 'The provider could not be reached. Try again in a minute.',
     gateway_local: 'The managed gateway is not enabled on this platform.',
     gateway_provider_unknown: 'The gateway provider setting could not be read. Try again in a moment.',
+    retire_limit: 'All replacement slots of this plan are in use. Wait until a link being replaced has run out.',
+    retire_budget: "This plan's monthly number of link replacements is used up.",
+    retire_not_needed: 'This plan has no host limit, so no link needs replacing: add the new node and move the servers to it.',
+    kit_retiring: "This node's link is being replaced. Move the server to another node first.",
+    kit_known: 'This link belongs to a node of this platform. Replace or delete that node instead.',
+    no_kit: 'This node has no managed link yet.',
+    link_limit: "This plan's host limit is reached. Remove a node's link, or use Replace this node's link on a node you are retiring.",
+    kit_already_retiring: "This node's link is already being replaced.",
 };
 
 export function providerErrorText(code: string): string {
@@ -97,6 +106,67 @@ export function outboxWarning(outbox: { open: number; oldestAt?: string } | null
     return outbox.open === 1
         ? '1 change is waiting to reach the gateway provider.'
         : `${outbox.open} changes are waiting to reach the gateway provider.`;
+}
+
+/**
+ * The card's routing mode warning: the managed gateway is chosen or on while
+ * servers take their addresses from IP:Port only. undefined (an older Core)
+ * says nothing.
+ */
+export function routingModeWarning(routingModeOk: boolean | undefined, chosen: boolean, saved: boolean): string | null {
+    return routingModeOk === false && (chosen || saved) ? providerErrorText('routing_mode') : null;
+}
+
+const OUTBOX_OPS: Record<string, string> = {
+    proxy: 'Real player IP',
+    move: 'Move',
+    delete: 'Delete',
+};
+
+/** One change the provider refused, as the card lists it. */
+export function refusalLine(item: { op: string; domain: string; error: string }): string {
+    return `${OUTBOX_OPS[item.op] ?? item.op} for ${item.domain}: ${item.error}`;
+}
+
+/** The confirm before a node's link is replaced. The provider's window is 8 hours. */
+export const RETIRE_CONFIRM = {
+    title: "Replace this node's link?",
+    message: 'The link keeps working for 8 hours so players can finish, then it is removed. '
+        + "During that time another node can get a link even if your plan's host limit is reached. "
+        + "Move this node's servers to the new node before the time is up. This cannot be undone.",
+    confirmLabel: 'Replace the link',
+    destructive: true,
+    focusCancel: true,
+};
+
+/** A link can be replaced once; one already being replaced shows its deadline instead. */
+export function canReplaceLink(kit: { retireAt?: string } | null | undefined): boolean {
+    return !!kit && !kit.retireAt;
+}
+
+/** What the node's kit says while its link is being replaced. */
+export function retiringLine(retireAt: string, fmt: (v: string) => string): string {
+    return `Being replaced. Removed at ${fmt(retireAt)}.`;
+}
+
+/** The cleanup view's caveat: the provider cannot tell two installations on one account apart. */
+export const ORPHAN_INTRO = 'These links exist on the gateway provider, but no node of this platform has them, for example after the database was lost or restored. '
+    + 'Only revoke a link here if no other DYLARIS installation uses this provider account.';
+
+/** The cleanup view shows only when there is something to clean up, or its list failed. */
+export function showOrphanSection(items: unknown[] | null | undefined, error: string): boolean {
+    return !!error || (!!items && items.length > 0);
+}
+
+export function orphanRevokeConfirm(name: string) {
+    return {
+        title: 'Revoke this link?',
+        message: `${name ? `"${name}"` : 'This link'} stops connecting at once, and every address on it is deleted with it. `
+            + 'If another DYLARIS installation uses this provider account, its node loses its link.',
+        confirmLabel: 'Revoke',
+        destructive: true,
+        focusCancel: true,
+    };
 }
 
 /** The provider's percentage, clamped for a bar width. */

@@ -1553,6 +1553,8 @@ export interface LinkKit {
      * could not ask, which is not the same as false - see lib/linkState.
      */
     online?: boolean;
+    /** Set while the link is being replaced: it takes no new routes and is removed then. */
+    retire_at?: string;
 }
 export interface MintedLinkKit {
     success: boolean;

@@ -50,6 +50,25 @@ func TestGatewayProviderError(t *testing.T) {
 		{"billing_suspended", func(t *testing.T) error { return providerErr(t, 403, "billing_suspended", 0) }, refusal(403, "billing_suspended")},
 		{"no_entitlement", func(t *testing.T) error { return providerErr(t, 403, "no_entitlement", 0) }, refusal(403, "no_entitlement")},
 		{"forbidden", func(t *testing.T) error { return providerErr(t, 403, "forbidden", 0) }, refusal(403, "forbidden")},
+		{"proxy_protocol_disabled", func(t *testing.T) error { return providerErr(t, 409, "proxy_protocol_disabled", 0) },
+			want{409, "proxy_protocol_disabled", "Real player IP forwarding is not enabled on the gateway provider.", ""}},
+		{"link_without_client_addr", func(t *testing.T) error { return providerErr(t, 409, "link_without_client_addr", 0) }, refusal(409, "link_without_client_addr")},
+		{"route_suspended", func(t *testing.T) error { return providerErr(t, 403, "route_suspended", 0) }, refusal(403, "route_suspended")},
+		{"kit_retiring", func(t *testing.T) error { return providerErr(t, 409, "kit_retiring", 0) },
+			want{409, "kit_retiring", "This node's link is being replaced. Move the server to another node first.", ""}},
+		{"retire_limit", func(t *testing.T) error { return providerErr(t, 409, "retire_limit", 0) },
+			want{409, "retire_limit", "All replacement slots of this plan are in use. Wait until a link being replaced has run out.", ""}},
+		{"retire_budget", func(t *testing.T) error { return providerErr(t, 409, "retire_budget", 0) },
+			want{409, "retire_budget", "This plan's monthly number of link replacements is used up.", ""}},
+		{"retire_not_needed", func(t *testing.T) error { return providerErr(t, 409, "retire_not_needed", 0) },
+			want{409, "retire_not_needed", "This plan has no host limit, so no link needs replacing: add the new node and move the servers to it.", ""}},
+		{"link_not_found", func(t *testing.T) error { return providerErr(t, 404, "link_not_found", 0) }, refusal(404, "link_not_found")},
+		{"node's kit being replaced", func(*testing.T) error { return fmt.Errorf("create: %w", services.ErrGatewayKitRetiring) },
+			want{409, "kit_retiring", "This node's link is being replaced. Move the server to another node first.", ""}},
+		{"kit a node here holds", func(*testing.T) error { return services.ErrGatewayKitKnown },
+			want{409, "kit_known", "This link belongs to a node of this platform. Replace or delete that node instead.", ""}},
+		{"node without a kit", func(*testing.T) error { return services.ErrGatewayNoKit },
+			want{404, "no_kit", "This node has no managed link yet.", ""}},
 		{"key rejected (auth layer, no code)", func(t *testing.T) error { return providerErr(t, 401, "", 0) },
 			want{502, "provider_key_rejected", "The gateway provider rejected the API key.", ""}},
 		{"rate limited", func(t *testing.T) error { return providerErr(t, 429, "rate_limited", 7*time.Second) },
@@ -113,5 +132,43 @@ func TestGatewayProviderError(t *testing.T) {
 		if GatewayProviderError(rec, err) || rec.Body.Len() != 0 {
 			t.Fatalf("%v: handled, body %q", err, rec.Body)
 		}
+	}
+}
+
+// Every limit the provider can answer on a kit mint, a kit retire or a route
+// create keeps its code and gets a client status, never 502 provider_error.
+func TestProviderLimitCodesKeepTheirCode(t *testing.T) {
+	for _, c := range []struct {
+		code       string
+		in, status int
+		msg        string // "" = the provider's own text passes through
+	}{
+		{"link_limit", 403, 409, "This plan's host limit is reached. Remove a node's link, or use Replace this node's link on a node you are retiring."},
+		{"route_limit", 403, 403, ""},
+		{"custom_domain_limit", 403, 403, ""},
+		{"retire_limit", 409, 409, "All replacement slots of this plan are in use. Wait until a link being replaced has run out."},
+		{"retire_budget", 409, 409, "This plan's monthly number of link replacements is used up."},
+		{"retire_not_needed", 409, 409, "This plan has no host limit, so no link needs replacing: add the new node and move the servers to it."},
+		{"kit_retiring", 409, 409, "This node's link is being replaced. Move the server to another node first."},
+		{"kit_already_retiring", 409, 409, "This node's link is already being replaced."},
+	} {
+		t.Run(c.code, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			if !GatewayProviderError(rec, providerErr(t, c.in, c.code, 0)) {
+				t.Fatal("not handled")
+			}
+			var body struct {
+				Error string `json:"error"`
+				Code  string `json:"code"`
+			}
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			want := c.msg
+			if want == "" {
+				want = "fake failure"
+			}
+			if rec.Code != c.status || body.Code != c.code || body.Error != want {
+				t.Fatalf("got %d %+v, want %d %s %q", rec.Code, body, c.status, c.code, want)
+			}
+		})
 	}
 }

@@ -374,7 +374,8 @@ func TestModeFlipKeepsRowsAndSendsNothing(t *testing.T) {
 	remote = true
 	tickAt(l, outboxT0.Add(3*time.Minute))
 	got := strings.Join(fake.Calls()[before:], ",")
-	if got != "DELETE /routes/d.example.com,GET /routes,POST /routes r.example.com" {
+	// The sweep reads the kit list first (reconcileRemoteKits), then the routes.
+	if got != "DELETE /routes/d.example.com,GET /link-kits,GET /routes,POST /routes r.example.com" {
 		t.Fatalf("remote on: calls %s", got)
 	}
 	// Off and on again inside the sweep interval: back on reconciles at once.
@@ -383,7 +384,7 @@ func TestModeFlipKeepsRowsAndSendsNothing(t *testing.T) {
 	remote = true
 	before = len(fake.Calls())
 	tickAt(l, outboxT0.Add(5*time.Minute))
-	if got := fake.Calls()[before:]; len(got) != 1 || got[0] != "GET /routes" {
+	if got := fake.Calls()[before:]; len(got) != 2 || got[0] != "GET /link-kits" || got[1] != "GET /routes" {
 		t.Fatalf("second flip: calls %v", got)
 	}
 }

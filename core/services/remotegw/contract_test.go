@@ -48,7 +48,7 @@ func TestFakeMatchesProviderShapes(t *testing.T) {
 	cl := New(f.URL(), f.Key)
 	ctx := context.Background()
 	m, _ := cl.MintKit(ctx, "k", "eu")
-	cl.PutRoute(ctx, m.LinkID, "play.example.com", "mc-1", 25565)
+	cl.PutRoute(ctx, m.LinkID, "play.example.com", "mc-12-abc123def456", 25565)
 	K := ContractKeys
 
 	acct := fakeGet(t, f, "/account")
@@ -79,4 +79,16 @@ func TestFakeMatchesProviderShapes(t *testing.T) {
 	var mint map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&mint)
 	requireKeys(t, "link-kits.mint", mint, K["link-kits.mint"])
+
+	f.SetLinkLimit(5)
+	req, _ = http.NewRequest("POST", f.URL()+apiPrefix+"/link-kits/"+m.LinkID+"/retire", nil)
+	req.Header.Set("Authorization", "Bearer "+f.Key())
+	rresp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rresp.Body.Close()
+	var retire map[string]interface{}
+	json.NewDecoder(rresp.Body).Decode(&retire)
+	requireKeys(t, "link-kits.retire", retire, K["link-kits.retire"])
 }

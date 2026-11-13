@@ -981,17 +981,26 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 		// provider API's clients decide moves and proxy protocol from it.
 		Region string   `json:"region"`
 		Caps   []string `json:"caps"`
+		// RetireAt is when a retiring kit is revoked (RFC 3339); absent for a
+		// kit that is not retiring.
+		RetireAt string `json:"retire_at,omitempty"`
 	}
 	// warp_api_keys also holds this tenant's BYON node keys. They are a different
 	// product with a different cap, so listing them here would show a node as a
 	// route-only location and let it be revoked through the wrong door.
 	out := make([]linkKit, 0, len(keys))
+	retiring := 0
 	for _, k := range keys {
 		if !strings.HasPrefix(k.NodeID, "link-") {
 			continue
 		}
-		out = append(out, linkKit{ID: k.ID, Name: k.Name, LinkID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			Region: k.Region, Caps: []string{}})
+		kit := linkKit{ID: k.ID, Name: k.Name, LinkID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			Region: k.Region, Caps: []string{}}
+		if k.RetireAt != nil {
+			kit.RetireAt = k.RetireAt.UTC().Format(time.RFC3339)
+			retiring++
+		}
+		out = append(out, kit)
 	}
 	// One round trip for every kit on the page: the token a route-only Link runs
 	// with is the one LinkBoot derives from the kit's id, so Core can ask about
@@ -1017,11 +1026,12 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Surface the effective link cap + current link-kit count so the panel can show
-	// "X of Y links used". 0 limit means unlimited.
+	// "X of Y links used". used counts live kits only, the number the cap is
+	// checked against; retiring is the kits on their way out beside it.
 	lim, _ := services.EffectiveLimits(h.d.Store, userID)
 	used, _ := h.d.Store.CountLinkKitsByOwner(userID)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "kits": out, "used": used, "limit": lim.MaxLinks})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "kits": out, "used": used, "retiring": retiring, "limit": lim.MaxLinks})
 }
 
 // RevokeLinkKit DELETE /api/warp/link-kits/{linkID} - owner or admin. Tears the
@@ -1052,18 +1062,41 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	if err := h.revokeKit(r.Context(), key); err != nil {
+		httpx.SendJSONError(w, "Failed to revoke link", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// RevokeRetiredKit is the owner's kit revoke for the retirement tick
+// (services.StartKitRetirement): the same revokeKit, so routes, Redis keys,
+// peers and beam issuers go exactly as they do on DELETE.
+func (h *WarpHandler) RevokeRetiredKit(ctx context.Context, ownerID, linkID string) error {
+	key, err := h.d.Store.GetWarpAPIKeyByNodeID(linkID)
+	if err != nil {
+		return fmt.Errorf("load kit: %w", err)
+	}
+	if key.OwnerID != ownerID {
+		return fmt.Errorf("kit %s changed owner", linkID)
+	}
+	return h.revokeKit(ctx, key)
+}
+
+// revokeKit tears one route-only link kit down end to end.
+func (h *WarpHandler) revokeKit(parent context.Context, key *store.WarpAPIKey) error {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 
 	// Durable-first revoke, ACL dropped before the tunnel key, routes cleaned up
 	// last - shared with the admin force-suspend path (billing_lifecycle.go
 	// SuspendNow) so the ordering has one source of truth. See its doc comment.
-	removed, rerr := services.RevokeLinkKitTeardown(ctx, h.d.Store, h.d.Gateway, h.d.Redis, linkID, key.OwnerID)
+	removed, rerr := services.RevokeLinkKitTeardown(ctx, h.d.Store, h.d.Gateway, h.d.Redis, key.NodeID, key.OwnerID)
 	h.links.dropKeyID(key.ID)
 	if rerr != nil {
-		log.Printf("revoke link %s: %v", linkID, rerr)
-		httpx.SendJSONError(w, "Failed to revoke link", http.StatusInternalServerError)
-		return
+		log.Printf("revoke link %s: %v", key.NodeID, rerr)
+		return rerr
 	}
 	// A kit key cannot enroll any more, but a kit from the warp era may still be
 	// a peer; revoking it must take that away too.
@@ -1071,13 +1104,11 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 	if h.svc != nil {
 		peers = h.svc.DisconnectKeyPeers(ctx, key.ID)
 	}
-	log.Printf("revoke link %s: revoked, %d route(s) removed, %d peer(s) disconnected", linkID, removed, peers)
+	log.Printf("revoke link %s: revoked, %d route(s) removed, %d peer(s) disconnected", key.NodeID, removed, peers)
 	// The kit leaves the owner's beam issuer records (its beam:ext key went
 	// with the teardown).
-	publishBeamIssuers(r.Context(), h.d, key.OwnerID)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+	publishBeamIssuers(parent, h.d, key.OwnerID)
+	return nil
 }
 
 // rollWarpKeySecret replaces the secret of one live warp key in place, after
@@ -1134,6 +1165,10 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 		httpx.SendJSONError(w, notFound, http.StatusNotFound)
 		return "", false
 	}
+	if key.RetireAt != nil {
+		httpx.SendJSONErrorCode(w, kitRetiringMessage, "kit_retiring", http.StatusConflict)
+		return "", false
+	}
 	plaintext, err := services.GeneratePlaintextKey()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to generate key", http.StatusInternalServerError)
@@ -1141,6 +1176,11 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 	}
 	if err := h.d.Store.RollWarpAPIKeyHash(id, services.HashAPIKey(plaintext)); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			// A retire that won the race leaves no rollable row either.
+			if fresh, ferr := h.d.Store.GetWarpAPIKeyByNodeID(id); ferr == nil && fresh.RevokedAt == nil && fresh.RetireAt != nil {
+				httpx.SendJSONErrorCode(w, kitRetiringMessage, "kit_retiring", http.StatusConflict)
+				return "", false
+			}
 			httpx.SendJSONError(w, notFound, http.StatusNotFound)
 			return "", false
 		}

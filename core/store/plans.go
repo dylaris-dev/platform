@@ -344,10 +344,12 @@ func (s *PostgresStore) CountNodeWarpKeysByOwner(ownerID string) (int, error) {
 
 // CountLinkKitsByOwner returns how many route-only link kits a tenant owns (for the
 // max_links gate). warp_api_keys also holds BYON node keys, so this filters to the
-// 'link-' node_id prefix.
+// 'link-' node_id prefix. A retiring kit (retire_at set) is not counted: it gave
+// its slot up when it was retired, and the mint gate and the over-limit sweep
+// both read this, so they cannot disagree about it.
 func (s *PostgresStore) CountLinkKitsByOwner(ownerID string) (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM warp_api_keys
-		WHERE owner_id = $1::uuid AND revoked_at IS NULL AND node_id LIKE 'link-%'`, ownerID).Scan(&n)
+		WHERE owner_id = $1::uuid AND revoked_at IS NULL AND retire_at IS NULL AND node_id LIKE 'link-%'`, ownerID).Scan(&n)
 	return n, err
 }

@@ -274,3 +274,30 @@ func TestServerHostname(t *testing.T) {
 		}
 	}
 }
+
+func TestIsServerHostname(t *testing.T) {
+	cases := []struct {
+		s    string
+		want bool
+	}{
+		{"mc-0a1b2c3d-0000-4000-8000-0123456789ab", true}, // canonical uuid
+		{"mc-12-abc123def456", true},                      // panel wizard id 12_abc123def456
+		{"mc-" + strings.Repeat("a", 60), true},           // 63 bytes
+		{"mc-" + strings.Repeat("a", 61), false},          // 64 bytes
+		{"mc-12-ABC123DEF456", false},
+		{"MC-12-abc123def456", false},
+		{"mc-12-abc123def456.example.com", false},
+		{"mc-12-abc123def456-", false},
+		{"mc-12_abc123def456", false},
+		{"mc-", false},
+		{"mc-abc", false}, // ServerHostname needs at least 8 characters
+		{"10.0.0.5", false},
+		{"12-abc123def456", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := IsServerHostname(c.s); got != c.want {
+			t.Errorf("IsServerHostname(%q) = %v, want %v", c.s, got, c.want)
+		}
+	}
+}

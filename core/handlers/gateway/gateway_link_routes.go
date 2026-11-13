@@ -205,10 +205,37 @@ func (h *GatewayHandler) resolveOwnedLinkToken(userID, linkID string) (string, e
 	}
 	for _, k := range kits {
 		if k.NodeID == linkID {
+			// A retiring kit is being emptied: routes already on it keep working
+			// and may be moved off or deleted, nothing new lands on it.
+			if k.RetireAt != nil {
+				return "", errKitRetiring
+			}
 			return h.d.Gateway.LinkToken(linkID), nil
 		}
 	}
 	return "", fmt.Errorf("unknown link")
+}
+
+// kitRetiringMessage refuses a write onto a retiring link kit (code kit_retiring).
+const kitRetiringMessage = "This link is retiring: it accepts no new routes or features and is revoked at its retire time. Use another link."
+
+var errKitRetiring = errors.New(kitRetiringMessage)
+
+// linkTokenRetiring reports whether token belongs to one of owner's retiring
+// kits. A failed read answers false: the worst that lets through is a feature
+// switched on for a kit that is gone within hours anyway.
+func (h *GatewayHandler) linkTokenRetiring(ownerID, token string) bool {
+	kits, err := h.d.Store.ListWarpAPIKeysByOwner(ownerID)
+	if err != nil {
+		log.Printf("link routes: retiring check for %s: %v", ownerID, err)
+		return false
+	}
+	for _, k := range kits {
+		if k.RetireAt != nil && k.NodeID != "" && h.d.Gateway.LinkToken(k.NodeID) == token {
+			return true
+		}
+	}
+	return false
 }
 
 // CreateLinkRoute POST /api/gateway/link-routes — authed, gateway-gated. 409
@@ -252,6 +279,10 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 
 	// Resolve (and authorize) the tenant's Link before doing anything else.
 	linkToken, err := h.resolveOwnedLinkToken(userID, req.LinkID)
+	if errors.Is(err, errKitRetiring) {
+		httpx.SendJSONErrorCode(w, kitRetiringMessage, "kit_retiring", http.StatusConflict)
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

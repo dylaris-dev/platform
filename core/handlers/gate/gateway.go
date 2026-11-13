@@ -84,6 +84,12 @@ func GatewayProviderError(w http.ResponseWriter, err error) bool {
 		writeGatewayError(w, http.StatusBadRequest, "invalid_target", "This server's id cannot be used as a gateway target.")
 	case errors.Is(err, services.ErrGatewayDomainTaken):
 		writeGatewayError(w, http.StatusConflict, "domain_taken", services.ErrGatewayDomainTaken.Error())
+	case errors.Is(err, services.ErrGatewayKitRetiring):
+		writeGatewayError(w, http.StatusConflict, "kit_retiring", kitRetiringText)
+	case errors.Is(err, services.ErrGatewayKitKnown):
+		writeGatewayError(w, http.StatusConflict, "kit_known", "This link belongs to a node of this platform. Replace or delete that node instead.")
+	case errors.Is(err, services.ErrGatewayNoKit):
+		writeGatewayError(w, http.StatusNotFound, "no_kit", "This node has no managed link yet.")
 	case errors.As(err, &ae):
 		status, code, msg := providerStatus(ae)
 		if code == "rate_limited" {
@@ -124,9 +130,34 @@ func providerStatus(ae *remotegw.APIError) (int, string, string) {
 		return http.StatusForbidden, ae.Code, ae.Message
 	case "target_not_allowed", "invalid_request":
 		return http.StatusBadRequest, ae.Code, ae.Message
+	case "proxy_protocol_disabled":
+		// The provider's own text says "this platform", which here would read
+		// as the customer's.
+		return http.StatusConflict, ae.Code, "Real player IP forwarding is not enabled on the gateway provider."
+	case "link_without_client_addr":
+		return http.StatusConflict, ae.Code, ae.Message
+	case "route_suspended":
+		return http.StatusForbidden, ae.Code, ae.Message
+	// The provider speaks of retiring a link; this panel of replacing a node's.
+	case "kit_retiring":
+		return http.StatusConflict, ae.Code, kitRetiringText
+	case "kit_already_retiring":
+		return http.StatusConflict, ae.Code, "This node's link is already being replaced."
+	case "link_limit":
+		return http.StatusConflict, ae.Code, "This plan's host limit is reached. Remove a node's link, or use Replace this node's link on a node you are retiring."
+	case "retire_limit":
+		return http.StatusConflict, ae.Code, "All replacement slots of this plan are in use. Wait until a link being replaced has run out."
+	case "retire_budget":
+		return http.StatusConflict, ae.Code, "This plan's monthly number of link replacements is used up."
+	case "retire_not_needed":
+		return http.StatusConflict, ae.Code, "This plan has no host limit, so no link needs replacing: add the new node and move the servers to it."
+	case "link_not_found":
+		return http.StatusNotFound, ae.Code, ae.Message
 	}
 	return http.StatusBadGateway, "provider_error", ae.Message
 }
+
+const kitRetiringText = "This node's link is being replaced. Move the server to another node first."
 
 // WriteGatewayError writes the one body shape of every managed-gateway answer
 // ({success:false, error, code}), for a handler's own remote-mode refusals.

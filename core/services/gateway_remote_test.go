@@ -52,6 +52,8 @@ type remoteFakeStore struct {
 	// each other, so concurrent EnsureKit calls all miss before any inserts.
 	holdGets int
 	release  chan struct{}
+	// stampErr fails SetRemoteKitRetireAt.
+	stampErr error
 }
 
 func newRemoteFakeStore() *remoteFakeStore {
@@ -486,7 +488,9 @@ func TestRemoteProxyProtocolEnqueues(t *testing.T) {
 			t.Fatalf("%s: %+v", d, it)
 		}
 	}
-	if len(st.outbox) != 2 || st.routes["a1.example.com"].ProxyProtocol || len(fake.Calls()) != 0 {
+	// The provider has neither route, so the first one's synchronous ask
+	// answered not_found and fell back to the queue.
+	if len(st.outbox) != 2 || st.routes["a1.example.com"].ProxyProtocol || countRemoteCalls(fake.Calls(), "PATCH ") != 1 || len(fake.Calls()) != 1 {
 		t.Fatalf("outbox %+v, rows %v, calls %v", st.outbox, st.routes, fake.Calls())
 	}
 }
@@ -598,6 +602,104 @@ func TestRemoteCreateRefusesWhilePreviousChangePending(t *testing.T) {
 	if err := g.CreateServerRoute(1, "owner", "y.example.com", 25565); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Another server's address answers taken even while its owner has a change
+// queued for it: "pending" would tell a stranger about an address it does not
+// own and send it back to try again.
+func TestRemoteCreateOnAnotherServersPendingAddressIsTaken(t *testing.T) {
+	g, st, fake := newRemoteTest(t)
+	held := store.RemoteRoute{Domain: "x.example.com", ServerUUID: uuidB, NodeID: 7, Port: 25565}
+	st.routes[held.Domain] = held
+	st.outbox = []remoteOutboxItem{{op: OutboxOpProxy, domain: held.Domain, id: 1}}
+	if err := g.CreateServerRoute(1, "owner", held.Domain, 25565); !errors.Is(err, ErrGatewayDomainTaken) {
+		t.Fatalf("err = %v, want ErrGatewayDomainTaken", err)
+	}
+	// The holder itself still waits for its change.
+	if err := g.CreateServerRoute(2, "owner", held.Domain, 25565); !errors.Is(err, ErrGatewayChangePending) {
+		t.Fatalf("holder: err = %v, want ErrGatewayChangePending", err)
+	}
+	if c := fake.Calls(); len(c) != 0 || st.routes[held.Domain] != held {
+		t.Fatalf("calls %v, row %+v", c, st.routes[held.Domain])
+	}
+}
+
+// Turning real IP on asks the provider for the first route at once. A refusal
+// reaches the caller and leaves nothing behind; a failure that may pass is
+// queued as before; off is never sent synchronously.
+func TestRemoteProxyProtocolOnAsksTheProviderFirst(t *testing.T) {
+	setup := func(t *testing.T) (*RemoteGateway, *remoteFakeStore, *remotegw.Fake) {
+		g, st, fake := newRemoteTest(t)
+		if err := g.CreateServerRoute(1, "owner", "a.example.com", 25565); err != nil {
+			t.Fatal(err)
+		}
+		return g, st, fake
+	}
+	for _, tc := range []struct {
+		name   string
+		status int
+		code   string
+	}{
+		{"provider feature off", 409, "proxy_protocol_disabled"},
+		{"link without client-addr", 409, "link_without_client_addr"},
+		{"route suspended", 403, "route_suspended"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g, st, fake := setup(t)
+			fake.FailNext(1, tc.status, tc.code, 0)
+			err := g.SetServerProxyProtocol(uuidA, true)
+			if !remotegw.IsCode(err, tc.code) {
+				t.Fatalf("err = %v, want %s", err, tc.code)
+			}
+			if len(st.outbox) != 0 || st.routes["a.example.com"].ProxyProtocol {
+				t.Fatalf("refusal left outbox %+v, row %+v", st.outbox, st.routes["a.example.com"])
+			}
+		})
+	}
+	t.Run("provider error queues", func(t *testing.T) {
+		g, st, fake := setup(t)
+		fake.FailNext(1, 503, "unavailable", 0)
+		if err := g.SetServerProxyProtocol(uuidA, true); err != nil {
+			t.Fatal(err)
+		}
+		if len(st.outbox) != 1 || st.outbox[0].op != OutboxOpProxy || st.routes["a.example.com"].ProxyProtocol {
+			t.Fatalf("outbox %+v, row %+v", st.outbox, st.routes["a.example.com"])
+		}
+	})
+	t.Run("network failure queues", func(t *testing.T) {
+		_, st, fake := setup(t)
+		dead := httptest.NewServer(http.NotFoundHandler())
+		dead.Close()
+		g := NewRemoteGateway(st, func() *remotegw.Client { return remotegw.New(dead.URL, fake.Key) })
+		if err := g.SetServerProxyProtocol(uuidA, true); err != nil {
+			t.Fatal(err)
+		}
+		if len(st.outbox) != 1 || st.outbox[0].op != OutboxOpProxy {
+			t.Fatalf("outbox %+v", st.outbox)
+		}
+	})
+	t.Run("a queued change is not overtaken", func(t *testing.T) {
+		g, st, fake := setup(t)
+		st.outbox = []remoteOutboxItem{{op: OutboxOpMove, domain: "a.example.com", id: 1}}
+		before := len(fake.Calls())
+		if err := g.SetServerProxyProtocol(uuidA, true); err != nil {
+			t.Fatal(err)
+		}
+		if len(fake.Calls()) != before || len(st.outbox) != 2 {
+			t.Fatalf("calls %v, outbox %+v", fake.Calls()[before:], st.outbox)
+		}
+	})
+	t.Run("off is only queued", func(t *testing.T) {
+		g, st, fake := setup(t)
+		fake.FailNext(1, 409, "proxy_protocol_disabled", 0)
+		before := len(fake.Calls())
+		if err := g.SetServerProxyProtocol(uuidA, false); err != nil {
+			t.Fatal(err)
+		}
+		if len(fake.Calls()) != before || len(st.outbox) != 1 {
+			t.Fatalf("calls %v, outbox %+v", fake.Calls()[before:], st.outbox)
+		}
+	})
 }
 
 func TestRemoteMigrateSkipsDomainsBeingDeleted(t *testing.T) {

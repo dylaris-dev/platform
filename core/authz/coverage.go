@@ -110,6 +110,7 @@ var ExemptRoutes = map[string]bool{
 	"/api/external/gateway/link-kits":                                true,
 	"/api/external/gateway/link-kits/{linkID}":                       true,
 	"/api/external/gateway/link-kits/{linkID}/roll":                  true,
+	"/api/external/gateway/link-kits/{linkID}/retire":                true,
 	"/api/external/gateway/routes":                                   true,
 	"/api/external/gateway/routes/{domain:[^/]+}":                    true,
 	"/api/external/gateway/routes/{domain:[^/]+}/proxy-protocol":     true,

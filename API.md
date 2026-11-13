@@ -139,9 +139,9 @@ can still show what exists.
 
 ## At a glance
 
-- **659 routes** in 53 sections: 284 GET, 193 POST, 67 PUT, 42 PATCH, 74 DELETE.
+- **663 routes** in 53 sections: 285 GET, 195 POST, 67 PUT, 42 PATCH, 75 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **444** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **157** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **448** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **157** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **49** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -156,9 +156,9 @@ can still show what exists.
 - [/api/backup-storages](#apibackup-storages) (7)
 - [/api/beam](#apibeam) (4)
 - [/api/disk](#apidisk) (4)
-- [/api/external](#apiexternal) (34)
+- [/api/external](#apiexternal) (35)
 - [/api/files](#apifiles) (10)
-- [/api/gateway](#apigateway) (28)
+- [/api/gateway](#apigateway) (30)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
@@ -166,7 +166,7 @@ can still show what exists.
 - [/api/me](#apime) (50)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
-- [/api/nodes](#apinodes) (17)
+- [/api/nodes](#apinodes) (18)
 - [/api/notifications](#apinotifications) (5)
 - [/api/packs](#apipacks) (32)
 - [/api/placement](#apiplacement) (3)
@@ -464,13 +464,14 @@ can still show what exists.
 | DELETE | `/api/external/gateway/custom-domains/{domain:[^/]+}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.DeleteCustomDomain` | removes the caller's claim; refused while a route uses it. |
 | POST | `/api/external/gateway/custom-domains/{domain:[^/]+}/txt-token` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.IssueCustomDomainTXTToken` | returns the claim's TXT record, minting it once. |
 | POST | `/api/external/gateway/custom-domains/{domain:[^/]+}/verify-txt` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.VerifyCustomDomainTXT` | checks the published TXT record now. |
-| GET | `/api/external/gateway/link-kits` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListLinkKits` | the caller's route-only link kits, without secrets, plus used and limit. |
+| GET | `/api/external/gateway/link-kits` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListLinkKits` | the caller's route-only link kits, without secrets, plus used (live kits), retiring and limit; a retiring kit carries retire_at. |
 | POST | `/api/external/gateway/link-kits` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.MintLinkKit` | creates a link kit; link_key is shown once. |
 | DELETE | `/api/external/gateway/link-kits/{linkID}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.RevokeLinkKit` | revokes one of the caller's link kits and removes its routes. |
+| POST | `/api/external/gateway/link-kits/{linkID}/retire` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.RetireLinkKit` | retires one of the caller's link kits to replace a node, irreversibly: it stops counting toward maxLinks at once, keeps working but takes no new routes, voice or Bedrock, and is revoked with its routes at retire_at, 8 hours later; 409 kit_already_retiring (with retire_at), retire_not_needed (no host limit), retire_limit (as many retiring as hosts) or retire_budget (4 per host per UTC month). |
 | POST | `/api/external/gateway/link-kits/{linkID}/roll` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.RollLinkKit` | replaces a link kit's key; the old one keeps working for the grace period. |
 | GET | `/api/external/gateway/regions` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListRegions` | the gateway regions with their wildcard and liveness, plus the hoster domains and CNAME target. |
 | GET | `/api/external/gateway/routes` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListRoutes` | the caller's route-only addresses. |
-| POST | `/api/external/gateway/routes` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.CreateRoute` | creates or retargets an address on one of the caller's links. |
+| POST | `/api/external/gateway/routes` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.CreateRoute` | creates or retargets an address on one of the caller's links; a retiring link takes no route changes except removing an address or moving it to another link (409 kit_retiring). |
 | DELETE | `/api/external/gateway/routes/{domain:[^/]+}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.DeleteRoute` | removes one of the caller's addresses. |
 | PUT | `/api/external/gateway/routes/{domain:[^/]+}/bedrock` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteBedrock` | body {"java": bool, "bedrock": bool}, the address's editions. |
 | PATCH | `/api/external/gateway/routes/{domain:[^/]+}/proxy-protocol` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteProxyProtocol` | body {"enabled": bool}, real player IP forwarding. |
@@ -524,6 +525,8 @@ can still show what exists.
 | PUT | `/api/gateway/link-routes/{domain:[^/]+}/voice` | session | _no capability_ | RequireLocalGateway | `GatewayHandler.SetLinkRouteVoice` | body {"enabled": bool, "target_port": int}. |
 | GET | `/api/gateway/links` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetLinks` | every link registered in Redis, each with its online flag. |
 | GET | `/api/gateway/logs` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetLogs` | hub logs are not shipped to Redis, so this answers with the last 100 service error entries instead. |
+| GET | `/api/gateway/provider/orphan-kits` | session | `topology.write` | - | `RemoteKitHandler.OrphanKits` | lists the links the provider holds for this account that no node of this platform has (after a lost or restored database), from the 30 s kit cache. |
+| DELETE | `/api/gateway/provider/orphan-kits/{linkId}` | session | `topology.write` | - | `RemoteKitHandler.RevokeOrphanKit` | revokes a link the provider holds that no node here has; one a node here holds is refused (409 kit_known). |
 | GET | `/api/gateway/provider/usage` | session | `topology.read` | - | `RemoteKitHandler.ProviderUsage` | returns the managed gateway provider's usage for the running month, cached for 60 s. |
 | GET | `/api/gateway/route-options` | session | _no capability_ | - | `SettingsHandler.GetGatewayRouteOptions` | Available to all authenticated users — the user-facing route form needs the hoster list + custom-domain config to render itself. |
 | GET | `/api/gateway/routes` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetAllRoutes` | every gateway route across the whole fleet, read from Redis. |
@@ -663,6 +666,7 @@ can still show what exists.
 | GET | `/api/nodes/{id:[0-9]+}/deploy-bundle` | session | _no capability_ | - | `NodeHandler.GetDeployBundle` | returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint. |
 | DELETE | `/api/nodes/{id:[0-9]+}/force` | session | `nodes.delete` | - | `NodeHandler.ForceDeleteNode` | deletes an offline node and all its servers |
 | GET | `/api/nodes/{id:[0-9]+}/managed-link` | session | `topology.write` | - | `RemoteKitHandler.ManagedLink` | returns the node's managed-gateway link kit (id and key) for its deploy file. |
+| POST | `/api/nodes/{id:[0-9]+}/managed-link/retire` | session | `topology.write` | - | `RemoteKitHandler.RetireManagedLink` | replaces the node's managed link: the provider keeps it working for 8 hours, then removes it with every route still on it. |
 | PUT | `/api/nodes/{id:[0-9]+}/placement` | session | `nodes.write` | - | `PlacementHandler.SetNodePlacement` | PANEL nodes.write. |
 | GET | `/api/nodes/{id:[0-9]+}/servers` | session | _no capability_ | - | `NodeHandler.GetNodeServers` | returns all servers assigned to a node |
 | GET | `/api/nodes/{id:[0-9]+}/storage` | session | _no capability_ | - | `NodeHandler.GetNodeStorage` | returns storage path info from the node's Redis heartbeat. |
@@ -884,7 +888,7 @@ can still show what exists.
 | GET | `/api/settings/gateway/dns` | session | `settings.read` | RequireLocalGateway | `GatewayDNSHandler.Get` | PANEL settings.read. |
 | PUT | `/api/settings/gateway/dns` | session | `settings.write` | RequireLocalGateway | `GatewayDNSHandler.Save` | PANEL settings.write. |
 | POST | `/api/settings/gateway/dns/probe` | session | `settings.write` | RequireLocalGateway | `GatewayDNSHandler.Probe` | PANEL settings.write. |
-| GET | `/api/settings/gateway/provider` | session | `settings.read` | - | `GatewayProviderHandler.Get` | returns the gateway provider mode, URL, whether a key is set (never the key), the outbox backlog and, with a key, the provider account. |
+| GET | `/api/settings/gateway/provider` | session | `settings.read` | - | `GatewayProviderHandler.Get` | returns the gateway provider mode, URL, whether a key is set (never the key), whether the routing mode lets the managed gateway hand out addresses (routingModeOk), the outbox backlog with up to five changes the provider refused and, with a key, the provider account. |
 | POST | `/api/settings/gateway/provider` | session | `settings.write` | - | `GatewayProviderHandler.Save` | saves the gateway provider mode, URL and key. |
 | POST | `/api/settings/gateway/provider/test` | session | `settings.write` | - | `GatewayProviderHandler.Test` | checks a provider URL and key against the provider's account. |
 | GET | `/api/settings/placement` | session | `settings.read` | - | `SettingsHandler.GetPlacementSettings` | PANEL settings.read (RequireCap at the route). |

@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +25,15 @@ type remoteReadsStore struct {
 	routes map[string]store.RemoteRoute
 	outbox []struct{ op, domain string }
 	limits map[string]*int // scope -> max routes; a missing scope has no row
+	// modeErr fails SetServerProxyMode.
+	modeErr error
+}
+
+func (f *remoteReadsStore) SetServerProxyMode(id int, mode string) error {
+	if f.modeErr != nil {
+		return f.modeErr
+	}
+	return f.proxyProtoFakeStore.SetServerProxyMode(id, mode)
 }
 
 func (f *remoteReadsStore) GetGatewayRouteLimit(scope string) (*models.GatewayRouteLimit, error) {
@@ -347,6 +357,71 @@ func TestRemoteProxyProtocolUsesKitCaps(t *testing.T) {
 	}
 }
 
+// The provider refusing real IP (its own feature off) reaches the owner as that
+// refusal, and nothing is stored or queued: before, the PATCH answered 200 and
+// the outbox retried a refusal every 10 minutes.
+func TestRemoteProxyProtocolRefusalReachesTheOwner(t *testing.T) {
+	h, fs, fake := newRemoteGatewayHandler(t)
+	c := remotegw.New(fake.URL(), fake.Key)
+	minted, err := c.MintKit(context.Background(), "node", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.kits[3] = store.RemoteKit{NodeID: 3, LinkID: minted.LinkID}
+	fake.SetKitOnline(minted.LinkID, "client-addr")
+	if err := c.PutRoute(context.Background(), minted.LinkID, "a.example.com", "mc-"+remoteSrvUUID, 25565); err != nil {
+		t.Fatal(err)
+	}
+	fs.routes["a.example.com"] = store.RemoteRoute{Domain: "a.example.com", ServerUUID: remoteSrvUUID, NodeID: 3, Port: 25565}
+
+	// Warm the kit cache, so the refusal below hits the switch, not the kit check.
+	if _, err := h.d.RemoteGateway.KitStatus(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fake.FailNext(1, http.StatusConflict, "proxy_protocol_disabled", 0)
+	rec := serveVars(h.SetServerProxyProtocol, http.MethodPatch, "/", `{"mode":"on"}`, map[string]string{"id": "7"})
+	if rec.Code != http.StatusConflict || decodeCode(t, rec) != "proxy_protocol_disabled" {
+		t.Fatalf("refused: %d %s", rec.Code, rec.Body)
+	}
+	if fs.servers[7].ProxyProtocol || fs.modes[7] != "" || len(fs.outbox) != 0 || fs.routes["a.example.com"].ProxyProtocol {
+		t.Fatalf("refusal left state: flag %v, mode %q, outbox %v, row %+v", fs.servers[7].ProxyProtocol, fs.modes[7], fs.outbox, fs.routes["a.example.com"])
+	}
+
+	// Accepted: applied at once, stored, nothing queued, the provider asked once.
+	before := countCalls(fake.Calls(), "PATCH ")
+	rec = serveVars(h.SetServerProxyProtocol, http.MethodPatch, "/", `{"mode":"on"}`, map[string]string{"id": "7"})
+	if rec.Code != http.StatusOK || !fs.servers[7].ProxyProtocol || fs.modes[7] != store.ProxyModeOn || len(fs.outbox) != 0 || !fs.routes["a.example.com"].ProxyProtocol {
+		t.Fatalf("accepted: %d %s, outbox %v", rec.Code, rec.Body, fs.outbox)
+	}
+	if n := countCalls(fake.Calls(), "PATCH ") - before; n != 1 {
+		t.Fatalf("provider asked %d times, want 1", n)
+	}
+}
+
+func countCalls(calls []string, prefix string) int {
+	n := 0
+	for _, c := range calls {
+		if strings.HasPrefix(c, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// A new server's stored auto does nothing on the managed gateway, so the view
+// says off; the stored value is kept.
+func TestRemoteProxyProtocolViewReportsAutoAsOff(t *testing.T) {
+	h, fs, _ := newRemoteGatewayHandler(t)
+	rec := serveVars(h.GetServerProxyProtocol, http.MethodGet, "/", "", map[string]string{"id": "7"})
+	var view map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &view); err != nil || view["mode"] != store.ProxyModeOff || view["autoAvailable"] != false {
+		t.Fatalf("view = %s", rec.Body)
+	}
+	if _, stored := fs.modes[7]; stored {
+		t.Fatal("the stored mode was rewritten")
+	}
+}
+
 // Local mode gets none of the remote fields or branches.
 func TestLocalProxyProtocolViewUnchanged(t *testing.T) {
 	h, _, _ := newProxyProtoHandler(t, true)
@@ -422,5 +497,34 @@ func TestRemoteCheckReasonSentences(t *testing.T) {
 		if got := remoteCheckReason(code, "admin.example.com"); got != want {
 			t.Errorf("%s: %q, want %q", code, got, want)
 		}
+	}
+}
+
+// Real IP switched on at the provider, then the local save fails: the
+// provider change is taken back through the outbox, so the two do not
+// disagree with the switch showing off.
+func TestRemoteProxyProtocolOnUndoneWhenTheSaveFails(t *testing.T) {
+	h, fs, fake := newRemoteGatewayHandler(t)
+	c := remotegw.New(fake.URL(), fake.Key)
+	minted, err := c.MintKit(context.Background(), "node", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fs.kits[3] = store.RemoteKit{NodeID: 3, LinkID: minted.LinkID}
+	fake.SetKitOnline(minted.LinkID, "client-addr")
+	if err := c.PutRoute(context.Background(), minted.LinkID, "a.example.com", "mc-"+remoteSrvUUID, 25565); err != nil {
+		t.Fatal(err)
+	}
+	fs.routes["a.example.com"] = store.RemoteRoute{Domain: "a.example.com", ServerUUID: remoteSrvUUID, NodeID: 3, Port: 25565}
+	fs.modeErr = errors.New("database down")
+	rec := serveVars(h.SetServerProxyProtocol, http.MethodPatch, "/", `{"mode":"on"}`, map[string]string{"id": "7"})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("save failure: %d %s", rec.Code, rec.Body)
+	}
+	if countCalls(fake.Calls(), "PATCH ") != 1 {
+		t.Fatalf("calls %v, want the provider switched on once", fake.Calls())
+	}
+	if len(fs.outbox) != 1 || fs.outbox[0].op != "proxy" || fs.outbox[0].domain != "a.example.com" {
+		t.Fatalf("outbox %v, want the switch-off queued for a.example.com", fs.outbox)
 	}
 }

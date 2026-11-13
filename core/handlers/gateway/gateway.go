@@ -1096,7 +1096,9 @@ func decodeProxyProtocolBody(r *http.Request) (bool, bool) {
 //
 // The column is the truth and is written first; the node key and the hub
 // message follow it. A failure after the column answers 502 so the caller saves
-// again, which rewrites all three.
+// again, which rewrites all three. On the managed gateway, turning it on asks
+// the provider for the first route before anything is stored, and its refusal
+// is the answer.
 func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.Request) {
 	srv, err := h.d.Store.GetServerByID(httpx.MustAtoi(mux.Vars(r)["id"]))
 	if err != nil || srv == nil {
@@ -1137,12 +1139,35 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 	} else if enabled && h.proxyProtocolNoLink(w, r, func(rt services.GatewayRoute) bool { return services.RouteBelongsToServer(rt, srv.UUID) }) {
 		return
 	}
+	var hub interface {
+		SetServerProxyProtocol(serverUUID string, enabled bool) error
+	} = h.d.Gateway
+	if enabled && rg != nil {
+		// The managed provider is asked BEFORE anything is stored, so its
+		// refusal leaves the switch as it was instead of showing it on while
+		// the outbox retries in vain. Asked once: the write below skips it.
+		if err := rg.SetServerProxyProtocol(srv.UUID, true); err != nil {
+			if !gate.GatewayProviderError(w, err) {
+				log.Printf("proxy-protocol: server %d: %v", srv.ID, err)
+				httpx.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
+			}
+			return
+		}
+		hub = proxyProtocolSent{}
+	}
 	if err := h.d.Store.SetServerProxyMode(srv.ID, mode); err != nil {
 		log.Printf("proxy-protocol: server %d: mode: %v", srv.ID, err)
+		if _, sent := hub.(proxyProtocolSent); sent {
+			// The provider already switched it on while this platform still
+			// says off; turning it off again is only ever queued.
+			if uerr := rg.SetServerProxyProtocol(srv.UUID, false); uerr != nil {
+				log.Printf("proxy-protocol: server %d: undo on the provider not queued: %v", srv.ID, uerr)
+			}
+		}
 		httpx.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)
 		return
 	}
-	if err := services.ApplyServerProxyProtocol(r.Context(), h.d.Store, h.d.Redis, h.d.Gateway, srv.ID, srv.UUID, enabled); err != nil {
+	if err := services.ApplyServerProxyProtocol(r.Context(), h.d.Store, h.d.Redis, hub, srv.ID, srv.UUID, enabled); err != nil {
 		log.Printf("proxy-protocol: server %d: %v", srv.ID, err)
 		switch {
 		case errors.Is(err, services.ErrProxyProtocolNodeKey):
@@ -1164,6 +1189,12 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "proxyProtocol": enabled, "mode": mode})
 }
+
+// proxyProtocolSent stands in for the gateway once the switch already reached
+// the managed provider.
+type proxyProtocolSent struct{}
+
+func (proxyProtocolSent) SetServerProxyProtocol(string, bool) error { return nil }
 
 // decodeProxyModeBody reads {"mode": "auto"|"on"|"off"}, or the older
 // {"enabled": bool} (true = on, false = off). One of the two is required: an
@@ -1242,6 +1273,11 @@ func (h *GatewayHandler) GetServerProxyProtocol(w http.ResponseWriter, r *http.R
 	}
 	if rg != nil {
 		out["autoAvailable"] = false
+		// What a stored auto does here: nothing, so it reads as off. The row
+		// keeps auto for a switch back to the local gateway.
+		if mode == store.ProxyModeAuto {
+			out["mode"] = store.ProxyModeOff
+		}
 	}
 	json.NewEncoder(w).Encode(out)
 }

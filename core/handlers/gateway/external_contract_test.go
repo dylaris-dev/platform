@@ -69,4 +69,9 @@ func TestProviderMatchesClientContract(t *testing.T) {
 	})
 	contractRequire(t, "regions", regions, K["regions"])
 	contractRequire(t, "regions.item", contractFirst(t, regions), K["regions.item"])
+
+	retire := get(func(rec *httptest.ResponseRecorder) {
+		f.h.RetireLinkKit(rec, retireReq(extTenantB, "link-b"))
+	})
+	contractRequire(t, "link-kits.retire", retire, K["link-kits.retire"])
 }

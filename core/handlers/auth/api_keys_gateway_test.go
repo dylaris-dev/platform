@@ -170,6 +170,50 @@ func TestGatewayKeyStopsWhenEntitlementLapses(t *testing.T) {
 	}
 }
 
+// A refused key at use time: a gateway-only key (gateway.* plus at most
+// usage.read) on a platform with a store says its owner's gateway access is
+// suspended or has ended; any other key, and any key without a store, keeps
+// the operator-gate text. Same status and body shape either way.
+func TestRefusedKeyAtUseNamesTheReason(t *testing.T) {
+	use := func(h *APIKeysHandler, rs *rollFakeStore, perms []string) (int, string) {
+		rs.keysByHash[services.HashAPIKey("gk")] = &models.APIKey{ID: 1, UserID: gwOwner, RatePerMin: 100,
+			Scope: models.APIKeyScope{Permissions: perms}}
+		r := httptest.NewRequest("GET", "/x", nil)
+		r.Header.Set("Authorization", "Bearer dyl_gk")
+		rec := httptest.NewRecorder()
+		h.APIKeyOwnerRoute("")(sentinelInner)(rec, r)
+		var body struct {
+			Success *bool  `json:"success"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Success == nil || *body.Success {
+			t.Fatalf("body shape: %s", rec.Body.String())
+		}
+		return rec.Code, body.Message
+	}
+	const ended = "This account's gateway access is suspended or has ended."
+	const gated = "API keys are not enabled for users on this platform"
+	for _, c := range []struct {
+		name  string
+		store bool
+		perms []string
+		want  string
+	}{
+		{"gateway only", true, []string{"gateway.read"}, ended},
+		{"gateway and usage", true, []string{"gateway.read", "gateway.write", "usage.read"}, ended},
+		{"usage only", true, []string{"usage.read"}, gated},
+		{"gateway and more", true, []string{"gateway.read", "modpack.read"}, gated},
+		{"gateway only, no store", false, []string{"gateway.read"}, gated},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, rs := newGatewayHandlerStore(false, c.store, nil)
+			if code, msg := use(h, rs, c.perms); code != http.StatusForbidden || msg != c.want {
+				t.Fatalf("got %d %q, want 403 %q", code, msg, c.want)
+			}
+		})
+	}
+}
+
 func rollSelf(h *APIKeysHandler, bearer string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest("POST", "/api/external/api-key/roll", nil)
 	r.Header.Set("Authorization", "Bearer "+bearer)

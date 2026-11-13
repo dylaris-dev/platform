@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.13.2
+
+### Features
+- The gateway API can retire a link kit to replace a node: `POST /api/external/gateway/link-kits/{id}/retire`.
+  It keeps working for 8 hours, and kit lists show its `retire_at`.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.12
 
 ### Features

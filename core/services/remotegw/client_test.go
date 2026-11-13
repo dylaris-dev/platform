@@ -94,7 +94,7 @@ func TestClientUnwrapsItems(t *testing.T) {
 		t.Fatalf("mint = %+v, %v", m, err)
 	}
 	f.SetKitOnline(m.LinkID, "client-addr", "voice")
-	if err := cl.PutRoute(ctx, m.LinkID, "play.example.com", "mc-1", 25570); err != nil {
+	if err := cl.PutRoute(ctx, m.LinkID, "play.example.com", "mc-12-abc123def456", 25570); err != nil {
 		t.Fatal(err)
 	}
 	kits, err := cl.Kits(ctx)
@@ -106,7 +106,7 @@ func TestClientUnwrapsItems(t *testing.T) {
 		t.Fatalf("kit = %+v", k)
 	}
 	routes, err := cl.Routes(ctx)
-	want := Route{Domain: "play.example.com", TargetHost: "mc-1", TargetPort: 25570, LinkID: m.LinkID}
+	want := Route{Domain: "play.example.com", TargetHost: "mc-12-abc123def456", TargetPort: 25570, LinkID: m.LinkID}
 	if err != nil || len(routes) != 1 || routes[0] != want {
 		t.Fatalf("routes = %+v, %v, want %+v", routes, err, want)
 	}
@@ -117,12 +117,12 @@ func TestClientRoutesLifecycle(t *testing.T) {
 	ctx := context.Background()
 	a, _ := cl.MintKit(ctx, "a", "")
 	b, _ := cl.MintKit(ctx, "b", "")
-	cl.PutRoute(ctx, a.LinkID, "play.example.com", "mc-1", 0)
+	cl.PutRoute(ctx, a.LinkID, "play.example.com", "mc-12-abc123def456", 0)
 	if err := cl.SetProxyProtocol(ctx, "play.example.com", true); err != nil {
 		t.Fatal(err)
 	}
 	// The move is the same upsert on another kit and keeps the proxy switch.
-	if err := cl.PutRoute(ctx, b.LinkID, "play.example.com", "mc-1", 25565); err != nil {
+	if err := cl.PutRoute(ctx, b.LinkID, "play.example.com", "mc-12-abc123def456", 25565); err != nil {
 		t.Fatal(err)
 	}
 	routes, _ := cl.Routes(ctx)
@@ -294,5 +294,60 @@ func TestClientRefusesDotPathSegments(t *testing.T) {
 	}
 	if n := len(f.Calls()); n != 0 {
 		t.Fatalf("%d requests went out, want none: %v", n, f.Calls())
+	}
+}
+
+// RetireKit returns the provider's deadline, the kit list carries it, and the
+// provider's refusals reach the caller with their codes.
+func TestClientRetireKit(t *testing.T) {
+	ctx := context.Background()
+	cl, f := newClient(t)
+	f.SetLinkLimit(1)
+	m, err := cl.MintKit(ctx, "old", "eu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now()
+	at, err := cl.RetireKit(ctx, m.LinkID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := at.Sub(before); d < 8*time.Hour-2*time.Second || d > 8*time.Hour+2*time.Second {
+		t.Fatalf("retire_at %v is %v away, want 8h", at, d)
+	}
+	kits, err := cl.Kits(ctx)
+	if err != nil || len(kits) != 1 || kits[0].RetireAt == nil || !kits[0].RetireAt.Equal(at) {
+		t.Fatalf("kits %+v, %v: want retire_at %v", kits, err, at)
+	}
+	m2, err := cl.MintKit(ctx, "new", "eu")
+	if err != nil {
+		t.Fatalf("mint beside a retiring kit at a limit of 1: %v", err)
+	}
+	if kits, _ := cl.Kits(ctx); len(kits) != 2 || kits[1].RetireAt != nil {
+		t.Fatalf("a kit that is not retiring carries retire_at: %+v", kits)
+	}
+
+	for _, c := range []struct {
+		name, link, code string
+		setup            func()
+	}{
+		{"already retiring", m.LinkID, "kit_already_retiring", nil},
+		{"every slot in use", m2.LinkID, "retire_limit", nil},
+		{"budget used up", m2.LinkID, "retire_budget", func() { f.SetLinkLimit(2); f.SetRetireBudget(1) }},
+		{"unknown kit", "link-nope", "link_not_found", nil},
+		{"no host limit", m2.LinkID, "retire_not_needed", func() { f.SetLinkLimit(0) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if c.setup != nil {
+				c.setup()
+			}
+			at, err := cl.RetireKit(ctx, c.link)
+			if !IsCode(err, c.code) || !at.IsZero() || Retryable(err) {
+				t.Fatalf("got %v, %v; want %s, not retryable", at, err, c.code)
+			}
+		})
+	}
+	if _, err := cl.RetireKit(ctx, ".."); !errors.Is(err, ErrBadSegment) {
+		t.Fatalf("dot segment: %v", err)
 	}
 }

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
     visibilityFor, providerErrorText, providerModeOf, outboxWarning, barPercent, isDockerNetworkName,
     switchConfirm, purchaseNote, usageFinalLabel, providerGbToBytes, productLabel, testedAccount,
+    routingModeWarning, refusalLine,
+    RETIRE_CONFIRM, canReplaceLink, retiringLine, ORPHAN_INTRO, showOrphanSection, orphanRevokeConfirm,
     type RemoteVisibility,
 } from './gatewayProvider';
 
@@ -165,5 +167,71 @@ describe('testedAccount', () => {
         ['failed test without one: none', { ok: false }, undefined],
     ])('%s', (_name, test, want) => {
         expect(testedAccount(test as { account?: { product: string } } | null, saved)).toEqual(want);
+    });
+});
+
+describe('routingModeWarning', () => {
+    const text = 'Switch the routing mode to Gateway or Both first. Servers get their addresses from the gateway only in those modes.';
+    it.each([
+        [false, true, false, text],
+        [false, false, true, text],
+        [false, false, false, null],
+        [true, true, true, null],
+        [undefined, true, true, null],
+    ])('ok=%j chosen=%j saved=%j', (ok, chosen, saved, want) => {
+        expect(routingModeWarning(ok, chosen, saved)).toBe(want);
+    });
+    it('has its own error text', () => {
+        expect(providerErrorText('routing_mode')).toBe(text);
+    });
+});
+
+describe('refusalLine', () => {
+    it('names the change, the address and the answer', () => {
+        expect(refusalLine({ op: 'proxy', domain: 'a.example.com', error: 'gateway provider answered 409 proxy_protocol_disabled: off' }))
+            .toBe('Real player IP for a.example.com: gateway provider answered 409 proxy_protocol_disabled: off');
+        expect(refusalLine({ op: 'other', domain: 'b.example.com', error: 'x' })).toBe('other for b.example.com: x');
+    });
+});
+
+describe('replacing a node link', () => {
+    it('the confirm states the 8 hours, the host limit and that it is final', () => {
+        expect(RETIRE_CONFIRM.message).toBe(
+            'The link keeps working for 8 hours so players can finish, then it is removed. '
+            + "During that time another node can get a link even if your plan's host limit is reached. "
+            + "Move this node's servers to the new node before the time is up. This cannot be undone.",
+        );
+        expect(RETIRE_CONFIRM).toMatchObject({ destructive: true, focusCancel: true });
+    });
+
+    it('offers the replacement only for a link that is not being replaced', () => {
+        expect(canReplaceLink({})).toBe(true);
+        expect(canReplaceLink({ retireAt: '2026-11-13T20:00:00Z' })).toBe(false);
+        expect(canReplaceLink(null)).toBe(false);
+    });
+
+    it('names the removal time', () => {
+        expect(retiringLine('2026-11-13T20:00:00Z', v => `<${v}>`)).toBe('Being replaced. Removed at <2026-11-13T20:00:00Z>.');
+    });
+
+    it('has texts for the provider refusals', () => {
+        expect(providerErrorText('retire_limit')).toBe('All replacement slots of this plan are in use. Wait until a link being replaced has run out.');
+        expect(providerErrorText('retire_budget')).toBe("This plan's monthly number of link replacements is used up.");
+        expect(providerErrorText('link_limit')).toBe("This plan's host limit is reached. Remove a node's link, or use Replace this node's link on a node you are retiring.");
+    });
+});
+
+describe('unknown provider links', () => {
+    it('is hidden while empty or not loaded, shown with links or a failed load', () => {
+        expect(showOrphanSection(null, '')).toBe(false);
+        expect(showOrphanSection([], '')).toBe(false);
+        expect(showOrphanSection([{ linkId: 'link-a' }], '')).toBe(true);
+        expect(showOrphanSection(null, 'The provider could not be reached.')).toBe(true);
+    });
+
+    it('warns about a second installation on the same account', () => {
+        expect(ORPHAN_INTRO).toContain('Only revoke a link here if no other DYLARIS installation uses this provider account.');
+        expect(orphanRevokeConfirm('old node').message).toContain('another DYLARIS installation');
+        expect(orphanRevokeConfirm('').message.startsWith('This link stops connecting')).toBe(true);
     });
 });

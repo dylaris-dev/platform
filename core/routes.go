@@ -91,6 +91,9 @@ type routeExtras struct {
 	// The scheduler in main runs platform backups through the same handler
 	// the routes use, so both read one backup.Deps.
 	platformBackupHandler *backup.PlatformBackupHandler
+	// The retirement tick in main revokes retired link kits through the same
+	// teardown as the owner's revoke.
+	warpHandler *gateway.WarpHandler
 }
 
 // requiredCaps maps a route's mux path template to the capability id that
@@ -508,6 +511,9 @@ var requiredCaps = map[string]string{
 	"/api/gateway/sync":                            "topology.write",
 	"/api/gateway/provider/usage":                  "topology.read",
 	"/api/nodes/{id:[0-9]+}/managed-link":          "topology.write",
+	"/api/nodes/{id:[0-9]+}/managed-link/retire":   "topology.write",
+	"/api/gateway/provider/orphan-kits":            "topology.write",
+	"/api/gateway/provider/orphan-kits/{linkId}":   "topology.write",
 	"/api/gateway/errors":                          "topology.read",
 	"/api/infrastructure/overview":                 "topology.read",
 	"/api/infrastructure/players-online":           "topology.read",
@@ -1910,6 +1916,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	remoteKitHandler := gateway.NewRemoteKitHandler(gatewayDeps)
 	api.HandleFunc("/nodes/{id:[0-9]+}/managed-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(remoteKitHandler.ManagedLink))).Methods("GET")
 	api.HandleFunc("/gateway/provider/usage", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(remoteKitHandler.ProviderUsage))).Methods("GET")
+	api.HandleFunc("/nodes/{id:[0-9]+}/managed-link/retire", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(remoteKitHandler.RetireManagedLink))).Methods("POST")
+	api.HandleFunc("/gateway/provider/orphan-kits", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(remoteKitHandler.OrphanKits))).Methods("GET")
+	api.HandleFunc("/gateway/provider/orphan-kits/{linkId}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(remoteKitHandler.RevokeOrphanKit))).Methods("DELETE")
 	// One cap for both methods (the cap map is keyed by path): the toggle is a write control, and reading it is only ever done to show it.
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(gates.RequireLocalGateway(gatewayHandler.GetPublicTargets)))).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(gates.RequireLocalGateway(gatewayHandler.SetPublicTargets)))).Methods("PUT")
@@ -2032,6 +2041,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/external/gateway/link-kits", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.MintLinkKit))))).Methods("POST")
 	api.HandleFunc("/external/gateway/link-kits/{linkID}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.RevokeLinkKit))))).Methods("DELETE")
 	api.HandleFunc("/external/gateway/link-kits/{linkID}/roll", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.RollLinkKit))))).Methods("POST")
+	api.HandleFunc("/external/gateway/link-kits/{linkID}/retire", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.RetireLinkKit))))).Methods("POST")
 	api.HandleFunc("/external/gateway/routes", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.ListRoutes))))).Methods("GET")
 	api.HandleFunc("/external/gateway/routes", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.CreateRoute))))).Methods("POST")
 	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.DeleteRoute))))).Methods("DELETE")
@@ -2408,6 +2418,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	return r, &routeExtras{
 		settingsHandler: settingsHandler,
 		warpService:     warpService,
+		warpHandler:     warpHandler,
 		proxyHandler:    proxyHandler,
 		packsHandler:    packsHandler,
 

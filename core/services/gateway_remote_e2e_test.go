@@ -8,8 +8,28 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/models"
 	"dylaris-core/services/remotegw"
 )
+
+// A server created in the panel has the id <ownerId>_<12 base36 chars>, not a
+// canonical uuid; the fake provider applies the provider's target rule, so a
+// name the provider refuses fails here too.
+func TestRemoteGatewayPanelShapedServerGetsARoute(t *testing.T) {
+	rg, st, fake := newRemoteTest(t)
+	st.servers[3] = &models.Server{ID: 3, UUID: "12_abc123def456", NodeID: 7}
+	gw := NewSwitchingGateway(nil, rg, func() (bool, bool) { return true, true })
+	if err := gw.CreateServerRoute(3, "owner", "panel.example.com", 25565); err != nil {
+		t.Fatal(err)
+	}
+	routes, err := remotegw.New(fake.URL(), fake.Key).Routes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || routes[0].TargetHost != "mc-12-abc123def456" || st.routes["panel.example.com"].ServerUUID != "12_abc123def456" {
+		t.Fatalf("provider %+v, rows %v", routes, st.routes)
+	}
+}
 
 // TestRemoteGatewayLifecycleEndToEnd drives one server through the managed
 // gateway the way the platform does: create, real-IP on, move to another node,
@@ -65,16 +85,13 @@ func TestRemoteGatewayLifecycleEndToEnd(t *testing.T) {
 				t.Fatalf("after create: row %+v", row)
 			}
 
-			// 2. Real IP on: queued, then drained.
+			// 2. Real IP on: the provider is asked at once, nothing is queued.
 			st.servers[1].ProxyProtocol = true
 			if err := gw.SetServerProxyProtocol(uuidA, true); err != nil {
 				t.Fatal(err)
 			}
-			if r, _ := providerRoute(); r.ProxyProtocol || len(openOutbox(st)) != 1 {
-				t.Fatalf("proxy applied before the drain: %+v, outbox %+v", r, openOutbox(st))
-			}
-			if done, failed := drain(); done != 1 || failed != 0 {
-				t.Fatalf("proxy drain: done %d failed %d", done, failed)
+			if len(openOutbox(st)) != 0 {
+				t.Fatalf("proxy queued although the provider took it: %+v", openOutbox(st))
 			}
 			if r, _ := providerRoute(); !r.ProxyProtocol || !st.routes[domain].ProxyProtocol {
 				t.Fatalf("after proxy: provider %+v, row %+v", r, st.routes[domain])

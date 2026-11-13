@@ -583,8 +583,8 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 before, and independently of, how traffic is routed. */}
             <GatewayProviderCard />
 
-            {/* Routing Mode */}
-            <div className="card p-5 space-y-5">
+            {/* Routing Mode. The provider card links here by id. */}
+            <div id="traffic-routing" className="card p-5 space-y-5 scroll-mt-4">
                 <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-md bg-(--base-03) flex items-center justify-center">
                         <Router size={18} className="text-(--accent-light)" />

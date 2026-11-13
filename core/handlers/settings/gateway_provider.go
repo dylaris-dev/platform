@@ -62,7 +62,19 @@ type providerFailure struct {
 type providerOutbox struct {
 	Open     int        `json:"open"`
 	OldestAt *time.Time `json:"oldestAt,omitempty"`
+	// Refused: open changes the provider refused, newest first, at most
+	// providerRefusedMax. Error is the stored answer, which the client already
+	// stripped of the key.
+	Refused []providerRefusal `json:"refused"`
 }
+
+type providerRefusal struct {
+	Op     string `json:"op"`
+	Domain string `json:"domain"`
+	Error  string `json:"error"`
+}
+
+const providerRefusedMax = 5
 
 type providerView struct {
 	Success    bool   `json:"success"`
@@ -73,7 +85,10 @@ type providerView struct {
 	URLFromEnv bool   `json:"urlFromEnv"`
 	// KeyUnreadable: a key is stored but cannot be decrypted (CLUSTER_SECRET
 	// changed); it reads as no key, so remote mode is off until it is re-entered.
-	KeyUnreadable bool              `json:"keyUnreadable,omitempty"`
+	KeyUnreadable bool `json:"keyUnreadable,omitempty"`
+	// RoutingModeOK: the routing mode is gateway or both. In ip_port no server
+	// gets a gateway address, so every route create is refused.
+	RoutingModeOK bool              `json:"routingModeOk"`
 	Outbox        providerOutbox    `json:"outbox"`
 	Account       *remotegw.Account `json:"account,omitempty"`
 	Error         *providerFailure  `json:"error,omitempty"`
@@ -189,7 +204,8 @@ func (h *GatewayProviderHandler) view(ctx context.Context) (providerView, error)
 	if err != nil {
 		return providerView{}, err
 	}
-	v := providerView{Success: true, Mode: "local", URL: pc.URL, KeySet: pc.Key != "", KeyFromEnv: pc.KeyFromEnv, URLFromEnv: pc.URLFromEnv}
+	v := providerView{Success: true, Mode: "local", URL: pc.URL, KeySet: pc.Key != "", KeyFromEnv: pc.KeyFromEnv, URLFromEnv: pc.URLFromEnv,
+		RoutingModeOK: services.GatewayRoutingEnabled(h.d.Store)}
 	if pc.Remote {
 		v.Mode = "remote"
 	}
@@ -207,6 +223,14 @@ func (h *GatewayProviderHandler) view(ctx context.Context) (providerView, error)
 	v.Outbox.Open = open
 	if open > 0 && !oldest.IsZero() {
 		v.Outbox.OldestAt = &oldest
+	}
+	refused, err := h.d.Store.ListRefusedOutbox(providerRefusedMax)
+	if err != nil {
+		return providerView{}, fmt.Errorf("list refused gateway outbox: %w", err)
+	}
+	v.Outbox.Refused = make([]providerRefusal, 0, len(refused))
+	for _, it := range refused {
+		v.Outbox.Refused = append(v.Outbox.Refused, providerRefusal{Op: it.Op, Domain: it.Domain, Error: it.LastError})
 	}
 	// Only with a key: a platform that never set one makes no outbound call.
 	if v.KeySet {
@@ -230,8 +254,10 @@ func (h *GatewayProviderHandler) writeView(w http.ResponseWriter, r *http.Reques
 }
 
 // Get GET /api/settings/gateway/provider returns the gateway provider mode,
-// URL, whether a key is set (never the key), the outbox backlog and, with a
-// key, the provider account. settings.read at the route.
+// URL, whether a key is set (never the key), whether the routing mode lets the
+// managed gateway hand out addresses (routingModeOk), the outbox backlog with
+// up to five changes the provider refused and, with a key, the provider
+// account. settings.read at the route.
 func (h *GatewayProviderHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if h.limited(w, r, "provider-read", providerReadsPerMinute) {
 		return
@@ -246,15 +272,17 @@ type providerSaveRequest struct {
 }
 
 const (
-	invalidURLMessage = "The provider URL must be https:// with no path, query or credentials."
-	envKeyURLMessage  = "The provider key is set by GATEWAY_PROVIDER_KEY and is only sent to the provider address in force."
+	invalidURLMessage  = "The provider URL must be https:// with no path, query or credentials."
+	envKeyURLMessage   = "The provider key is set by GATEWAY_PROVIDER_KEY and is only sent to the provider address in force."
+	routingModeMessage = "Switch the routing mode to Gateway or Both first. Servers get their addresses from the gateway only in those modes."
 )
 
 // Save POST /api/settings/gateway/provider saves the gateway provider mode,
 // URL and key. settings.write at the route. An omitted url or key keeps the
 // stored one; "" clears it. A new address needs the key sent with it, so a
 // stored key never travels to a host it was not entered for. Switching to
-// remote is checked against the provider first. Switching to local, or
+// remote is refused with 409 routing_mode while the routing mode is IP:Port,
+// and is checked against the provider first. Switching to local, or
 // clearing the key, deletes nothing: the local route rows stay for a switch
 // back.
 func (h *GatewayProviderHandler) Save(w http.ResponseWriter, r *http.Request) {
@@ -312,6 +340,12 @@ func (h *GatewayProviderHandler) Save(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	if req.Mode == "remote" && !pc.Remote && !services.GatewayRoutingEnabled(h.d.Store) {
+		// Not switched for the operator: changing the routing mode redeploys
+		// every server.
+		httpx.SendJSONErrorCode(w, routingModeMessage, "routing_mode", http.StatusConflict)
+		return
+	}
 	if req.Mode == "remote" {
 		// The stored flags, not the getters: those already read off in remote
 		// mode. Tenants' kits and nodes are local gateway state the managed

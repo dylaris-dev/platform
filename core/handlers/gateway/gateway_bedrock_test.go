@@ -195,6 +195,11 @@ type linkBedrockStore struct {
 }
 
 func (f *linkBedrockStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) { return f.core, nil }
+
+// No retiring kits here.
+func (f *linkBedrockStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
+	return nil, nil
+}
 func (f *linkBedrockStore) ListLinkRouteEditions() ([]store.LinkRouteEdition, error) {
 	var out []store.LinkRouteEdition
 	for _, e := range f.links {

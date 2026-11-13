@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
     providerSaveBody, providerTestBody, saveGatewayProvider, getGatewayProvider, type ProviderForm,
+    retireManagedLink, getOrphanKits, revokeOrphanKit,
 } from './gatewayProvider';
 
 const form: ProviderForm = {
@@ -72,6 +73,35 @@ describe('request shape and refusals', () => {
         stub(429, { success: false, message: 'Too many requests, try again in a minute.', code: 'rate_limited' });
         const res = await saveGatewayProvider({ mode: 'local' });
         expect(res).toMatchObject({ success: false, status: 429, message: 'Too many attempts, try again in a minute.' });
+    });
+
+    it('replacing a node link POSTs to its retire route and returns the deadline', async () => {
+        const f = stub(200, { success: true, retireAt: '2026-11-13T20:00:00Z' });
+        const res = await retireManagedLink(12);
+        const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+        expect(url).toMatch(/\/nodes\/12\/managed-link\/retire$/);
+        expect(init.method).toBe('POST');
+        expect(res).toMatchObject({ success: true, retireAt: '2026-11-13T20:00:00Z' });
+    });
+
+    it('a replacement refusal keeps the provider code and message', async () => {
+        stub(409, { success: false, error: "This plan's monthly number of link replacements is used up.", code: 'retire_budget' });
+        const res = await retireManagedLink(12);
+        expect(res).toMatchObject({ success: false, status: 409, code: 'retire_budget', message: "This plan's monthly number of link replacements is used up." });
+    });
+
+    it('lists the unknown links and revokes one by its escaped id', async () => {
+        const f = stub(200, { success: true, items: [{ linkId: 'link-a', name: 'old', region: 'eu', online: true }] });
+        const list = await getOrphanKits();
+        expect(list).toMatchObject({ success: true, items: [{ linkId: 'link-a' }] });
+        expect((f.mock.calls[0] as unknown as [string])[0]).toMatch(/\/gateway\/provider\/orphan-kits$/);
+
+        const g = stub(200, { success: true, queued: false });
+        const res = await revokeOrphanKit('link a/..');
+        const [url, init] = g.mock.calls[0] as unknown as [string, RequestInit];
+        expect(url).toMatch(/\/gateway\/provider\/orphan-kits\/link%20a%2F\.\.$/);
+        expect(init.method).toBe('DELETE');
+        expect(res).toMatchObject({ success: true, queued: false });
     });
 
     it('a transport failure is not an answer', async () => {

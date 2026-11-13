@@ -57,6 +57,10 @@ type PickNodeRequest struct {
 	// Not set on the preview endpoint, so an admin's capacity view still shows
 	// every node. Not JSON-decoded.
 	PlatformOnly bool `json:"-"`
+
+	// Retiring holds the nodes whose managed link is being replaced: they are
+	// listed but never picked. Not JSON-decoded.
+	Retiring map[int]bool `json:"-"`
 }
 
 // NodeCandidate is one node considered for placement. `Available` means
@@ -148,6 +152,10 @@ func Pick(ctx context.Context, st store.Store, rdb *redis.Client, gatewayOn bool
 		}
 
 		c := ScoreNode(ctx, st, rdb, n, req, heartbeats[n.Token])
+		if req.Retiring[n.ID] {
+			c.Available = false
+			c.Reason = "this node's managed link is being replaced"
+		}
 		candidates = append(candidates, c)
 	}
 

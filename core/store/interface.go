@@ -264,6 +264,7 @@ type Store interface {
 	InsertRemoteKit(k RemoteKit) (inserted bool, err error) // false: the node already has a kit
 	DeleteRemoteKit(nodeID uint) error
 	ListRemoteKits() ([]RemoteKit, error)
+	SetRemoteKitRetireAt(nodeID uint, linkID string, at time.Time) error
 	UpsertRemoteRoute(r RemoteRoute) error
 	// ClaimRemoteRoute inserts r unless its domain has a row; claimed=false
 	// returns the row that holds it.
@@ -277,6 +278,7 @@ type Store interface {
 	FinishOutbox(id int64) error
 	FailOutbox(id int64, lastError string, next time.Time) error
 	CountOpenOutbox() (open int, oldest time.Time, err error)
+	ListRefusedOutbox(limit int) ([]OutboxItem, error)  // open route changes the provider refused, newest first
 	GetRemoteRoute(domain string) (*RemoteRoute, error) // nil, nil when absent
 	OldestOpenOutboxID(domain string) (int64, error)    // 0 when none is open
 	DeferOutbox(id int64, next time.Time) error         // reschedule without counting an attempt
@@ -592,6 +594,11 @@ type Store interface {
 	// fewer than cap live kits, counted and inserted under one per-owner lock.
 	// false (no error) when the cap is reached.
 	CreateLinkKitUnderCap(k WarpAPIKey, cap int64) (bool, error)
+	// RetireLinkKit, ListDueRetiringLinkKits and PurgeKitRetirements are link
+	// kit retirement (services/kit_retire.go); see store/warp.go.
+	RetireLinkKit(ownerID, linkID string, now, retireAt, monthStart time.Time, allow func(retiring, thisMonth int64) error) (time.Time, error)
+	ListDueRetiringLinkKits(now time.Time) ([]WarpAPIKey, error)
+	PurgeKitRetirements(before time.Time) error
 	// ListWarpKeyIDsBoundToNode names the overlay keys bound to one node, revoked
 	// or not. Read before the node row goes: the binding is ON DELETE SET NULL.
 	ListWarpKeyIDsBoundToNode(nodeID int) ([]int, error)

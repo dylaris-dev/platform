@@ -16,6 +16,7 @@ import { DeployKit, DEPLOY_ASIDE_STICKY, DEPLOY_GRID, NotIncluded, usageLabel } 
 import { routeSubmitRequest } from '@/lib/routeSubmit';
 import { allowedTargets } from '@/lib/warpDeploy';
 import { linkState } from '@/lib/linkState';
+import { fmtDateTime } from '@/lib/time';
 import LinkBadge from '@/components/infra/LinkBadge';
 import type { WarpDeployConfig } from '@/lib/api/warpDeployConfig';
 import ProxyProtocolSwitch from '@/components/ProxyProtocolSwitch';
@@ -75,6 +76,8 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
 
     // Create-route flow
     const [linkId, setLinkId] = useState('');
+    const routableKits = kits.filter(k => !k.retire_at);
+    const retiringSelected = kits.some(k => k.retire_at && k.link_id === linkId);
     const [domainReq, setDomainReq] = useState<CreateRouteRequest>({ targetPort: 25565 });
     const [availability, setAvailability] = useState<DomainAvailability>('idle');
     const [targetHost, setTargetHost] = useState('127.0.0.1');
@@ -102,7 +105,7 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
             setLimit(k?.limit);
             setRoutes(Array.isArray(r) ? r : []);
             // Default the route form to the first link if none chosen yet.
-            setLinkId(prev => prev || (kitList[0]?.link_id ?? ''));
+            setLinkId(prev => prev || (kitList.find(k => !k.retire_at)?.link_id ?? ''));
         } finally {
             setLoading(false);
         }
@@ -358,15 +361,19 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                                     came up saw the same picture as one serving players. */}
                                 <LinkBadge state={linkState(k.online, suspended)} />
                                 <span className="text-sm text-(--base-09) truncate">{k.name}</span>
+                                {k.retire_at && (
+                                    <span className="text-xs text-(--warning-light) shrink-0">being replaced until {fmtDateTime(k.retire_at)}</span>
+                                )}
                                 <span className="text-xs text-(--base-06) font-mono truncate ml-auto">{k.link_id}</span>
-                                <button
+                                {/* A link being replaced cannot be rolled; the provider refuses it. */}
+                                {!k.retire_at && <button
                                     onClick={() => roll(k.link_id, k.name)}
                                     disabled={rollingLink === k.link_id}
                                     title="Replace this key with a new one, keeping the address and its routes"
                                     className="p-1.5 text-(--base-06) hover:text-(--base-09) transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
                                 >
                                     <RefreshCw size={14} className={rollingLink === k.link_id ? 'animate-spin' : undefined} />
-                                </button>
+                                </button>}
                                 <button
                                     onClick={() => revoke(k.link_id)}
                                     title="Revoke link"
@@ -420,8 +427,14 @@ export default function RouteOnlyPanel({ enrollUrl, config, storeUrl, allowed, e
                         disabled={kits.length === 0}
                         className="input-field text-sm w-full max-w-md disabled:opacity-60"
                     >
-                        {kits.length === 0 && <option value="">Create a link first</option>}
-                        {kits.map(k => <option key={k.id} value={k.link_id}>{k.name}</option>)}
+                        {routableKits.length === 0 && !retiringSelected && <option value="">Create a link first</option>}
+                        {/* A link being replaced takes no route; an address already on
+                            it shows it, so moving the address away stays possible. */}
+                        {kits.filter(k => !k.retire_at || k.link_id === linkId).map(k => (
+                            <option key={k.id} value={k.link_id} disabled={!!k.retire_at}>
+                                {k.retire_at ? `${k.name} (being replaced)` : k.name}
+                            </option>
+                        ))}
                     </select>
                     {editing && linkUnknown && (
                         <p className="text-xs text-(--warning-light)">

@@ -95,9 +95,9 @@ func (s *PostgresStore) CreateAPIKey(k *models.APIKey) (int, error) {
 	var id int
 	err = s.db.QueryRow(`INSERT INTO api_keys
 		(user_id, name, key_hash, scope, expires_at, rate_per_min)
-		VALUES ($1,$2,$3,$4::jsonb,$5,$6) RETURNING id`,
+		VALUES ($1,$2,$3,$4::jsonb,$5,$6) RETURNING id, created_at`,
 		k.UserID, k.Name, k.KeyHash, string(scopeJSON), expiresAt, rate,
-	).Scan(&id)
+	).Scan(&id, &k.CreatedAt) // the mint answer shows k as stored
 	return id, err
 }
 

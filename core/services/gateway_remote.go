@@ -55,6 +55,19 @@ var ErrGatewayChangePending = errors.New("a previous change to this address is s
 // read the second create as the holder editing its own route.
 var ErrGatewayDomainTaken = errors.New("this address is already in use")
 
+// ErrGatewayKitRetiring refuses a new route, or a move, onto a node whose link
+// kit is being replaced: the provider takes nothing new onto a retiring kit and
+// revokes it, with every route still on it, at its deadline.
+var ErrGatewayKitRetiring = errors.New("this node's link is being replaced; move the server to another node first")
+
+// ErrGatewayKitKnown refuses to revoke, as unknown, a kit a node of this
+// platform holds.
+var ErrGatewayKitKnown = errors.New("this link belongs to a node of this platform")
+
+// ErrGatewayNoKit: the node has no managed link yet, so there is nothing to
+// replace.
+var ErrGatewayNoKit = errors.New("this node has no managed link yet")
+
 const (
 	remoteCallTimeout = 15 * time.Second
 	remoteKitsTTL     = 30 * time.Second
@@ -236,6 +249,156 @@ func (g *RemoteGateway) RevokeKit(ctx context.Context, nodeID uint) error {
 }
 
 func (g *RemoteGateway) dropKitCache() { g.kits.drop() }
+
+// RetireNodeKit retires the node's kit on the provider and stamps the local
+// row. The kit keeps working until the returned time, then the provider
+// revokes it; meanwhile it no longer counts toward the host limit, so another
+// node can get a kit. EnsureKit keeps returning the retiring kit for this
+// node (never a second one) until reconcile forgets it after the deadline.
+// Retiring a kit that is already retiring here answers its deadline again.
+func (g *RemoteGateway) RetireNodeKit(ctx context.Context, nodeID uint) (time.Time, error) {
+	k, err := g.st.GetRemoteKit(nodeID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if k == nil {
+		return time.Time{}, ErrGatewayNoKit
+	}
+	if k.RetireAt != nil {
+		return *k.RetireAt, nil
+	}
+	// Not the caller's context: a closed tab must not cut the call off between
+	// the provider's commit and the local stamp.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remoteCallTimeout)
+	defer cancel()
+	api := g.api()
+	at, err := api.RetireKit(ctx, k.LinkID)
+	// An answer that never arrived (network, timeout, 5xx, 429) may hide a
+	// retire the provider committed, and kit_already_retiring is one it did:
+	// the provider's kit list is the truth then. A definite refusal is not.
+	if err != nil && (remotegw.Retryable(err) || remotegw.IsCode(err, "kit_already_retiring")) {
+		if pat, lerr := providerRetireAt(ctx, api, k.LinkID); lerr == nil {
+			at, err = pat, nil
+		}
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("retire link kit of node %d: %w", nodeID, err)
+	}
+	g.dropKitCache()
+	// A failed stamp is repaired by the sweep, which copies the provider's
+	// deadline onto a row that has none.
+	if err := g.st.SetRemoteKitRetireAt(nodeID, k.LinkID, at); err != nil {
+		return time.Time{}, err
+	}
+	return at, nil
+}
+
+func providerRetireAt(ctx context.Context, api *remotegw.Client, linkID string) (time.Time, error) {
+	kits, err := api.Kits(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	for _, k := range kits {
+		if k.LinkID == linkID && k.RetireAt != nil {
+			return *k.RetireAt, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("%w: kit %s reported as retiring but listed without a deadline", remotegw.ErrBadAnswer, linkID)
+}
+
+// RetiringKitNodes is the set of nodes whose managed link is being replaced,
+// in remote mode only (nil otherwise, and while the mode is unknown): automatic
+// placement and moves skip them, since the provider takes no route onto such a
+// link. One read serves a whole pass.
+func RetiringKitNodes(st store.Store, mode func() (remote, known bool)) (map[int]bool, error) {
+	if mode == nil {
+		return nil, nil
+	}
+	if remote, known := mode(); !remote || !known {
+		return nil, nil
+	}
+	kits, err := st.ListRemoteKits()
+	if err != nil {
+		return nil, err
+	}
+	out := map[int]bool{}
+	for _, k := range kits {
+		if k.RetireAt != nil {
+			out[int(k.NodeID)] = true
+		}
+	}
+	return out, nil
+}
+
+// NodeKitRetiring reports whether the node's kit is being replaced.
+func (g *RemoteGateway) NodeKitRetiring(nodeID uint) (bool, error) {
+	k, err := g.st.GetRemoteKit(nodeID)
+	if err != nil || k == nil {
+		return false, err
+	}
+	return k.RetireAt != nil, nil
+}
+
+// OrphanKits lists the provider's kits that no node here holds, from the
+// cached kit list: what a lost or restored database leaves on the provider.
+// Retiring kits are included and carry RetireAt. Another installation on the
+// same provider account shows up here too; nothing on the provider tells the
+// two apart.
+func (g *RemoteGateway) OrphanKits(ctx context.Context) ([]remotegw.Kit, error) {
+	kits, err := g.providerKits(ctx)
+	if err != nil {
+		return nil, err
+	}
+	known, err := g.localLinkIDs()
+	if err != nil {
+		return nil, err
+	}
+	out := []remotegw.Kit{}
+	for _, k := range kits {
+		if !known[k.LinkID] {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+
+func (g *RemoteGateway) localLinkIDs() (map[string]bool, error) {
+	local, err := g.st.ListRemoteKits()
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]bool, len(local))
+	for _, k := range local {
+		known[k.LinkID] = true
+	}
+	return known, nil
+}
+
+// RevokeOrphanKit revokes a provider kit no node here holds. The local rows
+// are read again right before the call (the orphan list is cached), and a kit
+// one of them names is refused with ErrGatewayKitKnown. A failure that may
+// pass is queued as a revoke_kit (queued=true); a kit already gone is done.
+func (g *RemoteGateway) RevokeOrphanKit(ctx context.Context, linkID string) (queued bool, err error) {
+	known, err := g.localLinkIDs()
+	if err != nil {
+		return false, err
+	}
+	if known[linkID] {
+		return false, ErrGatewayKitKnown
+	}
+	err = g.api().RevokeKit(ctx, linkID)
+	switch {
+	case err == nil || remotegw.IsCode(err, "link_not_found"):
+		g.dropKitCache()
+		return false, nil
+	case remotegw.Retryable(err):
+		if qerr := g.st.EnqueueOutbox(OutboxOpRevokeKit, linkID, struct{}{}); qerr != nil {
+			return false, fmt.Errorf("revoke link kit %s: %w (queueing it failed: %v)", linkID, err, qerr)
+		}
+		return true, nil
+	}
+	return false, fmt.Errorf("revoke link kit %s: %w", linkID, err)
+}
 
 // KitStatus maps node id -> the provider's view of its kit. The provider list
 // is cached for 30 s, a failed call for 10 s.
@@ -484,15 +647,28 @@ func (g *RemoteGateway) CreateServerRoute(serverID uint, ownerID string, domain 
 	if host == "" {
 		return ErrGatewayTargetName
 	}
+	// Another server's address is taken whatever is queued for it; the
+	// pending answer below is only for the server's own address. The claim
+	// further down stays the authority when two creates race.
+	if held, err := g.st.GetRemoteRoute(domain); err != nil {
+		return err
+	} else if held != nil && held.ServerUUID != server.UUID {
+		return ErrGatewayDomainTaken
+	}
 	if pending, err := g.st.HasOpenOutbox(domain, ""); err != nil {
 		return err
 	} else if pending {
 		return ErrGatewayChangePending
 	}
+	node := uint(server.NodeID)
+	if retiring, err := g.NodeKitRetiring(node); err != nil {
+		return err
+	} else if retiring {
+		return ErrGatewayKitRetiring
+	}
 	// The row is claimed BEFORE the provider is asked: the provider sees one
 	// account for every server here, so it would take a second server's put
 	// as an edit and hand it the first server's players.
-	node := uint(server.NodeID)
 	claimed, held, err := g.st.ClaimRemoteRoute(store.RemoteRoute{Domain: domain, ServerUUID: server.UUID, NodeID: node, Port: port})
 	if err != nil {
 		return err
@@ -584,6 +760,11 @@ func (g *RemoteGateway) MigrateServerRoutes(serverID uint, newNodeID uint) error
 	if err != nil {
 		return err
 	}
+	// The provider would refuse every move onto it; failing here lets the
+	// move's cutover roll back instead of leaving the routes behind.
+	if kit.RetireAt != nil {
+		return ErrGatewayKitRetiring
+	}
 	for _, r := range routes {
 		if err := g.st.EnqueueOutbox(OutboxOpMove, r.Domain, OutboxMove{LinkID: kit.LinkID, NodeID: newNodeID, TargetHost: host, Port: r.Port}); err != nil {
 			return err
@@ -592,10 +773,39 @@ func (g *RemoteGateway) MigrateServerRoutes(serverID uint, newNodeID uint) error
 	return nil
 }
 
+// SetServerProxyProtocol queues the switch for every route of the server.
+// Turning it ON asks the provider for the first route at once: a refusal there
+// (its own real-IP feature off, a link without client-addr, a suspended route)
+// would only repeat in the outbox every 10 minutes while the panel showed the
+// switch as on, so it is returned and nothing is queued. A failure that may
+// pass (network, 429, 5xx, no such route yet) is queued as before, and so is a
+// route with a change already waiting, which must not be overtaken. Turning it
+// OFF is only ever queued, never refused.
 func (g *RemoteGateway) SetServerProxyProtocol(serverUUID string, enabled bool) error {
 	domains, err := g.ServerDomains(serverUUID)
 	if err != nil {
 		return err
+	}
+	if enabled && len(domains) > 0 {
+		first := domains[0]
+		pending, err := g.st.HasOpenOutbox(first, "")
+		if err != nil {
+			return err
+		}
+		if !pending {
+			ctx, cancel := context.WithTimeout(context.Background(), remoteCallTimeout)
+			err := g.api().SetProxyProtocol(ctx, first, true)
+			cancel()
+			switch {
+			case err == nil:
+				if err := updateRemoteRoute(g.st, first, func(r *store.RemoteRoute) { r.ProxyProtocol = true }); err != nil {
+					return err
+				}
+				domains = domains[1:]
+			case !remotegw.Retryable(err) && !remotegw.IsCode(err, "not_found"):
+				return fmt.Errorf("real-IP switch for %s: %w", first, err)
+			}
+		}
 	}
 	for _, d := range domains {
 		if err := g.st.EnqueueOutbox(OutboxOpProxy, d, OutboxProxy{Enabled: enabled}); err != nil {

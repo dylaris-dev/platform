@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -62,6 +63,12 @@ func (h *PlacementHandler) PickNode(w http.ResponseWriter, r *http.Request) {
 
 // pickNode binds placement.Pick to this handler's state.
 func (h *PlacementHandler) pickNode(ctx context.Context, req placement.PickNodeRequest) placement.PickNodeResponse {
+	retiring, err := services.RetiringKitNodes(h.d.Store, h.d.GatewayRemote)
+	if err != nil {
+		// Placement still works; a server put there is refused its address.
+		log.Printf("placement: nodes with a link being replaced: %v", err)
+	}
+	req.Retiring = retiring
 	return placement.Pick(ctx, h.d.Store, h.d.Redis, services.GatewayRoutingEnabled(h.d.Store), req)
 }
 
