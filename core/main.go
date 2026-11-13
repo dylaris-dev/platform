@@ -46,6 +46,7 @@ import (
 	"dylaris-core/services/demo"
 	"dylaris-core/services/modcompat"
 	"dylaris-core/services/redisacl"
+	"dylaris-core/services/remotegw"
 	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 	backupstorage "dylaris-core/storage/backup"
@@ -300,6 +301,7 @@ func main() {
 	// clear and a legacy plaintext one is re-encrypted on its next save.
 	pgStore.SetBackupStorageEncryptionKey(cfg.ClusterSecret)
 	pgStore.SetBedrockEncryptionKey(cfg.ClusterSecret)
+	pgStore.SetRemoteKitEncryptionKey(cfg.ClusterSecret)
 
 	// Before the HTTP server starts, so the code is in the log by the time
 	// /setup answers. Not fatal: on an installed platform this is only the
@@ -459,6 +461,25 @@ func main() {
 	appState.StorageStatus.Start(bgCtx)
 	appState.StorageStatus.Attach()
 
+	// One cached answer to "is the remote provider active" (remote, known), shared with every
+	// component that must behave differently in remote mode. Built before the
+	// first background service so none of them runs a tick in a mode it was
+	// not told about.
+	gatewayRemote, resetGatewayRemote := services.CachedProviderMode(5*time.Second, func() (bool, error) {
+		pc, err := services.LoadProviderConfig(pgStore, &cfg)
+		return pc.Remote, err
+	})
+	// One read now, before any listener or loop asks: otherwise every call in
+	// the first window answers "unknown" (503) although the settings are
+	// readable.
+	if _, known := gatewayRemote(); !known {
+		log.Printf("gateway provider: setting not readable at boot; gateway calls answer 503 until it is")
+	}
+	appState.GatewayRemote = gatewayRemote
+	appState.ResetGatewayRemote = resetGatewayRemote
+	appState.GatewayProviderConfig = func() (services.ProviderConfig, error) { return services.LoadProviderConfig(pgStore, &cfg) }
+	appState.FeatureFlags.SetGatewayRemote(gatewayRemote)
+
 	// Leader election: a single Redis lease named for the
 	// "core-leader" role, identified by this instance's CoreID. Every
 	// scheduled background loop consults the leader's IsLeader() to
@@ -488,6 +509,7 @@ func main() {
 	// downsampled rows into gateway_bandwidth_stats. Leader-gated persistence.
 	gwBandwidth := services.NewGatewayBandwidthConsumerService(pgStore, redisClient, cfg.CoreID)
 	gwBandwidth.SetLeader(coreLeader)
+	gwBandwidth.SetGatewayRemote(gatewayRemote)
 	gwBandwidth.Start(bgCtx)
 
 	sftpSync := services.NewSFTPSyncService(pgStore, redisClient, appState.Authz)
@@ -498,6 +520,7 @@ func main() {
 	// traffic_usage. No-op in solo/hoster mode (feature_byon_enabled off).
 	trafficAggregator := services.NewTrafficAggregator(pgStore, redisClient, appState.FeatureFlags)
 	trafficAggregator.SetLeader(coreLeader)
+	trafficAggregator.SetGatewayRemote(gatewayRemote)
 	trafficAggregator.SetSuspendGrace(cfg.SuspendGrace)
 	trafficAggregator.Start(bgCtx)
 
@@ -512,6 +535,7 @@ func main() {
 	// every 60 s and sweeps keys that have no row.
 	voiceService := services.NewVoiceService(pgStore, redisClient)
 	voiceService.SetLeader(coreLeader)
+	voiceService.SetGatewayRemote(gatewayRemote)
 	voiceService.SetRevoke(func(ctx context.Context, srv *models.Server) error {
 		return gateway.RevokeServerVoice(ctx, appState.Store, appState.Redis, appState.GRPCRegistry, srv)
 	})
@@ -521,6 +545,7 @@ func main() {
 	// Redis every 60 s and sweeps keys that have no row.
 	bedrockService := services.NewBedrockService(pgStore, redisClient)
 	bedrockService.SetLeader(coreLeader)
+	bedrockService.SetGatewayRemote(gatewayRemote)
 	bedrockService.SetFlags(appState.FeatureFlags)
 	bedrockService.Start(bgCtx)
 
@@ -561,6 +586,7 @@ func main() {
 	// whole reason the manager exists.
 	metricsCollector := services.NewMetricsCollector(pgStore, redisClient, db, metricsManager, appState.FeatureFlags)
 	metricsCollector.SetLeader(coreLeader)
+	metricsCollector.SetGatewayRemote(gatewayRemote)
 	// The gateway telemetry this Core already consumes. Reading it through
 	// the existing consumer keeps one set of Redis consumer groups per
 	// stream instead of two per Core.
@@ -580,6 +606,7 @@ func main() {
 		}
 	}
 	appState.Billing.SetLeader(coreLeader)
+	appState.Billing.SetGatewayRemote(gatewayRemote)
 	// Start() is deferred until after SetLinkACL below, so the ticker can never run
 	// a suspend before the link teardown dependencies are wired.
 
@@ -634,6 +661,7 @@ func main() {
 	// in the liveness key the leader already refreshes.
 	warpSelfReg := services.NewWarpSelfRegistrar(pgStore, redisClient)
 	warpSelfReg.SetLeader(coreLeader)
+	warpSelfReg.SetGatewayRemote(gatewayRemote)
 	warpSelfReg.Start(bgCtx)
 
 	// Route-only routes are published straight into Redis, which used to be the
@@ -642,6 +670,7 @@ func main() {
 	// platform had.
 	routeRepublisher := services.NewRouteRepublisher(pgStore, redisClient)
 	routeRepublisher.SetLeader(coreLeader)
+	routeRepublisher.SetGatewayRemote(gatewayRemote)
 	routeRepublisher.Start(bgCtx)
 
 	// Managed-gateway beam issuer records (beam:issuer:<kid>) are republished
@@ -687,7 +716,20 @@ func main() {
 
 	// Gateway always active — uses same Redis as Core
 	redisGateway := services.NewRedisGateway(redisClient, pgStore, cfg.ClusterSecret)
-	appState.Gateway = redisGateway
+	// A client per call: New is cheap (the pooled transport is shared), and a URL
+	// or key saved in the panel applies to the next call without a restart.
+	remoteAPI := func() *remotegw.Client {
+		pc, err := services.LoadProviderConfig(pgStore, &cfg)
+		if err != nil {
+			log.Printf("gateway provider: reading the settings: %v", err)
+		}
+		return remotegw.New(pc.URL, func() string { return pc.Key })
+	}
+	appState.RemoteGateway = services.NewRemoteGateway(pgStore, remoteAPI)
+	appState.Gateway = services.NewSwitchingGateway(redisGateway, appState.RemoteGateway, gatewayRemote)
+	// Replays the remote gateway's queued writes; leader-gated per tick and idle
+	// unless remote mode is on, so a local platform makes no outbound call.
+	services.StartGatewayOutbox(bgCtx, pgStore, remoteAPI, coreLeader, gatewayRemote)
 
 	// Which link serves each node is the Hub's answer (hub:node-link:<node>), not
 	// a token Core derives: a self-enrolled Link carries a generated one, and the
@@ -695,13 +737,14 @@ func main() {
 	// beside the warp self-registration it is modelled on.
 	nodeLinks := services.NewNodeLinkLearner(pgStore, redisGateway)
 	nodeLinks.SetLeader(coreLeader)
+	nodeLinks.SetGatewayRemote(gatewayRemote)
 	nodeLinks.Start(bgCtx)
 
 	// Real player IP in auto mode follows what each server's status ping
 	// shows it expects (node proxy_ready.go).
 	services.StartProxyAutoReconcile(bgCtx, pgStore, redisClient, redisGateway, func(ctx context.Context) bool {
 		return appState.FeatureFlags != nil && appState.FeatureFlags.IsProxyProtocolEnabled(ctx)
-	}, coreLeader)
+	}, coreLeader, gatewayRemote)
 
 	// Routing migration service for batch redeployment when mode changes
 	appState.RoutingMigration = services.NewRoutingMigrationService(pgStore, appState.Queue, redisClient)
@@ -730,6 +773,7 @@ func main() {
 	// warp_rebalance_mode is dry-run/armed AND gateway routing is active.
 	warpRebalancer := services.NewWarpRebalancer(pgStore, redisClient, appState.FeatureFlags)
 	warpRebalancer.SetLeader(coreLeader)
+	warpRebalancer.SetGatewayRemote(gatewayRemote)
 	warpRebalancer.Start(bgCtx)
 
 	// Publish the node-facing settings to Redis now, and keep re-publishing
@@ -837,7 +881,10 @@ func main() {
 	})
 	// boot-time warp resync watcher + firewall-allowlist publish use the
 	// handlers/service buildAPIRouter just constructed.
-	extras.warpService.StartResyncWatcher(coreLeader.IsLeader)
+	// Warp is local-only: on the managed gateway the watcher idles as a follower does.
+	extras.warpService.StartResyncWatcher(func() bool {
+		return coreLeader.IsLeader() && services.LocalGatewayErr(gatewayRemote) == nil
+	})
 	// Imported Modrinth packs pick up newly published versions (leader only).
 	extras.packsHandler.StartModrinthSync(bgCtx, coreLeader)
 	// Server packs live in a local temp cache for an hour, never in storage.
@@ -861,6 +908,7 @@ func main() {
 		// the election goroutine, so IsLeader() is still false here on a cold
 		// start, and leadership moves at runtime anyway.
 		customDomainVerifier.SetLeader(coreLeader)
+		customDomainVerifier.SetGatewayRemote(gatewayRemote)
 		customDomainVerifier.Start(context.Background())
 	}
 	// Direct-mode server domains: writes A/SRV records into the zones of the

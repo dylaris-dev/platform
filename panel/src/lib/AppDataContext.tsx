@@ -10,6 +10,7 @@ import { API_URL, GATE_TIMEOUT_MS, getAuthHeader } from '@/lib/api/core';
 import { systemEvents } from '@/lib/systemEvents';
 import { getSystemFeatures, FeatureFlags } from '@/lib/api/featureFlags';
 import { getMyEntitlement, Entitlement } from '@/lib/api/entitlement';
+import { providerModeOf, visibilityFor, GatewayProviderMode, RemoteVisibility } from '@/lib/gatewayProvider';
 
 interface CoreInfo {
     coreId: string;
@@ -59,6 +60,10 @@ interface AppData {
     // entitled tenant they have nothing.
     entitlement: Entitlement | null;
     refreshEntitlement: () => Promise<void>;
+    // Own gateway or the DYLARIS Managed Gateway, from featureFlags. Every
+    // gateway surface reads gatewayVisibility instead of the mode itself.
+    gatewayProvider: GatewayProviderMode;
+    gatewayVisibility: RemoteVisibility;
 }
 
 const AppDataContext = createContext<AppData | null>(null);
@@ -277,6 +282,8 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
     // Features toggle keeps rendering the operator's actual setting.
     const byonEnabled = isByonUsable(featureFlags.byon, routingMode);
     const routeOnlyEnabled = isByonUsable(featureFlags.routeOnly ?? featureFlags.byon, routingMode);
+    const gatewayProvider = providerModeOf(featureFlags);
+    const gatewayVisibility = visibilityFor(gatewayProvider);
 
     // Retry clears the error first, or a second failure would look like a
     // button that does nothing.
@@ -296,6 +303,7 @@ export function AppDataProvider({ children, onUnauthenticated }: AppDataProvider
         featureFlags, refreshFeatureFlags,
         coreInfo,
         entitlement, refreshEntitlement,
+        gatewayProvider, gatewayVisibility,
     };
 
     return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;

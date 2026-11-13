@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -538,6 +539,10 @@ func fleetComponent(key, name string, nodes []models.Node, selfReported func(tok
 // subsystem is intentionally dormant ("disabled"), which is not a fault.
 func (h *HealthHandler) gatewayComponent(ctx context.Context) healthComponent {
 	comp := healthComponent{Key: "gateway", Name: "Gateway"}
+	if err := services.LocalGatewayErr(h.d.GatewayRemote); err != nil {
+		comp.Status, comp.Detail, comp.Reason = gatewayModeVerdict(err, "Run by the managed gateway provider")
+		return comp
+	}
 	if !services.GatewayRoutingEnabled(h.d.Store) {
 		comp.Status = "disabled"
 		comp.Detail = "Routing mode is ip_port"
@@ -574,6 +579,16 @@ func (h *HealthHandler) gatewayComponent(ctx context.Context) healthComponent {
 	return comp
 }
 
+// gatewayModeVerdict is a gateway-backed component's answer while local gateway
+// state may not be read: disabled on the managed gateway, degraded while the
+// provider setting itself cannot be read (nothing is known about the gateway).
+func gatewayModeVerdict(err error, remoteDetail string) (status, detail, reason string) {
+	if errors.Is(err, services.ErrGatewayProviderUnknown) {
+		return "degraded", "Gateway provider setting could not be read", err.Error()
+	}
+	return "disabled", remoteDetail, ""
+}
+
 // voicePoolWarnPct is how full a region's voice port pool may get before the
 // status page says so. There is no per-customer cap; this is how an operator
 // learns the pool needs one, or a second region, before it runs out.
@@ -582,6 +597,10 @@ const voicePoolWarnPct = 80
 // voiceComponent reports the voice relays and each region's port pool.
 func (h *HealthHandler) voiceComponent(ctx context.Context) healthComponent {
 	comp := healthComponent{Key: "voice", Name: "Voice chat"}
+	if err := services.LocalGatewayErr(h.d.GatewayRemote); err != nil {
+		comp.Status, comp.Detail, comp.Reason = gatewayModeVerdict(err, "Not available with the managed gateway")
+		return comp
+	}
 	if !services.GatewayRoutingEnabled(h.d.Store) || h.d.Redis == nil || h.d.Store == nil {
 		comp.Status, comp.Detail = "disabled", "Voice needs gateway routing"
 		return comp
@@ -611,6 +630,10 @@ func (h *HealthHandler) voiceComponent(ctx context.Context) healthComponent {
 // server also has a live Bedrock entry. No enabled server is not a fault.
 func (h *HealthHandler) bedrockComponent(ctx context.Context) healthComponent {
 	comp := healthComponent{Key: "bedrock", Name: "Bedrock"}
+	if err := services.LocalGatewayErr(h.d.GatewayRemote); err != nil {
+		comp.Status, comp.Detail, comp.Reason = gatewayModeVerdict(err, "Not available with the managed gateway")
+		return comp
+	}
 	if !services.GatewayRoutingEnabled(h.d.Store) || h.d.Redis == nil || h.d.Store == nil {
 		comp.Status, comp.Detail = "disabled", "Bedrock needs gateway routing"
 		return comp

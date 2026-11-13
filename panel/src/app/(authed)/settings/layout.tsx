@@ -258,7 +258,7 @@ function SettingsLayoutInner({
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
-    const { user, modules, ready, featureFlags, gatewayEnabled, byonEnabled, routeOnlyEnabled } = useAppData();
+    const { user, modules, ready, featureFlags, gatewayEnabled, byonEnabled, routeOnlyEnabled, gatewayVisibility } = useAppData();
 
     // Admin-only gate
     useEffect(() => {
@@ -285,6 +285,8 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
             tabs: g.tabs.filter(tab => {
                 if (tab.requiresStore && !featureFlags.store) return false;
                 if (tab.requiresGateway && !gatewayEnabled) return false;
+                // The managed gateway runs the overlay; there is none here to configure.
+                if (tab.slug === 'warp' && !gatewayVisibility.warpTab) return false;
                 if (tab.always) return true;
                 return modules.some(m => m.name === tab.module && m.isEnabled);
             }),

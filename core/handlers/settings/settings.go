@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
@@ -317,6 +318,33 @@ func (h *SettingsHandler) LoadGatewayDomainConfig() (hosters []services.HosterDo
 // Available to all authenticated users — the user-facing route form needs
 // the hoster list + custom-domain config to render itself.
 func (h *SettingsHandler) GetGatewayRouteOptions(w http.ResponseWriter, r *http.Request) {
+	rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway)
+	if gate.GatewayModeError(w, merr) {
+		return
+	}
+	if rg != nil {
+		// The provider's hoster domains; custom domains are off on the managed
+		// gateway until a later stage.
+		regions, err := rg.Regions(r.Context())
+		if gate.GatewayProviderError(w, err) {
+			return
+		}
+		if err != nil {
+			httpx.SendJSONError(w, "Could not load the address options. Try again.", http.StatusInternalServerError)
+			return
+		}
+		hosters := make([]services.HosterDomain, 0, len(regions.HosterDomains))
+		for _, hd := range regions.HosterDomains {
+			hosters = append(hosters, services.HosterDomain{Domain: hd.Domain, Validation: hd.Validation})
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":              true,
+			"hosterDomains":        hosters,
+			"customDomainsEnabled": false,
+			"cnameTarget":          "",
+		})
+		return
+	}
 	hosters, customEnabled, cname := h.LoadGatewayDomainConfig()
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":              true,
@@ -886,7 +914,7 @@ func (h *SettingsHandler) GetBeamSettings(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	settings.DiscoveredRelays = beamaccess.DiscoverBeamRelays(r.Context(), h.d.Redis)
+	settings.DiscoveredRelays = beamaccess.DiscoverBeamRelays(r.Context(), services.LocalGatewayRedis(h.d.Redis, h.d.GatewayRemote))
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":  true,
 		"settings": settings,
@@ -1013,7 +1041,7 @@ func (h *SettingsHandler) LoadBeamSettings() BeamSettings {
 
 	manualOverride := getSetting("beam.relay_address")
 	publicHost := getSetting("beam.public_host")
-	effective, _ := beamaccess.ResolveRelay(context.Background(), h.d.Redis, manualOverride, publicHost, "")
+	effective, _ := beamaccess.ResolveRelay(context.Background(), services.LocalGatewayRedis(h.d.Redis, h.d.GatewayRemote), manualOverride, publicHost, "")
 
 	settings := BeamSettings{
 		RelayAddress:   effective,

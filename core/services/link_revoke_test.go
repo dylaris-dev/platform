@@ -19,6 +19,7 @@ type linkRevokeFakeStore struct {
 	revokeCalls []string
 	rows        []store.CoreLinkRoute
 	listErr     error
+	deletedRows []string
 }
 
 func (f *linkRevokeFakeStore) RevokeWarpAPIKeyByNodeID(nodeID string) error {

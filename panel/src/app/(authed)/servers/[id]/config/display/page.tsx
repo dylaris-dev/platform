@@ -30,7 +30,9 @@ const ICON_PATH_NAME = 'server-icon.png';
 
 export default function ServerConfigDisplayPage() {
     const paramId = useRouteId('servers');
-    const { servers, gatewayEnabled } = useAppData();
+    const { servers, gatewayEnabled, gatewayVisibility } = useAppData();
+    // This Core's own edges show it; the managed gateway's do not read it.
+    const edgeMotdShown = gatewayEnabled && gatewayVisibility.edgeMotd;
     const serverId = Number(paramId);
     const server = servers.find(s => s.id === serverId);
     const activeSubServer = server?.activeSubServer || '';
@@ -105,7 +107,7 @@ export default function ServerConfigDisplayPage() {
     const [savingEdgeMotd, setSavingEdgeMotd] = useState(false);
 
     useEffect(() => {
-        if (!serverId) return;
+        if (!serverId || !edgeMotdShown) return;
         let cancelled = false;
         (async () => {
             const res = await getEdgeMotd(serverId);
@@ -120,7 +122,7 @@ export default function ServerConfigDisplayPage() {
             setEdgeMotdLoaded(true);
         })();
         return () => { cancelled = true; };
-    }, [serverId]);
+    }, [serverId, edgeMotdShown]);
 
     const edgeMotdDirty = edgeMotdMode !== edgeMotdInitial.mode || edgeMotdText !== edgeMotdInitial.text;
 
@@ -419,7 +421,7 @@ export default function ServerConfigDisplayPage() {
                 standing in front of the port. With routing on ip_port there is no
                 listener at all while the server is down, so the whole card would
                 configure something nothing reads. */}
-            {gatewayEnabled && (
+            {edgeMotdShown && (
             <SettingsCard
                 title="Edge MOTD (transitional)"
                 icon={Globe}

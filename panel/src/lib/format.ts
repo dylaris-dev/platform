@@ -25,6 +25,24 @@ export function formatBytes(bytes: number): string {
     return `${shown} ${UNITS[unit]}`;
 }
 
+/**
+ * A byte count for display in DECIMAL units (1 KB = 1000 B). Only for amounts
+ * someone else counts that way - the gateway provider sells traffic in decimal
+ * GB, where 5000 GB is 5 TB - so the number matches the plan that was bought.
+ */
+export function formatDecimalBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1000 && unit < UNITS.length - 1) {
+        value /= 1000;
+        unit += 1;
+    }
+    if (unit === 0) return `${Math.round(value)} B`;
+    const shown = value >= 100 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, '');
+    return `${shown} ${UNITS[unit]}`;
+}
+
 /** A size the API carries in MB (RAM, disk limits). */
 export function formatMB(mb: number): string {
     return formatBytes(mb * 1024 * 1024);

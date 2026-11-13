@@ -35,7 +35,7 @@ func TestExternalGatewayRoutesGoThroughTheAdapter(t *testing.T) {
 				r.Methods, r.Path, r.Auth, r.Cap, gates, r.Handler, want)
 		}
 	}
-	if n != 21 {
-		t.Fatalf("%d external gateway routes, want 21", n)
+	if n != 23 {
+		t.Fatalf("%d external gateway routes, want 23", n)
 	}
 }

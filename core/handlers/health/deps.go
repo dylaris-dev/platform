@@ -30,4 +30,8 @@ type Deps struct {
 	StoreSharedKey   string
 	ReleaseVersion   string
 	CoreID           string
+	// GatewayRemote is the gateway provider mode; nil is local.
+	GatewayRemote func() (remote, known bool)
+	// RemoteGateway is the managed-gateway provider used while it is remote.
+	RemoteGateway *services.RemoteGateway
 }

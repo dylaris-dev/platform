@@ -84,6 +84,8 @@ var identityEventPins = []identityEventPin{
 	{"dns_account.updated", "AuditEventDNSAccountUpdated", []string{"handlers/domains/admin.go"}},
 	{"dns_account.deleted", "AuditEventDNSAccountDeleted", []string{"handlers/domains/admin.go"}},
 	{"dns_settings.updated", "AuditEventDNSSettingsUpdated", []string{"handlers/domains/admin.go"}},
+	{"gateway_provider_changed", "AuditEventGatewayProviderChanged", []string{"handlers/settings/gateway_provider.go"}},
+	{"managed_link_kit_viewed", "AuditEventManagedLinkKitViewed", []string{"handlers/gateway/remote_kit.go"}},
 
 	// Written with a literal or a constant outside this package's catalog.
 	{"user_registered", `"user_registered"`, []string{"handlers/auth/registration.go"}},

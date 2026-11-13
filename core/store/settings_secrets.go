@@ -38,6 +38,9 @@ var settingsSecretKeys = map[string]bool{
 	// credential is still a credential: whoever reads a DB dump would otherwise
 	// hold a working login to an endpoint on the operator's network.
 	"mod_cache_redis_password": true,
+	// API key for the remote gateway provider (another DYLARIS Core). It can
+	// create and delete routes on the operator's account there.
+	"gateway.provider_key": true,
 }
 
 // smtpPasswordSuffix identifies the SMTP credential settings, whose key is

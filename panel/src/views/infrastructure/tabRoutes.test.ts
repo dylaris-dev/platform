@@ -118,10 +118,12 @@ describe('the three kinds of machine', () => {
         // external nodes" and "this platform has no such thing" the same
         // screen - and the tab somebody needs FIRST is the one for the kind
         // they have not registered yet.
-        for (const slug of ['nodes', 'external']) {
-            const re = new RegExp(`slug: '${slug}'[^}]*visible: true`);
-            expect(re.test(SHELL), `the ${slug} tab is conditionally visible`).toBe(true);
-        }
+        expect(/slug: 'nodes'[^}]*visible: true/.test(SHELL), 'the nodes tab is conditionally visible').toBe(true);
+        // External is always drawn while this platform runs warp, the only way
+        // to add one. With the managed gateway there is no such way, so it
+        // stays only for machines that already exist.
+        expect(/slug: 'external'[^}]*visible: gatewayVisibility\.warpTab \|\| external\.length > 0/.test(SHELL),
+            'the external tab is drawn whenever one can be added').toBe(true);
     });
 
     it('the BYON tab follows the BYON feature, or existing BYON nodes', () => {

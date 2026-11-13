@@ -12,6 +12,7 @@ import {
 } from '@/lib/api';
 import { AlertCircle, Check, Globe, Loader2, Server, X } from 'lucide-react';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
+import { useAppData } from '@/lib/AppDataContext';
 
 // Availability state surfaced to the parent so it can disable submit when
 // the picker is mid-check or has landed on a taken domain.
@@ -71,6 +72,8 @@ export function customDomainOk(d: string) {
  */
 export default function RouteDomainPicker({ value, onChange, onAvailabilityChange, existingRoutes, error, portChildren }: Props) {
     const [opts, setOpts] = useState<GatewayRouteOptions | null>(null);
+    const { gatewayVisibility } = useAppData();
+    const customAllowed = gatewayVisibility.customDomains;
     const [mode, setMode] = useState<'hoster' | 'custom' | 'legacy'>('legacy');
     const [subdomain, setSubdomain] = useState('');
     const [hosterDomain, setHosterDomain] = useState('');
@@ -87,7 +90,10 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
     const reqCounter = useRef(0);
 
     useEffect(() => {
-        getGatewayRouteOptions().then(res => {
+        getGatewayRouteOptions().then(fetched => {
+            // Core already reports custom domains off with the managed gateway;
+            // this keeps an older answer from offering a tab that 400s.
+            const res = customAllowed ? fetched : { ...fetched, customDomainsEnabled: false };
             setOpts(res);
             const hosters = res.hosterDomains || [];
             if (hosters.length > 0) {
@@ -99,7 +105,7 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                 setMode('legacy');
             }
         });
-    }, []);
+    }, [customAllowed]);
 
     const activeHoster = useMemo(
         () => (opts?.hosterDomains || []).find(h => h.domain === hosterDomain),

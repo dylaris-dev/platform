@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import RoutesPanel from '@/views/infrastructure/RoutesPanel';
 import { getInfrastructureOverview, type GatewayEdge } from '@/lib/api';
 import { SkeletonTable } from '@/components/Skeleton';
+import { useAppData } from '@/lib/AppDataContext';
+import { MANAGED_GATEWAY_NOTE } from '@/lib/gatewayProvider';
 
 /**
  * The gateway routes, under Admin.
@@ -22,8 +24,11 @@ import { SkeletonTable } from '@/components/Skeleton';
 export default function Page() {
     const [edges, setEdges] = useState<GatewayEdge[] | null>(null);
     const [links, setLinks] = useState<number>(0);
+    const { gatewayVisibility } = useAppData();
+    const local = gatewayVisibility.infrastructureGateway;
 
     useEffect(() => {
+        if (!local) return;
         let cancelled = false;
         const load = () => {
             getInfrastructureOverview()
@@ -39,7 +44,10 @@ export default function Page() {
         // current, so it polls at the slow cadence the overview is meant for.
         const t = setInterval(load, 10000);
         return () => { cancelled = true; clearInterval(t); };
-    }, []);
+    }, [local]);
+
+    // The provider holds the route list; this Core's admin route API answers 409.
+    if (!local) return <div className="card p-8 text-center text-(--base-06) text-sm">{MANAGED_GATEWAY_NOTE}</div>;
 
     if (edges === null) return <SkeletonTable rows={6} />;
 

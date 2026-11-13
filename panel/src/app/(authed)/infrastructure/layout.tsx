@@ -13,7 +13,7 @@ import InfrastructureShell from '@/views/infrastructure/Shell';
  */
 export default function InfrastructureLayout({ children }: { children: React.ReactNode }) {
     const router = useRouter();
-    const { gatewayEnabled, user, ready } = useAppData();
+    const { gatewayEnabled, user, ready, gatewayVisibility } = useAppData();
 
     useEffect(() => {
         if (!ready) return;
@@ -31,7 +31,9 @@ export default function InfrastructureLayout({ children }: { children: React.Rea
 
     return (
         <main className="flex-1 flex flex-col overflow-hidden relative z-10 p-6">
-            <InfraProvider gatewayEnabled={gatewayEnabled}>
+            {/* With the managed gateway the provider runs the edges, links and
+                bandwidth, so this screen has none of its own to show. */}
+            <InfraProvider gatewayEnabled={gatewayEnabled && gatewayVisibility.infrastructureGateway}>
                 <InfrastructureShell>{children}</InfrastructureShell>
             </InfraProvider>
         </main>

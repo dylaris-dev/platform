@@ -20,6 +20,14 @@ type Deps struct {
 	Redis        *redis.Client
 	FeatureFlags *services.FeatureFlags
 	Gateway      services.GatewayProvider
+
+	// GatewayRemote is the gateway provider mode; nil is local. RemoteGateway
+	// is the managed-gateway provider used while it is remote.
+	GatewayRemote func() (remote, known bool)
+	RemoteGateway *services.RemoteGateway
+	// GatewayProviderConfig resolves the provider settings, env over settings.
+	GatewayProviderConfig func() (services.ProviderConfig, error)
+
 	GRPCRegistry *nodegrpc.Registry
 	Admission    *services.AdmissionGate
 

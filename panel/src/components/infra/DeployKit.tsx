@@ -2,11 +2,16 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink, Link2 as LinkIcon } from 'lucide-react';
+import { Copy, Check, Terminal, Lock, ShoppingCart, ExternalLink, Link2 as LinkIcon, CircleAlert } from 'lucide-react';
 import {
     nodeCompose, routeOnlyCompose, deployCli, deployIntro, composeFileName,
-    DEPLOY_PORTAINER_NOTE, kitInput, watchtowerNote,
+    DEPLOY_PORTAINER_NOTE, kitInput, watchtowerNote, managedLinkCompose, LINK_IMAGE,
 } from '@/lib/warpDeploy';
+import { getManagedLink, type ManagedLinkKit as ManagedLinkKitData } from '@/lib/api/gatewayProvider';
+import { isDockerNetworkName } from '@/lib/gatewayProvider';
+import { linkState } from '@/lib/linkState';
+import LinkBadge from '@/components/infra/LinkBadge';
+import { Skeleton } from '@/components/Skeleton';
 import { useAppData } from '@/lib/AppDataContext';
 import type { KitProps } from '@/lib/warpDeploy';
 import type { DeployPlatform } from '@/lib/warpDeploy';
@@ -290,4 +295,110 @@ export function usageLabel(used: number, limit: number | undefined | null): stri
     if (limit === undefined || limit === null || limit < 0) return `${used} in use`;
     if (limit === 0) return 'none allowed';
     return `${used} of ${limit} in use`;
+}
+
+/**
+ * The managed gateway's link for one node: the compose file the operator runs
+ * on the node's host.
+ *
+ * Fetched on open, never before: the first fetch mints the kit at the provider
+ * and the answer carries the link's key. The key lives in this component's state
+ * only, so closing the kit (unmounting it) is what forgets it.
+ */
+export function ManagedLinkKit({ nodeId }: { nodeId: number }) {
+    const [kit, setKit] = useState<ManagedLinkKitData | null>(null);
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [slow, setSlow] = useState(false);
+    const [network, setNetwork] = useState('');
+
+    useEffect(() => {
+        let cancelled = false;
+        const t = setTimeout(() => setSlow(true), 400);
+        getManagedLink(nodeId).then(res => {
+            if (cancelled) return;
+            if (res.success) {
+                setKit(res);
+                // Core cannot see the node's Docker network, so its answer is a
+                // guess to start the field with, not a value.
+                setNetwork(res.networkKnown && res.network ? res.network : (res.networkHint ?? ''));
+            } else {
+                // Core's own sentence; the module falls back to ours when it sent none.
+                setError(res.message);
+            }
+            setLoading(false);
+        });
+        return () => { cancelled = true; clearTimeout(t); };
+    }, [nodeId]);
+
+    if (loading) {
+        return slow ? (
+            <div className="space-y-3" aria-busy="true">
+                <Skeleton className="h-5 w-40" />
+                <Skeleton className="h-40 w-full" />
+            </div>
+        ) : null;
+    }
+    if (error || !kit) {
+        return (
+            <div className="alert alert-error text-xs" role="alert">
+                <CircleAlert size={14} className="shrink-0 mt-0.5" />
+                <span>{error || 'The deploy kit could not be loaded.'}</span>
+            </div>
+        );
+    }
+
+    const known = !!kit.networkKnown && !!kit.network;
+    const net = network.trim();
+    const netOk = isDockerNetworkName(net);
+    const state = linkState(kit.online);
+    const hintId = `managed-link-net-hint-${nodeId}`;
+    const warnId = `managed-link-net-warn-${nodeId}`;
+    const describedBy = [!netOk && warnId, !known && hintId].filter(Boolean).join(' ') || undefined;
+
+    return (
+        <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm text-(--base-08)" role="status">
+                <LinkBadge state={state} />
+                <span>{state.label}</span>
+            </div>
+            <p className="text-xs text-(--base-06)">Run this on the node&apos;s host. It connects the node to the gateway.</p>
+            <div>
+                <label className="input-label" htmlFor={`managed-link-net-${nodeId}`}>Docker network</label>
+                <input
+                    id={`managed-link-net-${nodeId}`}
+                    type="text"
+                    spellCheck={false}
+                    readOnly={known}
+                    value={network}
+                    onChange={e => setNetwork(e.target.value)}
+                    aria-invalid={!netOk}
+                    aria-describedby={describedBy}
+                    className={`input-field input-mono text-sm w-full ${netOk ? '' : 'input-field-error'} ${known ? 'opacity-60 cursor-default' : ''}`}
+                />
+                {/* Directly under the field, so the error sits where the eye is. */}
+                {!netOk && (
+                    <p id={warnId} className="text-xs text-(--error-light) mt-1.5">
+                        Enter the name of a Docker network: letters, digits and _ . - only, no spaces. Words like true or null and numbers alone are not accepted.
+                    </p>
+                )}
+                {!known && (
+                    <p id={hintId} className="text-xs text-(--base-06) mt-1.5">
+                        The network your game servers run on. Check with: <code className="font-mono break-all">docker network ls | grep dylaris_net</code>
+                    </p>
+                )}
+            </div>
+            {/* No file without a valid network, so nothing that points at one. */}
+            {netOk && (
+                <>
+                    <SecretField label="Link key" value={kit.linkKey} note="Already filled into the file below." />
+                    <Snippet
+                        title="managed-link.yml"
+                        body={managedLinkCompose({ linkKey: kit.linkKey, coreUrl: kit.coreUrl, network: net, image: LINK_IMAGE })}
+                    />
+                    <Snippet title="Commands" body="docker compose -f managed-link.yml up -d" />
+                </>
+            )}
+        </div>
+    );
 }

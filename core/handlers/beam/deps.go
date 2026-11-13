@@ -17,4 +17,6 @@ type Deps struct {
 	Authz        *authz.Resolver
 	StoreEnabled bool
 	SuspendGrace time.Duration
+	// GatewayRemote is the gateway provider mode; nil is local.
+	GatewayRemote func() (remote, known bool)
 }

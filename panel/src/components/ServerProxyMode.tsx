@@ -34,13 +34,14 @@ export default function ServerProxyMode({ serverId, software, viaLink, canWrite,
     const load = useCallback(async () => {
         const res = await getServerProxyMode(serverId).catch(() => null);
         if (res?.success && res.mode) {
-            setState({ mode: res.mode, active: !!res.active, detected: res.detected ?? 'unknown' });
+            setState({ mode: res.mode, active: !!res.active, detected: res.detected ?? 'unknown', autoAvailable: res.autoAvailable });
         }
     }, [serverId]);
 
     useEffect(() => { void load(); }, [load]);
 
     if (!state) return null;
+    const noAuto = state.autoAvailable === false;
 
     const change = async (next: ProxyMode) => {
         if (next === state.mode) return;
@@ -83,13 +84,14 @@ export default function ServerProxyMode({ serverId, software, viaLink, canWrite,
                 <span className="flex items-center gap-2 shrink-0" aria-busy={busy}>
                     {busy && <Loader2 size={14} className="animate-spin text-(--base-06)" aria-hidden="true" />}
                     <Segmented
-                        options={OPTIONS.map(o => ({ ...o, disabled: busy || !canWrite }))}
+                        options={OPTIONS.map(o => ({ ...o, disabled: busy || !canWrite || (noAuto && o.id === 'auto') }))}
                         value={state.mode}
                         onChange={id => void change(id)}
                         ariaLabel="Real player IP"
                     />
                 </span>
             </div>
+            {noAuto && <p className="text-xs text-(--base-06) mt-2">Auto is not available with the managed gateway.</p>}
             {error && <div className="alert alert-error text-xs mt-2" role="alert">{error}</div>}
             <RealIpGuide software={software} />
         </div>

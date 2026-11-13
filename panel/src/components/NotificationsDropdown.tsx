@@ -59,7 +59,7 @@ async function checkBeamRelayMissing(ctx: CheckContext): Promise<Notification | 
 async function checkGatewayBandwidth(ctx: CheckContext): Promise<Notification | null> {
     // Bandwidth budgets are a gateway concept: the alerts come from edges and
     // links, and without routing there are none to be over budget.
-    if (!ctx.gatewayEnabled) return null;
+    if (!ctx.gatewayEnabled || !ctx.localGateway) return null;
     try {
         const ov = await getGatewayBandwidthOverview();
         if (!ov?.alerts?.length) return null;
@@ -84,6 +84,8 @@ async function checkGatewayBandwidth(ctx: CheckContext): Promise<Notification | 
 // context itself (they run outside React).
 interface CheckContext {
     gatewayEnabled: boolean;
+    /** False with the managed gateway, whose components this Core does not meter. */
+    localGateway: boolean;
 }
 
 // All registered checks. Run in parallel; null results are dropped.
@@ -97,7 +99,8 @@ const CHECKS: Array<(ctx: CheckContext) => Promise<Notification | null>> = [
 // ---------------------------------------------------------------------------
 
 export default function NotificationsDropdown() {
-    const { user, gatewayEnabled } = useAppData();
+    const { user, gatewayEnabled, gatewayVisibility } = useAppData();
+    const localGateway = gatewayVisibility.infrastructureGateway;
     // The inbox is NOT gated on the ticket feature, though it used to be on
     // both sides: Core 503'd these endpoints and the bell skipped polling them.
     // The inbox started out ticket-driven and has since grown notifications
@@ -118,9 +121,9 @@ export default function NotificationsDropdown() {
             setItems([]);
             return;
         }
-        const results = await Promise.all(CHECKS.map(c => c({ gatewayEnabled })));
+        const results = await Promise.all(CHECKS.map(c => c({ gatewayEnabled, localGateway })));
         setItems(results.filter((n): n is Notification => n !== null));
-    }, [isAdmin, gatewayEnabled]);
+    }, [isAdmin, gatewayEnabled, localGateway]);
 
     // Refresh user inbox + unread badge. Cheap unread-count endpoint runs on
     // the same interval; the full inbox is only fetched on open.

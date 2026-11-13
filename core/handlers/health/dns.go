@@ -32,7 +32,13 @@ func NewDNSHandler(d Deps) *DNSHandler {
 // GET /api/gateway/dns-check
 func (h *DNSHandler) CheckDNS(w http.ResponseWriter, r *http.Request) {
 	cfg := h.buildDNSCheckConfig()
-	result := services.RunDNSCheck(context.Background(), h.d.Redis, cfg)
+	rdb := services.LocalGatewayRedis(h.d.Redis, h.d.GatewayRemote)
+	if services.LocalGatewayErr(h.d.GatewayRemote) != nil {
+		// On the managed gateway the edges and hoster domains are the
+		// provider's: only the operator's own origin records are checked here.
+		cfg.HosterDomains, cfg.CustomDomainsOn = nil, false
+	}
+	result := services.RunDNSCheck(context.Background(), rdb, cfg)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
@@ -104,7 +110,7 @@ func (h *DNSHandler) buildDNSCheckConfig() services.DNSCheckConfig {
 	// trimmed. net.SplitHostPort splits on the last colon without validating, so
 	// " host :25550 " parses without error and then fails to dial - a red row
 	// against a relay that is up.
-	if effective, _ := beamaccess.ResolveRelay(context.Background(), h.d.Redis, override, publicHost, ""); strings.TrimSpace(effective) != "" {
+	if effective, _ := beamaccess.ResolveRelay(context.Background(), services.LocalGatewayRedis(h.d.Redis, h.d.GatewayRemote), override, publicHost, ""); strings.TrimSpace(effective) != "" {
 		effective = strings.TrimSpace(effective)
 		if host, port, splitErr := net.SplitHostPort(effective); splitErr == nil && strings.TrimSpace(host) != "" {
 			host = strings.TrimSpace(host)

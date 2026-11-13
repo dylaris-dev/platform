@@ -20,10 +20,11 @@ import (
 // mirrors the view to Redis for the panel, and persists one downsampled row per
 // component per persistInterval. Leader-gated: only one Core persists + mirrors.
 type GatewayBandwidthConsumerService struct {
-	store  store.Store
-	redis  *redis.Client
-	coreID string
-	leader leader.Election
+	store         store.Store
+	redis         *redis.Client
+	coreID        string
+	leader        leader.Election
+	gatewayRemote func() (remote, known bool)
 
 	mu      sync.Mutex
 	latest  map[string]seenStat // keyed by component ID
@@ -81,6 +82,12 @@ func NewGatewayBandwidthConsumerService(s store.Store, r *redis.Client, coreID s
 // SetLeader wires the leader-election gate. Call once at boot.
 func (s *GatewayBandwidthConsumerService) SetLeader(l leader.Election) { s.leader = l }
 
+// SetGatewayRemote wires the gateway provider mode: unless it is known and
+// local, the gateway work idles (there is no local gateway state to read).
+func (s *GatewayBandwidthConsumerService) SetGatewayRemote(fn func() (remote, known bool)) {
+	s.gatewayRemote = fn
+}
+
 func (s *GatewayBandwidthConsumerService) Start(ctx context.Context) {
 	if s.redis == nil {
 		return
@@ -108,6 +115,9 @@ func (s *GatewayBandwidthConsumerService) scanLoop(ctx context.Context) {
 }
 
 func (s *GatewayBandwidthConsumerService) scan(ctx context.Context) {
+	if LocalGatewayErr(s.gatewayRemote) != nil {
+		return
+	}
 	for _, k := range s.discoverStreams(ctx) {
 		s.mu.Lock()
 		seen := s.streams[k]
@@ -389,6 +399,9 @@ func (s *GatewayBandwidthConsumerService) persistLoop(ctx context.Context) {
 }
 
 func (s *GatewayBandwidthConsumerService) persistOnce(ctx context.Context) {
+	if LocalGatewayErr(s.gatewayRemote) != nil {
+		return
+	}
 	now := time.Now()
 	s.mu.Lock()
 	snapshot := make(map[string]protocol.GatewayStats, len(s.latest))

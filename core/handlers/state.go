@@ -33,6 +33,18 @@ type AppState struct {
 	Queue        *services.QueueService
 	GRPCRegistry *nodegrpc.Registry
 	Gateway      services.GatewayProvider
+	// GatewayRemote reports whether the remote gateway provider is active
+	// (cached for a few seconds; known=false until the setting was read once). Shared by every component that must behave
+	// differently in remote mode.
+	GatewayRemote func() (remote, known bool)
+	// ResetGatewayRemote drops GatewayRemote's cached answer, so a saved
+	// provider setting applies at once.
+	ResetGatewayRemote func()
+	// GatewayProviderConfig resolves the provider settings, env over settings.
+	GatewayProviderConfig func() (services.ProviderConfig, error)
+	// RemoteGateway is the managed-gateway provider behind Gateway, for the
+	// kit and status calls GatewayProvider does not carry.
+	RemoteGateway *services.RemoteGateway
 	// WarpPeers drops the WireGuard peers of one overlay key. Held here, and not
 	// only by the warp handler, because removing an account has to drop that
 	// account's peers before its rows cascade away and nothing can name them any

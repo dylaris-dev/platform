@@ -8,6 +8,7 @@ import (
 	"dylaris-core/pkg/leader"
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -202,12 +203,13 @@ func BackupAllowanceExceeded(st backupQuotaStore, ownerID string, storeEnabled b
 // (next chunk removes node connection + R2 backups after their windows). It NEVER
 // deletes a user or their DB rows. Leader-gated so only one Core acts.
 type BillingLifecycleService struct {
-	store       store.Store
-	queue       *QueueService
-	registry    *nodegrpc.Registry // for backupstorage.Deps (node-local deletes)
-	frontendURL string
-	leader      leader.Election
-	interval    time.Duration
+	store         store.Store
+	queue         *QueueService
+	registry      *nodegrpc.Registry // for backupstorage.Deps (node-local deletes)
+	frontendURL   string
+	leader        leader.Election
+	gatewayRemote func() (remote, known bool)
+	interval      time.Duration
 	// storeEnabled mirrors config.StoreEnabled and reaches the over-limit sweep,
 	// which has to tell "no billing plane exists" from "this tenant holds no
 	// entitlement". Zero value false means self-host, where the sweep grants
@@ -251,6 +253,12 @@ func NewBillingLifecycleService(s store.Store, q *QueueService, registry *nodegr
 }
 
 func (s *BillingLifecycleService) SetLeader(l leader.Election) { s.leader = l }
+
+// SetGatewayRemote wires the gateway provider mode: unless it is known and
+// local, the gateway work idles (there is no local gateway state to read).
+func (s *BillingLifecycleService) SetGatewayRemote(fn func() (remote, known bool)) {
+	s.gatewayRemote = fn
+}
 
 // SetTemplateRetention wires the template file delete retention needs.
 func (s *BillingLifecycleService) SetTemplateRetention(drop func(ctx context.Context, t *models.Template) error) {
@@ -417,7 +425,7 @@ func (s *BillingLifecycleService) dropWarpPeersOnceStopped(ctx context.Context, 
 // a push that failed is retried by the next pass (restoreNodeLinks) rather than
 // leaving a paying customer's routes down.
 func (s *BillingLifecycleService) setTenantNodeLinks(userID string, enabled bool) {
-	if s.gateway == nil {
+	if s.gateway == nil || LocalGatewayErr(s.gatewayRemote) != nil {
 		return
 	}
 	b, err := s.store.GetUserBilling(userID)
@@ -535,7 +543,7 @@ func (s *BillingLifecycleService) byonServersStillUp(userID string) bool {
 // within ~3 minutes of losing the peer, and it re-enrolls on the 10 minute
 // timer regardless).
 func (s *BillingLifecycleService) suspendTenantWarpPeers(ctx context.Context, userID string) {
-	if s.warpPeers == nil {
+	if s.warpPeers == nil || LocalGatewayErr(s.gatewayRemote) != nil {
 		return
 	}
 	// Revoked keys included: the admin's immediate suspension revokes the node
@@ -845,6 +853,14 @@ func (s *BillingLifecycleService) SuspendNow(ctx context.Context, userID string)
 	if s.gateway == nil || s.redis == nil {
 		return nil // solo/hoster mode: no link kits to revoke
 	}
+	if err := LocalGatewayErr(s.gatewayRemote); err != nil {
+		// Remote: the kits are the provider's. Unknown: nothing is guessed, but
+		// a suspension that left kits up must be visible to the operator.
+		if errors.Is(err, ErrGatewayProviderUnknown) {
+			logErrf("billing-lifecycle", "suspend %s: link kits not revoked: %v", userID, err)
+		}
+		return nil
+	}
 	revokeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	for _, linkID := range s.linkKitsForUser(userID) {
@@ -1086,7 +1102,7 @@ func (s *BillingLifecycleService) linkKitsForUser(userID string) []string {
 // off. It does NOT revoke the key or delete routes, so Reactivate can bring the
 // same links back.
 func (s *BillingLifecycleService) suspendTenantLinks(ctx context.Context, userID string) {
-	if s.gateway == nil || s.redis == nil {
+	if s.gateway == nil || s.redis == nil || LocalGatewayErr(s.gatewayRemote) != nil {
 		return
 	}
 	// The hourly ticker calls Suspend with context.Background(); a hung Redis call
@@ -1105,7 +1121,7 @@ func (s *BillingLifecycleService) suspendTenantLinks(ctx context.Context, userID
 // tunnel again within seconds rather than at the link's next heartbeat. No
 // restart needed: the link's ConnectionManager retries on its own.
 func (s *BillingLifecycleService) reactivateTenantLinks(userID string) {
-	if s.gateway == nil || s.redis == nil {
+	if s.gateway == nil || s.redis == nil || LocalGatewayErr(s.gatewayRemote) != nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

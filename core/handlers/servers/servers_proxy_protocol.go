@@ -36,6 +36,26 @@ func (h *ServerHandler) proxyProtocolDefault(ctx context.Context, srv *models.Se
 	in.NodeWritesConfig = nodeops.NodeReleaseAtLeast(ctx, h.d.Redis, node.Token, proxyProtocolDefaultSince)
 
 	installs, ierr := h.d.Store.ListSubServerInstalls(srv.ID)
+	rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway)
+	if merr != nil {
+		// The mode is unread (or remote with nothing wired): which gateway the
+		// route will use is unknown, so no.
+		return false
+	}
+	if rg != nil {
+		domains, derr := rg.ServerDomains(srv.UUID)
+		if ierr != nil || derr != nil {
+			log.Printf("proxy-protocol default: server %d: cannot tell whether it is new (installs: %v, routes: %v)", srv.ID, ierr, derr)
+			return false
+		}
+		in.NewServer = len(installs) == 0 && len(domains) == 0
+		hasKit, ok, kerr := rg.NodeKitCarriesClientAddr(ctx, uint(node.ID))
+		if kerr != nil {
+			log.Printf("proxy-protocol default: server %d: link check: %v", srv.ID, kerr)
+		}
+		in.LinkClientAddr = kerr == nil && hasKit && ok
+		return services.ProxyProtocolDefaultOn(in)
+	}
 	routes, rerr := services.ReadRoutesFromRedis(ctx, h.d.Redis)
 	if ierr != nil || rerr != nil {
 		log.Printf("proxy-protocol default: server %d: cannot tell whether it is new (installs: %v, routes: %v)", srv.ID, ierr, rerr)

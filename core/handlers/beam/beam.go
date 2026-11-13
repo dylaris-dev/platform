@@ -389,7 +389,7 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 		val, _ := h.d.Store.GetSetting(key)
 		return val
 	}
-	relayAddr, _ := beamaccess.ResolveRelay(r.Context(), h.d.Redis, getSetting("beam.relay_address"), getSetting("beam.public_host"), nodeRegion)
+	relayAddr, _ := beamaccess.ResolveRelay(r.Context(), services.LocalGatewayRedis(h.d.Redis, h.d.GatewayRemote), getSetting("beam.relay_address"), getSetting("beam.public_host"), nodeRegion)
 	// "No relay registered" is also every relay restart: heartbeats live 30s, so
 	// a member asking during a relay deploy got the node's public address, the
 	// one the server list hides from them. The same rule decides here, so an
@@ -628,7 +628,7 @@ func (h *BeamHandler) GetBeamConfig(w http.ResponseWriter, r *http.Request) {
 	publicHost := getSetting("beam.public_host")
 	// No server context here, so no region to prefer: this endpoint answers
 	// "which relay can I reach at all", and the ticket path applies the region.
-	relayAddress, _ := beamaccess.ResolveRelay(r.Context(), h.d.Redis, manualOverride, publicHost, "")
+	relayAddress, _ := beamaccess.ResolveRelay(r.Context(), services.LocalGatewayRedis(h.d.Redis, h.d.GatewayRemote), manualOverride, publicHost, "")
 	enabled := getSetting("beam.enabled")
 	if enabled == "" {
 		enabled = "true"

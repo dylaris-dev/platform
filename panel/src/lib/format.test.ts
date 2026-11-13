@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatBytes, formatMB } from './format';
+import { formatBytes, formatMB, formatDecimalBytes } from './format';
 
 describe('formatBytes', () => {
     it.each([
@@ -26,5 +26,17 @@ describe('formatMB', () => {
     it('keeps RAM under a GB in MB', () => {
         expect(formatMB(512)).toBe('512 MB');
         expect(formatMB(1536)).toBe('1.5 GB');
+    });
+});
+
+describe('formatDecimalBytes', () => {
+    it.each([
+        [5000e9, '5 TB'],
+        [2_800_000_000_000, '2.8 TB'],
+        [1020, '1 KB'],
+        [999, '999 B'],
+        [0, '0 B'],
+    ])('%s -> %s', (bytes, want) => {
+        expect(formatDecimalBytes(bytes)).toBe(want);
     });
 });

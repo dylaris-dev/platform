@@ -14,6 +14,7 @@ import (
 
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/audit"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
 
@@ -2442,7 +2443,22 @@ func (h *ServerHandler) queueMigration(w http.ResponseWriter, r *http.Request, s
 	// With Real player IP on, the gateway sends the header through the target's
 	// link from the first player on. A link that cannot carry the address gets
 	// the header-less stream and every join is refused. Fails closed.
-	if srv.ProxyProtocol && h.d.Gateway != nil {
+	rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway)
+	if srv.ProxyProtocol && gate.GatewayModeError(w, merr) {
+		return
+	}
+	if srv.ProxyProtocol && rg != nil {
+		// A target with no kit yet is fine: the move mints it, and the switch
+		// follows the route through the outbox.
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		hasKit, ok, err := rg.NodeKitCarriesClientAddr(ctx, uint(target.ID))
+		cancel()
+		if err != nil || (hasKit && !ok) {
+			httpx.SendJSONErrorCode(w, "Real player IP is on for this server, and the target node's link has not reported that it can pass the player IP. Update that link or turn Real player IP off first.",
+				"link_without_client_addr", http.StatusConflict)
+			return
+		}
+	} else if srv.ProxyProtocol && h.d.Gateway != nil {
 		tok := target.LinkToken
 		if tok == "" {
 			tok = h.d.Gateway.LinkToken(target.Token)
@@ -2814,7 +2830,7 @@ func (h *ServerHandler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	//
 	// Background, not the request context: the rows are already gone, and a
 	// caller who hung up must not leave the address answering.
-	matched := services.RemoveDeletedServers(context.Background(), h.d.Gateway, h.d.Redis, []string{srv.UUID})
+	matched := services.RemoveDeletedServers(context.Background(), h.d.Gateway, h.d.Redis, []string{srv.UUID}, h.d.GatewayRemote)
 	demo.DropServers(h.d.Store, h.d.StoreEnabled, []string{srv.UUID})
 	log.Printf("DeleteServer: server %s — cleaned up %d route(s)", srv.UUID, matched)
 

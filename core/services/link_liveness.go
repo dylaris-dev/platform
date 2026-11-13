@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 
 	"github.com/redis/go-redis/v9"
 
@@ -68,4 +70,54 @@ func LinkOnline(ctx context.Context, rdb *redis.Client, tokens []string) map[str
 // as not connected.
 func EffectiveLinkToken(n *models.Node, clusterSecret string) string {
 	return effectiveLinkToken(n, clusterSecret)
+}
+
+// LinkPresence is LinkOnline plus each online Link's announced capabilities,
+// from ONE pipelined GET per token instead of an EXISTS round trip and then a
+// GET per online Link. online has LinkOnline's contract (nil = not known);
+// caps holds an entry only for an online Link that announced some (an old Link
+// writes "1", which announces nothing).
+func LinkPresence(ctx context.Context, rdb *redis.Client, tokens []string) (online map[string]bool, caps map[string][]string) {
+	if rdb == nil || len(tokens) == 0 {
+		return nil, nil
+	}
+	pipe := rdb.Pipeline()
+	cmds := make(map[string]*redis.StringCmd, len(tokens))
+	for _, t := range tokens {
+		if t == "" || cmds[t] != nil {
+			continue
+		}
+		cmds[t] = pipe.Get(ctx, "online_link:"+t)
+	}
+	if len(cmds) == 0 {
+		return nil, nil
+	}
+	// redis.Nil is a missing key (an offline Link), not a failed read; any
+	// other Exec error gives up on the whole set, as LinkOnline does.
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	online = make(map[string]bool, len(cmds))
+	caps = map[string][]string{}
+	for t, cmd := range cmds {
+		v, err := cmd.Result()
+		switch {
+		case errors.Is(err, redis.Nil):
+			online[t] = false
+		case err != nil:
+			continue
+		default:
+			online[t] = true
+			var p struct {
+				Caps []string `json:"caps"`
+			}
+			if json.Unmarshal([]byte(v), &p) == nil && p.Caps != nil {
+				caps[t] = p.Caps
+			}
+		}
+	}
+	if len(online) == 0 {
+		return nil, nil
+	}
+	return online, caps
 }

@@ -35,12 +35,13 @@ import {
 } from '@/lib/ramPadding';
 import {
     Network, Server, Globe, Settings as SettingsIcon, Save,
-    Pencil, X, AlertTriangle, Cpu, KeyRound, Copy,
+    Pencil, X, AlertTriangle, Cpu, KeyRound, Copy, Cloud,
     ShieldCheck, ShieldOff, Plus, Trash2, Ticket, RotateCcw, RefreshCw, Eye, EyeOff,
 } from 'lucide-react';
 import HelpTip from '@/components/ui/HelpTip';
 import ExternalMachines from '@/components/settings/ExternalMachines';
 import ModalPanel from '@/components/ui/ModalPanel';
+import { ManagedLinkKit } from '@/components/infra/DeployKit';
 import NodeBackupThrottle from '@/components/settings/NodeBackupThrottle';
 import { NO_MEMORY_LIMIT_MESSAGE, NO_MEMORY_LIMIT_SHORT } from '@/lib/memoryLimit';
 
@@ -112,7 +113,7 @@ function isExternalNode(node: Node): boolean {
 function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean) => void; kind: 'platform' | 'external' }) {
     // Applied routing mode from the shared app context (same source WarpTab
     // gates on) — no extra fetch, no new store.
-    const { routingMode } = useAppData();
+    const { routingMode, gatewayVisibility } = useAppData();
     const gatewayOff = routingMode === 'ip_port';
 
     const [nodes, setNodes] = useState<Node[]>([]);
@@ -125,6 +126,9 @@ function NodesPanel({ showToast, kind }: { showToast: (msg: string, ok?: boolean
     // per failed poll would be a stream of them.
     const [loadError, setLoadError] = useState<string | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<DeletableNode | null>(null);
+    // The node whose managed link kit is open. Closing it unmounts the kit,
+    // which is what drops the link key from memory.
+    const [managedLinkNode, setManagedLinkNode] = useState<{ id: number; name: string } | null>(null);
     // Reveals every address on this list at once. Component state on purpose:
     // it must not survive a reload, or "blurred by default" would only be true
     // on the first visit of the browser's lifetime.
@@ -228,7 +232,8 @@ CORE_GRPC_ADDR=<core-host:25501>` : '';
                 and used to be invisible here entirely. It renders nothing when
                 nothing is being refused. */}
             {kind === 'platform' && <NodeJoinAttempts onAdmitted={loadNodes} />}
-            {kind === 'external' && <ExternalMachines nodes={shownNodes} />}
+            {/* Its keys are warp keys, and the managed gateway runs no warp here. */}
+            {kind === 'external' && gatewayVisibility.warpTab && <ExternalMachines nodes={shownNodes} />}
 
             <div>
                 <div className="flex items-start justify-between gap-3 mb-1">
@@ -286,6 +291,7 @@ CORE_GRPC_ADDR=<core-host:25501>` : '';
                                 onRollSecret={() => rollSecret(node)}
                                 rollingSecret={rollingId === node.id}
                                 onOpenDeleteDialog={node.status === 'online' ? null : () => setDeleteTarget({ id: node.id, name: node.name })}
+                                onOpenManagedLink={gatewayVisibility.managedLinkKit ? () => setManagedLinkNode({ id: node.id, name: node.displayName || node.name }) : null}
                                 revealAddresses={revealAddresses}
                                 globalRamPaddingMb={globalRamPaddingMb}
                             />
@@ -301,6 +307,23 @@ CORE_GRPC_ADDR=<core-host:25501>` : '';
                     onDeleted={name => { setDeleteTarget(null); loadNodes(); showToast(`Node "${name}" deleted`); }}
                     onError={msg => showToast(msg, false)}
                 />
+            )}
+
+            {managedLinkNode && (
+                <div className="modal-overlay animate-fade-in" onClick={() => setManagedLinkNode(null)}>
+                    <ModalPanel onClose={() => setManagedLinkNode(null)} className="modal-panel w-full max-w-2xl mx-4 flex flex-col max-h-[calc(100dvh-2rem)]" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header flex items-center justify-between gap-3">
+                            <h3 className="modal-title truncate" title={managedLinkNode.name}>Managed link: {managedLinkNode.name}</h3>
+                            <button type="button" onClick={() => setManagedLinkNode(null)} aria-label="Close" className="text-(--base-06) hover:text-(--base-09) shrink-0">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        <div className="modal-body flex-1 min-h-0 overflow-y-auto">
+                            <ManagedLinkKit nodeId={managedLinkNode.id} />
+                        </div>
+                        <div className="modal-footer"><button type="button" onClick={() => setManagedLinkNode(null)} className="btn btn-primary">Done</button></div>
+                    </ModalPanel>
+                </div>
             )}
 
             {revealed && (
@@ -344,6 +367,8 @@ interface NodeCardProps {
     // Only offered while the node is offline: deleting a machine that is still
     // running would leave its containers alive with nothing tracking them.
     onOpenDeleteDialog: (() => void) | null;
+    // Only with the managed gateway: opens this node's link deploy kit.
+    onOpenManagedLink: (() => void) | null;
     // The panel-wide "show addresses" switch. Per-field reveals live in the
     // card; this overrides all of them at once.
     revealAddresses: boolean;
@@ -577,7 +602,7 @@ function NodeAddresses({ node, revealAll }: { node: Node; revealAll: boolean }) 
     );
 }
 
-function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onRollSecret, rollingSecret, onOpenDeleteDialog, revealAddresses, globalRamPaddingMb }: NodeCardProps) {
+function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved, onCpuPoolSaved, onError, onRevealDeployBundle, revealingDeployBundle, onResetPairing, resettingPairing, onRollSecret, rollingSecret, onOpenDeleteDialog, onOpenManagedLink, revealAddresses, globalRamPaddingMb }: NodeCardProps) {
     const { gatewayEnabled } = useAppData();
     const [cpuRatio, setCpuRatio] = useState(node.cpuOvercommitRatio ?? 1.0);
     const [ramRatio, setRamRatio] = useState(node.ramOvercommitRatio ?? 1.0);
@@ -732,6 +757,17 @@ function NodeCard({ node, gatewayRequired, isEditing, onEdit, onCancel, onSaved,
                         <Pencil size={11} />
                         Placement
                     </button>
+                    {onOpenManagedLink && (
+                        <button
+                            type="button"
+                            onClick={onOpenManagedLink}
+                            className="focus-ring rounded text-xs text-(--base-06) hover:text-(--accent-light) inline-flex items-center gap-1 transition-colors"
+                            title="The link this node needs for the DYLARIS Managed Gateway"
+                        >
+                            <Cloud size={11} />
+                            Managed link
+                        </button>
+                    )}
                     <span className="inline-flex items-center gap-1">
                         <button
                             onClick={onRevealDeployBundle}

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
@@ -50,7 +51,12 @@ func RevokeLinkKitTeardown(ctx context.Context, st store.Store, gw GatewayProvid
 				log.Printf("revoke link %s: kept suspended route %s", linkID, rt.Domain)
 				continue
 			}
-			if derr := gw.DeleteCoreOwnedRoute(rt.Domain); derr != nil {
+			derr := gw.DeleteCoreOwnedRoute(rt.Domain)
+			if errors.Is(derr, ErrGatewayRemote) {
+				// The managed gateway never held this route; only the row is left.
+				derr = st.DeleteCoreLinkRoute(rt.Domain)
+			}
+			if derr != nil {
 				log.Printf("revoke link %s: delete route %s: %v", linkID, rt.Domain, derr)
 				continue
 			}

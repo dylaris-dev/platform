@@ -63,7 +63,7 @@ func TestRemoveDeletedServers_MatchesBothShapesAndLeavesOthersAlone(t *testing.T
 	seedRoute(t, rdb, GatewayRoute{Domain: "keep.example.com", ServerUUID: "uuid-c", TargetIP: "mc_uuid-c"})
 
 	gw := &routeDeleteGateway{}
-	got := RemoveDeletedServers(context.Background(), gw, rdb, []string{"uuid-a", "uuid-b"})
+	got := RemoveDeletedServers(context.Background(), gw, rdb, []string{"uuid-a", "uuid-b"}, nil)
 
 	if got != 2 {
 		t.Errorf("matched %d route(s), want 2", got)
@@ -94,7 +94,7 @@ func TestRemoveDeletedServers_TellsTheHubAsWellAsDroppingTheKey(t *testing.T) {
 	seedRoute(t, rdb, GatewayRoute{Domain: "a.example.com", ServerUUID: "uuid-a"})
 
 	gw := &routeDeleteGateway{}
-	RemoveDeletedServers(context.Background(), gw, rdb, []string{"uuid-a"})
+	RemoveDeletedServers(context.Background(), gw, rdb, []string{"uuid-a"}, nil)
 
 	if len(gw.deleted) != 1 || gw.deleted[0] != "a.example.com" {
 		t.Fatalf("hub was told about %v, want [a.example.com] - otherwise its next sync writes the route back", gw.deleted)
@@ -109,7 +109,7 @@ func TestRemoveDeletedServers_StillClearsTheCacheWithNoGateway(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	seedRoute(t, rdb, GatewayRoute{Domain: "a.example.com", ServerUUID: "uuid-a"})
 
-	if got := RemoveDeletedServers(context.Background(), nil, rdb, []string{"uuid-a"}); got != 1 {
+	if got := RemoveDeletedServers(context.Background(), nil, rdb, []string{"uuid-a"}, nil); got != 1 {
 		t.Fatalf("matched %d, want 1", got)
 	}
 	if routeExists(t, rdb, "a.example.com") {
@@ -125,7 +125,7 @@ func TestRemoveDeletedServers_IgnoresAnEmptyList(t *testing.T) {
 	seedRoute(t, rdb, GatewayRoute{Domain: "a.example.com", TargetIP: "mc_uuid-a"})
 
 	for _, uuids := range [][]string{nil, {}, {""}} {
-		if got := RemoveDeletedServers(context.Background(), nil, rdb, uuids); got != 0 {
+		if got := RemoveDeletedServers(context.Background(), nil, rdb, uuids, nil); got != 0 {
 			t.Errorf("uuids=%v matched %d route(s), want 0", uuids, got)
 		}
 	}
@@ -166,7 +166,7 @@ func TestRemoveDeletedServers_SweepsThePerServerKeys(t *testing.T) {
 		t.Fatalf("seed lookalike: %v", err)
 	}
 
-	RemoveDeletedServers(ctx, nil, rdb, []string{gone})
+	RemoveDeletedServers(ctx, nil, rdb, []string{gone}, nil)
 
 	for _, k := range []string{
 		"dylaris:server:" + gone + ":logs:survival",
@@ -197,7 +197,7 @@ func TestRemoveDeletedServers_EmptyUUIDSweepsNothing(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	RemoveDeletedServers(ctx, nil, rdb, []string{"   ", ""})
+	RemoveDeletedServers(ctx, nil, rdb, []string{"   ", ""}, nil)
 
 	if n, _ := rdb.Exists(ctx, "dylaris:server:owner_x:java-heap").Result(); n != 1 {
 		t.Error("an empty uuid removed keys")
@@ -212,7 +212,7 @@ func TestRemoveDeletedServersTellsTheHubEvenWhenRedisIsEmpty(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	gw := &routeDeleteGateway{}
 
-	RemoveDeletedServers(context.Background(), gw, rdb, []string{"srv-1", "srv-2"})
+	RemoveDeletedServers(context.Background(), gw, rdb, []string{"srv-1", "srv-2"}, nil)
 
 	if len(gw.serverDeletes) != 2 || gw.serverDeletes[0] != "srv-1" || gw.serverDeletes[1] != "srv-2" {
 		t.Errorf("server deletes sent = %v, want both servers", gw.serverDeletes)

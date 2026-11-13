@@ -42,9 +42,10 @@ type routeRepublishStore interface {
 // with the row - and it leaves anything owned by somebody else exactly where it
 // is, saying so once per pass.
 type RouteRepublisher struct {
-	store  routeRepublishStore
-	redis  *redis.Client
-	leader leader.Election
+	store         routeRepublishStore
+	redis         *redis.Client
+	leader        leader.Election
+	gatewayRemote func() (remote, known bool)
 
 	// adopted is written and read only by the loop goroutine, so it needs no
 	// lock. It exists because adoption has to WAIT for leadership rather than
@@ -57,6 +58,10 @@ func NewRouteRepublisher(s routeRepublishStore, r *redis.Client) *RouteRepublish
 }
 
 func (s *RouteRepublisher) SetLeader(l leader.Election) { s.leader = l }
+
+// SetGatewayRemote wires the gateway provider mode: unless it is known and
+// local, the gateway work idles (there is no local gateway state to read).
+func (s *RouteRepublisher) SetGatewayRemote(fn func() (remote, known bool)) { s.gatewayRemote = fn }
 
 func (s *RouteRepublisher) Start(ctx context.Context) {
 	log.Printf("Route republisher started (interval: %s)", republishInterval)
@@ -90,6 +95,9 @@ func (s *RouteRepublisher) adoptOnce(ctx context.Context) {
 	if s.adopted {
 		return
 	}
+	if LocalGatewayErr(s.gatewayRemote) != nil {
+		return
+	}
 	if s.leader != nil && !s.leader.IsLeader() {
 		return
 	}
@@ -100,6 +108,9 @@ func (s *RouteRepublisher) adoptOnce(ctx context.Context) {
 // RunOnce reconciles every stored route once. Exported for tests and for a
 // caller that wants the routing table current right now.
 func (s *RouteRepublisher) RunOnce(ctx context.Context) {
+	if LocalGatewayErr(s.gatewayRemote) != nil {
+		return
+	}
 	if s.leader != nil && !s.leader.IsLeader() {
 		return
 	}

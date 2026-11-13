@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 )
@@ -279,6 +280,20 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 			"message": "Configure Core file storage (Settings -> Core file storage) before enabling Tickets.",
 		})
 		return
+	}
+
+	// BYON and route-only are products of the store-linked panel; a platform on
+	// the managed gateway cannot offer them (owner decision, stage 7a).
+	if err := services.LocalGatewayErr(h.d.GatewayRemote); err != nil {
+		if (req.Byon != nil && *req.Byon) || (req.RouteOnly != nil && *req.RouteOnly) {
+			gate.GatewayModeError(w, err)
+			return
+		}
+		if errors.Is(err, services.ErrGatewayRemote) {
+			// The getters answer false here whatever is stored, and the panel
+			// sends that false back: it must not overwrite the stored choice.
+			req.Byon, req.RouteOnly = nil, nil
+		}
 	}
 
 	// The values that will be in force after this request: what it submitted,

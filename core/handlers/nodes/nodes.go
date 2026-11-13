@@ -263,8 +263,13 @@ func (h *NodeHandler) GetNodes(w http.ResponseWriter, r *http.Request) {
 	services.EnrichNodesWithLiveStats(r.Context(), h.d.Store, h.d.Redis, nodes)
 
 	// One round trip for the whole list, after the scope filter, so it covers
-	// exactly the rows being returned.
-	nodeops.SetNodesLinkOnline(r.Context(), h.d.Redis, h.d.ClusterSecret, nodes)
+	// exactly the rows being returned. While the mode cannot be read nothing
+	// is claimed: LinkOnline stays nil, "no answer".
+	if rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway); rg != nil {
+		rg.SetNodesLinkOnline(r.Context(), nodes)
+	} else if merr == nil {
+		nodeops.SetNodesLinkOnline(r.Context(), h.d.Redis, h.d.ClusterSecret, nodes)
+	}
 
 	// Derive the unusable flag at response time (no DB column needed): an
 	// external/home node only routes via gateway+beam, so while the platform
@@ -415,6 +420,18 @@ func (h *NodeHandler) DeleteNode(w http.ResponseWriter, r *http.Request) {
 // a Redis hiccup here must not turn a completed delete into a 500.
 func (h *NodeHandler) cleanupDeletedNode(r *http.Request, node *models.Node, warpKeys []int) {
 	h.releaseNodeWarpKeys(r.Context(), node, warpKeys)
+	// On the managed gateway the node's link is a provider kit, not a token in
+	// this Redis. The switching gateway decides by the mode, the same call the
+	// account teardown makes; it reports a kit it could not clean up itself.
+	if f, ok := h.d.Gateway.(interface {
+		ForgetNode(ctx context.Context, nodeID uint) error
+	}); ok && node != nil {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 15*time.Second)
+		if err := f.ForgetNode(ctx, uint(node.ID)); err != nil {
+			log.Printf("node %d deleted: gateway kit: %v", node.ID, err)
+		}
+		cancel()
+	}
 	if h.d.Redis == nil || node == nil || node.Token == "" {
 		return
 	}
@@ -429,7 +446,9 @@ func (h *NodeHandler) cleanupDeletedNode(r *http.Request, node *models.Node, war
 	// Only for a machine outside the cluster, whose Link serves that machine
 	// alone. An in-cluster node can be served by a self-enrolled Link shared
 	// with its neighbours, and dropping that token would cut them off too.
-	if node.Kind() == models.NodeKindPlatform {
+	// Not on the managed gateway, and not while the mode is unread: this Redis
+	// is then not the gateway's.
+	if node.Kind() == models.NodeKindPlatform || services.LocalGatewayErr(h.d.GatewayRemote) != nil {
 		return
 	}
 	if tok := services.EffectiveLinkToken(node, h.d.ClusterSecret); tok != "" {
@@ -563,7 +582,7 @@ func (h *NodeHandler) ForceDeleteNode(w http.ResponseWriter, r *http.Request) {
 	//
 	// Background, not the request context: an operator who hung up must not be
 	// the reason a deleted machine's addresses keep resolving.
-	matched := services.RemoveDeletedServers(context.Background(), h.d.Gateway, h.d.Redis, services.ServerUUIDs(servers))
+	matched := services.RemoveDeletedServers(context.Background(), h.d.Gateway, h.d.Redis, services.ServerUUIDs(servers), h.d.GatewayRemote)
 	demo.DropServers(h.d.Store, h.d.StoreEnabled, services.ServerUUIDs(servers))
 	log.Printf("ForceDeleteNode: node %d — cleaned up %d route(s) across %d server(s)", id, matched, len(servers))
 	h.cleanupDeletedNode(r, node, warpKeys)

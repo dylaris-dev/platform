@@ -1037,20 +1037,27 @@ func GetAllServiceErrorsFromRedis(rdb *redis.Client, count int64) map[string][]e
 // presence key (online_link:<token> = {"caps":[...]}). An old link writes "1",
 // which is not JSON and so announces nothing; a missing key is an offline link.
 func LinkAnnouncesCap(ctx context.Context, rdb *redis.Client, token, cap string) (bool, error) {
+	caps, err := LinkCaps(ctx, rdb, token)
+	return slices.Contains(caps, cap), err
+}
+
+// LinkCaps returns every capability the link behind token announced; nil for an
+// offline or old link (see LinkAnnouncesCap).
+func LinkCaps(ctx context.Context, rdb *redis.Client, token string) ([]string, error) {
 	v, err := rdb.Get(ctx, "online_link:"+token).Result()
 	if errors.Is(err, redis.Nil) {
-		return false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	var p struct {
 		Caps []string `json:"caps"`
 	}
 	if json.Unmarshal([]byte(v), &p) != nil {
-		return false, nil
+		return nil, nil
 	}
-	return slices.Contains(p.Caps, cap), nil
+	return p.Caps, nil
 }
 
 // TargetCarriesClientAddr reports whether target's link can carry the real

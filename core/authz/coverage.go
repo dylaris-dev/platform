@@ -121,6 +121,8 @@ var ExemptRoutes = map[string]bool{
 	"/api/external/gateway/custom-domains/{domain:[^/]+}/verify-txt": true,
 	"/api/external/gateway/regions":                                  true,
 	"/api/external/gateway/usage":                                    true,
+	"/api/external/gateway/account":                                  true,
+	"/api/external/gateway/check-domain":                             true,
 	"/api/external/gateway/beam/keys":                                true,
 	"/api/external/gateway/beam/keys/{kid}":                          true,
 	"/api/external/gateway/beam/relays":                              true,

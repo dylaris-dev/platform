@@ -71,10 +71,11 @@ func LiveBedrockEntries(ctx context.Context, rdb *redis.Client) ([]BedrockEntry,
 // BedrockService keeps Redis in step with the bedrock_servers table. Core is
 // the source of truth: the leader rewrites every key and deletes keys without a row.
 type BedrockService struct {
-	store  store.Store
-	redis  *redis.Client
-	leader leader.Election
-	flags  *FeatureFlags
+	store         store.Store
+	redis         *redis.Client
+	leader        leader.Election
+	gatewayRemote func() (remote, known bool)
+	flags         *FeatureFlags
 }
 
 func NewBedrockService(st store.Store, rdb *redis.Client) *BedrockService {
@@ -82,6 +83,10 @@ func NewBedrockService(st store.Store, rdb *redis.Client) *BedrockService {
 }
 
 func (b *BedrockService) SetLeader(l leader.Election) { b.leader = l }
+
+// SetGatewayRemote wires the gateway provider mode: unless it is known and
+// local, the gateway work idles (there is no local gateway state to read).
+func (b *BedrockService) SetGatewayRemote(fn func() (remote, known bool)) { b.gatewayRemote = fn }
 
 // SetFlags lets Reconcile fold the platform's Bedrock switch into the editions.
 func (b *BedrockService) SetFlags(f *FeatureFlags) { b.flags = f }
@@ -130,6 +135,9 @@ func (b *BedrockService) publish(ctx context.Context, uuid string, key []byte) e
 // BEFORE the rows are read, so a key published in between is in the rows or
 // not yet in Redis, never swept as an orphan. A follower does nothing.
 func (b *BedrockService) Reconcile(ctx context.Context) error {
+	if LocalGatewayErr(b.gatewayRemote) != nil {
+		return nil
+	}
 	if b.leader != nil && !b.leader.IsLeader() {
 		return nil
 	}
@@ -208,6 +216,9 @@ const bedrockSeenPrefix = "dylaris:bedrock:agg:seen:"
 // the seen hash is renewed on every read so it cannot expire under a counter
 // that outlives it and re-add the lifetime bytes.
 func (b *BedrockService) Meter(ctx context.Context) {
+	if LocalGatewayErr(b.gatewayRemote) != nil {
+		return
+	}
 	if b.leader != nil && !b.leader.IsLeader() {
 		return
 	}

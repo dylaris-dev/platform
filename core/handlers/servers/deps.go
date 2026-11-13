@@ -42,4 +42,9 @@ type Deps struct {
 	// InstallMrpackURL is wired in routes.go to the packs handler (assigned on
 	// AppState inside buildAPIRouter, so serversDeps is built after it).
 	InstallMrpackURL func(ctx context.Context, pack *models.Pack, build *models.PackBuild) (string, error)
+
+	// GatewayRemote is the gateway provider mode; nil is local. RemoteGateway
+	// is the managed-gateway provider used while it is remote.
+	GatewayRemote func() (remote, known bool)
+	RemoteGateway *services.RemoteGateway
 }

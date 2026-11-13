@@ -1338,7 +1338,8 @@ export const setServerProxyProtocol = (serverId: number, enabled: boolean): Prom
 // shows it expects the header (`detected`), on always, off never. `active` is
 // what the gateway does right now.
 export type ProxyMode = 'auto' | 'on' | 'off';
-export interface ServerProxyState { mode: ProxyMode; active: boolean; detected: 'yes' | 'no' | 'unknown' }
+// autoAvailable is false with the managed gateway, which has no Auto; absent means it is offered.
+export interface ServerProxyState { mode: ProxyMode; active: boolean; detected: 'yes' | 'no' | 'unknown'; autoAvailable?: boolean }
 export const getServerProxyMode = (serverId: number): Promise<{ success?: boolean; error?: string } & Partial<ServerProxyState>> =>
     fetchAPI(`/servers/${serverId}/proxy-protocol`);
 export const setServerProxyMode = (serverId: number, mode: ProxyMode): Promise<{ success?: boolean; proxyProtocol?: boolean; mode?: ProxyMode; message?: string; error?: string; code?: string }> =>

@@ -33,7 +33,7 @@ type AvailabilityState =
     | { status: 'invalid'; reason: string };
 
 export default function RoutesModal({ serverId, serverName, server, onClose, onRoutesChanged }: RoutesModalProps) {
-    const { featureFlags, refreshServers } = useAppData();
+    const { featureFlags, refreshServers, gatewayVisibility } = useAppData();
     // Hidden until the operator opens the feature, except while it is on: an
     // owner must always be able to turn their own forwarding off.
     const showProxySwitch = !!featureFlags.proxyProtocol || !!server?.proxyProtocol;
@@ -78,12 +78,15 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
     const [bedrock, setBedrock] = useState<ServerBedrock | null>(null);
     const [newEdition, setNewEdition] = useState<Edition>('java');
     useEffect(() => {
+        // Bedrock runs on this platform's own gateway; with the managed one the
+        // route answers 409, so it is not asked.
+        if (!gatewayVisibility.bedrock) return;
         let cancelled = false;
         getServerBedrock(serverId)
             .then(res => { if (!cancelled && res?.success !== false && res?.bedrock) setBedrock(res.bedrock); })
             .catch(() => {});
         return () => { cancelled = true; };
-    }, [serverId]);
+    }, [serverId, gatewayVisibility.bedrock]);
     const bedrockShown = !!bedrock && showBedrock(bedrock);
 
     // Mirrors what Core stored: Java only has no row.
@@ -237,7 +240,7 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                     )}
 
                     {/* Shows itself only when Core allows voice here or it is on. */}
-                    <VoiceChatSwitch serverId={serverId} />
+                    {gatewayVisibility.voice && <VoiceChatSwitch serverId={serverId} />}
                     {bedrockShown && bedrock && <BedrockSummary bedrock={bedrock} />}
 
                     {routesLoading ? (

@@ -91,7 +91,7 @@ export function sortUsers(users: User[], sort: UserSort): User[] {
 }
 
 export default function UsersTab({ currentUser }: UsersTabProps) {
-    const { featureFlags } = useAppData();
+    const { featureFlags, gatewayVisibility } = useAppData();
     // Core asks for the operator's own credential before an action that hands
     // somebody durable access - a takeover of an account, or a grant of power
     // that outlives this sign-in. Resolves null when the operator cancels, so
@@ -976,7 +976,8 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                             </button>
                                         </div>
                                     </div>
-                                    {settingsUser && <GatewayPublicTargetsToggle userId={settingsUser.id} />}
+                                    {/* A route-only setting: the managed gateway offers no route-only here. */}
+                                    {settingsUser && gatewayVisibility.tenancy && <GatewayPublicTargetsToggle userId={settingsUser.id} />}
                                 </div>
                             )}
                         </div>

@@ -31,9 +31,10 @@ type MetricsCollector struct {
 	// runtime: a collector holding a recorder would keep writing to the
 	// database an admin just replaced, and would keep it open for the life of
 	// the process.
-	recorders recorderSource
-	flags     *FeatureFlags
-	leader    leader.Election
+	recorders     recorderSource
+	flags         *FeatureFlags
+	leader        leader.Election
+	gatewayRemote func() (remote, known bool)
 
 	// gwStats is the live gateway telemetry, read through the consumer that
 	// already holds it rather than through a second consumer group per stream.
@@ -114,6 +115,10 @@ func (c *MetricsCollector) SetGatewayStats(src gatewayStatsSource) { c.gwStats =
 
 // SetLeader wires the leader-election gate. Call once at boot.
 func (c *MetricsCollector) SetLeader(l leader.Election) { c.leader = l }
+
+// SetGatewayRemote wires the gateway provider mode: unless it is known and
+// local, the gateway work idles (there is no local gateway state to read).
+func (c *MetricsCollector) SetGatewayRemote(fn func() (remote, known bool)) { c.gatewayRemote = fn }
 
 // Start runs the sampling loops.
 //
@@ -484,7 +489,7 @@ func (c *MetricsCollector) linkOwnership() LinkOwnership {
 }
 
 func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {
-	if c.redis == nil {
+	if c.redis == nil || LocalGatewayErr(c.gatewayRemote) != nil {
 		return
 	}
 	edges := GetEdgesFromRedis(ctx, c.redis)

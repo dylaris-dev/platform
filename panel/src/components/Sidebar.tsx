@@ -60,7 +60,10 @@ function buildProxyHierarchy(servers: Server[]) {
 
 export default function Sidebar({ onNewServer }: SidebarProps) {
   const { collapsed, toggle, width } = useSidebarCollapse();
-  const { servers, user: currentUser, proxiesEnabled, featureFlags, gatewayEnabled } = useAppData();
+  const { servers, user: currentUser, proxiesEnabled, featureFlags, gatewayEnabled: gatewayRouting, gatewayVisibility } = useAppData();
+  // The counts come from this Core's own edges; with the managed gateway there
+  // are none, and the route answers 409.
+  const gatewayEnabled = gatewayRouting && gatewayVisibility.playerCounts;
   const paramId = useRouteId('servers');
   const activeServerId = paramId ? Number(paramId) : null;
   const now = useNow();

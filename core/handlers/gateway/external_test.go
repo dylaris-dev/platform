@@ -120,6 +120,15 @@ func (f *extStore) GetWarpAPIKeyByNodeID(nodeID string) (*store.WarpAPIKey, erro
 }
 
 func (f *extStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) { return f.routes, nil }
+func (f *extStore) GetCoreLinkRoute(domain string) (*store.CoreLinkRoute, error) {
+	for i := range f.routes {
+		if f.routes[i].Domain == domain {
+			r := f.routes[i]
+			return &r, nil
+		}
+	}
+	return nil, nil
+}
 
 func (f *extStore) claim(userID, domain string) int {
 	for i, c := range f.claims {

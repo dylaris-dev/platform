@@ -976,6 +976,11 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 		// a wrong "not connected" sends a customer to debug a machine that is
 		// fine. Until this existed the row rendered a green shield either way.
 		Online *bool `json:"online,omitempty"`
+		// Region is where the kit was pinned at mint ("" = unset). Caps is what
+		// its Link announced (client-addr, voice, ...), [] while offline: the
+		// provider API's clients decide moves and proxy protocol from it.
+		Region string   `json:"region"`
+		Caps   []string `json:"caps"`
 	}
 	// warp_api_keys also holds this tenant's BYON node keys. They are a different
 	// product with a different cap, so listing them here would show a node as a
@@ -985,7 +990,8 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(k.NodeID, "link-") {
 			continue
 		}
-		out = append(out, linkKit{ID: k.ID, Name: k.Name, LinkID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00")})
+		out = append(out, linkKit{ID: k.ID, Name: k.Name, LinkID: k.NodeID, CreatedAt: k.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			Region: k.Region, Caps: []string{}})
 	}
 	// One round trip for every kit on the page: the token a route-only Link runs
 	// with is the one LinkBoot derives from the kit's id, so Core can ask about
@@ -995,10 +1001,16 @@ func (h *WarpHandler) ListLinkKits(w http.ResponseWriter, r *http.Request) {
 		for _, k := range out {
 			tokens = append(tokens, h.d.Gateway.LinkToken(k.LinkID))
 		}
-		if online := services.LinkOnline(r.Context(), h.d.Redis, tokens); online != nil {
-			for i := range out {
-				if v, ok := online[h.d.Gateway.LinkToken(out[i].LinkID)]; ok {
-					out[i].Online = &v
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		online, caps := services.LinkPresence(ctx, h.d.Redis, tokens)
+		cancel()
+		for i := range out {
+			tok := h.d.Gateway.LinkToken(out[i].LinkID)
+			if v, ok := online[tok]; ok {
+				out[i].Online = &v
+				// An offline kit, or one that announced nothing, keeps [].
+				if c := caps[tok]; v && c != nil {
+					out[i].Caps = c
 				}
 			}
 		}

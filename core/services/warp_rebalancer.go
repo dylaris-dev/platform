@@ -144,7 +144,8 @@ type WarpRebalancer struct {
 	features *FeatureFlags
 	// leader is set by main.go after construction. nil = run unconditionally
 	// (single-Core dev mode); non-nil = only act when this Core holds the lease.
-	leader leader.Election
+	leader        leader.Election
+	gatewayRemote func() (remote, known bool)
 }
 
 func NewWarpRebalancer(s store.Store, r *redis.Client, f *FeatureFlags) *WarpRebalancer {
@@ -154,6 +155,10 @@ func NewWarpRebalancer(s store.Store, r *redis.Client, f *FeatureFlags) *WarpReb
 // SetLeader wires the leader-election gate. The loop only acts on the elected
 // Core; followers idle.
 func (w *WarpRebalancer) SetLeader(l leader.Election) { w.leader = l }
+
+// SetGatewayRemote wires the gateway provider mode: unless it is known and
+// local, the gateway work idles (there is no local gateway state to read).
+func (w *WarpRebalancer) SetGatewayRemote(fn func() (remote, known bool)) { w.gatewayRemote = fn }
 
 // Start launches the evaluation loop. The interval is re-read each cycle so a
 // panel change to warp_rebalance_interval_min takes effect without a restart.
@@ -192,6 +197,9 @@ func (w *WarpRebalancer) gatewayEnabled() bool {
 // tick is one evaluation pass. It stays completely silent (no work, no writes)
 // unless the mode is dry-run/armed and gateway routing is active.
 func (w *WarpRebalancer) tick(ctx context.Context, now time.Time) {
+	if LocalGatewayErr(w.gatewayRemote) != nil {
+		return
+	}
 	mode := w.features.WarpRebalanceMode(ctx)
 	if mode == "off" || !w.gatewayEnabled() {
 		return

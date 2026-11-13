@@ -99,13 +99,14 @@ function CodeBlock({ code, label }: { code: string; label: string }) {
 type NodeKind = 'fleet' | 'external';
 
 export default function AddNodeModal({ onClose }: { onClose: () => void }) {
-    const { gatewayEnabled } = useAppData();
+    const { gatewayEnabled, gatewayVisibility } = useAppData();
     const [tab, setTab] = useState<NodeKind>('fleet');
 
     // An external node reaches Core over the warp overlay, which is part of the
     // gateway subsystem. With routing on ip_port there is no overlay deployed,
     // so offering the tab would document a path that does not exist here.
-    const showExternal = gatewayEnabled;
+    // The managed gateway runs no warp here, so there is no overlay either.
+    const showExternal = gatewayEnabled && gatewayVisibility.warpTab;
     const active: NodeKind = showExternal ? tab : 'fleet';
 
     return (
@@ -194,8 +195,8 @@ export default function AddNodeModal({ onClose }: { onClose: () => void }) {
                             <CodeBlock label="Stack service" code={FLEET_COMPOSE} />
                             <CodeBlock label="Deploy" code={FLEET_STEPS} />
                             <p className="text-xs text-(--base-06)">
-                                Core is reachable at <code className="text-(--base-08)">{enrollUrl}</code>. If the new
-                                host is not on the same overlay network, it is an External node - see the other tab.
+                                Core is reachable at <code className="text-(--base-08)">{enrollUrl}</code>.
+                                {showExternal && ' If the new host is not on the same overlay network, it is an External node - see the other tab.'}
                             </p>
                         </>
                     ) : (

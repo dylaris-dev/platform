@@ -20,6 +20,7 @@ type teardownFakeStore struct {
 	keysErr     error
 	rows        []store.CoreLinkRoute
 	revokeCalls []string
+	deletedRows []string
 
 	usedLiveOnlyListing bool
 

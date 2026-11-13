@@ -30,6 +30,7 @@ var resealedPurposes = map[string]bool{
 	settingsSecretPurpose:      true,
 	totpSecretPurpose:          true,
 	dnsCredentialPurpose:       true,
+	remoteKitPurpose:           true,
 }
 
 // unresealablePurposes are the derivations that are NOT stored ciphertext, with
@@ -53,6 +54,7 @@ var knownPurposeIdents = map[string]string{
 	"settingsSecretPurpose":      settingsSecretPurpose,
 	"totpSecretPurpose":          totpSecretPurpose,
 	"dnsCredentialPurpose":       dnsCredentialPurpose,
+	"remoteKitPurpose":           remoteKitPurpose,
 }
 
 var deriveKeyCall = regexp.MustCompile(`crypto\.DeriveKey\(\s*[^,()]+,\s*([^)]+)\)`)

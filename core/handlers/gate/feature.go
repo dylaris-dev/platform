@@ -22,6 +22,8 @@ type Gates struct {
 	FeatureFlags *services.FeatureFlags
 	StoreEnabled bool
 	CoreStorage  *corestorage.Manager
+	// GatewayRemote is the gateway provider mode; nil is local.
+	GatewayRemote func() (remote, known bool)
 }
 
 // FeatureModpacks is the canonical name used in X-Feature-Disabled headers

@@ -86,9 +86,10 @@ type nodeLinkStore interface {
 //
 // RunOnce is not safe for concurrent use; the ticker is its only caller.
 type NodeLinkLearner struct {
-	store  nodeLinkStore
-	gw     *RedisGateway
-	leader leader.Election
+	store         nodeLinkStore
+	gw            *RedisGateway
+	leader        leader.Election
+	gatewayRemote func() (remote, known bool)
 	// seen is the token the Hub named on the previous pass for each node whose
 	// routes point elsewhere. Rebuilt every pass, so a pass that does not name
 	// it breaks the chain.
@@ -105,6 +106,10 @@ func NewNodeLinkLearner(s nodeLinkStore, g *RedisGateway) *NodeLinkLearner {
 }
 
 func (l *NodeLinkLearner) SetLeader(e leader.Election) { l.leader = e }
+
+// SetGatewayRemote wires the gateway provider mode: unless it is known and
+// local, the gateway work idles (there is no local gateway state to read).
+func (l *NodeLinkLearner) SetGatewayRemote(fn func() (remote, known bool)) { l.gatewayRemote = fn }
 
 func (l *NodeLinkLearner) Start(ctx context.Context) {
 	log.Printf("Node link learner started (interval: %s)", nodeLinkInterval)
@@ -134,6 +139,9 @@ func (l *NodeLinkLearner) RunOnce(ctx context.Context) {
 	prevSwitched := l.justSwitched
 	l.justSwitched = map[string]string{}
 
+	if LocalGatewayErr(l.gatewayRemote) != nil {
+		return
+	}
 	if l.leader != nil && !l.leader.IsLeader() {
 		return
 	}

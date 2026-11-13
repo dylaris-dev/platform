@@ -2,7 +2,10 @@ package health
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+
+	"dylaris-core/services"
 )
 
 type SystemFeaturesHandler struct {
@@ -74,6 +77,16 @@ func (h *SystemFeaturesHandler) Get(w http.ResponseWriter, r *http.Request) {
 			// Whether THIS caller may add, test and choose own S3 targets.
 			// Data already on one stays reachable either way.
 			"ownStorage": h.d.FeatureFlags.OwnStorageAllowed(r.Context(), isAdmin),
+			// Which gateway this platform runs on: its own (local) or the
+			// managed one (remote). An unknown mode reads local. No key, no URL.
+			"gatewayProvider": gatewayProvider(h.d.GatewayRemote),
 		},
 	})
+}
+
+func gatewayProvider(mode func() (remote, known bool)) string {
+	if errors.Is(services.LocalGatewayErr(mode), services.ErrGatewayRemote) {
+		return "remote"
+	}
+	return "local"
 }

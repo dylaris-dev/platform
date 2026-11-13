@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
     routeOnlyCompose, nodeCompose, deployCli, deployIntro, composeFileName,
     nodeIdFromLabel, defaultLocalTarget, EXTERNAL_NODE_PORTS, kitGrpcTlsFingerprint,
-    kitInput, allowedTargets, genericNodeKitApplies, watchtowerNote, redeployCli
+    kitInput, allowedTargets, genericNodeKitApplies, watchtowerNote, redeployCli,
+    managedLinkCompose, LINK_IMAGE,
 } from './warpDeploy';
 
 const base = { apiKey: 'KEY123', enrollUrl: 'https://api.example.com' };
@@ -947,5 +948,57 @@ describe('redeployCli', () => {
         expect(out).toContain('up -d --no-deps warp node');
         expect(out).not.toMatch(/up -d\s*$/m);
         expect(out).not.toMatch(/up -d[^\n]*link/);
+    });
+});
+
+// The managed gateway's link on a node's host. It joins the network the game
+// servers run on and dials out to the provider's edges: nothing is published,
+// it is not host-networked (it reaches the servers by container name), and it
+// carries no allow list because its targets are container names on that
+// network, not hosts the operator types.
+describe('managedLinkCompose', () => {
+    const o = { linkKey: 'lk_abc', coreUrl: 'https://panel.dylaris.com', network: 'dylaris_net', image: LINK_IMAGE };
+    const out = managedLinkCompose(o);
+
+    it('is the same link image the route-only kit runs', () => {
+        expect(out).toContain(`image: ${LINK_IMAGE}`);
+        expect(routeOnlyCompose(base)).toContain(`image: ${LINK_IMAGE}`);
+    });
+
+    it('carries both credentials and the drain window', () => {
+        expect(out).toContain('LINK_KEY: "lk_abc"');
+        expect(out).toContain('CORE_URL: "https://panel.dylaris.com"');
+        expect(out).toContain('LINK_DRAIN_TIMEOUT: "6h"');
+        expect(out).toContain('stop_grace_period: 6h10m');
+    });
+
+    it('joins the given network, declared external', () => {
+        expect(out).toContain('networks: ["dylaris_net"]');
+        expect(out).toMatch(/\nnetworks:\n(?: {2}#[^\n]*\n)* {2}"dylaris_net":\n {4}external: true\n/);
+    });
+
+    it('is labelled as the link', () => {
+        expect(out).toContain('dylaris.component: "link"');
+    });
+
+    it('publishes nothing, is not host-networked and has no allow list', () => {
+        for (const gone of ['network_mode', 'LINK_ALLOWED_TARGETS', 'ports:', 'LINK_BOOT_KEY', 'watchtower:']) {
+            expect(out).not.toContain(gone);
+        }
+    });
+
+    it('is one service', () => {
+        expect(out.match(/\n {2}[a-z]+:\n {4}image:/g)).toEqual(['\n  link:\n    image:']);
+    });
+
+    // The values are emitted as JSON strings, which YAML reads as double-quoted
+    // scalars: a quote or a backslash cannot end the value early.
+    it('escapes the key and the address', () => {
+        const key = 'lk_a"b\\c';
+        const url = 'https://x.example.com/"q';
+        const f = managedLinkCompose({ ...o, linkKey: key, coreUrl: url });
+        const scalar = (name: string) => JSON.parse(f.match(new RegExp(`\\n {6}${name}: (.*)\\n`))![1]);
+        expect(scalar('LINK_KEY')).toBe(key);
+        expect(scalar('CORE_URL')).toBe(url);
     });
 });

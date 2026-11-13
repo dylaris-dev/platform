@@ -1988,6 +1988,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/external/gateway/account",
+      "auth": "user API key",
+      "authorization": "gateway.read",
+      "description": "who the key belongs to: product (managed, route_only, none), entitlement source, suspension, the key's scopes and the gateway caps.",
+      "handler": "ExternalGatewayHandler.GetAccount",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
       "path": "/api/external/gateway/beam/keys",
       "auth": "user API key",
       "authorization": "gateway.read",
@@ -2023,6 +2033,16 @@
       "authorization": "gateway.read",
       "description": "the beam relays a customer Core puts in its beam config [{region, public_host, client_port}]; ?region= narrows to one region.",
       "handler": "ExternalGatewayHandler.ListBeamRelays",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/gateway/check-domain",
+      "auth": "user API key",
+      "authorization": "gateway.read",
+      "description": "whether the caller could create a route on that domain: available, and a reason (taken, blocked, invalid, not_hosted) when not.",
+      "handler": "ExternalGatewayHandler.CheckDomain",
       "group": "external",
       "external": true
     },
@@ -2572,6 +2592,16 @@
       "authorization": "topology.read",
       "description": "hub logs are not shipped to Redis, so this answers with the last 100 service error entries instead.",
       "handler": "GatewayHandler.GetLogs",
+      "group": "gateway",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/gateway/provider/usage",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "returns the managed gateway provider's usage for the running month, cached for 60 s.",
+      "handler": "RemoteKitHandler.ProviderUsage",
       "group": "gateway",
       "external": false
     },
@@ -3549,6 +3579,16 @@
       "authorization": "nodes.delete",
       "description": "deletes an offline node and all its servers",
       "handler": "NodeHandler.ForceDeleteNode",
+      "group": "nodes",
+      "external": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/nodes/{id:[0-9]+}/managed-link",
+      "auth": "session",
+      "authorization": "topology.write",
+      "description": "returns the node's managed-gateway link kit (id and key) for its deploy file.",
+      "handler": "RemoteKitHandler.ManagedLink",
       "group": "nodes",
       "external": false
     },
@@ -5297,6 +5337,36 @@
     },
     {
       "method": "GET",
+      "path": "/api/settings/gateway/provider",
+      "auth": "session",
+      "authorization": "settings.read",
+      "description": "returns the gateway provider mode, URL, whether a key is set (never the key), the outbox backlog and, with a key, the provider account.",
+      "handler": "GatewayProviderHandler.Get",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/gateway/provider",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "saves the gateway provider mode, URL and key.",
+      "handler": "GatewayProviderHandler.Save",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/gateway/provider/test",
+      "auth": "session",
+      "authorization": "settings.write",
+      "description": "checks a provider URL and key against the provider's account.",
+      "handler": "GatewayProviderHandler.Test",
+      "group": "settings",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/settings/placement",
       "auth": "session",
       "authorization": "settings.read",
@@ -6483,11 +6553,11 @@
     }
   ],
   "counts": {
-    "total": 653,
+    "total": 660,
     "byAuth": {
       "none": 30,
-      "session": 582,
-      "user API key": 32,
+      "session": 587,
+      "user API key": 34,
       "warp key": 9
     },
     "byGroup": {
@@ -6501,9 +6571,9 @@
       "backup-storages": 7,
       "beam": 5,
       "disk": 4,
-      "external": 32,
+      "external": 34,
       "files": 10,
-      "gateway": 27,
+      "gateway": 28,
       "gateway-bandwidth": 4,
       "grants": 3,
       "healthz": 1,
@@ -6513,7 +6583,7 @@
       "mirror": 1,
       "modrinth": 9,
       "modules": 6,
-      "nodes": 16,
+      "nodes": 17,
       "notifications": 5,
       "packs": 32,
       "placement": 3,
@@ -6522,7 +6592,7 @@
       "scheduled-tasks": 1,
       "server-roles": 4,
       "servers": 96,
-      "settings": 28,
+      "settings": 31,
       "setup": 2,
       "share": 1,
       "sse-ticket": 1,
@@ -6545,6 +6615,6 @@
       "voice": 1,
       "warp": 24
     },
-    "external": 32
+    "external": 34
   }
 }

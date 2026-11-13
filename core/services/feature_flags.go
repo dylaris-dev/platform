@@ -21,11 +21,28 @@ type settingsReader interface {
 // be a 60-second cache here as well, with an Invalidate every writer had to
 // remember to call; a flag flipped on another replica took up to a minute.
 type FeatureFlags struct {
-	store settingsReader
+	store         settingsReader
+	gatewayRemote func() (remote, known bool)
 }
 
 func NewFeatureFlags(st settingsReader) *FeatureFlags {
 	return &FeatureFlags{store: st}
+}
+
+// SetGatewayRemote wires the gateway provider mode. Nil (the default) is local.
+func (f *FeatureFlags) SetGatewayRemote(fn func() (remote, known bool)) { f.gatewayRemote = fn }
+
+// remoteGateway is true only for a KNOWN remote mode: BYON and route-only are
+// products of the store-linked panel, never of a platform on the managed
+// gateway. Only the getters that OPEN those products consult it; the ownership
+// fences keep the stored, fail-closed answer in every mode, so a tenant's
+// machine stays theirs across a switch to remote.
+func (f *FeatureFlags) remoteGateway() bool {
+	if f.gatewayRemote == nil {
+		return false
+	}
+	remote, known := f.gatewayRemote()
+	return remote && known
 }
 
 // Get returns the boolean value for key, defaulting to defaultV when the
@@ -207,6 +224,9 @@ func (f *FeatureFlags) OwnStorageAllowed(ctx context.Context, isAdmin bool) bool
 // enrollment, node ownership scoping, plans/billing). Default = false: the
 // platform ships as today's single-operator panel and the operator opts in.
 func (f *FeatureFlags) IsBYONEnabled(ctx context.Context) bool {
+	if f.remoteGateway() {
+		return false
+	}
 	return f.Get(ctx, "feature_byon_enabled", false)
 }
 
@@ -218,6 +238,9 @@ func (f *FeatureFlags) IsBYONEnabled(ctx context.Context) bool {
 // Unset, it FOLLOWS the BYON flag, which is what it was gated on until it had
 // one: an operator who never touches it sees no change.
 func (f *FeatureFlags) IsRouteOnlyEnabled(ctx context.Context) bool {
+	if f.remoteGateway() {
+		return false
+	}
 	return f.Get(ctx, "feature_route_only_enabled", f.IsBYONEnabled(ctx))
 }
 

@@ -195,3 +195,23 @@ func (l *IPRateLimiter) Limit(perMin int, next http.HandlerFunc) http.HandlerFun
 		next(w, r)
 	}
 }
+
+// LimitUser is Limit keyed by the signed-in user (the "userID" the auth
+// middleware sets) instead of the IP, for an authenticated route whose cost
+// lands on something shared. Without a user it falls back to the IP.
+func (l *IPRateLimiter) LimitUser(perMin int, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key, _ := r.Context().Value("userID").(string)
+		if key == "" {
+			key = "ip:" + ClientIP(r)
+		} else {
+			key = "user:" + key
+		}
+		if !l.Allow(key, perMin) {
+			w.Header().Set("Retry-After", "60")
+			SendJSONErrorCode(w, "Too many requests, try again in a minute.", "rate_limited", http.StatusTooManyRequests)
+			return
+		}
+		next(w, r)
+	}
+}

@@ -431,10 +431,6 @@ input[type="number"] {
   border-color: var(--accent-light);
   box-shadow: 0 0 0 3px var(--accent-ghost);
 }
-.input-field-error {
-  border-color: var(--error-light);
-  box-shadow: 0 0 0 3px var(--error-ghost);
-}
 .input-mono {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -449,6 +445,12 @@ input[type="number"] {
 .input-mono:focus {
   border-color: var(--accent-light);
   box-shadow: 0 0 0 3px var(--accent-ghost);
+}
+/* After .input-mono, which sets its own border at the same specificity: an
+   error on a mono input used to stay grey. */
+.input-field-error {
+  border-color: var(--error-light);
+  box-shadow: 0 0 0 3px var(--error-ghost);
 }
 /* Excludes focus and error so hovering never repaints either of them grey. */
 :is(.input-field, .input-mono):hover:not(:focus):not(:disabled):not(.input-field-error) {

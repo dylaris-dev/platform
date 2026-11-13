@@ -75,11 +75,12 @@ const (
 // bills) and BYON-gated (no tenants = nothing to meter), so it is a no-op in
 // solo/hoster mode.
 type TrafficAggregator struct {
-	store    store.Store
-	redis    *redis.Client
-	flags    *FeatureFlags
-	leader   leader.Election
-	interval time.Duration
+	store         store.Store
+	redis         *redis.Client
+	flags         *FeatureFlags
+	leader        leader.Election
+	interval      time.Duration
+	gatewayRemote func() (remote, known bool)
 	// suspendGrace is what PublishBeamIssuers needs when a managed tenant's
 	// throttle flips; the same value the issuer reconciler runs with.
 	suspendGrace time.Duration
@@ -101,6 +102,10 @@ func NewTrafficAggregator(st store.Store, r *redis.Client, flags *FeatureFlags) 
 
 // SetLeader wires the leader-election gate. Call once at boot.
 func (a *TrafficAggregator) SetLeader(l leader.Election) { a.leader = l }
+
+// SetGatewayRemote wires the gateway provider mode: unless it is known and
+// local, the gateway work idles (there is no local gateway state to read).
+func (a *TrafficAggregator) SetGatewayRemote(fn func() (remote, known bool)) { a.gatewayRemote = fn }
 
 // SetSuspendGrace wires the grace the beam issuer records are published with.
 func (a *TrafficAggregator) SetSuspendGrace(d time.Duration) { a.suspendGrace = d }
@@ -235,6 +240,9 @@ func (a *TrafficAggregator) marker(ctx context.Context, key string, current int6
 }
 
 func (a *TrafficAggregator) runOnce(ctx context.Context) {
+	if LocalGatewayErr(a.gatewayRemote) != nil {
+		return
+	}
 	if !a.flags.IsTenancyEnabled(ctx) {
 		return // no tenants to bill
 	}

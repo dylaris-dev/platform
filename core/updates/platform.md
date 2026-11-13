@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.13
+
+### Features
+- Settings > Gateway can switch to the DYLARIS Managed Gateway: provider address, API key, connection
+  test and the month's usage. Opt-in, and it needs a managed gateway plan, which is not on sale yet. `core`
+- With the managed gateway each node runs one link from a deploy kit in the panel, and server addresses
+  follow the server through create, move and delete. Voice, Bedrock and own domains are not available with it. `core`
+- The gateway API adds `GET /api/external/gateway/account` and `/check-domain`, and lists each link
+  kit's `region` and `caps`. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.12
 
 ### Features

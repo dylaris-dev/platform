@@ -83,6 +83,11 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 		t.Fatalf("SetLinkRouteEdition: %v", err)
 	}
 
+	before.SetRemoteKitEncryptionKey(secretBefore)
+	if err := before.SaveRemoteKit(store.RemoteKit{NodeID: uint(f.node.ID), LinkID: "reseal-link", LinkKey: "KIT-SECRET"}); err != nil {
+		t.Fatalf("SaveRemoteKit: %v", err)
+	}
+
 	before.SetTOTPEncryptionKey(secretBefore)
 	if err := before.SetUserTOTP(f.user.ID, "JBSWY3DPEHPK3PXP", "[]", true); err != nil {
 		t.Fatalf("SetUserTOTP: %v", err)
@@ -104,8 +109,8 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	if rep.Unreadable() != 0 {
 		t.Fatalf("report = %+v; every value was sealed under the source secret", rep.Buckets)
 	}
-	if len(rep.Buckets) != 9 {
-		t.Fatalf("got %d buckets, want 9: %+v", len(rep.Buckets), rep.Buckets)
+	if len(rep.Buckets) != 10 {
+		t.Fatalf("got %d buckets, want 10: %+v", len(rep.Buckets), rep.Buckets)
 	}
 	for _, b := range rep.Buckets {
 		if b.Moved < 1 {
@@ -121,7 +126,11 @@ func TestIntegrationResealMovesEveryBucket(t *testing.T) {
 	after.SetSettingsEncryptionKey(secretAfter)
 	after.SetTOTPEncryptionKey(secretAfter)
 	after.SetBedrockEncryptionKey(secretAfter)
+	after.SetRemoteKitEncryptionKey(secretAfter)
 
+	if k, err := after.GetRemoteKit(uint(f.node.ID)); err != nil || k == nil || k.LinkKey != "KIT-SECRET" {
+		t.Errorf("remote kit under the new secret = %+v, %v", k, err)
+	}
 	if k, ok, err := after.GetBedrockKey(f.server.ID); err != nil || !ok || !bytes.Equal(k, floodgateKey) {
 		t.Errorf("Floodgate key under the new secret = %x, %v, %v", k, ok, err)
 	}

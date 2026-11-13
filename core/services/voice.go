@@ -200,9 +200,10 @@ func VoiceRegionFor(domain string, edges []GatewayEdgeInfo) (region string, ok b
 // have no row, which covers every delete path including the ones that do not
 // know voice exists (the FK cascade on servers).
 type VoiceService struct {
-	store  store.Store
-	redis  *redis.Client
-	leader leader.Election
+	store         store.Store
+	redis         *redis.Client
+	leader        leader.Election
+	gatewayRemote func() (remote, known bool)
 	// revoke drops the row and keys and must not wait on the node: the config
 	// write-back runs in the background. It lives in handlers, which can reach
 	// the node; nil skips revocation.
@@ -215,6 +216,10 @@ func NewVoiceService(st store.Store, rdb *redis.Client) *VoiceService {
 
 // SetLeader wires the leader-election gate. Call once at boot.
 func (v *VoiceService) SetLeader(l leader.Election) { v.leader = l }
+
+// SetGatewayRemote wires the gateway provider mode: unless it is known and
+// local, the gateway work idles (there is no local gateway state to read).
+func (v *VoiceService) SetGatewayRemote(fn func() (remote, known bool)) { v.gatewayRemote = fn }
 
 // SetRevoke wires the disable path the reconcile runs for a server that is no
 // longer allowed voice. Call once at boot.
@@ -249,6 +254,9 @@ func (v *VoiceService) Start(ctx context.Context) {
 // Redis - never swept as an orphan. A row deleted in between gets its keys
 // rewritten once and removed on the next tick.
 func (v *VoiceService) Reconcile(ctx context.Context) error {
+	if LocalGatewayErr(v.gatewayRemote) != nil {
+		return nil
+	}
 	if v.leader != nil && !v.leader.IsLeader() {
 		return nil
 	}
@@ -428,6 +436,9 @@ const voiceSeenPrefix = "dylaris:voice:agg:seen:"
 // A server whose port was released between flushes loses its last unmetered
 // bytes here (not in the bill).
 func (v *VoiceService) Meter(ctx context.Context) {
+	if LocalGatewayErr(v.gatewayRemote) != nil {
+		return
+	}
 	if v.leader != nil && !v.leader.IsLeader() {
 		return
 	}

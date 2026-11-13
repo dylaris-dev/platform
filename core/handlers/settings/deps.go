@@ -23,4 +23,12 @@ type Deps struct {
 	CoreStorage      *corestorage.Manager
 	RoutingMigration *services.RoutingMigrationService
 	FrontendURL      string
+	// GatewayRemote is the gateway provider mode; nil is local.
+	GatewayRemote func() (remote, known bool)
+	// RemoteGateway is the managed-gateway provider used while it is remote.
+	RemoteGateway *services.RemoteGateway
+	// ResetGatewayRemote drops GatewayRemote's cache; nil is a no-op.
+	ResetGatewayRemote func()
+	// GatewayProviderConfig resolves the provider settings, env over settings.
+	GatewayProviderConfig func() (services.ProviderConfig, error)
 }

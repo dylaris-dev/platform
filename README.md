@@ -217,6 +217,35 @@ Optional and in a separate repo: the **Gateway** (edge ingress, hub, link, warp 
    - `both` — direct ports *and* gateway routes.
 5. **Files** — `sftp` exposes SFTP (`:25520`), `beam` uses an overlay gRPC transport (`:25521`) that never exposes the node IP. (External/Warp nodes force `gateway`+`beam` automatically via `NODE_EXTERNAL`.)
 
+### Managed gateway provider
+
+Instead of running the Gateway yourself, a platform can use the DYLARIS Managed
+Gateway: DYLARIS runs the edges, and each of your nodes runs one link container.
+It needs a managed gateway plan. Sales are not open yet; the waitlist is on
+dylaris.com/pricing.
+
+```
+player -> DYLARIS edge -> link (on your node) -> server
+             ^
+your Core ---+ HTTPS: routes, link kits, usage
+```
+
+- **Opt-in.** Settings > Gateway offers "This platform's own gateway" (the
+  default) or "DYLARIS Managed Gateway". The managed one needs that choice AND
+  an API key; without a key Core makes no call to the provider.
+- **Configuration.** The provider address (default `https://panel.dylaris.com`,
+  or `GATEWAY_PROVIDER_URL`) and the API key, set in the panel or by
+  `GATEWAY_PROVIDER_KEY` / `GATEWAY_PROVIDER_KEY_FILE`. The environment wins. A
+  stored key is only ever sent to the address in force. The settings page has a
+  connection test and shows the month's usage.
+- **What it does.** Each node gets a link deploy kit in the panel. Server
+  addresses on the provider's domains are created, moved with the server and
+  removed with it. Real player IP (on/off) works. A change the provider cannot
+  take at once is retried and shown as pending.
+- **Not available with it yet:** voice chat routing, Bedrock, own domains, the
+  edge MOTD, automatic real-IP mode, and BYON / route-only (those two belong to
+  a platform's own gateway).
+
 ### Main failure sources and operational gotchas
 
 - **Core fails fast at boot on bad secrets.** It refuses to start if `JWT_SECRET`
@@ -1296,7 +1325,9 @@ release notes - all must pass before an image is built. Details in
 Dylaris sends nothing anywhere. There is no usage heartbeat, no phone-home, no
 opt-out to configure, and no endpoint to block. Your instance talks to your
 database, your Redis, your nodes, and whatever mod/plugin sources you ask it to
-fetch from. Nothing else.
+fetch from. Nothing else. The one exception is one you switch on yourself: with
+the [managed gateway provider](#managed-gateway-provider) selected and a key
+set, Core talks to that provider about your routes, link kits and usage.
 
 ## Release notes and updates
 

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -34,6 +35,12 @@ func (e *TenantStillOwnsServersError) Error() string {
 		return fmt.Sprintf("Node %s, which this account brought, still runs %d server(s) of other accounts. Move them off it first.", e.OnNode, e.Count)
 	}
 	return fmt.Sprintf("This account still owns %d server(s). Move or delete them first.", e.Count)
+}
+
+// nodeForgetter is SwitchingGateway's node cleanup for the managed gateway;
+// a gateway without it has no provider kits.
+type nodeForgetter interface {
+	ForgetNode(ctx context.Context, nodeID uint) error
 }
 
 // TeardownTenantInfrastructure removes everything an account HOLDS outside its
@@ -204,6 +211,15 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 			// then fail, and nothing can ever name the Redis user again. A node
 			// whose access was revoked while its row survives is recoverable; the
 			// other way round is not.
+			//
+			// On the managed gateway the node's link is a provider kit; the same
+			// cleanup the node delete runs. An unknown mode refuses rather than
+			// leave a kit nobody can name.
+			if f, ok := gw.(nodeForgetter); ok {
+				if ferr := f.ForgetNode(ctx, uint(n.ID)); ferr != nil {
+					return fmt.Errorf("release the gateway kit of node %d (%s): %w", n.ID, n.Name, ferr)
+				}
+			}
 			RemoveNodeRedisState(ctx, rdb, prov, n.Token)
 			if derr := st.DeleteNode(n.ID); derr != nil {
 				return fmt.Errorf("remove node %d (%s): %w", n.ID, n.Name, derr)
@@ -231,7 +247,12 @@ func TeardownTenantInfrastructure(ctx context.Context, st store.Store, gw Gatewa
 			log.Printf("tenant teardown %s: kept suspended route %s", userID, rt.Domain)
 			continue
 		}
-		if derr := gw.DeleteCoreOwnedRoute(rt.Domain); derr != nil {
+		derr := gw.DeleteCoreOwnedRoute(rt.Domain)
+		if errors.Is(derr, ErrGatewayRemote) {
+			// The managed gateway never held this route; only the row is left.
+			derr = st.DeleteCoreLinkRoute(rt.Domain)
+		}
+		if derr != nil {
 			// Durable: a route left behind keeps sending players to a machine
 			// whose owner no longer exists, and the republisher will put it back
 			// within the minute even if someone clears it by hand.

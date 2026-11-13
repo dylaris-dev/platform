@@ -49,6 +49,8 @@ type PostgresStore struct {
 	backupStorageSecretKey []byte
 	// bedrockKey seals bedrock_servers.floodgate_key_enc; nil fails writes closed.
 	bedrockKey []byte
+	// remoteKitKey seals remote_link_kits.link_key; nil fails writes closed.
+	remoteKitKey []byte
 	// hasUsersUntil is when a cached HasUsers()==true expires (unix nanos,
 	// store/read_cache.go).
 	hasUsersUntil atomic.Int64

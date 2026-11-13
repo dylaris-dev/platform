@@ -50,7 +50,8 @@ type CustomDomainVerifier struct {
 
 	// leader gates each pass, like every other Core singleton. Nil means
 	// ungated, which is what the tests want.
-	leader leader.Election
+	leader        leader.Election
+	gatewayRemote func() (remote, known bool)
 }
 
 // SetLeader gates the poll loop so only one Core acts on a claim.
@@ -63,6 +64,10 @@ type CustomDomainVerifier struct {
 // boot either. Nothing logged, nothing errored. Claims just stopped being
 // looked at, sitting pending until someone noticed their domain never verified.
 func (v *CustomDomainVerifier) SetLeader(l leader.Election) { v.leader = l }
+
+// SetGatewayRemote wires the gateway provider mode: unless it is known and
+// local, the gateway work idles (there is no local gateway state to read).
+func (v *CustomDomainVerifier) SetGatewayRemote(fn func() (remote, known bool)) { v.gatewayRemote = fn }
 
 func (v *CustomDomainVerifier) shouldRun() bool {
 	return v.leader == nil || v.leader.IsLeader()
@@ -102,6 +107,9 @@ func (v *CustomDomainVerifier) Start(ctx context.Context) {
 // RunOnce proves what can be proven, fails what has run out of time, then
 // re-checks the claims that are already proven.
 func (v *CustomDomainVerifier) RunOnce(ctx context.Context) {
+	if LocalGatewayErr(v.gatewayRemote) != nil {
+		return
+	}
 	v.checkPending(ctx)
 	v.recheckVerified(ctx)
 }

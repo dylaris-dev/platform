@@ -60,8 +60,13 @@ type Config struct {
 	// writer of records. Empty means no gateway, and the panel says so rather
 	// than offering a form that cannot work.
 	GatewayHubURL string
-	CoreID        string
-	GRPCPort      int
+	// GatewayProviderURL / GatewayProviderKey point this Core at another
+	// DYLARIS Core as its gateway provider. Both override the settings of the
+	// same name (services.LoadProviderConfig); empty means "not set here".
+	GatewayProviderURL string
+	GatewayProviderKey string
+	CoreID             string
+	GRPCPort           int
 	// GRPCTLSEnabled turns on server-authenticated TLS + fingerprint pinning on
 	// the node<->core NodeService channel. ON by default: the channel carries
 	// console output, RCON and file transfer, and the justification for shipping
@@ -274,18 +279,20 @@ func LoadConfig() (Config, error) {
 	setupEnabled, _ := strconv.ParseBool(getEnv("SETUP", "false"))
 
 	cfg := Config{
-		APIPort:        getEnv("API_PORT", "25500"),
-		FrontendURL:    frontendURL,
-		JWTSecret:      getSecret("JWT_SECRET", "change-this-secret"),
-		BeamJWTSecret:  getSecret("BEAM_JWT_SECRET", ""),
-		AdminSecret:    getSecret("ADMIN_SECRET", ""),
-		SetupEnabled:   setupEnabled,
-		ClusterSecret:  getSecret("CLUSTER_SECRET", "dylaris-cluster-secret"),
-		GatewayHubURL:  strings.TrimSpace(getEnv("GATEWAY_HUB_URL", "")),
-		CoreID:         coreID,
-		GRPCPort:       grpcPort,
-		GRPCTLSEnabled: grpcTLSEnabled,
-		Region:         getEnv("DYLARIS_REGION", "default"),
+		APIPort:            getEnv("API_PORT", "25500"),
+		FrontendURL:        frontendURL,
+		JWTSecret:          getSecret("JWT_SECRET", "change-this-secret"),
+		BeamJWTSecret:      getSecret("BEAM_JWT_SECRET", ""),
+		AdminSecret:        getSecret("ADMIN_SECRET", ""),
+		SetupEnabled:       setupEnabled,
+		ClusterSecret:      getSecret("CLUSTER_SECRET", "dylaris-cluster-secret"),
+		GatewayHubURL:      strings.TrimSpace(getEnv("GATEWAY_HUB_URL", "")),
+		GatewayProviderURL: strings.TrimSpace(getEnv("GATEWAY_PROVIDER_URL", "")),
+		GatewayProviderKey: strings.TrimSpace(getSecret("GATEWAY_PROVIDER_KEY", "")),
+		CoreID:             coreID,
+		GRPCPort:           grpcPort,
+		GRPCTLSEnabled:     grpcTLSEnabled,
+		Region:             getEnv("DYLARIS_REGION", "default"),
 
 		DBHost:     getEnv("DB_HOST", "localhost"),
 		DBPort:     getEnv("DB_PORT", "5432"),

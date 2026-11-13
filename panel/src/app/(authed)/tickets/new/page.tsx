@@ -11,7 +11,7 @@ import { getNodes, getLinkRoutes } from '@/lib/api';
 
 export default function NewTicketPage() {
     const router = useRouter();
-    const { servers, featureFlags, gatewayEnabled } = useAppData();
+    const { servers, featureFlags, gatewayEnabled, gatewayVisibility } = useAppData();
     const [categories, setCategories] = useState<TicketCategory[]>([]);
     const [loading, setLoading] = useState(true);
     const [categoryId, setCategoryId] = useState<number | ''>('');
@@ -47,13 +47,14 @@ export default function NewTicketPage() {
             setOwnNodes((res.nodes as { name: string; displayName?: string }[])
                 .map(n => ({ id: n.name, label: n.displayName || n.name })));
         }).catch(() => {});
-        if (gatewayEnabled) {
+        // Route-only addresses exist only on this platform's own gateway.
+        if (gatewayEnabled && gatewayVisibility.tenancy) {
             getLinkRoutes().then(routes => {
                 if (!cancelled && Array.isArray(routes)) setOwnRoutes(routes.map(r => r.domain));
             }).catch(() => {});
         }
         return () => { cancelled = true; };
-    }, [featureFlags.tickets, gatewayEnabled]);
+    }, [featureFlags.tickets, gatewayEnabled, gatewayVisibility.tenancy]);
 
     if (!featureFlags.tickets) return <TicketsDisabledBanner />;
 

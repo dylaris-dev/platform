@@ -37,8 +37,11 @@ export default function FeaturesTab() {
     const [tab, setTab] = useTabParam<FeatureTab>(FEATURE_TABS, 'subsystems');
     // BYON, route-only, real player IP, voice and Bedrock are gateway-only:
     // their toggles follow the live routing mode. Auto-move runs in both.
-    const { routingMode, coreInfo } = useAppData();
+    const { routingMode, coreInfo, gatewayVisibility } = useAppData();
     const gatewayOff = routingMode === 'ip_port';
+    // Tenancy runs on this platform's own gateway. With the managed gateway Core
+    // ignores both keys on save, so the switches cannot be used.
+    const managedGateway = !gatewayVisibility.tenancy;
 
     // Seeded with the SERVER's default, not an optimistic one: Core reads proxy
     // as `val != "false"` (default on). This is only ever visible if the load
@@ -604,14 +607,14 @@ export default function FeaturesTab() {
                         label="BYON (bring your own node)"
                         description="Turns on tenant node enrollment, traffic metering and the Usage and Billing admin settings, which stay hidden while it is off."
                         checked={!!platformFlags.byon}
-                        disabled={gatewayOff}
+                        disabled={gatewayOff || managedGateway}
                         onChange={v => editPlatformFlag('byon', v)}
                     />
                     <SwitchRow
                         label="Route-only (protected addresses)"
                         description="Lets customers point a protected address at a server they run themselves, through one link container. Follows BYON until you set it."
                         checked={!!platformFlags.routeOnly}
-                        disabled={gatewayOff}
+                        disabled={gatewayOff || managedGateway}
                         onChange={v => editPlatformFlag('routeOnly', v)}
                     />
                     <SwitchRow
@@ -621,11 +624,16 @@ export default function FeaturesTab() {
                         disabled={gatewayOff}
                         onChange={v => editPlatformFlag('proxyProtocol', v)}
                     />
+                    {managedGateway && (
+                        <p className="text-xs text-(--base-06)">
+                            With the DYLARIS Managed Gateway, server owners can turn the real player IP on or off for their servers. Auto is not available there.
+                        </p>
+                    )}
                     <SwitchRow
                         label="Voice chat"
                         description="Lets server owners give Simple Voice Chat or Plasmo Voice a public address through the gateway. Needs a voice relay in the server's region. Turning it off turns voice off within a minute on every server without an allow override. Overrides per server, user or role are below."
                         checked={!!platformFlags.voiceChat}
-                        disabled={gatewayOff}
+                        disabled={gatewayOff || !gatewayVisibility.voice}
                         onChange={v => editPlatformFlag('voiceChat', v)}
                     />
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -642,12 +650,17 @@ export default function FeaturesTab() {
                             value={platformFlags.bedrock ?? 'off'}
                             onChange={v => editPlatformFlag('bedrock', v)}
                             options={[
-                                { id: 'off', label: 'Off', disabled: gatewayOff && (platformFlags.bedrock ?? 'off') === 'off' },
-                                { id: 'admin', label: 'Admins', disabled: gatewayOff },
-                                { id: 'all', label: 'Everyone', disabled: gatewayOff },
+                                { id: 'off', label: 'Off', disabled: (gatewayOff || !gatewayVisibility.bedrock) && (platformFlags.bedrock ?? 'off') === 'off' },
+                                { id: 'admin', label: 'Admins', disabled: gatewayOff || !gatewayVisibility.bedrock },
+                                { id: 'all', label: 'Everyone', disabled: gatewayOff || !gatewayVisibility.bedrock },
                             ]}
                         />
                     </div>
+                    {managedGateway && (
+                        <p className="text-xs text-(--base-06)">
+                            BYON, route-only, voice chat and Bedrock players belong to this platform&apos;s own gateway, so they are off while it uses the DYLARIS Managed Gateway.
+                        </p>
+                    )}
                     {gatewayOff && (
                         <p className="flex items-start gap-1.5 text-xs text-(--warning-light)">
                             <AlertTriangle size={12} className="mt-0.5 shrink-0" />
@@ -660,7 +673,7 @@ export default function FeaturesTab() {
                     )}
                 </SettingsGroup>
                             </SettingsCard>
-                            {!gatewayOff && <VoiceAccessCard />}
+                            {!gatewayOff && gatewayVisibility.voice && <VoiceAccessCard />}
                             {/* Extra ports are direct routing only (ip_port or both). */}
                             {routingMode !== 'gateway' && <ExtraPortsCard />}
                             {routingMode !== 'gateway' && <DnsUpdaterFlagCard />}

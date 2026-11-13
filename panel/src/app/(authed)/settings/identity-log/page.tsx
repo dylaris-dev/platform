@@ -48,6 +48,8 @@ const LABELS: Record<string, string> = {
     gateway_public_targets_changed: 'Public API route targets changed',
     gateway_route_suspended: 'Route suspended by an operator',
     gateway_route_unsuspended: 'Route suspension lifted by an operator',
+    gateway_provider_changed: 'Gateway provider changed',
+    managed_link_kit_viewed: 'Managed link deploy kit viewed',
     user_role_changed: 'Role changed',
     user_permissions_changed: 'Permissions changed',
     '2fa_admin_reset': 'Two-factor reset by an operator',

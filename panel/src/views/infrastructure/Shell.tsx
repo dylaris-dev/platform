@@ -30,7 +30,7 @@ const BASE = '/infrastructure';
 
 export default function InfrastructureShell({ children }: { children: React.ReactNode }) {
     const infra = useInfra();
-    const { featureFlags } = useAppData();
+    const { featureFlags, gatewayVisibility } = useAppData();
     const pathname = usePathname();
 
     const platform = isKind(infra.nodes, 'platform');
@@ -48,7 +48,9 @@ export default function InfrastructureShell({ children }: { children: React.Reac
         // no such thing" the same screen - and the tab an operator needs first
         // is the one for the kind they have not registered yet.
         { slug: 'nodes', label: 'Nodes', count: platform.length, visible: true },
-        { slug: 'external', label: 'External nodes', count: external.length, visible: true },
+        // With the managed gateway there is no warp to add one through, so the
+        // tab only stays for machines that already exist.
+        { slug: 'external', label: 'External nodes', count: external.length, visible: gatewayVisibility.warpTab || external.length > 0 },
         // BYON, not "Customer nodes": it is the word used everywhere else in
         // this product - the setting, the plan, the release notes - and one
         // screen calling it something friendlier only costs the reader the

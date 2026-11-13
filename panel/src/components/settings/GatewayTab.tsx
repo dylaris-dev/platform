@@ -24,6 +24,8 @@ import HelpTip from '@/components/ui/HelpTip';
 import SettingsPage from '@/components/settings/SettingsPage';
 import ModalPanel from '@/components/ui/ModalPanel';
 import { fmtDateTime } from '@/lib/time';
+import { useAppData } from '@/lib/AppDataContext';
+import GatewayProviderCard from '@/components/settings/GatewayProviderCard';
 
 // ─────────────────────────────────────────────
 // Gateway settings
@@ -110,6 +112,10 @@ function DnsCheckCard() {
     const [result, setResult] = useState<DnsCheckResult | null>(null);
     const [checking, setChecking] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // With the managed gateway only this platform's own records are checked;
+    // the provider owns the player domains.
+    const { gatewayVisibility } = useAppData();
+    const ownDomains = gatewayVisibility.hosterDomainEditor;
 
     const runCheck = async () => {
         setChecking(true);
@@ -168,7 +174,9 @@ function DnsCheckCard() {
                     <Network size={22} className="text-(--base-05)" />
                     <p className="text-sm text-(--base-08)">Run a check to see your required DNS records</p>
                     <p className="text-xs text-(--base-06) max-w-md">
-                        The records are computed from your configured hoster domains, custom-domain CNAME target and panel URL. Each is resolved against a public resolver and the ingress is dialled for reachability.
+                        {ownDomains
+                            ? 'The records are computed from your configured hoster domains, custom-domain CNAME target and panel URL. Each is resolved against a public resolver and the ingress is dialled for reachability.'
+                            : "The records are computed from this platform's own addresses: the panel URL, the API and the Beam relay. The player domains belong to the DYLARIS Managed Gateway and are not checked here."}
                     </p>
                 </div>
             )}
@@ -179,7 +187,7 @@ function DnsCheckCard() {
                     {result.records.length === 0 ? (
                         <div className="flex items-start gap-2 p-3 rounded-md bg-(--base-02) border border-(--base-03) text-xs text-(--base-07)">
                             <AlertTriangle size={14} className="text-(--warning-light) mt-0.5 shrink-0" />
-                            <span>No DNS records to verify. Configure at least one hoster domain above (and the panel URL via <span className="font-mono">FRONTEND_URL</span>) to populate this table.</span>
+                            <span>No DNS records to verify. {ownDomains ? 'Configure at least one hoster domain above (and the panel URL via ' : 'Set the panel URL via '}<span className="font-mono">FRONTEND_URL</span>{ownDomains ? ') to populate this table.' : ' to populate this table.'}</span>
                         </div>
                     ) : (
                         <div>
@@ -300,6 +308,10 @@ function GatewayDisabledNotice() {
 }
 
 function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
+    // With the managed gateway the provider owns the hoster domains, custom
+    // domains and DNS; their routes answer 409 here. Route limits and reserved
+    // prefixes are still applied by this Core.
+    const { gatewayVisibility } = useAppData();
 
     const [settings, setSettings] = useState<GatewaySettings>({
         limits: {
@@ -567,6 +579,10 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             width="full"
             description="Gateway routing, link defaults and route limits for gates and links."
         >
+            {/* Outside the routing fieldset: which gateway to use is decided
+                before, and independently of, how traffic is routed. */}
+            <GatewayProviderCard />
+
             {/* Routing Mode */}
             <div className="card p-5 space-y-5">
                 <div className="flex items-center gap-3">
@@ -704,7 +720,8 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 form={{ dirty, saving, save: handleSave, discard: handleDiscard }}
                 description="The domains users pick from, and how many routes and ports they may take."
             >
-                <SettingsGroup title="Hoster domains" first>
+                <SettingsGroup title={gatewayVisibility.hosterDomainEditor ? 'Hoster domains' : undefined} first>
+                    {gatewayVisibility.hosterDomainEditor && (
                     <div>
                     <p className="text-xs text-(--base-06) mb-3">
                         Users only enter a subdomain — these base domains appear as a dropdown next to the input. Pick which characters are allowed in the subdomain per domain.
@@ -752,7 +769,9 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                         <Plus size={12} /> Add domain
                     </button>
                 </div>
+                    )}
 
+                {gatewayVisibility.customDomains && (
                 <div className="border-t border-(--base-03) pt-5 space-y-4">
                     <div className="flex items-center justify-between gap-4">
                         <div>
@@ -815,8 +834,9 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                         </div>
                     )}
                 </div>
+                )}
 
-                <div className="border-t border-(--base-03) pt-5 space-y-3">
+                <div className={`${gatewayVisibility.hosterDomainEditor ? 'border-t border-(--base-03) pt-5 ' : ''}space-y-3`}>
                     <div>
                         <h3 className="mono-label">Reserved Route Prefixes</h3>
                         <p className="text-xs text-(--base-06) mt-1">
@@ -910,7 +930,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
             {/* Diagnostics for the records derived from the hoster domains,
                 CNAME target and panel URL configured above. Each owns its own
                 state, so they sit after the settings rather than between them. */}
-            <GatewayDnsCard />
+            {gatewayVisibility.hubDnsCard && <GatewayDnsCard />}
 
             <DnsCheckCard />
 

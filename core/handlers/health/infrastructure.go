@@ -27,13 +27,18 @@ func NewInfrastructureHandler(d Deps) *InfrastructureHandler {
 func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
-	// Edges with full stats (auto-discovered from Redis)
-	edges := services.GetEdgesFromRedis(ctx, h.d.Redis)
-
-	// Links with online status
-	links := services.GetLinksFromRedis(ctx, h.d.Redis)
-
-	routeCount := services.CountRoutesFromRedis(ctx, h.d.Redis)
+	// On the managed gateway the edges, links and routes are the provider's:
+	// that half stays empty instead of reading keys nobody writes here.
+	var edges []services.GatewayEdgeInfo
+	var links []services.GatewayLinkStatus
+	var routeCount int64
+	if services.LocalGatewayErr(h.d.GatewayRemote) == nil {
+		// Edges with full stats (auto-discovered from Redis)
+		edges = services.GetEdgesFromRedis(ctx, h.d.Redis)
+		// Links with online status
+		links = services.GetLinksFromRedis(ctx, h.d.Redis)
+		routeCount = services.CountRoutesFromRedis(ctx, h.d.Redis)
+	}
 
 	// Nodes with server count + live heartbeat stats
 	nodes, err := h.d.Store.ListNodes()
@@ -44,7 +49,11 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 	// Shared with the metrics collector, which used to read these fields off an
 	// unenriched ListNodes result and record the zero value as a measurement.
 	services.EnrichNodesWithLiveStats(ctx, h.d.Store, h.d.Redis, nodes)
-	nodeops.SetNodesLinkOnline(ctx, h.d.Redis, h.d.ClusterSecret, nodes)
+	if rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway); rg != nil {
+		rg.SetNodesLinkOnline(ctx, nodes)
+	} else if merr == nil {
+		nodeops.SetNodesLinkOnline(ctx, h.d.Redis, h.d.ClusterSecret, nodes)
+	}
 
 	// Aggregate stats. Links are split by who RUNS them: a customer's BYON or
 	// route-only link going down is not an outage of this platform, so the
@@ -228,11 +237,19 @@ func (h *InfrastructureHandler) customerSummary(ctx context.Context, split servi
 		// ONE aggregate over every peer. Until every leader is on a build that
 		// does, or while our own peers are inside that aggregate, the honest
 		// answer is a total with no online count: it cannot be split by owner.
-		if up, known := services.WarpPeersActive(ctx, h.d.Redis); known && platform == 0 {
+		// Warp is not used with the managed gateway: no leader to ask.
+		if up, known := h.warpPeersActive(ctx); known && platform == 0 {
 			out.Warps.Online = &up
 		}
 	}
 	return out
+}
+
+func (h *InfrastructureHandler) warpPeersActive(ctx context.Context) (int, bool) {
+	if services.LocalGatewayErr(h.d.GatewayRemote) != nil {
+		return 0, false
+	}
+	return services.WarpPeersActive(ctx, h.d.Redis)
 }
 
 // GetRoutingMigrationStatus GET /api/infrastructure/routing-migration -

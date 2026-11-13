@@ -139,9 +139,9 @@ can still show what exists.
 
 ## At a glance
 
-- **652 routes** in 53 sections: 279 GET, 191 POST, 67 PUT, 42 PATCH, 74 DELETE.
+- **659 routes** in 53 sections: 284 GET, 193 POST, 67 PUT, 42 PATCH, 74 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **437** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **157** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **444** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **157** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **49** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -156,9 +156,9 @@ can still show what exists.
 - [/api/backup-storages](#apibackup-storages) (7)
 - [/api/beam](#apibeam) (4)
 - [/api/disk](#apidisk) (4)
-- [/api/external](#apiexternal) (32)
+- [/api/external](#apiexternal) (34)
 - [/api/files](#apifiles) (10)
-- [/api/gateway](#apigateway) (27)
+- [/api/gateway](#apigateway) (28)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
 - [/api/grants](#apigrants) (3)
 - [/api/infrastructure](#apiinfrastructure) (3)
@@ -166,7 +166,7 @@ can still show what exists.
 - [/api/me](#apime) (50)
 - [/api/modrinth](#apimodrinth) (9)
 - [/api/modules](#apimodules) (6)
-- [/api/nodes](#apinodes) (16)
+- [/api/nodes](#apinodes) (17)
 - [/api/notifications](#apinotifications) (5)
 - [/api/packs](#apipacks) (32)
 - [/api/placement](#apiplacement) (3)
@@ -175,7 +175,7 @@ can still show what exists.
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
 - [/api/servers](#apiservers) (96)
-- [/api/settings](#apisettings) (28)
+- [/api/settings](#apisettings) (31)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
 - [/api/sse-ticket](#apisse-ticket) (1)
@@ -330,8 +330,8 @@ can still show what exists.
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.read` | RequireTenancyEnabled | `EntitlementHandler.GetForUser` | RequireCap("plans.read"). |
 | POST | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireTenancyEnabled | `EntitlementHandler.Grant` | RequireCap("plans.write"). |
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireTenancyEnabled | `EntitlementHandler.Revoke` | RequireCap("plans.write"). |
-| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets` | session | `users.write` | - | `GatewayHandler.GetPublicTargets` | whether this account's API keys may create gateway routes with public targets. |
-| PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets` | session | `users.write` | - | `GatewayHandler.SetPublicTargets` | body {"enabled": bool}, lets this account's API keys create gateway routes with public targets. |
+| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets` | session | `users.write` | RequireLocalGateway | `GatewayHandler.GetPublicTargets` | whether this account's API keys may create gateway routes with public targets. |
+| PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets` | session | `users.write` | RequireLocalGateway | `GatewayHandler.SetPublicTargets` | body {"enabled": bool}, lets this account's API keys create gateway routes with public targets. |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides` | session | `plans.write` | RequireTenancyEnabled | `PlansHandler.SetUserLimitOverrides` | - |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag` | session | `settings.write` | - | `ModpackSettingsHandler.SetUserFlag` | PANEL settings.write (RequireCap at the route). |
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/modpack-flag` | session | `settings.write` | - | `ModpackSettingsHandler.ClearUserFlagOverride` | PANEL settings.write (RequireCap at the route). |
@@ -343,15 +343,15 @@ can still show what exists.
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/storage-targets/{storageId:[0-9]+}` | session | `users.write` | - | `BackupHandler.AdminDeleteUserStorage` | Refused while anything still names the target, exactly as the user's own delete is, and for the same reason: the reference would fall back to the platform storage. |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/username` | session | `users.write` | - | `UsernameHistoryHandler.AdminRename` | Body: {"username": "newname"} — bypasses cooldown + platform toggle. |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/username-history` | session | `users.read` | - | `UsernameHistoryHandler.Admin` | Gated at the route with RequireCap("users.read"); admin short-circuits. |
-| GET | `/api/admin/voice-permissions` | session | `settings.read` | - | `GatewayHandler.ListVoicePermissions` | every scope row, plus the global setting they override. |
-| PUT | `/api/admin/voice-permissions` | session | `settings.write` | - | `GatewayHandler.SetVoicePermission` | body {scope, allowed}. |
-| DELETE | `/api/admin/voice-permissions` | session | `settings.write` | - | `GatewayHandler.DeleteVoicePermission` | removes the row, so the scope defers to the next one down again. |
-| POST | `/api/admin/warp/external-nodes` | session | `topology.write` | - | `WarpHandler.MintExternalNodeKey` | everything an External node needs, in one call: an owner-less node- warp key and the platform enroll token bound to it. |
-| GET | `/api/admin/warp/keys` | session | `topology.read` | - | `WarpHandler.ListAPIKeys` | the external-node inventory. |
-| POST | `/api/admin/warp/keys` | session | `topology.write` | - | `WarpHandler.MintAPIKey` | (admin) creates a warp enrollment key and returns the plaintext ONCE. |
-| DELETE | `/api/admin/warp/keys/{id:[0-9]+}` | session | `topology.write` | - | `WarpHandler.RevokeAPIKey` | revoke an enrollment key AND disconnect whatever it already enrolled. |
-| DELETE | `/api/admin/warp/keys/{id:[0-9]+}/purge` | session | `topology.write` | - | `WarpHandler.DeleteAPIKey` | remove the key row entirely, after disconnecting whatever it enrolled. |
-| POST | `/api/admin/warp/keys/{id:[0-9]+}/roll` | session | `topology.write` | - | `WarpHandler.RollExternalNodeKey` | a new secret for an External node's key, same identity. |
+| GET | `/api/admin/voice-permissions` | session | `settings.read` | RequireLocalGateway | `GatewayHandler.ListVoicePermissions` | every scope row, plus the global setting they override. |
+| PUT | `/api/admin/voice-permissions` | session | `settings.write` | RequireLocalGateway | `GatewayHandler.SetVoicePermission` | body {scope, allowed}. |
+| DELETE | `/api/admin/voice-permissions` | session | `settings.write` | RequireLocalGateway | `GatewayHandler.DeleteVoicePermission` | removes the row, so the scope defers to the next one down again. |
+| POST | `/api/admin/warp/external-nodes` | session | `topology.write` | RequireLocalGateway | `WarpHandler.MintExternalNodeKey` | everything an External node needs, in one call: an owner-less node- warp key and the platform enroll token bound to it. |
+| GET | `/api/admin/warp/keys` | session | `topology.read` | RequireLocalGateway | `WarpHandler.ListAPIKeys` | the external-node inventory. |
+| POST | `/api/admin/warp/keys` | session | `topology.write` | RequireLocalGateway | `WarpHandler.MintAPIKey` | (admin) creates a warp enrollment key and returns the plaintext ONCE. |
+| DELETE | `/api/admin/warp/keys/{id:[0-9]+}` | session | `topology.write` | RequireLocalGateway | `WarpHandler.RevokeAPIKey` | revoke an enrollment key AND disconnect whatever it already enrolled. |
+| DELETE | `/api/admin/warp/keys/{id:[0-9]+}/purge` | session | `topology.write` | RequireLocalGateway | `WarpHandler.DeleteAPIKey` | remove the key row entirely, after disconnecting whatever it enrolled. |
+| POST | `/api/admin/warp/keys/{id:[0-9]+}/roll` | session | `topology.write` | RequireLocalGateway | `WarpHandler.RollExternalNodeKey` | a new secret for an External node's key, same identity. |
 
 ## /api/auth
 
@@ -453,27 +453,29 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | POST | `/api/external/api-key/roll` | user API key | _no capability_ | Limit | `APIKeysHandler.RollSelf` | a key replaces its own secret. |
-| GET | `/api/external/gateway/beam/keys` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListBeamKeys` | the caller's live beam keys. |
-| POST | `/api/external/gateway/beam/keys` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.RegisterBeamKey` | body {"public_key": base64 Ed25519 public key}; returns the kid to put in ticket headers. |
-| DELETE | `/api/external/gateway/beam/keys/{kid}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.RevokeBeamKey` | revokes one of the caller's beam keys; the relay refuses its tickets at once. |
-| GET | `/api/external/gateway/beam/relays` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListBeamRelays` | the beam relays a customer Core puts in its beam config [{region, public_host, client_port}]; ?region= narrows to one region. |
-| GET | `/api/external/gateway/custom-domains` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListCustomDomains` | the caller's own domain claims and their TXT records. |
-| POST | `/api/external/gateway/custom-domains` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.AddCustomDomain` | body {"domain": "play.example.com"}, returns the TXT record to publish. |
-| DELETE | `/api/external/gateway/custom-domains/{domain:[^/]+}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.DeleteCustomDomain` | removes the caller's claim; refused while a route uses it. |
-| POST | `/api/external/gateway/custom-domains/{domain:[^/]+}/txt-token` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.IssueCustomDomainTXTToken` | returns the claim's TXT record, minting it once. |
-| POST | `/api/external/gateway/custom-domains/{domain:[^/]+}/verify-txt` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.VerifyCustomDomainTXT` | checks the published TXT record now. |
-| GET | `/api/external/gateway/link-kits` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListLinkKits` | the caller's route-only link kits, without secrets, plus used and limit. |
-| POST | `/api/external/gateway/link-kits` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.MintLinkKit` | creates a link kit; link_key is shown once. |
-| DELETE | `/api/external/gateway/link-kits/{linkID}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.RevokeLinkKit` | revokes one of the caller's link kits and removes its routes. |
-| POST | `/api/external/gateway/link-kits/{linkID}/roll` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.RollLinkKit` | replaces a link kit's key; the old one keeps working for the grace period. |
-| GET | `/api/external/gateway/regions` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListRegions` | the gateway regions with their wildcard and liveness, plus the hoster domains and CNAME target. |
-| GET | `/api/external/gateway/routes` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.ListRoutes` | the caller's route-only addresses. |
-| POST | `/api/external/gateway/routes` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.CreateRoute` | creates or retargets an address on one of the caller's links. |
-| DELETE | `/api/external/gateway/routes/{domain:[^/]+}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.DeleteRoute` | removes one of the caller's addresses. |
-| PUT | `/api/external/gateway/routes/{domain:[^/]+}/bedrock` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.SetRouteBedrock` | body {"java": bool, "bedrock": bool}, the address's editions. |
-| PATCH | `/api/external/gateway/routes/{domain:[^/]+}/proxy-protocol` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.SetRouteProxyProtocol` | body {"enabled": bool}, real player IP forwarding. |
-| PUT | `/api/external/gateway/routes/{domain:[^/]+}/voice` | user API key | `gateway.write` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.SetRouteVoice` | body {"enabled": bool, "target_port": int}, voice chat relay. |
-| GET | `/api/external/gateway/usage` | user API key | `gateway.read` | Limit, ExternalOwnerRoute | `ExternalGatewayHandler.GetUsage` | the period's totals (as /api/external/usage) plus regions [{region, kind, bytes}], final (false while the month runs: an estimate as of asOf) and, for the running month of a managed plan, pool {includedGb, maxPurchaseGb, usedBytes, percent}; ?period=YYYY-MM. |
+| GET | `/api/external/gateway/account` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.GetAccount` | who the key belongs to: product (managed, route_only, none), entitlement source, suspension, the key's scopes and the gateway caps. |
+| GET | `/api/external/gateway/beam/keys` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListBeamKeys` | the caller's live beam keys. |
+| POST | `/api/external/gateway/beam/keys` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.RegisterBeamKey` | body {"public_key": base64 Ed25519 public key}; returns the kid to put in ticket headers. |
+| DELETE | `/api/external/gateway/beam/keys/{kid}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.RevokeBeamKey` | revokes one of the caller's beam keys; the relay refuses its tickets at once. |
+| GET | `/api/external/gateway/beam/relays` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListBeamRelays` | the beam relays a customer Core puts in its beam config [{region, public_host, client_port}]; ?region= narrows to one region. |
+| GET | `/api/external/gateway/check-domain` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.CheckDomain` | whether the caller could create a route on that domain: available, and a reason (taken, blocked, invalid, not_hosted) when not. |
+| GET | `/api/external/gateway/custom-domains` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListCustomDomains` | the caller's own domain claims and their TXT records. |
+| POST | `/api/external/gateway/custom-domains` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.AddCustomDomain` | body {"domain": "play.example.com"}, returns the TXT record to publish. |
+| DELETE | `/api/external/gateway/custom-domains/{domain:[^/]+}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.DeleteCustomDomain` | removes the caller's claim; refused while a route uses it. |
+| POST | `/api/external/gateway/custom-domains/{domain:[^/]+}/txt-token` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.IssueCustomDomainTXTToken` | returns the claim's TXT record, minting it once. |
+| POST | `/api/external/gateway/custom-domains/{domain:[^/]+}/verify-txt` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.VerifyCustomDomainTXT` | checks the published TXT record now. |
+| GET | `/api/external/gateway/link-kits` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListLinkKits` | the caller's route-only link kits, without secrets, plus used and limit. |
+| POST | `/api/external/gateway/link-kits` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.MintLinkKit` | creates a link kit; link_key is shown once. |
+| DELETE | `/api/external/gateway/link-kits/{linkID}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.RevokeLinkKit` | revokes one of the caller's link kits and removes its routes. |
+| POST | `/api/external/gateway/link-kits/{linkID}/roll` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.RollLinkKit` | replaces a link kit's key; the old one keeps working for the grace period. |
+| GET | `/api/external/gateway/regions` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListRegions` | the gateway regions with their wildcard and liveness, plus the hoster domains and CNAME target. |
+| GET | `/api/external/gateway/routes` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListRoutes` | the caller's route-only addresses. |
+| POST | `/api/external/gateway/routes` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.CreateRoute` | creates or retargets an address on one of the caller's links. |
+| DELETE | `/api/external/gateway/routes/{domain:[^/]+}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.DeleteRoute` | removes one of the caller's addresses. |
+| PUT | `/api/external/gateway/routes/{domain:[^/]+}/bedrock` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteBedrock` | body {"java": bool, "bedrock": bool}, the address's editions. |
+| PATCH | `/api/external/gateway/routes/{domain:[^/]+}/proxy-protocol` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteProxyProtocol` | body {"enabled": bool}, real player IP forwarding. |
+| PUT | `/api/external/gateway/routes/{domain:[^/]+}/voice` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteVoice` | body {"enabled": bool, "target_port": int}, voice chat relay. |
+| GET | `/api/external/gateway/usage` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.GetUsage` | the period's totals (as /api/external/usage) plus regions [{region, kind, bytes}], final (false while the month runs: an estimate as of asOf) and, for the running month of a managed plan, pool {includedGb, maxPurchaseGb, usedBytes, percent}; ?period=YYYY-MM. |
 | POST | `/api/external/rcon/{uuid}/exec` | user API key | `rcon.exec` | - | `RconHandler.ExecExternal` | automation entry. |
 | GET | `/api/external/servers` | user API key | _no capability_ | - | `APIKeysHandler.ListExternalServers` | the servers this KEY may act on: the servers of its owner, narrowed to the allowlist of the key. |
 | GET | `/api/external/servers/{uuid}` | user API key | `overview.read` | - | `APIKeysHandler.GetExternalServer` | the record of one server. |
@@ -504,42 +506,43 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/gateway/check-domain` | session | _no capability_ | - | `GatewayHandler.CheckDomainAvailability` | tells the panel whether a candidate domain is already registered, so the route-create form can show a live "available / in use" hint while the user types. |
-| GET | `/api/gateway/custom-domains` | session | _in-handler_ | - | `CustomDomainHandler.List` | the caller's OWN claims. |
-| POST | `/api/gateway/custom-domains` | session | _in-handler_ | Limit | `CustomDomainHandler.Add` | body {"domain": "play.example.com"}. |
-| POST | `/api/gateway/custom-domains/{domain:.+}/txt-token` | session | _in-handler_ | - | `CustomDomainHandler.IssueTXTToken` | Mints (once) the record that proves ownership. |
-| POST | `/api/gateway/custom-domains/{domain:.+}/verify-txt` | session | _in-handler_ | Limit | `CustomDomainHandler.VerifyTXT` | Checks the published record now instead of at the next pass, and on success verifies the claim - from pending, out of a block, or out of a run of missed re-checks. |
-| DELETE | `/api/gateway/custom-domains/{domain:[^/]+}` | session | _in-handler_ | - | `CustomDomainHandler.Delete` | removes the caller's claim on a domain. |
+| GET | `/api/gateway/check-domain` | session | _no capability_ | LimitUser | `GatewayHandler.CheckDomainAvailability` | tells the panel whether a candidate domain is already registered, so the route-create form can show a live "available / in use" hint while the user types. |
+| GET | `/api/gateway/custom-domains` | session | _in-handler_ | RequireLocalGateway | `CustomDomainHandler.List` | the caller's OWN claims. |
+| POST | `/api/gateway/custom-domains` | session | _in-handler_ | Limit, RequireLocalGateway | `CustomDomainHandler.Add` | body {"domain": "play.example.com"}. |
+| POST | `/api/gateway/custom-domains/{domain:.+}/txt-token` | session | _in-handler_ | RequireLocalGateway | `CustomDomainHandler.IssueTXTToken` | Mints (once) the record that proves ownership. |
+| POST | `/api/gateway/custom-domains/{domain:.+}/verify-txt` | session | _in-handler_ | Limit, RequireLocalGateway | `CustomDomainHandler.VerifyTXT` | Checks the published record now instead of at the next pass, and on success verifies the claim - from pending, out of a block, or out of a run of missed re-checks. |
+| DELETE | `/api/gateway/custom-domains/{domain:[^/]+}` | session | _in-handler_ | RequireLocalGateway | `CustomDomainHandler.Delete` | removes the caller's claim on a domain. |
 | GET | `/api/gateway/dns-check` | session | `topology.read` | - | `DNSHandler.CheckDNS` | computes the required DNS records from the operator's OWN config (FRONTEND_URL + gateway settings + registered edges) and verifies them against the public DNS view plus a TCP reachability probe. |
-| GET | `/api/gateway/edges` | session | `topology.read` | - | `GatewayHandler.GetEdges` | every edge currently registered in Redis. |
-| GET | `/api/gateway/errors` | session | `topology.read` | - | `GatewayHandler.GetErrors` | the 50 most recent gateway service errors; ?service= narrows them to one component. |
-| GET | `/api/gateway/link-routes` | session | _no capability_ | - | `GatewayHandler.ListLinkRoutes` | the caller's route-only entries. |
-| POST | `/api/gateway/link-routes` | session | _no capability_ | RequireGatewayEnabled | `GatewayHandler.CreateLinkRoute` | authed, gateway-gated. |
-| DELETE | `/api/gateway/link-routes/{domain:.+}` | session | _no capability_ | - | `GatewayHandler.DeleteLinkRoute` | owner-scoped. |
-| PUT | `/api/gateway/link-routes/{domain:[^/]+}/bedrock` | session | _no capability_ | - | `GatewayHandler.SetLinkRouteBedrock` | body {"java": bool, "bedrock": bool}. |
-| GET | `/api/gateway/link-routes/{domain:[^/]+}/floodgate-key` | session | _no capability_ | - | `GatewayHandler.GetLinkRouteFloodgateKey` | the address's Floodgate key as key.pem (the 16 raw bytes Floodgate reads). |
-| PATCH | `/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol` | session | _no capability_ | RequireGatewayEnabled | `GatewayHandler.SetLinkRouteProxyProtocol` | switches real player IP forwarding on one route-only entry. |
-| PUT | `/api/gateway/link-routes/{domain:[^/]+}/voice` | session | _no capability_ | - | `GatewayHandler.SetLinkRouteVoice` | body {"enabled": bool, "target_port": int}. |
-| GET | `/api/gateway/links` | session | `topology.read` | - | `GatewayHandler.GetLinks` | every link registered in Redis, each with its online flag. |
-| GET | `/api/gateway/logs` | session | `topology.read` | - | `GatewayHandler.GetLogs` | hub logs are not shipped to Redis, so this answers with the last 100 service error entries instead. |
+| GET | `/api/gateway/edges` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetEdges` | every edge currently registered in Redis. |
+| GET | `/api/gateway/errors` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetErrors` | the 50 most recent gateway service errors; ?service= narrows them to one component. |
+| GET | `/api/gateway/link-routes` | session | _no capability_ | RequireLocalGateway | `GatewayHandler.ListLinkRoutes` | the caller's route-only entries. |
+| POST | `/api/gateway/link-routes` | session | _no capability_ | RequireGatewayEnabled, RequireLocalGateway | `GatewayHandler.CreateLinkRoute` | authed, gateway-gated. |
+| DELETE | `/api/gateway/link-routes/{domain:.+}` | session | _no capability_ | RequireLocalGateway | `GatewayHandler.DeleteLinkRoute` | owner-scoped. |
+| PUT | `/api/gateway/link-routes/{domain:[^/]+}/bedrock` | session | _no capability_ | RequireLocalGateway | `GatewayHandler.SetLinkRouteBedrock` | body {"java": bool, "bedrock": bool}. |
+| GET | `/api/gateway/link-routes/{domain:[^/]+}/floodgate-key` | session | _no capability_ | RequireLocalGateway | `GatewayHandler.GetLinkRouteFloodgateKey` | the address's Floodgate key as key.pem (the 16 raw bytes Floodgate reads). |
+| PATCH | `/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol` | session | _no capability_ | RequireGatewayEnabled, RequireLocalGateway | `GatewayHandler.SetLinkRouteProxyProtocol` | switches real player IP forwarding on one route-only entry. |
+| PUT | `/api/gateway/link-routes/{domain:[^/]+}/voice` | session | _no capability_ | RequireLocalGateway | `GatewayHandler.SetLinkRouteVoice` | body {"enabled": bool, "target_port": int}. |
+| GET | `/api/gateway/links` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetLinks` | every link registered in Redis, each with its online flag. |
+| GET | `/api/gateway/logs` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetLogs` | hub logs are not shipped to Redis, so this answers with the last 100 service error entries instead. |
+| GET | `/api/gateway/provider/usage` | session | `topology.read` | - | `RemoteKitHandler.ProviderUsage` | returns the managed gateway provider's usage for the running month, cached for 60 s. |
 | GET | `/api/gateway/route-options` | session | _no capability_ | - | `SettingsHandler.GetGatewayRouteOptions` | Available to all authenticated users — the user-facing route form needs the hoster list + custom-domain config to render itself. |
-| GET | `/api/gateway/routes` | session | `topology.read` | - | `GatewayHandler.GetAllRoutes` | every gateway route across the whole fleet, read from Redis. |
-| POST | `/api/gateway/routes/bulk-delete` | session | `topology.write` | - | `GatewayHandler.BulkDeleteRoutesBySuffix` | deletes every route whose domain equals OR ends with `.<suffix>`. |
-| GET | `/api/gateway/routes/suffixes` | session | `topology.read` | - | `GatewayHandler.GetRouteSuffixes` | returns the unique apex (1-dot) and parent (2-dot) suffixes across every route currently registered. |
-| DELETE | `/api/gateway/routes/{domain:.+}` | session | `topology.write` | - | `GatewayHandler.AdminDeleteRoute` | removes any route by domain, without the per-server ownership check its /api/servers twin applies. |
-| POST | `/api/gateway/routes/{domain:[^/]+}/suspend` | session | `topology.write` | - | `GatewayHandler.SuspendRoute` | body {"reason": "..."}, takes one route-only route off the edges until an admin lifts it. |
-| POST | `/api/gateway/routes/{domain:[^/]+}/unsuspend` | session | `topology.write` | - | `GatewayHandler.UnsuspendRoute` | lifts a suspension and publishes the route again right away. |
-| GET | `/api/gateway/stats` | session | `topology.read` | - | `GatewayHandler.GetStats` | counts only: links and edges, how many of each are online, and the route total. |
-| POST | `/api/gateway/sync` | session | `topology.write` | - | `GatewayHandler.TriggerSync` | a no-op kept for the panel button. |
+| GET | `/api/gateway/routes` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetAllRoutes` | every gateway route across the whole fleet, read from Redis. |
+| POST | `/api/gateway/routes/bulk-delete` | session | `topology.write` | RequireLocalGateway | `GatewayHandler.BulkDeleteRoutesBySuffix` | deletes every route whose domain equals OR ends with `.<suffix>`. |
+| GET | `/api/gateway/routes/suffixes` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetRouteSuffixes` | returns the unique apex (1-dot) and parent (2-dot) suffixes across every route currently registered. |
+| DELETE | `/api/gateway/routes/{domain:.+}` | session | `topology.write` | RequireLocalGateway | `GatewayHandler.AdminDeleteRoute` | removes any route by domain, without the per-server ownership check its /api/servers twin applies. |
+| POST | `/api/gateway/routes/{domain:[^/]+}/suspend` | session | `topology.write` | RequireLocalGateway | `GatewayHandler.SuspendRoute` | body {"reason": "..."}, takes one route-only route off the edges until an admin lifts it. |
+| POST | `/api/gateway/routes/{domain:[^/]+}/unsuspend` | session | `topology.write` | RequireLocalGateway | `GatewayHandler.UnsuspendRoute` | lifts a suspension and publishes the route again right away. |
+| GET | `/api/gateway/stats` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetStats` | counts only: links and edges, how many of each are online, and the route total. |
+| POST | `/api/gateway/sync` | session | `topology.write` | RequireLocalGateway | `GatewayHandler.TriggerSync` | a no-op kept for the panel button. |
 
 ## /api/gateway-bandwidth
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/gateway-bandwidth/history` | session | `settings.read` | - | `GatewayBandwidthHandler.GetHistory` | Every series the bandwidth screen draws, in one response: one per component and one per host. |
-| GET | `/api/gateway-bandwidth/overview` | session | `settings.read` | - | `GatewayBandwidthHandler.GetOverview` | Live per-component + per-host utilisation and sustained-threshold alerts. |
-| GET | `/api/gateway-bandwidth/rebalance` | session | `settings.read` | - | `GatewayBandwidthHandler.GetRebalance` | the F3 rebalancer mode + recent decision feed. |
-| POST | `/api/gateway-bandwidth/rebalance` | session | `settings.write` | - | `GatewayBandwidthHandler.SetRebalanceMode` | sets the warp rebalancer mode (off \| dry-run \| armed). |
+| GET | `/api/gateway-bandwidth/history` | session | `settings.read` | RequireLocalGateway | `GatewayBandwidthHandler.GetHistory` | Every series the bandwidth screen draws, in one response: one per component and one per host. |
+| GET | `/api/gateway-bandwidth/overview` | session | `settings.read` | RequireLocalGateway | `GatewayBandwidthHandler.GetOverview` | Live per-component + per-host utilisation and sustained-threshold alerts. |
+| GET | `/api/gateway-bandwidth/rebalance` | session | `settings.read` | RequireLocalGateway | `GatewayBandwidthHandler.GetRebalance` | the F3 rebalancer mode + recent decision feed. |
+| POST | `/api/gateway-bandwidth/rebalance` | session | `settings.write` | RequireLocalGateway | `GatewayBandwidthHandler.SetRebalanceMode` | sets the warp rebalancer mode (off \| dry-run \| armed). |
 
 ## /api/grants
 
@@ -659,6 +662,7 @@ can still show what exists.
 | GET | `/api/nodes/{id:[0-9]+}/cpu` | session | _no capability_ | - | `CPUPinningHandler.GetNodeCPU` | the host CPU topology a node reported plus the per-core pinning load (how many servers are pinned to each core). |
 | GET | `/api/nodes/{id:[0-9]+}/deploy-bundle` | session | _no capability_ | - | `NodeHandler.GetDeployBundle` | returns the values a secret-free BYON host needs: the gRPC-TLS pin fingerprint. |
 | DELETE | `/api/nodes/{id:[0-9]+}/force` | session | `nodes.delete` | - | `NodeHandler.ForceDeleteNode` | deletes an offline node and all its servers |
+| GET | `/api/nodes/{id:[0-9]+}/managed-link` | session | `topology.write` | - | `RemoteKitHandler.ManagedLink` | returns the node's managed-gateway link kit (id and key) for its deploy file. |
 | PUT | `/api/nodes/{id:[0-9]+}/placement` | session | `nodes.write` | - | `PlacementHandler.SetNodePlacement` | PANEL nodes.write. |
 | GET | `/api/nodes/{id:[0-9]+}/servers` | session | _no capability_ | - | `NodeHandler.GetNodeServers` | returns all servers assigned to a node |
 | GET | `/api/nodes/{id:[0-9]+}/storage` | session | _no capability_ | - | `NodeHandler.GetNodeStorage` | returns storage path info from the node's Redis heartbeat. |
@@ -764,7 +768,7 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/servers` | session | _no capability_ | - | `ServerHandler.GetServers` | the servers the caller may see: their own plus any they were invited to, or the whole fleet for an admin. |
 | POST | `/api/servers` | session | _no capability_ | - | `ServerHandler.CreateServer` | (Step 1): Creates container with resources, status=pending_setup |
-| GET | `/api/servers/players` | session | _no capability_ | - | `ServerHandler.GetGatewayPlayers` | players connected through the gateway, per server id, for the servers the caller's own list shows. |
+| GET | `/api/servers/players` | session | _no capability_ | RequireLocalGateway | `ServerHandler.GetGatewayPlayers` | players connected through the gateway, per server id, for the servers the caller's own list shows. |
 | DELETE | `/api/servers/{id:[0-9]+}` | session | `server.delete` | - | `ServerHandler.DeleteServer` | Completely delete a server |
 | GET | `/api/servers/{id:[0-9]+}/audit` | session | `server.audit.read` | - | `ServerAuditHandler.ListAudit` | the server's audit trail, paged with ?limit and ?offset and filterable by ?eventType. |
 | PUT | `/api/servers/{id:[0-9]+}/audit/force` | session | `server.settings.write` | - | `ServerAuditHandler.SetForce` | gated by the route (RequireCap(server.settings.write)): the owner, or a role-holder granted that cap, can force their own server's audit on regardless of member state. |
@@ -774,8 +778,8 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/backup-jobs` | session | `backups.create` | - | `BackupHandler.CreateJob` | adds a backup schedule and computes its first run from the cron expression. |
 | GET | `/api/servers/{id:[0-9]+}/backup-restores` | session | `backups.read` | - | `BackupHandler.ListRestores` | Recent restore history for a server, newest first. |
 | GET | `/api/servers/{id:[0-9]+}/backup-usage` | session | `backups.read` | - | `BackupHandler.BackupUsage` | Returns the on-disk bytes used by node-local backups for the given server, plus archive count. |
-| GET | `/api/servers/{id:[0-9]+}/bedrock` | session | `network.read` | - | `GatewayHandler.GetServerBedrock` | - |
-| PUT | `/api/servers/{id:[0-9]+}/bedrock/routes` | session | `network.write` | - | `GatewayHandler.SetRouteEdition` | body {"domain": "...", "java": bool, "bedrock": bool}. |
+| GET | `/api/servers/{id:[0-9]+}/bedrock` | session | `network.read` | RequireLocalGateway | `GatewayHandler.GetServerBedrock` | - |
+| PUT | `/api/servers/{id:[0-9]+}/bedrock/routes` | session | `network.write` | RequireLocalGateway | `GatewayHandler.SetRouteEdition` | body {"domain": "...", "java": bool, "bedrock": bool}. |
 | POST | `/api/servers/{id:[0-9]+}/console/command` | session | `console.send` | - | `ConsoleHandler.SendCommand` | pushes one line onto the server's Redis input queue. |
 | GET | `/api/servers/{id:[0-9]+}/console/history` | session | `console.read` | - | `ConsoleHandler.GetHistory` | Returns up to ?count= (default and max 1000) log lines from the Redis Stream, oldest first, with their stream IDs. |
 | GET | `/api/servers/{id:[0-9]+}/console/stream` | session | `console.read` | - | `ConsoleHandler.StreamConsole` | Streams live server logs via SSE (Server-Sent Events). |
@@ -783,8 +787,8 @@ can still show what exists.
 | GET | `/api/servers/{id:[0-9]+}/domains` | session | `domains.read` | ServerGate | `DomainsHandler.List` | - |
 | POST | `/api/servers/{id:[0-9]+}/domains` | session | `domains.write` | ServerGate | `DomainsHandler.Create` | {mode:"manual", fqdn} or {mode:"managed", zoneId, label}. |
 | DELETE | `/api/servers/{id:[0-9]+}/domains/{domainId:[0-9]+}` | session | `domains.write` | ServerGate | `DomainsHandler.Delete` | Core's records for it are removed by the reconciler's next pass (the ledger row loses its domain). |
-| GET | `/api/servers/{id:[0-9]+}/edge-motd` | session | `overview.read` | - | `ServerHandler.GetServerEdgeMotd` | Returns the per-server edge transitional-MOTD config (mode + custom text). |
-| PATCH | `/api/servers/{id:[0-9]+}/edge-motd` | session | `server.settings.write` | - | `ServerHandler.SetServerEdgeMotd` | Updates the per-server edge transitional-MOTD mode/text and publishes it to Redis so the gateway edge picks it up (auto/custom/off; see the edge's handleSpliceServerStatus). |
+| GET | `/api/servers/{id:[0-9]+}/edge-motd` | session | `overview.read` | RequireLocalGateway | `ServerHandler.GetServerEdgeMotd` | Returns the per-server edge transitional-MOTD config (mode + custom text). |
+| PATCH | `/api/servers/{id:[0-9]+}/edge-motd` | session | `server.settings.write` | RequireLocalGateway | `ServerHandler.SetServerEdgeMotd` | Updates the per-server edge transitional-MOTD mode/text and publishes it to Redis so the gateway edge picks it up (auto/custom/off; see the edge's handleSpliceServerStatus). |
 | GET | `/api/servers/{id:[0-9]+}/install-cooldown` | session | `overview.read` | - | `ServerHandler.GetInstallCooldown` | returns how many seconds remain on the post-install cooldown for a server, so the UI can disable power actions and show a countdown instead of letting the user click and get a 429. |
 | GET | `/api/servers/{id:[0-9]+}/installs` | session | `server.settings.write` | - | `ServerHandler.SubServerInstalls` | how each sub-server of this server was installed. |
 | PATCH | `/api/servers/{id:[0-9]+}/loader-metadata` | session | `server.settings.write` | - | `ServerHandler.DeclareServerLoaderMetadata` | persists a server's InstallerType (loader) + MinecraftVersion (and optional BuildNumber) WITHOUT reinstalling or wiping the server. |
@@ -856,7 +860,7 @@ can still show what exists.
 | PUT | `/api/servers/{id:[0-9]+}/timezone` | session | `server.settings.write` | - | `TimezoneHandler.SetServer` | body {timezone}; "" inherits the owner's again. |
 | POST | `/api/servers/{id:[0-9]+}/transfer` | session | `server.settings.write` | RequireGatewayEnabled | `ServerHandler.TransferServer` | (tenant) queues a node-to-node migration of a server the caller OWNS to a target node they may place on. |
 | POST | `/api/servers/{id:[0-9]+}/version-update` | session | `server.settings.write` | - | `ServerModsHandler.VersionUpdate` | - |
-| GET | `/api/servers/{id:[0-9]+}/voice` | session | `network.read` | RequireGatewayEnabled | `GatewayHandler.GetServerVoice` | the server's voice port, if any, and whether it may turn voice on. |
+| GET | `/api/servers/{id:[0-9]+}/voice` | session | `network.read` | RequireGatewayEnabled, RequireLocalGateway | `GatewayHandler.GetServerVoice` | the server's voice port, if any, and whether it may turn voice on. |
 | PUT | `/api/servers/{id:[0-9]+}/voice/switch` | session | `network.write` | - | `GatewayHandler.SetServerVoice` | turns proximity voice chat on or off for one server. |
 
 ## /api/settings
@@ -877,9 +881,12 @@ can still show what exists.
 | GET | `/api/settings/filemanager/limits` | session | _no capability_ | - | `SettingsHandler.GetUserLimits` | available to ALL authenticated users |
 | GET | `/api/settings/gateway` | session | `settings.read` | - | `SettingsHandler.GetGatewaySettings` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/gateway` | session | `settings.write` | - | `SettingsHandler.SaveGatewaySettings` | PANEL settings.write (RequireCap at the route). |
-| GET | `/api/settings/gateway/dns` | session | `settings.read` | - | `GatewayDNSHandler.Get` | PANEL settings.read. |
-| PUT | `/api/settings/gateway/dns` | session | `settings.write` | - | `GatewayDNSHandler.Save` | PANEL settings.write. |
-| POST | `/api/settings/gateway/dns/probe` | session | `settings.write` | - | `GatewayDNSHandler.Probe` | PANEL settings.write. |
+| GET | `/api/settings/gateway/dns` | session | `settings.read` | RequireLocalGateway | `GatewayDNSHandler.Get` | PANEL settings.read. |
+| PUT | `/api/settings/gateway/dns` | session | `settings.write` | RequireLocalGateway | `GatewayDNSHandler.Save` | PANEL settings.write. |
+| POST | `/api/settings/gateway/dns/probe` | session | `settings.write` | RequireLocalGateway | `GatewayDNSHandler.Probe` | PANEL settings.write. |
+| GET | `/api/settings/gateway/provider` | session | `settings.read` | - | `GatewayProviderHandler.Get` | returns the gateway provider mode, URL, whether a key is set (never the key), the outbox backlog and, with a key, the provider account. |
+| POST | `/api/settings/gateway/provider` | session | `settings.write` | - | `GatewayProviderHandler.Save` | saves the gateway provider mode, URL and key. |
+| POST | `/api/settings/gateway/provider/test` | session | `settings.write` | - | `GatewayProviderHandler.Test` | checks a provider URL and key against the provider's account. |
 | GET | `/api/settings/placement` | session | `settings.read` | - | `SettingsHandler.GetPlacementSettings` | PANEL settings.read (RequireCap at the route). |
 | POST | `/api/settings/placement` | session | `settings.write` | - | `SettingsHandler.SavePlacementSettings` | PANEL settings.write (RequireCap at the route). |
 | GET | `/api/settings/routing-mode` | session | _uncapped method_ | - | `SettingsHandler.GetRoutingMode` | available to all authenticated users |
@@ -889,8 +896,8 @@ can still show what exists.
 | GET | `/api/settings/storage-placement` | session | `settings.read` | - | `NodeHandler.GetFleetStoragePlacement` | The fleet-wide default a node uses when it has no policy of its own, plus every storage path any node currently reports (no single node's list describes the fleet). |
 | PUT | `/api/settings/storage-placement` | session | `settings.write` | - | `NodeHandler.SetFleetStoragePlacement` | sets fleet- wide storage placement to auto or manual, manual carrying an explicit node order. |
 | GET | `/api/settings/storage-reach` | session | `settings.read` | - | `CoreStorageHandler.StorageReachStatus` | PANEL settings.read. |
-| GET | `/api/settings/warp-firewall` | session | `settings.read` | - | `SettingsHandler.GetWarpFirewallSettings` | PANEL settings.read (RequireCap at the route). |
-| POST | `/api/settings/warp-firewall` | session | `settings.write` | - | `SettingsHandler.SaveWarpFirewallSettings` | PANEL settings.write (RequireCap at the route). |
+| GET | `/api/settings/warp-firewall` | session | `settings.read` | RequireLocalGateway | `SettingsHandler.GetWarpFirewallSettings` | PANEL settings.read (RequireCap at the route). |
+| POST | `/api/settings/warp-firewall` | session | `settings.write` | RequireLocalGateway | `SettingsHandler.SaveWarpFirewallSettings` | PANEL settings.write (RequireCap at the route). |
 
 ## /api/setup
 
@@ -1074,36 +1081,36 @@ can still show what exists.
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/voice/overview` | session | `settings.read` | RequireGatewayEnabled | `VoiceStatsHandler.GetOverview` | Live relays, port use per region, and voice bytes per region and server for the period (default: the current month), plus Bedrock bytes per server. |
+| GET | `/api/voice/overview` | session | `settings.read` | RequireGatewayEnabled, RequireLocalGateway | `VoiceStatsHandler.GetOverview` | Live relays, port use per region, and voice bytes per region and server for the period (default: the current month), plus Bedrock bytes per server. |
 
 ## /api/warp
 
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| GET | `/api/warp/assignment` | warp key | _no capability_ | Limit | `WarpHandler.Assignment` | the client's lightweight poll for its current endpoint order (warp API-key auth). |
+| GET | `/api/warp/assignment` | warp key | _no capability_ | Limit, RequireLocalGateway | `WarpHandler.Assignment` | the client's lightweight poll for its current endpoint order (warp API-key auth). |
 | GET | `/api/warp/deploy-config` | session | _no capability_ | - | `WarpHandler.GetDeployConfig` | a tenant who can actually deploy something, or an admin. |
-| POST | `/api/warp/enroll` | warp key | _no capability_ | Limit | `WarpHandler.Enroll` | registers a warp client's public key and answers with its overlay address, the region's leader endpoints and the Core and Redis addresses it should proxy to. |
-| POST | `/api/warp/leaders` | session | `topology.write` | - | `WarpHandler.UpsertLeader` | (admin) creates or updates a leader endpoint within a region. |
-| DELETE | `/api/warp/leaders/{leaderId}` | session | `topology.write` | - | `WarpHandler.DeleteLeader` | (admin) removes a leader endpoint. |
-| POST | `/api/warp/link-boot` | warp key | _no capability_ | Limit | `WarpHandler.LinkBoot` | a Link presents its key and receives its tunnel token. |
-| GET | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.ListLinkKits` | (tenant) returns the caller's route-only link kits (metadata only, no secrets). |
-| POST | `/api/warp/link-kits` | session | _no capability_ | - | `WarpHandler.MintLinkKit` | (tenant) creates a route-only "link kit": a key bound to the calling user plus an auto-generated link identity (node_id). |
-| DELETE | `/api/warp/link-kits/{linkID}` | session | _no capability_ | - | `WarpHandler.RevokeLinkKit` | owner or admin. |
-| POST | `/api/warp/link-kits/{linkID}/roll` | session | _no capability_ | - | `WarpHandler.RollLinkKit` | owner or admin. |
-| GET | `/api/warp/link/beams` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkBeams` | the beam relays a managed-gateway kit's link holds a tunnel to: every relay in sys:beams in the kit's region (all of them for a kit with no region), with its public address and the certificate fingerprint it published. |
-| GET | `/api/warp/link/edges` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkEdges` | every edge in sys:edges with a public tunnel address, and the certificate fingerprint it published. |
-| POST | `/api/warp/link/heartbeat` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkHeartbeat` | a route-only link says it is running. |
-| POST | `/api/warp/link/stats` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkStats` | one of the link's telemetry records, written to the stream every consumer already reads, dylaris:link:<link id>:stats. |
-| GET | `/api/warp/link/targets` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkTargets` | the host:port pairs this link's routes point at. |
-| GET | `/api/warp/link/voice` | warp key | _no capability_ | Limit, LimitLink | `WarpHandler.LinkVoice` | the voice ports of this link's routes, and Core's clock: the relay refuses a REG more than 60 s off its own, and a customer's machine is the one that drifts. |
-| GET | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.ListNodeWarpKeys` | the caller's own BYON node keys, metadata only (the secret is stored as a hash and is gone after minting). |
-| POST | `/api/warp/node-keys` | session | _no capability_ | - | `WarpHandler.MintNodeWarpKey` | tenant self-service. |
-| DELETE | `/api/warp/node-keys/{nodeID}` | session | _no capability_ | - | `WarpHandler.RevokeNodeWarpKey` | owner or admin. |
-| POST | `/api/warp/node-keys/{nodeID}/bind` | session | _no capability_ | - | `WarpHandler.BindNodeWarpKey` | owner only. |
-| POST | `/api/warp/node-keys/{nodeID}/roll` | session | _no capability_ | - | `WarpHandler.RollNodeWarpKey` | owner or admin. |
-| GET | `/api/warp/regions` | session | `topology.read` | - | `WarpHandler.ListRegions` | returns the full warp registry (regions + leaders + liveness + peer counts) for the admin panel. |
-| POST | `/api/warp/regions` | session | `topology.write` | - | `WarpHandler.UpsertRegion` | (admin) creates or updates a region's subnet + enabled flag. |
-| DELETE | `/api/warp/regions/{region}` | session | `topology.write` | - | `WarpHandler.DeleteRegion` | (admin) removes a region (cascades its leaders). |
+| POST | `/api/warp/enroll` | warp key | _no capability_ | Limit, RequireLocalGateway | `WarpHandler.Enroll` | registers a warp client's public key and answers with its overlay address, the region's leader endpoints and the Core and Redis addresses it should proxy to. |
+| POST | `/api/warp/leaders` | session | `topology.write` | RequireLocalGateway | `WarpHandler.UpsertLeader` | (admin) creates or updates a leader endpoint within a region. |
+| DELETE | `/api/warp/leaders/{leaderId}` | session | `topology.write` | RequireLocalGateway | `WarpHandler.DeleteLeader` | (admin) removes a leader endpoint. |
+| POST | `/api/warp/link-boot` | warp key | _no capability_ | Limit, RequireLocalGateway | `WarpHandler.LinkBoot` | a Link presents its key and receives its tunnel token. |
+| GET | `/api/warp/link-kits` | session | _no capability_ | RequireLocalGateway | `WarpHandler.ListLinkKits` | (tenant) returns the caller's route-only link kits (metadata only, no secrets). |
+| POST | `/api/warp/link-kits` | session | _no capability_ | RequireLocalGateway | `WarpHandler.MintLinkKit` | (tenant) creates a route-only "link kit": a key bound to the calling user plus an auto-generated link identity (node_id). |
+| DELETE | `/api/warp/link-kits/{linkID}` | session | _no capability_ | RequireLocalGateway | `WarpHandler.RevokeLinkKit` | owner or admin. |
+| POST | `/api/warp/link-kits/{linkID}/roll` | session | _no capability_ | RequireLocalGateway | `WarpHandler.RollLinkKit` | owner or admin. |
+| GET | `/api/warp/link/beams` | warp key | _no capability_ | Limit, LimitLink, RequireLocalGateway | `WarpHandler.LinkBeams` | the beam relays a managed-gateway kit's link holds a tunnel to: every relay in sys:beams in the kit's region (all of them for a kit with no region), with its public address and the certificate fingerprint it published. |
+| GET | `/api/warp/link/edges` | warp key | _no capability_ | Limit, LimitLink, RequireLocalGateway | `WarpHandler.LinkEdges` | every edge in sys:edges with a public tunnel address, and the certificate fingerprint it published. |
+| POST | `/api/warp/link/heartbeat` | warp key | _no capability_ | Limit, LimitLink, RequireLocalGateway | `WarpHandler.LinkHeartbeat` | a route-only link says it is running. |
+| POST | `/api/warp/link/stats` | warp key | _no capability_ | Limit, LimitLink, RequireLocalGateway | `WarpHandler.LinkStats` | one of the link's telemetry records, written to the stream every consumer already reads, dylaris:link:<link id>:stats. |
+| GET | `/api/warp/link/targets` | warp key | _no capability_ | Limit, LimitLink, RequireLocalGateway | `WarpHandler.LinkTargets` | the host:port pairs this link's routes point at. |
+| GET | `/api/warp/link/voice` | warp key | _no capability_ | Limit, LimitLink, RequireLocalGateway | `WarpHandler.LinkVoice` | the voice ports of this link's routes, and Core's clock: the relay refuses a REG more than 60 s off its own, and a customer's machine is the one that drifts. |
+| GET | `/api/warp/node-keys` | session | _no capability_ | RequireLocalGateway | `WarpHandler.ListNodeWarpKeys` | the caller's own BYON node keys, metadata only (the secret is stored as a hash and is gone after minting). |
+| POST | `/api/warp/node-keys` | session | _no capability_ | RequireLocalGateway | `WarpHandler.MintNodeWarpKey` | tenant self-service. |
+| DELETE | `/api/warp/node-keys/{nodeID}` | session | _no capability_ | RequireLocalGateway | `WarpHandler.RevokeNodeWarpKey` | owner or admin. |
+| POST | `/api/warp/node-keys/{nodeID}/bind` | session | _no capability_ | RequireLocalGateway | `WarpHandler.BindNodeWarpKey` | owner only. |
+| POST | `/api/warp/node-keys/{nodeID}/roll` | session | _no capability_ | RequireLocalGateway | `WarpHandler.RollNodeWarpKey` | owner or admin. |
+| GET | `/api/warp/regions` | session | `topology.read` | RequireLocalGateway | `WarpHandler.ListRegions` | returns the full warp registry (regions + leaders + liveness + peer counts) for the admin panel. |
+| POST | `/api/warp/regions` | session | `topology.write` | RequireLocalGateway | `WarpHandler.UpsertRegion` | (admin) creates or updates a region's subnet + enabled flag. |
+| DELETE | `/api/warp/regions/{region}` | session | `topology.write` | RequireLocalGateway | `WarpHandler.DeleteRegion` | (admin) removes a region (cascades its leaders). |
 
 ## /healthz
 

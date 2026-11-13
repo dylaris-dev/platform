@@ -1,6 +1,10 @@
 package store
 
-import "time"
+import (
+	"database/sql"
+	"errors"
+	"time"
+)
 
 // CoreLinkRoute is the durable record of one route-only entry.
 //
@@ -60,6 +64,23 @@ func (s *PostgresStore) ListCoreLinkRoutes() ([]CoreLinkRoute, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// GetCoreLinkRoute is the row for one domain, nil when there is none; served
+// by the primary key instead of a scan of the table.
+func (s *PostgresStore) GetCoreLinkRoute(domain string) (*CoreLinkRoute, error) {
+	var r CoreLinkRoute
+	err := s.db.QueryRow(`
+		SELECT domain, owner_id, link_token, target_host, target_port, proxy_protocol, created_at, suspended_at, COALESCE(suspended_reason, '')
+		FROM core_link_routes WHERE domain = $1`, domain).
+		Scan(&r.Domain, &r.OwnerID, &r.LinkToken, &r.TargetHost, &r.TargetPort, &r.ProxyProtocol, &r.CreatedAt, &r.SuspendedAt, &r.SuspendedReason)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // ListCoreLinkRoutesByOwner is ListCoreLinkRoutes for one account, served by

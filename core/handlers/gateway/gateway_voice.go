@@ -98,6 +98,11 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if enabled {
+		// Voice is offered on this platform's own gateway only. Off is never
+		// refused, whatever the mode.
+		if gate.GatewayModeError(w, services.LocalGatewayErr(h.d.GatewayRemote)) {
+			return
+		}
 		if !services.GatewayRoutingEnabled(h.d.Store) {
 			gate.GatewayDisabledResponse(w)
 			return
@@ -110,7 +115,10 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 
 	if !enabled {
-		changed, err := DisableServerVoice(ctx, h.d.Store, h.d.Redis, h.d.GRPCRegistry, srv)
+		// On the managed gateway (or with the mode unread) this Redis carries no
+		// voice routes and is not written: the row and the node config only.
+		rdb := services.LocalGatewayRedis(h.d.Redis, h.d.GatewayRemote)
+		changed, err := DisableServerVoice(ctx, h.d.Store, rdb, h.d.GRPCRegistry, srv)
 		if err != nil {
 			log.Printf("voice: server %d: disable: %v", srv.ID, err)
 			httpx.SendJSONError(w, "Failed to turn voice chat off", http.StatusInternalServerError)

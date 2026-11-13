@@ -81,9 +81,10 @@ type warpRegistrarStore interface {
 // an operator can still delete the row explicitly. Absence is not the same as
 // "please forget this existed".
 type WarpSelfRegistrar struct {
-	store  warpRegistrarStore
-	redis  *redis.Client
-	leader leader.Election
+	store         warpRegistrarStore
+	redis         *redis.Client
+	leader        leader.Election
+	gatewayRemote func() (remote, known bool)
 }
 
 func NewWarpSelfRegistrar(s warpRegistrarStore, r *redis.Client) *WarpSelfRegistrar {
@@ -91,6 +92,10 @@ func NewWarpSelfRegistrar(s warpRegistrarStore, r *redis.Client) *WarpSelfRegist
 }
 
 func (s *WarpSelfRegistrar) SetLeader(l leader.Election) { s.leader = l }
+
+// SetGatewayRemote wires the gateway provider mode: unless it is known and
+// local, the gateway work idles (there is no local gateway state to read).
+func (s *WarpSelfRegistrar) SetGatewayRemote(fn func() (remote, known bool)) { s.gatewayRemote = fn }
 
 func (s *WarpSelfRegistrar) Start(ctx context.Context) {
 	log.Printf("Warp self-registration started (interval: %s)", selfRegInterval)
@@ -116,6 +121,9 @@ func (s *WarpSelfRegistrar) Start(ctx context.Context) {
 // a consistent picture or does nothing at all - and two leaders announcing the
 // same new region create it once rather than racing on it.
 func (s *WarpSelfRegistrar) RunOnce(ctx context.Context) {
+	if LocalGatewayErr(s.gatewayRemote) != nil {
+		return
+	}
 	if s.leader != nil && !s.leader.IsLeader() {
 		return
 	}

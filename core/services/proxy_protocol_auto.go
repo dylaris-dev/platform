@@ -101,8 +101,10 @@ func ReconcileProxyAuto(ctx context.Context, st proxyAutoStore, rdb *redis.Clien
 	}
 }
 
-// StartProxyAutoReconcile runs ReconcileProxyAuto every 20 s on the leader.
-func StartProxyAutoReconcile(ctx context.Context, st proxyAutoStore, rdb *redis.Client, hub proxyProtocolHub, platformOn func(context.Context) bool, l leader.Election) {
+// StartProxyAutoReconcile runs ReconcileProxyAuto every 20 s on the leader,
+// and only while the gateway mode is known and local: it reads the local routes
+// and link caps and writes through the local hub.
+func StartProxyAutoReconcile(ctx context.Context, st proxyAutoStore, rdb *redis.Client, hub proxyProtocolHub, platformOn func(context.Context) bool, l leader.Election, gatewayRemote func() (remote, known bool)) {
 	go func() {
 		t := time.NewTicker(20 * time.Second)
 		defer t.Stop()
@@ -113,6 +115,9 @@ func StartProxyAutoReconcile(ctx context.Context, st proxyAutoStore, rdb *redis.
 			case <-t.C:
 			}
 			if l != nil && !l.IsLeader() {
+				continue
+			}
+			if LocalGatewayErr(gatewayRemote) != nil {
 				continue
 			}
 			rctx, cancel := context.WithTimeout(ctx, 15*time.Second)

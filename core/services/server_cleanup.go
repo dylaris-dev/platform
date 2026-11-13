@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 
@@ -21,8 +22,15 @@ import (
 // Best-effort throughout, and it must stay that way: every caller has already
 // deleted the server rows when it gets here, so a Redis hiccup cannot be allowed
 // to turn a completed delete into a failure. Returns how many routes matched.
-func RemoveDeletedServers(ctx context.Context, gw GatewayProvider, rdb *redis.Client, uuids []string) int {
-	matched := removeServerRoutes(ctx, gw, rdb, uuids)
+//
+// On the managed gateway the routes are the provider's: gw deletes them by
+// server, and the local Redis holds none to scan for.
+func RemoveDeletedServers(ctx context.Context, gw GatewayProvider, rdb *redis.Client, uuids []string, gatewayRemote func() (remote, known bool)) int {
+	routeRdb := rdb
+	if errors.Is(LocalGatewayErr(gatewayRemote), ErrGatewayRemote) {
+		routeRdb = nil
+	}
+	matched := removeServerRoutes(ctx, gw, routeRdb, uuids)
 	for _, u := range uuids {
 		removeServerKeys(ctx, rdb, u)
 	}

@@ -185,7 +185,7 @@ func (h *NodeHandler) DeleteMyNode(w http.ResponseWriter, r *http.Request) {
 	//
 	// Background, not the request context: a browser that timed out must not be
 	// the reason an address outlives the machine behind it.
-	matched := services.RemoveDeletedServers(context.Background(), h.d.Gateway, h.d.Redis, services.ServerUUIDs(servers))
+	matched := services.RemoveDeletedServers(context.Background(), h.d.Gateway, h.d.Redis, services.ServerUUIDs(servers), h.d.GatewayRemote)
 	demo.DropServers(h.d.Store, h.d.StoreEnabled, services.ServerUUIDs(servers))
 	log.Printf("DeleteMyNode: node %d — cleaned up %d route(s) across %d server(s)", node.ID, matched, len(servers))
 

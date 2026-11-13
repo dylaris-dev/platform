@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"dylaris-core/authz"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
@@ -298,6 +300,14 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 		HosterDomain: q.Get("hosterDomain"),
 		CustomDomain: q.Get("customDomain"),
 	}
+	rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway)
+	if gate.GatewayModeError(w, merr) {
+		return
+	}
+	if rg != nil {
+		h.checkDomainRemote(w, r, rg, &req)
+		return
+	}
 	finalDomain, _, err := h.resolveRouteDomain(&req, reqctx.IsAdmin(r))
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -314,6 +324,167 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 	})
 }
 
+// checkDomainRemote answers check-domain in the local path's shape: from the
+// local rows first, which is where another server of this platform holds an
+// address (the provider sees one account for all of them and would call it
+// free), then from the provider.
+func (h *GatewayHandler) checkDomainRemote(w http.ResponseWriter, r *http.Request, rg *services.RemoteGateway, req *routeDomainRequest) {
+	finalDomain, err, answered := h.resolveRemoteRouteDomain(w, r, rg, req)
+	if answered {
+		return
+	}
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"available": false,
+			"reason":    err.Error(),
+		})
+		return
+	}
+	held, err := h.d.Store.GetRemoteRoute(finalDomain)
+	if err != nil {
+		log.Printf("check-domain %s: %v", finalDomain, err)
+		httpx.SendJSONError(w, "Could not check the address. Try again.", http.StatusInternalServerError)
+		return
+	}
+	if held != nil {
+		// Taken, as the local path says it: no reason, nothing about who.
+		json.NewEncoder(w).Encode(map[string]interface{}{"available": false, "domain": finalDomain})
+		return
+	}
+	available, reason, err := rg.CheckDomain(r.Context(), finalDomain)
+	if gate.GatewayProviderError(w, err) {
+		return
+	}
+	if err != nil {
+		log.Printf("check-domain %s: %v", finalDomain, err)
+		httpx.SendJSONError(w, "Could not check the address. Try again.", http.StatusInternalServerError)
+		return
+	}
+	out := map[string]interface{}{"available": available, "domain": finalDomain}
+	if msg := remoteCheckReason(reason, finalDomain); !available && msg != "" {
+		out["reason"] = msg
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
+// remoteCheckReason turns the provider's reason code into the sentence the
+// local path gives for the same case. A taken address has none there, and an
+// unknown code gets none rather than a raw code in front of a user.
+func remoteCheckReason(code, domain string) string {
+	switch code {
+	case "blocked":
+		label, _, _ := strings.Cut(domain, ".")
+		return fmt.Sprintf("subdomain %q is reserved", label)
+	case "not_hosted":
+		return "custom domains are not enabled"
+	case "invalid":
+		return "invalid domain format"
+	}
+	return ""
+}
+
+// routeDomainRequest is the request shape of route create and check-domain.
+type routeDomainRequest = struct {
+	Domain       string `json:"domain"`
+	Subdomain    string `json:"subdomain"`
+	HosterDomain string `json:"hosterDomain"`
+	CustomDomain string `json:"customDomain"`
+	TargetPort   int    `json:"targetPort"`
+}
+
+// remoteRouteDomain is resolveRouteDomain on the managed gateway: the same
+// per-hoster format rules and reserved names, against the PROVIDER's hoster
+// domains. Every tenant here shares one provider account, so a name outside
+// those domains is refused for everyone, admins included: it could be a
+// domain verified on the provider by the operator or another tenant. Custom
+// domains come in a later stage.
+func remoteRouteDomain(req *routeDomainRequest, hosters []services.HosterDomain, blocked map[string]bool) (string, error) {
+	notEnabled := fmt.Errorf("custom domains are not enabled")
+	switch {
+	case req.Subdomain != "" || req.HosterDomain != "":
+		sub := strings.ToLower(strings.TrimSpace(req.Subdomain))
+		host := validate.NormHost(req.HosterDomain)
+		if sub == "" || host == "" {
+			return "", fmt.Errorf("subdomain and hosterDomain must both be set")
+		}
+		for _, hd := range hosters {
+			if hd.Domain == host {
+				dom, _, err := resolveHosterSubdomain(sub, hd, blocked)
+				return dom, err
+			}
+		}
+		return "", fmt.Errorf("hoster domain not configured: %s", host)
+	case req.CustomDomain != "":
+		return "", notEnabled
+	case req.Domain != "":
+		dom := validate.NormHost(req.Domain)
+		if !validate.IsHostname(dom, 2) {
+			return "", fmt.Errorf("invalid domain format")
+		}
+		for _, hd := range hosters {
+			if dom == hd.Domain || strings.HasSuffix(dom, "."+hd.Domain) {
+				sub := strings.TrimSuffix(strings.TrimSuffix(dom, hd.Domain), ".")
+				d, _, err := resolveHosterSubdomain(sub, hd, blocked)
+				return d, err
+			}
+		}
+		return "", notEnabled
+	}
+	return "", fmt.Errorf("no domain provided")
+}
+
+// remoteHosters is the provider's hoster domains (cached in the RemoteGateway).
+func remoteHosters(ctx context.Context, rg *services.RemoteGateway) ([]services.HosterDomain, error) {
+	regions, err := rg.Regions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]services.HosterDomain, 0, len(regions.HosterDomains))
+	for _, hd := range regions.HosterDomains {
+		out = append(out, services.HosterDomain{Domain: validate.NormHost(hd.Domain), Validation: hd.Validation})
+	}
+	return out, nil
+}
+
+// resolveRemoteRouteDomain resolves the request against the provider's hoster
+// domains, with the reserved names lifted for an admin as on the local path.
+// It answers the request itself when the provider list cannot be read.
+func (h *GatewayHandler) resolveRemoteRouteDomain(w http.ResponseWriter, r *http.Request, rg *services.RemoteGateway, req *routeDomainRequest) (dom string, resolveErr error, answered bool) {
+	hosters, err := remoteHosters(r.Context(), rg)
+	if err != nil {
+		if !gate.GatewayProviderError(w, err) {
+			log.Printf("gateway hoster domains: %v", err)
+			httpx.SendJSONError(w, "Could not load the address options. Try again.", http.StatusInternalServerError)
+		}
+		return "", nil, true
+	}
+	blocked := h.loadBlockedRoutePrefixes()
+	if reqctx.IsAdmin(r) {
+		blocked = nil
+	}
+	dom, resolveErr = remoteRouteDomain(req, hosters, blocked)
+	return dom, resolveErr, false
+}
+
+// remoteOwnerRoutes counts the addresses an account holds on the managed
+// gateway: the local rows of the servers it owns, minus pending deletes. All
+// of them are on the provider's hoster domains.
+func remoteOwnerRoutes(st store.Store, rg *services.RemoteGateway, account string) (int64, error) {
+	owned, err := services.OwnedServerUUIDs(st, account)
+	if err != nil {
+		return 0, err
+	}
+	var n int64
+	for uuid := range owned {
+		domains, err := rg.ServerDomains(uuid)
+		if err != nil {
+			return 0, err
+		}
+		n += int64(len(domains))
+	}
+	return n, nil
+}
+
 // ==========================================
 // USER: Server Routes
 // ==========================================
@@ -326,6 +497,20 @@ func (h *GatewayHandler) GetServerRoutes(w http.ResponseWriter, r *http.Request)
 	server, err := authz.ServerByID(r.Context(), h.d.Store, httpx.MustAtoi(serverID))
 	if err != nil {
 		http.Error(w, "Server not found", http.StatusNotFound)
+		return
+	}
+	rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway)
+	if gate.GatewayModeError(w, merr) {
+		return
+	}
+	if rg != nil {
+		routes, err := rg.ServerRoutes(server.UUID)
+		if err != nil {
+			log.Printf("server %d routes: %v", server.ID, err)
+			http.Error(w, "Failed to load routes", http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(routes)
 		return
 	}
 
@@ -370,10 +555,31 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		req.TargetPort = 25565
 	}
 
+	// On the managed gateway the addresses are the provider's hoster domains
+	// and the routes are counted from the local rows; the rest is local.
+	rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway)
+	if gate.GatewayModeError(w, merr) {
+		return
+	}
+
 	// isCustomDomain comes from the resolver, not from which FIELD the request
 	// used: a tenant's raw FQDN is normalised into a brought domain, and reading
 	// the field here would have left that one unproven.
-	finalDomain, isCustomDomain, err := h.resolveRouteDomain(&req, reqctx.IsAdmin(r))
+	var finalDomain string
+	var isCustomDomain bool
+	var err error
+	if rg != nil {
+		var answered bool
+		if finalDomain, err, answered = h.resolveRemoteRouteDomain(w, r, rg, &req); answered {
+			return
+		}
+	} else {
+		finalDomain, isCustomDomain, err = h.resolveRouteDomain(&req, reqctx.IsAdmin(r))
+	}
+	if err != nil && rg != nil {
+		gate.WriteGatewayError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -446,7 +652,26 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// The cap counts only addresses on OUR domains, matching CreateLinkRoute and
 	// the over-limit sweep. Routes on the tenant's own domains have their own,
 	// separate cap.
-	if !reqctx.IsAdmin(r) {
+	//
+	// On the managed gateway the count comes from the local route rows (this
+	// Redis holds none), and every address is on one of our hoster domains.
+	if !reqctx.IsAdmin(r) && rg != nil {
+		limit := h.effectiveRouteLimit(account)
+		if limit != nil && *limit == 0 {
+			gate.WriteGatewayError(w, http.StatusForbidden, "route_limit", "Route creation is disabled for your account")
+			return
+		}
+		held, cerr := remoteOwnerRoutes(h.d.Store, rg, account)
+		if cerr != nil {
+			gate.WriteGatewayError(w, http.StatusInternalServerError, "internal", "Could not count your routes")
+			return
+		}
+		if services.AtOrOver(limit, held) {
+			gate.WriteGatewayError(w, http.StatusForbidden, "route_limit", ourDomainsCapMessage(*limit))
+			return
+		}
+	}
+	if !reqctx.IsAdmin(r) && rg == nil {
 		limit := h.effectiveRouteLimit(account)
 		if limit != nil && *limit == 0 {
 			http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
@@ -470,6 +695,13 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := h.d.Gateway.CreateServerRoute(uint(serverID), account, finalDomain, req.TargetPort); err != nil {
+		if rg != nil {
+			if !gate.GatewayProviderError(w, err) {
+				log.Printf("create route %s: %v", finalDomain, err)
+				gate.WriteGatewayError(w, http.StatusInternalServerError, "internal", "Failed to create route")
+			}
+			return
+		}
 		errMsg := err.Error()
 		if errors.Is(err, services.ErrRouteDomainTaken) {
 			http.Error(w, fmt.Sprintf("%s is already in use", finalDomain), http.StatusConflict)
@@ -701,6 +933,14 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "server not found", http.StatusNotFound)
 		return
 	}
+	rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway)
+	if gate.GatewayModeError(w, merr) {
+		return
+	}
+	if rg != nil {
+		h.deleteServerRouteRemote(w, rg, server.UUID, domain)
+		return
+	}
 	all := services.GetRoutesFromRedis(h.ctx(), h.d.Redis)
 	found := false
 	for _, rt := range all {
@@ -730,6 +970,34 @@ func (h *GatewayHandler) DeleteServerRoute(w http.ResponseWriter, r *http.Reques
 		log.Printf("route %s: publish editions: %v", domain, err)
 	}
 
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Route deletion queued"})
+}
+
+// deleteServerRouteRemote is DeleteServerRoute on the managed gateway: the
+// local rows say which addresses are the server's, the provider deletes. Bedrock
+// is not offered there, so there are no published editions to update.
+func (h *GatewayHandler) deleteServerRouteRemote(w http.ResponseWriter, rg *services.RemoteGateway, serverUUID, domain string) {
+	domains, err := rg.ServerDomains(serverUUID)
+	if err != nil {
+		log.Printf("delete route %s: %v", domain, err)
+		gate.WriteGatewayError(w, http.StatusInternalServerError, "internal", "Failed to delete route")
+		return
+	}
+	if !slices.Contains(domains, domain) {
+		gate.WriteGatewayError(w, http.StatusNotFound, "not_found", "Route not found for this server")
+		return
+	}
+	if err := h.d.Gateway.DeleteRoute(domain); err != nil {
+		if !gate.GatewayProviderError(w, err) {
+			log.Printf("delete route %s: %v", domain, err)
+			gate.WriteGatewayError(w, http.StatusInternalServerError, "internal", "Failed to delete route")
+		}
+		return
+	}
+	if err := h.d.Store.DeleteRouteEdition(domain); err != nil {
+		log.Printf("route %s: delete editions: %v", domain, err)
+	}
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Route deletion queued"})
 }
@@ -788,6 +1056,27 @@ func (h *GatewayHandler) proxyProtocolNoLink(w http.ResponseWriter, r *http.Requ
 	return false
 }
 
+// proxyProtocolNoKit is proxyProtocolNoLink on the managed gateway: every route
+// of the server must sit on a node kit that is online and announced
+// client-addr. Same answers, and it fails closed the same way.
+func (h *GatewayHandler) proxyProtocolNoKit(w http.ResponseWriter, r *http.Request, rg *services.RemoteGateway, serverUUID string) bool {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	routes, gap, err := rg.ClientAddrGap(ctx, serverUUID)
+	switch {
+	case err != nil:
+		log.Printf("proxy-protocol: link check: %v", err)
+		httpx.SendJSONErrorCode(w, "Could not check the links of this server's routes. Try again.", "link_check_failed", http.StatusConflict)
+	case routes == 0:
+		httpx.SendJSONErrorCode(w, "This server has no gateway route yet. Add a route first.", "no_routes", http.StatusConflict)
+	case gap != "":
+		httpx.SendJSONErrorCode(w, fmt.Sprintf("The link of route %s has not reported that it can pass the player IP. Update the link, then try again.", gap), "link_without_client_addr", http.StatusConflict)
+	default:
+		return false
+	}
+	return true
+}
+
 // decodeProxyProtocolBody reads {"enabled": bool}. The field is required: a
 // body without it must not read as "switch it off".
 func decodeProxyProtocolBody(r *http.Request) (bool, bool) {
@@ -822,7 +1111,18 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 		httpx.SendJSONError(w, `Invalid request: expected {"mode": "auto"|"on"|"off"}`, http.StatusBadRequest)
 		return
 	}
+	// Off is never refused, not even while the mode is unreadable; only on and
+	// auto depend on which gateway carries the routes.
+	rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway)
+	if mode != store.ProxyModeOff && gate.GatewayModeError(w, merr) {
+		return
+	}
 	if mode == store.ProxyModeAuto {
+		// The auto reconcile runs only against the local gateway.
+		if rg != nil {
+			httpx.SendJSONErrorCode(w, "Auto is not available with the managed gateway. Choose on or off.", "gateway_remote", http.StatusConflict)
+			return
+		}
 		h.setServerProxyAuto(w, r, srv)
 		return
 	}
@@ -830,7 +1130,11 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 	if h.proxyProtocolOff(w, r, enabled) {
 		return
 	}
-	if enabled && h.proxyProtocolNoLink(w, r, func(rt services.GatewayRoute) bool { return services.RouteBelongsToServer(rt, srv.UUID) }) {
+	if enabled && rg != nil {
+		if h.proxyProtocolNoKit(w, r, rg, srv.UUID) {
+			return
+		}
+	} else if enabled && h.proxyProtocolNoLink(w, r, func(rt services.GatewayRoute) bool { return services.RouteBelongsToServer(rt, srv.UUID) }) {
 		return
 	}
 	if err := h.d.Store.SetServerProxyMode(srv.ID, mode); err != nil {
@@ -929,5 +1233,15 @@ func (h *GatewayHandler) GetServerProxyProtocol(w http.ResponseWriter, r *http.R
 			detected = "no"
 		}
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "mode": mode, "active": srv.ProxyProtocol, "detected": detected})
+	out := map[string]interface{}{"success": true, "mode": mode, "active": srv.ProxyProtocol, "detected": detected}
+	// Auto's reconcile runs only against the local gateway; say so instead of
+	// showing a mode that never acts.
+	rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway)
+	if gate.GatewayModeError(w, merr) {
+		return
+	}
+	if rg != nil {
+		out["autoAvailable"] = false
+	}
+	json.NewEncoder(w).Encode(out)
 }

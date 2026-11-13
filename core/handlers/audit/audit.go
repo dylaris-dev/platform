@@ -83,6 +83,10 @@ const (
 	// An operator taking a route-only route off the edges, or putting it back.
 	AuditEventGatewayRouteSuspended   = "gateway_route_suspended"
 	AuditEventGatewayRouteUnsuspended = "gateway_route_unsuspended"
+	// The managed gateway provider settings saved (never the key), and a
+	// node's managed link kit shown with its key.
+	AuditEventGatewayProviderChanged = "gateway_provider_changed"
+	AuditEventManagedLinkKitViewed   = "managed_link_kit_viewed"
 
 	// Moving the platform's own data. These used to be filed under
 	// maintenance_toggled, all five of them, with the real action buried in a

@@ -52,6 +52,10 @@ export interface FeatureFlags {
     // Whether this caller may add, test and choose own S3 targets (Core holds
     // off / admin / all). Optional: an older Core omits it, which means yes.
     ownStorage?: boolean;
+    // Which gateway this platform uses: its own, or the DYLARIS Managed Gateway
+    // ("remote"). Read through providerModeOf; an older Core omits it, which
+    // means local.
+    gatewayProvider?: 'local' | 'remote';
 }
 
 // Every field is optional on the way OUT: the Features screen is a set of tabs

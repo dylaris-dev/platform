@@ -469,6 +469,8 @@ var requiredCaps = map[string]string{
 	"/api/settings/filemanager":                       "settings.read",
 	"/api/settings/gateway":                           "settings.read",
 	"/api/settings/gateway/dns":                       "settings.read",
+	"/api/settings/gateway/provider":                  "settings.read", // POST save: settings.write
+	"/api/settings/gateway/provider/test":             "settings.write",
 	// settings.write, not read: it sends an operator-supplied credential to a
 	// third-party DNS API.
 	"/api/settings/gateway/dns/probe":             "settings.write",
@@ -504,6 +506,8 @@ var requiredCaps = map[string]string{
 	"/api/gateway/logs":                            "topology.read",
 	"/api/gateway/stats":                           "topology.read",
 	"/api/gateway/sync":                            "topology.write",
+	"/api/gateway/provider/usage":                  "topology.read",
+	"/api/nodes/{id:[0-9]+}/managed-link":          "topology.write",
 	"/api/gateway/errors":                          "topology.read",
 	"/api/infrastructure/overview":                 "topology.read",
 	"/api/infrastructure/players-online":           "topology.read",
@@ -651,6 +655,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		FeatureFlags: appState.FeatureFlags,
 		StoreEnabled: appState.StoreEnabled,
 		CoreStorage:  appState.CoreStorage,
+		// The one cached mode func main builds; nil (tests) is local.
+		GatewayRemote: appState.GatewayRemote,
 	}
 
 	// Per-package dependencies, copied from appState once. A field assigned
@@ -666,11 +672,12 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		Metrics:      appState.Metrics,
 	}
 	beamDeps := beam.Deps{
-		Store:        appState.Store,
-		Redis:        appState.Redis,
-		Authz:        appState.Authz,
-		StoreEnabled: appState.StoreEnabled,
-		SuspendGrace: appState.SuspendGrace,
+		Store:         appState.Store,
+		Redis:         appState.Redis,
+		Authz:         appState.Authz,
+		StoreEnabled:  appState.StoreEnabled,
+		SuspendGrace:  appState.SuspendGrace,
+		GatewayRemote: appState.GatewayRemote,
 	}
 	modsDeps := mods.Deps{
 		Store:       appState.Store,
@@ -734,21 +741,24 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		ClusterSecret:         appState.ClusterSecret,
 	}
 	gatewayDeps := gateway.Deps{
-		Store:              appState.Store,
-		Redis:              appState.Redis,
-		FeatureFlags:       appState.FeatureFlags,
-		Gateway:            appState.Gateway,
-		GRPCRegistry:       appState.GRPCRegistry,
-		Admission:          appState.Admission,
-		SuspendGrace:       appState.SuspendGrace,
-		StoreEnabled:       appState.StoreEnabled,
-		StoreURL:           appState.StoreURL,
-		StoreSharedKey:     appState.StoreSharedKey,
-		ClusterSecret:      appState.ClusterSecret,
-		GatewayHubURL:      appState.GatewayHubURL,
-		GRPCTLSEnabled:     appState.GRPCTLSEnabled,
-		GRPCTLSFingerprint: appState.GRPCTLSFingerprint,
-		LongTermRead:       longTermRead(appState.Metrics),
+		Store:                 appState.Store,
+		Redis:                 appState.Redis,
+		FeatureFlags:          appState.FeatureFlags,
+		Gateway:               appState.Gateway,
+		GRPCRegistry:          appState.GRPCRegistry,
+		Admission:             appState.Admission,
+		SuspendGrace:          appState.SuspendGrace,
+		StoreEnabled:          appState.StoreEnabled,
+		StoreURL:              appState.StoreURL,
+		StoreSharedKey:        appState.StoreSharedKey,
+		ClusterSecret:         appState.ClusterSecret,
+		GatewayHubURL:         appState.GatewayHubURL,
+		GRPCTLSEnabled:        appState.GRPCTLSEnabled,
+		GRPCTLSFingerprint:    appState.GRPCTLSFingerprint,
+		LongTermRead:          longTermRead(appState.Metrics),
+		GatewayRemote:         appState.GatewayRemote,
+		RemoteGateway:         appState.RemoteGateway,
+		GatewayProviderConfig: appState.GatewayProviderConfig,
 	}
 	storageapiDeps := storageapi.Deps{
 		Store:            appState.Store,
@@ -785,6 +795,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		StoreSharedKey:   appState.StoreSharedKey,
 		ReleaseVersion:   appState.ReleaseVersion,
 		CoreID:           appState.CoreID,
+		GatewayRemote:    appState.GatewayRemote,
+		RemoteGateway:    appState.RemoteGateway,
 	}
 	consoleDeps := console.Deps{
 		Store:        appState.Store,
@@ -814,15 +826,19 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		DBType:       appState.DBType,
 	}
 	settingsDeps := settings.Deps{
-		Store:            appState.Store,
-		Redis:            appState.Redis,
-		Events:           appState.Events,
-		FeatureFlags:     appState.FeatureFlags,
-		Cache:            appState.Cache,
-		Authz:            appState.Authz,
-		CoreStorage:      appState.CoreStorage,
-		RoutingMigration: appState.RoutingMigration,
-		FrontendURL:      appState.FrontendURL,
+		Store:                 appState.Store,
+		Redis:                 appState.Redis,
+		Events:                appState.Events,
+		FeatureFlags:          appState.FeatureFlags,
+		Cache:                 appState.Cache,
+		Authz:                 appState.Authz,
+		CoreStorage:           appState.CoreStorage,
+		RoutingMigration:      appState.RoutingMigration,
+		FrontendURL:           appState.FrontendURL,
+		GatewayRemote:         appState.GatewayRemote,
+		RemoteGateway:         appState.RemoteGateway,
+		ResetGatewayRemote:    appState.ResetGatewayRemote,
+		GatewayProviderConfig: appState.GatewayProviderConfig,
 	}
 
 	// Initialize handlers
@@ -894,6 +910,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		GRPCTLSEnabled:     appState.GRPCTLSEnabled,
 		GRPCTLSFingerprint: appState.GRPCTLSFingerprint,
 		ClusterSecret:      appState.ClusterSecret,
+		GatewayRemote:      appState.GatewayRemote,
+		RemoteGateway:      appState.RemoteGateway,
 	}
 	nodeHandler := nodes.NewNodeHandler(nodesDeps)
 
@@ -956,6 +974,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		Hosted:           appState.Hosted,
 		ReleaseVersion:   appState.ReleaseVersion,
 		InstallMrpackURL: appState.InstallMrpackURL,
+		GatewayRemote:    appState.GatewayRemote,
+		RemoteGateway:    appState.RemoteGateway,
 	}
 	serverHandler := servers.NewServerHandler(serversDeps)
 	portsAdminHandler := servers.NewPortsAdminHandler(serversDeps)
@@ -1469,27 +1489,27 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// can neither be unbounded nor drain the login budget of the address it
 	// shares with its owner's browser.
 	kitBootLimiter := httpx.NewIPRateLimiter()
-	api.HandleFunc("/warp/enroll", kitBootLimiter.Limit(300, warpHandler.WarpAPIKeyMiddleware(warpHandler.Enroll))).Methods("POST")
-	api.HandleFunc("/warp/assignment", kitBootLimiter.Limit(300, warpHandler.WarpAPIKeyMiddleware(warpHandler.Assignment))).Methods("GET")
+	api.HandleFunc("/warp/enroll", kitBootLimiter.Limit(300, warpHandler.WarpAPIKeyMiddleware(gates.RequireLocalGateway(warpHandler.Enroll)))).Methods("POST")
+	api.HandleFunc("/warp/assignment", kitBootLimiter.Limit(300, warpHandler.WarpAPIKeyMiddleware(gates.RequireLocalGateway(warpHandler.Assignment)))).Methods("GET")
 	// Warp admin registry: regions + leaders (PANEL topology.*; Phase 4 Task 18)
-	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(warpHandler.ListRegions))).Methods("GET")
-	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.UpsertRegion))).Methods("POST")
-	api.HandleFunc("/warp/regions/{region}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.DeleteRegion))).Methods("DELETE")
-	api.HandleFunc("/warp/leaders", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.UpsertLeader))).Methods("POST")
-	api.HandleFunc("/warp/leaders/{leaderId}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.DeleteLeader))).Methods("DELETE")
-	api.HandleFunc("/admin/warp/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.MintAPIKey))).Methods("POST")
-	api.HandleFunc("/admin/warp/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(warpHandler.ListAPIKeys))).Methods("GET")
-	api.HandleFunc("/admin/warp/keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.RevokeAPIKey))).Methods("DELETE")
-	api.HandleFunc("/admin/warp/keys/{id:[0-9]+}/purge", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.DeleteAPIKey))).Methods("DELETE")
-	api.HandleFunc("/admin/warp/keys/{id:[0-9]+}/roll", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.RollExternalNodeKey))).Methods("POST")
+	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gates.RequireLocalGateway(warpHandler.ListRegions)))).Methods("GET")
+	api.HandleFunc("/warp/regions", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(warpHandler.UpsertRegion)))).Methods("POST")
+	api.HandleFunc("/warp/regions/{region}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(warpHandler.DeleteRegion)))).Methods("DELETE")
+	api.HandleFunc("/warp/leaders", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(warpHandler.UpsertLeader)))).Methods("POST")
+	api.HandleFunc("/warp/leaders/{leaderId}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(warpHandler.DeleteLeader)))).Methods("DELETE")
+	api.HandleFunc("/admin/warp/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(warpHandler.MintAPIKey)))).Methods("POST")
+	api.HandleFunc("/admin/warp/keys", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gates.RequireLocalGateway(warpHandler.ListAPIKeys)))).Methods("GET")
+	api.HandleFunc("/admin/warp/keys/{id:[0-9]+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(warpHandler.RevokeAPIKey)))).Methods("DELETE")
+	api.HandleFunc("/admin/warp/keys/{id:[0-9]+}/purge", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(warpHandler.DeleteAPIKey)))).Methods("DELETE")
+	api.HandleFunc("/admin/warp/keys/{id:[0-9]+}/roll", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(warpHandler.RollExternalNodeKey)))).Methods("POST")
 	// An External node's key and platform enroll token in one call. Same
 	// capability as the key mint above, and deliberately not BYON-gated.
-	api.HandleFunc("/admin/warp/external-nodes", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(warpHandler.MintExternalNodeKey))).Methods("POST")
+	api.HandleFunc("/admin/warp/external-nodes", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(warpHandler.MintExternalNodeKey)))).Methods("POST")
 	// Route-only link kits (tenant self-service; BYON-gated inside the handler)
-	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.ListLinkKits)).Methods("GET")
-	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(warpHandler.MintLinkKit)).Methods("POST")
+	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(gates.RequireLocalGateway(warpHandler.ListLinkKits))).Methods("GET")
+	api.HandleFunc("/warp/link-kits", authHandler.AuthMiddleware(gates.RequireLocalGateway(warpHandler.MintLinkKit))).Methods("POST")
 	api.HandleFunc("/warp/link-boot",
-		kitBootLimiter.Limit(300, warpHandler.WarpAPIKeyMiddleware(warpHandler.LinkBoot))).Methods("POST")
+		kitBootLimiter.Limit(300, warpHandler.WarpAPIKeyMiddleware(gates.RequireLocalGateway(warpHandler.LinkBoot)))).Methods("POST")
 	// A route-only link's steady traffic: an edge list and a heartbeat every
 	// 5s and a stats record every 3s, about 45 a minute. Its own limiter, so it
 	// can never drain the login budget of the same address. The per-IP ceiling
@@ -1497,22 +1517,22 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// for people behind CGNAT); the real cap is per link key, 300 a minute,
 	// shared across replicas through Redis.
 	linkAPILimiter := httpx.NewIPRateLimiter()
-	api.HandleFunc("/warp/link/edges", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkEdges)))).Methods("GET")
-	api.HandleFunc("/warp/link/beams", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkBeams)))).Methods("GET")
-	api.HandleFunc("/warp/link/heartbeat", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkHeartbeat)))).Methods("POST")
-	api.HandleFunc("/warp/link/stats", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkStats)))).Methods("POST")
-	api.HandleFunc("/warp/link/voice", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkVoice)))).Methods("GET")
-	api.HandleFunc("/warp/link/targets", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, warpHandler.LinkTargets)))).Methods("GET")
-	api.HandleFunc("/warp/link-kits/{linkID}", authHandler.AuthMiddleware(warpHandler.RevokeLinkKit)).Methods("DELETE")
-	api.HandleFunc("/warp/link-kits/{linkID}/roll", authHandler.AuthMiddleware(warpHandler.RollLinkKit)).Methods("POST")
+	api.HandleFunc("/warp/link/edges", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, gates.RequireLocalGateway(warpHandler.LinkEdges))))).Methods("GET")
+	api.HandleFunc("/warp/link/beams", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, gates.RequireLocalGateway(warpHandler.LinkBeams))))).Methods("GET")
+	api.HandleFunc("/warp/link/heartbeat", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, gates.RequireLocalGateway(warpHandler.LinkHeartbeat))))).Methods("POST")
+	api.HandleFunc("/warp/link/stats", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, gates.RequireLocalGateway(warpHandler.LinkStats))))).Methods("POST")
+	api.HandleFunc("/warp/link/voice", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, gates.RequireLocalGateway(warpHandler.LinkVoice))))).Methods("GET")
+	api.HandleFunc("/warp/link/targets", linkAPILimiter.Limit(6000, warpHandler.WarpAPIKeyMiddleware(keyLimiter.LimitLink(gateway.WarpKeyID, gates.RequireLocalGateway(warpHandler.LinkTargets))))).Methods("GET")
+	api.HandleFunc("/warp/link-kits/{linkID}", authHandler.AuthMiddleware(gates.RequireLocalGateway(warpHandler.RevokeLinkKit))).Methods("DELETE")
+	api.HandleFunc("/warp/link-kits/{linkID}/roll", authHandler.AuthMiddleware(gates.RequireLocalGateway(warpHandler.RollLinkKit))).Methods("POST")
 	// BYON node warp keys (tenant self-service; BYON + gateway gated inside the
 	// handler, capped on max_nodes). Separate from link kits by the "node-"
 	// node_id prefix - see MintNodeWarpKey.
-	api.HandleFunc("/warp/node-keys", authHandler.AuthMiddleware(warpHandler.MintNodeWarpKey)).Methods("POST")
-	api.HandleFunc("/warp/node-keys", authHandler.AuthMiddleware(warpHandler.ListNodeWarpKeys)).Methods("GET")
-	api.HandleFunc("/warp/node-keys/{nodeID}", authHandler.AuthMiddleware(warpHandler.RevokeNodeWarpKey)).Methods("DELETE")
-	api.HandleFunc("/warp/node-keys/{nodeID}/roll", authHandler.AuthMiddleware(warpHandler.RollNodeWarpKey)).Methods("POST")
-	api.HandleFunc("/warp/node-keys/{nodeID}/bind", authHandler.AuthMiddleware(warpHandler.BindNodeWarpKey)).Methods("POST")
+	api.HandleFunc("/warp/node-keys", authHandler.AuthMiddleware(gates.RequireLocalGateway(warpHandler.MintNodeWarpKey))).Methods("POST")
+	api.HandleFunc("/warp/node-keys", authHandler.AuthMiddleware(gates.RequireLocalGateway(warpHandler.ListNodeWarpKeys))).Methods("GET")
+	api.HandleFunc("/warp/node-keys/{nodeID}", authHandler.AuthMiddleware(gates.RequireLocalGateway(warpHandler.RevokeNodeWarpKey))).Methods("DELETE")
+	api.HandleFunc("/warp/node-keys/{nodeID}/roll", authHandler.AuthMiddleware(gates.RequireLocalGateway(warpHandler.RollNodeWarpKey))).Methods("POST")
+	api.HandleFunc("/warp/node-keys/{nodeID}/bind", authHandler.AuthMiddleware(gates.RequireLocalGateway(warpHandler.BindNodeWarpKey))).Methods("POST")
 	// Overlay addresses for the deploy snippets. Authed but uncapped for the same
 	// reason as the kits above: the tenant minting the key is the one who needs
 	// them, and they are RFC1918 addresses that authorize nothing on their own.
@@ -1835,7 +1855,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/disk/orphans/assign", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.AssignOrphan))).Methods("POST")
 
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.GetServers)).Methods("GET")
-	api.HandleFunc("/servers/players", authHandler.AuthMiddleware(serverHandler.GetGatewayPlayers)).Methods("GET")
+	api.HandleFunc("/servers/players", authHandler.AuthMiddleware(gates.RequireLocalGateway(serverHandler.GetGatewayPlayers))).Methods("GET")
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.CreateServer)).Methods("POST")
 	// POWER is in-handler-enforced (Rule R5): the action is in the request body
 	// (start|stop|restart|kill), so a single route-level RequireCap would wrongly
@@ -1885,9 +1905,14 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 
 	// --- Gateway Endpoints ---
 	gatewayHandler := gateway.NewGatewayHandler(gatewayDeps)
+	// Managed gateway only (409 gateway_local otherwise). The kit answer holds
+	// a link key: topology.write, like the admin warp key mints.
+	remoteKitHandler := gateway.NewRemoteKitHandler(gatewayDeps)
+	api.HandleFunc("/nodes/{id:[0-9]+}/managed-link", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(remoteKitHandler.ManagedLink))).Methods("GET")
+	api.HandleFunc("/gateway/provider/usage", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(remoteKitHandler.ProviderUsage))).Methods("GET")
 	// One cap for both methods (the cap map is keyed by path): the toggle is a write control, and reading it is only ever done to show it.
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(gatewayHandler.GetPublicTargets))).Methods("GET")
-	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(gatewayHandler.SetPublicTargets))).Methods("PUT")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(gates.RequireLocalGateway(gatewayHandler.GetPublicTargets)))).Methods("GET")
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(gates.RequireLocalGateway(gatewayHandler.SetPublicTargets)))).Methods("PUT")
 	dnsHandler := health.NewDNSHandler(healthDeps)
 	trafficLimitHandler := billing.NewTrafficLimitHandler(billingDeps)
 	infrastructureHandler := health.NewInfrastructureHandler(healthDeps)
@@ -1895,23 +1920,27 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	metricsDBHandler := stats.NewMetricsDBHandler(statsDeps)
 
 	// Admin endpoints (PANEL topology.* - global gateway oversight; Phase 4 Task 18)
-	api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetLinks))).Methods("GET")
-	api.HandleFunc("/gateway/edges", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetEdges))).Methods("GET")
-	api.HandleFunc("/gateway/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetAllRoutes))).Methods("GET")
+	api.HandleFunc("/gateway/links", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gates.RequireLocalGateway(gatewayHandler.GetLinks)))).Methods("GET")
+	api.HandleFunc("/gateway/edges", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gates.RequireLocalGateway(gatewayHandler.GetEdges)))).Methods("GET")
+	api.HandleFunc("/gateway/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gates.RequireLocalGateway(gatewayHandler.GetAllRoutes)))).Methods("GET")
 	api.HandleFunc("/gateway/dns-check", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(dnsHandler.CheckDNS))).Methods("GET")
-	api.HandleFunc("/gateway/routes/suffixes", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetRouteSuffixes))).Methods("GET")
-	api.HandleFunc("/gateway/routes/bulk-delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.BulkDeleteRoutesBySuffix))).Methods("POST")
-	api.HandleFunc("/gateway/routes/{domain:[^/]+}/suspend", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.SuspendRoute))).Methods("POST")
-	api.HandleFunc("/gateway/routes/{domain:[^/]+}/unsuspend", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.UnsuspendRoute))).Methods("POST")
-	api.HandleFunc("/gateway/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.AdminDeleteRoute))).Methods("DELETE")
+	api.HandleFunc("/gateway/routes/suffixes", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gates.RequireLocalGateway(gatewayHandler.GetRouteSuffixes)))).Methods("GET")
+	api.HandleFunc("/gateway/routes/bulk-delete", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(gatewayHandler.BulkDeleteRoutesBySuffix)))).Methods("POST")
+	api.HandleFunc("/gateway/routes/{domain:[^/]+}/suspend", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(gatewayHandler.SuspendRoute)))).Methods("POST")
+	api.HandleFunc("/gateway/routes/{domain:[^/]+}/unsuspend", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(gatewayHandler.UnsuspendRoute)))).Methods("POST")
+	api.HandleFunc("/gateway/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(gatewayHandler.AdminDeleteRoute)))).Methods("DELETE")
 	// check-domain is an owner-facing route-creation helper (RouteDomainPicker in
 	// the new-server + routes UI): any authed user needs the domain-availability
 	// hint for their OWN route. Read-only, non-sensitive -> authed-exempt (T22).
-	api.HandleFunc("/gateway/check-domain", authHandler.AuthMiddleware(gatewayHandler.CheckDomainAvailability)).Methods("GET")
-	api.HandleFunc("/gateway/logs", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetLogs))).Methods("GET")
-	api.HandleFunc("/gateway/stats", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetStats))).Methods("GET")
-	api.HandleFunc("/gateway/sync", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gatewayHandler.TriggerSync))).Methods("POST")
-	api.HandleFunc("/gateway/errors", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gatewayHandler.GetErrors))).Methods("GET")
+	// Per user, 30 a minute: on the managed gateway every check is a read on the
+	// platform's one provider key. The picker debounces (600 ms), so typing
+	// stays well under it.
+	checkDomainLimiter := httpx.NewIPRateLimiter()
+	api.HandleFunc("/gateway/check-domain", authHandler.AuthMiddleware(checkDomainLimiter.LimitUser(30, gatewayHandler.CheckDomainAvailability))).Methods("GET")
+	api.HandleFunc("/gateway/logs", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gates.RequireLocalGateway(gatewayHandler.GetLogs)))).Methods("GET")
+	api.HandleFunc("/gateway/stats", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gates.RequireLocalGateway(gatewayHandler.GetStats)))).Methods("GET")
+	api.HandleFunc("/gateway/sync", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.write")(gates.RequireLocalGateway(gatewayHandler.TriggerSync)))).Methods("POST")
+	api.HandleFunc("/gateway/errors", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gates.RequireLocalGateway(gatewayHandler.GetErrors)))).Methods("GET")
 
 	// User endpoints (per-server routes, identified by domain)
 	api.HandleFunc("/servers/{id:[0-9]+}/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gatewayHandler.GetServerRoutes))).Methods("GET")
@@ -1919,15 +1948,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.DeleteServerRoute))).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gates.RequireGatewayEnabled(gatewayHandler.SetServerProxyProtocol)))).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gates.RequireGatewayEnabled(gatewayHandler.GetServerProxyProtocol)))).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/voice", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gates.RequireGatewayEnabled(gatewayHandler.GetServerVoice)))).Methods("GET")
-	// No RequireGatewayEnabled: turning voice off must work with the gateway
-	// off; SetServerVoice gates the enable itself.
+	api.HandleFunc("/servers/{id:[0-9]+}/voice", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gates.RequireGatewayEnabled(gates.RequireLocalGateway(gatewayHandler.GetServerVoice))))).Methods("GET")
+	// No RequireGatewayEnabled and no RequireLocalGateway: turning voice off must
+	// work with the gateway off and on the managed gateway; SetServerVoice gates
+	// the enable itself.
 	api.HandleFunc("/servers/{id:[0-9]+}/voice/switch", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.SetServerVoice))).Methods("PUT")
-	api.HandleFunc("/servers/{id:[0-9]+}/bedrock", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gatewayHandler.GetServerBedrock))).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/bedrock/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.SetRouteEdition))).Methods("PUT")
-	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayHandler.ListVoicePermissions))).Methods("GET")
-	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayHandler.SetVoicePermission))).Methods("PUT")
-	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayHandler.DeleteVoicePermission))).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/bedrock", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gates.RequireLocalGateway(gatewayHandler.GetServerBedrock)))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/bedrock/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gates.RequireLocalGateway(gatewayHandler.SetRouteEdition)))).Methods("PUT")
+	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gates.RequireLocalGateway(gatewayHandler.ListVoicePermissions)))).Methods("GET")
+	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gates.RequireLocalGateway(gatewayHandler.SetVoicePermission)))).Methods("PUT")
+	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gates.RequireLocalGateway(gatewayHandler.DeleteVoicePermission)))).Methods("DELETE")
 	// Extra ports, direct routing only (the handlers refuse the gateway mode
 	// with a sentence; DELETE is never refused, taking a port away must work).
 	api.HandleFunc("/servers/{id:[0-9]+}/ports", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(serverHandler.GetServerPorts))).Methods("GET")
@@ -1969,23 +1999,23 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// a claim is one user's relationship to one domain, and the block is per
 	// (user, domain) so nobody can lock a competitor's domain out globally.
 	customDomainHandler := gateway.NewCustomDomainHandler(gatewayDeps, services.NewNetResolver())
-	api.HandleFunc("/gateway/custom-domains", authHandler.AuthMiddleware(customDomainHandler.List)).Methods("GET")
-	api.HandleFunc("/gateway/custom-domains", authLimiter.Limit(30, authHandler.AuthMiddleware(customDomainHandler.Add))).Methods("POST")
-	api.HandleFunc("/gateway/custom-domains/{domain:[^/]+}", authHandler.AuthMiddleware(customDomainHandler.Delete)).Methods("DELETE")
+	api.HandleFunc("/gateway/custom-domains", authHandler.AuthMiddleware(gates.RequireLocalGateway(customDomainHandler.List))).Methods("GET")
+	api.HandleFunc("/gateway/custom-domains", authLimiter.Limit(30, authHandler.AuthMiddleware(gates.RequireLocalGateway(customDomainHandler.Add)))).Methods("POST")
+	api.HandleFunc("/gateway/custom-domains/{domain:[^/]+}", authHandler.AuthMiddleware(gates.RequireLocalGateway(customDomainHandler.Delete))).Methods("DELETE")
 	api.HandleFunc("/gateway/custom-domains/{domain:.+}/txt-token",
-		authHandler.AuthMiddleware(customDomainHandler.IssueTXTToken)).Methods("POST")
+		authHandler.AuthMiddleware(gates.RequireLocalGateway(customDomainHandler.IssueTXTToken))).Methods("POST")
 	// Rate-limited: it triggers an outbound DNS lookup and is the way back from a
 	// permanent block, so it is the one endpoint here worth hammering.
 	api.HandleFunc("/gateway/custom-domains/{domain:.+}/verify-txt",
-		authLimiter.Limit(20, authHandler.AuthMiddleware(customDomainHandler.VerifyTXT))).Methods("POST")
+		authLimiter.Limit(20, authHandler.AuthMiddleware(gates.RequireLocalGateway(customDomainHandler.VerifyTXT)))).Methods("POST")
 
-	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gatewayHandler.ListLinkRoutes)).Methods("GET")
-	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gates.RequireGatewayEnabled(gatewayHandler.CreateLinkRoute))).Methods("POST")
-	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/proxy-protocol", authHandler.AuthMiddleware(gates.RequireGatewayEnabled(gatewayHandler.SetLinkRouteProxyProtocol))).Methods("PATCH")
-	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/voice", authHandler.AuthMiddleware(gatewayHandler.SetLinkRouteVoice)).Methods("PUT")
-	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/bedrock", authHandler.AuthMiddleware(gatewayHandler.SetLinkRouteBedrock)).Methods("PUT")
-	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/floodgate-key", authHandler.AuthMiddleware(gatewayHandler.GetLinkRouteFloodgateKey)).Methods("GET")
-	api.HandleFunc("/gateway/link-routes/{domain:.+}", authHandler.AuthMiddleware(gatewayHandler.DeleteLinkRoute)).Methods("DELETE")
+	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gates.RequireLocalGateway(gatewayHandler.ListLinkRoutes))).Methods("GET")
+	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gates.RequireGatewayEnabled(gates.RequireLocalGateway(gatewayHandler.CreateLinkRoute)))).Methods("POST")
+	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/proxy-protocol", authHandler.AuthMiddleware(gates.RequireGatewayEnabled(gates.RequireLocalGateway(gatewayHandler.SetLinkRouteProxyProtocol)))).Methods("PATCH")
+	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/voice", authHandler.AuthMiddleware(gates.RequireLocalGateway(gatewayHandler.SetLinkRouteVoice))).Methods("PUT")
+	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/bedrock", authHandler.AuthMiddleware(gates.RequireLocalGateway(gatewayHandler.SetLinkRouteBedrock))).Methods("PUT")
+	api.HandleFunc("/gateway/link-routes/{domain:[^/]+}/floodgate-key", authHandler.AuthMiddleware(gates.RequireLocalGateway(gatewayHandler.GetLinkRouteFloodgateKey))).Methods("GET")
+	api.HandleFunc("/gateway/link-routes/{domain:.+}", authHandler.AuthMiddleware(gates.RequireLocalGateway(gatewayHandler.DeleteLinkRoute))).Methods("DELETE")
 
 	// --- External gateway API: the route-only product for a user API key ---
 	//
@@ -1998,30 +2028,32 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// take its own rate class.
 	extGatewayHandler := gateway.NewExternalGatewayHandler(warpHandler, gatewayHandler, customDomainHandler,
 		gates.RequireGatewayEnabled, settingsHandler.GetGatewayRouteOptions, usageHandler.GetMyUsage)
-	api.HandleFunc("/external/gateway/link-kits", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListLinkKits)))).Methods("GET")
-	api.HandleFunc("/external/gateway/link-kits", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.MintLinkKit)))).Methods("POST")
-	api.HandleFunc("/external/gateway/link-kits/{linkID}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.RevokeLinkKit)))).Methods("DELETE")
-	api.HandleFunc("/external/gateway/link-kits/{linkID}/roll", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.RollLinkKit)))).Methods("POST")
-	api.HandleFunc("/external/gateway/routes", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListRoutes)))).Methods("GET")
-	api.HandleFunc("/external/gateway/routes", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.CreateRoute)))).Methods("POST")
-	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.DeleteRoute)))).Methods("DELETE")
-	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/proxy-protocol", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.SetRouteProxyProtocol)))).Methods("PATCH")
-	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/voice", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.SetRouteVoice)))).Methods("PUT")
-	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/bedrock", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.SetRouteBedrock)))).Methods("PUT")
-	api.HandleFunc("/external/gateway/custom-domains", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListCustomDomains)))).Methods("GET")
-	api.HandleFunc("/external/gateway/custom-domains", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.AddCustomDomain)))).Methods("POST")
-	api.HandleFunc("/external/gateway/custom-domains/{domain:[^/]+}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.DeleteCustomDomain)))).Methods("DELETE")
-	api.HandleFunc("/external/gateway/custom-domains/{domain:[^/]+}/txt-token", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.IssueCustomDomainTXTToken)))).Methods("POST")
-	api.HandleFunc("/external/gateway/custom-domains/{domain:[^/]+}/verify-txt", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.VerifyCustomDomainTXT)))).Methods("POST")
-	api.HandleFunc("/external/gateway/regions", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListRegions)))).Methods("GET")
-	api.HandleFunc("/external/gateway/usage", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.GetUsage)))).Methods("GET")
+	api.HandleFunc("/external/gateway/link-kits", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.ListLinkKits))))).Methods("GET")
+	api.HandleFunc("/external/gateway/link-kits", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.MintLinkKit))))).Methods("POST")
+	api.HandleFunc("/external/gateway/link-kits/{linkID}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.RevokeLinkKit))))).Methods("DELETE")
+	api.HandleFunc("/external/gateway/link-kits/{linkID}/roll", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.RollLinkKit))))).Methods("POST")
+	api.HandleFunc("/external/gateway/routes", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.ListRoutes))))).Methods("GET")
+	api.HandleFunc("/external/gateway/routes", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.CreateRoute))))).Methods("POST")
+	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.DeleteRoute))))).Methods("DELETE")
+	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/proxy-protocol", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.SetRouteProxyProtocol))))).Methods("PATCH")
+	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/voice", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.SetRouteVoice))))).Methods("PUT")
+	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/bedrock", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.SetRouteBedrock))))).Methods("PUT")
+	api.HandleFunc("/external/gateway/custom-domains", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.ListCustomDomains))))).Methods("GET")
+	api.HandleFunc("/external/gateway/custom-domains", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.AddCustomDomain))))).Methods("POST")
+	api.HandleFunc("/external/gateway/custom-domains/{domain:[^/]+}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.DeleteCustomDomain))))).Methods("DELETE")
+	api.HandleFunc("/external/gateway/custom-domains/{domain:[^/]+}/txt-token", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.IssueCustomDomainTXTToken))))).Methods("POST")
+	api.HandleFunc("/external/gateway/custom-domains/{domain:[^/]+}/verify-txt", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.VerifyCustomDomainTXT))))).Methods("POST")
+	api.HandleFunc("/external/gateway/regions", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.ListRegions))))).Methods("GET")
+	api.HandleFunc("/external/gateway/account", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.GetAccount))))).Methods("GET")
+	api.HandleFunc("/external/gateway/check-domain", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.CheckDomain))))).Methods("GET")
+	api.HandleFunc("/external/gateway/usage", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.GetUsage))))).Methods("GET")
 	// Managed gateway: the customer Core's beam ticket keys and the relays its
 	// beam config names. Register and revoke share the mint class: a key is a
 	// credential, and churning them is what the 10/hour budget exists to stop.
-	api.HandleFunc("/external/gateway/beam/keys", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListBeamKeys)))).Methods("GET")
-	api.HandleFunc("/external/gateway/beam/keys", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.RegisterBeamKey)))).Methods("POST")
-	api.HandleFunc("/external/gateway/beam/keys/{kid}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.RevokeBeamKey)))).Methods("DELETE")
-	api.HandleFunc("/external/gateway/beam/relays", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(extGatewayHandler.ListBeamRelays)))).Methods("GET")
+	api.HandleFunc("/external/gateway/beam/keys", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.ListBeamKeys))))).Methods("GET")
+	api.HandleFunc("/external/gateway/beam/keys", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.RegisterBeamKey))))).Methods("POST")
+	api.HandleFunc("/external/gateway/beam/keys/{kid}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassMint, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.RevokeBeamKey))))).Methods("DELETE")
+	api.HandleFunc("/external/gateway/beam/relays", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.ListBeamRelays))))).Methods("GET")
 
 	// Infrastructure overview + migration status (PANEL topology.read; Phase 4 Task 18)
 	// Traffic limits: what a tenant may use and buy, per (region, kind). The
@@ -2089,20 +2121,26 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/settings/features", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveFeatureSettings))).Methods("POST")
 	api.HandleFunc("/settings/gateway", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetGatewaySettings))).Methods("GET")
 	api.HandleFunc("/settings/gateway", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveGatewaySettings))).Methods("POST")
+	// The gateway provider: this platform's own gateway or the managed one.
+	// Not mode-gated: these are how the mode is chosen.
+	gatewayProviderHandler := settings.NewGatewayProviderHandler(settingsDeps)
+	api.HandleFunc("/settings/gateway/provider", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayProviderHandler.Get))).Methods("GET")
+	api.HandleFunc("/settings/gateway/provider", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayProviderHandler.Save))).Methods("POST")
+	api.HandleFunc("/settings/gateway/provider/test", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayProviderHandler.Test))).Methods("POST")
 
 	// Hub-admin Redis provisioner (TP2b): admin-only create/roll of the
 	// gw-hub-admin ACL user (PANEL settings.*). GET status carries no secret;
 	// the password is returned once by POST provision/roll.
 	// The DNS credential is stored by the gateway HUB, not here. These two
 	// forward the panel's form; Core holds no copy. See handlers/gateway_dns.go.
-	api.HandleFunc("/settings/gateway/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayDNSHandler.Get))).Methods("GET")
-	api.HandleFunc("/settings/gateway/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayDNSHandler.Save))).Methods("PUT")
-	api.HandleFunc("/settings/gateway/dns/probe", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayDNSHandler.Probe))).Methods("POST")
-	api.HandleFunc("/gateway-bandwidth/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetOverview))).Methods("GET")
-	api.HandleFunc("/gateway-bandwidth/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetHistory))).Methods("GET")
-	api.HandleFunc("/gateway-bandwidth/rebalance", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayBandwidthHandler.GetRebalance))).Methods("GET")
-	api.HandleFunc("/gateway-bandwidth/rebalance", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayBandwidthHandler.SetRebalanceMode))).Methods("POST")
-	api.HandleFunc("/voice/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gates.RequireGatewayEnabled(voiceStatsHandler.GetOverview)))).Methods("GET")
+	api.HandleFunc("/settings/gateway/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gates.RequireLocalGateway(gatewayDNSHandler.Get)))).Methods("GET")
+	api.HandleFunc("/settings/gateway/dns", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gates.RequireLocalGateway(gatewayDNSHandler.Save)))).Methods("PUT")
+	api.HandleFunc("/settings/gateway/dns/probe", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gates.RequireLocalGateway(gatewayDNSHandler.Probe)))).Methods("POST")
+	api.HandleFunc("/gateway-bandwidth/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gates.RequireLocalGateway(gatewayBandwidthHandler.GetOverview)))).Methods("GET")
+	api.HandleFunc("/gateway-bandwidth/history", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gates.RequireLocalGateway(gatewayBandwidthHandler.GetHistory)))).Methods("GET")
+	api.HandleFunc("/gateway-bandwidth/rebalance", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gates.RequireLocalGateway(gatewayBandwidthHandler.GetRebalance)))).Methods("GET")
+	api.HandleFunc("/gateway-bandwidth/rebalance", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gates.RequireLocalGateway(gatewayBandwidthHandler.SetRebalanceMode)))).Methods("POST")
+	api.HandleFunc("/voice/overview", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gates.RequireGatewayEnabled(gates.RequireLocalGateway(voiceStatsHandler.GetOverview))))).Methods("GET")
 
 	// Placement / Scheduling. /placement/pick + /tags + /regions stay authed-exempt
 	// (Phase 4 Task 13): they are node-picking helper reads/preview any authed user
@@ -2122,8 +2160,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/servers/{id:[0-9]+}/transfer", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(gates.RequireGatewayEnabled(serverHandler.TransferServer)))).Methods("POST")
 	// Per-server edge transitional-MOTD: GET current config, PATCH mode/text.
 	// PATCH publishes to Redis for the gateway edge (auto/custom/off).
-	api.HandleFunc("/servers/{id:[0-9]+}/edge-motd", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(serverHandler.GetServerEdgeMotd))).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/edge-motd", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(serverHandler.SetServerEdgeMotd))).Methods("PATCH")
+	api.HandleFunc("/servers/{id:[0-9]+}/edge-motd", authHandler.AuthMiddleware(appState.Authz.RequireCap("overview.read")(gates.RequireLocalGateway(serverHandler.GetServerEdgeMotd)))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/edge-motd", authHandler.AuthMiddleware(appState.Authz.RequireCap("server.settings.write")(gates.RequireLocalGateway(serverHandler.SetServerEdgeMotd)))).Methods("PATCH")
 	// Admin cancel of an in-flight migration (pre-cutover rollback to the source node).
 	api.HandleFunc("/admin/servers/{id:[0-9]+}/migration/cancel", authHandler.AuthMiddleware(appState.Authz.RequireCap("servers.write")(serverHandler.CancelMigration))).Methods("POST")
 	// Demo flag (admin, PANEL settings.write) - mark a normal server as a public
@@ -2176,8 +2214,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/settings/routing-mode", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveRoutingMode))).Methods("POST")
 	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetBackupConfig))).Methods("GET")
 	api.HandleFunc("/settings/backup", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveBackupConfig))).Methods("POST")
-	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(settingsHandler.GetWarpFirewallSettings))).Methods("GET")
-	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(settingsHandler.SaveWarpFirewallSettings))).Methods("POST")
+	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gates.RequireLocalGateway(settingsHandler.GetWarpFirewallSettings)))).Methods("GET")
+	api.HandleFunc("/settings/warp-firewall", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gates.RequireLocalGateway(settingsHandler.SaveWarpFirewallSettings)))).Methods("POST")
 	// Shared Core file storage config (ticket-attachments/ticket-backups
 	// backend, path or s3) - CRUD + a write+read+delete connection probe.
 	api.HandleFunc("/settings/core-storage", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(coreStorageHandler.GetConfig))).Methods("GET")

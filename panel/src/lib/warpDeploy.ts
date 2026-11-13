@@ -101,6 +101,9 @@ export function defaultLocalTarget(platform: DeployPlatform | undefined): string
 
 const REG = 'ghcr.io/dylaris-dev';
 
+/** The link image. One name for every kit that runs a link. */
+export const LINK_IMAGE = `${REG}/gateway-link:latest`;
+
 /**
  * Port warp binds locally for its Redis proxy.
  *
@@ -296,7 +299,7 @@ ${header}
 
 services:
   link:
-    image: ${REG}/gateway-link:latest
+    image: ${LINK_IMAGE}
     restart: unless-stopped
 ${LOGS}    environment:
       # keep - this link's key. Shown once; we store only a hash of it. It is
@@ -334,6 +337,58 @@ ${watchtowerService('the link', `
       # weekday), in TZ below. At this time every player on your servers is
       # disconnected once and can rejoin within seconds. Change the time here.
       WATCHTOWER_SCHEDULE: "0 0 4 * * *"`, tz)}`;
+}
+
+/**
+ * managedLinkCompose is the link for a node of a platform on the DYLARIS
+ * Managed Gateway. It runs on the node's host, on the Docker network the game
+ * servers are on, and dials out to the provider's edges with its own key.
+ *
+ * Not host-networked and no LINK_ALLOWED_TARGETS: it reaches the servers by
+ * container name on that network, and the network is the boundary. The network
+ * already exists (the node created it), so it is declared external rather than
+ * created here, where Compose would prefix it with the folder name.
+ */
+export function managedLinkCompose(o: { linkKey: string; coreUrl: string; network: string; image: string }): string {
+    // JSON strings are valid YAML double-quoted scalars, so a quote or a
+    // backslash in a value cannot end it early.
+    const q = (v: string) => JSON.stringify(v);
+    return `# managed-link.yml
+#
+# link carries players from the DYLARIS Managed Gateway to the game servers on
+# this machine. It talks to the gateway provider with the key below and opens
+# outbound tunnels to its edges. Nothing is published and no port is opened.
+#
+# Lines marked "keep" are filled in for this node and must stay as they are.
+
+services:
+  link:
+    image: ${o.image}
+    restart: unless-stopped
+${LOGS}    environment:
+      # keep - this link's key. Anyone holding it can serve this node's routes.
+      LINK_KEY: ${q(o.linkKey)}
+
+      # keep - the gateway provider's API.
+      CORE_URL: ${q(o.coreUrl)}
+
+      # keep - on a stop or update the link keeps the players already on your
+      # servers until the last one leaves, for at most this long.
+      LINK_DRAIN_TIMEOUT: "6h"
+    # keep - a little longer than LINK_DRAIN_TIMEOUT, so link finishes on its own
+    # terms instead of being killed with players still on it.
+    stop_grace_period: 6h10m
+    # keep - the network your game servers run on; link reaches them there.
+    networks: [${q(o.network)}]
+    labels:
+      # keep - how the node finds this link.
+      dylaris.component: "link"
+
+networks:
+  # keep - created by the node, so it is only joined here.
+  ${q(o.network)}:
+    external: true
+`;
 }
 
 /**
@@ -407,7 +462,7 @@ ${i.legacyAdminKey
     const linkService = kitLink
         ? `
   link:
-    image: ${REG}/gateway-link:latest
+    image: ${LINK_IMAGE}
     restart: unless-stopped
 ${LOGS}    depends_on: [warp]
     environment:

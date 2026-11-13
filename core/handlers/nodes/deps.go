@@ -28,4 +28,9 @@ type Deps struct {
 	GRPCTLSEnabled     bool
 	GRPCTLSFingerprint string
 	ClusterSecret      string
+
+	// GatewayRemote is the gateway provider mode; nil is local. RemoteGateway
+	// is the managed-gateway provider used while it is remote.
+	GatewayRemote func() (remote, known bool)
+	RemoteGateway *services.RemoteGateway
 }

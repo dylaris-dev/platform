@@ -401,3 +401,44 @@ func TestVoicePermissionAdminAPI(t *testing.T) {
 		t.Fatalf("delete global: status %d, want 400", rec.Code)
 	}
 }
+
+// On the managed gateway, or with the mode unread, voice cannot be turned on,
+// and turning it off still works: the row and the node config go, this Redis is
+// not written.
+func TestVoiceSwitchRemoteAndUnknownMode(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		remote, know bool
+		status       int
+		code         string
+	}{
+		{"remote", true, true, http.StatusConflict, "gateway_remote"},
+		{"unknown", false, false, http.StatusServiceUnavailable, "gateway_provider_unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newVoiceSwitch(t)
+			e.h.d.GatewayRemote = func() (bool, bool) { return tc.remote, tc.know }
+			rec, out := e.put(t, `{"enabled":true}`)
+			if rec.Code != tc.status || out["code"] != tc.code || e.fs.row != nil || len(e.voiceKeys()) != 0 {
+				t.Fatalf("enable: %d %s; want %d %s and nothing written", rec.Code, rec.Body.String(), tc.status, tc.code)
+			}
+
+			e = newVoiceSwitch(t)
+			e.h.d.GatewayRemote = func() (bool, bool) { return tc.remote, tc.know }
+			row := store.VoicePort{ServerID: 7, ServerUUID: "srv-7", Region: "eu", Port: 26000, Mod: "svc", Host: "a.eu.dylaris.com", UplinkKey: make([]byte, 32)}
+			e.fs.row = &row
+			// A leftover key from local days stays: the remote mode never writes here.
+			if err := services.PublishVoice(context.Background(), e.h.d.Redis, row); err != nil {
+				t.Fatal(err)
+			}
+			keys := len(e.voiceKeys())
+			rec, out = e.put(t, `{"enabled":false}`)
+			if rec.Code != http.StatusOK || out["restartRequired"] != true || e.fs.row != nil {
+				t.Fatalf("disable: %d %s, row %+v", rec.Code, rec.Body.String(), e.fs.row)
+			}
+			if len(e.voiceKeys()) != keys {
+				t.Fatalf("voice keys changed in %s mode: %v", tc.name, e.voiceKeys())
+			}
+		})
+	}
+}

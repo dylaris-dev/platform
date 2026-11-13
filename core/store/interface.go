@@ -257,6 +257,30 @@ type Store interface {
 	DisableBedrock(serverID int) error
 	ListBedrockServers() ([]BedrockServer, error)
 	ListBedrockServerRefs() ([]BedrockServerRef, error)
+
+	// Local state of the remote gateway provider (store/remote_gateway.go).
+	GetRemoteKit(nodeID uint) (*RemoteKit, error) // nil, nil when absent
+	SaveRemoteKit(k RemoteKit) error
+	InsertRemoteKit(k RemoteKit) (inserted bool, err error) // false: the node already has a kit
+	DeleteRemoteKit(nodeID uint) error
+	ListRemoteKits() ([]RemoteKit, error)
+	UpsertRemoteRoute(r RemoteRoute) error
+	// ClaimRemoteRoute inserts r unless its domain has a row; claimed=false
+	// returns the row that holds it.
+	ClaimRemoteRoute(r RemoteRoute) (claimed bool, existing *RemoteRoute, err error)
+	DeleteRemoteRoute(domain string) error
+	ListRemoteRoutesByServer(serverUUID string) ([]RemoteRoute, error)
+	ListRemoteRoutes() ([]RemoteRoute, error)
+	EnqueueOutbox(op, domain string, payload any) error
+	HasOpenOutbox(domain, op string) (bool, error) // op "" = any op
+	ClaimDueOutbox(now time.Time, limit int) ([]OutboxItem, error)
+	FinishOutbox(id int64) error
+	FailOutbox(id int64, lastError string, next time.Time) error
+	CountOpenOutbox() (open int, oldest time.Time, err error)
+	GetRemoteRoute(domain string) (*RemoteRoute, error) // nil, nil when absent
+	OldestOpenOutboxID(domain string) (int64, error)    // 0 when none is open
+	DeferOutbox(id int64, next time.Time) error         // reschedule without counting an attempt
+	PurgeDoneOutbox(olderThan time.Time) (int64, error)
 	AddBedrockUsage(serverID int, period time.Time, region string, rx, tx int64) error
 	ListBedrockUsage(period time.Time) ([]BedrockUsageRow, error)
 	// Per-route Java/Bedrock editions (postgres_route_editions.go).
@@ -637,6 +661,7 @@ type Store interface {
 	// CoreLinkRoute.
 	UpsertCoreLinkRoute(r CoreLinkRoute) error
 	ListCoreLinkRoutes() ([]CoreLinkRoute, error)
+	GetCoreLinkRoute(domain string) (*CoreLinkRoute, error) // nil, nil when absent
 	ListCoreLinkRoutesByOwner(ownerID string) ([]CoreLinkRoute, error)
 	DeleteCoreLinkRoute(domain string) error
 	SetCoreLinkRouteSuspended(domain string, at *time.Time, reason string) (bool, error)
