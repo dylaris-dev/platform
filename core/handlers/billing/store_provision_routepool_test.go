@@ -178,14 +178,14 @@ func TestProvisionMaxCustomDomains(t *testing.T) {
 		}
 		noRouteWrites(t, fs)
 	})
-	t.Run("omitted touches nothing, and maxRoutes leaves the custom table alone", func(t *testing.T) {
-		fs := provision(t, map[string]interface{}{"maxRoutes": 5})
-		if len(fs.customDomainSets)+len(fs.customDomainDels) != 0 {
-			t.Fatalf("custom-domain cap touched: %+v %+v", fs.customDomainSets, fs.customDomainDels)
-		}
-		fs = provision(t, map[string]interface{}{"maxRoutes": nil})
-		if len(fs.customDomainSets)+len(fs.customDomainDels) != 0 {
-			t.Fatalf("a route clear touched the custom-domain cap")
+	// A managed-plan field: an activate that does not carry it says the plan is
+	// not held, so the store-written row goes (store_provision_managed_end_test).
+	t.Run("omitted deletes the row like null, and maxRoutes writes only the route table", func(t *testing.T) {
+		for _, routes := range []interface{}{5, nil} {
+			fs := provision(t, map[string]interface{}{"maxRoutes": routes})
+			if len(fs.customDomainSets) != 0 || len(fs.customDomainDels) != 1 || fs.customDomainDels[0] != "user:"+uid {
+				t.Fatalf("maxRoutes=%v: sets = %+v dels = %+v, want one delete of user:%s", routes, fs.customDomainSets, fs.customDomainDels, uid)
+			}
 		}
 	})
 }

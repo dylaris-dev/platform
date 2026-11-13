@@ -537,9 +537,10 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		MaxRoutes json.RawMessage `json:"maxRoutes,omitempty"`
 		// MaxCustomDomains caps routes on the tenant own domains. It lives in
 		// gateway_custom_domain_limits (scope "user:<uuid>"), a table separate
-		// from max_routes so the two cannot disturb each other. Same rules as
-		// MaxRoutes: omitted leaves it alone, null deletes the row (the platform
-		// default answers), a number is written literally, 0 included.
+		// from max_routes so the two cannot disturb each other. Unlike MaxRoutes,
+		// omitted deletes the row like null (the platform default answers): it
+		// is a managed-plan field, see below. A number is written literally, 0
+		// included.
 		MaxCustomDomains json.RawMessage `json:"maxCustomDomains,omitempty"`
 		// TrafficCeilingGB is where the tenant's free traffic ends (decimal GB,
 		// 10^9) and TrafficBillingEnabled whether they have agreed to be charged
@@ -548,8 +549,9 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// while they can still act on it, which is the whole point of a ceiling
 		// that stops things rather than billing them.
 		// TrafficLimits is the tenant's per-(region, kind) traffic answer, written
-		// to the "user:<uuid>" rows of traffic_limits. Omitted (or null) leaves
-		// the rows alone; an array, EMPTY included, REPLACES them exactly.
+		// to the "user:<uuid>" rows of traffic_limits. Omitted (or null) deletes
+		// only the managed ("*", edge) row and leaves the others alone; an
+		// array, EMPTY included, REPLACES them exactly.
 		TrafficLimits json.RawMessage `json:"trafficLimits,omitempty"`
 		// TrafficCeilingGB is unread, kept so the field stays documented.
 		TrafficCeilingGB      *int64 `json:"trafficCeilingGb,omitempty"`
@@ -665,35 +667,44 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		domains, setDomains, derr := parseRoutePool(unlimitedAsAbsent(req.MaxCustomDomains, domainsUnlimited))
+		domains, _, derr := parseRoutePool(unlimitedAsAbsent(req.MaxCustomDomains, domainsUnlimited))
 		if derr != nil {
 			httpx.SendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
 			return
 		}
-		if domainsUnlimited {
-			if err := h.d.Store.SetGatewayCustomDomainLimit(storeclient.UserRouteScope(req.UUID), nil); err != nil {
-				httpx.SendJSONError(w, "Activated but failed to apply the custom-domain cap", http.StatusInternalServerError)
-				return
-			}
+		// The user custom-domain row and the user "*" edge traffic row exist only
+		// for a managed plan, and the store is their only writer. Every activate
+		// carries the account's whole derived state, so one that names neither
+		// says the managed plan is not held: omitted clears them like null. Without
+		// that, a plan that ended on "suspend" (unlink, cancel with nothing beside
+		// it) left them behind for whatever cheaper plan activated the user next.
+		// Suspend itself leaves them: a traffic cutoff suspends a managed tenant
+		// who is still paying, and the store bills that pool from the "*" row.
+		scope := storeclient.UserRouteScope(req.UUID)
+		var derr2 error
+		switch {
+		case domainsUnlimited:
+			derr2 = h.d.Store.SetGatewayCustomDomainLimit(scope, nil)
+		case domains == nil:
+			derr2 = h.d.Store.DeleteGatewayCustomDomainLimit(scope)
+		default:
+			derr2 = h.d.Store.SetGatewayCustomDomainLimit(scope, domains)
 		}
-		if setDomains {
-			scope := storeclient.UserRouteScope(req.UUID)
-			var err error
-			if domains == nil {
-				err = h.d.Store.DeleteGatewayCustomDomainLimit(scope)
-			} else {
-				err = h.d.Store.SetGatewayCustomDomainLimit(scope, domains)
-			}
-			if err != nil {
-				httpx.SendJSONError(w, "Activated but failed to apply the custom-domain cap", http.StatusInternalServerError)
-				return
-			}
+		if derr2 != nil {
+			httpx.SendJSONError(w, "Activated but failed to apply the custom-domain cap", http.StatusInternalServerError)
+			return
 		}
+		var terr2 error
 		if setTraffic {
-			if err := h.d.Store.ReplaceTrafficLimits(storeclient.UserRouteScope(req.UUID), trafficRows); err != nil {
-				httpx.SendJSONError(w, "Activated but failed to apply the traffic limits", http.StatusInternalServerError)
-				return
-			}
+			terr2 = h.d.Store.ReplaceTrafficLimits(scope, trafficRows)
+		} else {
+			// Only the managed row: other user rows are an operator's per-region
+			// overrides (the admin handler refuses this one shape).
+			terr2 = h.d.Store.DeleteTrafficLimit(scope, services.TrafficRegionAny, services.TrafficKindEdge)
+		}
+		if terr2 != nil {
+			httpx.SendJSONError(w, "Activated but failed to apply the traffic limits", http.StatusInternalServerError)
+			return
 		}
 	case "past_due":
 		// Dunning never lifts a suspension. A failed payment retry reaching a
