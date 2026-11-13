@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.13.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- After a managed gateway plan ends, own-domain addresses above your new limit count as over the limit.
+  You get a warning; after 72 hours over it your account is disconnected until you are back within it.
+
 ## 2026.11.13.2
 
 ### Features

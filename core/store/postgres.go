@@ -2489,6 +2489,58 @@ func (s *PostgresStore) DeleteGatewayCustomDomainLimit(scope string) error {
 	return err
 }
 
+// SetUserCustomDomainLimit upserts the user:<id> row (nil = no cap) and clears
+// custom_domain_cap_since: the account holds a managed plan again.
+func (s *PostgresStore) SetUserCustomDomainLimit(userID string, max *int64) error {
+	if max != nil && *max < 0 {
+		max = nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`
+		INSERT INTO gateway_custom_domain_limits (scope, max_custom_domains) VALUES ($1, $2)
+		ON CONFLICT (scope) DO UPDATE SET max_custom_domains = EXCLUDED.max_custom_domains
+	`, "user:"+userID, max); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE user_billing SET custom_domain_cap_since = NULL, updated_at = NOW()
+		WHERE user_id = $1 AND custom_domain_cap_since IS NOT NULL`, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ClearUserCustomDomainLimit deletes the user:<id> row and, only when a row was
+// actually there, stamps custom_domain_cap_since (kept if already set): the
+// managed plan ended. An activate for an account that never had the row
+// changes nothing, so no tenant who never held managed is ever marked.
+func (s *PostgresStore) ClearUserCustomDomainLimit(userID string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`DELETE FROM gateway_custom_domain_limits WHERE scope = $1`, "user:"+userID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		if _, err := tx.Exec(`
+			INSERT INTO user_billing (user_id, custom_domain_cap_since, updated_at) VALUES ($1, NOW(), NOW())
+			ON CONFLICT (user_id) DO UPDATE SET
+				custom_domain_cap_since = COALESCE(user_billing.custom_domain_cap_since, NOW()),
+				updated_at = NOW()`, userID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *PostgresStore) ListGatewayRouteLimits() ([]models.GatewayRouteLimit, error) {
 	rows, err := s.db.Query(`SELECT id, scope, max_routes FROM gateway_route_limits ORDER BY id ASC`)
 	if err != nil {

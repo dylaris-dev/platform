@@ -150,21 +150,10 @@ func (h *GatewayHandler) ownerRouteStats(userID, domain string) (routeStats, err
 	return st, nil
 }
 
-// customDomainCapFor resolves the cap on routes on an account own domains:
-// admin:<id> -> user:<id> -> user_default -> global in
-// gateway_custom_domain_limits, the first ROW answering, NULL included (no cap
-// for this account). When no scope has a row the platform setting answers.
-// scoped reports that a row did, which the claim cap needs.
+// customDomainCapFor is services.CustomDomainCapFor, which the over-limit sweep
+// shares.
 func customDomainCapFor(st store.Store, userID string) (limit *int64, scoped bool) {
-	for _, scope := range []string{storeclient.AdminRouteScope(userID), storeclient.UserRouteScope(userID), "user_default", "global"} {
-		l, err := st.GetGatewayCustomDomainLimit(scope)
-		if err != nil || l == nil {
-			continue // no row here: ask the next scope
-		}
-		return l.MaxCustomDomains, true
-	}
-	raw, _ := st.GetSetting(services.SettingMaxCustomDomains)
-	return services.ParseLimitSetting(raw, services.DefaultMaxCustomDomains), false
+	return services.CustomDomainCapFor(st, userID)
 }
 
 // The external API maps these two messages to the public codes link_limit and

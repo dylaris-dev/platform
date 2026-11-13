@@ -2,11 +2,16 @@ package services
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"dylaris-core/mailer"
+	"dylaris-core/store"
 )
 
 // overLimitGrace is how long a tenant keeps everything running after they are
@@ -29,6 +34,10 @@ type tenantUsage struct {
 	linkLimit  *int64
 	routes     int64
 	routeLimit *int64
+	// custom is routes on the tenant's OWN domains, against the custom-domain
+	// cap. Separate from routes: those count only addresses on our domains.
+	custom      int64
+	customLimit *int64
 	// entitledByon / entitledRoute are whether the tenant may hold each KIND.
 	// Separate from the caps because a cap cannot express it, and separate from
 	// each other because the two doors ask separately: see over().
@@ -82,7 +91,8 @@ func (u tenantUsage) over() bool {
 	}
 	return Exceeds(u.nodeLimit, u.nodes) ||
 		Exceeds(u.linkLimit, u.links) ||
-		Exceeds(u.routeLimit, u.routes)
+		Exceeds(u.routeLimit, u.routes) ||
+		Exceeds(u.customLimit, u.custom)
 }
 
 // describe renders the dimensions that are actually over, for the email and the
@@ -116,6 +126,9 @@ func (u tenantUsage) describe() string {
 	if Exceeds(u.routeLimit, u.routes) {
 		parts = append(parts, fmt.Sprintf("%d protected addresses (allowed %d)", u.routes, *u.routeLimit))
 	}
+	if Exceeds(u.customLimit, u.custom) {
+		parts = append(parts, fmt.Sprintf("%d addresses on your own domains (allowed %d)", u.custom, *u.customLimit))
+	}
 	out := ""
 	for i, p := range parts {
 		switch {
@@ -137,7 +150,10 @@ func (u tenantUsage) describe() string {
 // mint gates enforce. A minted identity is a machine that has not connected yet,
 // and ignoring it would let a downgraded tenant sit under the cap on paper while
 // three boxes are mid-setup.
-func (s *BillingLifecycleService) tenantUsageFor(ctx context.Context, userID string) (tenantUsage, error) {
+//
+// customCapEnded is user_billing.custom_domain_cap_since being set: the
+// tenant's managed plan ended. Only then are own-domain routes counted.
+func (s *BillingLifecycleService) tenantUsageFor(ctx context.Context, userID string, customCapEnded bool) (tenantUsage, error) {
 	var u tenantUsage
 
 	lim, err := EffectiveLimits(s.store, userID)
@@ -204,16 +220,76 @@ func (s *BillingLifecycleService) tenantUsageFor(ctx context.Context, userID str
 	// panel allowed and then be cut off by this sweep for holding it - the guard
 	// one door takes and its sibling does not.
 	if s.redis != nil {
-		raw, _ := s.store.GetSetting(HosterDomainsSettingKey)
+		raw, herr := s.store.GetSetting(HosterDomainsSettingKey)
 		bases := HosterBaseDomains(raw)
-		for _, rt := range GetRoutesFromRedis(ctx, s.redis) {
+		routes := GetRoutesFromRedis(ctx, s.redis)
+		for _, rt := range routes {
 			if rt.OwnerID == userID && DomainIsOurs(rt.Domain, bases) {
 				u.routes++
+			}
+		}
+		// Routes on their OWN domains, against the cap the create paths enforce,
+		// ONLY for a tenant whose managed plan ended (the store removed its
+		// unlimited row, so the cheaper plan's cap answers). Nobody else is
+		// counted: not for a lowered setting, not for routes that predate the
+		// cap. Admins skip the cap at the doors, so they skip it here. Every read
+		// fails toward skipping the tenant this pass: an unreadable hoster list
+		// would count every address on our domains as their own.
+		if customCapEnded && s.storeEnabled && !subjectIsAdmin {
+			// A NULL value is unset, like a missing row: skipping on it would keep
+			// a marked tenant skipped for as long as it stays NULL.
+			if herr != nil && !errors.Is(herr, sql.ErrNoRows) && !errors.Is(herr, store.ErrSettingNull) {
+				return u, fmt.Errorf("hoster domains: %w", herr)
+			}
+			// The same shape HosterBaseDomains parses. Valid JSON that is not a
+			// list (an object, a string, null) parses to no bases there.
+			if trimmed := strings.TrimSpace(raw); trimmed != "" {
+				var list []struct {
+					Domain string `json:"domain"`
+				}
+				if trimmed == "null" || json.Unmarshal([]byte(trimmed), &list) != nil {
+					return u, errors.New("hoster domains: not a list")
+				}
+			}
+			if u.customLimit, err = CustomDomainCapForSweep(s.store, userID); err != nil {
+				return u, err
+			}
+			if u.customLimit != nil {
+				if u.custom, err = ownDomainRoutes(s.store, routes, userID, bases); err != nil {
+					return u, err
+				}
 			}
 		}
 	}
 
 	return u, nil
+}
+
+// ownDomainRoutes counts a tenant's routes on their own domains exactly as the
+// create paths do (handlers/gateway ownerRouteStats): their durable route-only
+// rows, plus the managed routes they hold through their servers. Route-only
+// entries are CoreOwned in Redis, so nothing is counted twice.
+func ownDomainRoutes(st store.Store, routes []GatewayRoute, userID string, bases []string) (int64, error) {
+	owned, err := OwnedServerUUIDs(st, userID)
+	if err != nil {
+		return 0, err
+	}
+	mine, err := st.ListCoreLinkRoutesByOwner(userID)
+	if err != nil {
+		return 0, fmt.Errorf("list route-only routes of %s: %w", userID, err)
+	}
+	var n int64
+	for _, rt := range mine {
+		if !DomainIsOurs(rt.Domain, bases) {
+			n++
+		}
+	}
+	for _, rt := range routes {
+		if !rt.CoreOwned && RouteHeldBy(rt, userID, owned) && !DomainIsOurs(rt.Domain, bases) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // enforceEntitlementLimits is the over-limit half of the lifecycle: a tenant who
@@ -242,7 +318,7 @@ func (s *BillingLifecycleService) enforceEntitlementLimits(ctx context.Context) 
 			continue
 		}
 
-		u, err := s.tenantUsageFor(ctx, b.UserID)
+		u, err := s.tenantUsageFor(ctx, b.UserID, b.CustomDomainCapSince != nil)
 		if err != nil {
 			log.Printf("billing over-limit: usage for %s: %v", b.UserID, err)
 			continue
@@ -259,7 +335,14 @@ func (s *BillingLifecycleService) enforceEntitlementLimits(ctx context.Context) 
 			continue
 		}
 
-		if b.OverLimitSince == nil {
+		// Own-domain routes over the cap never ride a clock started for something
+		// else without their own warning: a stamp from before the managed plan
+		// ended is restarted now, and the mail names every exceeded limit. That
+		// can only move a cutoff later, never earlier. A stamp taken after the
+		// marker already saw the own-domain overage, so it is not restarted again.
+		restart := b.OverLimitSince != nil && b.CustomDomainCapSince != nil &&
+			Exceeds(u.customLimit, u.custom) && b.OverLimitSince.Before(*b.CustomDomainCapSince)
+		if b.OverLimitSince == nil || restart {
 			at := now
 			if err := s.store.SetUserOverLimitSince(b.UserID, &at); err != nil {
 				log.Printf("billing over-limit: stamp %s: %v", b.UserID, err)

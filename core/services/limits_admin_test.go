@@ -75,7 +75,7 @@ func TestTheSweepReadsTheOperatorsAddressCeilingFirst(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			st := scopedRouteStore{overLimitStore: &overLimitStore{billing: []store.UserBilling{{UserID: "u1", Status: "active"}}}, rows: tc.rows}
-			u, err := (&BillingLifecycleService{store: st}).tenantUsageFor(context.Background(), "u1")
+			u, err := (&BillingLifecycleService{store: st}).tenantUsageFor(context.Background(), "u1", false)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -20,23 +20,18 @@ func provisionRaw(t *testing.T, body map[string]interface{}) (*storeLinkFakeStor
 
 func TestProvisionTrafficLimitsWritesUserRows(t *testing.T) {
 	fs, code := provisionRaw(t, map[string]interface{}{"trafficLimits": []map[string]interface{}{
-		{"region": "eu-central", "kind": "edge", "includedGb": 100, "maxPurchaseGb": 0},
-		// non-regional kind: the region folds onto "*"
-		{"region": "eu-central", "kind": "beam", "includedGb": nil, "maxPurchaseGb": 50},
+		{"region": "*", "kind": "edge", "includedGb": 100, "maxPurchaseGb": 0},
 	}})
 	if code != http.StatusOK || len(fs.trafficReplaces) != 1 {
 		t.Fatalf("code=%d replaces=%+v", code, fs.trafficReplaces)
 	}
 	r := fs.trafficReplaces[0]
-	if r.scope != "user:u1" || len(r.rows) != 2 {
+	if r.scope != "user:u1" || len(r.rows) != 1 {
 		t.Fatalf("got %+v", r)
 	}
-	e, b := r.rows[0], r.rows[1]
-	if e.Region != "eu-central" || e.Kind != "edge" || *e.IncludedGB != 100 || e.MaxPurchaseGB == nil || *e.MaxPurchaseGB != 0 {
+	e := r.rows[0]
+	if e.Region != "*" || e.Kind != "edge" || *e.IncludedGB != 100 || e.MaxPurchaseGB == nil || *e.MaxPurchaseGB != 0 {
 		t.Fatalf("edge row %+v (0 must stay a number)", e)
-	}
-	if b.Region != "*" || b.IncludedGB != nil || *b.MaxPurchaseGB != 50 {
-		t.Fatalf("beam row %+v", b)
 	}
 }
 
@@ -66,6 +61,12 @@ func TestProvisionTrafficLimitsRefused(t *testing.T) {
 		"duplicate": {"trafficLimits": []interface{}{
 			map[string]interface{}{"region": "eu", "kind": "edge"}, map[string]interface{}{"region": "eu", "kind": "edge"}}},
 		"not an array": {"trafficLimits": "x"},
+		// Only ("*", edge) is store-owned: anything else is an operator's row.
+		"per-region edge row":      row(map[string]interface{}{"region": "eu", "kind": "edge", "includedGb": 1}),
+		"non-regional kind folded": row(map[string]interface{}{"region": "eu", "kind": "relay", "includedGb": 1}),
+		"star relay row":           row(map[string]interface{}{"region": "*", "kind": "relay", "includedGb": 1}),
+		"store row beside a per-region row": {"trafficLimits": []interface{}{
+			map[string]interface{}{"region": "*", "kind": "edge"}, map[string]interface{}{"region": "eu", "kind": "edge"}}},
 	} {
 		body["maxRoutes"] = 3
 		fs, code := provisionRaw(t, body)

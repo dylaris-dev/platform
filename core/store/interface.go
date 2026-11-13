@@ -694,7 +694,8 @@ type Store interface {
 	SetTrafficLimit(scope, region, kind string, includedGB, maxPurchaseGB *int64) error
 	ListTrafficLimits() ([]models.TrafficLimit, error)
 	DeleteTrafficLimit(scope, region, kind string) error
-	// ReplaceTrafficLimits makes rows the exact set one scope holds, in one transaction.
+	// ReplaceTrafficLimits makes rows the exact set of the store-owned ("*", edge)
+	// rows one scope holds, in one transaction; other rows of the scope stay.
 	ReplaceTrafficLimits(scope string, rows []models.TrafficLimit) error
 
 	// --- Gateway Route Limits (still managed by Core, not Hub) ---
@@ -705,6 +706,11 @@ type Store interface {
 	GetGatewayCustomDomainLimit(scope string) (*models.GatewayCustomDomainLimit, error)
 	SetGatewayCustomDomainLimit(scope string, max *int64) error
 	DeleteGatewayCustomDomainLimit(scope string) error
+	// SetUserCustomDomainLimit / ClearUserCustomDomainLimit write the store's
+	// user:<id> row and keep user_billing.custom_domain_cap_since in step: set
+	// clears it, a clear that removed a row stamps it. One transaction each.
+	SetUserCustomDomainLimit(userID string, max *int64) error
+	ClearUserCustomDomainLimit(userID string) error
 
 	// --- Regions ---
 	ListRegions(includeDisabled bool) ([]models.Region, error)

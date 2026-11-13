@@ -179,6 +179,16 @@ func (f *storeLinkFakeStore) SetGatewayCustomDomainLimit(scope string, max *int6
 	return f.routeLimitErr
 }
 
+// The user-row variants record into the same lists, so the existing
+// assertions on customDomainSets / customDomainDels keep reading the writes.
+func (f *storeLinkFakeStore) SetUserCustomDomainLimit(userID string, max *int64) error {
+	return f.SetGatewayCustomDomainLimit("user:"+userID, max)
+}
+
+func (f *storeLinkFakeStore) ClearUserCustomDomainLimit(userID string) error {
+	return f.DeleteGatewayCustomDomainLimit("user:" + userID)
+}
+
 func (f *storeLinkFakeStore) DeleteGatewayCustomDomainLimit(scope string) error {
 	f.customDomainDels = append(f.customDomainDels, scope)
 	return f.routeLimitErr

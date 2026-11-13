@@ -548,10 +548,10 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// does the stopping. They are stored so the PANEL can warn the tenant
 		// while they can still act on it, which is the whole point of a ceiling
 		// that stops things rather than billing them.
-		// TrafficLimits is the tenant's per-(region, kind) traffic answer, written
-		// to the "user:<uuid>" rows of traffic_limits. Omitted (or null) deletes
-		// only the managed ("*", edge) row and leaves the others alone; an
-		// array, EMPTY included, REPLACES them exactly.
+		// TrafficLimits is the managed pool: at most the one ("*", edge) row of
+		// "user:<uuid>" in traffic_limits, any other row is refused. Omitted,
+		// null and [] all delete that row; a one-row array replaces it. The
+		// other user rows (an operator's per-region overrides) are never touched.
 		TrafficLimits json.RawMessage `json:"trafficLimits,omitempty"`
 		// TrafficCeilingGB is unread, kept so the field stays documented.
 		TrafficCeilingGB      *int64 `json:"trafficCeilingGb,omitempty"`
@@ -585,6 +585,15 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		if terr != nil || uerr != nil || uerr2 != nil {
 			httpx.SendJSONError(w, "Invalid entitlement", http.StatusBadRequest)
 			return
+		}
+		// The store owns only the ("*", edge) row (website managedEntitlement
+		// sends nothing else); every other user row is an operator's override,
+		// which the replace below leaves alone and the store must not write.
+		for _, r := range trafficRows {
+			if !storeOwnedTrafficRow(storeclient.UserRouteScope(req.UUID), r.Region, r.Kind) {
+				httpx.SendJSONError(w, "Invalid entitlement: trafficLimits may only hold the region \"*\" edge row", http.StatusBadRequest)
+				return
+			}
 		}
 		// A suspension an operator imposed stays: paying, renewing or toggling a
 		// billing option on the store is not a review of why they were cut off.
@@ -682,13 +691,16 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// who is still paying, and the store bills that pool from the "*" row.
 		scope := storeclient.UserRouteScope(req.UUID)
 		var derr2 error
+		// The User* variants also keep custom_domain_cap_since in step: removing an
+		// existing row marks the end of the managed plan, which is what lets the
+		// over-limit sweep count own-domain routes for that account only.
 		switch {
 		case domainsUnlimited:
-			derr2 = h.d.Store.SetGatewayCustomDomainLimit(scope, nil)
+			derr2 = h.d.Store.SetUserCustomDomainLimit(req.UUID, nil)
 		case domains == nil:
-			derr2 = h.d.Store.DeleteGatewayCustomDomainLimit(scope)
+			derr2 = h.d.Store.ClearUserCustomDomainLimit(req.UUID)
 		default:
-			derr2 = h.d.Store.SetGatewayCustomDomainLimit(scope, domains)
+			derr2 = h.d.Store.SetUserCustomDomainLimit(req.UUID, domains)
 		}
 		if derr2 != nil {
 			httpx.SendJSONError(w, "Activated but failed to apply the custom-domain cap", http.StatusInternalServerError)

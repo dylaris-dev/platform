@@ -24,6 +24,8 @@ type capsStore struct {
 	routes             map[string]*int
 	domains            map[string]*int64
 	traffic            map[string]models.TrafficLimit // scope/region/kind
+	// capSince is user_billing.custom_domain_cap_since: the managed plan ended.
+	capSince bool
 }
 
 func newCapsStore() *capsStore {
@@ -57,12 +59,25 @@ func (c *capsStore) DeleteGatewayCustomDomainLimit(scope string) error {
 	delete(c.domains, scope)
 	return nil
 }
-func (c *capsStore) ReplaceTrafficLimits(scope string, rows []models.TrafficLimit) error {
-	for k := range c.traffic {
-		if strings.HasPrefix(k, scope+"/") {
-			delete(c.traffic, k)
-		}
+
+// Same semantics as the Postgres store: setting clears the marker, a clear
+// that removed a row sets it.
+func (c *capsStore) SetUserCustomDomainLimit(userID string, max *int64) error {
+	c.domains["user:"+userID] = max
+	c.capSince = false
+	return nil
+}
+func (c *capsStore) ClearUserCustomDomainLimit(userID string) error {
+	if _, ok := c.domains["user:"+userID]; ok {
+		delete(c.domains, "user:"+userID)
+		c.capSince = true
 	}
+	return nil
+}
+
+// Same semantics as the Postgres store: only the ("*", edge) row is replaced.
+func (c *capsStore) ReplaceTrafficLimits(scope string, rows []models.TrafficLimit) error {
+	delete(c.traffic, scope+"/*/edge")
 	for _, r := range rows {
 		c.traffic[scope+"/"+r.Region+"/"+r.Kind] = r
 	}
@@ -92,6 +107,9 @@ func (c *capsStore) snapshot() string {
 	}
 	for k, v := range c.traffic {
 		parts = append(parts, "traffic "+k+"="+ptrStr(v.IncludedGB)+"/"+ptrStr(v.MaxPurchaseGB))
+	}
+	if c.capSince {
+		parts = append(parts, "custom_domain_cap_since")
 	}
 	return state(parts...)
 }
@@ -142,9 +160,13 @@ func TestProvisionManagedCapsDoNotOutliveThePlan(t *testing.T) {
 	routeOnly := []string{"nodes=nil", "links=1", "route user:u1=3"}
 	byon := []string{"nodes=2", "links=nil", "route user:u1=6"}
 	// Operator-set layers that live in the same tables, under other keys.
-	admin := []string{"domains admin:u1=7", "route admin:u1=9", "traffic user:u1/eu-central/edge=100/0"}
+	admin := []string{"domains admin:u1=7", "route admin:u1=9", "traffic user:u1/eu-central/edge=100/0", "traffic user:u1/*/relay=10/nil"}
 	with := func(a, b []string) string { return state(append(append([]string{}, a...), b...)...) }
 	managedState, routeOnlyState, byonState := state(managed...), state(routeOnly...), state(byon...)
+	// The marker the over-limit sweep reads: set when an activate removed the
+	// managed custom-domain row, never for an account that never held one.
+	ended := []string{"custom_domain_cap_since"}
+	endedRouteOnly := append(append([]string{}, routeOnly...), ended...)
 	type step struct {
 		action string
 		body   func() map[string]interface{}
@@ -152,9 +174,18 @@ func TestProvisionManagedCapsDoNotOutliveThePlan(t *testing.T) {
 	act := func(b func() map[string]interface{}) step { return step{"activate", b} }
 	suspend := step{"suspend", nil}
 	pastDue := step{"past_due", nil}
+	// The store's wipe for an ended managed plan (WipeManaged): [] + null.
+	wipeBody := func() map[string]interface{} {
+		b := routeOnlyBody()
+		b["trafficLimits"], b["maxCustomDomains"] = []interface{}{}, nil
+		return b
+	}
 	cases := []struct {
-		name       string
-		withAdmin  bool
+		name      string
+		withAdmin bool
+		// adminFirst sets the operator layers before the first step instead of
+		// after it.
+		adminFirst bool
 		steps      []step
 		wantFinal  string
 		wantBefore string // state before the last step, "" = not checked
@@ -162,13 +193,13 @@ func TestProvisionManagedCapsDoNotOutliveThePlan(t *testing.T) {
 		{name: "suspend alone keeps the managed caps (a traffic cutoff is not the end of the plan)",
 			steps: []step{act(managedBody), suspend}, wantFinal: managedState},
 		{name: "managed, suspend, route-only from another store account: route-only caps only",
-			steps: []step{act(managedBody), suspend, act(routeOnlyBody)}, wantFinal: routeOnlyState},
+			steps: []step{act(managedBody), suspend, act(routeOnlyBody)}, wantFinal: state(endedRouteOnly...)},
 		{name: "managed, suspend, BYON: BYON caps only",
-			steps: []step{act(managedBody), suspend, act(byonBody)}, wantFinal: byonState},
+			steps: []step{act(managedBody), suspend, act(byonBody)}, wantFinal: with(byon, ended)},
 		{name: "managed, suspend, managed again: everything restored",
 			steps: []step{act(managedBody), suspend, act(managedBody)}, wantFinal: managedState},
 		{name: "admin layers survive the end of the plan",
-			withAdmin: true, steps: []step{act(managedBody), suspend, act(routeOnlyBody)}, wantFinal: with(routeOnly, admin)},
+			withAdmin: true, steps: []step{act(managedBody), suspend, act(routeOnlyBody)}, wantFinal: with(endedRouteOnly, admin)},
 		{name: "admin layers set after a managed activate survive suspend",
 			withAdmin: true, steps: []step{act(managedBody), suspend}, wantFinal: with(managed, admin)},
 		{name: "past_due changes no entitlement",
@@ -177,21 +208,35 @@ func TestProvisionManagedCapsDoNotOutliveThePlan(t *testing.T) {
 			steps: []step{act(routeOnlyBody), suspend, act(routeOnlyBody)}, wantBefore: routeOnlyState, wantFinal: routeOnlyState},
 		{name: "BYON never managed: suspend and activate as before",
 			steps: []step{act(byonBody), suspend, act(byonBody)}, wantBefore: byonState, wantFinal: byonState},
+		{name: "operator rows from before the plan survive the managed activate; the * row is the store's",
+			withAdmin: true, adminFirst: true, steps: []step{act(managedBody)}, wantFinal: with(managed, admin)},
+		{name: "repeated managed syncs are idempotent and keep the operator rows",
+			withAdmin: true, adminFirst: true, steps: []step{act(managedBody), act(managedBody), act(managedBody)},
+			wantBefore: with(managed, admin), wantFinal: with(managed, admin)},
+		{name: "repeated managed syncs without operator rows: as before",
+			steps: []step{act(managedBody), act(managedBody)}, wantBefore: managedState, wantFinal: managedState},
+		{name: "the wipe (trafficLimits []) removes only the * row",
+			withAdmin: true, adminFirst: true, steps: []step{act(managedBody), act(wipeBody)}, wantFinal: with(endedRouteOnly, admin)},
+		{name: "the wipe without operator rows: route-only caps only",
+			steps: []step{act(managedBody), act(wipeBody)}, wantFinal: state(endedRouteOnly...)},
+		{name: "managed again after it ended clears the marker",
+			steps: []step{act(managedBody), act(wipeBody), act(managedBody)}, wantBefore: state(endedRouteOnly...), wantFinal: managedState},
+		{name: "the wipe sent twice keeps one marker, a later route-only activate too",
+			steps: []step{act(managedBody), act(wipeBody), act(wipeBody), act(routeOnlyBody)}, wantFinal: state(endedRouteOnly...)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			c := newCapsStore()
 			for i, s := range tc.steps {
-				// Set by an operator while the plan runs. Not before it: a managed
-				// activate's trafficLimits array replaces every user row, so a
-				// per-region row from before the plan does not survive the
-				// purchase itself (a separate, older behaviour).
-				if i == 1 && tc.withAdmin {
+				// Set by an operator while the plan runs, or before it.
+				if tc.withAdmin && ((tc.adminFirst && i == 0) || (!tc.adminFirst && i == 1)) {
 					seven, nine := int64(7), 9
 					c.domains["admin:u1"] = &seven
 					c.routes["admin:u1"] = &nine
 					inc, buy := int64(100), int64(0)
 					c.traffic["user:u1/eu-central/edge"] = models.TrafficLimit{Region: "eu-central", Kind: "edge", IncludedGB: &inc, MaxPurchaseGB: &buy}
+					relay := int64(10)
+					c.traffic["user:u1/*/relay"] = models.TrafficLimit{Region: "*", Kind: "relay", IncludedGB: &relay}
 				}
 				if i == len(tc.steps)-1 && tc.wantBefore != "" {
 					if got := c.snapshot(); got != tc.wantBefore {

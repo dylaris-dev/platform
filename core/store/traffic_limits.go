@@ -76,16 +76,24 @@ func (s *PostgresStore) DeleteTrafficLimit(scope, region, kind string) error {
 	return err
 }
 
-// ReplaceTrafficLimits makes rows the exact set one scope holds: rows not in
-// the set are deleted, the rest upserted, all in one transaction so a failed
-// write never leaves a tenant with half of what the store sent.
+// ReplaceTrafficLimits makes rows the exact set of the STORE-OWNED rows one
+// scope holds: the ("*", edge) row, the only shape the store writes and the
+// one shape an operator is refused (handlers/billing/traffic_limits.go). Every
+// other row of the scope is an operator's override and is left alone; it used
+// to be deleted on every managed sync. One transaction, so a failed write
+// never leaves a tenant with half of what the store sent.
 func (s *PostgresStore) ReplaceTrafficLimits(scope string, rows []models.TrafficLimit) error {
+	for _, r := range rows {
+		if r.Region != "*" || r.Kind != "edge" {
+			return errors.New("only the (*, edge) traffic row is store-owned")
+		}
+	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM traffic_limits WHERE scope = $1`, scope); err != nil {
+	if _, err := tx.Exec(`DELETE FROM traffic_limits WHERE scope = $1 AND region = '*' AND kind = 'edge'`, scope); err != nil {
 		return err
 	}
 	for _, r := range rows {

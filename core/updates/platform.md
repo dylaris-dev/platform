@@ -8,6 +8,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.13.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- After a tenant's managed gateway plan ends, the hourly over-limit check counts their routes on their own
+  domains against the custom-domain cap (warning, then the full cutoff after 72 hours); no other tenant. `core`
+- A managed plan sync no longer deletes per-region traffic limits set by hand on that tenant. `core`
+
 ## 2026.11.13.2
 
 ### Features

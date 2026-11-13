@@ -69,6 +69,11 @@ type UserBilling struct {
 	// Separate from GraceUntil on purpose: being over a cap and being behind on
 	// payment are different problems with different clocks.
 	OverLimitSince *time.Time `json:"overLimitSince,omitempty"`
+	// CustomDomainCapSince is when a store activate removed the tenant's
+	// custom-domain row, i.e. their managed plan ended; cleared when one sets it
+	// again. Only with it set does the over-limit sweep count their routes on
+	// their own domains (services.tenantUsageFor).
+	CustomDomainCapSince *time.Time `json:"-"`
 	// TrafficCeilingGB is where the tenant's free traffic ends, in DECIMAL GB
 	// (10^9), and TrafficBillingEnabled whether they have agreed to be charged
 	// past it. Both are told to us by the store and are never decided here - Core
@@ -114,7 +119,7 @@ func (b *UserBilling) PaymentStatus() string {
 
 // userBillingCols is the column list (and order) shared by every UserBilling
 // SELECT so scanUserBilling can stay in lockstep.
-const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_byon_expires_at, manual_entitlement_route_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, COALESCE(backup_billing_enabled, FALSE), COALESCE(admin_hold, FALSE), COALESCE(held_status, ''), node_links_off_at IS NOT NULL, updated_at, COALESCE(admin_max_nodes, ''), COALESCE(admin_max_links, '')`
+const userBillingCols = `user_id, status, grace_until, suspended_at, grace_period, r2_retention, node_retention, r2_quota_gb, max_nodes, max_links, traffic_edge_gb, traffic_relay_gb, traffic_combined_gb, manual_entitlement, manual_entitlement_expires_at, manual_entitlement_byon_expires_at, manual_entitlement_route_expires_at, manual_entitlement_granted_at, manual_entitlement_granted_by, overlimit_since, COALESCE(traffic_ceiling_gb, 0), traffic_billing_enabled, COALESCE(backup_billing_enabled, FALSE), COALESCE(admin_hold, FALSE), COALESCE(held_status, ''), node_links_off_at IS NOT NULL, updated_at, COALESCE(admin_max_nodes, ''), COALESCE(admin_max_links, ''), custom_domain_cap_since`
 
 // SetUserOverLimitSince stamps (or clears, with nil) when a tenant was first seen
 // over a purchased cap. Touches ONLY that column: the row also carries the
@@ -155,15 +160,18 @@ func scanUserBilling(row interface {
 	var gp, r2, nr sql.NullString
 	var quota, maxNodes, maxLinks, tEdge, tRelay, tComb sql.NullInt64
 	var meKind, meBy sql.NullString
-	var meExp, meByon, meRoute, meAt, overLimit sql.NullTime
+	var meExp, meByon, meRoute, meAt, overLimit, customCap sql.NullTime
 	if err := row.Scan(&b.UserID, &b.Status, &grace, &susp, &gp, &r2, &nr, &quota,
 		&maxNodes, &maxLinks, &tEdge, &tRelay, &tComb,
 		&meKind, &meExp, &meByon, &meRoute, &meAt, &meBy, &overLimit,
-		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.BackupBillingEnabled, &b.AdminHold, &b.HeldStatus, &b.NodeLinksOff, &b.UpdatedAt, &b.AdminMaxNodes, &b.AdminMaxLinks); err != nil {
+		&b.TrafficCeilingGB, &b.TrafficBillingEnabled, &b.BackupBillingEnabled, &b.AdminHold, &b.HeldStatus, &b.NodeLinksOff, &b.UpdatedAt, &b.AdminMaxNodes, &b.AdminMaxLinks, &customCap); err != nil {
 		return nil, err
 	}
 	if overLimit.Valid {
 		b.OverLimitSince = &overLimit.Time
+	}
+	if customCap.Valid {
+		b.CustomDomainCapSince = &customCap.Time
 	}
 	b.ManualEntitlement = meKind.String
 	if meExp.Valid {

@@ -59,9 +59,10 @@ type settingsSnapshot struct {
 	loadMu sync.Mutex
 }
 
-// errSettingNull stands in for the Scan error a NULL value used to produce on
+// ErrSettingNull stands in for the Scan error a NULL value used to produce on
 // a single-row read. The column is nullable; no writer here stores NULL.
-var errSettingNull = errors.New("settings: value is NULL")
+// Exported so a caller that must tell "unreadable" from "unset" can.
+var ErrSettingNull = errors.New("settings: value is NULL")
 
 func (s *PostgresStore) invalidateSettings() {
 	c := &s.settings
@@ -154,7 +155,7 @@ func (s *PostgresStore) GetSetting(key string) (string, error) {
 		return "", sql.ErrNoRows
 	}
 	if !v.Valid {
-		return "", errSettingNull
+		return "", ErrSettingNull
 	}
 	return s.decodeSettingValue(key, v.String), nil
 }

@@ -97,7 +97,7 @@ func TestGetSettingServesTheSnapshot(t *testing.T) {
 		{"a", "1", nil},
 		{"b", "", nil},
 		{"missing", "", sql.ErrNoRows},
-		{"n", "", errSettingNull},
+		{"n", "", ErrSettingNull},
 	} {
 		got, err := s.GetSetting(tc.key)
 		if got != tc.want || !errors.Is(err, tc.wantErr) {
