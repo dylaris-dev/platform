@@ -466,7 +466,7 @@ func TestReconcileRepairSkipsRetiringKit(t *testing.T) {
 	}
 	st.routes["gone.example.com"] = store.RemoteRoute{Domain: "gone.example.com", ServerUUID: uuidA, NodeID: 7, Port: 25565}
 	before := countRemoteCalls(fake.Calls(), "POST /routes")
-	if _, repaired, _, err := reconcileRemoteRoutes(ctx, st, remotegw.New(fake.URL(), fake.Key), nil); err != nil || repaired != 0 {
+	if _, repaired, _, err := reconcileRemoteRoutes(ctx, st, remotegw.New(fake.URL(), fake.Key), nil, nil); err != nil || repaired != 0 {
 		t.Fatalf("reconcile: repaired %d, %v", repaired, err)
 	}
 	if countRemoteCalls(fake.Calls(), "POST /routes") != before {

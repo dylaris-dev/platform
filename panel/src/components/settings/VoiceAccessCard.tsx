@@ -5,6 +5,7 @@ import { Loader2, Mic, Plus, Trash2 } from 'lucide-react';
 import SettingsCard from '@/components/settings/SettingsCard';
 import { toast } from '@/components/ui/Toast';
 import { getVoicePermissions, setVoicePermission, deleteVoicePermission, type VoicePermission } from '@/lib/api';
+import { voiceAccessDescription } from '@/lib/voiceChat';
 
 type ScopeKind = 'server' | 'user' | 'role';
 
@@ -21,8 +22,9 @@ function validId(kind: ScopeKind, id: string): boolean {
  * Who may turn voice chat on, beyond the global switch above. A server row
  * beats a user row beats a role row beats the global switch. Saved per row,
  * like the per-tenant traffic overrides, so the card has no Save button.
+ * managed: the platform uses the managed gateway (only the timing differs).
  */
-export default function VoiceAccessCard() {
+export default function VoiceAccessCard({ managed = false }: { managed?: boolean }) {
     const [rows, setRows] = useState<VoicePermission[] | null>(null);
     const [loadError, setLoadError] = useState('');
     const [kind, setKind] = useState<ScopeKind>('server');
@@ -75,7 +77,7 @@ export default function VoiceAccessCard() {
     return (
         <SettingsCard
             title="Voice chat access"
-            description="Overrides the voice chat switch above for one server, user or role. Server beats user beats role. A deny turns voice off on servers that have it within a minute."
+            description={voiceAccessDescription(managed)}
             icon={Mic}
         >
             {loadError ? (

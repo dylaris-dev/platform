@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { linkRouteVoiceConfig, showVoiceSwitch, validVoicePort, voiceAddress, voiceErrorMessage } from './voiceChat';
+import { linkRouteVoiceConfig, showVoiceSwitch, validVoicePort, voiceAccessDescription, voiceAddress, voiceErrorMessage, voiceOwnDomainBlocked } from './voiceChat';
+import { OWN_DOMAIN_EXTRAS_TEXT } from './gatewayProvider';
 
 /** Every 409 code Core's enable can answer, read from the handler rather than
  *  restated, so a new refusal without a panel sentence turns this red. */
@@ -75,5 +76,27 @@ describe('validVoicePort', () => {
 describe('voiceErrorMessage for route-only', () => {
     it('explains an old link', () => {
         expect(voiceErrorMessage('link_without_voice', 'x')).toContain('up to date');
+    });
+});
+
+describe('voiceOwnDomainBlocked', () => {
+    it('blocks turning voice on when every address is an own domain, on the managed gateway only', () => {
+        expect(voiceOwnDomainBlocked(true, { enabled: false, ownDomainOnly: true })).toBe(OWN_DOMAIN_EXTRAS_TEXT);
+        expect(voiceOwnDomainBlocked(false, { enabled: false, ownDomainOnly: true })).toBeNull();
+        expect(voiceOwnDomainBlocked(true, { enabled: false, ownDomainOnly: false })).toBeNull();
+        expect(voiceOwnDomainBlocked(true, { enabled: false })).toBeNull();
+    });
+
+    it('never blocks turning voice off', () => {
+        expect(voiceOwnDomainBlocked(true, { enabled: true, ownDomainOnly: true })).toBeNull();
+    });
+});
+
+describe('voiceAccessDescription', () => {
+    it('keeps the local sentence and gives the managed gateway its own timing', () => {
+        expect(voiceAccessDescription(false)).toBe('Overrides the voice chat switch above for one server, user or role. Server beats user beats role. A deny turns voice off on servers that have it within a minute.');
+        const managed = voiceAccessDescription(true);
+        expect(managed).toContain('within about five minutes');
+        expect(managed).not.toContain('within a minute');
     });
 });

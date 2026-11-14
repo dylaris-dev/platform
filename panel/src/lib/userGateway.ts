@@ -25,6 +25,14 @@ export interface UserGatewayRoute {
     proxyProtocol: boolean;
     suspendedAt?: string;
     suspendedReason?: string;
+    // Absent when nobody is on the address right now.
+    players?: UserGatewayPlayers;
+}
+
+/** Play sessions right now as the edges count them, a few seconds old. */
+export interface UserGatewayPlayers {
+    java: number;
+    bedrock: number;
 }
 
 export interface UserGatewayClaim {
@@ -68,6 +76,11 @@ export interface UserGateway {
     kitsRetiring: number;
     routes: UserGatewayRoute[];
     routesTruncated: boolean;
+    // The account's total over its addresses; absent from a Core older than it.
+    players?: UserGatewayPlayers;
+    // Daily peaks, each a lower bound; absent from a Core older than them.
+    // day is the server's UTC day (YYYY-MM-DD) the windows are measured against.
+    peaks?: { day: string; today: PeakWindow; last30Days: PeakWindow; days: PeakDay[] };
     customDomains: UserGatewayClaim[];
     customDomainsTruncated: boolean;
     // Absent with "usage" in hidden (needs plans.read).
@@ -160,6 +173,65 @@ export function routeSuspendedLabel(route: Pick<UserGatewayRoute, 'suspendedAt' 
     return route.suspendedReason ? `Suspended: ${route.suspendedReason}` : 'Suspended';
 }
 
+/** "3 Java, 1 Bedrock", an edition with nobody left out; "None" at zero. */
+export function playersLabel(p?: UserGatewayPlayers): string {
+    const parts = [p?.java ? `${p.java} Java` : '', p?.bedrock ? `${p.bedrock} Bedrock` : ''].filter(Boolean);
+    return parts.length ? parts.join(', ') : 'None';
+}
+
+/** The highest concurrent players over some UTC days, each column its own maximum. */
+export interface PeakWindow {
+    java: number;
+    bedrock: number;
+    total: number;
+}
+
+/** One UTC day's peak; day is YYYY-MM-DD. */
+export interface PeakDay extends PeakWindow {
+    day: string;
+}
+
+/** "Peak today: at least 4 (3 Java, 1 Bedrock)". Sampled once a minute, so "at least". */
+export function peakLine(label: string, w: PeakWindow | undefined, editions: boolean): string {
+    if (!w?.total) return `${label}: none recorded`;
+    return editions ? `${label}: at least ${w.total} (${playersLabel(w)})` : `${label}: at least ${w.total}`;
+}
+
+/** The UTC day n days before day (YYYY-MM-DD). */
+function daysBefore(day: string, n: number): string {
+    return new Date(Date.parse(`${day}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** What the day list says for a day without a row. */
+export const PEAK_NO_DATA = 'no data';
+
+/**
+ * The 30 daily totals ending today, oldest first; a day without a row is null,
+ * never 0: peaks start on deploy day, so a zero there would be a claim nobody
+ * measured. today is the SERVER's UTC day (peaks.day), never the browser
+ * clock, so the chart and the list below it name the same days.
+ */
+export function peakSeries(days: PeakDay[], today: string): (number | null)[] {
+    const byDay = new Map(days.map(d => [d.day, d.total]));
+    return Array.from({ length: 30 }, (_, i) => byDay.get(daysBefore(today, 29 - i)) ?? null);
+}
+
+/** Every day from today back to the oldest row, newest first, a day without a
+ *  row as peak null; empty without rows. Days before the oldest row are only
+ *  in the chart. */
+export function peakDayList(days: PeakDay[], today: string): { day: string; peak: PeakDay | null }[] {
+    if (!days.length) return [];
+    const byDay = new Map(days.map(d => [d.day, d]));
+    const oldest = days.reduce((o, d) => (d.day < o ? d.day : o), days[0].day);
+    const out: { day: string; peak: PeakDay | null }[] = [];
+    for (let n = 0; n < 30; n++) {
+        const day = daysBefore(today, n);
+        if (day < oldest) break;
+        out.push({ day, peak: byDay.get(day) ?? null });
+    }
+    return out;
+}
+
 /** The pool line under the bar, in the provider's decimal units. */
 export function poolText(pool: UserGatewayPool | undefined, fmt: (bytes: number) => string): string | null {
     if (!pool) return null;
@@ -176,6 +248,7 @@ export function truncatedNote(truncated: boolean, shown: number): string | null 
 export const EMPTY_TEXT = {
     kits: 'No links. The account has not created a managed link yet.',
     routes: 'No addresses.',
+    peaks: 'No players recorded yet.',
     customDomains: 'No own domains.',
     regions: 'No traffic this month.',
     beamKeys: 'No beam keys.',

@@ -139,9 +139,9 @@ can still show what exists.
 
 ## At a glance
 
-- **664 routes** in 53 sections: 286 GET, 195 POST, 67 PUT, 42 PATCH, 75 DELETE.
+- **666 routes** in 53 sections: 288 GET, 195 POST, 67 PUT, 42 PATCH, 75 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **449** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **157** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **451** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **157** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **49** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -156,7 +156,7 @@ can still show what exists.
 - [/api/backup-storages](#apibackup-storages) (7)
 - [/api/beam](#apibeam) (4)
 - [/api/disk](#apidisk) (4)
-- [/api/external](#apiexternal) (35)
+- [/api/external](#apiexternal) (37)
 - [/api/files](#apifiles) (10)
 - [/api/gateway](#apigateway) (30)
 - [/api/gateway-bandwidth](#apigateway-bandwidth) (4)
@@ -330,7 +330,7 @@ can still show what exists.
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.read` | RequireTenancyEnabled | `EntitlementHandler.GetForUser` | RequireCap("plans.read"). |
 | POST | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireTenancyEnabled | `EntitlementHandler.Grant` | RequireCap("plans.write"). |
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireTenancyEnabled | `EntitlementHandler.Revoke` | RequireCap("plans.write"). |
-| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway` | session | `topology.read` | RequireLocalGateway, RequireTenancyEnabled | `GatewayHandler.AdminUserGateway` | one account's managed gateway as the provider holds it: product, billing status, caps, link kits (online and caps), routes (suspended ones too), own domains, this month's traffic, beam key ids and gateway API keys. |
+| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway` | session | `topology.read` | RequireLocalGateway, RequireTenancyEnabled | `GatewayHandler.AdminUserGateway` | one account's managed gateway as the provider holds it: product, billing status, caps, link kits (online and caps), routes (suspended ones too) with the players on each address right now, players (the account's total, java and bedrock), peaks (the daily peak of concurrent players: day (the server's UTC day), today, last30Days and the days of the last 30 with a row, newest first; each AT LEAST that many; left out when they cannot be read), own domains, this month's traffic, beam key ids and gateway API keys. |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets` | session | `users.write` | RequireLocalGateway | `GatewayHandler.GetPublicTargets` | whether this account's API keys may create gateway routes with public targets. |
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets` | session | `users.write` | RequireLocalGateway | `GatewayHandler.SetPublicTargets` | body {"enabled": bool}, lets this account's API keys create gateway routes with public targets. |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides` | session | `plans.write` | RequireTenancyEnabled | `PlansHandler.SetUserLimitOverrides` | - |
@@ -344,9 +344,9 @@ can still show what exists.
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/storage-targets/{storageId:[0-9]+}` | session | `users.write` | - | `BackupHandler.AdminDeleteUserStorage` | Refused while anything still names the target, exactly as the user's own delete is, and for the same reason: the reference would fall back to the platform storage. |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/username` | session | `users.write` | - | `UsernameHistoryHandler.AdminRename` | Body: {"username": "newname"} — bypasses cooldown + platform toggle. |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/username-history` | session | `users.read` | - | `UsernameHistoryHandler.Admin` | Gated at the route with RequireCap("users.read"); admin short-circuits. |
-| GET | `/api/admin/voice-permissions` | session | `settings.read` | RequireLocalGateway | `GatewayHandler.ListVoicePermissions` | every scope row, plus the global setting they override. |
-| PUT | `/api/admin/voice-permissions` | session | `settings.write` | RequireLocalGateway | `GatewayHandler.SetVoicePermission` | body {scope, allowed}. |
-| DELETE | `/api/admin/voice-permissions` | session | `settings.write` | RequireLocalGateway | `GatewayHandler.DeleteVoicePermission` | removes the row, so the scope defers to the next one down again. |
+| GET | `/api/admin/voice-permissions` | session | `settings.read` | - | `GatewayHandler.ListVoicePermissions` | every scope row, plus the global setting they override. |
+| PUT | `/api/admin/voice-permissions` | session | `settings.write` | - | `GatewayHandler.SetVoicePermission` | body {scope, allowed}. |
+| DELETE | `/api/admin/voice-permissions` | session | `settings.write` | - | `GatewayHandler.DeleteVoicePermission` | removes the row, so the scope defers to the next one down again. |
 | POST | `/api/admin/warp/external-nodes` | session | `topology.write` | RequireLocalGateway | `WarpHandler.MintExternalNodeKey` | everything an External node needs, in one call: an owner-less node- warp key and the platform enroll token bound to it. |
 | GET | `/api/admin/warp/keys` | session | `topology.read` | RequireLocalGateway | `WarpHandler.ListAPIKeys` | the external-node inventory. |
 | POST | `/api/admin/warp/keys` | session | `topology.write` | RequireLocalGateway | `WarpHandler.MintAPIKey` | (admin) creates a warp enrollment key and returns the plaintext ONCE. |
@@ -470,13 +470,15 @@ can still show what exists.
 | DELETE | `/api/external/gateway/link-kits/{linkID}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.RevokeLinkKit` | revokes one of the caller's link kits and removes its routes. |
 | POST | `/api/external/gateway/link-kits/{linkID}/retire` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.RetireLinkKit` | retires one of the caller's link kits to replace a node, irreversibly: it stops counting toward maxLinks at once, keeps working but takes no new routes, voice or Bedrock, and is revoked with its routes at retire_at, 8 hours later; 409 kit_already_retiring (with retire_at), retire_not_needed (no host limit), retire_limit (as many retiring as hosts) or retire_budget (4 per host per UTC month). |
 | POST | `/api/external/gateway/link-kits/{linkID}/roll` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.RollLinkKit` | replaces a link kit's key; the old one keeps working for the grace period. |
+| GET | `/api/external/gateway/players` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.GetPlayers` | the live play sessions on the caller's route-only addresses, by edition, as the edges count them: total {java, bedrock}, items [{domain, java, bedrock}] for the addresses with at least one player (a suspended address is left out), asOf the time of the answer (a count can be about 12 seconds old), and peak {today, last30Days}, the highest concurrent players per UTC day, each a lower bound (at least that many). |
 | GET | `/api/external/gateway/regions` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListRegions` | the gateway regions with their wildcard and liveness, plus the hoster domains and CNAME target. |
-| GET | `/api/external/gateway/routes` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListRoutes` | the caller's route-only addresses. |
+| GET | `/api/external/gateway/routes` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.ListRoutes` | the caller's route-only addresses; voice_allowed, bedrock_allowed and bedrock_active answer for this caller as its enables would, an active managed gateway plan included. |
 | POST | `/api/external/gateway/routes` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.CreateRoute` | creates or retargets an address on one of the caller's links; a retiring link takes no route changes except removing an address or moving it to another link (409 kit_retiring). |
 | DELETE | `/api/external/gateway/routes/{domain:[^/]+}` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.DeleteRoute` | removes one of the caller's addresses. |
-| PUT | `/api/external/gateway/routes/{domain:[^/]+}/bedrock` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteBedrock` | body {"java": bool, "bedrock": bool}, the address's editions. |
+| PUT | `/api/external/gateway/routes/{domain:[^/]+}/bedrock` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteBedrock` | body {"java": bool, "bedrock": bool}, the address's editions; an active managed gateway plan lifts the platform's Bedrock audience setting for its account (the other checks, such as a suspension, a retiring link or no Bedrock entry in the region, still refuse), any other account only while the platform offers Bedrock to it (409 bedrock_disabled). |
+| GET | `/api/external/gateway/routes/{domain:[^/]+}/floodgate-key` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.GetRouteFloodgateKey` | the Floodgate key of one of the caller's addresses, a credential that needs gateway.write (a gateway.read key is refused) and is never cached (Cache-Control: no-store), as {success, domain, key} with key the standard base64 of the 16 bytes Floodgate reads as key.pem; 404 not_found when the address is not the caller's or has no key yet (give it Bedrock first). |
 | PATCH | `/api/external/gateway/routes/{domain:[^/]+}/proxy-protocol` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteProxyProtocol` | body {"enabled": bool}, real player IP forwarding. |
-| PUT | `/api/external/gateway/routes/{domain:[^/]+}/voice` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteVoice` | body {"enabled": bool, "target_port": int}, voice chat relay. |
+| PUT | `/api/external/gateway/routes/{domain:[^/]+}/voice` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteVoice` | body {"enabled": bool, "target_port": int}, voice chat relay; an active managed gateway plan lifts the platform's global voice permission for its account (an explicit per-user deny and the other checks, such as a suspension or a retiring link, still refuse), any other account only where the platform's voice permissions allow (409 voice_not_allowed). |
 | GET | `/api/external/gateway/usage` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.GetUsage` | the period's totals (as /api/external/usage) plus regions [{region, kind, bytes}], final (false while the month runs: an estimate as of asOf) and, for the running month of a managed plan, pool {includedGb, maxPurchaseGb, usedBytes, percent}; ?period=YYYY-MM. |
 | POST | `/api/external/rcon/{uuid}/exec` | user API key | `rcon.exec` | - | `RconHandler.ExecExternal` | automation entry. |
 | GET | `/api/external/servers` | user API key | _no capability_ | - | `APIKeysHandler.ListExternalServers` | the servers this KEY may act on: the servers of its owner, narrowed to the allowlist of the key. |
@@ -773,7 +775,7 @@ can still show what exists.
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/servers` | session | _no capability_ | - | `ServerHandler.GetServers` | the servers the caller may see: their own plus any they were invited to, or the whole fleet for an admin. |
 | POST | `/api/servers` | session | _no capability_ | - | `ServerHandler.CreateServer` | (Step 1): Creates container with resources, status=pending_setup |
-| GET | `/api/servers/players` | session | _no capability_ | RequireLocalGateway | `ServerHandler.GetGatewayPlayers` | players connected through the gateway, per server id, for the servers the caller's own list shows. |
+| GET | `/api/servers/players` | session | _no capability_ | - | `ServerHandler.GetGatewayPlayers` | players connected through the gateway, per server id, for the servers the caller's own list shows. |
 | DELETE | `/api/servers/{id:[0-9]+}` | session | `server.delete` | - | `ServerHandler.DeleteServer` | Completely delete a server |
 | GET | `/api/servers/{id:[0-9]+}/audit` | session | `server.audit.read` | - | `ServerAuditHandler.ListAudit` | the server's audit trail, paged with ?limit and ?offset and filterable by ?eventType. |
 | PUT | `/api/servers/{id:[0-9]+}/audit/force` | session | `server.settings.write` | - | `ServerAuditHandler.SetForce` | gated by the route (RequireCap(server.settings.write)): the owner, or a role-holder granted that cap, can force their own server's audit on regardless of member state. |
@@ -783,8 +785,8 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/backup-jobs` | session | `backups.create` | - | `BackupHandler.CreateJob` | adds a backup schedule and computes its first run from the cron expression. |
 | GET | `/api/servers/{id:[0-9]+}/backup-restores` | session | `backups.read` | - | `BackupHandler.ListRestores` | Recent restore history for a server, newest first. |
 | GET | `/api/servers/{id:[0-9]+}/backup-usage` | session | `backups.read` | - | `BackupHandler.BackupUsage` | Returns the on-disk bytes used by node-local backups for the given server, plus archive count. |
-| GET | `/api/servers/{id:[0-9]+}/bedrock` | session | `network.read` | RequireLocalGateway | `GatewayHandler.GetServerBedrock` | - |
-| PUT | `/api/servers/{id:[0-9]+}/bedrock/routes` | session | `network.write` | RequireLocalGateway | `GatewayHandler.SetRouteEdition` | body {"domain": "...", "java": bool, "bedrock": bool}. |
+| GET | `/api/servers/{id:[0-9]+}/bedrock` | session | `network.read` | - | `GatewayHandler.GetServerBedrock` | - |
+| PUT | `/api/servers/{id:[0-9]+}/bedrock/routes` | session | `network.write` | - | `GatewayHandler.SetRouteEdition` | body {"domain": "...", "java": bool, "bedrock": bool}. |
 | POST | `/api/servers/{id:[0-9]+}/console/command` | session | `console.send` | - | `ConsoleHandler.SendCommand` | pushes one line onto the server's Redis input queue. |
 | GET | `/api/servers/{id:[0-9]+}/console/history` | session | `console.read` | - | `ConsoleHandler.GetHistory` | Returns up to ?count= (default and max 1000) log lines from the Redis Stream, oldest first, with their stream IDs. |
 | GET | `/api/servers/{id:[0-9]+}/console/stream` | session | `console.read` | - | `ConsoleHandler.StreamConsole` | Streams live server logs via SSE (Server-Sent Events). |
@@ -865,7 +867,7 @@ can still show what exists.
 | PUT | `/api/servers/{id:[0-9]+}/timezone` | session | `server.settings.write` | - | `TimezoneHandler.SetServer` | body {timezone}; "" inherits the owner's again. |
 | POST | `/api/servers/{id:[0-9]+}/transfer` | session | `server.settings.write` | RequireGatewayEnabled | `ServerHandler.TransferServer` | (tenant) queues a node-to-node migration of a server the caller OWNS to a target node they may place on. |
 | POST | `/api/servers/{id:[0-9]+}/version-update` | session | `server.settings.write` | - | `ServerModsHandler.VersionUpdate` | - |
-| GET | `/api/servers/{id:[0-9]+}/voice` | session | `network.read` | RequireGatewayEnabled, RequireLocalGateway | `GatewayHandler.GetServerVoice` | the server's voice port, if any, and whether it may turn voice on. |
+| GET | `/api/servers/{id:[0-9]+}/voice` | session | `network.read` | RequireGatewayEnabled | `GatewayHandler.GetServerVoice` | the server's voice port, if any, and whether it may turn voice on. |
 | PUT | `/api/servers/{id:[0-9]+}/voice/switch` | session | `network.write` | - | `GatewayHandler.SetServerVoice` | turns proximity voice chat on or off for one server. |
 
 ## /api/settings

@@ -214,3 +214,45 @@ func TestProviderStatusOwnDomainCodes(t *testing.T) {
 		})
 	}
 }
+
+// checkProviderCodes runs each provider refusal through GatewayProviderError.
+func checkProviderCodes(t *testing.T, cases []struct{ code, providerMsg, msg string }) {
+	t.Helper()
+	for _, c := range cases {
+		t.Run(c.code, func(t *testing.T) {
+			err := fmt.Errorf("wrapped: %w", &remotegw.APIError{Status: http.StatusConflict, Code: c.code, Message: c.providerMsg})
+			rec := httptest.NewRecorder()
+			if !GatewayProviderError(rec, err) {
+				t.Fatal("not handled")
+			}
+			var body struct{ Error, Code string }
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			if rec.Code != http.StatusConflict || body.Code != c.code || body.Error != c.msg {
+				t.Fatalf("got %d %+v, want 409 %s %q", rec.Code, body, c.code, c.msg)
+			}
+		})
+	}
+}
+
+func TestProviderStatusVoiceCodes(t *testing.T) {
+	checkProviderCodes(t, []struct{ code, providerMsg, msg string }{
+		{"voice_not_allowed", "Voice chat is not available for this account.", "Voice chat is not enabled for this platform's account on the managed gateway."},
+		{"voice_not_allowed", "Voice chat is not available for this account. " + ManagedPlanNeededText,
+			"Voice chat is not enabled for this platform's account on the managed gateway. It needs an active managed gateway plan for this platform."},
+		{"link_without_voice", "The link of this route has not reported that it can carry voice chat.", "This node's managed link has not reported that it can carry voice chat. Make sure it is running and up to date."},
+		{"no_routes", "Voice chat needs an address on one of the platform's domains.", RemoteVoiceNoRoutesText},
+		{"no_relay", "No voice relay is running in this address's region yet.", "No voice relay is running in this address's region yet."},
+		{"voice_pool_full", "Every voice port in this region is taken.", "Every voice port in this region is taken."},
+		{"kit_retiring", "This link is being replaced and takes no new routes.", kitRetiringText},
+	})
+}
+
+func TestProviderStatusBedrockCodes(t *testing.T) {
+	checkProviderCodes(t, []struct{ code, providerMsg, msg string }{
+		{"bedrock_disabled", "Bedrock is turned off on this platform.", "Bedrock is not enabled for this platform's account on the managed gateway."},
+		{"bedrock_disabled", "Bedrock is turned off on this platform. " + ManagedPlanNeededText,
+			"Bedrock is not enabled for this platform's account on the managed gateway. It needs an active managed gateway plan for this platform."},
+		{"bedrock_unavailable", "Bedrock needs the gateway: no Bedrock entry is running in this address's region yet.", "Bedrock needs the gateway: no Bedrock entry is running in this address's region yet."},
+		{"kit_retiring", "This link is being replaced and takes no new routes.", kitRetiringText},
+	})
+}

@@ -25,7 +25,8 @@ func TestExternalGatewayRoutesGoThroughTheAdapter(t *testing.T) {
 		}
 		n++
 		want := "gateway.write"
-		if len(r.Methods) == 1 && r.Methods[0] == "GET" {
+		// The one GET that answers with a credential needs the write scope.
+		if len(r.Methods) == 1 && r.Methods[0] == "GET" && !strings.HasSuffix(r.Path, "/floodgate-key") {
 			want = "gateway.read"
 		}
 		gates := strings.Join(r.Gates, ",")
@@ -35,7 +36,7 @@ func TestExternalGatewayRoutesGoThroughTheAdapter(t *testing.T) {
 				r.Methods, r.Path, r.Auth, r.Cap, gates, r.Handler, want)
 		}
 	}
-	if n != 24 {
-		t.Fatalf("%d external gateway routes, want 24", n)
+	if n != 26 {
+		t.Fatalf("%d external gateway routes, want 26", n)
 	}
 }

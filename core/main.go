@@ -512,6 +512,13 @@ func main() {
 	gwBandwidth.SetGatewayRemote(gatewayRemote)
 	gwBandwidth.Start(bgCtx)
 
+	// Daily peak of concurrent players per route-only account, from the edge
+	// counts. Leader-gated, idle in remote mode.
+	gwPlayerPeaks := services.NewGatewayPlayerPeaksService(pgStore, redisClient)
+	gwPlayerPeaks.SetLeader(coreLeader)
+	gwPlayerPeaks.SetGatewayRemote(gatewayRemote)
+	gwPlayerPeaks.Start(bgCtx)
+
 	sftpSync := services.NewSFTPSyncService(pgStore, redisClient, appState.Authz)
 	sftpSync.Start()
 
@@ -729,7 +736,7 @@ func main() {
 	appState.Gateway = services.NewSwitchingGateway(redisGateway, appState.RemoteGateway, gatewayRemote)
 	// Replays the remote gateway's queued writes; leader-gated per tick and idle
 	// unless remote mode is on, so a local platform makes no outbound call.
-	services.StartGatewayOutbox(bgCtx, pgStore, remoteAPI, coreLeader, gatewayRemote, appState.RemoteGateway)
+	services.StartGatewayOutbox(bgCtx, pgStore, remoteAPI, coreLeader, gatewayRemote, appState.RemoteGateway, bedrockService.ReplaceKey)
 
 	// Which link serves each node is the Hub's answer (hub:node-link:<node>), not
 	// a token Core derives: a self-enrolled Link carries a generated one, and the

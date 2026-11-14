@@ -75,12 +75,13 @@ func TestRemoteBackgroundServicesStayIdle(t *testing.T) {
 			}
 			v.Meter(ctx)
 		}, false},
-		{"bedrock reconcile and meter", func(rdb *redis.Client, mode func() (bool, bool)) {
+		// The Bedrock reconcile is not idle in remote mode: it publishes the
+		// Floodgate keys downloaded from the provider for this platform's own
+		// nodes (TestBedrockReconcileRemotePublishesAndSweeps; the unknown mode
+		// is TestBedrockReconcileIdleWhenModeUnknown).
+		{"bedrock meter", func(rdb *redis.Client, mode func() (bool, bool)) {
 			b := NewBedrockService(nil, rdb)
 			b.SetGatewayRemote(mode)
-			if err := b.Reconcile(ctx); err != nil {
-				t.Errorf("bedrock reconcile: %v", err)
-			}
 			b.Meter(ctx)
 		}, false},
 		{"metrics collector gateway sample", func(rdb *redis.Client, mode func() (bool, bool)) {

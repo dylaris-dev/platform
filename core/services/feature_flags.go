@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+
+	"dylaris-core/store"
 )
 
 // settingsReader is the slice of the Store interface this service needs.
@@ -183,6 +185,24 @@ func (f *FeatureFlags) BedrockAudience(ctx context.Context) string {
 		return v
 	}
 	return "off"
+}
+
+// BedrockAudienceChecked is BedrockAudience, except that a read which FAILED
+// (as opposed to a setting never saved) is an error instead of "off", so a
+// caller can tell "turned off" from "could not check".
+func (f *FeatureFlags) BedrockAudienceChecked() (string, error) {
+	v, err := f.store.GetSetting(BedrockSettingKey)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, store.ErrSettingNull) {
+			return "off", nil
+		}
+		return "", err
+	}
+	switch v = strings.TrimSpace(v); v {
+	case "admin", "all":
+		return v, nil
+	}
+	return "off", nil
 }
 
 // TemplatesAudience is who is offered Templates: "off" (the default), "admin"

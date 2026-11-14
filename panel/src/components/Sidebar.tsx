@@ -12,6 +12,7 @@ import { useNow } from '@/lib/useNow';
 import CreateMenu from '@/components/CreateMenu';
 import HelpTourButton from '@/components/help/HelpTourButton';
 import { useRouteId } from '@/lib/routeParams';
+import { playersTitle } from '@/lib/gatewayProvider';
 
 interface SidebarProps {
   onNewServer?: () => void;
@@ -61,8 +62,7 @@ function buildProxyHierarchy(servers: Server[]) {
 export default function Sidebar({ onNewServer }: SidebarProps) {
   const { collapsed, toggle, width } = useSidebarCollapse();
   const { servers, user: currentUser, proxiesEnabled, featureFlags, gatewayEnabled: gatewayRouting, gatewayVisibility } = useAppData();
-  // The counts come from this Core's own edges; with the managed gateway there
-  // are none, and the route answers 409.
+  // The counts come from this Core's own edges, or from the managed gateway's.
   const gatewayEnabled = gatewayRouting && gatewayVisibility.playerCounts;
   const paramId = useRouteId('servers');
   const activeServerId = paramId ? Number(paramId) : null;
@@ -88,19 +88,21 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
   // asked from each server. Polled at the edges' own publish cadence while the
   // tab is visible; no gateway, no poll.
   const [players, setPlayers] = useState<Record<string, number>>({});
+  // Java and Bedrock per server: only the managed gateway sends them.
+  const [editions, setEditions] = useState<Record<string, { java: number; bedrock: number }>>({});
   useEffect(() => {
     if (!gatewayEnabled) return;
     let cancelled = false;
     let misses = 0;
     // One failed poll keeps the last counts; two in a row are no counts, not
     // the counts from before Core stopped answering.
-    const miss = () => { if (!cancelled && ++misses >= 2) setPlayers({}); };
+    const miss = () => { if (!cancelled && ++misses >= 2) { setPlayers({}); setEditions({}); } };
     const tick = async () => {
       if (document.visibilityState !== 'visible') return;
       try {
         const res = await getGatewayPlayers();
         if (cancelled) return;
-        if (res?.players) { setPlayers(res.players); misses = 0; } else miss();
+        if (res?.players) { setPlayers(res.players); setEditions(res.editions ?? {}); misses = 0; } else miss();
       } catch { miss(); }
     };
     tick();
@@ -208,11 +210,11 @@ export default function Sidebar({ onNewServer }: SidebarProps) {
         {gatewayEnabled && players[server.id] > 0 && (
           <span
             className="flex items-center gap-1 text-[11px] font-mono tabular-nums text-(--base-07) shrink-0"
-            title={`${players[server.id]} connected through the gateway`}
+            title={playersTitle(players[server.id], editions[server.id])}
           >
             <Users size={11} aria-hidden="true" />
             {players[server.id]}
-            <span className="sr-only">players online</span>
+            <span className="sr-only">{editions[server.id] ? `players online, ${editions[server.id].java} Java, ${editions[server.id].bedrock} Bedrock` : 'players online'}</span>
           </span>
         )}
         {(() => {

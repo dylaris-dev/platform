@@ -8,7 +8,7 @@ import { formatDecimalBytes } from '@/lib/format';
 import { barPercent } from '@/lib/gatewayProvider';
 import {
     getUserGateway, productLabel, limitText, kitState, routeSuspendedLabel, poolText, truncatedNote, EMPTY_TEXT,
-    failureText, hiddenNote, NOT_FOR_ROLE, type UserGateway,
+    failureText, hiddenNote, NOT_FOR_ROLE, playersLabel, peakLine, peakSeries, peakDayList, PEAK_NO_DATA, type UserGateway,
 } from '@/lib/userGateway';
 
 // Read-only view of one managed gateway customer, as this platform (the
@@ -58,6 +58,46 @@ const TONE: Record<string, string> = { success: 'badge-success', neutral: 'badge
 
 function Badge({ tone, children }: { tone: string; children: React.ReactNode }) {
     return <span className={`badge ${TONE[tone] ?? 'badge-neutral'} shrink-0`}>{children}</span>;
+}
+
+/** 30 daily bars, oldest first. A day without data is a dashed mark on the
+ *  baseline, never a bar of 0: nothing was measured that day. */
+function PeakBars({ series }: { series: (number | null)[] }) {
+    const max = Math.max(1, ...series.map(v => v ?? 0));
+    return (
+        <div className="flex items-end gap-px h-8" role="img" aria-label="Daily peak of concurrent players, last 30 days">
+            {series.map((v, i) => (
+                v === null
+                    ? <span key={i} className="flex-1 border-b border-dashed border-(--base-05)" title={PEAK_NO_DATA} />
+                    : <span key={i} className="flex-1 rounded-t-sm bg-(--accent)" style={{ height: `${Math.max(6, (v / max) * 100)}%` }} title={String(v)} />
+            ))}
+        </div>
+    );
+}
+
+/** The daily peaks: two lines, a 30-day chart of the totals and the days since the first row. */
+function PlayerPeaks({ peaks }: { peaks: NonNullable<UserGateway['peaks']> }) {
+    if (!peaks.days.length) {
+        return <Section title="Player peaks" empty={EMPTY_TEXT.peaks} />;
+    }
+    const series = peakSeries(peaks.days, peaks.day);
+    return (
+        <section>
+            <h4 className="mono-label mb-2">Player peaks</h4>
+            <div className="rounded-md bg-(--base-02) border border-(--base-03) p-3 space-y-2 mb-2">
+                <p className="text-xs text-(--base-09)">{peakLine('Peak today', peaks.today, true)}</p>
+                <p className="text-xs text-(--base-09)">{peakLine('Peak in the last 30 days', peaks.last30Days, false)}</p>
+                <PeakBars series={series} />
+                <p className="text-xs text-(--base-06)">Sampled once a minute: each figure is at least that many. A dashed day has no data.</p>
+            </div>
+            <ul className="rounded-md border border-(--base-03) divide-y divide-(--base-03)">
+                {peakDayList(peaks.days, peaks.day).map(({ day, peak: d }) => (
+                    <Row key={day} main={day} sub={d ? `${d.java} Java · ${d.bedrock} Bedrock` : PEAK_NO_DATA}
+                        badge={<span className="text-sm font-mono text-(--base-08) shrink-0">{d ? d.total : '-'}</span>} />
+                ))}
+            </ul>
+        </section>
+    );
 }
 
 export default function UserGatewayTab({ userId }: { userId: string }) {
@@ -195,13 +235,26 @@ export default function UserGatewayTab({ userId }: { userId: string }) {
                 })}
             </Section>
 
+            {data.players && (
+                <p className="text-xs text-(--base-06)">
+                    Players now: <span className="text-(--base-09)">{playersLabel(data.players)}</span>
+                </p>
+            )}
+
             <Section title="Addresses" empty={data.routes.length ? null : EMPTY_TEXT.routes} truncated={data.routesTruncated} shown={data.routes.length}>
                 {data.routes.map(r => {
                     const suspended = routeSuspendedLabel(r);
                     const sub = [`${r.targetHost}:${r.targetPort}`, r.linkId || 'no link', r.proxyProtocol ? 'real IP on' : ''].filter(Boolean).join(' · ');
-                    return <Row key={r.domain} main={r.domain} sub={sub} badge={suspended ? <Badge tone="error">{suspended}</Badge> : undefined} />;
+                    const badge = suspended
+                        ? <Badge tone="error">{suspended}</Badge>
+                        : r.players ? <span className="text-xs font-mono text-(--base-08) shrink-0">{playersLabel(r.players)}</span> : undefined;
+                    return <Row key={r.domain} main={r.domain} sub={sub} badge={badge} />;
                 })}
             </Section>
+
+            {data.peaks && (
+                <PlayerPeaks peaks={data.peaks} />
+            )}
 
             <Section title="Own domains" empty={data.customDomains.length ? null : EMPTY_TEXT.customDomains} truncated={data.customDomainsTruncated} shown={data.customDomains.length}>
                 {data.customDomains.map(c => (

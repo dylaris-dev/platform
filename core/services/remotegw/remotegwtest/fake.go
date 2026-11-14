@@ -5,11 +5,14 @@
 package remotegwtest
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +41,15 @@ type fakeRoute struct {
 	domain, linkID, host string
 	port                 int
 	proxy                bool
+	voice                *fakeVoice    // nil: voice off
+	editions             *fakeEditions // nil: never given editions (Java only, no key)
+}
+
+type fakeVoice struct{ port, targetPort int }
+
+type fakeEditions struct {
+	java, bedrock bool
+	key           []byte
 }
 
 // fakeDomain is a provider claim of the fake's one account.
@@ -109,6 +121,17 @@ type Fake struct {
 	// liveReverify: the route gate proves a pending or blocked claim whose TXT
 	// value is published on the spot, as the real gate does.
 	liveReverify bool
+
+	voiceRefusal, bedrockRefusal string
+	// bedrockUntold: an editions change is stored, then answered 502 like the
+	// real handler when its gateway could not be told yet.
+	bedrockUntold bool
+	nextVoicePort int
+	// players: the edges' count per domain, [java, bedrock].
+	players     map[string][2]int
+	listSaysOff bool
+	// peak is what GET /players reports as the peaks; nil reports zeros.
+	peak *remotegw.PlayersPeak
 }
 
 // fakeClaimCap is the provider's per-account claim bound (maxClaimsPerUser).
@@ -119,7 +142,8 @@ const fakeVerifyCooldown = 5 * time.Minute
 
 func NewFake(t testing.TB) *Fake {
 	t.Helper()
-	f := &Fake{key: "dyl_fake_provider_key", nextID: 1, published: map[string]bool{}, checked: map[string]time.Time{}}
+	f := &Fake{key: "dyl_fake_provider_key", nextID: 1, published: map[string]bool{}, checked: map[string]time.Time{},
+		nextVoicePort: fakeVoicePortMin, players: map[string][2]int{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -367,12 +391,25 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && path == "/routes":
 		items := []map[string]interface{}{}
 		for _, rt := range f.routes {
+			voice, editions := rt.voice, rt.editions
+			if f.listSaysOff {
+				voice, editions = nil, nil
+			}
 			items = append(items, map[string]interface{}{"domain": rt.domain, "target_ip": rt.host, "target_port": rt.port,
-				"server_uuid": "", "link_id": rt.linkID, "proxy_protocol": rt.proxy})
+				"server_uuid": "", "link_id": rt.linkID, "proxy_protocol": rt.proxy,
+				"voice": voiceView(voice), "bedrock": bedrockView(editions)})
 		}
 		writeJSON(w, 200, map[string]interface{}{"success": true, "items": items})
 	case r.Method == http.MethodPost && path == "/routes":
 		f.putRoute(w, body)
+	case r.Method == http.MethodPut && strings.HasPrefix(path, "/routes/") && strings.HasSuffix(path, "/voice"):
+		f.setVoice(w, strings.TrimSuffix(strings.TrimPrefix(path, "/routes/"), "/voice"), body)
+	case r.Method == http.MethodPut && strings.HasPrefix(path, "/routes/") && strings.HasSuffix(path, "/bedrock"):
+		f.setBedrock(w, strings.TrimSuffix(strings.TrimPrefix(path, "/routes/"), "/bedrock"), body)
+	case r.Method == http.MethodGet && strings.HasPrefix(path, "/routes/") && strings.HasSuffix(path, "/floodgate-key"):
+		f.floodgateKey(w, strings.TrimSuffix(strings.TrimPrefix(path, "/routes/"), "/floodgate-key"))
+	case r.Method == http.MethodGet && path == "/players":
+		f.playersAnswer(w)
 	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/routes/"):
 		d := strings.TrimPrefix(path, "/routes/")
 		for i, rt := range f.routes {
@@ -663,4 +700,232 @@ func (f *Fake) retireKit(w http.ResponseWriter, linkID string) {
 func str(m map[string]interface{}, k string) string {
 	s, _ := m[k].(string)
 	return s
+}
+
+// fakeVoicePortMin is where the fake's voice ports start.
+const fakeVoicePortMin = 30000
+
+// SetVoiceRefusal makes turning voice ON answer 409 with code (one of the
+// provider's: voice_not_allowed, link_without_voice, no_routes, no_relay,
+// voice_pool_full, kit_retiring); "" lets it through again.
+func (f *Fake) SetVoiceRefusal(code string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.voiceRefusal = code
+}
+
+// SetBedrockRefusal makes ADDING Bedrock answer 409 with code
+// (bedrock_disabled, bedrock_unavailable, kit_retiring); "" lets it through.
+func (f *Fake) SetBedrockRefusal(code string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bedrockRefusal = code
+}
+
+// SetBedrockStoredUntold makes the editions endpoint store the change, then
+// answer as the provider's external API does when SetLinkRouteBedrock could
+// not publish to its gateway: 502 with the code its error wrapper stamps on
+// any 5xx (internal).
+func (f *Fake) SetBedrockStoredUntold(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bedrockUntold = on
+}
+
+// SetPlayers sets the play sessions the edges count on domain.
+func (f *Fake) SetPlayers(domain string, java, bedrock int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.players[domain] = [2]int{java, bedrock}
+}
+
+// SetPeak sets the peaks GET /players reports (zeros until called).
+func (f *Fake) SetPeak(p remotegw.PlayersPeak) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.peak = &p
+}
+
+// SetListSaysOff makes GET /routes report every address with voice off and
+// Java only while the stored state is unchanged: the provider's shape when its
+// own table read fails.
+func (f *Fake) SetListSaysOff(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listSaysOff = on
+}
+
+// DropRouteExtras forgets domain's voice and editions, as a removed and
+// re-created address on the provider: no voice, and a new key once it gets
+// Bedrock again.
+func (f *Fake) DropRouteExtras(domain string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if rt := f.route(domain); rt != nil {
+		rt.voice, rt.editions = nil, nil
+	}
+}
+
+func (f *Fake) route(domain string) *fakeRoute {
+	for _, rt := range f.routes {
+		if rt.domain == domain {
+			return rt
+		}
+	}
+	return nil
+}
+
+func (f *Fake) kitRetiring(linkID string) bool {
+	for _, k := range f.kits {
+		if k.linkID == linkID {
+			return k.retire != nil
+		}
+	}
+	return false
+}
+
+// voiceView is the provider's linkRouteVoiceView: port and target_port are
+// left out while voice is off.
+func voiceView(v *fakeVoice) map[string]interface{} {
+	if v == nil {
+		return map[string]interface{}{"enabled": false}
+	}
+	return map[string]interface{}{"enabled": true, "port": v.port, "target_port": v.targetPort}
+}
+
+// bedrockView is the provider's linkRouteBedrockView; an address never given
+// editions reads Java only.
+func bedrockView(e *fakeEditions) map[string]interface{} {
+	if e == nil {
+		return map[string]interface{}{"java": true, "bedrock": false, "has_key": false}
+	}
+	return map[string]interface{}{"java": e.java, "bedrock": e.bedrock, "has_key": true}
+}
+
+// setVoice follows the provider's SetLinkRouteVoice: off is never refused, on
+// keeps the address's port and follows target_port.
+func (f *Fake) setVoice(w http.ResponseWriter, domain string, body map[string]interface{}) {
+	rt := f.route(domain)
+	if rt == nil {
+		handlerError(w, 404, "not_found", "Route not found")
+		return
+	}
+	enabled, ok := body["enabled"].(bool)
+	if !ok {
+		handlerError(w, 400, "bad_request", `Invalid request: expected {"enabled": true|false, "target_port": 1-65535}`)
+		return
+	}
+	target, _ := body["target_port"].(float64)
+	if target == 0 {
+		target = 24454
+	}
+	if target < 1 || target > 65535 {
+		handlerError(w, 400, "bad_request", "The voice port must be between 1 and 65535.")
+		return
+	}
+	if !enabled {
+		rt.voice = nil
+		writeJSON(w, 200, map[string]interface{}{"success": true, "voice": voiceView(nil)})
+		return
+	}
+	if f.kitRetiring(rt.linkID) {
+		handlerError(w, 409, "kit_retiring", "This link is being replaced and takes no new routes.")
+		return
+	}
+	if f.voiceRefusal != "" {
+		handlerError(w, 409, f.voiceRefusal, "fake voice refusal")
+		return
+	}
+	if rt.voice == nil {
+		rt.voice = &fakeVoice{port: f.nextVoicePort}
+		f.nextVoicePort++
+	}
+	rt.voice.targetPort = int(target)
+	writeJSON(w, 200, map[string]interface{}{"success": true, "voice": voiceView(rt.voice)})
+}
+
+// setBedrock follows the provider's SetLinkRouteBedrock: only ADDING Bedrock
+// can be refused, and a key, once made, stays while the address exists.
+func (f *Fake) setBedrock(w http.ResponseWriter, domain string, body map[string]interface{}) {
+	java, okJ := body["java"].(bool)
+	bedrock, okB := body["bedrock"].(bool)
+	if !okJ || !okB {
+		handlerError(w, 400, "bad_request", `Invalid request: expected {"java": true|false, "bedrock": true|false}`)
+		return
+	}
+	if !java && !bedrock {
+		handlerError(w, 400, "edition_invalid", "A route needs Java, Bedrock or both.")
+		return
+	}
+	rt := f.route(domain)
+	if rt == nil {
+		handlerError(w, 404, "not_found", "Route not found")
+		return
+	}
+	if bedrock && (rt.editions == nil || !rt.editions.bedrock) {
+		if f.bedrockRefusal != "" {
+			handlerError(w, 409, f.bedrockRefusal, "fake bedrock refusal")
+			return
+		}
+		if f.kitRetiring(rt.linkID) {
+			handlerError(w, 409, "kit_retiring", "This link is being replaced and takes no new routes.")
+			return
+		}
+	}
+	if rt.editions == nil && !bedrock {
+		writeJSON(w, 200, map[string]interface{}{"success": true, "bedrock": bedrockView(nil)})
+		return
+	}
+	if rt.editions == nil {
+		rt.editions = &fakeEditions{key: make([]byte, 16)}
+		if _, err := rand.Read(rt.editions.key); err != nil {
+			handlerError(w, 500, "internal", "Failed to create the Floodgate key")
+			return
+		}
+	}
+	rt.editions.java, rt.editions.bedrock = java, bedrock
+	if f.bedrockUntold {
+		handlerError(w, http.StatusBadGateway, "internal", "The route was saved, but the gateway could not be told yet. It applies within a minute.")
+		return
+	}
+	writeJSON(w, 200, map[string]interface{}{"success": true, "bedrock": bedrockView(rt.editions)})
+}
+
+// floodgateKey follows the provider's GetRouteFloodgateKey.
+func (f *Fake) floodgateKey(w http.ResponseWriter, domain string) {
+	w.Header().Set("Cache-Control", "no-store")
+	rt := f.route(domain)
+	if rt == nil {
+		handlerError(w, 404, "not_found", "Route not found")
+		return
+	}
+	if rt.editions == nil {
+		handlerError(w, 404, "not_found", "This address has no Floodgate key yet. Give it Bedrock first.")
+		return
+	}
+	writeJSON(w, 200, map[string]interface{}{"success": true, "domain": domain, "key": base64.StdEncoding.EncodeToString(rt.editions.key)})
+}
+
+// playersAnswer follows the provider's GetPlayers: addresses of this account
+// with at least one player, sorted; the peaks are SetPeak's, else zeros, as
+// on a provider that has not sampled yet.
+func (f *Fake) playersAnswer(w http.ResponseWriter) {
+	items := []map[string]interface{}{}
+	java, bedrock := 0, 0
+	for _, rt := range f.routes { // sorted below
+		p := f.players[rt.domain]
+		if p[0]+p[1] == 0 {
+			continue
+		}
+		items = append(items, map[string]interface{}{"domain": rt.domain, "java": p[0], "bedrock": p[1]})
+		java += p[0]
+		bedrock += p[1]
+	}
+	sort.Slice(items, func(a, b int) bool { return items[a]["domain"].(string) < items[b]["domain"].(string) })
+	peak := remotegw.PlayersPeak{}
+	if f.peak != nil {
+		peak = *f.peak
+	}
+	writeJSON(w, 200, map[string]interface{}{"success": true, "asOf": time.Now().UTC().Format(time.RFC3339),
+		"total": map[string]int{"java": java, "bedrock": bedrock}, "items": items, "peak": peak})
 }

@@ -196,11 +196,46 @@ func providerStatus(ae *remotegw.APIError) (int, string, string) {
 		return http.StatusConflict, ae.Code, "This plan has no host limit, so no link needs replacing: add the new node and move the servers to it."
 	case "link_not_found":
 		return http.StatusNotFound, ae.Code, ae.Message
+	// Voice and Bedrock: the provider speaks of "this account" and "the
+	// platform's domains", which here would read as the customer's own.
+	case "voice_not_allowed":
+		return http.StatusConflict, ae.Code, withPlanNeeded("Voice chat is not enabled for this platform's account on the managed gateway.", ae.Message)
+	case "link_without_voice":
+		return http.StatusConflict, ae.Code, "This node's managed link has not reported that it can carry voice chat. Make sure it is running and up to date."
+	case "no_routes":
+		return http.StatusConflict, ae.Code, RemoteVoiceNoRoutesText
+	case "no_relay", "voice_pool_full", "bedrock_unavailable":
+		return http.StatusConflict, ae.Code, ae.Message
+	case "bedrock_disabled":
+		return http.StatusConflict, ae.Code, withPlanNeeded("Bedrock is not enabled for this platform's account on the managed gateway.", ae.Message)
 	}
 	return http.StatusBadGateway, "provider_error", ae.Message
 }
 
+// ManagedPlanNeededText ends the provider's voice or Bedrock refusal of an
+// account without an active managed gateway plan. A customer Core reads it
+// to say the same in its own words (withPlanNeeded); an older provider never
+// sends it.
+const ManagedPlanNeededText = "It needs an active managed gateway plan."
+
+// withPlanNeeded is own, plus why when the provider said the platform's
+// managed gateway plan is what is missing.
+func withPlanNeeded(own, providerMsg string) string {
+	if strings.HasSuffix(providerMsg, ManagedPlanNeededText) {
+		return own + " It needs an active managed gateway plan for this platform."
+	}
+	return own
+}
+
 const kitRetiringText = "This node's link is being replaced. Move the server to another node first."
+
+// RemoteVoiceNoRoutesText is the refusal of voice chat on the managed gateway
+// for a server without an address on one of the provider's domains.
+const RemoteVoiceNoRoutesText = "Voice chat needs an address on one of the gateway provider's domains. Add one first."
+
+// RemoteOwnDomainExtrasText is the refusal of voice chat and Bedrock on an
+// address on the customer's own domain (own_domain_unsupported).
+const RemoteOwnDomainExtrasText = "Voice chat and Bedrock are not available on your own domain yet. Use an address on the gateway provider's domain for them."
 
 const providerOwnDomainCapText = "This platform's own-domain limit at the gateway provider is reached."
 

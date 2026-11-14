@@ -110,8 +110,16 @@ func TestClientUnwrapsItems(t *testing.T) {
 	}
 	routes, err := cl.Routes(ctx)
 	want := remotegw.Route{Domain: "play.example.com", TargetHost: "mc-12-abc123def456", TargetPort: 25570, LinkID: m.LinkID}
-	if err != nil || len(routes) != 1 || routes[0] != want {
-		t.Fatalf("routes = %+v, %v, want %+v", routes, err, want)
+	if err != nil || len(routes) != 1 || routes[0].Voice == nil || routes[0].Bedrock == nil {
+		t.Fatalf("routes = %+v, %v, want one with voice and bedrock", routes, err)
+	}
+	got := routes[0]
+	if *got.Voice != (remotegw.RouteVoice{}) || *got.Bedrock != (remotegw.RouteBedrock{Java: true}) {
+		t.Fatalf("new route voice %+v bedrock %+v, want off and Java only", *got.Voice, *got.Bedrock)
+	}
+	got.Voice, got.Bedrock = nil, nil
+	if got != want {
+		t.Fatalf("routes = %+v, want %+v", got, want)
 	}
 }
 

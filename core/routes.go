@@ -1863,7 +1863,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/disk/orphans/assign", authHandler.AuthMiddleware(appState.Authz.RequireCap("nodes.write")(nodeHandler.AssignOrphan))).Methods("POST")
 
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.GetServers)).Methods("GET")
-	api.HandleFunc("/servers/players", authHandler.AuthMiddleware(gates.RequireLocalGateway(serverHandler.GetGatewayPlayers))).Methods("GET")
+	api.HandleFunc("/servers/players", authHandler.AuthMiddleware(serverHandler.GetGatewayPlayers)).Methods("GET")
 	api.HandleFunc("/servers", authHandler.AuthMiddleware(serverHandler.CreateServer)).Methods("POST")
 	// POWER is in-handler-enforced (Rule R5): the action is in the request body
 	// (start|stop|restart|kill), so a single route-level RequireCap would wrongly
@@ -1964,16 +1964,16 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/servers/{id:[0-9]+}/routes/{domain:.+}", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.DeleteServerRoute))).Methods("DELETE")
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gates.RequireGatewayEnabled(gatewayHandler.SetServerProxyProtocol)))).Methods("PATCH")
 	api.HandleFunc("/servers/{id:[0-9]+}/proxy-protocol", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gates.RequireGatewayEnabled(gatewayHandler.GetServerProxyProtocol)))).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/voice", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gates.RequireGatewayEnabled(gates.RequireLocalGateway(gatewayHandler.GetServerVoice))))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/voice", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gates.RequireGatewayEnabled(gatewayHandler.GetServerVoice)))).Methods("GET")
 	// No RequireGatewayEnabled and no RequireLocalGateway: turning voice off must
 	// work with the gateway off and on the managed gateway; SetServerVoice gates
 	// the enable itself.
 	api.HandleFunc("/servers/{id:[0-9]+}/voice/switch", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.SetServerVoice))).Methods("PUT")
-	api.HandleFunc("/servers/{id:[0-9]+}/bedrock", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gates.RequireLocalGateway(gatewayHandler.GetServerBedrock)))).Methods("GET")
-	api.HandleFunc("/servers/{id:[0-9]+}/bedrock/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gates.RequireLocalGateway(gatewayHandler.SetRouteEdition)))).Methods("PUT")
-	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gates.RequireLocalGateway(gatewayHandler.ListVoicePermissions)))).Methods("GET")
-	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gates.RequireLocalGateway(gatewayHandler.SetVoicePermission)))).Methods("PUT")
-	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gates.RequireLocalGateway(gatewayHandler.DeleteVoicePermission)))).Methods("DELETE")
+	api.HandleFunc("/servers/{id:[0-9]+}/bedrock", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gatewayHandler.GetServerBedrock))).Methods("GET")
+	api.HandleFunc("/servers/{id:[0-9]+}/bedrock/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.SetRouteEdition))).Methods("PUT")
+	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayHandler.ListVoicePermissions))).Methods("GET")
+	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayHandler.SetVoicePermission))).Methods("PUT")
+	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.write")(gatewayHandler.DeleteVoicePermission))).Methods("DELETE")
 	// Extra ports, direct routing only (the handlers refuse the gateway mode
 	// with a sentence; DELETE is never refused, taking a port away must work).
 	api.HandleFunc("/servers/{id:[0-9]+}/ports", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(serverHandler.GetServerPorts))).Methods("GET")
@@ -2058,6 +2058,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/proxy-protocol", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.SetRouteProxyProtocol))))).Methods("PATCH")
 	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/voice", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.SetRouteVoice))))).Methods("PUT")
 	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/bedrock", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.SetRouteBedrock))))).Methods("PUT")
+	// A GET that needs gateway.write: the answer is a credential, and a read-only
+	// key is what a customer hands a dashboard.
+	api.HandleFunc("/external/gateway/routes/{domain:[^/]+}/floodgate-key", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.GetRouteFloodgateKey))))).Methods("GET")
 	api.HandleFunc("/external/gateway/custom-domains", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.ListCustomDomains))))).Methods("GET")
 	api.HandleFunc("/external/gateway/custom-domains", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.AddCustomDomain))))).Methods("POST")
 	api.HandleFunc("/external/gateway/custom-domains/{domain:[^/]+}", apiKeysHandler.APIKeyOwnerRoute("gateway.write")(keyLimiter.Limit(guard.KeyClassWrite, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.DeleteCustomDomain))))).Methods("DELETE")
@@ -2067,6 +2070,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	api.HandleFunc("/external/gateway/account", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.GetAccount))))).Methods("GET")
 	api.HandleFunc("/external/gateway/check-domain", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.CheckDomain))))).Methods("GET")
 	api.HandleFunc("/external/gateway/usage", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.GetUsage))))).Methods("GET")
+	api.HandleFunc("/external/gateway/players", apiKeysHandler.APIKeyOwnerRoute("gateway.read")(keyLimiter.Limit(guard.KeyClassRead, apiKeysHandler.ExternalOwnerRoute(gates.RequireLocalGateway(extGatewayHandler.GetPlayers))))).Methods("GET")
 	// Managed gateway: the customer Core's beam ticket keys and the relays its
 	// beam config names. Register and revoke share the mint class: a key is a
 	// credential, and churning them is what the 10/hour budget exists to stop.

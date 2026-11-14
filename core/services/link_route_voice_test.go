@@ -15,6 +15,30 @@ type routeVoiceFakeStore struct {
 	routes  []store.LinkRouteVoice
 	deleted []string
 	allowed *bool
+	// managed: the owner holds the user "*" edge traffic row; managedErr fails
+	// that read.
+	managed    bool
+	managedErr error
+	// role is the owner's role row (role:3), global the voice setting.
+	role   *bool
+	global string
+}
+
+func (f *routeVoiceFakeStore) GetSetting(key string) (string, error) {
+	if key == VoiceChatSettingKey {
+		return f.global, nil
+	}
+	return "", nil
+}
+
+func (f *routeVoiceFakeStore) GetTrafficLimit(scope, region, kind string) (*models.TrafficLimit, error) {
+	if f.managedErr != nil {
+		return nil, f.managedErr
+	}
+	if f.managed && region == TrafficRegionAny && kind == TrafficKindEdge && strings.HasPrefix(scope, "user:") {
+		return &models.TrafficLimit{Region: region, Kind: kind}, nil
+	}
+	return nil, nil
 }
 
 func (f *routeVoiceFakeStore) ListLinkRouteVoice() ([]store.LinkRouteVoice, error) {
@@ -44,10 +68,17 @@ func (f *routeVoiceFakeStore) GetVoicePermission(scope string) (*bool, error) {
 	if strings.HasPrefix(scope, "user:") {
 		return f.allowed, nil
 	}
+	if scope == "role:3" {
+		return f.role, nil
+	}
 	return nil, nil
 }
 
 func (f *routeVoiceFakeStore) GetUserPanelAuthz(string) (*int, store.CapOverrides, error) {
+	if f.role != nil {
+		id := 3
+		return &id, store.CapOverrides{}, nil
+	}
 	return nil, store.CapOverrides{}, nil
 }
 

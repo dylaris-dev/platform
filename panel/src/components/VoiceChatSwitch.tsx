@@ -6,7 +6,9 @@ import Switch from '@/components/ui/Switch';
 import CopyText from '@/components/ui/CopyText';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { getServerVoice, setServerVoice, serverPower, type ServerVoice } from '@/lib/api';
-import { showVoiceSwitch, voiceAddress, voiceErrorMessage } from '@/lib/voiceChat';
+import { showVoiceSwitch, voiceAddress, voiceErrorMessage, voiceOwnDomainBlocked } from '@/lib/voiceChat';
+import { refusalText } from '@/lib/gatewayProvider';
+import { useAppData } from '@/lib/AppDataContext';
 
 const MOD_LABEL: Record<string, string> = { svc: 'Simple Voice Chat', plasmo: 'Plasmo Voice' };
 
@@ -19,6 +21,8 @@ const MOD_LABEL: Record<string, string> = { svc: 'Simple Voice Chat', plasmo: 'P
  * offered one; declining keeps the note on screen.
  */
 export default function VoiceChatSwitch({ serverId }: { serverId: number }) {
+    const { gatewayProvider } = useAppData();
+    const managed = gatewayProvider === 'remote';
     const [voice, setVoice] = useState<ServerVoice | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
@@ -70,7 +74,11 @@ export default function VoiceChatSwitch({ serverId }: { serverId: number }) {
             // refusals carry a code with their own sentence.
             const res = await setServerVoice(serverId, next);
             if (res?.success === false || !res?.voice) {
-                setError(voiceErrorMessage(res?.code, res?.message || res?.error || 'Voice chat could not be changed.'));
+                // On the managed gateway Core's sentence is written for it (the
+                // provider's domains, its relay); the local table would not be.
+                setError(managed
+                    ? refusalText(res, 'Voice chat could not be changed.')
+                    : voiceErrorMessage(res?.code, res?.message || res?.error || 'Voice chat could not be changed.'));
                 return;
             }
             setVoice(res.voice);
@@ -85,6 +93,9 @@ export default function VoiceChatSwitch({ serverId }: { serverId: number }) {
         if (restart) await offerRestart();
     };
 
+    // Every address of this server is on an own domain: say so up front, not as a refusal after a click.
+    const ownDomainNote = voiceOwnDomainBlocked(managed, voice);
+
     return (
         <div className="bg-(--base-02) rounded-md border border-(--base-03) px-3 py-2.5">
             <div className="flex items-center gap-3 justify-between">
@@ -93,17 +104,26 @@ export default function VoiceChatSwitch({ serverId }: { serverId: number }) {
                     <div className="text-xs text-(--base-06) mt-0.5">
                         Gives Simple Voice Chat or Plasmo Voice a public address through the gateway. The mod must be installed.
                     </div>
+                    {managed && (
+                        <div className="text-xs text-(--base-06) mt-1">
+                            Voice chat runs through the managed gateway&apos;s relay. It needs an address on the gateway
+                            provider&apos;s domain, not on an own domain, and a server has one voice address. Restart the
+                            server after switching it on.
+                            {!voice.enabled && " If it went off on its own, the managed gateway's side changed: switch it on again, then restart."}
+                        </div>
+                    )}
                 </div>
                 <span className="flex items-center gap-2 shrink-0" aria-busy={busy}>
                     {busy && <Loader2 size={14} className="animate-spin text-(--base-06)" aria-hidden="true" />}
                     <Switch
                         checked={voice.enabled}
                         onChange={toggle}
-                        disabled={busy}
+                        disabled={busy || !!ownDomainNote}
                         ariaLabel="Voice chat"
                     />
                 </span>
             </div>
+            {ownDomainNote && <p className="text-xs text-(--warning-light) mt-2">{ownDomainNote}</p>}
             {voice.enabled && voice.host && voice.port > 0 && (
                 <div className="flex flex-wrap items-center gap-2 mt-2">
                     <span className="mono-label">Voice address</span>

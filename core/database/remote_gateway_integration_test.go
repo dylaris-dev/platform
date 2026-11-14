@@ -104,7 +104,7 @@ func TestIntegrationRemoteRoutesRoundTrip(t *testing.T) {
 		if got[0].UpdatedAt.IsZero() {
 			t.Fatal("updated_at not read")
 		}
-		got[0].UpdatedAt = time.Time{}
+		got[0] = noStamp(got[0])
 	}
 	if err != nil || len(got) != 1 || got[0] != r {
 		t.Fatalf("ListRemoteRoutesByServer = %+v, %v", got, err)
@@ -383,6 +383,7 @@ func TestIntegrationRemoteRouteClaim(t *testing.T) {
 
 func noStamp(r store.RemoteRoute) store.RemoteRoute {
 	r.UpdatedAt = time.Time{}
+	r.Age, r.AgeKnown = 0, false
 	return r
 }
 

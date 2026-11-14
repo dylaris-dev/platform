@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,8 @@ type bedrockSwitchStore struct {
 	key      []byte
 	eds      map[string]store.RouteEdition
 	audience string
+	// settingErr fails the read of the Bedrock setting itself.
+	settingErr error
 }
 
 func (f *bedrockSwitchStore) EnableBedrock(_ int, k []byte) error {
@@ -62,7 +65,7 @@ func (f *bedrockSwitchStore) ListLinkRouteEditions() ([]store.LinkRouteEdition, 
 }
 func (f *bedrockSwitchStore) GetSetting(k string) (string, error) {
 	if k == services.BedrockSettingKey {
-		return f.audience, nil
+		return f.audience, f.settingErr
 	}
 	return f.voiceSwitchStore.GetSetting(k)
 }
@@ -183,6 +186,20 @@ func TestRouteEditionWhileSwitchedOff(t *testing.T) {
 	}
 	if rec, _ := bedrockCall(e, http.MethodPut, edition(true, false), false); rec.Code != http.StatusOK {
 		t.Fatalf("back to Java while off: %d", rec.Code)
+	}
+}
+
+// A Bedrock setting that cannot be read is a server error, never the
+// "Bedrock is turned off" refusal, and it allows nothing.
+func TestRouteEditionSettingReadErrorIsAServerError(t *testing.T) {
+	e, bs := newBedrockSwitch(t)
+	bs.settingErr = errors.New("pq: connection reset by peer")
+	rec, _ := bedrockCall(e, http.MethodPut, edition(true, true), false)
+	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "bedrock_disabled") {
+		t.Fatalf("%d %s, want 500 and no bedrock_disabled", rec.Code, rec.Body.String())
+	}
+	if len(bs.eds) != 0 {
+		t.Fatalf("a read error added Bedrock: %v", bs.eds)
 	}
 }
 

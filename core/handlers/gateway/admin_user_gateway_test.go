@@ -218,6 +218,7 @@ type adminGwView struct {
 	} `json:"usage"`
 	BeamKeys []adminGatewayBeamKey `json:"beamKeys"`
 	APIKeys  []adminGatewayAPIKey  `json:"apiKeys"`
+	Players  adminGatewayPlayers   `json:"players"`
 }
 
 func TestAdminUserGatewayShowsOneOwner(t *testing.T) {
@@ -286,6 +287,83 @@ func TestAdminUserGatewayShowsOneOwner(t *testing.T) {
 	}
 }
 
+// The daily peaks of the asked owner only: the windows as on the external
+// API, and the days of the last 30 that have a row, newest first.
+func TestAdminUserGatewayShowsPeaks(t *testing.T) {
+	h, st, _ := newAdminGwFixture(t, 1)
+	seedPeaks(st.extStore, gwOwnerA, gwOwnerB)
+	type window struct{ Java, Bedrock, Total int }
+	var v struct {
+		Peaks struct {
+			Today      window `json:"today"`
+			Day        string `json:"day"`
+			Last30Days window `json:"last30Days"`
+			Days       []struct {
+				Day                  string
+				Java, Bedrock, Total int
+			} `json:"days"`
+		} `json:"peaks"`
+	}
+	// Topology only: the peaks are not a billing block.
+	rec := adminUserGatewayAs(h, gwOwnerA, "topology.read")
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &v) != nil {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	if v.Peaks.Day != utcToday().Format("2006-01-02") {
+		t.Errorf("peaks.day = %q, want the server's UTC day", v.Peaks.Day)
+	}
+	if v.Peaks.Today != (window{3, 1, 4}) || v.Peaks.Last30Days != (window{9, 8, 10}) {
+		t.Errorf("windows %+v", v.Peaks)
+	}
+	today := utcToday()
+	want := []string{today.Format("2006-01-02"), today.AddDate(0, 0, -5).Format("2006-01-02"), today.AddDate(0, 0, -29).Format("2006-01-02")}
+	if len(v.Peaks.Days) != len(want) {
+		t.Fatalf("days %+v, want %v", v.Peaks.Days, want)
+	}
+	for i, d := range v.Peaks.Days {
+		if d.Day != want[i] {
+			t.Errorf("day %d = %s, want %s", i, d.Day, want[i])
+		}
+	}
+	if v.Peaks.Days[1].Java != 9 || v.Peaks.Days[1].Total != 10 {
+		t.Errorf("day -5 = %+v", v.Peaks.Days[1])
+	}
+	if strings.Contains(rec.Body.String(), `"total":140`) {
+		t.Errorf("owner B's peak appears in A's view: %s", rec.Body.String())
+	}
+	// Without rows: zero windows and an empty list, never null.
+	h2, _, _ := newAdminGwFixture(t, 1)
+	if body := adminUserGateway(h2, gwOwnerA).Body.String(); !strings.Contains(body, `"days":[]`) {
+		t.Errorf("no rows: %s", body)
+	}
+}
+
+// peaksBrokenStore fails only the peaks read.
+type peaksBrokenStore struct{ *adminGwStore }
+
+func (peaksBrokenStore) ListPlayerPeaks(string, time.Time) ([]store.PlayerPeak, error) {
+	return nil, errors.New("relation gateway_player_peaks is locked")
+}
+
+// A broken peaks table costs the view its peaks block, never the kits,
+// routes and domains an admin opened it for.
+func TestAdminUserGatewayPeaksErrorKeepsTheView(t *testing.T) {
+	h, st, _ := newAdminGwFixture(t, 1)
+	h.d.Store = peaksBrokenStore{st}
+	rec := adminUserGateway(h, gwOwnerA)
+	var v adminGwView
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &v) != nil {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `"peaks"`) || strings.Contains(body, "locked") {
+		t.Errorf("the peaks block must be absent and the error unsaid: %s", body)
+	}
+	if len(v.Kits) != 1 || len(v.Routes) != 2 || len(v.CustomDomains) != 1 {
+		t.Errorf("the rest of the view is missing: kits %d routes %d domains %d", len(v.Kits), len(v.Routes), len(v.CustomDomains))
+	}
+}
+
 // Review Focus 5: searched in the raw bytes, so a field added later under any
 // name is caught too.
 func TestAdminUserGatewayCarriesNoSecret(t *testing.T) {
@@ -307,21 +385,81 @@ func TestAdminUserGatewayCarriesNoSecret(t *testing.T) {
 }
 
 // Online state and caps for every kit cost one pipelined trip, whatever the
-// kit count.
+// kit count, and the player counts one read of the edge streams, whatever the
+// route count: with one edge that is the registry scan, its record and its
+// newest sample.
 func TestAdminUserGatewayOneRedisRoundTrip(t *testing.T) {
 	for _, n := range []int{1, 5, 20} {
-		h, _, rdb := newAdminGwFixture(t, n)
+		h, st, rdb := newAdminGwFixture(t, n)
+		for i := 0; i < n; i++ {
+			st.routes = append(st.routes, store.CoreLinkRoute{Domain: fmt.Sprintf("trip%02d.example.com", i), OwnerID: gwOwnerA, TargetHost: "10.0.0.1", TargetPort: 25565})
+		}
+		seedPlayersSample(t, rdb, "e1", `{"players_by_route":{"trip00.example.com":{"j":1}}}`, time.Second)
 		hook := &roundTrips{}
 		rdb.AddHook(hook)
 		rec := adminUserGateway(h, gwOwnerA)
 		var v adminGwView
 		_ = json.Unmarshal(rec.Body.Bytes(), &v)
-		if rec.Code != 200 || len(v.Kits) != n {
+		if rec.Code != 200 || len(v.Kits) != n || len(v.Routes) != n+2 {
 			t.Fatalf("%d kits: %d %s", n, rec.Code, rec.Body.String())
 		}
-		if hook.n != 1 {
-			t.Errorf("%d kits: redis round trips = %d, want 1", n, hook.n)
+		if v.Players.Java != 1 {
+			t.Fatalf("%d kits: players %+v, want the seeded one", n, v.Players)
 		}
+		if hook.n != 1+3 {
+			t.Errorf("%d kits and routes: redis round trips = %d, want 4", n, hook.n)
+		}
+	}
+}
+
+// Review Focus (Task 3): each route carries its own address's count, the
+// total is the sum of the asked owner's addresses only, and a suspended route
+// shows none.
+func TestAdminUserGatewayShowsPlayersPerAddress(t *testing.T) {
+	h, _, rdb := newAdminGwFixture(t, 1)
+	seedPlayersSample(t, rdb, "e1", `{"players_by_route":{"a.example.com":{"j":2,"b":1},"a-susp.example.com":{"j":5},"b-marker.example.com":{"j":7,"b":7}}}`, time.Second)
+	seedPlayersSample(t, rdb, "e2", `{"players_by_route":{"a.example.com":{"j":1}}}`, time.Second)
+
+	cases := []struct {
+		owner      string
+		perRoute   map[string]*adminGatewayPlayers
+		java, bedr int
+	}{
+		{gwOwnerA, map[string]*adminGatewayPlayers{"a.example.com": {Java: 3, Bedrock: 1}, "a-susp.example.com": nil}, 3, 1},
+		{gwOwnerB, map[string]*adminGatewayPlayers{"b-marker.example.com": {Java: 7, Bedrock: 7}}, 7, 7},
+	}
+	for _, c := range cases {
+		rec := adminUserGateway(h, c.owner)
+		var v adminGwView
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &v) != nil {
+			t.Fatalf("%s: %d %s", c.owner, rec.Code, rec.Body.String())
+		}
+		if len(v.Routes) != len(c.perRoute) {
+			t.Fatalf("%s: routes %+v", c.owner, v.Routes)
+		}
+		sumJ, sumB := 0, 0
+		for _, r := range v.Routes {
+			want, ok := c.perRoute[r.Domain]
+			if !ok {
+				t.Fatalf("%s: unexpected route %s", c.owner, r.Domain)
+			}
+			if (want == nil) != (r.Players == nil) || (want != nil && *want != *r.Players) {
+				t.Errorf("%s %s: players %+v, want %+v", c.owner, r.Domain, r.Players, want)
+			}
+			if r.Players != nil {
+				sumJ += r.Players.Java
+				sumB += r.Players.Bedrock
+			}
+		}
+		if v.Players.Java != c.java || v.Players.Bedrock != c.bedr || v.Players.Java != sumJ || v.Players.Bedrock != sumB {
+			t.Errorf("%s: total %+v, want %d/%d and the sum of its rows", c.owner, v.Players, c.java, c.bedr)
+		}
+	}
+	// Nobody online: the total is there and zero, no row carries a count.
+	h2, _, _ := newAdminGwFixture(t, 1)
+	body := adminUserGateway(h2, gwOwnerA).Body.String()
+	if !strings.Contains(body, `"players":{"java":0,"bedrock":0}`) || strings.Count(body, `"players"`) != 1 {
+		t.Errorf("no players: %s", body)
 	}
 }
 

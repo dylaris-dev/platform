@@ -114,6 +114,35 @@ func TestFakeMatchesProviderShapes(t *testing.T) {
 	json.NewDecoder(tresp.Body).Decode(&txt)
 	requireKeys(t, "custom-domains.txt-token", txt, K["custom-domains.txt-token"])
 
+	put := func(path, body string) map[string]interface{} {
+		t.Helper()
+		req, _ := http.NewRequest("PUT", f.URL()+apiPrefix+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+f.Key())
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&out)
+		return out
+	}
+	voice := put("/routes/play.example.com/voice", `{"enabled":true}`)
+	requireKeys(t, "routes.voice", voice, K["routes.voice"])
+	requireKeys(t, "routes.voice.voice", voice["voice"].(map[string]interface{}), K["routes.voice.voice"])
+	bedrock := put("/routes/play.example.com/bedrock", `{"java":true,"bedrock":true}`)
+	requireKeys(t, "routes.bedrock", bedrock, K["routes.bedrock"])
+	requireKeys(t, "routes.bedrock.bedrock", bedrock["bedrock"].(map[string]interface{}), K["routes.bedrock.bedrock"])
+	requireKeys(t, "routes.floodgate-key", fakeGet(t, f, "/routes/play.example.com/floodgate-key"), K["routes.floodgate-key"])
+	f.SetPlayers("play.example.com", 1, 1)
+	players := fakeGet(t, f, "/players")
+	requireKeys(t, "players", players, K["players"])
+	requireKeys(t, "players.item", first(t, players, "items"), K["players.item"])
+	peak := players["peak"].(map[string]interface{})
+	requireKeys(t, "players.peak", peak, K["players.peak"])
+	requireKeys(t, "players.peak.window", peak["today"].(map[string]interface{}), K["players.peak.window"])
+	requireKeys(t, "players.peak.window", peak["last30Days"].(map[string]interface{}), K["players.peak.window"])
+
 	f.SetLinkLimit(5)
 	req, _ = http.NewRequest("POST", f.URL()+apiPrefix+"/link-kits/"+m.LinkID+"/retire", nil)
 	req.Header.Set("Authorization", "Bearer "+f.Key())

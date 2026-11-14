@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.14.2
+
+### Features
+- With the managed gateway, servers get voice chat and Bedrock (one Bedrock address per server) in the
+  Routes & Domains dialog; restart the server after switching either on. Not on own domains yet. `core`
+- With the managed gateway, the sidebar shows how many players are on each server, and its tooltip
+  splits them into Java and Bedrock. `core`
+- With your own gateway, the admin user dialog's "Managed gateway" tab shows a customer's players now
+  and a daily peak for the last 30 days, sampled once a minute and therefore "at least". `core`
+
+### Breaking
+- Accounts with a managed gateway plan get voice chat and Bedrock through the gateway API whatever the
+  global voice switch says, and Bedrock "Off" no longer pauses them; a per-user voice deny still refuses. `core`
+
+### Security
+- Nothing.
+
+### Fixes
+- Turning on voice chat or Bedrock for a route-only address while the database cannot be read now
+  answers a server error to retry, instead of "not found" or "not allowed". `core`
+
 ## 2026.11.14
 
 ### Features

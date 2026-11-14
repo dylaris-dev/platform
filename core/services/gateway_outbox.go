@@ -40,8 +40,11 @@ const (
 // leaves the rows: a mode flip never sends or deletes anything. rg supplies the
 // provider's own-domain claims to the sweep (cached) and has that cache dropped
 // when a claim release lands; nil skips own-domain rows in the sweep.
-func StartGatewayOutbox(ctx context.Context, st store.Store, api func() *remotegw.Client, el leader.Election, mode func() (remote, known bool), rg *RemoteGateway) {
-	l := &outboxLoop{st: st, api: api, el: el, mode: mode, now: time.Now, rg: rg}
+// publishKey puts a server's Floodgate key where its node reads it, reporting
+// whether the node's copy was missing or different; the sweep republishes a
+// key it has confirmed with the provider (nil: not published).
+func StartGatewayOutbox(ctx context.Context, st store.Store, api func() *remotegw.Client, el leader.Election, mode func() (remote, known bool), rg *RemoteGateway, publishKey func(ctx context.Context, uuid string, key []byte) (changed bool, err error)) {
+	l := &outboxLoop{st: st, api: api, el: el, mode: mode, now: time.Now, rg: rg, publishKey: publishKey}
 	go func() {
 		t := time.NewTicker(outboxTick)
 		defer t.Stop()
@@ -63,6 +66,8 @@ type outboxLoop struct {
 	mode func() (remote, known bool)
 	now  func() time.Time
 	rg   *RemoteGateway
+	// publishKey republishes a Floodgate key the sweep confirmed; may be nil.
+	publishKey func(ctx context.Context, uuid string, key []byte) (changed bool, err error)
 	// Touched only by the loop goroutine.
 	nextSweep time.Time
 	// pauseUntil: the provider rejected the key or rate-limited us; nothing is
@@ -104,7 +109,7 @@ func (l *outboxLoop) tick(ctx context.Context) {
 	} else if n > 0 {
 		log.Printf("[gateway-outbox] forgot %d link kit(s) the provider has removed", n)
 	}
-	adopted, repaired, foreign, err := reconcileRemoteRoutes(ctx, l.st, c, l.rg)
+	adopted, repaired, foreign, err := reconcileRemoteRoutes(ctx, l.st, c, l.rg, l.publishKey)
 	if err != nil {
 		log.Printf("[gateway-outbox] reconcile: %v", err)
 	} else if adopted+repaired > 0 {
@@ -184,7 +189,10 @@ func releaseOrphanProviderClaims(ctx context.Context, st store.Store, rg *Remote
 // not be read (or no rg) leaves own-domain rows alone for this pass. An
 // ownerless server (the operator's own) needs no local claim; the provider's
 // claim still applies.
-func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Client, rg *RemoteGateway) (adopted, repaired, foreign int, err error) {
+//
+// A row present on the provider also has its voice and Bedrock compared with
+// the provider's (reconcileRouteExtras), within one re-assert budget per pass.
+func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Client, rg *RemoteGateway, publishKey func(ctx context.Context, uuid string, key []byte) (changed bool, err error)) (adopted, repaired, foreign int, err error) {
 	// The rows first: with the provider list read first, a route another
 	// leader's drain deleted (provider route, then row) in between was adopted
 	// back from the stale list. The repair below re-reads its row for the
@@ -231,8 +239,11 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 	var claims map[string]remotegw.CustomDomain
 	var claimsErr error
 	claimsRead, claimsFresh := false, false
+	extrasBudget := routeExtrasPerSweep
+	var extrasLastSpent string
+	defer func() { advanceExtrasCursor(extrasBudget, extrasLastSpent) }()
 	hasRow := make(map[string]bool, len(local))
-	for _, r := range local {
+	for _, r := range orderForExtras(st, local, serverByUUID) {
 		hasRow[r.Domain] = true
 		gone := false
 		srv, listed := serverByUUID[r.ServerUUID]
@@ -274,7 +285,7 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 		// Claimed or written moments ago: its create may still be on its way
 		// to the provider, and a put from here (repair or drift move) could
 		// race the create's own undo and leave a route nothing here knows.
-		if !r.UpdatedAt.IsZero() && time.Since(r.UpdatedAt) < 2*remoteCallTimeout {
+		if writtenMomentsAgo(r) {
 			continue
 		}
 		if r.CustomDomain {
@@ -334,6 +345,13 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 			if listed {
 				if err := queueRouteDrift(st, r, p, srv, kitByNode); err != nil {
 					return adopted, repaired, foreign, err
+				}
+				before := extrasBudget
+				if err := reconcileRouteExtras(ctx, st, c, publishKey, r, p, srv, &extrasBudget); err != nil {
+					log.Printf("[gateway-outbox] voice/Bedrock of %s left for the next sweep: %v", r.Domain, err)
+				}
+				if extrasBudget < before {
+					extrasLastSpent = r.Domain
 				}
 			}
 			continue
@@ -674,7 +692,7 @@ func drainOutboxOnce(ctx context.Context, st store.Store, c *remotegw.Client, el
 			deferOutbox(st, it, now)
 			continue
 		}
-		if it.Op == OutboxOpMove || it.Op == OutboxOpProxy {
+		if it.Op == OutboxOpMove || it.Op == OutboxOpProxy || it.Op == OutboxOpVoice || it.Op == OutboxOpBedrock {
 			// A newer delete makes the change pointless; finishing it lets the
 			// delete through instead of waiting behind a refusal.
 			if deleting, err := st.HasOpenOutbox(it.Domain, OutboxOpDelete); err != nil {
@@ -699,6 +717,9 @@ func drainOutboxOnce(ctx context.Context, st store.Store, c *remotegw.Client, el
 			finishOutbox(st, it)
 			if it.Op == OutboxOpDeleteCustomDomain && rg != nil {
 				rg.domains.drop()
+			}
+			if (it.Op == OutboxOpVoice || it.Op == OutboxOpBedrock) && rg != nil {
+				rg.routes.drop()
 			}
 			done++
 			continue
@@ -836,6 +857,40 @@ func applyOutbox(ctx context.Context, st store.Store, c *remotegw.Client, it sto
 			return err
 		}
 		return updateRemoteRoute(st, it.Domain, func(r *store.RemoteRoute) { r.ProxyProtocol = p.Enabled })
+	case OutboxOpVoice:
+		var p OutboxVoice
+		if err := json.Unmarshal(it.Payload, &p); err != nil {
+			return fmt.Errorf("bad voice payload: %w", err)
+		}
+		// An off queued for a row that has voice again is stale: every user
+		// off clears the column before it queues, and every on is refused
+		// while an item is open. Sending it would take away what the user
+		// just turned on (a sweep's off raced by an on).
+		if !p.Enabled {
+			if stale, err := rowHas(st, it.Domain, func(r *store.RemoteRoute) bool { return r.VoicePort != nil }); err != nil || stale {
+				return err
+			}
+		}
+		// not_found with the provider's code: the address is gone, and with
+		// it the voice port. A code-less 404 is not that answer.
+		if _, err := c.SetVoice(cctx, it.Domain, p.Enabled, p.TargetPort); err != nil && !remotegw.IsCode(err, "not_found") {
+			return err
+		}
+		return nil
+	case OutboxOpBedrock:
+		var p OutboxBedrock
+		if err := json.Unmarshal(it.Payload, &p); err != nil {
+			return fmt.Errorf("bad bedrock payload: %w", err)
+		}
+		if !p.Bedrock {
+			if stale, err := rowHas(st, it.Domain, func(r *store.RemoteRoute) bool { return r.Edition != "" }); err != nil || stale {
+				return err
+			}
+		}
+		if _, err := c.SetBedrock(cctx, it.Domain, p.Java, p.Bedrock); err != nil && !remotegw.IsCode(err, "not_found") {
+			return err
+		}
+		return nil
 	case OutboxOpRevokeKit:
 		// Already gone counts as done.
 		if err := c.RevokeKit(cctx, it.Domain); err != nil && !remotegw.IsCode(err, "link_not_found") && !remotegw.IsCode(err, "not_found") {
@@ -855,6 +910,17 @@ func applyOutbox(ctx context.Context, st store.Store, c *remotegw.Client, it sto
 	default:
 		return fmt.Errorf("unknown outbox op %q", it.Op)
 	}
+}
+
+// rowHas reports whether domain's row exists and has what has tests for; a
+// stale item it marks is finished without being sent, and says so.
+func rowHas(st store.Store, domain string, has func(*store.RemoteRoute) bool) (bool, error) {
+	r, err := st.GetRemoteRoute(domain)
+	if err != nil || r == nil || !has(r) {
+		return false, err
+	}
+	log.Printf("[gateway-outbox] queued off for %s not sent: the address has it on again", domain)
+	return true, nil
 }
 
 // updateRemoteRoute changes the local row; a row that is gone needs nothing.

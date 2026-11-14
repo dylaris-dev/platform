@@ -6,12 +6,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
@@ -113,9 +115,9 @@ func (h *ExternalGatewayHandler) RetireLinkKit(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// ListRoutes GET /api/external/gateway/routes - the caller's route-only addresses.
+// ListRoutes GET /api/external/gateway/routes - the caller's route-only addresses; voice_allowed, bedrock_allowed and bedrock_active answer for this caller as its enables would, an active managed gateway plan included.
 func (h *ExternalGatewayHandler) ListRoutes(w http.ResponseWriter, r *http.Request) {
-	externalGateway(h.gw.ListLinkRoutes)(w, r)
+	externalGateway(h.gw.ListLinkRoutes)(w, withManagedAPI(r, h.gw.d.Store, reqctx.ByonCallerID(r)))
 }
 
 // CreateRoute POST /api/external/gateway/routes - creates or retargets an address on one of the caller's links; a retiring link takes no route changes except removing an address or moving it to another link (409 kit_retiring).
@@ -136,14 +138,81 @@ func (h *ExternalGatewayHandler) SetRouteProxyProtocol(w http.ResponseWriter, r 
 	externalGateway(h.requireGateway(h.gw.SetLinkRouteProxyProtocol))(w, r)
 }
 
-// SetRouteVoice PUT /api/external/gateway/routes/{domain}/voice - body {"enabled": bool, "target_port": int}, voice chat relay.
+// SetRouteVoice PUT /api/external/gateway/routes/{domain}/voice - body {"enabled": bool, "target_port": int}, voice chat relay; an active managed gateway plan lifts the platform's global voice permission for its account (an explicit per-user deny and the other checks, such as a suspension or a retiring link, still refuse), any other account only where the platform's voice permissions allow (409 voice_not_allowed).
 func (h *ExternalGatewayHandler) SetRouteVoice(w http.ResponseWriter, r *http.Request) {
-	externalGateway(h.gw.SetLinkRouteVoice)(w, r)
+	externalGateway(h.gw.SetLinkRouteVoice)(w, withManagedAPI(r, h.gw.d.Store, reqctx.ByonCallerID(r)))
 }
 
-// SetRouteBedrock PUT /api/external/gateway/routes/{domain}/bedrock - body {"java": bool, "bedrock": bool}, the address's editions.
+// SetRouteBedrock PUT /api/external/gateway/routes/{domain}/bedrock - body {"java": bool, "bedrock": bool}, the address's editions; an active managed gateway plan lifts the platform's Bedrock audience setting for its account (the other checks, such as a suspension, a retiring link or no Bedrock entry in the region, still refuse), any other account only while the platform offers Bedrock to it (409 bedrock_disabled).
 func (h *ExternalGatewayHandler) SetRouteBedrock(w http.ResponseWriter, r *http.Request) {
-	externalGateway(h.gw.SetLinkRouteBedrock)(w, r)
+	externalGateway(h.gw.SetLinkRouteBedrock)(w, withManagedAPI(r, h.gw.d.Store, reqctx.ByonCallerID(r)))
+}
+
+// managedAPIKey marks a request as an external call of an account that holds
+// a managed gateway plan; the value is that owner's id.
+type managedAPIKey struct{}
+
+// noManagedPlanKey marks an external call whose owner's managed plan lookup
+// answered "none"; the value is that owner's id.
+type noManagedPlanKey struct{}
+
+// managedLookupKey marks a request whose managed plan lookup failed; the value
+// is a managedLookupFailure.
+type managedLookupKey struct{}
+
+type managedLookupFailure struct {
+	ownerID string
+	err     error
+}
+
+// withManagedAPI marks r for ownerID when the account holds a managed gateway
+// plan (owner decision 2026-11-14: such an account may always enable voice and
+// Bedrock on the external API). Only SetRouteVoice, SetRouteBedrock and
+// ListRoutes (whose flags must say what those allow) call it, so the panel
+// routes never carry the mark. A failed lookup leaves r unmarked,
+// so it grants nothing; where the global rules would then refuse, the handler
+// answers a server error instead (managedLookupErr): that refusal would be a
+// guess against the customer.
+func withManagedAPI(r *http.Request, st store.Store, ownerID string) *http.Request {
+	if ownerID == "" {
+		return r
+	}
+	managed, err := services.HasManagedProduct(st, ownerID)
+	if err != nil {
+		log.Printf("external gateway %s: managed plan lookup for %s: %v", r.URL.Path, ownerID, err)
+		return r.WithContext(context.WithValue(r.Context(), managedLookupKey{}, managedLookupFailure{ownerID, err}))
+	}
+	if !managed {
+		return r.WithContext(context.WithValue(r.Context(), noManagedPlanKey{}, ownerID))
+	}
+	return r.WithContext(context.WithValue(r.Context(), managedAPIKey{}, ownerID))
+}
+
+// managedAPICall reports whether r was marked by withManagedAPI for ownerID,
+// the owner of what the handler is about to change.
+func managedAPICall(r *http.Request, ownerID string) bool {
+	id, _ := r.Context().Value(managedAPIKey{}).(string)
+	return id != "" && id == ownerID
+}
+
+// planNeededRefusal is msg, a refusal by the global rules, plus the sentence
+// that a managed gateway plan would lift it, for an external call whose owner
+// holds none (after a plan ended the refusal says why). Otherwise msg as is.
+func planNeededRefusal(r *http.Request, ownerID, msg string) string {
+	if id, _ := r.Context().Value(noManagedPlanKey{}).(string); id != "" && id == ownerID {
+		return msg + " " + gate.ManagedPlanNeededText
+	}
+	return msg
+}
+
+// managedLookupErr is the error of withManagedAPI's failed lookup for ownerID;
+// nil when the lookup answered or was never made (the panel path).
+func managedLookupErr(r *http.Request, ownerID string) error {
+	f, ok := r.Context().Value(managedLookupKey{}).(managedLookupFailure)
+	if !ok || ownerID == "" || f.ownerID != ownerID {
+		return nil
+	}
+	return fmt.Errorf("managed plan lookup: %w", f.err)
 }
 
 // ListCustomDomains GET /api/external/gateway/custom-domains - the caller's own domain claims and their TXT records.

@@ -3,7 +3,8 @@
 #
 # Two platforms on one Docker host:
 #   PROVIDER  p-core (+ p-db, p-redis), the gateway hub (+ hub-db), one edge
-#             that spawns its host-networked splice on :25565.
+#             that spawns its host-networked splice on :25565, a voice relay
+#             (voice-net + voice), Geyser and the Bedrock bridge (stage 7b-2).
 #   CUSTOMER  c-core (+ c-db, c-redis) with its panel, node1 (node2 and node3 under
 #             their profiles). Each node has its own server network, the way
 #             two machines would; the managed link kit joins that network.
@@ -27,7 +28,7 @@
 # -----------------------------------------------------------------------------
 
 x-platform-core: &platform-core
-  image: e2e7c/platform-core:${E2E_PLATFORM_TAG:-ed9f3e26}
+  image: ${E2E_IMG:-e2e7c}/platform-core:${E2E_PLATFORM_TAG:-ed9f3e26}
   pull_policy: never
   restart: unless-stopped
   stop_grace_period: 90s
@@ -123,7 +124,7 @@ services:
     networks: [prov_net]
 
   hub:
-    image: e2e7c/gateway-hub:${E2E_GATEWAY_TAG:-cd910633}
+    image: ${E2E_IMG:-e2e7c}/gateway-hub:${E2E_GATEWAY_TAG:-cd910633}
     pull_policy: never
     restart: unless-stopped
     depends_on:
@@ -146,32 +147,127 @@ services:
     networks: [prov_net]
 
   edge:
-    image: e2e7c/gateway-edge:${E2E_GATEWAY_TAG:-cd910633}
+    # E2E_EDGE_IMAGE swaps only the edge (version matrix: an older edge with
+    # the new Cores); the splice below stays on its own pinned tag.
+    image: ${E2E_EDGE_IMAGE:-${E2E_IMG:-e2e7c}/gateway-edge:${E2E_GATEWAY_TAG:-cd910633}}
     pull_policy: never
     restart: unless-stopped
     depends_on: [hub, p-redis]
     environment:
       EDGE_NAME: e2e-edge-01
       EDGE_REGION: e2e
+      # The region's address pattern: Core picks a voice relay of the region
+      # whose edge wildcard matches the address (services.VoiceRegionFor).
+      EDGE_WILDCARD: "*.play.e2e.test"
+      # Bedrock bridge -> edge (host-networked bridge, loopback-published).
+      BEDROCK_LISTEN_ADDR: ":25569"
       REDIS_ADDR: "p-redis:6379"
       HUB_INTERNAL_URL: "http://hub:25530"
       CLUSTER_SECRET: "${P_CLUSTER_SECRET:?}"
       # Otherwise the edge probes for the PC's public IP.
       ADVERTISE_IP: "${HOST_IP:?}"
-      # The splice is built from the same exported commit as this edge.
-      SPLICE_IMAGE: "e2e7c/gateway-edge:${E2E_GATEWAY_TAG:-cd910633}"
+      # Pinned apart from the edge image, as in production: changing the edge
+      # image must not recreate the splice.
+      SPLICE_IMAGE: "${E2E_SPLICE_IMAGE:-${E2E_IMG:-e2e7c}/gateway-edge:${E2E_GATEWAY_TAG:-cd910633}}"
       NODE_HOSTNAME: e2e-host
       BANDWIDTH_MBIT: "1000"
       GOMEMLIMIT: 400MiB
     mem_limit: 512m
     ports:
       - "127.0.0.1:25566:25566"  # splice -> edge
+      - "127.0.0.1:25569:25569"  # bedrock bridge -> edge
       - "0.0.0.0:25560:25560"    # link tunnels (ADVERTISE_IP:25560)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - edge_data:/app/data
       - edge_state:/app/state
     networks: [prov_net]
+
+  # Voice relay for region e2e (gateway/docker-stack.voice.yml). Players and the
+  # links reach it at HOST_IP (uplink 25562, player ports from 26000; Core
+  # allocates from the bottom of 26000-26999, so a narrow range is enough).
+  # NOT host-networked as in production, on purpose: on one host a link in a
+  # Docker bridge reaches HOST_IP through its bridge, and a host-networked relay
+  # (unbound UDP socket) answers from the BRIDGE gateway address, which the link
+  # drops (it accepts frames only from the address it resolved, link/voice.go
+  # isEdge). Published ports go through conntrack, so answers come from HOST_IP.
+  # In production the relay has one public address and this does not arise.
+  # The relay believes it is host-networked (gateway/voice/main.go) and takes
+  # the Hub's loopback Redis answer, so its namespace (voice-net) forwards
+  # 127.0.0.1:6379 to p-redis. ${E2E_IMG}/nettools = alpine + socat, tcpdump,
+  # python3 (runbook, "Build").
+  voice-net:
+    image: ${E2E_IMG:-e2e7c}/nettools
+    pull_policy: never
+    restart: unless-stopped
+    depends_on: [p-redis]
+    command: ["socat", "TCP-LISTEN:6379,bind=127.0.0.1,fork,reuseaddr", "TCP:p-redis:6379"]
+    ports:
+      - "0.0.0.0:25562:25562/udp"
+      - "0.0.0.0:26000-26019:26000-26019/udp"
+    networks: [prov_net]
+
+  voice:
+    image: ${E2E_IMG:-e2e7c}/gateway-voice:${E2E_GATEWAY_TAG:-cd910633}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on: [hub, voice-net]
+    network_mode: "service:voice-net"
+    environment:
+      CLUSTER_SECRET: "${P_CLUSTER_SECRET:?}"
+      REDIS_ADDR: "127.0.0.1:6379"
+      HUB_INTERNAL_URL: "http://hub:25530"
+      VOICE_REGION: e2e
+      VOICE_ID: voice-e2e
+      ADVERTISE_IP: "${HOST_IP:?}"
+      VOICE_UPLINK_PORT: "25562"
+      VOICE_PORT_MIN: "26000"
+      VOICE_PORT_MAX: "26019"
+    volumes: [voice_state:/app/state]
+
+  # Bedrock Mode A for region e2e (gateway/docker-stack.bedrock.yml): Geyser
+  # (stock, NetherNet on 19132) -> bridge (edge image, MODE=bedrock-bridge,
+  # 127.0.0.1:25568) -> edge :25569. Both share a TEST-ONLY internal Floodgate
+  # key that the up script generates in E2E_RUN/bedrock. Geyser's config is the
+  # image's own with two lines changed by the up script (advertise HOST_IP, no
+  # public STUN lookup), so nothing reaches out to find a public address.
+  geyser:
+    image: ${E2E_IMG:-e2e7c}/gateway-geyser:${E2E_GATEWAY_TAG:-cd910633}
+    pull_policy: never
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
+    mem_limit: 1g
+    volumes:
+      - ${E2E_RUN:?}/bedrock/floodgate.key:/run/secrets/bedrock_floodgate_key:ro
+      - ${E2E_RUN:?}/bedrock/geyser-config.yml:/opt/geyser/config.yml:ro
+
+  bedrock-bridge:
+    image: ${E2E_EDGE_IMAGE:-${E2E_IMG:-e2e7c}/gateway-edge:${E2E_GATEWAY_TAG:-cd910633}}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on: [hub, p-redis, edge]
+    network_mode: host
+    environment:
+      MODE: bedrock-bridge
+      CLUSTER_SECRET: "${P_CLUSTER_SECRET:?}"
+      REDIS_ADDR: "127.0.0.1:6379"
+      HUB_INTERNAL_URL: "http://127.0.0.1:25530"
+      BEDROCK_ID: bedrock-e2e
+      BEDROCK_LISTEN: "127.0.0.1:25568"
+      BEDROCK_EDGE_ADDR: "127.0.0.1:25569"
+      BEDROCK_FLOODGATE_KEY_FILE: /run/secrets/bedrock_floodgate_key
+      EDGE_REGION: e2e
+    # The image healthcheck probes the edge's :25563, which this mode never opens.
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 25568 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    volumes:
+      - ${E2E_RUN:?}/bedrock/floodgate.key:/run/secrets/bedrock_floodgate_key:ro
+      - bedrock_bridge_state:/app/state
 
   # Test DNS for own domains: zone own.e2e.test from E2E_RUN/dns, reloaded every
   # 2 s, everything else forwarded. The drive script's dns-txt rewrites it.
@@ -288,7 +384,7 @@ services:
     networks: [cust_net, node1_dylaris_net, node2_dylaris_net, node3_dylaris_net, dns_net]
 
   c-node1:
-    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-ed9f3e26}
+    image: ${E2E_IMG:-e2e7c}/platform-node:${E2E_PLATFORM_TAG:-ed9f3e26}
     pull_policy: never
     restart: unless-stopped
     depends_on: [c-core]
@@ -312,7 +408,7 @@ services:
 
   c-node2:
     profiles: [node2]
-    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-ed9f3e26}
+    image: ${E2E_IMG:-e2e7c}/platform-node:${E2E_PLATFORM_TAG:-ed9f3e26}
     pull_policy: never
     restart: unless-stopped
     depends_on: [c-core]
@@ -334,7 +430,7 @@ services:
   # link is only minted once node 1's link is retiring).
   c-node3:
     profiles: [node3]
-    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-ed9f3e26}
+    image: ${E2E_IMG:-e2e7c}/platform-node:${E2E_PLATFORM_TAG:-ed9f3e26}
     pull_policy: never
     restart: unless-stopped
     depends_on: [c-core]
@@ -359,6 +455,8 @@ volumes:
   hub_db:
   edge_data:
   edge_state:
+  voice_state:
+  bedrock_bridge_state:
   c_db:
   c_redis:
   c_core_data:

@@ -6,6 +6,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"dylaris-core/services"
+	"dylaris-core/store"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 // BYON and route-only cannot be switched ON while the managed gateway is the
@@ -52,6 +58,55 @@ func TestRemoteModeRefusesTenancyFlags(t *testing.T) {
 			}
 			if got := st.kv[tt.key]; got != tt.written {
 				t.Fatalf("%s = %q after the request, want %q", tt.key, got, tt.written)
+			}
+		})
+	}
+}
+
+// editionsCountingStore counts the publishes a Bedrock audience save starts.
+type editionsCountingStore struct {
+	*gateFakeStore
+	publishes int
+}
+
+func (s *editionsCountingStore) ListRouteEditions(int) ([]store.RouteEdition, error) {
+	s.publishes++
+	return nil, nil
+}
+func (s *editionsCountingStore) ListLinkRouteEditions() ([]store.LinkRouteEdition, error) {
+	return nil, nil
+}
+func (s *editionsCountingStore) ListBedrockServerRefs() ([]store.BedrockServerRef, error) {
+	return nil, nil
+}
+
+// Final review M-6: on the managed gateway the provider publishes editions and
+// keys. Saving the Bedrock audience then must not publish them into this
+// platform's own Redis, where a local leftover row could even mint a local
+// Floodgate key; local mode still publishes at once.
+func TestBedrockAudienceSaveSkipsThePublishInRemoteMode(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mode      func() (bool, bool)
+		publishes int
+	}{
+		{"remote", func() (bool, bool) { return true, true }, 0},
+		{"mode unread", func() (bool, bool) { return false, false }, 0},
+		{"local", func() (bool, bool) { return false, true }, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fake := newFeatureSettingsFixture(t, nil)
+			st := &editionsCountingStore{gateFakeStore: fake}
+			h.d.Store = st
+			h.d.Redis = redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+			h.d.GatewayRemote = tc.mode
+			rec := httptest.NewRecorder()
+			h.Set(rec, httptest.NewRequest(http.MethodPut, "/api/admin/settings/features", strings.NewReader(`{"bedrock":"all"}`)))
+			if rec.Code != http.StatusOK || fake.kv[services.BedrockSettingKey] != "all" {
+				t.Fatalf("%d %s", rec.Code, rec.Body.String())
+			}
+			if st.publishes != tc.publishes {
+				t.Fatalf("publishes %d, want %d", st.publishes, tc.publishes)
 			}
 		})
 	}

@@ -631,7 +631,10 @@ export default function FeaturesTab() {
                     )}
                     <SwitchRow
                         label="Voice chat"
-                        description="Lets server owners give Simple Voice Chat or Plasmo Voice a public address through the gateway. Needs a voice relay in the server's region. Turning it off turns voice off within a minute on every server without an allow override. Overrides per server, user or role are below."
+                        description={managedGateway
+                            // The managed sweep runs every 5 minutes, not every minute.
+                            ? "Lets server owners give Simple Voice Chat or Plasmo Voice a public address through the managed gateway's voice relay. Turning it off turns voice off within about five minutes on every server without an allow override. Overrides per server, user or role are below."
+                            : "Lets server owners give Simple Voice Chat or Plasmo Voice a public address through the gateway. Needs a voice relay in the server's region. Turning it off turns voice off within a minute on every server without an allow override. Overrides per server, user or role are below."}
                         checked={!!platformFlags.voiceChat}
                         disabled={gatewayOff || !gatewayVisibility.voice}
                         onChange={v => editPlatformFlag('voiceChat', v)}
@@ -640,9 +643,13 @@ export default function FeaturesTab() {
                         <div className="max-w-prose">
                             <div className="text-sm font-medium text-(--base-09)">Bedrock players</div>
                             <p className="text-xs text-(--base-06) mt-0.5">
-                                Who may let Bedrock players join a route through the gateway&apos;s Geyser. Needs a
-                                Bedrock entry in the server&apos;s region. Admins lets you test it on your own servers
-                                first; Off pauses every route that has it, without forgetting the choice.
+                                {managedGateway
+                                    ? 'Who may give an address Bedrock. Turning it off does not remove Bedrock from addresses that already have it.'
+                                    : <>
+                                        Who may let Bedrock players join a route through the gateway&apos;s Geyser. Needs a
+                                        Bedrock entry in the server&apos;s region. Admins lets you test it on your own servers
+                                        first; Off pauses every route that has it, without forgetting the choice.
+                                    </>}
                             </p>
                         </div>
                         <Segmented
@@ -658,7 +665,7 @@ export default function FeaturesTab() {
                     </div>
                     {managedGateway && (
                         <p className="text-xs text-(--base-06)">
-                            BYON, route-only, voice chat and Bedrock players belong to this platform&apos;s own gateway, so they are off while it uses the DYLARIS Managed Gateway.
+                            BYON and route-only belong to this platform&apos;s own gateway, so they are off while it uses the DYLARIS Managed Gateway. Voice chat and Bedrock run through the managed gateway, on addresses on its domains only; own domains are not supported for them yet.
                         </p>
                     )}
                     {gatewayOff && (
@@ -673,7 +680,7 @@ export default function FeaturesTab() {
                     )}
                 </SettingsGroup>
                             </SettingsCard>
-                            {!gatewayOff && gatewayVisibility.voice && <VoiceAccessCard />}
+                            {!gatewayOff && gatewayVisibility.voice && <VoiceAccessCard managed={managedGateway} />}
                             {/* Extra ports are direct routing only (ip_port or both). */}
                             {routingMode !== 'gateway' && <ExtraPortsCard />}
                             {routingMode !== 'gateway' && <DnsUpdaterFlagCard />}

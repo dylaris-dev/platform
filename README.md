@@ -270,9 +270,100 @@ your Core ---+ HTTPS: routes, link kits, usage
   counts toward the host limit (at most as many at once as the plan has hosts,
   4 per host per UTC month). Details:
   [the managed edge docs](https://dylaris.com/docs/managed-edge).
-- **Not available with it yet:** voice chat routing, Bedrock, the edge MOTD,
-  automatic real-IP mode, and BYON / route-only (those two belong to a
-  platform's own gateway).
+- **Voice chat.** Settings > Features > "Voice chat" and the voice access
+  overrides below it are this platform's own permission, as with its own
+  gateway. The server's owner turns on "Voice chat" in the server's "Routes &
+  Domains" dialog; Simple Voice Chat or Plasmo Voice must be installed and
+  have written its config. The voice address is the server's first address,
+  alphabetically, on one of the provider's regional domains (a server has one
+  voice address); the provider's relay hands out the port and the panel writes
+  host and port into the mod's config. Restart the server after switching it
+  on. Turning it off is never refused: it applies here at once and reaches the
+  provider through the retrying queue. A deny here takes effect at the next
+  sweep (up to five minutes), not within a minute as with an own gateway.
+- **Bedrock.** Settings > Features > "Bedrock players" decides who may GIVE an
+  address Bedrock; Off does not take Bedrock from addresses that have it. The
+  owner sets one address to "Java + Bedrock" or "Bedrock" in the routes dialog;
+  a server has one Bedrock address with the managed gateway, and the other
+  addresses' Bedrock options are disabled. Core fetches that address's Floodgate
+  key from the provider, stores it sealed (key derived from `CLUSTER_SECRET`)
+  and puts it where the node reads it; the node writes `key.pem` at the next
+  start, so restart the server once. Floodgate must be installed; there is no
+  key download in this mode. Taking Bedrock off is never refused.
+- **Own domains and voice / Bedrock.** Not available yet: an address on an own
+  domain shows both as disabled with a sentence saying so, and the API refuses
+  them (409 `own_domain_unsupported`). Planned as its own stage.
+- **Player counts.** The sidebar shows each server's players, with Java and
+  Bedrock in its tooltip. Counts are a few seconds old (the provider samples
+  its edges every 3 seconds, this Core caches 5 seconds). When the provider
+  cannot be read, `GET /api/servers/players` keeps the last counts for up to
+  2 minutes with `stale: true` and `countsAt`, then answers no counts.
+- **The sweep never switches off on one bad read.** Every 5 minutes the leader
+  compares voice and Bedrock with the provider. On a difference it asks the
+  provider again and acts only on that answer: an error, a timeout or "not
+  found" changes nothing, and only a refusal that will not pass ("voice not
+  allowed", "Bedrock disabled") given twice, a sweep apart, for an unchanged
+  address switches the feature off here, with one line on the Errors screen.
+  The owner then switches it on again. A Floodgate key that differs on the
+  provider (the address was removed and added there) is taken over, with an
+  Errors line asking to restart the server. At most 10 such re-checks per
+  sweep. The sweep does not rewrite the voice mod's config.
+- **Known limits.** After a server move the new node does not rewrite
+  `key.pem` until the server's next restart, so if its Bedrock key changed
+  since its last restart, restart it once more after the move. A switch the
+  sweep turned off looks like one that was never on; the Errors screen says
+  which.
+- **Not available with it yet:** voice chat and Bedrock on own domains, the
+  edge MOTD, automatic real-IP mode, Beam over the provider's relays, and BYON /
+  route-only (those two belong to a platform's own gateway).
+
+#### Running the provider side (your own gateway, managed customers)
+
+- **Managed plans and voice / Bedrock.** An account with a managed gateway plan
+  (the user `*` edge traffic row the store's activate writes, a paid plan and an
+  admin grant alike) may turn on voice chat and Bedrock through
+  `/api/external/gateway/*` whatever the global voice switch, role voice rows
+  and the Bedrock audience say, and Bedrock "Off" does not pause its addresses.
+  Still refused: an explicit per-user voice deny, a suspended owner, a retiring
+  link, a link that cannot carry voice, no voice relay or a full port pool in
+  the region, no Bedrock entry in the region. The panel path (`/api/gateway/*`)
+  gets no exemption. When the plan ends (an activate without the row), new
+  enables are refused at once, voice is revoked within a minute, and Bedrock
+  is paused at the next publish while the audience is Off; with Admins or
+  Everyone it stays until the address goes through the normal plan-end
+  handling. A suspension keeps the row: the account is refused while
+  suspended, but setting billing active again by hand restores the exemption.
+- **Players and peaks.** The edge reports play sessions per route-only address
+  and edition in its stats sample (an older edge reports none, so counts are
+  empty, never wrong). The admin user dialog's "Managed gateway" tab
+  (`topology.read`) shows players now, per address and in total, and "Player
+  peaks": today, the last 30 days, a trend and the days with a row. The leader
+  samples once a minute into `gateway_player_peaks` (owner id, UTC day, the
+  day's highest Java, Bedrock and total; written only when a value rises) and
+  purges rows older than 400 days. Peaks are lower bounds: a spike shorter than
+  a minute, an edge mid-update or a Core restart can make a day's peak too
+  low, never too high. Rows of a deleted account stay until they age out.
+- **Two external endpoints.** `GET /api/external/gateway/players`
+  (`gateway.read`, read class: 120 a minute per key) returns the caller's
+  counts per address and its peaks. `GET
+  /api/external/gateway/routes/{domain}/floodgate-key` (`gateway.write`, write
+  class: 30 a minute per key, shared with its other writes) returns the
+  address's Floodgate key as base64 with `Cache-Control: no-store`, to the
+  address's owner only. **The key is a credential:** whoever holds it can sign
+  in as any Bedrock player on that address. It stays the same while the address
+  exists; removing the address and adding it again is the only way to replace
+  it.
+- **Deploy order.** The provider Core goes out first, before customers update
+  their Cores: a newer customer Core against an older provider only gets
+  refusals. The edge can follow in either order; the edge change needs no Hub
+  first and no splice bump (`SPLICE_IMAGE` stays). Nodes are unchanged.
+- **No rollback below 2026.11.14.2.** Once managed customers use voice or
+  Bedrock, never roll the provider Core back below this release: an older Core
+  revokes their voice within a minute (their Cores then switch it off on their
+  side) and pauses their Bedrock while the audience is Off. If a rollback is
+  unavoidable, first set the global voice switch and the Bedrock audience so
+  the old rules allow those accounts. The earlier rule (never below
+  2026.11.13.2 once a link replacement was used) still holds.
 
 ### Main failure sources and operational gotchas
 
@@ -864,7 +955,8 @@ Bedrock players join gateway-routed servers through Geyser at the gateway; the s
   the region. Core publishes the choice as `sys:route:editions`; the edge refuses Java on a
   Bedrock-only address, the bridge refuses Bedrock on a Java-only one.
 - Settings, Features, "Bedrock players": Off (default), Admins or Everyone decides who may give a
-  route Bedrock. Off pauses every Bedrock route without forgetting it.
+  route Bedrock. Off pauses every Bedrock route without forgetting it, except the addresses of
+  accounts with a managed gateway plan (see [Managed gateway provider](#managed-gateway-provider)).
 - Players add the route domain without a port. Consoles are not supported (no custom servers).
 - Signaling is plaintext, so each player sees a one-time trust prompt per region.
 

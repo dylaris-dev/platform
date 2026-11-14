@@ -6,6 +6,7 @@ package remotegw
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -154,6 +155,10 @@ type Route struct {
 	LinkID        string `json:"link_id"`
 	ProxyProtocol bool   `json:"proxy_protocol"`
 	Suspended     bool   `json:"suspended"`
+	// Voice and Bedrock are nil when the provider did not say: an older one
+	// lists neither, and that must not read as "voice off" or "Java only".
+	Voice   *RouteVoice   `json:"voice"`
+	Bedrock *RouteBedrock `json:"bedrock"`
 }
 
 type HosterDomain struct {
@@ -493,4 +498,145 @@ func (c *Client) Usage(ctx context.Context, period string) (Usage, error) {
 		return Usage{}, err
 	}
 	return Usage{Period: out.Usage.Period, EdgeBytes: out.Usage.EdgeBytes, RelayBytes: out.Usage.RelayBytes, Final: out.Final, Pool: out.Pool}, nil
+}
+
+// RouteVoice is an address's voice relay on the provider: Port is the public
+// voice port, TargetPort the voice mod's port on the target host. Both are 0
+// while voice is off.
+type RouteVoice struct {
+	Enabled    bool `json:"enabled"`
+	Port       int  `json:"port"`
+	TargetPort int  `json:"target_port"`
+}
+
+// RouteBedrock is an address's editions on the provider. HasKey: it has a
+// Floodgate key to download. Refusal is why Bedrock cannot be added now.
+type RouteBedrock struct {
+	Java    bool   `json:"java"`
+	Bedrock bool   `json:"bedrock"`
+	HasKey  bool   `json:"has_key"`
+	Refusal string `json:"refusal"`
+}
+
+// SetVoice switches the address's voice relay. targetPort 0 is the provider's
+// default (the voice mods' 24454). Turning it on again keeps the port.
+func (c *Client) SetVoice(ctx context.Context, domain string, enabled bool, targetPort int) (RouteVoice, error) {
+	seg, err := segment(domain)
+	if err != nil {
+		return RouteVoice{}, err
+	}
+	var out struct {
+		Voice *RouteVoice `json:"voice"`
+	}
+	if err := c.do(ctx, http.MethodPut, "/routes/"+seg+"/voice", map[string]interface{}{"enabled": enabled, "target_port": targetPort}, &out); err != nil {
+		return RouteVoice{}, err
+	}
+	if out.Voice == nil {
+		return RouteVoice{}, fmt.Errorf("%w: voice answer without voice", ErrBadAnswer)
+	}
+	return *out.Voice, nil
+}
+
+// SetBedrock sets the address's editions; at least one must be true.
+func (c *Client) SetBedrock(ctx context.Context, domain string, java, bedrock bool) (RouteBedrock, error) {
+	seg, err := segment(domain)
+	if err != nil {
+		return RouteBedrock{}, err
+	}
+	var out struct {
+		Bedrock *RouteBedrock `json:"bedrock"`
+	}
+	if err := c.do(ctx, http.MethodPut, "/routes/"+seg+"/bedrock", map[string]bool{"java": java, "bedrock": bedrock}, &out); err != nil {
+		return RouteBedrock{}, err
+	}
+	if out.Bedrock == nil {
+		return RouteBedrock{}, fmt.Errorf("%w: bedrock answer without bedrock", ErrBadAnswer)
+	}
+	return *out.Bedrock, nil
+}
+
+// floodgateKeyLen is the size of the key Floodgate reads as key.pem.
+const floodgateKeyLen = 16
+
+// FloodgateKey downloads the address's Floodgate key: exactly 16 bytes, or
+// ErrBadAnswer. The key is a secret: no error here carries it, only its length.
+func (c *Client) FloodgateKey(ctx context.Context, domain string) ([]byte, error) {
+	seg, err := segment(domain)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Key *string `json:"key"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/routes/"+seg+"/floodgate-key", nil, &out); err != nil {
+		if errors.Is(err, ErrBadAnswer) {
+			// The JSON error may quote a piece of the body.
+			return nil, fmt.Errorf("%w: floodgate key answer is not the expected JSON", ErrBadAnswer)
+		}
+		return nil, err
+	}
+	if out.Key == nil {
+		return nil, fmt.Errorf("%w: floodgate key answer without key", ErrBadAnswer)
+	}
+	key, err := base64.StdEncoding.DecodeString(*out.Key)
+	if err != nil {
+		return nil, fmt.Errorf("%w: floodgate key is not base64", ErrBadAnswer)
+	}
+	if len(key) != floodgateKeyLen {
+		return nil, fmt.Errorf("%w: floodgate key is %d bytes, want %d", ErrBadAnswer, len(key), floodgateKeyLen)
+	}
+	return key, nil
+}
+
+// RoutePlayers is one address's play sessions by edition.
+type RoutePlayers struct {
+	Domain  string `json:"domain"`
+	Java    int    `json:"java"`
+	Bedrock int    `json:"bedrock"`
+}
+
+// PlayerPeak is the highest concurrent players over a span of days, each
+// column its own maximum.
+type PlayerPeak struct {
+	Java    int `json:"java"`
+	Bedrock int `json:"bedrock"`
+	Total   int `json:"total"`
+}
+
+type PlayersPeak struct {
+	Today      PlayerPeak `json:"today"`
+	Last30Days PlayerPeak `json:"last30Days"`
+}
+
+// Players is the account's play sessions now. Peak is nil from a provider
+// that does not report it.
+type Players struct {
+	AsOf          time.Time
+	Java, Bedrock int
+	Items         []RoutePlayers
+	Peak          *PlayersPeak
+}
+
+// Players reads the account's player counts. A provider older than the
+// endpoint answers its router's 404 without a handler code: that is an empty
+// Players and no error, so a customer Core can run against it.
+func (c *Client) Players(ctx context.Context) (Players, error) {
+	var out struct {
+		AsOf  time.Time `json:"asOf"`
+		Total struct {
+			Java    int `json:"java"`
+			Bedrock int `json:"bedrock"`
+		} `json:"total"`
+		Items []RoutePlayers `json:"items"`
+		Peak  *PlayersPeak   `json:"peak"`
+	}
+	err := c.do(ctx, http.MethodGet, "/players", nil, &out)
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Status == http.StatusNotFound && ae.Code == "http_404" {
+		return Players{}, nil
+	}
+	if err != nil {
+		return Players{}, err
+	}
+	return Players{AsOf: out.AsOf, Java: out.Total.Java, Bedrock: out.Total.Bedrock, Items: out.Items, Peak: out.Peak}, nil
 }

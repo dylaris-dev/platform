@@ -3,11 +3,15 @@ package servers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"dylaris-core/handlers/access"
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/nodeops"
 	"dylaris-core/models"
@@ -171,13 +175,19 @@ func NewServerHandler(state Deps) *ServerHandler {
 // GetGatewayPlayers GET /api/servers/players - players connected through the
 // gateway, per server id, for the servers the caller's own list shows. The
 // edges count them (a play session per stream), so a server on IP:port
-// routing, or one nobody is on, is absent.
+// routing, or one nobody is on, is absent. On the managed gateway the
+// provider counts them instead (remoteGatewayPlayers), split by edition.
 //
 // ponytail: one server-list query per poll per open panel; serve it from the
 // list the panel already holds if that load ever shows.
 func (h *ServerHandler) GetGatewayPlayers(w http.ResponseWriter, r *http.Request) {
 	if h.d.Store == nil || h.d.Redis == nil {
 		httpx.SendJSONError(w, "Service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	// An unread mode answers as the local-only gate on this route did.
+	rg, merr := services.ActiveRemoteGateway(h.d.GatewayRemote, h.d.RemoteGateway)
+	if gate.GatewayModeError(w, merr) {
 		return
 	}
 	isAdmin, _ := r.Context().Value("isAdmin").(bool)
@@ -189,6 +199,10 @@ func (h *ServerHandler) GetGatewayPlayers(w http.ResponseWriter, r *http.Request
 		return
 	}
 	servers = access.ApplyResolvedTabPermissions(h.d.Authz, servers, userID, username)
+	if rg != nil {
+		h.remoteGatewayPlayers(w, r, rg, servers)
+		return
+	}
 	counts := services.GatewayPlayersByServer(r.Context(), h.d.Redis)
 	out := map[string]int{}
 	for _, s := range servers {
@@ -198,6 +212,65 @@ func (h *ServerHandler) GetGatewayPlayers(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"players": out})
+}
+
+// playersLogged is when remoteGatewayPlayers last logged a failed route read
+// (unix seconds): the sidebar polls every few seconds, the log gets one line a
+// minute.
+var playersLogged atomic.Int64
+
+type editionCounts struct {
+	Java    int `json:"java"`
+	Bedrock int `json:"bedrock"`
+}
+
+// remoteGatewayPlayers is GetGatewayPlayers on the managed gateway: the
+// provider's counts per address (PlayerCounts: cached, never a long wait),
+// summed per server through the local remote_routes rows, for the servers in
+// the caller's list only. A provider address with no row here counts for
+// nobody. Counts that cannot be read are no counts, never an error: the
+// sidebar treats both the same. stale and countsAt say how old they are.
+func (h *ServerHandler) remoteGatewayPlayers(w http.ResponseWriter, r *http.Request, rg *services.RemoteGateway, servers []models.Server) {
+	players, editions := map[string]int{}, map[string]*editionCounts{}
+	out := map[string]any{"players": players, "editions": editions, "stale": false}
+	rows, err := h.d.Store.ListRemoteRoutes()
+	if err != nil {
+		if now, last := time.Now().Unix(), playersLogged.Load(); now-last >= 60 && playersLogged.CompareAndSwap(last, now) {
+			log.Printf("player counts: remote routes: %v", err)
+		}
+	} else {
+		idByUUID := make(map[string]string, len(servers))
+		for _, s := range servers {
+			idByUUID[s.UUID] = strconv.Itoa(s.ID)
+		}
+		serverOf := make(map[string]string, len(rows))
+		for _, row := range rows {
+			if id, ok := idByUUID[row.ServerUUID]; ok {
+				serverOf[row.Domain] = id
+			}
+		}
+		counts := rg.PlayerCounts(r.Context())
+		for _, it := range counts.Items {
+			id, ok := serverOf[it.Domain]
+			if !ok || it.Java+it.Bedrock <= 0 {
+				continue
+			}
+			e := editions[id]
+			if e == nil {
+				e = &editionCounts{}
+				editions[id] = e
+			}
+			e.Java += it.Java
+			e.Bedrock += it.Bedrock
+			players[id] += it.Java + it.Bedrock
+		}
+		out["stale"] = counts.Stale
+		if !counts.At.IsZero() {
+			out["countsAt"] = counts.At.UTC().Format(time.RFC3339)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 // GetServers GET /api/servers - the servers the caller may see: their own plus

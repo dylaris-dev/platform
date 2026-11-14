@@ -72,14 +72,17 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONErrorCode(w, "A route needs Java, Bedrock or both.", "edition_invalid", http.StatusBadRequest)
 		return
 	}
-	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
-		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
+	if !isAdmin && !h.ownsCoreRouteOrFail(w, userID, domain) {
 		return
 	}
-	// The stored row decides, not only the live entry ownsCoreRoute also
+	// The stored row decides, not only the live entry coreRouteOwned also
 	// accepts: the key and the edition belong to the row's owner.
 	rt, err := h.coreRoute(domain)
-	if err != nil || rt == nil || (!isAdmin && rt.OwnerID != userID) {
+	if err != nil {
+		routeLookupFailed(w, domain, err)
+		return
+	}
+	if rt == nil || (!isAdmin && rt.OwnerID != userID) {
 		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
@@ -92,8 +95,18 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	if *req.Bedrock && (prior == nil || !prior.Bedrock) {
-		if !h.bedrockAllowed(r) {
-			httpx.SendJSONErrorCode(w, bedrockOff, "bedrock_disabled", http.StatusConflict)
+		allowed, settingErr := h.bedrockAllowedChecked(r)
+		if !allowed && !managedAPICall(r, rt.OwnerID) {
+			if settingErr != nil {
+				bedrockSettingUnreadable(w, settingErr)
+				return
+			}
+			if err := managedLookupErr(r, rt.OwnerID); err != nil {
+				log.Printf("bedrock: link route %s: owner %s: %v", domain, rt.OwnerID, err)
+				httpx.SendJSONError(w, "Could not check whether Bedrock is allowed. Try again.", http.StatusInternalServerError)
+				return
+			}
+			httpx.SendJSONErrorCode(w, planNeededRefusal(r, rt.OwnerID, bedrockOff), "bedrock_disabled", http.StatusConflict)
 			return
 		}
 		if msg := guard.OwnerRefusal(h.d.Store, h.d.SuspendGrace, r, rt.OwnerID); msg != "" {
@@ -149,30 +162,45 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 func (h *GatewayHandler) GetLinkRouteFloodgateKey(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userID").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
-	domain := mux.Vars(r)["domain"]
-	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
-		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
-		return
-	}
-	e, err := h.d.Store.GetLinkRouteEdition(domain)
-	if err != nil {
-		log.Printf("bedrock: link route %s: key: %v", domain, err)
-		httpx.SendJSONError(w, "Failed to read the Floodgate key", http.StatusInternalServerError)
-		return
-	}
-	if e != nil && !isAdmin && e.OwnerID != userID {
-		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
-		return
-	}
-	if e == nil {
-		httpx.SendJSONError(w, "This address has no Floodgate key yet. Give it Bedrock first.", http.StatusNotFound)
+	key, status, msg := h.linkRouteFloodgateKey(userID, isAdmin, mux.Vars(r)["domain"])
+	if status != http.StatusOK {
+		httpx.SendJSONError(w, msg, status)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="key.pem"`)
-	w.Header().Set("Content-Length", strconv.Itoa(len(e.Key)))
+	w.Header().Set("Content-Length", strconv.Itoa(len(key)))
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write(e.Key)
+	w.Write(key)
+}
+
+// linkRouteFloodgateKey is the address's Floodgate key for userID, or the
+// status and message to refuse with. The panel download and the external API
+// share it so both run the same ownership checks in the same order. The key
+// never goes into msg or a log line.
+func (h *GatewayHandler) linkRouteFloodgateKey(userID string, isAdmin bool, domain string) (key []byte, status int, msg string) {
+	if !isAdmin {
+		owned, err := h.coreRouteOwned(userID, domain)
+		if !owned && err != nil {
+			log.Printf("bedrock: link route %s: key: lookup: %v", domain, err)
+			return nil, http.StatusInternalServerError, "Failed to read the Floodgate key"
+		}
+		if !owned {
+			return nil, http.StatusNotFound, "Route not found"
+		}
+	}
+	e, err := h.d.Store.GetLinkRouteEdition(domain)
+	if err != nil {
+		log.Printf("bedrock: link route %s: key: %v", domain, err)
+		return nil, http.StatusInternalServerError, "Failed to read the Floodgate key"
+	}
+	if e != nil && !isAdmin && e.OwnerID != userID {
+		return nil, http.StatusNotFound, "Route not found"
+	}
+	if e == nil {
+		return nil, http.StatusNotFound, "This address has no Floodgate key yet. Give it Bedrock first."
+	}
+	return e.Key, http.StatusOK, ""
 }
 
 // linkRouteBedrockViews is the Bedrock part of the route-only list: each

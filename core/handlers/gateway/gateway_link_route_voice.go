@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -42,6 +43,29 @@ func newLinkRouteVoiceView(v *store.LinkRouteVoice) linkRouteVoiceView {
 	return linkRouteVoiceView{Enabled: true, Port: v.Port, TargetPort: v.TargetPort}
 }
 
+// routeLookupFailed answers a route table that could not be read: a server
+// error, never "Route not found", so no caller reads a database fault as the
+// address being gone.
+func routeLookupFailed(w http.ResponseWriter, domain string, err error) {
+	log.Printf("gateway: route %s: lookup: %v", domain, err)
+	httpx.SendJSONError(w, "Could not read the route. Try again.", http.StatusInternalServerError)
+}
+
+// ownsCoreRouteOrFail is ownsCoreRoute for a handler: false after it has
+// answered 404 (not the caller's) or 500 (could not be read).
+func (h *GatewayHandler) ownsCoreRouteOrFail(w http.ResponseWriter, userID, domain string) bool {
+	owned, err := h.coreRouteOwned(userID, domain)
+	switch {
+	case owned:
+		return true
+	case err != nil:
+		routeLookupFailed(w, domain, err)
+	default:
+		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
+	}
+	return false
+}
+
 func (h *GatewayHandler) coreRoute(domain string) (*store.CoreLinkRoute, error) {
 	rows, err := h.d.Store.ListCoreLinkRoutes()
 	if err != nil {
@@ -66,6 +90,30 @@ func (h *GatewayHandler) linkRouteVoiceAllowed(ownerID string) bool {
 	return allowed
 }
 
+const voiceNotAllowedText = "Voice chat is not available for this account."
+
+// linkRouteVoiceRefused is the refusal of turning voice on for ownerID's
+// route, "" when allowed: the rules deny it and the managed exemption does not
+// apply. The exemption overrides role rows and the global switch, never an
+// explicit user-scope deny. A failed read (of the rows or of the managed plan,
+// where the plan would decide) is err, never a refusal: a caller must be able
+// to tell "not allowed" from "could not check". It allows nothing either way.
+func (h *GatewayHandler) linkRouteVoiceRefused(r *http.Request, ownerID string) (string, error) {
+	allowed, by, err := services.ResolveVoiceAllowed(h.d.Store, &models.Server{OwnerID: ownerID})
+	if err != nil {
+		return voiceNotAllowedText, fmt.Errorf("permission check: %w", err)
+	}
+	switch {
+	case allowed:
+		return "", nil
+	case by == "user:"+ownerID:
+		return voiceNotAllowedText, nil
+	case managedAPICall(r, ownerID):
+		return "", nil
+	}
+	return planNeededRefusal(r, ownerID, voiceNotAllowedText), managedLookupErr(r, ownerID)
+}
+
 // SetLinkRouteVoice PUT /api/gateway/link-routes/{domain}/voice - body
 // {"enabled": bool, "target_port": int}. target_port is the voice mod's port on
 // the route's target host, default 24454. Off is never refused, as for a
@@ -74,8 +122,7 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 	userID := r.Context().Value("userID").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
 	domain := mux.Vars(r)["domain"]
-	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
-		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
+	if !isAdmin && !h.ownsCoreRouteOrFail(w, userID, domain) {
 		return
 	}
 	var req struct {
@@ -120,7 +167,11 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	rt, err := h.coreRoute(domain)
-	if err != nil || rt == nil {
+	if err != nil {
+		routeLookupFailed(w, domain, err)
+		return
+	}
+	if rt == nil {
 		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
 		return
 	}
@@ -136,8 +187,12 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONErrorCode(w, kitRetiringMessage, "kit_retiring", http.StatusConflict)
 		return
 	}
-	if !h.linkRouteVoiceAllowed(rt.OwnerID) {
-		httpx.SendJSONErrorCode(w, "Voice chat is not available for this account.", "voice_not_allowed", http.StatusConflict)
+	if refusal, err := h.linkRouteVoiceRefused(r, rt.OwnerID); err != nil {
+		log.Printf("voice: route %s: owner %s: %v", domain, rt.OwnerID, err)
+		httpx.SendJSONError(w, "Could not check whether voice chat is allowed. Try again.", http.StatusInternalServerError)
+		return
+	} else if refusal != "" {
+		httpx.SendJSONErrorCode(w, refusal, "voice_not_allowed", http.StatusConflict)
 		return
 	}
 	if ok, err := services.LinkAnnouncesCap(ctx, h.d.Redis, rt.LinkToken, linkCapVoice); err != nil || !ok {

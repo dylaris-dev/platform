@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
     CreateRouteRequest,
     DomainCheckRequest,
@@ -10,9 +10,10 @@ import {
     checkDomainAvailability,
     getGatewayRouteOptions,
 } from '@/lib/api';
-import { AlertCircle, Check, Globe, Loader2, Server, X } from 'lucide-react';
+import { AlertCircle, Check, Globe, Loader2, RotateCw, Server, X } from 'lucide-react';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
 import { useAppData } from '@/lib/AppDataContext';
+import { routeOptionsFailure } from '@/lib/gatewayProvider';
 
 // Availability state surfaced to the parent so it can disable submit when
 // the picker is mid-check or has landed on a taken domain.
@@ -87,9 +88,15 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
     const [availability, setAvailability] = useState<DomainAvailability>('idle');
     const [availabilityReason, setAvailabilityReason] = useState<string>('');
     const reqCounter = useRef(0);
+    // The options did not load (an error answer or no answer). Only the
+    // managed gateway says so; local mode renders as it always did.
+    const [optsFailed, setOptsFailed] = useState(false);
 
-    useEffect(() => {
+    const loadOptions = useCallback(() => {
+        setOptsFailed(false);
+        setOpts(null);
         getGatewayRouteOptions().then(res => {
+            setOptsFailed(!res || res.success === false);
             // Core's customDomainsEnabled decides own domains in both modes;
             // with the managed gateway it combines the provider's answer and
             // this platform's setting.
@@ -103,8 +110,10 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
             } else {
                 setMode('legacy');
             }
-        });
+        }, () => setOptsFailed(true));
     }, []);
+
+    useEffect(() => { loadOptions(); }, [loadOptions]);
 
     const activeHoster = useMemo(
         () => (opts?.hosterDomains || []).find(h => h.domain === hosterDomain),
@@ -200,6 +209,19 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
     useEffect(() => {
         onAvailabilityChange?.(availability);
     }, [availability, onAvailabilityChange]);
+
+    const unreachable = routeOptionsFailure(gatewayProvider, optsFailed);
+    if (unreachable) {
+        return (
+            <div className="max-w-md flex flex-wrap items-center gap-2 px-3 py-2.5 rounded-md bg-(--base-02) border border-(--base-03) text-sm text-(--base-07)" role="alert">
+                <AlertCircle size={14} className="shrink-0 text-(--error-light)" aria-hidden="true" />
+                <span className="flex-1 min-w-0">{unreachable}</span>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={loadOptions}>
+                    <RotateCw size={13} aria-hidden="true" /> Try again
+                </button>
+            </div>
+        );
+    }
 
     if (!opts) {
         return <div className="h-10 bg-(--base-02) rounded-md animate-pulse" />;

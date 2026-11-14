@@ -35,3 +35,10 @@ func isUniqueViolation(err error) bool {
 	var pqErr *pq.Error
 	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
+
+// isUniqueViolationOf is isUniqueViolation of the named constraint or unique
+// index only, for a statement that could hit more than one.
+func isUniqueViolationOf(err error, constraint string) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505" && pqErr.Constraint == constraint
+}

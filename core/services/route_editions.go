@@ -48,10 +48,34 @@ func LinkRouteBedrockSubject(ownerID, domain string) string {
 // taken away here: Floodgate reads the key at startup, so a key that changed
 // on every off-and-on would need a restart each time, and access is decided
 // by this hash, not by the key.
+//
+// A route-only address of an account with a managed gateway plan takes
+// Bedrock whatever active says (owner decision 2026-11-14); server routes
+// follow active alone.
 func (b *BedrockService) PublishEditions(ctx context.Context, active bool) error {
 	rows, err := b.store.ListRouteEditions(0)
 	if err != nil {
 		return fmt.Errorf("list route editions: %w", err)
+	}
+	links, err := b.store.ListLinkRouteEditions()
+	if err != nil {
+		return fmt.Errorf("list link route editions: %w", err)
+	}
+	// Read before anything is written: the hash is rewritten whole, so a lookup
+	// error taken as "not managed" would pause every managed customer's
+	// Bedrock at once. Aborting leaves the published hash as it was.
+	managed := map[string]bool{}
+	if !active {
+		for _, r := range links {
+			if _, seen := managed[r.OwnerID]; seen || !r.Bedrock {
+				continue
+			}
+			m, err := HasManagedProduct(b.store, r.OwnerID)
+			if err != nil {
+				return fmt.Errorf("managed plan of %s: %w", r.OwnerID, err)
+			}
+			managed[r.OwnerID] = m
+		}
 	}
 	refs, err := b.store.ListBedrockServerRefs()
 	if err != nil {
@@ -73,19 +97,15 @@ func (b *BedrockService) PublishEditions(ctx context.Context, active bool) error
 			fields = append(fields, r.Domain, v)
 		}
 	}
-	links, err := b.store.ListLinkRouteEditions()
-	if err != nil {
-		return fmt.Errorf("list link route editions: %w", err)
-	}
 	for _, r := range links {
 		// No key: unreadable at rest (logged by the store). The one already
 		// in Redis stays; Reconcile keeps its name.
 		if r.Key != nil {
-			if err := b.publish(ctx, LinkRouteBedrockSubject(r.OwnerID, r.Domain), r.Key); err != nil {
+			if err := b.PublishKey(ctx, LinkRouteBedrockSubject(r.OwnerID, r.Domain), r.Key); err != nil {
 				return err
 			}
 		}
-		if v := EditionValue(r.Java, r.Bedrock, active); v != "" {
+		if v := EditionValue(r.Java, r.Bedrock, active || managed[r.OwnerID]); v != "" {
 			fields = append(fields, r.Domain, v)
 		}
 	}

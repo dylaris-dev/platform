@@ -253,6 +253,8 @@ type Store interface {
 	// Real player IP mode per server (proxy_protocol_mode.go).
 	// Per-server Floodgate keys (postgres_bedrock.go).
 	EnableBedrock(serverID int, key []byte) error
+	// SetBedrockKey replaces the key (remote mode); changed=false: same bytes.
+	SetBedrockKey(serverID int, key []byte) (changed bool, err error)
 	GetBedrockKey(serverID int) ([]byte, bool, error)
 	DisableBedrock(serverID int) error
 	ListBedrockServers() ([]BedrockServer, error)
@@ -270,6 +272,11 @@ type Store interface {
 	// returns the row that holds it.
 	ClaimRemoteRoute(r RemoteRoute) (claimed bool, existing *RemoteRoute, err error)
 	DeleteRemoteRoute(domain string) error
+	// Voice and edition of a remote route; found=false: no row. A second
+	// address of the same server is ErrRemoteVoiceTaken / ErrRemoteBedrockTaken.
+	SetRemoteRouteVoice(domain string, port *int, mod string) (found bool, err error)
+	SetRemoteRouteEdition(domain, edition string) (found bool, err error)
+	TouchRemoteRoute(domain string) error
 	ListRemoteRoutesByServer(serverUUID string) ([]RemoteRoute, error)
 	ListRemoteRoutes() ([]RemoteRoute, error)
 	EnqueueOutbox(op, domain string, payload any) error
@@ -675,6 +682,10 @@ type Store interface {
 	ListCoreLinkRoutesByOwner(ownerID string) ([]CoreLinkRoute, error)
 	DeleteCoreLinkRoute(domain string) error
 	SetCoreLinkRouteSuspended(domain string, at *time.Time, reason string) (bool, error)
+	// Daily peak of concurrent players per route-only account (provider side).
+	RaisePlayerPeak(ownerID string, day time.Time, java, bedrock, total int) error
+	ListPlayerPeaks(ownerID string, since time.Time) ([]PlayerPeak, error)
+	PurgePlayerPeaks(before time.Time) (int64, error)
 	ListWarpLeadersByRegion(region string) ([]WarpLeader, error)
 	UpsertWarpLeader(leaderID, region, endpoint string, enabled bool) error
 	DeleteWarpLeader(leaderID string) (bool, error)

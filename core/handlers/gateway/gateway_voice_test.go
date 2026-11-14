@@ -402,9 +402,10 @@ func TestVoicePermissionAdminAPI(t *testing.T) {
 	}
 }
 
-// On the managed gateway, or with the mode unread, voice cannot be turned on,
-// and turning it off still works: the row and the node config go, this Redis is
-// not written.
+// On the managed gateway without its client, or with the mode unread, voice
+// cannot be turned on. Turning it off still works on the former: the row and
+// the node config go, this Redis is not written. With the mode unread off is
+// 503 too: it cannot tell which side holds the voice (review M-8).
 func TestVoiceSwitchRemoteAndUnknownMode(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -433,6 +434,12 @@ func TestVoiceSwitchRemoteAndUnknownMode(t *testing.T) {
 			}
 			keys := len(e.voiceKeys())
 			rec, out = e.put(t, `{"enabled":false}`)
+			if !tc.remote {
+				if rec.Code != http.StatusServiceUnavailable || out["code"] != "gateway_provider_unknown" || e.fs.row == nil || len(e.voiceKeys()) != keys {
+					t.Fatalf("disable with the mode unread: %d %s, row %+v", rec.Code, rec.Body.String(), e.fs.row)
+				}
+				return
+			}
 			if rec.Code != http.StatusOK || out["restartRequired"] != true || e.fs.row != nil {
 				t.Fatalf("disable: %d %s, row %+v", rec.Code, rec.Body.String(), e.fs.row)
 			}

@@ -58,6 +58,8 @@ type extStore struct {
 	retiredThisMonth int64
 	// billing overrides the default billing row (active, 5 links) per user.
 	billing map[string]*store.UserBilling
+	// peaks are the daily player peaks, by owner (see ListPlayerPeaks).
+	peaks map[string][]store.PlayerPeak
 }
 
 func (f *extStore) GetTrafficUsage(userID string, period time.Time) (*store.TrafficUsage, error) {

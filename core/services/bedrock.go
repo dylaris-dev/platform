@@ -109,7 +109,7 @@ func (b *BedrockService) Enable(ctx context.Context, serverID int, uuid string) 
 	if !ok {
 		return fmt.Errorf("floodgate key of server %d missing after enable", serverID)
 	}
-	return b.publish(ctx, uuid, stored)
+	return b.PublishKey(ctx, uuid, stored)
 }
 
 // Disable deletes the row first, then the key. A failed DEL is swept by the reconcile.
@@ -123,11 +123,27 @@ func (b *BedrockService) Disable(ctx context.Context, serverID int, uuid string)
 	return nil
 }
 
-func (b *BedrockService) publish(ctx context.Context, uuid string, key []byte) error {
+// PublishKey writes the server's key where its node reads it at every start.
+// The error never carries the key.
+func (b *BedrockService) PublishKey(ctx context.Context, uuid string, key []byte) error {
 	if err := b.redis.Set(ctx, FloodgateKeyRedisKey(uuid), base64.StdEncoding.EncodeToString(key), 0).Err(); err != nil {
 		return fmt.Errorf("publish floodgate key: %w", err)
 	}
 	return nil
+}
+
+// ReplaceKey is PublishKey reporting whether the node's copy was missing or
+// different, which is when a running server needs a restart to use the key.
+// Compared in the published encoding; neither value is logged. A failed read
+// counts as different.
+func (b *BedrockService) ReplaceKey(ctx context.Context, uuid string, key []byte) (bool, error) {
+	enc := base64.StdEncoding.EncodeToString(key)
+	prev, err := b.redis.Get(ctx, FloodgateKeyRedisKey(uuid)).Result()
+	changed := err != nil || prev != enc
+	if err := b.PublishKey(ctx, uuid, key); err != nil {
+		return true, err
+	}
+	return changed, nil
 }
 
 // Reconcile republishes every enabled key and removes keys that have no row.
@@ -135,7 +151,9 @@ func (b *BedrockService) publish(ctx context.Context, uuid string, key []byte) e
 // BEFORE the rows are read, so a key published in between is in the rows or
 // not yet in Redis, never swept as an orphan. A follower does nothing.
 func (b *BedrockService) Reconcile(ctx context.Context) error {
-	if LocalGatewayErr(b.gatewayRemote) != nil {
+	if err := LocalGatewayErr(b.gatewayRemote); errors.Is(err, ErrGatewayRemote) {
+		return b.reconcileRemoteKeys(ctx)
+	} else if err != nil {
 		return nil
 	}
 	if b.leader != nil && !b.leader.IsLeader() {
@@ -161,7 +179,7 @@ func (b *BedrockService) Reconcile(ctx context.Context) error {
 	keep := map[string]bool{}
 	for _, r := range rows {
 		keep[FloodgateKeyRedisKey(r.ServerUUID)] = true
-		if err := b.publish(ctx, r.ServerUUID, r.Key); err != nil {
+		if err := b.PublishKey(ctx, r.ServerUUID, r.Key); err != nil {
 			return err
 		}
 	}
@@ -176,6 +194,42 @@ func (b *BedrockService) Reconcile(ctx context.Context) error {
 	}
 	for _, k := range existing {
 		if !keep[k] && strings.HasSuffix(k, ":floodgate") {
+			if err := b.redis.Del(ctx, k).Err(); err != nil {
+				return fmt.Errorf("sweep floodgate orphan: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// reconcileRemoteKeys is Reconcile on the managed gateway: the provider holds
+// the editions, so only the keys downloaded from it are kept in step for the
+// nodes here. Same order as the local path: keys first, then rows.
+func (b *BedrockService) reconcileRemoteKeys(ctx context.Context) error {
+	if b.leader != nil && !b.leader.IsLeader() {
+		return nil
+	}
+	var existing []string
+	iter := b.redis.Scan(ctx, 0, "dylaris:server:*:floodgate", 200).Iterator()
+	for iter.Next(ctx) {
+		existing = append(existing, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
+		return fmt.Errorf("scan floodgate keys: %w", err)
+	}
+	rows, err := b.store.ListBedrockServers()
+	if err != nil {
+		return fmt.Errorf("list bedrock servers: %w", err)
+	}
+	keep := map[string]bool{}
+	for _, r := range rows {
+		keep[FloodgateKeyRedisKey(r.ServerUUID)] = true
+		if err := b.PublishKey(ctx, r.ServerUUID, r.Key); err != nil {
+			return err
+		}
+	}
+	for _, k := range existing {
+		if !keep[k] {
 			if err := b.redis.Del(ctx, k).Err(); err != nil {
 				return fmt.Errorf("sweep floodgate orphan: %w", err)
 			}

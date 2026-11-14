@@ -1,7 +1,10 @@
 package guard
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -117,9 +120,12 @@ func TestKeyClassLimiterRetryAfter(t *testing.T) {
 }
 
 func TestKeyClassLimiterRedisDown(t *testing.T) {
-	mr, rdb := keyLimitSetup(t)
+	// A dialer that always fails: a closed miniredis frees its port, and
+	// another test's server could take it before this one dials.
+	rdb := redis.NewClient(&redis.Options{Addr: "redis.invalid:6379", MaxRetries: -1,
+		Dialer: func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("redis is down") }})
+	t.Cleanup(func() { rdb.Close() })
 	l := NewKeyClassLimiter(rdb)
-	mr.Close()
 	if w := keyCall(l.Limit(KeyClassRead, ok), 1); w.Code != http.StatusNoContent {
 		t.Fatalf("read with Redis down = %d, want 204 (fail open)", w.Code)
 	}

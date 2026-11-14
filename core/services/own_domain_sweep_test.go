@@ -211,6 +211,8 @@ func TestOwnDomainClaimWritesCeiling(t *testing.T) {
 // A hoster-domain row whose repair the provider refuses for the domain stays,
 // and the refusal is reported once, not on every sweep.
 func TestReconcileHosterRowRefusedForTheDomainStays(t *testing.T) {
+	// The once-per-process report map would remember an earlier run's line.
+	reconcileRepairLogged.Clear()
 	st, fake, c, _ := newOutboxTest(t)
 	const d = "refused-hoster.example.com"
 	st.routes[d] = store.RemoteRoute{Domain: d, ServerUUID: uuidA, NodeID: 9, Port: 25565}

@@ -390,8 +390,10 @@ func (h *FeatureSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 		})
 		// Pause or resume the routes that have Bedrock now rather than at the
 		// next reconcile. Non-fatal: the setting is saved, and the reconcile
-		// applies it within a minute.
-		if h.d.Redis != nil {
+		// applies it within a minute. Not on the managed gateway (or while the
+		// mode is unread): the provider publishes editions and keys there, and
+		// a local leftover row would mint a local Floodgate key here.
+		if h.d.Redis != nil && services.LocalGatewayErr(h.d.GatewayRemote) == nil {
 			svc := services.NewBedrockService(h.d.Store, h.d.Redis)
 			if err := svc.PublishEditions(r.Context(), *req.Bedrock != "off"); err != nil {
 				log.Printf("features: bedrock: publish route editions: %v", err)

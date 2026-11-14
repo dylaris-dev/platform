@@ -165,6 +165,30 @@ func TestOutboxDeleteNotFoundFinishes(t *testing.T) {
 	}
 }
 
+// The provider answers 500 internal when it cannot read its route table: the
+// delete stays queued and the row stays, and the retry finishes it.
+func TestOutboxDeleteServerErrorIsRetried(t *testing.T) {
+	st, fake, c, _ := newOutboxTest(t)
+	st.routes["flap.example.com"] = store.RemoteRoute{Domain: "flap.example.com", ServerUUID: uuidA, NodeID: 7}
+	if err := st.EnqueueOutbox(OutboxOpDelete, "flap.example.com", struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	fake.FailNext(1, 500, "internal", 0)
+	ctx := context.Background()
+	if done, failed := drainAt(ctx, st, c, outboxT0); done != 0 || failed != 1 {
+		t.Fatalf("done %d failed %d", done, failed)
+	}
+	if _, ok := st.routes["flap.example.com"]; !ok || len(openOutbox(st)) != 1 {
+		t.Fatalf("after the 500: rows %v, open %+v", st.routes, openOutbox(st))
+	}
+	if done, _ := drainAt(ctx, st, c, outboxT0.Add(time.Hour)); done != 1 {
+		t.Fatalf("retry: done %d, open %+v", done, openOutbox(st))
+	}
+	if _, ok := st.routes["flap.example.com"]; ok || len(openOutbox(st)) != 0 {
+		t.Fatalf("after the retry: rows %v, open %+v", st.routes, openOutbox(st))
+	}
+}
+
 func TestOutboxRefusalStaysVisible(t *testing.T) {
 	st, fake, c, kit := newOutboxTest(t)
 	enqueueMove(t, st, kit, "s.example.com")
@@ -250,7 +274,7 @@ const uuidGone = "2d8b3e4f-8c5f-4e3d-9a91-3c4d5e6f7081"
 
 func reconcileOK(t *testing.T, st *remoteFakeStore, c *remotegw.Client) (adopted, repaired, foreign int) {
 	t.Helper()
-	adopted, repaired, foreign, err := reconcileRemoteRoutes(context.Background(), st, c, nil)
+	adopted, repaired, foreign, err := reconcileRemoteRoutes(context.Background(), st, c, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +371,7 @@ func TestReconcileDoesNothingWhenListFails(t *testing.T) {
 	st.routes["old.example.com"] = store.RemoteRoute{Domain: "old.example.com", ServerUUID: uuidGone, NodeID: 9, Port: 25565}
 	fake.FailNext(1, 503, "unavailable", 0)
 	before := len(fake.Calls())
-	if _, _, _, err := reconcileRemoteRoutes(context.Background(), st, c, nil); err == nil {
+	if _, _, _, err := reconcileRemoteRoutes(context.Background(), st, c, nil, nil); err == nil {
 		t.Fatal("want the list error")
 	}
 	if got := fake.Calls()[before:]; len(got) != 1 || len(st.routes) != 2 || len(st.outbox) != 0 {

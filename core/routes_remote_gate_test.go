@@ -53,13 +53,7 @@ var remoteGated = []struct{ method, tpl string }{
 	{"PUT", "/api/gateway/link-routes/{domain:[^/]+}/bedrock"},
 	{"GET", "/api/gateway/link-routes/{domain:[^/]+}/floodgate-key"},
 	{"DELETE", "/api/gateway/link-routes/{domain:.+}"},
-	// Voice and Bedrock are refused in 7a (map rows 8, 9).
-	{"GET", "/api/servers/{id:[0-9]+}/voice"},
-	{"GET", "/api/servers/{id:[0-9]+}/bedrock"},
-	{"PUT", "/api/servers/{id:[0-9]+}/bedrock/routes"},
-	{"GET", "/api/admin/voice-permissions"},
-	{"PUT", "/api/admin/voice-permissions"},
-	{"DELETE", "/api/admin/voice-permissions"},
+	// The relay overview reads this platform's own relays (map row 8).
 	{"GET", "/api/voice/overview"},
 	// The provider's external API: a customer Core is not a provider (map row 11).
 	{"GET", "/api/external/gateway/link-kits"},
@@ -73,6 +67,7 @@ var remoteGated = []struct{ method, tpl string }{
 	{"PATCH", "/api/external/gateway/routes/{domain:[^/]+}/proxy-protocol"},
 	{"PUT", "/api/external/gateway/routes/{domain:[^/]+}/voice"},
 	{"PUT", "/api/external/gateway/routes/{domain:[^/]+}/bedrock"},
+	{"GET", "/api/external/gateway/routes/{domain:[^/]+}/floodgate-key"},
 	{"GET", "/api/external/gateway/custom-domains"},
 	{"POST", "/api/external/gateway/custom-domains"},
 	{"DELETE", "/api/external/gateway/custom-domains/{domain:[^/]+}"},
@@ -82,6 +77,7 @@ var remoteGated = []struct{ method, tpl string }{
 	{"GET", "/api/external/gateway/account"},
 	{"GET", "/api/external/gateway/check-domain"},
 	{"GET", "/api/external/gateway/usage"},
+	{"GET", "/api/external/gateway/players"},
 	{"GET", "/api/external/gateway/beam/keys"},
 	{"POST", "/api/external/gateway/beam/keys"},
 	{"DELETE", "/api/external/gateway/beam/keys/{kid}"},
@@ -133,8 +129,6 @@ var remoteGated = []struct{ method, tpl string }{
 	{"GET", "/api/gateway-bandwidth/history"},
 	{"GET", "/api/gateway-bandwidth/rebalance"},
 	{"POST", "/api/gateway-bandwidth/rebalance"},
-	// Live player counts from the edges (map row 35; not on the provider API).
-	{"GET", "/api/servers/players"},
 }
 
 // remoteAware is every route served by handlers/gateway, or by a handler that
@@ -142,14 +136,23 @@ var remoteGated = []struct{ method, tpl string }{
 // gated, with the reason. Such a new route must land in one of the two lists:
 // unclassified, it could read empty Redis keys in remote mode.
 var remoteAware = map[string]string{
+	"GET /api/servers/players":                           "remote mode: the provider's GET /players (RemoteGateway.PlayerCounts, cached 5 s, the last good counts marked stale for at most 2 min) joined with the local remote_routes rows; an unread mode answers 503",
 	"GET /api/servers/{id:[0-9]+}/routes":                "lists the local remote_routes rows minus pending deletes (RemoteGateway.ServerRoutes)",
 	"POST /api/servers/{id:[0-9]+}/routes":               "creates through the switching GatewayProvider; provider refusals mapped by gate.GatewayProviderError",
 	"DELETE /api/servers/{id:[0-9]+}/routes/{domain:.+}": "checks the local remote_routes rows, deletes through the provider outbox",
 	"GET /api/servers/{id:[0-9]+}/proxy-protocol":        "DB and node keys only; reports Auto unavailable in remote mode",
 	"PATCH /api/servers/{id:[0-9]+}/proxy-protocol":      "precheck from the kits' client-addr capability (KitStatus); Auto refused",
 	"GET /api/gateway/check-domain":                      "local remote_routes rows first, then the provider (CheckDomain, cached 10 s); 30/min per user",
-	"PUT /api/servers/{id:[0-9]+}/voice/switch":          "turning voice off never needs the gateway (local rows only, no Redis in remote mode); turning it on answers the mode sentinel",
-	"GET /api/warp/deploy-config":                        "DB settings and the gRPC certificate fingerprint only, no gateway state; node deploy snippets read it",
+	"PUT /api/servers/{id:[0-9]+}/voice/switch":          "remote mode: on through the provider (RemoteGateway.EnableServerVoice), off clears the local column and queues the provider's off; no Redis; an unread mode answers 503 on on",
+	"GET /api/servers/{id:[0-9]+}/voice":                 "remote mode: the local remote_routes voice columns (RemoteGateway.ServerVoice); an unread mode answers 503",
+	// Voice permissions: without them a platform on the managed gateway could
+	// not allow voice for anyone.
+	"GET /api/admin/voice-permissions":            "database rows only, no gateway state",
+	"PUT /api/admin/voice-permissions":            "database rows only, no gateway state",
+	"DELETE /api/admin/voice-permissions":         "database rows only, no gateway state",
+	"GET /api/servers/{id:[0-9]+}/bedrock":        "remote mode: editions from the local remote_routes rows, refusal from the provider's route list (ProviderRoute, cached); no key; an unread mode answers 503",
+	"PUT /api/servers/{id:[0-9]+}/bedrock/routes": "remote mode: adding goes to the provider and downloads its Floodgate key into this platform's own Redis; removing is local first, then the outbox; an unread mode answers 503",
+	"GET /api/warp/deploy-config":                 "DB settings and the gRPC certificate fingerprint only, no gateway state; node deploy snippets read it",
 	// Own domains (7b-1): the user's local claim plus the provider's claim.
 	"GET /api/gateway/custom-domains":                         "the caller's local claims, each with the provider's claim (ProviderCustomDomains, cached) filtered to them",
 	"POST /api/gateway/custom-domains":                        "local claim first, then EnsureProviderClaim; a provider refusal takes back a claim made by the call",
@@ -207,7 +210,7 @@ func gatewayPackageHandlers(t *testing.T) map[string]bool {
 // state (Redis keys the edges, links and relays write) or reach the gateway
 // provider. A handler that reaches one of them must be classified, wherever
 // its package lives.
-var gatewayStateIdents = []string{"LocalGatewayRedis", "ReadRoutesFromRedis", "GetRoutesFromRedis", "DiscoverBeamRelays", "ResolveRelay", "GatewayPlayersByServer", "LinkPresence", "LinkToken", "DiscoveryProof",
+var gatewayStateIdents = []string{"LocalGatewayRedis", "ReadRoutesFromRedis", "GetRoutesFromRedis", "DiscoverBeamRelays", "ResolveRelay", "GatewayPlayersByServer", "GatewayPlayersByRoute", "LinkPresence", "LinkToken", "DiscoveryProof",
 	"GetEdgesFromRedis", "GetLinksFromRedis", "CountRoutesFromRedis", "LiveBedrockEntries"}
 
 // gatewayTouchingHandlers is every function in a non-test file under handlers/

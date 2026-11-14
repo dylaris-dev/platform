@@ -381,27 +381,30 @@ func (h *GatewayHandler) routeSuspended(ownerID, domain string) bool {
 	return false
 }
 
-// ownsCoreRoute reports whether this tenant may remove that route.
+// coreRouteOwned reports whether this tenant may change that route, with the
+// table's read error, returned only when Redis does not show the route as the
+// caller's either.
 //
 // The stored row is asked first and the live Redis entry second, because either
 // one proves ownership and they can disagree: a route whose Redis entry is gone
 // is exactly the route a tenant most wants to delete, and asking only the cache
 // meant the delete answered "Route not found" for something the panel had just
 // listed. The reverse gap is the create path's rollback window.
-func (h *GatewayHandler) ownsCoreRoute(userID, domain string) bool {
-	if rows, err := h.d.Store.ListCoreLinkRoutes(); err == nil {
+func (h *GatewayHandler) coreRouteOwned(userID, domain string) (bool, error) {
+	rows, err := h.d.Store.ListCoreLinkRoutes()
+	if err == nil {
 		for _, rt := range rows {
 			if rt.Domain == domain && rt.OwnerID == userID {
-				return true
+				return true, nil
 			}
 		}
 	}
 	for _, rt := range services.GetRoutesFromRedis(h.ctx(), h.d.Redis) {
 		if rt.Domain == domain && rt.CoreOwned && rt.OwnerID == userID {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, err
 }
 
 // ListLinkRoutes GET /api/gateway/link-routes — the caller's route-only entries.
@@ -460,6 +463,25 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 	}
 	bedrockAllowed := h.bedrockAllowed(r)
 	bedrockActive := services.BedrockActive(r.Context(), h.d.FeatureFlags)
+	// A managed account on the external API: the flags take the decision its
+	// enables take, or they would hide switches that work. A failed lookup is
+	// a server error, never a "false" a client would act on. The panel path
+	// carries no mark and keeps the answer above.
+	if managedAPICall(r, userID) {
+		refusal, err := h.linkRouteVoiceRefused(r, userID)
+		if err != nil {
+			log.Printf("link routes of %s: voice permission: %v", userID, err)
+			httpx.SendJSONError(w, "Could not read the route permissions. Try again.", http.StatusInternalServerError)
+			return
+		}
+		// PublishEditions gives a managed account's addresses Bedrock whatever
+		// the audience says, so it is active for them too.
+		allowed, bedrockAllowed, bedrockActive = refusal == "", true, true
+	} else if err := managedLookupErr(r, userID); err != nil && !(allowed && bedrockAllowed && bedrockActive) {
+		log.Printf("link routes of %s: %v", userID, err)
+		httpx.SendJSONError(w, "Could not read the route permissions. Try again.", http.StatusInternalServerError)
+		return
+	}
 	out := make([]linkRoute, 0, len(mine))
 	for _, rt := range mine {
 		out = append(out, linkRoute{PublicRoute: rt.Public(), LinkID: linkIDByToken[rt.TunnelID],
@@ -502,9 +524,18 @@ func (h *GatewayHandler) DeleteLinkRoute(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "domain required", http.StatusBadRequest)
 		return
 	}
-	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
-		http.Error(w, "Route not found", http.StatusNotFound)
-		return
+	if !isAdmin {
+		// A table error is no "not yours": the customer's outbox takes
+		// not_found on a delete as done and would forget a route we keep.
+		owned, err := h.coreRouteOwned(userID, domain)
+		if !owned && err != nil {
+			routeLookupFailed(w, domain, err)
+			return
+		}
+		if !owned {
+			http.Error(w, "Route not found", http.StatusNotFound)
+			return
+		}
 	}
 	// Deleting would let the owner lift the suspension by creating the route
 	// again. Only an admin removes a suspended route.
@@ -539,8 +570,7 @@ func (h *GatewayHandler) SetLinkRouteProxyProtocol(w http.ResponseWriter, r *htt
 		httpx.SendJSONError(w, "domain required", http.StatusBadRequest)
 		return
 	}
-	if !isAdmin && !h.ownsCoreRoute(userID, domain) {
-		httpx.SendJSONError(w, "Route not found", http.StatusNotFound)
+	if !isAdmin && !h.ownsCoreRouteOrFail(w, userID, domain) {
 		return
 	}
 	if msg := guard.OwnerRefusal(h.d.Store, h.d.SuspendGrace, r, userID); msg != "" {

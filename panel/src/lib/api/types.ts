@@ -859,8 +859,12 @@ export interface ServerCoreLoad {
 }
 export const getServerCoreLoad = (id: number): Promise<ServerCoreLoad> => fetchAPI(`/servers/${id}/stats/cores`);
 
-/** Players connected through the gateway, by server id, as the edges count them. */
-export const getGatewayPlayers = (): Promise<{ players?: Record<string, number> }> => fetchAPI('/servers/players');
+/** Players connected through the gateway, by server id, as the edges count them.
+ *  `editions` (Java and Bedrock per server id) comes only from the managed gateway. */
+export const getGatewayPlayers = (): Promise<{
+    players?: Record<string, number>;
+    editions?: Record<string, { java: number; bedrock: number }>;
+}> => fetchAPI('/servers/players');
 
 // --- SERVER SETTINGS ---
 export interface ServerLimitSettings {
@@ -1366,6 +1370,8 @@ export interface ServerVoice {
     port: number;
     mod: string; // "svc" | "plasmo"
     allowed: boolean;
+    // Managed gateway only: every address of the server is on an own domain.
+    ownDomainOnly?: boolean;
 }
 type VoiceResult = { success?: boolean; voice?: ServerVoice; restartRequired?: boolean; message?: string; error?: string; code?: string };
 export const getServerVoice = (serverId: number): Promise<VoiceResult> =>
@@ -1378,7 +1384,8 @@ export const setServerVoice = (serverId: number, enabled: boolean): Promise<Voic
 // `allowed`: this caller may give a route Bedrock. `available`: routed through
 // the gateway and a Bedrock entry runs in the region (`refusal` says why not).
 // `routes` lists only routes that differ from Java only.
-export interface BedrockRouteEdition { domain: string; java: boolean; bedrock: boolean }
+// `ownDomain` (managed gateway only): the address is on an own domain, where Bedrock is not offered yet.
+export interface BedrockRouteEdition { domain: string; java: boolean; bedrock: boolean; ownDomain?: boolean }
 export interface ServerBedrock {
     enabled: boolean;
     active: boolean;
@@ -1392,7 +1399,12 @@ export interface ServerBedrock {
 type BedrockResult = { success?: boolean; bedrock?: ServerBedrock; message?: string; error?: string; code?: string };
 export const getServerBedrock = (serverId: number): Promise<BedrockResult> =>
     fetchAPI(`/servers/${serverId}/bedrock`);
-type RouteEditionResult = { success?: boolean; route?: BedrockRouteEdition; message?: string; error?: string; code?: string };
+// restartRequired and warning come only from the managed gateway: a new
+// Floodgate key, and a key not yet handed to the node.
+type RouteEditionResult = {
+    success?: boolean; route?: BedrockRouteEdition; restartRequired?: boolean; warning?: string;
+    message?: string; error?: string; code?: string;
+};
 export const setRouteEdition = (serverId: number, domain: string, e: { java: boolean; bedrock: boolean }): Promise<RouteEditionResult> =>
     fetchAPI(`/servers/${serverId}/bedrock/routes`, { method: 'PUT', body: JSON.stringify({ domain, ...e }) });
 

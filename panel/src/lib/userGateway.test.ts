@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
     gatewayAnswerOf, productLabel, limitText, kitState, routeSuspendedLabel, poolText, truncatedNote, EMPTY_TEXT,
-    failureText, hiddenNote, NOT_FOR_ROLE,
+    failureText, hiddenNote, NOT_FOR_ROLE, playersLabel, peakLine, peakSeries, peakDayList, PEAK_NO_DATA,
 } from './userGateway';
 import { formatDecimalBytes } from './format';
 
@@ -76,6 +76,80 @@ describe('failureText', () => {
     });
     it.each([[404, 'User not found'], [500, "Failed to load the user's gateway"], [undefined, 'Connection failed']])(
         '%s keeps the server message', (status, message) => expect(failureText({ status, message })).toBe(message));
+});
+
+describe('playersLabel', () => {
+    it.each([
+        [undefined, 'None'],
+        [{ java: 0, bedrock: 0 }, 'None'],
+        [{ java: 3, bedrock: 0 }, '3 Java'],
+        [{ java: 0, bedrock: 2 }, '2 Bedrock'],
+        [{ java: 3, bedrock: 1 }, '3 Java, 1 Bedrock'],
+    ])('%j -> %s', (p, want) => expect(playersLabel(p)).toBe(want));
+});
+
+describe('peakLine', () => {
+    it.each([
+        ['Peak today', undefined, true, 'Peak today: none recorded'],
+        ['Peak today', { java: 0, bedrock: 0, total: 0 }, true, 'Peak today: none recorded'],
+        ['Peak today', { java: 3, bedrock: 1, total: 4 }, true, 'Peak today: at least 4 (3 Java, 1 Bedrock)'],
+        ['Peak today', { java: 5, bedrock: 0, total: 5 }, true, 'Peak today: at least 5 (5 Java)'],
+        ['Peak in the last 30 days', { java: 9, bedrock: 2, total: 10 }, false, 'Peak in the last 30 days: at least 10'],
+    ] as const)('%s %j editions=%s -> %s', (label, w, editions, want) => {
+        expect(peakLine(label, w, editions)).toBe(want);
+    });
+});
+
+describe('peakSeries', () => {
+    const row = (day: string, total: number) => ({ day, java: total, bedrock: 0, total });
+    // A day without a row was never measured (peaks start on deploy day):
+    // null, so the chart draws no zero it did not see (E2E D8).
+    it('is 30 days without data without rows', () => {
+        const s = peakSeries([], '2026-11-14');
+        expect(s).toHaveLength(30);
+        expect(s.every(v => v === null)).toBe(true);
+    });
+    it('runs oldest to newest with gaps as no data', () => {
+        const s = peakSeries([row('2026-11-14', 4), row('2026-11-12', 7), row('2026-10-16', 2)], '2026-11-14');
+        expect(s).toHaveLength(30);
+        expect(s[29]).toBe(4); // today, last
+        expect(s[28]).toBeNull(); // 2026-11-13, no row
+        expect(s[27]).toBe(7);
+        expect(s[0]).toBe(2); // 29 days ago, first
+    });
+    it('follows the server day, not a browser clock a day off', () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date('2026-11-15T23:30:00Z')); // browser a day ahead
+            const days = [row('2026-11-14', 4), row('2026-11-13', 6)];
+            const s = peakSeries(days, '2026-11-14');
+            expect(s.slice(-2)).toEqual([6, 4]); // the server's today is the last bar
+            vi.setSystemTime(new Date('2026-11-13T00:30:00Z')); // a day behind
+            expect(peakSeries(days, '2026-11-14')).toEqual(s);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+    it('crosses a month and leaves out days outside the window', () => {
+        const s = peakSeries([row('2026-12-01', 3), row('2026-11-30', 5), row('2026-11-01', 99)], '2026-12-01');
+        expect(s.slice(-2)).toEqual([5, 3]);
+        expect(s).not.toContain(99);
+    });
+});
+
+describe('peakDayList', () => {
+    const row = (day: string, total: number) => ({ day, java: total, bedrock: 0, total });
+    it('lists every day from today back to the oldest row, a gap as no data', () => {
+        const l = peakDayList([row('2026-11-14', 4), row('2026-11-11', 7)], '2026-11-14');
+        expect(l.map(d => d.day)).toEqual(['2026-11-14', '2026-11-13', '2026-11-12', '2026-11-11']);
+        expect(l.map(d => d.peak?.total ?? PEAK_NO_DATA)).toEqual([4, PEAK_NO_DATA, PEAK_NO_DATA, 7]);
+    });
+    it('is today as no data when only older rows exist', () => {
+        expect(peakDayList([row('2026-11-13', 2)], '2026-11-14').map(d => d.peak?.total ?? null)).toEqual([null, 2]);
+    });
+    it('is empty without rows', () => {
+        expect(peakDayList([], '2026-11-14')).toEqual([]);
+    });
 });
 
 describe('hiddenNote', () => {

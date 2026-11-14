@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
     visibilityFor, providerErrorText, providerModeOf, outboxWarning, barPercent, isDockerNetworkName, initialNetwork,
     switchConfirm, purchaseNote, usageFinalLabel, providerGbToBytes, productLabel, testedAccount,
-    routingModeWarning, refusalLine,
+    routingModeWarning, refusalLine, playersTitle, refusalText, routeOptionsFailure,
     RETIRE_CONFIRM, canReplaceLink, retiringLine, ORPHAN_INTRO, showOrphanSection, orphanRevokeConfirm,
     type RemoteVisibility,
 } from './gatewayProvider';
@@ -27,10 +27,11 @@ describe('visibilityFor', () => {
 
     // remote hides each surface whose route answers 409 gateway_remote. Route
     // limits stay: this Core still enforces them per user. Own domains are no
-    // surface here: they show in both modes, as route-options says.
+    // surface here: they show in both modes, as route-options says. Voice,
+    // Bedrock and player counts run through the provider since stage 7b-2.
     it.each(SURFACES)('remote: %s', (k) => {
-        const expected = k === 'routeLimits' || k === 'managedLinkKit' || k === 'providerUsage';
-        expect(visibilityFor('remote')[k]).toBe(expected);
+        const shown: (keyof RemoteVisibility)[] = ['routeLimits', 'managedLinkKit', 'providerUsage', 'voice', 'bedrock', 'playerCounts'];
+        expect(visibilityFor('remote')[k]).toBe(shown.includes(k));
     });
 });
 
@@ -79,6 +80,15 @@ describe('providerErrorText', () => {
         expect(t).toMatch(/^[A-Z].*\.$/);
         expect(t).not.toBe(generic);
         expect(t).not.toMatch(/belong|another user/i);
+    });
+
+    it.each([
+        'voice_not_allowed', 'link_without_voice', 'no_relay', 'voice_pool_full', 'no_routes',
+        'bedrock_disabled', 'bedrock_unavailable', 'bedrock_one_address', 'voice_one_address', 'own_domain_unsupported',
+    ])('voice/Bedrock code %s has its own sentence', (code) => {
+        const t = providerErrorText(code);
+        expect(t).toMatch(/^[A-Z].*\.$/);
+        expect(t).not.toBe(generic);
     });
 
     // The provider plan's cap is the whole platform's; the per-user one is this
@@ -281,5 +291,47 @@ describe('unknown provider links', () => {
         expect(ORPHAN_INTRO).toContain('Only revoke a link here if no other DYLARIS installation uses this provider account.');
         expect(orphanRevokeConfirm('old node').message).toContain('another DYLARIS installation');
         expect(orphanRevokeConfirm('').message.startsWith('This link stops connecting')).toBe(true);
+    });
+});
+
+describe('playersTitle', () => {
+    it.each([
+        // Without editions (this platform's own edges): today's text.
+        [3, undefined, '3 connected through the gateway'],
+        [4, { java: 3, bedrock: 1 }, '4 players: 3 Java, 1 Bedrock. Live, can be a few seconds old.'],
+        [1, { java: 1, bedrock: 0 }, '1 player: 1 Java, 0 Bedrock. Live, can be a few seconds old.'],
+        [2, { java: 0, bedrock: 2 }, '2 players: 0 Java, 2 Bedrock. Live, can be a few seconds old.'],
+    ])('%i %j', (total, e, want) => {
+        expect(playersTitle(total, e)).toBe(want);
+    });
+});
+
+describe('refusalText', () => {
+    it('prefers the sentence Core wrote for this mode', () => {
+        expect(refusalText({ code: 'bedrock_one_address', message: 'Take Bedrock off a.eu.example.com first.' }, 'x'))
+            .toBe('Take Bedrock off a.eu.example.com first.');
+        expect(refusalText({ code: 'no_relay', error: 'No relay in eu yet.' }, 'x')).toBe('No relay in eu yet.');
+    });
+    it('reads a bare code in error as a code, not a sentence', () => {
+        expect(refusalText({ error: 'gateway_disabled', message: 'Gateway routing is disabled.' }, 'x')).toBe('Gateway routing is disabled.');
+        expect(refusalText({ error: 'voice_pool_full' }, 'x')).toBe(providerErrorText('voice_pool_full'));
+    });
+    it('uses its own sentence where Core has only a generic one', () => {
+        expect(refusalText({ code: 'change_pending', error: 'a previous change to this address is still being applied' }, 'x'))
+            .toBe(providerErrorText('change_pending'));
+    });
+    it('falls back without a code or a sentence', () => {
+        expect(refusalText({}, 'Voice chat could not be changed.')).toBe('Voice chat could not be changed.');
+        expect(refusalText(null, 'Voice chat could not be changed.')).toBe('Voice chat could not be changed.');
+    });
+});
+
+describe('routeOptionsFailure', () => {
+    it('says the provider was not reached on the managed gateway only', () => {
+        expect(routeOptionsFailure('remote', true)).toMatch(/gateway provider could not be reached/);
+        expect(routeOptionsFailure('remote', true)).not.toMatch(/No domain configured/);
+        expect(routeOptionsFailure('remote', false)).toBeNull();
+        // Local mode keeps its block as it was.
+        expect(routeOptionsFailure('local', true)).toBeNull();
     });
 });

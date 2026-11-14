@@ -456,6 +456,14 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 		return err
 	}
 
+	if err := applyRemoteRouteExtras(db); err != nil {
+		return err
+	}
+
+	if err := applyGatewayPlayerPeaks(db); err != nil {
+		return err
+	}
+
 	seedSystemModules(db)
 
 	// After the seed, so every row it owns is guaranteed to exist.

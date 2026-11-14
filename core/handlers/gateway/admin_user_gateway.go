@@ -41,6 +41,23 @@ type adminGatewayRoute struct {
 	ProxyProtocol   bool       `json:"proxyProtocol"`
 	SuspendedAt     *time.Time `json:"suspendedAt,omitempty"`
 	SuspendedReason string     `json:"suspendedReason,omitempty"`
+	// Players is absent when nobody is on the address (or it is suspended).
+	Players *adminGatewayPlayers `json:"players,omitempty"`
+}
+
+// adminGatewayPlayers is play sessions right now as the edges count them: a
+// display, up to about 12 s old.
+type adminGatewayPlayers struct {
+	Java    int `json:"java"`
+	Bedrock int `json:"bedrock"`
+}
+
+// adminGatewayPeakDay is one UTC day's player peak, a lower bound.
+type adminGatewayPeakDay struct {
+	Day     string `json:"day"` // YYYY-MM-DD, UTC
+	Java    int    `json:"java"`
+	Bedrock int    `json:"bedrock"`
+	Total   int    `json:"total"`
 }
 
 type adminGatewayClaim struct {
@@ -82,7 +99,7 @@ func capped[T any](list []T) ([]T, bool) {
 	return list, false
 }
 
-// AdminUserGateway GET /api/admin/users/{id}/gateway - one account's managed gateway as the provider holds it: product, billing status, caps, link kits (online and caps), routes (suspended ones too), own domains, this month's traffic, beam key ids and gateway API keys. Billing, product, limits and usage need plans.read too, API keys users.read; a block the caller lacks is left out and named in hidden. Read-only and secret-free: no link token, key hash, beam public key or TXT value. Lists stop at 200 with <list>Truncated.
+// AdminUserGateway GET /api/admin/users/{id}/gateway - one account's managed gateway as the provider holds it: product, billing status, caps, link kits (online and caps), routes (suspended ones too) with the players on each address right now, players (the account's total, java and bedrock), peaks (the daily peak of concurrent players: day (the server's UTC day), today, last30Days and the days of the last 30 with a row, newest first; each AT LEAST that many; left out when they cannot be read), own domains, this month's traffic, beam key ids and gateway API keys. Billing, product, limits and usage need plans.read too, API keys users.read; a block the caller lacks is left out and named in hidden. Read-only and secret-free: no link token, key hash, beam public key or TXT value. Lists stop at 200 with <list>Truncated.
 func (h *GatewayHandler) AdminUserGateway(w http.ResponseWriter, r *http.Request) {
 	userID, ok := httpx.ParseUserID(w, r)
 	if !ok {
@@ -162,14 +179,43 @@ func (h *GatewayHandler) AdminUserGateway(w http.ResponseWriter, r *http.Request
 		fail("routes", err)
 		return
 	}
+	// One read of the edge streams for every address; looked up by this
+	// owner's own domains only. The map is shared: read it, never write.
+	var counts map[string]services.RoutePlayers
+	if h.d.Redis != nil {
+		counts = services.GatewayPlayersByRoute(r.Context(), h.d.Redis)
+	}
+	total := adminGatewayPlayers{}
+	// Summed before the cap, so a cut list still shows the account's total.
+	for _, rt := range rows {
+		if rt.SuspendedAt == nil {
+			total.Java += counts[rt.Domain].Java
+			total.Bedrock += counts[rt.Domain].Bedrock
+		}
+	}
 	rows, routesCut := capped(rows)
 	routes := make([]adminGatewayRoute, 0, len(rows))
 	for _, rt := range rows {
 		// The row's LinkToken is a tunnel credential: it is only ever used as a
 		// lookup key here, never written.
-		routes = append(routes, adminGatewayRoute{Domain: rt.Domain, TargetHost: rt.TargetHost, TargetPort: rt.TargetPort,
+		route := adminGatewayRoute{Domain: rt.Domain, TargetHost: rt.TargetHost, TargetPort: rt.TargetPort,
 			LinkID: linkOf[rt.LinkToken], ProxyProtocol: rt.ProxyProtocol,
-			SuspendedAt: rt.SuspendedAt, SuspendedReason: rt.SuspendedReason})
+			SuspendedAt: rt.SuspendedAt, SuspendedReason: rt.SuspendedReason}
+		if p := counts[rt.Domain]; rt.SuspendedAt == nil && p.Java+p.Bedrock > 0 {
+			route.Players = &adminGatewayPlayers{Java: p.Java, Bedrock: p.Bedrock}
+		}
+		routes = append(routes, route)
+	}
+
+	// A failed peaks read drops only the peaks block: the panel already draws
+	// the view without one, and the kits and routes are what an admin needs.
+	peakRows, peakToday, peak30, peakErr := playerPeaks(st, userID, now)
+	if peakErr != nil {
+		log.Printf("admin user gateway %s: player peaks left out: %v", userID, peakErr)
+	}
+	peakDays := make([]adminGatewayPeakDay, 0, len(peakRows))
+	for _, p := range peakRows {
+		peakDays = append(peakDays, adminGatewayPeakDay{Day: p.Day.Format("2006-01-02"), Java: p.Java, Bedrock: p.Bedrock, Total: p.Total})
 	}
 
 	claimRows, err := st.ListCustomDomainClaimsByUser(userID)
@@ -200,9 +246,15 @@ func (h *GatewayHandler) AdminUserGateway(w http.ResponseWriter, r *http.Request
 		"success": true,
 		"userId":  userID,
 		"kits":    kits, "kitsTruncated": kitsCut, "kitsUsed": used, "kitsRetiring": retiring,
-		"routes": routes, "routesTruncated": routesCut,
+		"routes": routes, "routesTruncated": routesCut, "players": total,
 		"customDomains": claims, "customDomainsTruncated": claimsCut,
 		"beamKeys": beamKeys, "beamKeysTruncated": beamCut,
+	}
+	if peakErr == nil {
+		out["peaks"] = map[string]interface{}{"today": peakToday, "last30Days": peak30, "days": peakDays,
+			// The UTC day the windows are measured against, so a client draws the
+			// 30 days from the server's calendar rather than its own clock.
+			"day": now.Format("2006-01-02")}
 	}
 	hidden := []string{}
 

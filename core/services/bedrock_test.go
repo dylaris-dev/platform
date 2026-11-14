@@ -5,10 +5,15 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
+	"dylaris-core/models"
 	"dylaris-core/store"
+
+	"github.com/alicebob/miniredis/v2"
 )
 
 type bedrockFakeStore struct {
@@ -27,6 +32,11 @@ func (f *bedrockFakeStore) ListLinkRouteEditions() ([]store.LinkRouteEdition, er
 }
 
 func (f *bedrockFakeStore) ListRouteEditions(int) ([]store.RouteEdition, error) { return f.eds, nil }
+
+// No owner holds a managed plan here (see route_editions_managed_test.go).
+func (f *bedrockFakeStore) GetTrafficLimit(string, string, string) (*models.TrafficLimit, error) {
+	return nil, nil
+}
 
 func (f *bedrockFakeStore) AddBedrockUsage(serverID int, _ time.Time, region string, rx, tx int64) error {
 	f.usage = append(f.usage, voiceUsageCall{serverID, region, rx, tx})
@@ -260,5 +270,113 @@ func TestPublishEditionsSurvivesAnUnreadableRouteOnlyKey(t *testing.T) {
 	}
 	if mr.Exists(FloodgateKeyRedisKey(LinkRouteBedrockSubject("owner-1", "r.eu.dylaris.com"))) {
 		t.Fatal("an unreadable key was published")
+	}
+}
+
+// redisDump is every key with its value (hash fields sorted), for comparing
+// what a reconcile wrote.
+func redisDump(t *testing.T, mr *miniredis.Miniredis) string {
+	t.Helper()
+	var out []string
+	for _, k := range mr.Keys() {
+		if mr.Type(k) == "hash" {
+			fields, _ := mr.HKeys(k)
+			sort.Strings(fields)
+			for _, f := range fields {
+				out = append(out, k+"."+f+"="+mr.HGet(k, f))
+			}
+			continue
+		}
+		v, _ := mr.Get(k)
+		out = append(out, k+"="+v)
+	}
+	return strings.Join(out, " ")
+}
+
+// bedrockReconcileFixture: one server row with a Bedrock route, one route-only
+// row, one orphan key.
+func bedrockReconcileFixture(t *testing.T) (*miniredis.Miniredis, *bedrockFakeStore, *BedrockService) {
+	mr, rdb := newVoiceRedis(t)
+	fs := newBedrockFake()
+	fs.keys[7] = bytes.Repeat([]byte{0x22}, 16)
+	fs.eds = []store.RouteEdition{{Domain: "s.eu.dylaris.com", ServerID: 7, ServerUUID: "uuid-7", Java: true, Bedrock: true}}
+	fs.links = []store.LinkRouteEdition{{Domain: "r.eu.dylaris.com", OwnerID: "owner-1", Java: false, Bedrock: true, Key: bytes.Repeat([]byte{0x33}, 16)}}
+	mr.Set(FloodgateKeyRedisKey("orphan"), "AAAA")
+	return mr, fs, NewBedrockService(fs, rdb)
+}
+
+// The local path writes exactly what it wrote before the remote branch.
+// Captured from the code before that change.
+func TestBedrockReconcileLocalUnchanged(t *testing.T) {
+	mr, _, svc := bedrockReconcileFixture(t)
+	svc.SetGatewayRemote(func() (bool, bool) { return false, true })
+	svc.SetLeader(fakeLeader{leader: true})
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := redisDump(t, mr), "dylaris:server:owner:owner-1:bedrock:r.eu.dylaris.com:floodgate=MzMzMzMzMzMzMzMzMzMzMw== dylaris:server:uuid-7:floodgate=IiIiIiIiIiIiIiIiIiIiIg== sys:route:editions.r.eu.dylaris.com=none"; got != want {
+		t.Fatalf("redis after reconcile:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestBedrockReconcileRemotePublishesAndSweeps(t *testing.T) {
+	mr, fs, svc := bedrockReconcileFixture(t)
+	svc.SetGatewayRemote(func() (bool, bool) { return true, true })
+	svc.SetLeader(fakeLeader{leader: true})
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := mr.Get(FloodgateKeyRedisKey("uuid-7")); got != base64.StdEncoding.EncodeToString(fs.keys[7]) {
+		t.Fatal("the stored key was not published")
+	}
+	if mr.Exists(FloodgateKeyRedisKey("orphan")) {
+		t.Fatal("orphan key not removed")
+	}
+	if mr.Exists(RouteEditionsKey) {
+		t.Fatal("sys:route:editions written in remote mode")
+	}
+	if mr.Exists(FloodgateKeyRedisKey(LinkRouteBedrockSubject("owner-1", "r.eu.dylaris.com"))) {
+		t.Fatal("a route-only key published in remote mode")
+	}
+
+	// A follower writes nothing.
+	mr2, _, follower := bedrockReconcileFixture(t)
+	follower.SetGatewayRemote(func() (bool, bool) { return true, true })
+	follower.SetLeader(fakeLeader{leader: false})
+	before := redisDump(t, mr2)
+	if err := follower.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := redisDump(t, mr2); got != before {
+		t.Fatalf("follower wrote: %s", got)
+	}
+}
+
+func TestBedrockReconcileIdleWhenModeUnknown(t *testing.T) {
+	mr, _, svc := bedrockReconcileFixture(t)
+	svc.SetGatewayRemote(func() (bool, bool) { return false, false })
+	before := redisDump(t, mr)
+	if err := svc.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := redisDump(t, mr); got != before {
+		t.Fatalf("an unread mode wrote: %s", got)
+	}
+}
+
+// ReplaceKey says whether the node's copy was missing or different: that is
+// when a running server needs a restart for the key.
+func TestBedrockReplaceKeyReportsAChange(t *testing.T) {
+	_, rdb := newVoiceRedis(t)
+	svc := NewBedrockService(newBedrockFake(), rdb)
+	a, b := bytes.Repeat([]byte{0x11}, 16), bytes.Repeat([]byte{0x22}, 16)
+	for i, c := range []struct {
+		key  []byte
+		want bool
+	}{{a, true}, {a, false}, {b, true}} {
+		changed, err := svc.ReplaceKey(context.Background(), "uuid-7", c.key)
+		if err != nil || changed != c.want {
+			t.Fatalf("step %d: changed %v, %v; want %v", i, changed, err, c.want)
+		}
 	}
 }

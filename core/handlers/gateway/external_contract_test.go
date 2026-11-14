@@ -2,10 +2,12 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"dylaris-core/services"
 	"dylaris-core/services/remotegw"
@@ -77,6 +79,25 @@ func TestProviderMatchesClientContract(t *testing.T) {
 		f.h.RetireLinkKit(rec, retireReq(extTenantB, "link-b"))
 	})
 	contractRequire(t, "link-kits.retire", retire, K["link-kits.retire"])
+
+	seedPlayersSample(t, f.rdb, "e1", `{"players_by_route":{"a.example.com":{"j":1}}}`, time.Second)
+	players := get(func(rec *httptest.ResponseRecorder) {
+		f.h.GetPlayers(rec, extReq("GET", "/", extTenantA, false, nil, nil))
+	})
+	contractRequire(t, "players", players, K["players"])
+	contractRequire(t, "players.total", players["total"].(map[string]interface{}), []string{"java", "bedrock"})
+	contractRequire(t, "players.item", contractFirst(t, players), K["players.item"])
+	peak := players["peak"].(map[string]interface{})
+	contractRequire(t, "players.peak", peak, K["players.peak"])
+	contractRequire(t, "players.peak.window", peak["today"].(map[string]interface{}), K["players.peak.window"])
+	contractRequire(t, "players.peak.window", peak["last30Days"].(map[string]interface{}), K["players.peak.window"])
+
+	// The Floodgate key needs a key row, which the route-only Bedrock fixture has.
+	_, _, x := floodgateEnv(t)
+	key := get(func(rec *httptest.ResponseRecorder) {
+		x.GetRouteFloodgateKey(rec, extReq("GET", "/", "owner-1", false, map[string]string{"domain": linkDomain}, nil))
+	})
+	contractRequire(t, "routes.floodgate-key", key, K["routes.floodgate-key"])
 }
 
 // Kit mint and usage through the REAL handlers: WarpHandler.MintLinkKit behind
@@ -201,5 +222,59 @@ func TestProviderMatchesClientContractCustomDomains(t *testing.T) {
 	f.st.settings["gateway_custom_domains_enabled"] = "false"
 	if code, body := call((*ExternalGatewayHandler).AddCustomDomain, "POST", extTenantA, nil, map[string]string{"domain": "a2-own.net"}); code != 409 || body["code"] != "custom_domains_off" {
 		t.Errorf("add with own domains off: %d %v, want 409 custom_domains_off", code, body)
+	}
+}
+
+// Voice and Bedrock through the REAL external handlers: the answer keys the
+// client reads, and the refusals remotegwtest copies (the fake side of the
+// same table is TestClientSetVoiceAndBedrock).
+func TestProviderMatchesClientContractVoiceAndBedrock(t *testing.T) {
+	K := remotegw.ContractKeys
+	put := func(m *managedEnv, fn func(*ExternalGatewayHandler, http.ResponseWriter, *http.Request), domain string, body interface{}) (int, map[string]interface{}) {
+		rec := httptest.NewRecorder()
+		fn(m.x, rec, extReq("PUT", "/", "owner-1", false, map[string]string{"domain": domain}, body))
+		var out map[string]interface{}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	voice, bedrock := (*ExternalGatewayHandler).SetRouteVoice, (*ExternalGatewayHandler).SetRouteBedrock
+
+	m := newManagedEnv(t, true)
+	code, v := put(m, voice, linkDomain, map[string]interface{}{"enabled": true})
+	if code != 200 {
+		t.Fatalf("voice on: %d %v", code, v)
+	}
+	contractRequire(t, "routes.voice", v, K["routes.voice"])
+	contractRequire(t, "routes.voice.voice", v["voice"].(map[string]interface{}), K["routes.voice.voice"])
+	code, b := put(m, bedrock, linkDomain, map[string]interface{}{"java": true, "bedrock": true})
+	if code != 200 {
+		t.Fatalf("bedrock on: %d %v", code, b)
+	}
+	contractRequire(t, "routes.bedrock", b, K["routes.bedrock"])
+	contractRequire(t, "routes.bedrock.bedrock", b["bedrock"].(map[string]interface{}), K["routes.bedrock.bedrock"])
+
+	refused := newManagedEnv(t, false)
+	for _, c := range []struct {
+		name   string
+		m      *managedEnv
+		fn     func(*ExternalGatewayHandler, http.ResponseWriter, *http.Request)
+		domain string
+		body   interface{}
+		status int
+		code   string
+	}{
+		{"voice on an unknown address", m, voice, "nope.example.com", map[string]interface{}{"enabled": true}, 404, "not_found"},
+		{"bedrock on an unknown address", m, bedrock, "nope.example.com", map[string]interface{}{"java": true, "bedrock": true}, 404, "not_found"},
+		{"no edition at all", m, bedrock, linkDomain, map[string]interface{}{"java": false, "bedrock": false}, 400, "edition_invalid"},
+		{"voice not allowed", refused, voice, linkDomain, map[string]interface{}{"enabled": true}, 409, "voice_not_allowed"},
+		{"bedrock not offered", refused, bedrock, linkDomain, map[string]interface{}{"java": true, "bedrock": true}, 409, "bedrock_disabled"},
+	} {
+		if status, out := put(c.m, c.fn, c.domain, c.body); status != c.status || out["code"] != c.code {
+			t.Errorf("%s: %d %v, want %d %s", c.name, status, out, c.status, c.code)
+		}
+	}
+	// Off is never refused, and answers the voice object without a port.
+	if code, v := put(refused, voice, linkDomain, map[string]interface{}{"enabled": false}); code != 200 || v["voice"] == nil {
+		t.Errorf("voice off where on is refused: %d %v", code, v)
 	}
 }

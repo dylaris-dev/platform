@@ -43,11 +43,12 @@ export function visibilityFor(mode: GatewayProviderMode): RemoteVisibility {
         // provider's own cap sits on top of them.
         routeLimits: true,
         warpTab: local,
-        voice: local,
-        bedrock: local,
+        // The provider carries voice and Bedrock and counts the players.
+        voice: true,
+        bedrock: true,
         edgeMotd: local,
         infrastructureGateway: local,
-        playerCounts: local,
+        playerCounts: true,
         tenancy: local,
         managedLinkKit: !local,
         providerUsage: !local,
@@ -57,6 +58,19 @@ export function visibilityFor(mode: GatewayProviderMode): RemoteVisibility {
 /** What a hidden gateway screen says instead, when it is reached by address. */
 export const MANAGED_GATEWAY_NOTE =
     'This platform uses the DYLARIS Managed Gateway, which runs this part of the gateway. There is nothing to manage here.';
+
+/** The Add Route block's line when the route options did not load on the
+ *  managed gateway: the provider was not reached, which is not "no domain
+ *  configured yet". null in local mode, where the block stays as it was. */
+export function routeOptionsFailure(mode: GatewayProviderMode, failed: boolean): string | null {
+    return mode === 'remote' && failed
+        ? "The gateway provider could not be reached, so its domains cannot be shown. Try again in a moment."
+        : null;
+}
+
+/** Voice chat and Bedrock on an address on the customer's own domain (Core's own_domain_unsupported). */
+export const OWN_DOMAIN_EXTRAS_TEXT =
+    "Voice chat and Bedrock are not available on your own domain yet. Use an address on the gateway provider's domain for them.";
 
 const PROVIDER_ERRORS: Record<string, string> = {
     unauthorized: 'The provider rejected this key. Check that it was copied in full and has not been revoked.',
@@ -101,11 +115,52 @@ const PROVIDER_ERRORS: Record<string, string> = {
     change_pending: 'A change to this domain is still on its way to the gateway provider. Try again in a minute.',
     verify_cooldown: 'This domain was checked a moment ago. Try again in a few minutes.',
     pending_domains_limit: 'Finish verifying your pending domains before adding another.',
+    // Voice and Bedrock. Core's own sentence usually says more (the region,
+    // the other address); these stand in when it sent none.
+    voice_not_allowed: 'Voice chat is not enabled for this server. Ask an admin.',
+    link_without_voice: "This node's managed link has not reported that it can carry voice chat. Make sure it is running and up to date.",
+    no_relay: "The managed gateway has no voice relay in this server's region yet. Try again later.",
+    voice_pool_full: "Every voice port of the managed gateway in this server's region is taken. Try again later.",
+    no_routes: "Voice chat needs an address on one of the gateway provider's domains. Own domains are not supported yet.",
+    voice_one_address: 'With the managed gateway a server has one voice chat address. Turn voice chat off, then on again.',
+    bedrock_disabled: 'Bedrock is not enabled for this server. Ask an admin.',
+    bedrock_unavailable: "Bedrock needs an address on one of the gateway provider's domains. Own domains are not supported yet.",
+    bedrock_one_address: 'With the managed gateway a server has one Bedrock address. Take Bedrock off the other address first.',
+    own_domain_unsupported: OWN_DOMAIN_EXTRAS_TEXT,
 };
 
 /** The sentence for a refusal code; an unknown code gets `fallback`, else a generic sentence. */
 export function providerErrorText(code: string, fallback?: string): string {
     return PROVIDER_ERRORS[code] ?? fallback ?? 'Something went wrong talking to the gateway provider. Try again in a moment.';
+}
+
+// Codes whose Core text is a generic error string rather than a sentence.
+const OWN_TEXT_FIRST = new Set(['change_pending', 'gateway_provider_unknown']);
+
+/**
+ * The sentence for a refused voice or Bedrock change on the managed gateway.
+ * Core writes those refusals for this mode and names what the panel cannot
+ * know (the other address, the provider's region), so its sentence wins; a
+ * bare code in `error` (the gateway-off answer) is a code, not a sentence.
+ */
+export function refusalText(
+    body: { error?: string; message?: string; code?: string } | null | undefined,
+    fallback: string,
+): string {
+    const bareCode = !!body?.error && /^[a-z_]+$/.test(body.error);
+    const code = body?.code || (bareCode ? body!.error! : '');
+    if (OWN_TEXT_FIRST.has(code)) return providerErrorText(code);
+    const sentence = (!bareCode && body?.error) || body?.message;
+    return sentence || (code ? providerErrorText(code, fallback) : fallback);
+}
+
+/**
+ * The sidebar's player count title. Editions come only from the managed
+ * gateway, which answers from a cache: say the number may lag.
+ */
+export function playersTitle(total: number, e?: { java: number; bedrock: number }): string {
+    if (!e) return `${total} connected through the gateway`;
+    return `${total} ${total === 1 ? 'player' : 'players'}: ${e.java} Java, ${e.bedrock} Bedrock. Live, can be a few seconds old.`;
 }
 
 /** An open outbox is worth a warning only once it has stopped draining on its own. */
@@ -218,7 +273,7 @@ export function initialNetwork(kit: { network?: string; networkKnown?: boolean; 
 const SWITCH_TEXT: Record<GatewayProviderMode, { title: string; message: string }> = {
     remote: {
         title: 'Switch to the DYLARIS Managed Gateway?',
-        message: 'Players then reach your servers through the managed gateway, and each node needs its managed link running. The screens for your own edges, warp, voice and Bedrock are hidden while it is on.',
+        message: 'Players then reach your servers through the managed gateway, and each node needs its managed link running. The screens for your own edges and warp are hidden while it is on.',
     },
     local: {
         title: "Switch back to this platform's own gateway?",

@@ -1253,7 +1253,7 @@
       "path": "/api/admin/users/{id:[0-9a-f-]{36}}/gateway",
       "auth": "session",
       "authorization": "topology.read",
-      "description": "one account's managed gateway as the provider holds it: product, billing status, caps, link kits (online and caps), routes (suspended ones too), own domains, this month's traffic, beam key ids and gateway API keys.",
+      "description": "one account's managed gateway as the provider holds it: product, billing status, caps, link kits (online and caps), routes (suspended ones too) with the players on each address right now, players (the account's total, java and bedrock), peaks (the daily peak of concurrent players: day (the server's UTC day), today, last30Days and the days of the last 30 with a row, newest first; each AT LEAST that many; left out when they cannot be read), own domains, this month's traffic, beam key ids and gateway API keys.",
       "handler": "GatewayHandler.AdminUserGateway",
       "group": "admin",
       "external": false
@@ -2158,6 +2158,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/external/gateway/players",
+      "auth": "user API key",
+      "authorization": "gateway.read",
+      "description": "the live play sessions on the caller's route-only addresses, by edition, as the edges count them: total {java, bedrock}, items [{domain, java, bedrock}] for the addresses with at least one player (a suspended address is left out), asOf the time of the answer (a count can be about 12 seconds old), and peak {today, last30Days}, the highest concurrent players per UTC day, each a lower bound (at least that many).",
+      "handler": "ExternalGatewayHandler.GetPlayers",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
       "path": "/api/external/gateway/regions",
       "auth": "user API key",
       "authorization": "gateway.read",
@@ -2171,7 +2181,7 @@
       "path": "/api/external/gateway/routes",
       "auth": "user API key",
       "authorization": "gateway.read",
-      "description": "the caller's route-only addresses.",
+      "description": "the caller's route-only addresses; voice_allowed, bedrock_allowed and bedrock_active answer for this caller as its enables would, an active managed gateway plan included.",
       "handler": "ExternalGatewayHandler.ListRoutes",
       "group": "external",
       "external": true
@@ -2201,8 +2211,18 @@
       "path": "/api/external/gateway/routes/{domain:[^/]+}/bedrock",
       "auth": "user API key",
       "authorization": "gateway.write",
-      "description": "body {\"java\": bool, \"bedrock\": bool}, the address's editions.",
+      "description": "body {\"java\": bool, \"bedrock\": bool}, the address's editions; an active managed gateway plan lifts the platform's Bedrock audience setting for its account (the other checks, such as a suspension, a retiring link or no Bedrock entry in the region, still refuse), any other account only while the platform offers Bedrock to it (409 bedrock_disabled).",
       "handler": "ExternalGatewayHandler.SetRouteBedrock",
+      "group": "external",
+      "external": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/external/gateway/routes/{domain:[^/]+}/floodgate-key",
+      "auth": "user API key",
+      "authorization": "gateway.write",
+      "description": "the Floodgate key of one of the caller's addresses, a credential that needs gateway.write (a gateway.read key is refused) and is never cached (Cache-Control: no-store), as {success, domain, key} with key the standard base64 of the 16 bytes Floodgate reads as key.pem; 404 not_found when the address is not the caller's or has no key yet (give it Bedrock first).",
+      "handler": "ExternalGatewayHandler.GetRouteFloodgateKey",
       "group": "external",
       "external": true
     },
@@ -2221,7 +2241,7 @@
       "path": "/api/external/gateway/routes/{domain:[^/]+}/voice",
       "auth": "user API key",
       "authorization": "gateway.write",
-      "description": "body {\"enabled\": bool, \"target_port\": int}, voice chat relay.",
+      "description": "body {\"enabled\": bool, \"target_port\": int}, voice chat relay; an active managed gateway plan lifts the platform's global voice permission for its account (an explicit per-user deny and the other checks, such as a suspension or a retiring link, still refuse), any other account only where the platform's voice permissions allow (409 voice_not_allowed).",
       "handler": "ExternalGatewayHandler.SetRouteVoice",
       "group": "external",
       "external": true
@@ -6603,11 +6623,11 @@
     }
   ],
   "counts": {
-    "total": 665,
+    "total": 667,
     "byAuth": {
       "none": 30,
       "session": 591,
-      "user API key": 35,
+      "user API key": 37,
       "warp key": 9
     },
     "byGroup": {
@@ -6621,7 +6641,7 @@
       "backup-storages": 7,
       "beam": 5,
       "disk": 4,
-      "external": 35,
+      "external": 37,
       "files": 10,
       "gateway": 30,
       "gateway-bandwidth": 4,
@@ -6665,6 +6685,6 @@
       "voice": 1,
       "warp": 24
     },
-    "external": 35
+    "external": 37
   }
 }

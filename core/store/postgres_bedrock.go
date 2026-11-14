@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -45,6 +46,36 @@ func (s *PostgresStore) EnableBedrock(serverID int, key []byte) error {
 		return fmt.Errorf("bedrock: enable server %d: %w", serverID, err)
 	}
 	return nil
+}
+
+// SetBedrockKey stores key for the server, replacing any other: in remote mode
+// the provider's key for the server's Bedrock address is authoritative.
+// changed is false when the stored key already is these bytes. A stored key
+// that no longer decrypts is replaced like any other.
+func (s *PostgresStore) SetBedrockKey(serverID int, key []byte) (bool, error) {
+	if s.bedrockKey == nil {
+		return false, errNoBedrockKey
+	}
+	var stored string
+	err := s.db.QueryRow(`SELECT floodgate_key_enc FROM bedrock_servers WHERE server_id = $1`, serverID).Scan(&stored)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return false, fmt.Errorf("bedrock: read key for server %d: %w", serverID, err)
+	default:
+		if old, derr := crypto.Decrypt(s.bedrockKey, stored); derr == nil && bytes.Equal(old, key) {
+			return false, nil
+		}
+	}
+	enc, err := crypto.Encrypt(s.bedrockKey, key)
+	if err != nil {
+		return false, fmt.Errorf("bedrock: encrypt key: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO bedrock_servers (server_id, floodgate_key_enc) VALUES ($1, $2)
+		ON CONFLICT (server_id) DO UPDATE SET floodgate_key_enc = EXCLUDED.floodgate_key_enc`, serverID, enc); err != nil {
+		return false, fmt.Errorf("bedrock: set key for server %d: %w", serverID, err)
+	}
+	return true, nil
 }
 
 // GetBedrockKey returns the server's key; ok is false when Bedrock is not enabled.

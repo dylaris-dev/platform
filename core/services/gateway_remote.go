@@ -31,6 +31,12 @@ const (
 	// (domain column = the domain, payload {}). It shares the domain's id
 	// order, so a route delete queued before it reaches the provider first.
 	OutboxOpDeleteCustomDomain = "delete_custom_domain"
+	// OutboxOpVoice and OutboxOpBedrock replay an address's voice switch and
+	// editions. Only a turn OFF, or a re-assert of the stored state, is queued:
+	// an ON is sent at once, since the caller needs the port or the refusal.
+	// The drain writes no local column; the caller already did.
+	OutboxOpVoice   = "voice"
+	OutboxOpBedrock = "bedrock"
 )
 
 // OutboxMove is the payload of a "move": put the route on another node's kit.
@@ -44,6 +50,19 @@ type OutboxMove struct {
 // OutboxProxy is the payload of a "proxy": the route's real-IP switch.
 type OutboxProxy struct {
 	Enabled bool `json:"enabled"`
+}
+
+// OutboxVoice is the payload of a "voice". TargetPort 0 is the provider's
+// default (24454); a re-assert sends the port the address had.
+type OutboxVoice struct {
+	Enabled    bool `json:"enabled"`
+	TargetPort int  `json:"targetPort,omitempty"`
+}
+
+// OutboxBedrock is the payload of a "bedrock": the address's editions.
+type OutboxBedrock struct {
+	Java    bool `json:"java"`
+	Bedrock bool `json:"bedrock"`
 }
 
 // ErrGatewayTargetName refuses a server whose id cannot form the mc-<uuid>
@@ -93,6 +112,18 @@ const (
 	remoteAccountTTL = 60 * time.Second
 	// The provider's claims on own domains; dropped after every claim write.
 	remoteCustomDomainsTTL = 60 * time.Second
+	// The provider's route list, for its voice and Bedrock state; dropped
+	// after every voice or Bedrock write here.
+	remoteRoutesTTL = 30 * time.Second
+	// Player counts: 5 s keeps a platform at 12 reads a minute against the
+	// key's 120.
+	remotePlayersTTL = 5 * time.Second
+	// A panel request waits this long for a player count; a slower provider
+	// is answered from the last good count while its read goes on.
+	remotePlayersWait = 2 * time.Second
+	// The last good player counts are served this long after the read that
+	// gave them (two edge sample periods), then nothing.
+	remotePlayersStaleMax = 2 * time.Minute
 	// A failed provider read is answered from the cache for this long, so a
 	// provider that does not answer costs one timeout per window, not one per
 	// panel poll.
@@ -119,6 +150,13 @@ type RemoteGateway struct {
 	usage   remoteCache[remotegw.Usage]
 	account remoteCache[remotegw.Account]
 	domains remoteCache[map[string]remotegw.CustomDomain]
+	routes  remoteCache[[]remotegw.Route]
+	players remoteCache[remotegw.Players]
+	// lastPlayers is the last count the provider answered (PlayerCounts),
+	// lastPlayersAt when (this process's clock; zero: never).
+	lastPlayersMu sync.Mutex
+	lastPlayers   remotegw.Players
+	lastPlayersAt time.Time
 
 	checkMu sync.Mutex
 	checks  map[string]checkAnswer
@@ -545,6 +583,72 @@ func (g *RemoteGateway) Account(ctx context.Context) (remotegw.Account, error) {
 	return g.account.get(ctx, g.now, remoteAccountTTL, func(ctx context.Context) (remotegw.Account, error) {
 		return g.api().Account(ctx)
 	})
+}
+
+// ProviderRoute is the provider's route for domain out of its route list,
+// cached for 30 s (a failure for 10 s) and dropped after every voice or
+// Bedrock write here. ok is false when the provider does not list it.
+func (g *RemoteGateway) ProviderRoute(ctx context.Context, domain string) (remotegw.Route, bool, error) {
+	routes, err := g.routes.get(ctx, g.now, remoteRoutesTTL, func(ctx context.Context) ([]remotegw.Route, error) {
+		return g.api().Routes(ctx)
+	})
+	if err != nil {
+		return remotegw.Route{}, false, err
+	}
+	for _, r := range routes {
+		if r.Domain == domain {
+			return r, true, nil
+		}
+	}
+	return remotegw.Route{}, false, nil
+}
+
+// Players is the provider's player count for this platform's account, cached
+// for 5 s, a failed call for 10 s.
+func (g *RemoteGateway) Players(ctx context.Context) (remotegw.Players, error) {
+	return g.players.get(ctx, g.now, remotePlayersTTL, func(ctx context.Context) (remotegw.Players, error) {
+		return g.api().Players(ctx)
+	})
+}
+
+// ProviderPlayers is what PlayerCounts answers: the counts, when they were
+// read (zero: none) and whether they are an older copy served while the
+// provider does not answer.
+type ProviderPlayers struct {
+	remotegw.Players
+	At    time.Time
+	Stale bool
+}
+
+// PlayerCounts is Players for a display: it waits at most remotePlayersWait,
+// and a failed or slow read answers the last good counts, marked Stale, for
+// at most remotePlayersStaleMax after that read (none before the first, none
+// after). The provider fails the read whole on purpose, so zero would be a
+// guess; a display only ever shows a count the provider gave.
+func (g *RemoteGateway) PlayerCounts(ctx context.Context) ProviderPlayers {
+	ctx, cancel := context.WithTimeout(ctx, remotePlayersWait)
+	defer cancel()
+	p, err := g.Players(ctx)
+	g.lastPlayersMu.Lock()
+	defer g.lastPlayersMu.Unlock()
+	now := g.now()
+	if err == nil {
+		g.lastPlayers, g.lastPlayersAt = p, now
+		return ProviderPlayers{Players: p, At: playersAt(p, now)}
+	}
+	if g.lastPlayersAt.IsZero() || now.Sub(g.lastPlayersAt) > remotePlayersStaleMax {
+		return ProviderPlayers{}
+	}
+	return ProviderPlayers{Players: g.lastPlayers, At: playersAt(g.lastPlayers, g.lastPlayersAt), Stale: true}
+}
+
+// playersAt is when the counts were sampled: the provider's own time when it
+// said, else when this process read them.
+func playersAt(p remotegw.Players, read time.Time) time.Time {
+	if !p.AsOf.IsZero() {
+		return p.AsOf
+	}
+	return read
 }
 
 // ProviderCustomDomains is the provider's claim list keyed by domain: one call

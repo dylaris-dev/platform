@@ -52,7 +52,7 @@ func verifiedOwnClaim(user, domain string) store.CustomDomainClaim {
 // reconcileWith runs one sweep with g as the provider-claims source.
 func reconcileWith(t *testing.T, st *remoteFakeStore, c *remotegw.Client, g *RemoteGateway) (adopted, repaired, foreign int) {
 	t.Helper()
-	adopted, repaired, foreign, err := reconcileRemoteRoutes(context.Background(), st, c, g)
+	adopted, repaired, foreign, err := reconcileRemoteRoutes(context.Background(), st, c, g, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestReconcileAdoptStopsWithoutHosterDomains(t *testing.T) {
 	st.servers[1].NodeID = 9
 	h.fake.AddRoute(st.kits[9].LinkID, "x.own.net", "mc-"+uuidA, 25565)
 	h.fake.FailAfter(1, 1, 503, "unavailable", 0)
-	if _, _, _, err := reconcileRemoteRoutes(context.Background(), st, h.c, nil); err == nil {
+	if _, _, _, err := reconcileRemoteRoutes(context.Background(), st, h.c, nil, nil); err == nil {
 		t.Fatal("want the hoster-domain error")
 	}
 	if len(st.routes) != 0 || len(st.outbox) != 0 {

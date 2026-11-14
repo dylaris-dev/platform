@@ -13,10 +13,10 @@ import ServerProxyMode from '@/components/ServerProxyMode';
 import VoiceChatSwitch from '@/components/VoiceChatSwitch';
 import Segmented from '@/components/ui/Segmented';
 import { BedrockSummary, RouteEdition } from '@/components/BedrockRoutes';
-import { canAddBedrock, changeEdition, editionFlags, editionOptions, showBedrock, type Edition } from '@/lib/bedrock';
+import { bedrockTakenElsewhere, canAddBedrock, editionFlags, editionOptions, saveEdition, showBedrock, type Edition } from '@/lib/bedrock';
 import { useAppData } from '@/lib/AppDataContext';
 import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
-import { providerErrorText } from '@/lib/gatewayProvider';
+import { OWN_DOMAIN_EXTRAS_TEXT, providerErrorText } from '@/lib/gatewayProvider';
 
 interface RoutesModalProps {
     serverId: number;
@@ -115,8 +115,6 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
     const [bedrock, setBedrock] = useState<ServerBedrock | null>(null);
     const [newEdition, setNewEdition] = useState<Edition>('java');
     useEffect(() => {
-        // Bedrock runs on this platform's own gateway; with the managed one the
-        // route answers 409, so it is not asked.
         if (!gatewayVisibility.bedrock) return;
         let cancelled = false;
         getServerBedrock(serverId)
@@ -166,13 +164,16 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
         return () => clearTimeout(handle);
     }, [hasRouteInput, newRoute.domain, newRoute.subdomain, newRoute.hosterDomain, newRoute.customDomain]);
 
+    // A route typed in as an own domain cannot take Bedrock on the managed gateway.
+    const newOwnDomain = gatewayProvider === 'remote' && !!newRoute.customDomain;
+
     const handleCreateRoute = async () => {
         setRouteError('');
         setRouteNotice('');
         if (!hasRouteInput) { setRouteError('Domain is required'); return; }
         setRouteCreating(true);
         // Saved once the Hub has committed the route: Core checks it exists.
-        const edition = newEdition;
+        const edition = newOwnDomain ? 'java' : newEdition;
         try {
             const { status, body: res } = await createServerRouteWithStatus(serverId, newRoute);
             const refusal = routeCreateRefusal(status, res);
@@ -202,9 +203,14 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                         setRoutes(real);
                         onRoutesChangedRef.current?.(real);
                         if (resolvedDomain && edition !== 'java') {
-                            const err = await changeEdition(serverId, resolvedDomain, edition);
-                            if (err) setRouteNotice(`The route was added as Java only: ${err}`);
-                            else editionSaved(resolvedDomain, edition);
+                            const res = await saveEdition(serverId, resolvedDomain, edition);
+                            if (res.error) setRouteNotice(`The route was added as Java only: ${res.error}`);
+                            else {
+                                editionSaved(resolvedDomain, edition);
+                                // Only the managed gateway sends these.
+                                if (res.warning) setRouteNotice(res.warning);
+                                else if (res.restartRequired) setRouteNotice('Restart the server so it loads the new Bedrock key.');
+                            }
                         }
                         break;
                     }
@@ -349,10 +355,11 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                                 <span className="text-xs text-(--base-06)">Players</span>
                                 <Segmented
                                     ariaLabel="Players on the new route"
-                                    value={newEdition}
+                                    value={newOwnDomain ? 'java' : newEdition}
                                     onChange={setNewEdition}
-                                    options={editionOptions('java', true, '')}
+                                    options={editionOptions('java', true, '', gatewayProvider === 'remote' ? bedrockTakenElsewhere(bedrock, '') : null, newOwnDomain)}
                                 />
+                                {newOwnDomain && <span className="text-xs text-(--base-06)">{OWN_DOMAIN_EXTRAS_TEXT}</span>}
                             </div>
                         )}
 

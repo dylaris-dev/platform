@@ -361,6 +361,16 @@ func (v *VoiceService) reconcileLinkRoutes(ctx context.Context, keep map[string]
 		allowed, by, err := true, "", error(nil)
 		if v.revoke != nil {
 			allowed, by, err = ResolveVoiceAllowed(v.store, &models.Server{OwnerID: rv.OwnerID})
+			if err == nil && !allowed && by != "user:"+rv.OwnerID {
+				// A managed gateway plan allows voice on the external API over role
+				// rows and the global switch (an explicit user deny still wins), so
+				// it is revoked only once the plan has ended. A lookup error keeps
+				// the row like any other error here.
+				var managed bool
+				if managed, err = HasManagedProduct(v.store, rv.OwnerID); err == nil && managed {
+					allowed = true
+				}
+			}
 		}
 		if err == nil && !allowed {
 			if _, err := v.store.DeleteLinkRouteVoice(rv.Domain); err != nil {
