@@ -274,6 +274,7 @@ type Store interface {
 	ListRemoteRoutes() ([]RemoteRoute, error)
 	EnqueueOutbox(op, domain string, payload any) error
 	HasOpenOutbox(domain, op string) (bool, error) // op "" = any op
+	OpenOutboxDomains(op string) (map[string]bool, error)
 	ClaimDueOutbox(now time.Time, limit int) ([]OutboxItem, error)
 	FinishOutbox(id int64) error
 	FailOutbox(id int64, lastError string, next time.Time) error
@@ -618,6 +619,7 @@ type Store interface {
 	// never be global - see database/db_custom_domains.go.
 	GetCustomDomainClaim(userID, domain string) (*CustomDomainClaim, error)
 	RequestCustomDomainClaim(userID, domain string) (*CustomDomainClaim, error)
+	RequestCustomDomainClaimCreated(userID, domain string) (claim *CustomDomainClaim, created bool, err error)
 	DeleteCustomDomainClaim(userID, domain string) (bool, error)
 	StartCustomDomainClaim(userID, domain string, deadline time.Time) (*CustomDomainClaim, error)
 	MarkCustomDomainVerified(id int) error
@@ -625,6 +627,7 @@ type Store interface {
 	ListExpiredPendingClaims(now time.Time) ([]CustomDomainClaim, error)
 	ListPendingClaims() ([]CustomDomainClaim, error)
 	ListCustomDomainClaimsByUser(userID string) ([]CustomDomainClaim, error)
+	CountLiveCustomDomainClaims(domain, exceptUserID string) (int, error)
 	SetCustomDomainTXTToken(id int, token string) error
 	ListClaimsDueRecheck(every time.Duration, limit int) ([]CustomDomainClaim, error)
 	RecheckFailedCustomDomainClaim(id int) (time.Time, error)

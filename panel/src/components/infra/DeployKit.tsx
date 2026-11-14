@@ -8,7 +8,7 @@ import {
     DEPLOY_PORTAINER_NOTE, kitInput, watchtowerNote, managedLinkCompose, LINK_IMAGE,
 } from '@/lib/warpDeploy';
 import { getManagedLink, retireManagedLink, type ManagedLinkKit as ManagedLinkKitData } from '@/lib/api/gatewayProvider';
-import { isDockerNetworkName, canReplaceLink, retiringLine, RETIRE_CONFIRM } from '@/lib/gatewayProvider';
+import { isDockerNetworkName, initialNetwork, canReplaceLink, retiringLine, RETIRE_CONFIRM } from '@/lib/gatewayProvider';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { toast } from '@/components/ui/Toast';
 import { fmtDateTime } from '@/lib/time';
@@ -335,9 +335,9 @@ export function ManagedLinkKit({ nodeId }: { nodeId: number }) {
             if (cancelled) return;
             if (res.success) {
                 setKit(res);
-                // Core cannot see the node's Docker network, so its answer is a
-                // guess to start the field with, not a value.
-                setNetwork(res.networkKnown && res.network ? res.network : (res.networkHint ?? ''));
+                // The node's reported network when Core knows it, else Core's
+                // guess to start the field with.
+                setNetwork(initialNetwork(res).value);
             } else {
                 // Core's own sentence; the module falls back to ours when it sent none.
                 setError(res.message);
@@ -364,13 +364,13 @@ export function ManagedLinkKit({ nodeId }: { nodeId: number }) {
         );
     }
 
-    const known = !!kit.networkKnown && !!kit.network;
+    const known = initialNetwork(kit).known;
     const net = network.trim();
     const netOk = isDockerNetworkName(net);
     const state = linkState(kit.online);
     const hintId = `managed-link-net-hint-${nodeId}`;
     const warnId = `managed-link-net-warn-${nodeId}`;
-    const describedBy = [!netOk && warnId, !known && hintId].filter(Boolean).join(' ') || undefined;
+    const describedBy = [!netOk && warnId, hintId].filter(Boolean).join(' ') || undefined;
 
     return (
         <div className="space-y-3">
@@ -421,6 +421,9 @@ export function ManagedLinkKit({ nodeId }: { nodeId: number }) {
                     <p id={warnId} className="text-xs text-(--error-light) mt-1.5">
                         Enter the name of a Docker network: letters, digits and _ . - only, no spaces. Words like true or null and numbers alone are not accepted. The name usually ends in <code className="font-mono">dylaris_net</code>.
                     </p>
+                )}
+                {known && (
+                    <p id={hintId} className="text-xs text-(--base-06) mt-1.5">Reported by the node.</p>
                 )}
                 {!known && (
                     <p id={hintId} className="text-xs text-(--base-06) mt-1.5">

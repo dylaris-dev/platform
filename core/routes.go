@@ -339,6 +339,7 @@ var requiredCaps = map[string]string{
 	"/api/admin/users/{id:[0-9a-f-]{36}}/username":               "users.write",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/email":                  "users.write",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets": "users.write",
+	"/api/admin/users/{id:[0-9a-f-]{36}}/gateway":                "topology.read",
 	"/api/admin/users/{id:[0-9a-f-]{36}}/panel-role":             "panelroles.write",
 	// A user's own storage targets: listing is a user read, removing one a
 	// user write, like the neighbouring per-user admin actions.
@@ -752,6 +753,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		FeatureFlags:          appState.FeatureFlags,
 		Gateway:               appState.Gateway,
 		GRPCRegistry:          appState.GRPCRegistry,
+		Authz:                 appState.Authz,
 		Admission:             appState.Admission,
 		SuspendGrace:          appState.SuspendGrace,
 		StoreEnabled:          appState.StoreEnabled,
@@ -1922,6 +1924,11 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// One cap for both methods (the cap map is keyed by path): the toggle is a write control, and reading it is only ever done to show it.
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(gates.RequireLocalGateway(gatewayHandler.GetPublicTargets)))).Methods("GET")
 	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets", authHandler.AuthMiddleware(appState.Authz.RequireCap("users.write")(gates.RequireLocalGateway(gatewayHandler.SetPublicTargets)))).Methods("PUT")
+	// One customer's managed gateway as this provider holds it, read-only and
+	// secret-free: their gateway topology, so topology.read. Billing, usage and
+	// API key blocks are filtered in the handler by plans.read / users.read.
+	// Tenancy like the billing admin routes: without it there are no customers.
+	api.HandleFunc("/admin/users/{id:[0-9a-f-]{36}}/gateway", authHandler.AuthMiddleware(appState.Authz.RequireCap("topology.read")(gates.RequireLocalGateway(gates.RequireTenancyEnabled(gatewayHandler.AdminUserGateway))))).Methods("GET")
 	dnsHandler := health.NewDNSHandler(healthDeps)
 	trafficLimitHandler := billing.NewTrafficLimitHandler(billingDeps)
 	infrastructureHandler := health.NewInfrastructureHandler(healthDeps)
@@ -2007,16 +2014,19 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// Custom-domain ownership proof. Scoped to the caller inside each handler -
 	// a claim is one user's relationship to one domain, and the block is per
 	// (user, domain) so nobody can lock a competitor's domain out globally.
+	// On the managed gateway each handler also keeps the provider's claim (one
+	// for the whole platform) beside the user's own; see custom_domains.go.
 	customDomainHandler := gateway.NewCustomDomainHandler(gatewayDeps, services.NewNetResolver())
-	api.HandleFunc("/gateway/custom-domains", authHandler.AuthMiddleware(gates.RequireLocalGateway(customDomainHandler.List))).Methods("GET")
-	api.HandleFunc("/gateway/custom-domains", authLimiter.Limit(30, authHandler.AuthMiddleware(gates.RequireLocalGateway(customDomainHandler.Add)))).Methods("POST")
-	api.HandleFunc("/gateway/custom-domains/{domain:[^/]+}", authHandler.AuthMiddleware(gates.RequireLocalGateway(customDomainHandler.Delete))).Methods("DELETE")
+	api.HandleFunc("/gateway/custom-domains", authHandler.AuthMiddleware(customDomainHandler.List)).Methods("GET")
+	api.HandleFunc("/gateway/custom-domains", authLimiter.Limit(30, authHandler.AuthMiddleware(customDomainHandler.Add))).Methods("POST")
+	api.HandleFunc("/gateway/custom-domains/{domain:[^/]+}", authHandler.AuthMiddleware(customDomainHandler.Delete)).Methods("DELETE")
 	api.HandleFunc("/gateway/custom-domains/{domain:.+}/txt-token",
-		authHandler.AuthMiddleware(gates.RequireLocalGateway(customDomainHandler.IssueTXTToken))).Methods("POST")
+		authHandler.AuthMiddleware(customDomainHandler.IssueTXTToken)).Methods("POST")
 	// Rate-limited: it triggers an outbound DNS lookup and is the way back from a
-	// permanent block, so it is the one endpoint here worth hammering.
+	// permanent block, so it is the one endpoint here worth hammering. On the
+	// managed gateway the handler adds 10 a minute per user (a provider call).
 	api.HandleFunc("/gateway/custom-domains/{domain:.+}/verify-txt",
-		authLimiter.Limit(20, authHandler.AuthMiddleware(gates.RequireLocalGateway(customDomainHandler.VerifyTXT)))).Methods("POST")
+		authLimiter.Limit(20, authHandler.AuthMiddleware(customDomainHandler.VerifyTXT))).Methods("POST")
 
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gates.RequireLocalGateway(gatewayHandler.ListLinkRoutes))).Methods("GET")
 	api.HandleFunc("/gateway/link-routes", authHandler.AuthMiddleware(gates.RequireGatewayEnabled(gates.RequireLocalGateway(gatewayHandler.CreateLinkRoute)))).Methods("POST")

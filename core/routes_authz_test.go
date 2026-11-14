@@ -1624,3 +1624,27 @@ func TestCap_GatewayPublicTargetsNeedsUsersWrite(t *testing.T) {
 		}
 	}
 }
+
+// TestAdminUserGatewayRequiresTopologyRead: the admin view of one managed
+// gateway customer is refused at the chokepoint, exactly like its neighbours,
+// for an ordinary user and for a panel role without topology.read (users.read
+// alone is not enough); a topology.read holder and an admin pass it.
+func TestAdminUserGatewayRequiresTopologyRead(t *testing.T) {
+	fs := &authzFakeStore{}
+	admin := fs.addUser("admin-id", "root", true)
+	fs.addUser("plain-id", "plain", false)
+	panelHolder(fs, "users-id", "usersonly", "users.read", "users.write")
+	panelHolder(fs, "topo-id", "topo", "topology.read")
+	srv := newAuthzTestServer(t, fs)
+	path := "/api/admin/users/11111111-2222-3333-4444-555555555555/gateway"
+	for _, id := range []testIdentity{{UserID: "plain-id", Username: "plain"}, {UserID: "users-id", Username: "usersonly"}} {
+		if !deniedAtChokepoint(t, srv, "GET", path, id) {
+			t.Errorf("%s must be refused at the chokepoint", id.Username)
+		}
+	}
+	for _, id := range []testIdentity{{UserID: "topo-id", Username: "topo"}, {UserID: admin.ID, Username: "root", IsAdmin: true}} {
+		if deniedAtChokepoint(t, srv, "GET", path, id) {
+			t.Errorf("%s holds topology.read and must pass the chokepoint", id.Username)
+		}
+	}
+}

@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -42,6 +44,8 @@ var remoteGated = []struct{ method, tpl string }{
 	// Route-only (map rows 5-7; route-only is not offered on the managed gateway).
 	{"GET", "/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets"},
 	{"PUT", "/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets"},
+	// The admin view of one managed gateway customer: provider-only.
+	{"GET", "/api/admin/users/{id:[0-9a-f-]{36}}/gateway"},
 	{"GET", "/api/gateway/link-routes"},
 	{"POST", "/api/gateway/link-routes"},
 	{"PATCH", "/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol"},
@@ -57,12 +61,6 @@ var remoteGated = []struct{ method, tpl string }{
 	{"PUT", "/api/admin/voice-permissions"},
 	{"DELETE", "/api/admin/voice-permissions"},
 	{"GET", "/api/voice/overview"},
-	// Custom domains are refused in 7a (map row 10).
-	{"GET", "/api/gateway/custom-domains"},
-	{"POST", "/api/gateway/custom-domains"},
-	{"DELETE", "/api/gateway/custom-domains/{domain:[^/]+}"},
-	{"POST", "/api/gateway/custom-domains/{domain:.+}/txt-token"},
-	{"POST", "/api/gateway/custom-domains/{domain:.+}/verify-txt"},
 	// The provider's external API: a customer Core is not a provider (map row 11).
 	{"GET", "/api/external/gateway/link-kits"},
 	{"POST", "/api/external/gateway/link-kits"},
@@ -139,9 +137,10 @@ var remoteGated = []struct{ method, tpl string }{
 	{"GET", "/api/servers/players"},
 }
 
-// remoteAware is every route served by handlers/gateway that is deliberately
-// NOT gated, with the reason. A new handlers/gateway route must land in one of
-// the two lists: unclassified, it could read empty Redis keys in remote mode.
+// remoteAware is every route served by handlers/gateway, or by a handler that
+// reaches gateway state (gatewayTouchingHandlers), that is deliberately NOT
+// gated, with the reason. Such a new route must land in one of the two lists:
+// unclassified, it could read empty Redis keys in remote mode.
 var remoteAware = map[string]string{
 	"GET /api/servers/{id:[0-9]+}/routes":                "lists the local remote_routes rows minus pending deletes (RemoteGateway.ServerRoutes)",
 	"POST /api/servers/{id:[0-9]+}/routes":               "creates through the switching GatewayProvider; provider refusals mapped by gate.GatewayProviderError",
@@ -151,6 +150,12 @@ var remoteAware = map[string]string{
 	"GET /api/gateway/check-domain":                      "local remote_routes rows first, then the provider (CheckDomain, cached 10 s); 30/min per user",
 	"PUT /api/servers/{id:[0-9]+}/voice/switch":          "turning voice off never needs the gateway (local rows only, no Redis in remote mode); turning it on answers the mode sentinel",
 	"GET /api/warp/deploy-config":                        "DB settings and the gRPC certificate fingerprint only, no gateway state; node deploy snippets read it",
+	// Own domains (7b-1): the user's local claim plus the provider's claim.
+	"GET /api/gateway/custom-domains":                         "the caller's local claims, each with the provider's claim (ProviderCustomDomains, cached) filtered to them",
+	"POST /api/gateway/custom-domains":                        "local claim first, then EnsureProviderClaim; a provider refusal takes back a claim made by the call",
+	"DELETE /api/gateway/custom-domains/{domain:[^/]+}":       "in-use check from the local remote_routes rows of the caller's servers, then ReleaseProviderClaim",
+	"POST /api/gateway/custom-domains/{domain:.+}/txt-token":  "the local claim's own record only, no gateway state",
+	"POST /api/gateway/custom-domains/{domain:.+}/verify-txt": "local DNS check, then VerifyProviderClaim; 10/min per user in the handler",
 	// The managed gateway's own endpoints: they refuse in LOCAL mode instead
 	// (TestManagedOnlyRoutesRefuseInLocalMode).
 	"GET /api/nodes/{id:[0-9]+}/managed-link":           "the node's provider link kit (EnsureKit); 409 gateway_local in local mode",
@@ -161,6 +166,18 @@ var remoteAware = map[string]string{
 	"GET /api/settings/gateway/provider":                "chooses the provider: settings and, with a key set, the provider's account",
 	"POST /api/settings/gateway/provider":               "chooses the provider: checks the account before remote, deletes nothing on local",
 	"POST /api/settings/gateway/provider/test":          "chooses the provider: one account call with the given or stored key, persists nothing",
+	// Outside handlers/gateway (found by gatewayTouchingHandlers).
+	"GET /api/admin/health":                    "every gateway component (gateway, voice, bedrock) checks LocalGatewayErr first and reports the mode instead of reading Redis",
+	"GET /api/infrastructure/overview":         "edges, links and route count only when LocalGatewayErr is nil; link presence from the provider (RemoteGateway.SetNodesLinkOnline), nothing while the mode is unread",
+	"GET /api/nodes":                           "link presence from the provider (RemoteGateway.SetNodesLinkOnline) in remote mode, nothing while the mode is unread",
+	"GET /api/gateway/dns-check":               "edges through LocalGatewayRedis (nil in remote mode) and no hoster or custom-domain records: only the operator's own origin records",
+	"POST /api/servers/{id:[0-9]+}/setup":      "proxy-protocol default asks the provider (ServerDomains, NodeKitCarriesClientAddr) in remote mode and says no while the mode is unread",
+	"POST /api/admin/servers/{id:[0-9]+}/move": "queueMigration checks the target's provider kit (retiring, client-addr) in remote mode; real player IP refuses while the mode is unread",
+	"POST /api/servers/{id:[0-9]+}/transfer":   "same queueMigration checks as the move",
+	"GET /api/settings/beam":                   "relay discovery through LocalGatewayRedis (nil in remote mode): only the manual override; provider relays are stage 7b-3",
+	"GET /api/beam/config":                     "relay through LocalGatewayRedis (nil in remote mode): only the manual override; provider relays are stage 7b-3",
+	"GET /api/beam/ticket":                     "relay through LocalGatewayRedis (nil in remote mode): only the manual override, else the direct hints; provider relays are stage 7b-3",
+	"POST /api/beam/ticket":                    "same as GET /api/beam/ticket",
 }
 
 // gatewayPackageHandlers is every "Type.Method" declared in handlers/gateway,
@@ -177,21 +194,132 @@ func gatewayPackageHandlers(t *testing.T) map[string]bool {
 	for _, p := range pkgs {
 		for _, f := range p.Files {
 			for _, d := range f.Decls {
-				fn, ok := d.(*ast.FuncDecl)
-				if !ok || fn.Recv == nil || len(fn.Recv.List) != 1 {
-					continue
-				}
-				typ := fn.Recv.List[0].Type
-				if star, ok := typ.(*ast.StarExpr); ok {
-					typ = star.X
-				}
-				if id, ok := typ.(*ast.Ident); ok {
-					out[id.Name+"."+fn.Name.Name] = true
+				if fn, ok := d.(*ast.FuncDecl); ok && receiverMethod(fn) != "" {
+					out[receiverMethod(fn)] = true
 				}
 			}
 		}
 	}
 	return out
+}
+
+// gatewayStateIdents are the calls that read this platform's own gateway
+// state (Redis keys the edges, links and relays write) or reach the gateway
+// provider. A handler that reaches one of them must be classified, wherever
+// its package lives.
+var gatewayStateIdents = []string{"LocalGatewayRedis", "ReadRoutesFromRedis", "GetRoutesFromRedis", "DiscoverBeamRelays", "ResolveRelay", "GatewayPlayersByServer", "LinkPresence", "LinkToken", "DiscoveryProof",
+	"GetEdgesFromRedis", "GetLinksFromRedis", "CountRoutesFromRedis", "LiveBedrockEntries"}
+
+// gatewayTouchingHandlers is every function in a non-test file under handlers/
+// that names a gatewayStateIdents identifier, in its own body or in a helper it
+// calls, keyed "Type.Method" for a method (the name apidoc reports) and
+// "pkg.Func" for a function. Followed calls: on the method's own receiver
+// (h.helper), to a function of the same package, and to a function of another
+// handlers package (nodeops.Helper). Not followed: calls through a field or an
+// interface (h.d.Gateway.X), func values, and code outside handlers/. Also
+// blind to a handler that reads gateway Redis keys by literal string through
+// its own Redis client (h.d.Redis.Get(ctx, "dylaris:gateway:...")). Names are
+// matched without types, so a struct field called LinkToken counts and two
+// types of one name in two packages share a key: both only ADD a requirement.
+func gatewayTouchingHandlers(t *testing.T) map[string]bool {
+	t.Helper()
+	want := map[string]bool{}
+	for _, n := range gatewayStateIdents {
+		want[n] = true
+	}
+	out := map[string]bool{}
+	calls := map[string][]string{}
+	err := filepath.WalkDir("handlers", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && d.Name() == "testdata" {
+			return filepath.SkipDir
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		pkg := f.Name.Name
+		handlerPkgs := map[string]string{} // local import name -> package name
+		for _, imp := range f.Imports {
+			p, _ := strconv.Unquote(imp.Path.Value)
+			if rest, ok := strings.CutPrefix(p, "dylaris-core/handlers/"); ok {
+				name := rest[strings.LastIndex(rest, "/")+1:]
+				local := name
+				if imp.Name != nil {
+					local = imp.Name.Name
+				}
+				handlerPkgs[local] = name
+			}
+		}
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			name, typ, recv := pkg+"."+fn.Name.Name, "", ""
+			if m := receiverMethod(fn); m != "" {
+				name, typ = m, strings.TrimSuffix(m, "."+fn.Name.Name)
+				if names := fn.Recv.List[0].Names; len(names) == 1 {
+					recv = names[0].Name
+				}
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.Ident:
+					if want[x.Name] {
+						out[name] = true
+					}
+				case *ast.CallExpr:
+					switch c := x.Fun.(type) {
+					case *ast.Ident:
+						calls[name] = append(calls[name], pkg+"."+c.Name)
+					case *ast.SelectorExpr:
+						if id, ok := c.X.(*ast.Ident); ok && recv != "" && id.Name == recv {
+							calls[name] = append(calls[name], typ+"."+c.Sel.Name)
+						} else if ok && handlerPkgs[id.Name] != "" {
+							calls[name] = append(calls[name], handlerPkgs[id.Name]+"."+c.Sel.Name)
+						}
+					}
+				}
+				return true
+			})
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for changed := true; changed; {
+		changed = false
+		for fn, callees := range calls {
+			for _, c := range callees {
+				if !out[fn] && out[c] {
+					out[fn], changed = true, true
+				}
+			}
+		}
+	}
+	return out
+}
+
+// receiverMethod is "Type.Method" for a method declaration, else "".
+func receiverMethod(fn *ast.FuncDecl) string {
+	if fn.Recv == nil || len(fn.Recv.List) != 1 {
+		return ""
+	}
+	typ := fn.Recv.List[0].Type
+	if star, ok := typ.(*ast.StarExpr); ok {
+		typ = star.X
+	}
+	if id, ok := typ.(*ast.Ident); ok {
+		return id.Name + "." + fn.Name.Name
+	}
+	return ""
 }
 
 var routeVar = regexp.MustCompile(`\{(\w+)(:[^{}]*(\{\d+\}[^{}]*)*)?\}`)
@@ -255,8 +383,8 @@ func answeredGatewayRemote(rec *httptest.ResponseRecorder) bool {
 }
 
 func TestRemoteModeGatesEveryLocalOnlyRoute(t *testing.T) {
-	// The guard: every handlers/gateway route is classified, and every entry
-	// still names a registered route.
+	// The guard: every handlers/gateway or gateway-touching route is
+	// classified, and every entry still names a registered route.
 	routes, err := apidoc.Parse("routes.go", []string{"handlers"})
 	if err != nil {
 		t.Fatal(err)
@@ -270,6 +398,7 @@ func TestRemoteModeGatesEveryLocalOnlyRoute(t *testing.T) {
 		gated[k] = true
 	}
 	inGateway := gatewayPackageHandlers(t)
+	touching := gatewayTouchingHandlers(t)
 	registered := map[string]bool{}
 	byKey := map[string]apidoc.Route{}
 	for _, r := range routes {
@@ -280,7 +409,7 @@ func TestRemoteModeGatesEveryLocalOnlyRoute(t *testing.T) {
 			switch {
 			case gated[k] && aware:
 				t.Errorf("%s is in both remoteGated and remoteAware", k)
-			case inGateway[r.Handler] && !gated[k] && !aware:
+			case (inGateway[r.Handler] || touching[r.Handler]) && !gated[k] && !aware:
 				t.Errorf("%s (%s) is unclassified for remote mode: wrap it in gates.RequireLocalGateway and add it to remoteGated, or make it remote-aware and add it to remoteAware with the reason", k, r.Handler)
 			}
 		}

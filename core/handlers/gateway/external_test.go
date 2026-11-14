@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/handlers/billing"
 	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
@@ -55,6 +56,8 @@ type extStore struct {
 	// retiredThisMonth: retirements already used this month beyond the kits
 	// retiring now, for the budget refusal.
 	retiredThisMonth int64
+	// billing overrides the default billing row (active, 5 links) per user.
+	billing map[string]*store.UserBilling
 }
 
 func (f *extStore) GetTrafficUsage(userID string, period time.Time) (*store.TrafficUsage, error) {
@@ -74,6 +77,10 @@ func (f *extStore) GetTrafficLimit(scope, region, kind string) (*models.TrafficL
 func (f *extStore) GetSetting(key string) (string, error) { return f.settings[key], nil }
 
 func (f *extStore) GetUserBilling(userID string) (*store.UserBilling, error) {
+	if b := f.billing[userID]; b != nil {
+		cp := *b
+		return &cp, nil
+	}
 	five := int64(5)
 	return &store.UserBilling{UserID: userID, Status: "active", MaxLinks: &five}, nil
 }
@@ -224,7 +231,43 @@ func (g *extGateway) SetCoreOwnedRouteProxyProtocol(domain string, _ bool) error
 	return nil
 }
 
+// CreateLinkKitUnderCap is the SQL's count-and-insert, for the real mint.
+func (f *extStore) CreateLinkKitUnderCap(k store.WarpAPIKey, limit int64) (bool, error) {
+	if n, _ := f.CountLinkKitsByOwner(k.OwnerID); int64(n) >= limit {
+		return false, nil
+	}
+	k.ID = 100 + len(f.kits)
+	f.kits = append(f.kits, k)
+	return true, nil
+}
+
+func (f *extStore) ListBeamIssuerKeysByOwner(string) ([]models.BeamIssuerKey, error) {
+	return nil, nil
+}
+
 func passGate(next http.HandlerFunc) http.HandlerFunc { return next }
+
+// extOption changes the fixture before its handler is built.
+type extOption func(st *extStore, usage *http.HandlerFunc)
+
+// withManagedOwner gives extTenantC (who holds nothing else) a managed plan:
+// a billing row capping links at maxLinks, which both the entitlement and
+// services.EffectiveLimits read, and the user:<id> */edge traffic row with
+// includedGB, which marks the plan as managed. The usage handler becomes the
+// REAL billing.UsageHandler.GetMyUsage over the same store.
+func withManagedOwner(maxLinks, includedGB int64) extOption {
+	return func(st *extStore, usage *http.HandlerFunc) {
+		if st.billing == nil {
+			st.billing = map[string]*store.UserBilling{}
+		}
+		if st.limits == nil {
+			st.limits = map[string]*models.TrafficLimit{}
+		}
+		st.billing[extTenantC] = &store.UserBilling{UserID: extTenantC, Status: "active", MaxLinks: &maxLinks}
+		st.limits["user:"+extTenantC] = &models.TrafficLimit{IncludedGB: &includedGB}
+		*usage = billing.NewUsageHandler(billing.Deps{Store: st}).GetMyUsage
+	}
+}
 
 type extFixture struct {
 	h   *ExternalGatewayHandler
@@ -233,7 +276,7 @@ type extFixture struct {
 	rdb *redis.Client
 }
 
-func newExtFixture(t *testing.T) *extFixture {
+func newExtFixture(t *testing.T, opts ...extOption) *extFixture {
 	t.Helper()
 	st := &extStore{
 		settings: map[string]string{
@@ -270,8 +313,11 @@ func newExtFixture(t *testing.T) *extFixture {
 	d := Deps{Store: st, Gateway: gw, Redis: rdb, FeatureFlags: services.NewFeatureFlags(routeOnlyOnFlags{})}
 	gh := NewGatewayHandler(d)
 	gh.txtResolver = noTXT{}
-	usage := func(w http.ResponseWriter, r *http.Request) {
+	var usage http.HandlerFunc = func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "usage": map[string]interface{}{"edgeBytes": 42}})
+	}
+	for _, o := range opts {
+		o(st, &usage)
 	}
 	routeOptions := func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true,

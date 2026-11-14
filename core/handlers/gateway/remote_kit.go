@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"dylaris-core/handlers/access"
@@ -12,6 +13,7 @@ import (
 	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
+	"dylaris-pkg/validate"
 
 	"github.com/gorilla/mux"
 )
@@ -23,6 +25,10 @@ type RemoteKitHandler struct {
 	d Deps
 	// views limits kit views per admin (keyed by user id, not by IP).
 	views *httpx.IPRateLimiter
+	// badNetwork holds the node ids whose reported server network failed
+	// validation and was already reported, so a bad node is reported once per
+	// process, not on every kit view.
+	badNetwork sync.Map
 }
 
 func NewRemoteKitHandler(d Deps) *RemoteKitHandler {
@@ -76,7 +82,8 @@ func (h *RemoteKitHandler) ownNode(w http.ResponseWriter, r *http.Request) (int,
 // the other admin endpoints that hand out a link or warp key. Mints the
 // node's kit on the provider the first time, then serves the stored one. The
 // answer carries the kit KEY, so it is never cached and every view is audited
-// (without the key).
+// (without the key). network / networkKnown are the server network the node
+// reports, when it reports a valid one; beamTarget likewise.
 func (h *RemoteKitHandler) ManagedLink(w http.ResponseWriter, r *http.Request) {
 	rg, ok := h.activeRemote(w)
 	if !ok {
@@ -120,14 +127,17 @@ func (h *RemoteKitHandler) ManagedLink(w http.ResponseWriter, r *http.Request) {
 			online = k.Online
 		}
 	}
-	// The node reports no server network name to Core (NODE_DOCKER_NETWORK,
-	// else the first dylaris_net / *_dylaris_net it finds), so this is only a
-	// hint for the deploy form: the name the panel's BYON kit gives a
-	// customer's node, and the plain one an operator's node creates.
+	// A node from 2026.11.13 reports its server network in the heartbeat
+	// (NODE_DOCKER_NETWORK, else the one dylaris_net / *_dylaris_net it
+	// finds). An older node, an ambiguous one, an offline one or a name that
+	// fails validation leaves it unknown, and the hint below is only a start
+	// for the deploy form: the name the panel's BYON kit gives a customer's
+	// node, and the plain one an operator's node creates.
 	networkHint := "dylaris_net"
 	if node.OwnerID != nil {
 		networkHint = "byon_dylaris_net"
 	}
+	network, beamTarget := h.reportedNetwork(r, node.ID, node.Token)
 
 	audit.LogIdentity(h.d.Store, r, audit.AuditEventManagedLinkKitViewed, userID, "", map[string]interface{}{
 		"nodeId": node.ID,
@@ -139,15 +149,40 @@ func (h *RemoteKitHandler) ManagedLink(w http.ResponseWriter, r *http.Request) {
 		"linkId":       kit.LinkID,
 		"linkKey":      kit.LinkKey,
 		"coreUrl":      pc.URL,
-		"network":      "",
-		"networkKnown": false,
+		"network":      network,
+		"networkKnown": network != "",
 		"networkHint":  networkHint,
 		"online":       online,
+	}
+	if beamTarget != "" {
+		out["beamTarget"] = beamTarget
 	}
 	if kit.RetireAt != nil {
 		out["retireAt"] = kit.RetireAt.UTC().Format(time.RFC3339)
 	}
 	json.NewEncoder(w).Encode(out)
+}
+
+// reportedNetwork is the node's reported server network and beam target from
+// its live heartbeat, each "" unless it passes validation: the network goes
+// into a compose file, so a crafted or broken value must end as unknown, never
+// echoed. A bad network is reported once per node, without the value.
+func (h *RemoteKitHandler) reportedNetwork(r *http.Request, nodeID int, token string) (network, beamTarget string) {
+	hb, ok := services.LoadNodeHeartbeat(r.Context(), h.d.Redis, token)
+	if !ok {
+		return "", ""
+	}
+	if validate.IsDockerNetworkName(hb.ServerNetwork) {
+		network = hb.ServerNetwork
+	} else if hb.ServerNetwork != "" {
+		if _, seen := h.badNetwork.LoadOrStore(nodeID, true); !seen {
+			services.ReportOperatorError("managed-link", "node %d reports a server network that is not a valid Docker network name; the deploy kit asks for it instead", nodeID)
+		}
+	}
+	if validate.IsBeamTarget(hb.BeamTarget) {
+		beamTarget = hb.BeamTarget
+	}
+	return network, beamTarget
 }
 
 // RetireManagedLink POST /api/nodes/{id}/managed-link/retire replaces the

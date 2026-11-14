@@ -13,6 +13,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/remotegw"
+	"dylaris-core/services/remotegw/remotegwtest"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -113,6 +114,15 @@ func (f *remoteReadsStore) HasOpenOutbox(domain, op string) (bool, error) {
 	}
 	return false, nil
 }
+func (f *remoteReadsStore) OpenOutboxDomains(op string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, it := range f.outbox {
+		if it.op == op {
+			out[it.domain] = true
+		}
+	}
+	return out, nil
+}
 func (f *remoteReadsStore) EnqueueOutbox(op, domain string, _ any) error {
 	f.outbox = append(f.outbox, struct{ op, domain string }{op, domain})
 	return nil
@@ -124,14 +134,14 @@ const remoteSrvUUID = "0b6f1c2e-6a3d-4c1b-9e7f-1a2b3c4d5e6f"
 // newRemoteGatewayHandler is a handler on a platform whose gateway is the
 // managed one. The local Redis holds a route of the same server, which no
 // remote answer may show.
-func newRemoteGatewayHandler(t *testing.T) (*GatewayHandler, *remoteReadsStore, *remotegw.Fake) {
+func newRemoteGatewayHandler(t *testing.T) (*GatewayHandler, *remoteReadsStore, *remotegwtest.Fake) {
 	t.Helper()
 	h, base, rdb := newProxyProtoHandler(t, true)
 	base.servers[7].UUID = remoteSrvUUID
 	base.servers[7].NodeID = 3
 	fs := &remoteReadsStore{proxyProtoFakeStore: base, kits: map[uint]store.RemoteKit{}, routes: map[string]store.RemoteRoute{}, limits: map[string]*int{}}
 	seedRoute(t, rdb, "local.example.com", "tok-a", capsClientAddr)
-	fake := remotegw.NewFake(t)
+	fake := remotegwtest.NewFake(t)
 	remote := func() (bool, bool) { return true, true }
 	rg := services.NewRemoteGateway(fs, func() *remotegw.Client { return remotegw.New(fake.URL(), fake.Key) })
 	h.d.Store = fs

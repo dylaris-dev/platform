@@ -246,7 +246,11 @@ function OrphanKitsPanel() {
     );
 }
 
-export default function GatewayProviderCard() {
+/**
+ * reloadToken: bumped by the page after a routing-mode save. That save sends
+ * no features.changed, so without it the routing warning stays as loaded.
+ */
+export default function GatewayProviderCard({ reloadToken = 0 }: { reloadToken?: number }) {
     const [view, setView] = useState<ProviderSettings | null>(null);
     const { refreshFeatureFlags, gatewayVisibility } = useAppData();
     const [testing, setTesting] = useState(false);
@@ -279,6 +283,15 @@ export default function GatewayProviderCard() {
         // changes dialog asks too.
         confirmBeforeSave: switchConfirm,
     });
+
+    // Only the view (routingModeOk) is re-read: reloading the form would drop
+    // what the operator typed into it.
+    useEffect(() => {
+        if (!reloadToken) return;
+        let alive = true;
+        void getGatewayProvider().then(res => { if (alive && res.success) setView(res); });
+        return () => { alive = false; };
+    }, [reloadToken]);
 
     const v = form.value;
     const slow = useSlow(form.loading);

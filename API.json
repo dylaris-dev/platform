@@ -1250,6 +1250,16 @@
     },
     {
       "method": "GET",
+      "path": "/api/admin/users/{id:[0-9a-f-]{36}}/gateway",
+      "auth": "session",
+      "authorization": "topology.read",
+      "description": "one account's managed gateway as the provider holds it: product, billing status, caps, link kits (online and caps), routes (suspended ones too), own domains, this month's traffic, beam key ids and gateway API keys.",
+      "handler": "GatewayHandler.AdminUserGateway",
+      "group": "admin",
+      "external": false
+    },
+    {
+      "method": "GET",
       "path": "/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets",
       "auth": "session",
       "authorization": "users.write",
@@ -6593,15 +6603,15 @@
     }
   ],
   "counts": {
-    "total": 664,
+    "total": 665,
     "byAuth": {
       "none": 30,
-      "session": 590,
+      "session": 591,
       "user API key": 35,
       "warp key": 9
     },
     "byGroup": {
-      "admin": 148,
+      "admin": 149,
       "auth": 23,
       "authz": 3,
       "avatar": 1,

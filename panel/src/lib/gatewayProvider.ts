@@ -17,7 +17,6 @@ export interface RemoteVisibility {
     voice: boolean;
     bedrock: boolean;
     edgeMotd: boolean;
-    customDomains: boolean;
     infrastructureGateway: boolean;
     playerCounts: boolean;
     // BYON and route-only: tenant nodes, link routes, public API targets.
@@ -47,7 +46,6 @@ export function visibilityFor(mode: GatewayProviderMode): RemoteVisibility {
         voice: local,
         bedrock: local,
         edgeMotd: local,
-        customDomains: local,
         infrastructureGateway: local,
         playerCounts: local,
         tenancy: local,
@@ -90,10 +88,24 @@ const PROVIDER_ERRORS: Record<string, string> = {
     no_kit: 'This node has no managed link yet.',
     link_limit: "This plan's host limit is reached. Remove a node's link, or use Replace this node's link on a node you are retiring.",
     kit_already_retiring: "This node's link is already being replaced.",
+    // Own domains. custom_domain_cap is this platform's per-user cap; the
+    // other two limits are the provider plan's, shared by the whole platform.
+    domain_unverified: 'This domain is not verified yet. Publish both TXT records shown under Your own domains, then check again.',
+    domain_blocked: 'This domain is blocked after failed ownership checks. Check it again under Your own domains.',
+    custom_domain_cap: 'You have reached your limit of routes on your own domains.',
+    custom_domain_limit: "This platform's own-domain limit at the gateway provider is reached. Ask the platform operator.",
+    too_many_domains: "This platform's own-domain limit at the gateway provider is reached. Ask the platform operator.",
+    custom_domains_off: 'Own domains are not enabled for this account on the managed gateway.',
+    domain_in_use: 'Delete the routes on this domain first.',
+    domain_taken: 'This address is already in use.',
+    change_pending: 'A change to this domain is still on its way to the gateway provider. Try again in a minute.',
+    verify_cooldown: 'This domain was checked a moment ago. Try again in a few minutes.',
+    pending_domains_limit: 'Finish verifying your pending domains before adding another.',
 };
 
-export function providerErrorText(code: string): string {
-    return PROVIDER_ERRORS[code] ?? 'Something went wrong talking to the gateway provider. Try again in a moment.';
+/** The sentence for a refusal code; an unknown code gets `fallback`, else a generic sentence. */
+export function providerErrorText(code: string, fallback?: string): string {
+    return PROVIDER_ERRORS[code] ?? fallback ?? 'Something went wrong talking to the gateway provider. Try again in a moment.';
 }
 
 /** An open outbox is worth a warning only once it has stopped draining on its own. */
@@ -121,6 +133,8 @@ const OUTBOX_OPS: Record<string, string> = {
     proxy: 'Real player IP',
     move: 'Move',
     delete: 'Delete',
+    revoke_kit: 'Revoke a link',
+    delete_custom_domain: 'Release an own-domain proof at the gateway provider',
 };
 
 /** One change the provider refused, as the card lists it. */
@@ -179,17 +193,32 @@ export function barPercent(percent: number | null | undefined): number {
 // quotes the name anyway; refusing them keeps a hand-edited copy safe too.
 const YAML_AMBIGUOUS = new Set(['null', 'true', 'false', 'yes', 'no', 'on', 'off', 'y', 'n', '~']);
 
+// Mirrored by pkg/validate IsDockerNetworkName, which Core applies to the name
+// a node reports; validationParity.test.ts pins the two patterns.
+export const DOCKER_NETWORK_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,126}$/;
+export const DIGITS_AND_PUNCT = /^[0-9._-]+$/;
+
 /** A plain Docker network name: what the managed link compose may carry. */
 export function isDockerNetworkName(s: string): boolean {
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(s)) return false;
+    if (!DOCKER_NETWORK_NAME.test(s)) return false;
     if (YAML_AMBIGUOUS.has(s.toLowerCase())) return false;
-    return !/^[0-9._-]+$/.test(s);
+    return !DIGITS_AND_PUNCT.test(s);
+}
+
+/**
+ * The deploy form's network: the name the node reported, read-only, when Core
+ * says it is known and it passes the same check the field applies; otherwise
+ * Core's hint as an editable start.
+ */
+export function initialNetwork(kit: { network?: string; networkKnown?: boolean; networkHint?: string }): { value: string; known: boolean } {
+    if (kit.networkKnown && kit.network && isDockerNetworkName(kit.network)) return { value: kit.network, known: true };
+    return { value: kit.networkHint ?? '', known: false };
 }
 
 const SWITCH_TEXT: Record<GatewayProviderMode, { title: string; message: string }> = {
     remote: {
         title: 'Switch to the DYLARIS Managed Gateway?',
-        message: 'Players then reach your servers through the managed gateway, and each node needs its managed link running. The screens for your own edges, warp, voice, Bedrock and custom domains are hidden while it is on.',
+        message: 'Players then reach your servers through the managed gateway, and each node needs its managed link running. The screens for your own edges, warp, voice and Bedrock are hidden while it is on.',
     },
     local: {
         title: "Switch back to this platform's own gateway?",

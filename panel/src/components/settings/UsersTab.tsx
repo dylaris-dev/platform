@@ -6,6 +6,7 @@ import React, { useState, useEffect } from 'react';
 import { getUsers, createUser, deleteUser, resetUserPassword, getUserRouteLimit, setUserRouteLimit, cancelUserDeletion, setUserRole, setUserPermissions, setUserEmail, User } from '@/lib/api';
 import { adminResetTOTP } from '@/lib/api/auth';
 import GatewayPublicTargetsToggle from '@/components/settings/GatewayPublicTargetsToggle';
+import UserGatewayTab from '@/components/settings/UserGatewayTab';
 import { setUserModpackFlag, clearUserModpackOverride } from '@/lib/api/modpackSettings';
 import {
     getUsernameHistory,
@@ -110,7 +111,7 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
 
     // Settings modal
     const [settingsUser, setSettingsUser] = useState<User | null>(null);
-    const [settingsTab, setSettingsTab] = useState<'general' | 'gateway'>('general');
+    const [settingsTab, setSettingsTab] = useState<'general' | 'gateway' | 'managed'>('general');
     const [newPassword, setNewPassword] = useState('');
     const [pwSaving, setPwSaving] = useState(false);
     const [routeMode, setRouteMode] = useState<RouteMode>('default');
@@ -623,6 +624,16 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                             >
                                 Gateway
                             </button>
+                            {/* The provider's view of this customer: only where this platform runs its own gateway. */}
+                            {gatewayVisibility.tenancy && (
+                                <button
+                                    type="button"
+                                    onClick={() => setSettingsTab('managed')}
+                                    className={tabClass('managed')}
+                                >
+                                    Managed gateway
+                                </button>
+                            )}
                         </div>
 
                         {/* Tab Content */}
@@ -980,6 +991,8 @@ export default function UsersTab({ currentUser }: UsersTabProps) {
                                     {settingsUser && gatewayVisibility.tenancy && <GatewayPublicTargetsToggle userId={settingsUser.id} />}
                                 </div>
                             )}
+
+                            {settingsTab === 'managed' && gatewayVisibility.tenancy && <UserGatewayTab userId={settingsUser.id} />}
                         </div>
                     </ModalPanel>
                 </div>

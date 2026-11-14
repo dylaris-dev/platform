@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.14
+
+### Features
+- Own domains on the managed gateway: a domain is proven with two TXT records at the same name, one for
+  this platform and one for the gateway provider. The server's owner adds it under Routes & Domains. `core`
+- The managed link deploy kit fills in the server network the node reports. Where a node cannot tell,
+  the field stays editable as before. `core` `node`
+- With your own gateway, the admin user dialog has a "Managed gateway" tab: one customer's links,
+  addresses, own domains, traffic and keys, each part shown only to roles that may read it. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The routes dialog no longer shows a refused address as created, for example during maintenance, for
+  the read-only demo account or a cross-origin request; it shows the reason. `core`
+- The Gateway provider card's routing-mode warning now updates as soon as the routing mode is saved. `core`
+
 ## 2026.11.13.3
 
 ### Features

@@ -37,9 +37,11 @@ const (
 
 // StartGatewayOutbox drains the gateway outbox on the leader while the remote
 // provider is on. With remote off (or the mode unknown) it does nothing and
-// leaves the rows: a mode flip never sends or deletes anything.
-func StartGatewayOutbox(ctx context.Context, st store.Store, api func() *remotegw.Client, el leader.Election, mode func() (remote, known bool)) {
-	l := &outboxLoop{st: st, api: api, el: el, mode: mode, now: time.Now}
+// leaves the rows: a mode flip never sends or deletes anything. rg supplies the
+// provider's own-domain claims to the sweep (cached) and has that cache dropped
+// when a claim release lands; nil skips own-domain rows in the sweep.
+func StartGatewayOutbox(ctx context.Context, st store.Store, api func() *remotegw.Client, el leader.Election, mode func() (remote, known bool), rg *RemoteGateway) {
+	l := &outboxLoop{st: st, api: api, el: el, mode: mode, now: time.Now, rg: rg}
 	go func() {
 		t := time.NewTicker(outboxTick)
 		defer t.Stop()
@@ -60,6 +62,7 @@ type outboxLoop struct {
 	el   leader.Election
 	mode func() (remote, known bool)
 	now  func() time.Time
+	rg   *RemoteGateway
 	// Touched only by the loop goroutine.
 	nextSweep time.Time
 	// pauseUntil: the provider rejected the key or rate-limited us; nothing is
@@ -81,7 +84,7 @@ func (l *outboxLoop) tick(ctx context.Context) {
 		return
 	}
 	c := l.api()
-	if _, _, pause := drainOutboxOnce(ctx, l.st, c, l.el, l.now); !pause.IsZero() {
+	if _, _, pause := drainOutboxOnce(ctx, l.st, c, l.el, l.now, l.rg); !pause.IsZero() {
 		l.pauseUntil = pause
 		return
 	}
@@ -101,12 +104,62 @@ func (l *outboxLoop) tick(ctx context.Context) {
 	} else if n > 0 {
 		log.Printf("[gateway-outbox] forgot %d link kit(s) the provider has removed", n)
 	}
-	adopted, repaired, foreign, err := reconcileRemoteRoutes(ctx, l.st, c)
+	adopted, repaired, foreign, err := reconcileRemoteRoutes(ctx, l.st, c, l.rg)
 	if err != nil {
 		log.Printf("[gateway-outbox] reconcile: %v", err)
 	} else if adopted+repaired > 0 {
 		log.Printf("[gateway-outbox] reconcile: adopted %d, repaired %d, left %d foreign", adopted, repaired, foreign)
 	}
+	if n, err := releaseOrphanProviderClaims(ctx, l.st, l.rg); err != nil {
+		log.Printf("[gateway-outbox] orphaned provider claims: %s", providerErrText(err))
+	} else if n > 0 {
+		log.Printf("[gateway-outbox] queued the release of %d provider claim(s) no user here holds", n)
+	}
+}
+
+// orphanReleasesPerSweep bounds the provider claim releases one sweep queues.
+const orphanReleasesPerSweep = 20
+
+// releaseOrphanProviderClaims queues the release of provider claims that no
+// user here holds a live local claim on: what a release finished as in use, a
+// release that could not be queued, or a route delete without one leaves. Each
+// takes a slot of the provider's bound for the whole platform account.
+// ReleaseProviderClaim keeps its own guards (a route row, a queued release).
+// Nothing is released when the claim list or a local count cannot be read.
+func releaseOrphanProviderClaims(ctx context.Context, st store.Store, rg *RemoteGateway) (queued int, err error) {
+	if rg == nil {
+		return 0, nil
+	}
+	claims, err := providerClaims(ctx, rg)
+	if err != nil {
+		return 0, err
+	}
+	for domain := range claims {
+		if queued >= orphanReleasesPerSweep {
+			break
+		}
+		n, err := st.CountLiveCustomDomainClaims(domain, "")
+		if err != nil {
+			return queued, err
+		}
+		if n > 0 {
+			continue
+		}
+		open, err := st.HasOpenOutbox(domain, OutboxOpDeleteCustomDomain)
+		if err != nil {
+			return queued, err
+		}
+		if open {
+			continue
+		}
+		if err := rg.ReleaseProviderClaim(domain, ""); err != nil {
+			return queued, err
+		}
+		if now, err := st.HasOpenOutbox(domain, OutboxOpDeleteCustomDomain); err == nil && now {
+			queued++
+		}
+	}
+	return queued, nil
 }
 
 // reconcileRemoteRoutes repairs drift between remote_routes and the provider.
@@ -118,7 +171,20 @@ func (l *outboxLoop) tick(ctx context.Context) {
 // a refused move) gets the move queued, and one whose real-IP switch differs
 // from its server's gets the switch queued. A domain with an open outbox item
 // is left to the drain.
-func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Client) (adopted, repaired, foreign int, err error) {
+//
+// A route on an own domain (not under a provider hoster domain) also needs its
+// server owner's VERIFIED local claim on that exact domain; without it the
+// delete is queued instead of a repair or a move, and a provider route of ours
+// on such a domain is deleted rather than adopted. A repair the provider
+// refuses for the domain itself (domain_unverified, domain_blocked) queues the
+// delete too. The provider's claim is checked BEFORE any repair or move, from
+// rg's cached claim list: its route gate re-proves a lapsed claim live, so a
+// repair after its lapse would bring the route back whenever the record shows
+// again. A claim that is not verified there gets the delete; a list that could
+// not be read (or no rg) leaves own-domain rows alone for this pass. An
+// ownerless server (the operator's own) needs no local claim; the provider's
+// claim still applies.
+func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Client, rg *RemoteGateway) (adopted, repaired, foreign int, err error) {
 	// The rows first: with the provider list read first, a route another
 	// leader's drain deleted (provider route, then row) in between was adopted
 	// back from the stale list. The repair below re-reads its row for the
@@ -160,20 +226,28 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 		onProvider[p.Domain] = p
 	}
 
+	// The provider's own-domain claims, read once per pass and only when an
+	// own-domain row needs them.
+	var claims map[string]remotegw.CustomDomain
+	var claimsErr error
+	claimsRead, claimsFresh := false, false
 	hasRow := make(map[string]bool, len(local))
 	for _, r := range local {
 		hasRow[r.Domain] = true
 		gone := false
 		srv, listed := serverByUUID[r.ServerUUID]
+		owner := srv.OwnerID
 		if !listed {
 			// The list skips rows it cannot scan, so absence there is not proof.
-			_, err := st.GetServerByUUID(r.ServerUUID)
+			s, err := st.GetServerByUUID(r.ServerUUID)
 			switch {
 			case errors.Is(err, sql.ErrNoRows):
 				gone = true
 			case err != nil:
 				log.Printf("[gateway-outbox] route %s skipped: server %s lookup: %v", r.Domain, r.ServerUUID, err)
 				continue
+			default:
+				owner = s.OwnerID
 			}
 		}
 		if gone {
@@ -202,6 +276,57 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 		// race the create's own undo and leave a route nothing here knows.
 		if !r.UpdatedAt.IsZero() && time.Since(r.UpdatedAt) < 2*remoteCallTimeout {
 			continue
+		}
+		if r.CustomDomain {
+			held, err := ownDomainClaimHeld(st, owner, r.Domain)
+			if err != nil {
+				log.Printf("[gateway-outbox] route %s skipped: local claim lookup: %v", r.Domain, err)
+				continue
+			}
+			if !held {
+				if err := queueOwnDomainDelete(st, r.Domain, r.ServerUUID, "the server's owner holds no verified claim on this domain here"); err != nil {
+					return adopted, repaired, foreign, err
+				}
+				continue
+			}
+			if !claimsRead {
+				claims, claimsErr = providerClaims(ctx, rg)
+				claimsRead = true
+				if claimsErr != nil {
+					log.Printf("[gateway-outbox] own-domain routes skipped this pass: provider claims: %s", providerErrText(claimsErr))
+				}
+			}
+			if claimsErr != nil {
+				continue
+			}
+			pc, ok := claims[r.Domain]
+			if (!ok || pc.State != store.ClaimVerified) && !claimsFresh {
+				// The list is cached per replica, and a verify or create on
+				// another replica drops only that one's copy: a "pending" read
+				// here may be a minute old and the route just proven. Deletes are
+				// decided on a list read now, once per pass.
+				rg.domains.drop()
+				claims, claimsErr = providerClaims(ctx, rg)
+				claimsFresh = true
+				if claimsErr != nil {
+					log.Printf("[gateway-outbox] own-domain routes skipped this pass: provider claims: %s", providerErrText(claimsErr))
+					continue
+				}
+				pc, ok = claims[r.Domain]
+			}
+			if !ok && present {
+				// The provider refuses to release a claim a live route uses, so
+				// a route without one is a list that does not belong to these
+				// routes (another provider account's key, a partial answer).
+				logErrf("gateway-outbox", "address %s left alone this pass: the gateway provider lists its route but no claim on the domain", r.Domain)
+				continue
+			}
+			if !ok || pc.State != store.ClaimVerified {
+				if err := queueOwnDomainDelete(st, r.Domain, r.ServerUUID, "the gateway provider's claim on the domain is not verified"); err != nil {
+					return adopted, repaired, foreign, err
+				}
+				continue
+			}
 		}
 		if present {
 			// A server that could not be listed is not compared: there is
@@ -239,7 +364,21 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 			if remotegw.Retryable(err) || providerRejectsAll(err) {
 				return adopted, repaired, foreign, fmt.Errorf("repair %s: %w", r.Domain, err)
 			}
-			logErrf("gateway-outbox", "route %s not repaired: %v", r.Domain, err)
+			if r.CustomDomain && providerRefusesDomain(err) {
+				if qerr := queueOwnDomainDelete(st, r.Domain, r.ServerUUID, "the gateway provider no longer accepts the domain ("+providerErrText(err)+")"); qerr != nil {
+					return adopted, repaired, foreign, qerr
+				}
+				continue
+			}
+			msg := routeErrText(err, r.CustomDomain)
+			if providerRefusesDomain(err) {
+				// A hoster-domain row stays; the refusal would repeat on every
+				// sweep, so it is reported once per text.
+				if prev, seen := reconcileRepairLogged.Swap(r.Domain, msg); seen && prev == msg {
+					continue
+				}
+			}
+			logErrf("gateway-outbox", "route %s not repaired: %s", r.Domain, msg)
 			continue
 		}
 		// The provider's put does not carry the real-IP switch.
@@ -251,6 +390,10 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 		repaired++
 	}
 
+	// The hoster domains are read once per pass, and only when a route is up
+	// for adoption; a failed read ends the pass like a failed route list.
+	var hosters []remotegw.HosterDomain
+	hostersRead := false
 	for _, p := range provider {
 		if hasRow[p.Domain] {
 			continue
@@ -268,10 +411,33 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 		if pending {
 			continue
 		}
+		if !hostersRead {
+			rctx, cancel := context.WithTimeout(ctx, remoteCallTimeout)
+			regions, err := c.Regions(rctx)
+			cancel()
+			if err != nil {
+				return adopted, repaired, foreign, fmt.Errorf("list provider hoster domains: %w", err)
+			}
+			hosters, hostersRead = regions.HosterDomains, true
+		}
+		custom := OwnDomain(p.Domain, hosters)
+		if custom {
+			held, err := ownDomainClaimHeld(st, serverByUUID[uuid].OwnerID, p.Domain)
+			if err != nil {
+				log.Printf("[gateway-outbox] route %s not adopted: local claim lookup: %v", p.Domain, err)
+				continue
+			}
+			if !held {
+				if err := queueOwnDomainDelete(st, p.Domain, uuid, "it is on an own domain the server's owner holds no verified claim on here"); err != nil {
+					return adopted, repaired, foreign, err
+				}
+				continue
+			}
+		}
 		// A claim, never an overwrite: a row written since the read above
 		// belongs to a create that won the address, and a provider list older
 		// than that create must not hand it back to anyone.
-		row := store.RemoteRoute{Domain: p.Domain, ServerUUID: uuid, NodeID: node, Port: p.TargetPort, ProxyProtocol: p.ProxyProtocol}
+		row := store.RemoteRoute{Domain: p.Domain, ServerUUID: uuid, NodeID: node, Port: p.TargetPort, ProxyProtocol: p.ProxyProtocol, CustomDomain: custom}
 		claimed, _, err := st.ClaimRemoteRoute(row)
 		if err != nil {
 			return adopted, repaired, foreign, err
@@ -285,6 +451,69 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 		}
 	}
 	return adopted, repaired, foreign, nil
+}
+
+// ownDomainClaimHeld reports whether ownerID holds a verified local claim on
+// exactly domain. An ownerless server is the operator's own and needs none.
+func ownDomainClaimHeld(st store.Store, ownerID, domain string) (bool, error) {
+	if ownerID == "" {
+		return true, nil
+	}
+	c, err := st.GetCustomDomainClaim(ownerID, domain)
+	if errors.Is(err, store.ErrNoClaim) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return c.State == store.ClaimVerified, nil
+}
+
+// providerClaims is rg's cached own-domain claim list; no rg is a failure, so
+// own-domain rows are left alone rather than judged against nothing.
+func providerClaims(ctx context.Context, rg *RemoteGateway) (map[string]remotegw.CustomDomain, error) {
+	if rg == nil {
+		return nil, errors.New("no gateway provider claims source")
+	}
+	cctx, cancel := context.WithTimeout(ctx, remoteCallTimeout)
+	defer cancel()
+	return rg.ProviderCustomDomains(cctx)
+}
+
+// providerRefusesDomain: the provider's route gate refused the domain itself.
+func providerRefusesDomain(err error) bool {
+	return remotegw.IsCode(err, "domain_unverified") || remotegw.IsCode(err, "domain_blocked")
+}
+
+// providerErrText is an error without the provider's message when it is a
+// refusal: the one for an unproven domain spells out this platform's TXT value
+// for it. Status and code still match ListRefusedOutbox's pattern.
+func providerErrText(err error) string {
+	var ae *remotegw.APIError
+	if errors.As(err, &ae) {
+		return fmt.Sprintf("gateway provider answered %d %s", ae.Status, ae.Code)
+	}
+	return err.Error()
+}
+
+// routeErrText is the text logged and stored for a failed change to a route:
+// without the provider's message on an own domain.
+func routeErrText(err error, ownDomain bool) string {
+	if ownDomain {
+		return providerErrText(err)
+	}
+	return err.Error()
+}
+
+// queueOwnDomainDelete queues the delete of a route on an own domain that has
+// lost its proof, and reports it once, naming server and domain. The caller
+// has checked no item is open for the domain.
+func queueOwnDomainDelete(st store.Store, domain, serverUUID, why string) error {
+	if err := st.EnqueueOutbox(OutboxOpDelete, domain, struct{}{}); err != nil {
+		return err
+	}
+	logErrf("gateway-outbox", "address %s of server %s removed: %s", domain, serverUUID, why)
+	return nil
 }
 
 // remoteKitLostAge protects a kit another replica minted a moment ago: the
@@ -373,6 +602,10 @@ func reconcileRemoteKits(ctx context.Context, st store.Store, c *remotegw.Client
 // node and process; it would otherwise repeat every sweep.
 var reconcileNoKitLogged sync.Map
 
+// reconcileRepairLogged keeps a refused repair's report to once per domain,
+// process and error text.
+var reconcileRepairLogged sync.Map
+
 // queueRouteDrift queues what makes the provider route p follow the row's
 // server srv: the move MigrateServerRoutes would have queued when the route
 // sits on another node's kit than the server's or targets another server, and
@@ -415,7 +648,7 @@ func queueRouteDrift(st store.Store, row store.RemoteRoute, p remotegw.Route, sr
 // is open, and the drain checks again. pauseUntil is set when the provider
 // refuses everything for now (rejected key, rate limit); the caller then sends
 // nothing before it. el may be nil (always leader).
-func drainOutboxOnce(ctx context.Context, st store.Store, c *remotegw.Client, el leader.Election, clock func() time.Time) (done, failed int, pauseUntil time.Time) {
+func drainOutboxOnce(ctx context.Context, st store.Store, c *remotegw.Client, el leader.Election, clock func() time.Time, rg *RemoteGateway) (done, failed int, pauseUntil time.Time) {
 	now := clock()
 	items, err := st.ClaimDueOutbox(now, outboxBatch)
 	if err != nil {
@@ -453,17 +686,47 @@ func drainOutboxOnce(ctx context.Context, st store.Store, c *remotegw.Client, el
 				continue
 			}
 		}
+		if it.Op == OutboxOpDeleteCustomDomain && rg != nil {
+			// Under the platform's own-domain write ceiling, as the handlers'
+			// claim writes are: not tried, so no attempt is counted.
+			if ok, at := rg.takeClaimWrite(false); !ok {
+				deferOutbox(st, it, at)
+				continue
+			}
+		}
 		err = applyOutbox(ctx, st, c, it)
 		if err == nil {
 			finishOutbox(st, it)
+			if it.Op == OutboxOpDeleteCustomDomain && rg != nil {
+				rg.domains.drop()
+			}
 			done++
 			continue
 		}
 		if ctx.Err() != nil {
 			return
 		}
+		ownDomain := it.Op == OutboxOpDeleteCustomDomain
+		if it.Op == OutboxOpMove || it.Op == OutboxOpProxy || it.Op == OutboxOpDelete {
+			if row, rerr := st.GetRemoteRoute(it.Domain); rerr == nil && row != nil && row.CustomDomain {
+				ownDomain = true
+				// The provider no longer takes the domain (its claim lapsed):
+				// every retry would be the same refusal, or a live re-proof
+				// that undoes the lapse. The route goes instead.
+				if it.Op != OutboxOpDelete && providerRefusesDomain(err) {
+					finishOutbox(st, it)
+					done++
+					if deleting, derr := st.HasOpenOutbox(it.Domain, OutboxOpDelete); derr == nil && !deleting {
+						if qerr := queueOwnDomainDelete(st, it.Domain, row.ServerUUID, "the gateway provider no longer accepts the domain ("+providerErrText(err)+")"); qerr != nil {
+							logErrf("gateway-outbox", "delete of %s not queued after the provider refused the domain: %v", it.Domain, qerr)
+						}
+					}
+					continue
+				}
+			}
+		}
 		failed++
-		msg := err.Error()
+		msg := routeErrText(err, ownDomain)
 		var ae *remotegw.APIError
 		isAPI := errors.As(err, &ae)
 		// Waits count from the answer, not from the batch start: late in a
@@ -579,6 +842,16 @@ func applyOutbox(ctx context.Context, st store.Store, c *remotegw.Client, it sto
 			return err
 		}
 		return nil
+	case OutboxOpDeleteCustomDomain:
+		// No such claim is done, and so is domain_in_use: a route on the
+		// domain still uses the claim, so keeping it is right. Left open, the
+		// item would block every later change to the domain.
+		err := c.DeleteCustomDomain(cctx, it.Domain)
+		if remotegw.IsCode(err, "domain_in_use") {
+			log.Printf("[gateway-outbox] provider claim on %s kept: a route on it is still in use", it.Domain)
+			return nil
+		}
+		return err
 	default:
 		return fmt.Errorf("unknown outbox op %q", it.Op)
 	}

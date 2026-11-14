@@ -59,9 +59,17 @@ func TestAStalledOrEndedTransferReleasesItsSender(t *testing.T) {
 	flowCreditWait = time.Minute
 	cc.openFlow("ended", 1)
 	_ = cc.awaitCredit(chunkFor("ended"))
+	// The sender holds its flow before the connection ends, as one already
+	// waiting does: awaitCredit looks the flow up once, and a goroutine that
+	// has not run yet would only look it up after closeFlows removed it,
+	// which is not the case this test is about. Taken here, the outcome no
+	// longer depends on when the goroutine is scheduled.
+	cc.flowMu.Lock()
+	f := cc.flows["ended"]
+	cc.flowMu.Unlock()
 	done := make(chan error, 1)
-	go func() { done <- cc.awaitCredit(chunkFor("ended")) }()
-	time.Sleep(20 * time.Millisecond)
+	go func() { done <- f.acquire() }()
+	time.Sleep(20 * time.Millisecond) // usually already waiting; either way it holds the flow
 	cc.closeFlows()
 	select {
 	case err := <-done:

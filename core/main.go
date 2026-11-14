@@ -729,7 +729,7 @@ func main() {
 	appState.Gateway = services.NewSwitchingGateway(redisGateway, appState.RemoteGateway, gatewayRemote)
 	// Replays the remote gateway's queued writes; leader-gated per tick and idle
 	// unless remote mode is on, so a local platform makes no outbound call.
-	services.StartGatewayOutbox(bgCtx, pgStore, remoteAPI, coreLeader, gatewayRemote)
+	services.StartGatewayOutbox(bgCtx, pgStore, remoteAPI, coreLeader, gatewayRemote, appState.RemoteGateway)
 
 	// Which link serves each node is the Hub's answer (hub:node-link:<node>), not
 	// a token Core derives: a self-enrolled Link carries a generated one, and the
@@ -906,7 +906,8 @@ func main() {
 		customDomainVerifier := services.NewCustomDomainVerifier(
 			pgStore,
 			services.NewNetResolver(),
-			services.NewCustomDomainRouteRemover(redisClient, appState.Gateway, pgStore),
+			services.NewCustomDomainRouteRemover(redisClient, appState.Gateway, pgStore,
+				pgStore, appState.RemoteGateway, gatewayRemote),
 		)
 		// Gated per pass, not once at boot: coreLeader.Start above only launches
 		// the election goroutine, so IsLeader() is still false here on a cold

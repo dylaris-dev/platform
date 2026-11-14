@@ -72,8 +72,7 @@ export function customDomainOk(d: string) {
  */
 export default function RouteDomainPicker({ value, onChange, onAvailabilityChange, existingRoutes, error, portChildren }: Props) {
     const [opts, setOpts] = useState<GatewayRouteOptions | null>(null);
-    const { gatewayVisibility } = useAppData();
-    const customAllowed = gatewayVisibility.customDomains;
+    const { gatewayProvider } = useAppData();
     const [mode, setMode] = useState<'hoster' | 'custom' | 'legacy'>('legacy');
     const [subdomain, setSubdomain] = useState('');
     const [hosterDomain, setHosterDomain] = useState('');
@@ -90,10 +89,10 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
     const reqCounter = useRef(0);
 
     useEffect(() => {
-        getGatewayRouteOptions().then(fetched => {
-            // Core already reports custom domains off with the managed gateway;
-            // this keeps an older answer from offering a tab that 400s.
-            const res = customAllowed ? fetched : { ...fetched, customDomainsEnabled: false };
+        getGatewayRouteOptions().then(res => {
+            // Core's customDomainsEnabled decides own domains in both modes;
+            // with the managed gateway it combines the provider's answer and
+            // this platform's setting.
             setOpts(res);
             const hosters = res.hosterDomains || [];
             if (hosters.length > 0) {
@@ -105,7 +104,7 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                 setMode('legacy');
             }
         });
-    }, [customAllowed]);
+    }, []);
 
     const activeHoster = useMemo(
         () => (opts?.hosterDomains || []).find(h => h.domain === hosterDomain),
@@ -363,10 +362,17 @@ export default function RouteDomainPicker({ value, onChange, onAvailabilityChang
                                         </div>
                                     </>
                                 )}
-                                <span>
-                                    Saving first shows a TXT record that proves the domain is yours. Publish it and
-                                    save again; the route goes live once the record is found.
-                                </span>
+                                {gatewayProvider === 'remote' ? (
+                                    <span>
+                                        Add the domain under Your own domains first and publish its two TXT records.
+                                        The route can be saved once both are verified.
+                                    </span>
+                                ) : (
+                                    <span>
+                                        Saving first shows a TXT record that proves the domain is yours. Publish it and
+                                        save again; the route goes live once the record is found.
+                                    </span>
+                                )}
                             </div>
                         </div>
                     )}

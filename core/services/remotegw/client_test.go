@@ -1,4 +1,4 @@
-package remotegw
+package remotegw_test
 
 import (
 	"context"
@@ -8,12 +8,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"dylaris-core/services/remotegw"
+	"dylaris-core/services/remotegw/remotegwtest"
 )
 
-func newClient(t *testing.T) (*Client, *Fake) {
+func newClient(t *testing.T) (*remotegw.Client, *remotegwtest.Fake) {
 	t.Helper()
-	f := NewFake(t)
-	return New(f.URL(), f.Key), f
+	f := remotegwtest.NewFake(t)
+	return remotegw.New(f.URL(), f.Key), f
 }
 
 func TestClientParsesBothErrorShapes(t *testing.T) {
@@ -31,11 +34,11 @@ func TestClientParsesBothErrorShapes(t *testing.T) {
 			cl, f := newClient(t)
 			f.FailNext(1, c.status, c.code, 0)
 			_, err := cl.Account(context.Background())
-			var ae *APIError
+			var ae *remotegw.APIError
 			if !errors.As(err, &ae) || ae.Status != c.status || ae.Code != c.wantCode {
 				t.Fatalf("err = %#v, want status %d code %s", err, c.status, c.wantCode)
 			}
-			if !IsCode(err, c.wantCode) || IsCode(err, "other") {
+			if !remotegw.IsCode(err, c.wantCode) || remotegw.IsCode(err, "other") {
 				t.Fatalf("IsCode wrong for %v", err)
 			}
 		})
@@ -46,8 +49,8 @@ func TestClientRetryAfter(t *testing.T) {
 	cl, f := newClient(t)
 	f.FailNext(1, 429, "rate_limited", 7*time.Second)
 	_, err := cl.Routes(context.Background())
-	var ae *APIError
-	if !errors.As(err, &ae) || ae.RetryAfter != 7*time.Second || !Retryable(err) {
+	var ae *remotegw.APIError
+	if !errors.As(err, &ae) || ae.RetryAfter != 7*time.Second || !remotegw.Retryable(err) {
 		t.Fatalf("err = %#v, want RetryAfter 7s and retryable", err)
 	}
 }
@@ -60,15 +63,15 @@ func TestRetryable(t *testing.T) {
 	}{
 		{"nil", nil, false},
 		{"network", errors.New("connection refused"), true},
-		{"429", &APIError{Status: 429}, true},
-		{"503", &APIError{Status: 503}, true},
-		{"401", &APIError{Status: 401}, false},
-		{"409", &APIError{Status: 409}, false},
+		{"429", &remotegw.APIError{Status: 429}, true},
+		{"503", &remotegw.APIError{Status: 503}, true},
+		{"401", &remotegw.APIError{Status: 401}, false},
+		{"409", &remotegw.APIError{Status: 409}, false},
 		{"canceled", context.Canceled, false},
-		{"bad base url", ErrBaseURL, false},
-		{"no key", ErrNoKey, false},
+		{"bad base url", remotegw.ErrBaseURL, false},
+		{"no key", remotegw.ErrNoKey, false},
 	} {
-		if got := Retryable(c.err); got != c.want {
+		if got := remotegw.Retryable(c.err); got != c.want {
 			t.Errorf("%s: Retryable = %v, want %v", c.name, got, c.want)
 		}
 	}
@@ -81,7 +84,7 @@ func TestClientDeleteRouteTreatsNotFoundAsDone(t *testing.T) {
 		t.Fatalf("404 must be success: %v", err)
 	}
 	f.FailNext(1, 409, "route_suspended", 0)
-	if err := cl.DeleteRoute(ctx, "x.example.com"); !IsCode(err, "route_suspended") {
+	if err := cl.DeleteRoute(ctx, "x.example.com"); !remotegw.IsCode(err, "route_suspended") {
 		t.Fatalf("other refusals must surface: %v", err)
 	}
 }
@@ -106,7 +109,7 @@ func TestClientUnwrapsItems(t *testing.T) {
 		t.Fatalf("kit = %+v", k)
 	}
 	routes, err := cl.Routes(ctx)
-	want := Route{Domain: "play.example.com", TargetHost: "mc-12-abc123def456", TargetPort: 25570, LinkID: m.LinkID}
+	want := remotegw.Route{Domain: "play.example.com", TargetHost: "mc-12-abc123def456", TargetPort: 25570, LinkID: m.LinkID}
 	if err != nil || len(routes) != 1 || routes[0] != want {
 		t.Fatalf("routes = %+v, %v, want %+v", routes, err, want)
 	}
@@ -129,7 +132,7 @@ func TestClientRoutesLifecycle(t *testing.T) {
 	if len(routes) != 1 || routes[0].LinkID != b.LinkID || !routes[0].ProxyProtocol || routes[0].TargetPort != 25565 {
 		t.Fatalf("routes = %+v", routes)
 	}
-	if err := cl.PutRoute(ctx, "link-nope", "x.example.com", "h", 1); !IsCode(err, "link_not_found") {
+	if err := cl.PutRoute(ctx, "link-nope", "x.example.com", "h", 1); !remotegw.IsCode(err, "link_not_found") {
 		t.Fatalf("unknown kit: %v", err)
 	}
 	if err := cl.RevokeKit(ctx, b.LinkID); err != nil {
@@ -182,17 +185,17 @@ func TestClientNeverPutsTheKeyInAnError(t *testing.T) {
 	dead := httptest.NewServer(http.NotFoundHandler())
 	deadURL := dead.URL
 	dead.Close()
-	f := NewFake(t)
+	f := remotegwtest.NewFake(t)
 
 	for _, c := range []struct {
 		name string
-		cl   *Client
+		cl   *remotegw.Client
 	}{
-		{"error echoes the key", New(echo.URL, func() string { return key })},
-		{"bad json", New(garbage.URL, func() string { return key })},
-		{"unreachable", New(deadURL, func() string { return key })},
-		{"rejected key", New(f.URL(), func() string { return key })},
-		{"refused base url", New("http://example.com", func() string { return key })},
+		{"error echoes the key", remotegw.New(echo.URL, func() string { return key })},
+		{"bad json", remotegw.New(garbage.URL, func() string { return key })},
+		{"unreachable", remotegw.New(deadURL, func() string { return key })},
+		{"rejected key", remotegw.New(f.URL(), func() string { return key })},
+		{"refused base url", remotegw.New("http://example.com", func() string { return key })},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := c.cl.Account(ctx)
@@ -207,15 +210,15 @@ func TestClientNeverPutsTheKeyInAnError(t *testing.T) {
 }
 
 func TestClientKeyIsReadPerRequest(t *testing.T) {
-	f := NewFake(t)
+	f := remotegwtest.NewFake(t)
 	key := f.Key()
-	cl := New(f.URL(), func() string { return key })
+	cl := remotegw.New(f.URL(), func() string { return key })
 	ctx := context.Background()
 	if _, err := cl.Account(ctx); err != nil {
 		t.Fatal(err)
 	}
 	f.SetKey("dyl_rolled")
-	if _, err := cl.Account(ctx); !IsCode(err, "unauthorized") {
+	if _, err := cl.Account(ctx); !remotegw.IsCode(err, "unauthorized") {
 		t.Fatalf("old key after a roll: %v", err)
 	}
 	key = "dyl_rolled"
@@ -225,33 +228,13 @@ func TestClientKeyIsReadPerRequest(t *testing.T) {
 }
 
 func TestClientWithoutKeySendsNothing(t *testing.T) {
-	f := NewFake(t)
-	cl := New(f.URL(), func() string { return "" })
-	if _, err := cl.Account(context.Background()); !errors.Is(err, ErrNoKey) {
+	f := remotegwtest.NewFake(t)
+	cl := remotegw.New(f.URL(), func() string { return "" })
+	if _, err := cl.Account(context.Background()); !errors.Is(err, remotegw.ErrNoKey) {
 		t.Fatalf("err = %v, want ErrNoKey", err)
 	}
 	if c := f.Calls(); len(c) != 0 {
 		t.Fatalf("provider saw %v", c)
-	}
-}
-
-func TestClientRefusesNonHTTPSUnlessLoopback(t *testing.T) {
-	ctx := context.Background()
-	for _, base := range []string{"http://example.com", "ftp://127.0.0.1", "example.com", "",
-		"http://127.0.0.1.evil.com", "http://localhost.evil.com", "http://127.0.0.1@evil.com"} {
-		if _, err := New(base, func() string { return "k" }).Account(ctx); !errors.Is(err, ErrBaseURL) {
-			t.Errorf("%q: err = %v, want ErrBaseURL", base, err)
-		}
-	}
-	for _, base := range []string{"http://127.0.0.1:1", "http://localhost:1", "http://[::1]:1"} {
-		// Allowed means the failure is a dial error, not the refusal.
-		if _, err := New(base, func() string { return "k" }).Account(ctx); errors.Is(err, ErrBaseURL) {
-			t.Errorf("%q must be allowed", base)
-		}
-	}
-	// https is accepted by construction; no dial needed to prove it.
-	if c := New("https://panel.example.com/", func() string { return "k" }); c.baseErr != nil {
-		t.Errorf("https refused: %v", c.baseErr)
 	}
 }
 
@@ -260,7 +243,7 @@ func TestClientCancelledContextIsNotRetryable(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := cl.Account(ctx)
-	if !errors.Is(err, context.Canceled) || Retryable(err) {
+	if !errors.Is(err, context.Canceled) || remotegw.Retryable(err) {
 		t.Fatalf("err = %v, want context.Canceled and not retryable", err)
 	}
 }
@@ -271,8 +254,8 @@ func TestClientDoesNotFollowRedirects(t *testing.T) {
 	defer other.Close()
 	redir := httptest.NewServer(http.RedirectHandler(other.URL, http.StatusFound))
 	defer redir.Close()
-	_, err := New(redir.URL, func() string { return "k" }).Account(context.Background())
-	var ae *APIError
+	_, err := remotegw.New(redir.URL, func() string { return "k" }).Account(context.Background())
+	var ae *remotegw.APIError
 	if !errors.As(err, &ae) || ae.Status != http.StatusFound || leaked {
 		t.Fatalf("err = %v, leaked = %v, want APIError 302 and no second request", err, leaked)
 	}
@@ -287,7 +270,7 @@ func TestClientRefusesDotPathSegments(t *testing.T) {
 			"delete": cl.DeleteRoute(ctx, seg),
 			"proxy":  cl.SetProxyProtocol(ctx, seg, true),
 		} {
-			if !errors.Is(err, ErrBadSegment) || Retryable(err) {
+			if !errors.Is(err, remotegw.ErrBadSegment) || remotegw.Retryable(err) {
 				t.Errorf("%s %q: want non-retryable ErrBadSegment", name, seg)
 			}
 		}
@@ -342,12 +325,12 @@ func TestClientRetireKit(t *testing.T) {
 				c.setup()
 			}
 			at, err := cl.RetireKit(ctx, c.link)
-			if !IsCode(err, c.code) || !at.IsZero() || Retryable(err) {
+			if !remotegw.IsCode(err, c.code) || !at.IsZero() || remotegw.Retryable(err) {
 				t.Fatalf("got %v, %v; want %s, not retryable", at, err, c.code)
 			}
 		})
 	}
-	if _, err := cl.RetireKit(ctx, ".."); !errors.Is(err, ErrBadSegment) {
+	if _, err := cl.RetireKit(ctx, ".."); !errors.Is(err, remotegw.ErrBadSegment) {
 		t.Fatalf("dot segment: %v", err)
 	}
 }

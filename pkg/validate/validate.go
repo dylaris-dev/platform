@@ -11,8 +11,10 @@
 package validate
 
 import (
+	"net"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -241,6 +243,39 @@ func ServerHostname(uuid string) string {
 		return ""
 	}
 	return name
+}
+
+var (
+	dockerNetworkName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,126}$`)
+	digitsAndPunct    = regexp.MustCompile(`^[0-9._-]+$`)
+	// Bare words YAML 1.1 reads as something other than a string.
+	yamlAmbiguous = map[string]bool{"null": true, "true": true, "false": true, "yes": true, "no": true, "on": true, "off": true, "y": true, "n": true, "~": true}
+)
+
+// IsDockerNetworkName reports whether s is a plain Docker network name that a
+// managed link compose file may carry. Mirrors the panel's isDockerNetworkName
+// (src/lib/gatewayProvider.ts), so Core and the panel accept the same names.
+// The compose quotes the name, but a hand-edited copy may not, so the YAML 1.1
+// bare words and names of only digits and punctuation are refused even though
+// Docker accepts some of them. Docker has no length cap; 127 leaves room for
+// a long compose project prefix and still bounds what a heartbeat can carry.
+func IsDockerNetworkName(s string) bool {
+	return dockerNetworkName.MatchString(s) && !yamlAmbiguous[strings.ToLower(s)] && !digitsAndPunct.MatchString(s)
+}
+
+// IsBeamTarget reports whether s is an IPv4 "host:port" with a port of 1-65535,
+// the beam target a node reports in its heartbeat.
+func IsBeamTarget(s string) bool {
+	host, port, err := net.SplitHostPort(s)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || ip.To4() == nil || strings.Contains(host, ":") {
+		return false
+	}
+	p, err := strconv.Atoi(port)
+	return err == nil && p >= 1 && p <= 65535 && strconv.Itoa(p) == port
 }
 
 // IsServerHostname reports whether s is a name ServerHostname can produce.

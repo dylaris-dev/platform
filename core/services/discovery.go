@@ -97,6 +97,14 @@ type NodeHeartbeat struct {
 	// minimum in Redis, which cannot express "two of your three nodes are
 	// current" - the case an operator most needs to see.
 	ReleaseVersion string `json:"releaseVersion,omitempty"`
+	// ServerNetwork is the Docker network the node's game servers run on and
+	// BeamTarget the "ip:port" its beam server answers on inside it (node
+	// 2026.11.13+; omitted when the node cannot tell). Raw node input: a reader
+	// validates them (validate.IsDockerNetworkName, validate.IsBeamTarget)
+	// before showing or using them. They live only as long as this heartbeat,
+	// so a node that stops reporting them is unknown within 15 s.
+	ServerNetwork string `json:"serverNetwork,omitempty"`
+	BeamTarget    string `json:"beamTarget,omitempty"`
 	// Timestamp (unix seconds) + Sig replace the raw-secret compare on the
 	// hardened path: Sig = HMAC(perNodeSecret, heartbeat-domain|token|ts).
 	Timestamp int64  `json:"timestamp"`

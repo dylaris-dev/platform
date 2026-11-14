@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"testing"
 	"time"
 
 	"dylaris-core/handlers/audit"
@@ -135,10 +134,10 @@ func accountProblem(a remotegw.Account) *providerFailure {
 }
 
 // allowLoopbackHTTP admits the client's loopback http exception for a saved
-// or tested URL. Only under go test (the fake provider is plain http); config
-// has no dev switch for it, and an operator must not be able to point the key
-// at a plain-text listener.
-var allowLoopbackHTTP = testing.Testing()
+// or tested URL. Only tests set it (loopback_test.go: the fake provider is
+// plain http); config has no dev switch for it, and an operator must not be
+// able to point the key at a plain-text listener.
+var allowLoopbackHTTP = false
 
 // validProviderURL is the client's rule, https only (see allowLoopbackHTTP),
 // plus a bare origin: the client appends the API path, and a query or

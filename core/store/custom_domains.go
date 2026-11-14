@@ -98,13 +98,27 @@ func (s *PostgresStore) StartCustomDomainClaim(userID, domain string, deadline t
 // failed, so nothing runs out while the customer sets up DNS and no strike is
 // counted. An existing claim is returned as it is.
 func (s *PostgresStore) RequestCustomDomainClaim(userID, domain string) (*CustomDomainClaim, error) {
-	if _, err := s.db.Exec(`
+	c, _, err := s.RequestCustomDomainClaimCreated(userID, domain)
+	return c, err
+}
+
+// RequestCustomDomainClaimCreated is RequestCustomDomainClaim that also
+// reports whether THIS call inserted the row, so a caller taking the claim
+// back after a later failure never removes one a concurrent call made.
+func (s *PostgresStore) RequestCustomDomainClaimCreated(userID, domain string) (*CustomDomainClaim, bool, error) {
+	res, err := s.db.Exec(`
 		INSERT INTO custom_domain_claims (user_id, domain, state, deadline_at, updated_at)
 		VALUES ($1, $2, 'pending', NULL, NOW())
-		ON CONFLICT (user_id, domain) DO NOTHING`, userID, domain); err != nil {
-		return nil, err
+		ON CONFLICT (user_id, domain) DO NOTHING`, userID, domain)
+	if err != nil {
+		return nil, false, err
 	}
-	return s.GetCustomDomainClaim(userID, domain)
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, false, err
+	}
+	c, err := s.GetCustomDomainClaim(userID, domain)
+	return c, n > 0, err
 }
 
 // DeleteCustomDomainClaim removes one user's claim on one domain and reports
@@ -232,6 +246,19 @@ func (s *PostgresStore) ListPendingClaims() ([]CustomDomainClaim, error) {
 func (s *PostgresStore) ListCustomDomainClaimsByUser(userID string) ([]CustomDomainClaim, error) {
 	return s.queryClaims(
 		`SELECT `+claimCols+` FROM custom_domain_claims WHERE user_id = $1 ORDER BY domain`, userID)
+}
+
+// CountLiveCustomDomainClaims counts the claims on domain, of every user but
+// exceptUserID ("" excepts nobody), that may still need it: pending or
+// verified. Blocked and permablocked claims hold no route and are not counted;
+// re-arming one later claims the domain on the provider again.
+func (s *PostgresStore) CountLiveCustomDomainClaims(domain, exceptUserID string) (int, error) {
+	var n int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM custom_domain_claims
+		  WHERE domain = $1 AND user_id <> $2 AND state IN ('pending', 'verified')`,
+		domain, exceptUserID).Scan(&n)
+	return n, err
 }
 
 func (s *PostgresStore) queryClaims(q string, args ...interface{}) ([]CustomDomainClaim, error) {

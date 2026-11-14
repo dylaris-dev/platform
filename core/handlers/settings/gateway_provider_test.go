@@ -15,6 +15,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/remotegw"
+	"dylaris-core/services/remotegw/remotegwtest"
 	"dylaris-core/store"
 )
 
@@ -54,14 +55,14 @@ func (f *providerFakeStore) InsertAuditIdentity(ev *models.AuditEventIdentity) e
 type providerFixture struct {
 	h      *GatewayProviderHandler
 	st     *providerFakeStore
-	fake   *remotegw.Fake
+	fake   *remotegwtest.Fake
 	resets int
 }
 
 // newProviderFixture: env is the GATEWAY_PROVIDER_* config; settings start as given.
 func newProviderFixture(t *testing.T, env config.Config, settings map[string]string) *providerFixture {
 	t.Helper()
-	f := &providerFixture{st: &providerFakeStore{settings: settings, routingMode: "gateway"}, fake: remotegw.NewFake(t)}
+	f := &providerFixture{st: &providerFakeStore{settings: settings, routingMode: "gateway"}, fake: remotegwtest.NewFake(t)}
 	f.h = NewGatewayProviderHandler(Deps{
 		Store:                 f.st,
 		FeatureFlags:          services.NewFeatureFlags(f.st),

@@ -41,6 +41,9 @@ type RemoteRoute struct {
 	NodeID        uint
 	Port          int
 	ProxyProtocol bool
+	// CustomDomain: the domain is the customer's own, not under a provider
+	// hoster domain, so its route also needs a verified claim to stay.
+	CustomDomain bool
 	// UpdatedAt is read, never written: the column follows every write.
 	UpdatedAt time.Time
 }
@@ -171,11 +174,11 @@ func (s *PostgresStore) DeleteRemoteKit(nodeID uint) error {
 }
 
 func (s *PostgresStore) UpsertRemoteRoute(r RemoteRoute) error {
-	if _, err := s.db.Exec(`INSERT INTO remote_routes (domain, server_uuid, node_id, port, proxy_protocol)
-		VALUES ($1, $2, $3, $4, $5)
+	if _, err := s.db.Exec(`INSERT INTO remote_routes (domain, server_uuid, node_id, port, proxy_protocol, custom_domain)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (domain) DO UPDATE SET server_uuid = EXCLUDED.server_uuid, node_id = EXCLUDED.node_id,
-			port = EXCLUDED.port, proxy_protocol = EXCLUDED.proxy_protocol, updated_at = NOW()`,
-		r.Domain, r.ServerUUID, r.NodeID, r.Port, r.ProxyProtocol); err != nil {
+			port = EXCLUDED.port, proxy_protocol = EXCLUDED.proxy_protocol, custom_domain = EXCLUDED.custom_domain, updated_at = NOW()`,
+		r.Domain, r.ServerUUID, r.NodeID, r.Port, r.ProxyProtocol, r.CustomDomain); err != nil {
 		return fmt.Errorf("remote gateway: upsert route %s: %w", r.Domain, err)
 	}
 	return nil
@@ -186,9 +189,9 @@ func (s *PostgresStore) UpsertRemoteRoute(r RemoteRoute) error {
 // two of our servers apart: this row is the only arbiter of who holds an
 // address. claimed=false hands back the row that holds it.
 func (s *PostgresStore) ClaimRemoteRoute(r RemoteRoute) (bool, *RemoteRoute, error) {
-	res, err := s.db.Exec(`INSERT INTO remote_routes (domain, server_uuid, node_id, port, proxy_protocol)
-		VALUES ($1, $2, $3, $4, $5) ON CONFLICT (domain) DO NOTHING`,
-		r.Domain, r.ServerUUID, r.NodeID, r.Port, r.ProxyProtocol)
+	res, err := s.db.Exec(`INSERT INTO remote_routes (domain, server_uuid, node_id, port, proxy_protocol, custom_domain)
+		VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (domain) DO NOTHING`,
+		r.Domain, r.ServerUUID, r.NodeID, r.Port, r.ProxyProtocol, r.CustomDomain)
 	if err != nil {
 		return false, nil, fmt.Errorf("remote gateway: claim route %s: %w", r.Domain, err)
 	}
@@ -234,7 +237,7 @@ func (s *PostgresStore) GetRemoteRoute(domain string) (*RemoteRoute, error) {
 }
 
 func (s *PostgresStore) listRemoteRoutes(where string, args ...any) ([]RemoteRoute, error) {
-	rows, err := s.db.Query(`SELECT domain, server_uuid, node_id, port, proxy_protocol, updated_at FROM remote_routes `+where+` ORDER BY domain`, args...)
+	rows, err := s.db.Query(`SELECT domain, server_uuid, node_id, port, proxy_protocol, custom_domain, updated_at FROM remote_routes `+where+` ORDER BY domain`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("remote gateway: list routes: %w", err)
 	}
@@ -242,7 +245,7 @@ func (s *PostgresStore) listRemoteRoutes(where string, args ...any) ([]RemoteRou
 	var out []RemoteRoute
 	for rows.Next() {
 		var r RemoteRoute
-		if err := rows.Scan(&r.Domain, &r.ServerUUID, &r.NodeID, &r.Port, &r.ProxyProtocol, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.Domain, &r.ServerUUID, &r.NodeID, &r.Port, &r.ProxyProtocol, &r.CustomDomain, &r.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("remote gateway: list routes: %w", err)
 		}
 		out = append(out, r)
@@ -270,6 +273,25 @@ func (s *PostgresStore) HasOpenOutbox(domain, op string) (bool, error) {
 		return false, fmt.Errorf("remote gateway: open outbox for %s: %w", domain, err)
 	}
 	return ok, nil
+}
+
+// OpenOutboxDomains is the set of domains with a not yet finished item of op,
+// in one query instead of one HasOpenOutbox per domain.
+func (s *PostgresStore) OpenOutboxDomains(op string) (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT domain FROM gateway_outbox WHERE done_at IS NULL AND op = $1`, op)
+	if err != nil {
+		return nil, fmt.Errorf("remote gateway: open outbox domains for %s: %w", op, err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, fmt.Errorf("remote gateway: open outbox domains for %s: %w", op, err)
+		}
+		out[d] = true
+	}
+	return out, rows.Err()
 }
 
 // ClaimDueOutbox takes up to limit due rows and pushes their next_attempt_at

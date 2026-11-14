@@ -2,10 +2,12 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"dylaris-core/models"
+	"dylaris-core/store"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -16,12 +18,27 @@ type RouteDeleter interface {
 	DeleteRoute(domain string) error
 }
 
+// RemoteRouteReader is the store slice the remote branch reads the route row
+// from.
+type RemoteRouteReader interface {
+	GetRemoteRoute(domain string) (*store.RemoteRoute, error)
+}
+
+// ProviderClaimReleaser gives the provider's claim on a domain back once no
+// other local claim needs it. Satisfied by RemoteGateway.
+type ProviderClaimReleaser interface {
+	ReleaseProviderClaim(domain, exceptUserID string) error
+}
+
 // customDomainRouteRemover drops the routes a user holds on a domain they
 // failed to prove they own.
 type customDomainRouteRemover struct {
-	redis   *redis.Client
-	gw      RouteDeleter
-	servers ServerOwnerLister
+	redis         *redis.Client
+	gw            RouteDeleter
+	servers       ServerOwnerLister
+	remote        RemoteRouteReader
+	claims        ProviderClaimReleaser
+	gatewayRemote func() (remote, known bool)
 }
 
 // ServerOwnerLister is the store slice that maps an account to its servers.
@@ -29,9 +46,11 @@ type ServerOwnerLister interface {
 	ListServersByOwner(ownerID string) ([]models.Server, error)
 }
 
-// NewCustomDomainRouteRemover wires the verifier's route teardown.
-func NewCustomDomainRouteRemover(rdb *redis.Client, gw RouteDeleter, servers ServerOwnerLister) RouteRemover {
-	return &customDomainRouteRemover{redis: rdb, gw: gw, servers: servers}
+// NewCustomDomainRouteRemover wires the verifier's route teardown. A nil
+// gatewayRemote is local mode.
+func NewCustomDomainRouteRemover(rdb *redis.Client, gw RouteDeleter, servers ServerOwnerLister,
+	remote RemoteRouteReader, claims ProviderClaimReleaser, gatewayRemote func() (remote, known bool)) RouteRemover {
+	return &customDomainRouteRemover{redis: rdb, gw: gw, servers: servers, remote: remote, claims: claims, gatewayRemote: gatewayRemote}
 }
 
 // OwnedServerUUIDs is the set of servers an account owns, the key that ties a
@@ -92,6 +111,14 @@ func (r *customDomainRouteRemover) DeleteRoutesForDomain(ctx context.Context, us
 	if domain == "" || userID == "" {
 		return nil
 	}
+	switch err := LocalGatewayErr(r.gatewayRemote); {
+	case errors.Is(err, ErrGatewayRemote):
+		return r.deleteRemote(userID, domain)
+	case err != nil:
+		// Not knowing where the routes are is not "there are none": the
+		// verifier then leaves the claim for the next pass.
+		return err
+	}
 	owned, err := OwnedServerUUIDs(r.servers, userID)
 	if err != nil {
 		return err
@@ -114,4 +141,28 @@ func (r *customDomainRouteRemover) DeleteRoutesForDomain(ctx context.Context, us
 		}
 	}
 	return firstErr
+}
+
+// deleteRemote is the remote-mode teardown: the remote_routes row of exactly
+// that domain, when it serves one of the user's servers, is deleted through the
+// provider (gw is the switching gateway, so this queues the outbox delete).
+// Then the provider's claim is released unless another user's claim still
+// needs it; queued after the route delete, it reaches the provider second.
+func (r *customDomainRouteRemover) deleteRemote(userID, domain string) error {
+	row, err := r.remote.GetRemoteRoute(domain)
+	if err != nil {
+		return fmt.Errorf("read route %s: %w", domain, err)
+	}
+	if row != nil {
+		owned, err := OwnedServerUUIDs(r.servers, userID)
+		if err != nil {
+			return err
+		}
+		if owned[row.ServerUUID] {
+			if err := r.gw.DeleteRoute(row.Domain); err != nil {
+				return err
+			}
+		}
+	}
+	return r.claims.ReleaseProviderClaim(domain, userID)
 }

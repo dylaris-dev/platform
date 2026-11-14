@@ -55,7 +55,7 @@ func TestAnUnprovenDomainLosesItsManagedRoutesToo(t *testing.T) {
 	servers := ownerServers{"u1": {{UUID: "srv-u1"}}, "u2": {{UUID: "srv-u2"}}}
 	del := &recordingDeleter{}
 
-	if err := NewCustomDomainRouteRemover(rdb, del, servers).DeleteRoutesForDomain(context.Background(), "u1", "Play.Victim.net"); err != nil {
+	if err := NewCustomDomainRouteRemover(rdb, del, servers, nil, nil, nil).DeleteRoutesForDomain(context.Background(), "u1", "Play.Victim.net"); err != nil {
 		t.Fatal(err)
 	}
 	sort.Strings(del.deleted)
@@ -107,7 +107,7 @@ func TestTheRemoverLeavesOtherTenantsAlone(t *testing.T) {
 			seedRoutes(t, rdb, map[string]map[string]interface{}{"play.victim.net": fields})
 			del := &recordingDeleter{}
 			servers := ownerServers{"u1": {{UUID: "srv-u1"}}, "u2": {{UUID: "srv-u2"}}}
-			if err := NewCustomDomainRouteRemover(rdb, del, servers).DeleteRoutesForDomain(context.Background(), "u1", "play.victim.net"); err != nil {
+			if err := NewCustomDomainRouteRemover(rdb, del, servers, nil, nil, nil).DeleteRoutesForDomain(context.Background(), "u1", "play.victim.net"); err != nil {
 				t.Fatal(err)
 			}
 			if len(del.deleted) != 0 {
@@ -122,7 +122,7 @@ func TestTheRemoverFailsWhenRedisCannotBeRead(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	mr.Close()
-	err := NewCustomDomainRouteRemover(rdb, &recordingDeleter{}, ownerServers{}).DeleteRoutesForDomain(context.Background(), "u1", "play.victim.net")
+	err := NewCustomDomainRouteRemover(rdb, &recordingDeleter{}, ownerServers{}, nil, nil, nil).DeleteRoutesForDomain(context.Background(), "u1", "play.victim.net")
 	if err == nil {
 		t.Fatal("an unreadable Redis reported success")
 	}

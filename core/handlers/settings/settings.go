@@ -323,8 +323,8 @@ func (h *SettingsHandler) GetGatewayRouteOptions(w http.ResponseWriter, r *http.
 		return
 	}
 	if rg != nil {
-		// The provider's hoster domains; custom domains are off on the managed
-		// gateway until a later stage.
+		// The provider's hoster domains. Own domains need the provider to allow
+		// them for the account AND the local setting, as in local mode.
 		regions, err := rg.Regions(r.Context())
 		if gate.GatewayProviderError(w, err) {
 			return
@@ -337,11 +337,12 @@ func (h *SettingsHandler) GetGatewayRouteOptions(w http.ResponseWriter, r *http.
 		for _, hd := range regions.HosterDomains {
 			hosters = append(hosters, services.HosterDomain{Domain: hd.Domain, Validation: hd.Validation})
 		}
+		enabled, _ := h.d.Store.GetSetting("gateway_custom_domains_enabled")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":              true,
 			"hosterDomains":        hosters,
-			"customDomainsEnabled": false,
-			"cnameTarget":          "",
+			"customDomainsEnabled": regions.CustomDomainsEnabled && enabled == "true",
+			"cnameTarget":          regions.CNAMETarget,
 		})
 		return
 	}

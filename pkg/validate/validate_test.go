@@ -301,3 +301,74 @@ func TestIsServerHostname(t *testing.T) {
 		}
 	}
 }
+
+// Mirrors the panel's isDockerNetworkName cases (src/lib/gatewayProvider.test.ts)
+// plus the hostile shapes a heartbeat could carry.
+func TestIsDockerNetworkName(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"dylaris_net", true},
+		{"byon_dylaris_net", true},
+		{"platform_dylaris_net", true},
+		{"my.net-1", true},
+		{"net1", true},
+		{"a" + strings.Repeat("b", 62), true},            // 63
+		{strings.Repeat("p", 88) + "_dylaris_net", true}, // 100, a long compose project
+		{strings.Repeat("a", 127), true},
+		{strings.Repeat("a", 128), false},
+		{"", false},
+		{"-lead", false},
+		{"has space", false},
+		{`a"b`, false},
+		{"x\ny", false},
+		{"x\nservices:", false},
+		{"../x", false},
+		{"a/b", false},
+		{strings.Repeat("a", 200), false},
+		{"true", false},
+		{"False", false},
+		{"null", false},
+		{"yes", false},
+		{"no", false},
+		{"on", false},
+		{"off", false},
+		{"Y", false},
+		{"~", false},
+		{"123", false},
+		{"1.5", false},
+		{"1-2_3", false},
+	}
+	for _, c := range cases {
+		if got := IsDockerNetworkName(c.in); got != c.want {
+			t.Errorf("IsDockerNetworkName(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestIsBeamTarget(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"10.0.5.17:25521", true},
+		{"172.18.0.1:1", true},
+		{"172.18.0.1:65535", true},
+		{"172.18.0.1:0", false},
+		{"172.18.0.1:65536", false},
+		{"172.18.0.1:025521", false},
+		{"172.18.0.1:+1", false},
+		{"172.18.0.1", false},
+		{"[::1]:25521", false},
+		{"[::ffff:10.0.0.1]:25521", false},
+		{"node.example.com:25521", false},
+		{"10.0.0.1:25521\n", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := IsBeamTarget(c.in); got != c.want {
+			t.Errorf("IsBeamTarget(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}

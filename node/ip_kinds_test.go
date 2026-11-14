@@ -51,3 +51,91 @@ func TestClassifyPrivateIPs(t *testing.T) {
 		}
 	}
 }
+
+func TestPickServerNetwork(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		names    []string
+		override string
+		want     string
+	}{
+		{"override listed", []string{"bridge", "kit_net", "x_dylaris_net"}, "kit_net", "kit_net"},
+		{"override missing", []string{"bridge", "x_dylaris_net"}, "kit_net", ""},
+		{"one prefixed match", []string{"bridge", "host", "x_dylaris_net"}, "", "x_dylaris_net"},
+		{"exact match", []string{"dylaris_net"}, "", "dylaris_net"},
+		{"two matches", []string{"a_dylaris_net", "b_dylaris_net"}, "", ""},
+		{"none", []string{"bridge", "host", "none"}, "", ""},
+		{"control character", []string{"x\n_dylaris_net"}, "", ""},
+	} {
+		if got := pickServerNetwork(c.names, c.override); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestBeamTargetFor(t *testing.T) {
+	_, overlay, _ := net.ParseCIDR("10.0.5.0/24")
+	_, bridge, _ := net.ParseCIDR("172.21.0.0/16")
+	for _, c := range []struct {
+		name    string
+		subnets []*net.IPNet
+		addrs   []net.IP
+		want    string
+	}{
+		{"container address in subnet", []*net.IPNet{overlay},
+			[]net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("172.18.0.4"), net.ParseIP("10.0.5.17")}, "10.0.5.17:25521"},
+		{"host bridge gateway in subnet", []*net.IPNet{bridge},
+			[]net.IP{net.ParseIP("192.168.1.20"), net.ParseIP("172.21.0.1")}, "172.21.0.1:25521"},
+		{"outside every subnet", []*net.IPNet{overlay, bridge},
+			[]net.IP{net.ParseIP("192.168.1.20"), net.ParseIP("10.0.6.1")}, ""},
+		{"IPv6 only", []*net.IPNet{overlay},
+			[]net.IP{net.ParseIP("fd00::5")}, ""},
+		{"no subnets", nil, []net.IP{net.ParseIP("10.0.5.17")}, ""},
+	} {
+		if got := beamTargetFor(c.subnets, c.addrs, "25521"); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+// The two keys are additive: an unknown fact adds no key at all (absent is
+// "unknown" to Core, "" would not be), a known one adds exactly its key, and
+// nothing the heartbeat already carried changes.
+func TestHeartbeatNetworkKeysAreAdditive(t *testing.T) {
+	// Every key sendHeartbeat can write before this change.
+	golden := []string{"id", "name", "ip", "tags", "region", "timestamp", "ips", "hostname", "sig",
+		"cpuUsage", "ramFree", "ramTotal", "totalCpu", "linkCount", "storage", "sharedStorage",
+		"portRange", "portRangeNotice", "netPolicy", "netPolicyServers", "netPolicyNotice",
+		"noMemoryLimit", "releaseVersion", "linkKeySwap"}
+	base := func() map[string]interface{} {
+		m := map[string]interface{}{}
+		for i, k := range golden {
+			m[k] = i
+		}
+		return m
+	}
+	for _, c := range []struct {
+		name, net, target string
+		added             map[string]string
+	}{
+		{"unknown", "", "", map[string]string{}},
+		{"known", "x_dylaris_net", "10.0.5.17:25521", map[string]string{"serverNetwork": "x_dylaris_net", "beamTarget": "10.0.5.17:25521"}},
+		{"network without target", "x_dylaris_net", "", map[string]string{"serverNetwork": "x_dylaris_net"}},
+	} {
+		data := base()
+		addServerNetworkFacts(data, c.net, c.target)
+		if len(data) != len(golden)+len(c.added) {
+			t.Errorf("%s: %d keys, want %d: %v", c.name, len(data), len(golden)+len(c.added), data)
+		}
+		for i, k := range golden {
+			if data[k] != i {
+				t.Errorf("%s: existing key %q changed to %v", c.name, k, data[k])
+			}
+		}
+		for k, v := range c.added {
+			if data[k] != v {
+				t.Errorf("%s: %q = %v, want %q", c.name, k, data[k], v)
+			}
+		}
+	}
+}

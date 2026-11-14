@@ -13,6 +13,7 @@ import (
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/services"
+	"dylaris-core/store"
 )
 
 // Read-only helpers for the customer side of the managed gateway: who the key
@@ -58,7 +59,7 @@ func (h *ExternalGatewayHandler) GetAccount(w http.ResponseWriter, r *http.Reque
 		fail("entitlement", err)
 		return
 	}
-	managed, err := services.HasManagedProduct(d.Store, owner)
+	product, managed, err := accountProduct(d.Store, owner, ent)
 	if err != nil {
 		fail("managed lookup", err)
 		return
@@ -67,13 +68,6 @@ func (h *ExternalGatewayHandler) GetAccount(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		fail("limits", err)
 		return
-	}
-	product := "none"
-	switch {
-	case managed:
-		product = "managed"
-	case ent.RouteOnly:
-		product = "route_only"
 	}
 	customCap, _ := customDomainCapFor(d.Store, owner)
 	scopes := []string{}
@@ -90,6 +84,23 @@ func (h *ExternalGatewayHandler) GetAccount(w http.ResponseWriter, r *http.Reque
 		Scopes:            scopes,
 		Limits:            externalLimits{MaxLinks: lim.MaxLinks, MaxRoutes: h.gw.effectiveRouteLimit(owner), MaxCustomDomains: customCap},
 	}})
+}
+
+// accountProduct is the gateway product an account holds: managed (the
+// managed plan's traffic row) over route_only (the entitlement), else none.
+// Shared by the external account answer and the admin view of one customer.
+func accountProduct(st store.Store, userID string, ent services.Entitlement) (product string, managed bool, err error) {
+	managed, err = services.HasManagedProduct(st, userID)
+	if err != nil {
+		return "", false, err
+	}
+	switch {
+	case managed:
+		return "managed", true, nil
+	case ent.RouteOnly:
+		return "route_only", false, nil
+	}
+	return "none", false, nil
 }
 
 // domainRefusalReason files resolveRouteDomain's refusal under the public

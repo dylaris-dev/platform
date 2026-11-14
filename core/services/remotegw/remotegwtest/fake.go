@@ -1,41 +1,28 @@
-package remotegw
+// Package remotegwtest holds the in-memory gateway provider for tests. It is
+// a normal package so other packages' tests can share it, and it imports
+// testing, so only _test.go files may import it (layering_test.go enforces
+// that, and TestProductionBinaryDoesNotLinkTesting keeps it out of the binary).
+package remotegwtest
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"dylaris-core/services/remotegw"
 	"dylaris-pkg/validate"
 )
 
-// This file is a NON-test file on purpose: other packages' tests import the
-// fake. Nothing on a production path may call it.
-
-// ContractKeys are the JSON keys the client depends on, per response object.
-// The fake is checked against them in contract_test.go and the real provider
-// handlers in handlers/gateway/external_contract_test.go, so neither can drift
-// from the other without a red test. Add keys, never rename.
-var ContractKeys = map[string][]string{
-	"account":          {"userId", "product", "managed", "entitlementSource", "suspended", "scopes", "limits"},
-	"account.limits":   {"maxLinks", "maxRoutes", "maxCustomDomains"},
-	"check-domain":     {"success", "domain", "available", "reason"},
-	"link-kits":        {"success", "items"},
-	"link-kits.item":   {"id", "name", "link_id", "created_at", "region", "caps"},
-	"link-kits.mint":   {"success", "link_key", "link_id"},
-	"link-kits.retire": {"success", "link_id", "retire_at"},
-	"routes":           {"success", "items"},
-	"routes.item":      {"domain", "target_ip", "target_port", "link_id", "proxy_protocol"},
-	"regions":          {"success", "hosterDomains", "customDomainsEnabled", "cnameTarget", "items"},
-	"regions.item":     {"region", "wildcard", "online"},
-	"usage":            {"success", "usage", "final"},
-	"usage.usage":      {"period", "edgeBytes", "relayBytes"},
-}
+// apiPrefix is the client's (unexported) path prefix; a drift fails every
+// client test against the fake with a 404.
+const apiPrefix = "/api/external/gateway"
 
 type fakeKit struct {
 	id     int
@@ -52,6 +39,36 @@ type fakeRoute struct {
 	port                 int
 	proxy                bool
 }
+
+// fakeDomain is a provider claim of the fake's one account.
+type fakeDomain struct {
+	domain, state, token string
+	attempts             int
+	// lapsesAt is set on a verified claim whose record the provider's
+	// verifier stopped finding (the real FailingSince + grace).
+	lapsesAt *time.Time
+}
+
+// fakeHoster is the fake's one hoster domain, as /regions lists it.
+const fakeHoster = "example.com"
+
+// dnsLabel and isHostname mirror handlers/validate.IsHostname, which a services
+// package may not import.
+var dnsLabel = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+func isHostname(s string) bool {
+	if len(s) > 253 {
+		return false
+	}
+	for _, l := range strings.Split(s, ".") {
+		if len(l) > 63 || !dnsLabel.MatchString(l) {
+			return false
+		}
+	}
+	return true
+}
+
+func underHoster(d string) bool { return d == fakeHoster || strings.HasSuffix(d, "."+fakeHoster) }
 
 type failure struct {
 	status     int
@@ -71,7 +88,7 @@ type Fake struct {
 	nextID int
 	fails  []failure
 	calls  []string
-	acct   *Account // nil: the default managed account
+	acct   *remotegw.Account // nil: the default managed account
 	// linkLimit caps live (not retiring) kits like the plan's maxLinks; nil
 	// mints without a cap and refuses every retirement as not needed.
 	linkLimit *int
@@ -81,11 +98,28 @@ type Fake struct {
 	// loseNext: the next request is carried out, then answered 502, as if
 	// the answer was lost on its way back.
 	loseNext bool
+
+	domains []*fakeDomain
+	// customOff refuses own domains like a provider with them switched off.
+	customOff bool
+	// published: the domains whose provider TXT value is in DNS.
+	published map[string]bool
+	// checked: the last manual check per domain, for the 5-minute cooldown.
+	checked map[string]time.Time
+	// liveReverify: the route gate proves a pending or blocked claim whose TXT
+	// value is published on the spot, as the real gate does.
+	liveReverify bool
 }
+
+// fakeClaimCap is the provider's per-account claim bound (maxClaimsPerUser).
+const fakeClaimCap = 50
+
+// fakeVerifyCooldown is the provider's verifyCheckCooldown.
+const fakeVerifyCooldown = 5 * time.Minute
 
 func NewFake(t testing.TB) *Fake {
 	t.Helper()
-	f := &Fake{key: "dyl_fake_provider_key", nextID: 1}
+	f := &Fake{key: "dyl_fake_provider_key", nextID: 1, published: map[string]bool{}, checked: map[string]time.Time{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -107,7 +141,7 @@ func (f *Fake) SetKey(k string) {
 }
 
 // SetAccount makes GET /account answer a, e.g. a plan that is not managed.
-func (f *Fake) SetAccount(a Account) {
+func (f *Fake) SetAccount(a remotegw.Account) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.acct = &a
@@ -166,6 +200,49 @@ func (f *Fake) Calls() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.calls...)
+}
+
+// SetCustomDomainsEnabled switches own domains on the provider (default on).
+func (f *Fake) SetCustomDomainsEnabled(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.customOff = !on
+}
+
+// SetTXTPublished makes the provider's TXT value for domain findable or not.
+func (f *Fake) SetTXTPublished(domain string, ok bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.published[domain] = ok
+}
+
+// SetCustomDomainState sets a claim's state directly, as the provider's own
+// verifier does on a lapse ("blocked") or a pass ("verified").
+func (f *Fake) SetCustomDomainState(domain, state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if d := f.domain(domain); d != nil {
+		d.state = state
+	}
+}
+
+// SetLiveReverify makes a route put on an own domain re-prove a pending or
+// blocked claim whose TXT value is published, like the provider's gate
+// (default off: the put is refused until the claim is verified).
+func (f *Fake) SetLiveReverify(on bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.liveReverify = on
+}
+
+// SetCustomDomainLapsesAt marks a verified claim as failing its re-checks
+// (at != nil), or clears that.
+func (f *Fake) SetCustomDomainLapsesAt(domain string, at *time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if d := f.domain(domain); d != nil {
+		d.lapsesAt = at
+	}
 }
 
 // SetKitOnline marks a kit's Link as connected with the given capabilities.
@@ -320,8 +397,48 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && path == "/regions":
 		writeJSON(w, 200, map[string]interface{}{"success": true,
 			"hosterDomains":        []map[string]string{{"domain": "example.com", "validation": "dns"}},
-			"customDomainsEnabled": true, "cnameTarget": "route.example.com",
+			"customDomainsEnabled": !f.customOff, "cnameTarget": "route.example.com",
 			"items": []map[string]interface{}{{"region": "eu", "wildcard": "*.eu.example.com", "online": true}}})
+	case r.Method == http.MethodGet && path == "/custom-domains":
+		items := []map[string]interface{}{}
+		for _, d := range f.domains {
+			items = append(items, d.view())
+		}
+		writeJSON(w, 200, map[string]interface{}{"success": true, "items": items})
+	case r.Method == http.MethodPost && path == "/custom-domains":
+		f.addDomain(w, strings.ToLower(strings.TrimSuffix(strings.TrimSpace(str(body, "domain")), ".")))
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/custom-domains/") && strings.HasSuffix(path, "/txt-token"):
+		d := f.domain(strings.TrimSuffix(strings.TrimPrefix(path, "/custom-domains/"), "/txt-token"))
+		switch {
+		case d == nil:
+			handlerError(w, 404, "not_found", "No claim on that domain for your account")
+		case d.state == "verified":
+			handlerError(w, 400, "bad_request", "That domain is already verified")
+		default:
+			if d.token == "" {
+				d.token = fmt.Sprintf("dylaris-verify=fake%028d", f.nextID)
+				f.nextID++
+			}
+			writeJSON(w, 200, map[string]interface{}{"success": true, "domain": d.view()})
+		}
+	case r.Method == http.MethodPost && strings.HasPrefix(path, "/custom-domains/") && strings.HasSuffix(path, "/verify-txt"):
+		f.verifyDomain(w, strings.TrimSuffix(strings.TrimPrefix(path, "/custom-domains/"), "/verify-txt"))
+	case r.Method == http.MethodDelete && strings.HasPrefix(path, "/custom-domains/"):
+		name := strings.TrimPrefix(path, "/custom-domains/")
+		for _, rt := range f.routes {
+			if rt.domain == name {
+				handlerError(w, 409, "domain_in_use", "Delete the routes on "+name+" first.")
+				return
+			}
+		}
+		for i, d := range f.domains {
+			if d.domain == name {
+				f.domains = append(f.domains[:i], f.domains[i+1:]...)
+				writeJSON(w, 200, map[string]interface{}{"success": true})
+				return
+			}
+		}
+		handlerError(w, 404, "not_found", "No claim on that domain for your account")
 	case r.Method == http.MethodGet && path == "/usage":
 		writeJSON(w, 200, map[string]interface{}{"success": true,
 			"usage": map[string]interface{}{"period": "2026-11-01T00:00:00Z", "edgeBytes": 1000, "relayBytes": 20},
@@ -361,6 +478,9 @@ func (f *Fake) putRoute(w http.ResponseWriter, body map[string]interface{}) {
 		handlerError(w, 400, "target_not_allowed", "target not allowed")
 		return
 	}
+	if !underHoster(domain) && !f.ownDomainGate(w, domain) {
+		return
+	}
 	for _, rt := range f.routes {
 		if rt.domain == domain { // upsert: keeps proxy protocol, like the provider
 			rt.linkID, rt.host, rt.port = linkID, host, int(port)
@@ -370,6 +490,124 @@ func (f *Fake) putRoute(w http.ResponseWriter, body map[string]interface{}) {
 	}
 	f.routes = append(f.routes, &fakeRoute{domain: domain, linkID: linkID, host: host, port: int(port)})
 	writeJSON(w, 201, map[string]interface{}{"success": true, "message": "route created", "domain": domain})
+}
+
+// ownDomainGate is the provider's customDomainGate for a put on an own
+// domain: a verified claim passes, a permanent block is domain_blocked, and
+// anything else gets a claim (with a TXT value) and domain_unverified, whose
+// message names the value like the real one, unless liveReverify proves it.
+func (f *Fake) ownDomainGate(w http.ResponseWriter, domain string) bool {
+	d := f.domain(domain)
+	if d != nil && d.state == "permablocked" {
+		handlerError(w, 403, "domain_blocked", domain+" is blocked for your account after 5 failed ownership checks.")
+		return false
+	}
+	if d != nil && d.state == "verified" {
+		return true
+	}
+	if d == nil {
+		d = &fakeDomain{domain: domain, state: "pending"}
+		f.domains = append(f.domains, d)
+	}
+	if d.token == "" {
+		d.token = fmt.Sprintf("dylaris-verify=fake%028d", f.nextID)
+		f.nextID++
+	}
+	if f.liveReverify && f.published[domain] {
+		d.state, d.attempts, d.lapsesAt = "verified", 0, nil
+		return true
+	}
+	handlerError(w, 403, "domain_unverified", fmt.Sprintf("Prove you own this domain first: add a TXT record _dylaris-verify.%s with the value %s, "+
+		"then create the route again. DNS changes can take a few minutes to show.", domain, d.token))
+	return false
+}
+
+func (f *Fake) domain(name string) *fakeDomain {
+	for _, d := range f.domains {
+		if d.domain == name {
+			return d
+		}
+	}
+	return nil
+}
+
+// view is the provider's customDomainView.
+func (d *fakeDomain) view() map[string]interface{} {
+	v := map[string]interface{}{"domain": d.domain, "state": d.state, "attempts": d.attempts}
+	if d.token != "" {
+		v["txtName"] = "_dylaris-verify." + d.domain
+		v["txtValue"] = d.token
+	}
+	if d.state == "verified" && d.lapsesAt != nil {
+		v["lapsesAt"] = d.lapsesAt.UTC().Format(time.RFC3339)
+	}
+	return v
+}
+
+// addDomain follows the provider's Add: own domains on, a domain name, the
+// claim bound for a new domain, then the claim (an existing one is answered
+// as it is) with a TXT value minted once.
+func (f *Fake) addDomain(w http.ResponseWriter, name string) {
+	if f.customOff {
+		handlerError(w, 409, "custom_domains_off", "Your own domains are not enabled on this platform.")
+		return
+	}
+	// The provider's resolveBroughtDomain: a host name of 2 to 4 labels, not
+	// on or under a hoster domain.
+	if !isHostname(name) {
+		handlerError(w, 400, "bad_request", "invalid custom domain format")
+		return
+	}
+	if n := len(strings.Split(name, ".")); n < 2 || n > 4 {
+		handlerError(w, 400, "bad_request", "custom domain may have at most two subdomain levels")
+		return
+	}
+	if underHoster(name) {
+		handlerError(w, 400, "bad_request", "custom domain may not be a subdomain of a hoster domain ("+fakeHoster+")")
+		return
+	}
+	d := f.domain(name)
+	if d == nil {
+		if len(f.domains) >= fakeClaimCap {
+			handlerError(w, 409, "too_many_domains", fmt.Sprintf("You can add up to %d domains.", fakeClaimCap))
+			return
+		}
+		d = &fakeDomain{domain: name, state: "pending"}
+		f.domains = append(f.domains, d)
+	}
+	if d.token == "" && d.state != "verified" {
+		d.token = fmt.Sprintf("dylaris-verify=fake%028d", f.nextID)
+		f.nextID++
+	}
+	writeJSON(w, 200, map[string]interface{}{"success": true, "domain": d.view()})
+}
+
+// verifyDomain follows the provider's VerifyTXT, refusals in its order; "not
+// found yet" is the plain 409 the external wrapper sends with code conflict.
+func (f *Fake) verifyDomain(w http.ResponseWriter, name string) {
+	d := f.domain(name)
+	switch {
+	case d == nil:
+		handlerError(w, 404, "not_found", "No claim on that domain for your account")
+		return
+	case d.state == "verified" && d.lapsesAt == nil:
+		handlerError(w, 400, "bad_request", "That domain is already verified")
+		return
+	case d.token == "":
+		handlerError(w, 400, "bad_request", "Request a verification token for this domain first")
+		return
+	}
+	if at, ok := f.checked[name]; ok && time.Since(at) < fakeVerifyCooldown {
+		handlerError(w, 429, "verify_cooldown", "You checked this domain a moment ago. Try again in 5 minutes.")
+		return
+	}
+	f.checked[name] = time.Now()
+	if !f.published[name] {
+		handlerError(w, 409, "conflict", "The TXT record was not found yet. DNS changes can take a few minutes to publish.")
+		return
+	}
+	d.state, d.attempts, d.lapsesAt = "verified", 0, nil
+	writeJSON(w, 200, map[string]interface{}{"success": true, "message": "Ownership verified. You can add routes on " + name + "."})
 }
 
 func (f *Fake) kitCounts() (live, retiring int) {

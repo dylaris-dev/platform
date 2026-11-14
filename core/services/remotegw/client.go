@@ -400,6 +400,80 @@ func (c *Client) Regions(ctx context.Context) (Regions, error) {
 	return out, err
 }
 
+// CustomDomain is the provider's claim on one domain for this platform's
+// account. TXTValue is the provider's own proof value: the customer publishes
+// it next to the local one at TXTName.
+type CustomDomain struct {
+	Domain     string     `json:"domain"`
+	State      string     `json:"state"`
+	TXTName    string     `json:"txtName"`
+	TXTValue   string     `json:"txtValue"`
+	Attempts   int        `json:"attempts"`
+	DeadlineAt *time.Time `json:"deadlineAt"`
+	LapsesAt   *time.Time `json:"lapsesAt"`
+}
+
+func (c *Client) CustomDomains(ctx context.Context) ([]CustomDomain, error) {
+	var out struct {
+		Items []CustomDomain `json:"items"`
+	}
+	err := c.do(ctx, http.MethodGet, "/custom-domains", nil, &out)
+	return out.Items, err
+}
+
+// AddCustomDomain is idempotent on the provider: a domain already claimed
+// answers its existing claim and TXT value.
+func (c *Client) AddCustomDomain(ctx context.Context, domain string) (CustomDomain, error) {
+	var out struct {
+		Domain CustomDomain `json:"domain"`
+	}
+	err := c.do(ctx, http.MethodPost, "/custom-domains", map[string]string{"domain": domain}, &out)
+	return out.Domain, err
+}
+
+func (c *Client) IssueCustomDomainTXT(ctx context.Context, domain string) (CustomDomain, error) {
+	seg, err := segment(domain)
+	if err != nil {
+		return CustomDomain{}, err
+	}
+	var out struct {
+		Domain CustomDomain `json:"domain"`
+	}
+	err = c.do(ctx, http.MethodPost, "/custom-domains/"+seg+"/txt-token", nil, &out)
+	return out.Domain, err
+}
+
+// VerifyCustomDomainTXT asks the provider to check its TXT value now. The
+// provider answers "not found yet" as a 409 without a code of its own, which is
+// verified=false with no error. Everything else is an APIError: verify_cooldown
+// (429), not_found (404, no claim), bad_request (400: already verified and not
+// failing, or no TXT value issued yet; the claim list tells the two apart).
+func (c *Client) VerifyCustomDomainTXT(ctx context.Context, domain string) (verified bool, err error) {
+	seg, err := segment(domain)
+	if err != nil {
+		return false, err
+	}
+	err = c.do(ctx, http.MethodPost, "/custom-domains/"+seg+"/verify-txt", nil, nil)
+	if IsCode(err, "conflict") {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// DeleteCustomDomain treats "no such claim" as done. domain_in_use (409) means
+// a route on the domain still exists on the provider.
+func (c *Client) DeleteCustomDomain(ctx context.Context, domain string) error {
+	seg, err := segment(domain)
+	if err != nil {
+		return err
+	}
+	err = c.do(ctx, http.MethodDelete, "/custom-domains/"+seg, nil, nil)
+	if IsCode(err, "not_found") {
+		return nil
+	}
+	return err
+}
+
 // Usage fetches the month named by period (YYYY-MM); "" is the running month.
 func (c *Client) Usage(ctx context.Context, period string) (Usage, error) {
 	path := "/usage"

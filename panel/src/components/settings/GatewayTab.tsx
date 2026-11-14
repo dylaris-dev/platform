@@ -308,10 +308,12 @@ function GatewayDisabledNotice() {
 }
 
 function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) => void }) {
-    // With the managed gateway the provider owns the hoster domains, custom
-    // domains and DNS; their routes answer 409 here. Route limits and reserved
-    // prefixes are still applied by this Core.
-    const { gatewayVisibility } = useAppData();
+    // With the managed gateway the provider owns the hoster domains, the CNAME
+    // target and DNS; their routes answer 409 here. Route limits, reserved
+    // prefixes and whether this platform's users may bring own domains are
+    // still this Core's.
+    const { gatewayVisibility, gatewayProvider } = useAppData();
+    const remoteGateway = gatewayProvider === 'remote';
 
     const [settings, setSettings] = useState<GatewaySettings>({
         limits: {
@@ -342,6 +344,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
     const [confirmModal, setConfirmModal] = useState(false);
     const [applyingRouting, runSaveRouting] = useBusy();
     const [savingRouting, setSavingRouting] = useState(false);
+    const [providerReload, setProviderReload] = useState(0);
     const [migration, setMigration] = useState<{ running: boolean; total: number; done: number; failed: number } | null>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -418,6 +421,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         if (res.success) {
             setOrigRoutingMode(routingMode);
             setOrigFileMode(fileMode);
+            setProviderReload(n => n + 1);
             // The mode saves even when the fleet migration cannot start, and
             // "Routing mode saved." alone is indistinguishable from a platform
             // that had no servers to migrate - while every server is in fact
@@ -581,7 +585,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
         >
             {/* Outside the routing fieldset: which gateway to use is decided
                 before, and independently of, how traffic is routed. */}
-            <GatewayProviderCard />
+            <GatewayProviderCard reloadToken={providerReload} />
 
             {/* Routing Mode. The provider card links here by id. */}
             <div id="traffic-routing" className="card p-5 space-y-5 scroll-mt-4">
@@ -771,12 +775,15 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                 </div>
                     )}
 
-                {gatewayVisibility.customDomains && (
-                <div className="border-t border-(--base-03) pt-5 space-y-4">
+                <div className={`${gatewayVisibility.hosterDomainEditor ? 'border-t border-(--base-03) pt-5 ' : ''}space-y-4`}>
                     <div className="flex items-center justify-between gap-4">
                         <div>
                             <h3 className="mono-label">Custom Domains</h3>
-                            <p className="text-xs text-(--base-06) mt-1">Allow users to bring their own domain. They prove ownership with a TXT record and point it at us with a CNAME.</p>
+                            <p className="text-xs text-(--base-06) mt-1">
+                                {remoteGateway
+                                    ? "Allow users to bring their own domain to the managed gateway. They publish two TXT records, one for this platform and one for the gateway provider, and point a CNAME at the provider's target. The provider's plan must allow own domains too."
+                                    : 'Allow users to bring their own domain. They prove ownership with a TXT record and point it at us with a CNAME.'}
+                            </p>
                         </div>
                         <button
                             type="button"
@@ -790,6 +797,8 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                     </div>
                     {settings.customDomainsEnabled && (
                         <div className="flex flex-col gap-[5px]">
+                            {/* The managed gateway's CNAME target is the provider's. */}
+                            {!remoteGateway && (<>
                             <label className="input-label">CNAME Label</label>
                             <input
                                 type="text"
@@ -819,6 +828,7 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                                     Add a hoster domain above — without one there is nothing to combine this label with.
                                 </span>
                             )}
+                            </>)}
                             <div className="mt-2 flex items-center justify-between gap-4 p-3 rounded-md bg-(--base-02)">
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm text-(--base-09)">Routes per account</p>
@@ -834,9 +844,8 @@ function GatewayPanel({ showToast }: { showToast: (msg: string, ok?: boolean) =>
                         </div>
                     )}
                 </div>
-                )}
 
-                <div className={`${gatewayVisibility.hosterDomainEditor ? 'border-t border-(--base-03) pt-5 ' : ''}space-y-3`}>
+                <div className="border-t border-(--base-03) pt-5 space-y-3">
                     <div>
                         <h3 className="mono-label">Reserved Route Prefixes</h3>
                         <p className="text-xs text-(--base-06) mt-1">

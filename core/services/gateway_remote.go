@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -26,6 +27,10 @@ const (
 	// ID, not a domain. It is not a route: the delete-supersedes rule and the
 	// reconcile never see it.
 	OutboxOpRevokeKit = "revoke_kit"
+	// OutboxOpDeleteCustomDomain releases the provider's claim on an own domain
+	// (domain column = the domain, payload {}). It shares the domain's id
+	// order, so a route delete queued before it reaches the provider first.
+	OutboxOpDeleteCustomDomain = "delete_custom_domain"
 )
 
 // OutboxMove is the payload of a "move": put the route on another node's kit.
@@ -68,12 +73,26 @@ var ErrGatewayKitKnown = errors.New("this link belongs to a node of this platfor
 // replace.
 var ErrGatewayNoKit = errors.New("this node has no managed link yet")
 
+// ErrOwnDomainWritesBusy: this Core has sent ownDomainWritesPerMin own-domain
+// claim writes to the provider in the running minute.
+var ErrOwnDomainWritesBusy = errors.New("Too many own-domain changes on this platform right now. Try again in a minute.")
+
+// ownDomainWritesPerMin bounds the own-domain claim writes (add, TXT value,
+// verify, release) this process sends, for all users together: they share the
+// platform's one provider key, and its write budget with every route change.
+// With several replicas the ceiling is per replica. Route writes are not
+// counted.
+const ownDomainWritesPerMin = 12
+
 const (
 	remoteCallTimeout = 15 * time.Second
 	remoteKitsTTL     = 30 * time.Second
 	remoteRegionsTTL  = 60 * time.Second
 	// The provider's usage figures change once a minute.
-	remoteUsageTTL = 60 * time.Second
+	remoteUsageTTL   = 60 * time.Second
+	remoteAccountTTL = 60 * time.Second
+	// The provider's claims on own domains; dropped after every claim write.
+	remoteCustomDomainsTTL = 60 * time.Second
 	// A failed provider read is answered from the cache for this long, so a
 	// provider that does not answer costs one timeout per window, not one per
 	// panel poll.
@@ -98,9 +117,35 @@ type RemoteGateway struct {
 	kits    remoteCache[[]remotegw.Kit]
 	regions remoteCache[remotegw.Regions]
 	usage   remoteCache[remotegw.Usage]
+	account remoteCache[remotegw.Account]
+	domains remoteCache[map[string]remotegw.CustomDomain]
 
 	checkMu sync.Mutex
 	checks  map[string]checkAnswer
+
+	// Own-domain claim writes in the window starting at claimWritesFrom.
+	claimWritesMu   sync.Mutex
+	claimWritesFrom time.Time
+	claimWrites     int
+}
+
+// takeClaimWrite counts one own-domain claim write against the ceiling and
+// reports whether it may be sent; when not, retryAt is the window's end. force
+// counts a write that must follow one already sent (the TXT value after an add)
+// without refusing it. ponytail: fixed one-minute window, so up to twice the
+// ceiling can pass around a window edge.
+func (g *RemoteGateway) takeClaimWrite(force bool) (ok bool, retryAt time.Time) {
+	g.claimWritesMu.Lock()
+	defer g.claimWritesMu.Unlock()
+	now := g.now()
+	if now.Sub(g.claimWritesFrom) >= time.Minute {
+		g.claimWritesFrom, g.claimWrites = now, 0
+	}
+	if !force && g.claimWrites >= ownDomainWritesPerMin {
+		return false, g.claimWritesFrom.Add(time.Minute)
+	}
+	g.claimWrites++
+	return true, time.Time{}
 }
 
 type checkAnswer struct {
@@ -494,6 +539,145 @@ func (g *RemoteGateway) Usage(ctx context.Context) (remotegw.Usage, error) {
 	})
 }
 
+// Account is the provider's view of this platform's account, cached for 60 s,
+// a failed call for 10 s.
+func (g *RemoteGateway) Account(ctx context.Context) (remotegw.Account, error) {
+	return g.account.get(ctx, g.now, remoteAccountTTL, func(ctx context.Context) (remotegw.Account, error) {
+		return g.api().Account(ctx)
+	})
+}
+
+// ProviderCustomDomains is the provider's claim list keyed by domain: one call
+// serves every domain, cached for 60 s (a failure for 10 s) and dropped after
+// every claim write here. It is platform-wide: every user's domains, with the
+// provider's TXT values. The map is the caller's copy.
+func (g *RemoteGateway) ProviderCustomDomains(ctx context.Context) (map[string]remotegw.CustomDomain, error) {
+	m, err := g.domains.get(ctx, g.now, remoteCustomDomainsTTL, func(ctx context.Context) (map[string]remotegw.CustomDomain, error) {
+		items, err := g.api().CustomDomains(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string]remotegw.CustomDomain, len(items))
+		for _, d := range items {
+			out[d.Domain] = d
+		}
+		return out, nil
+	})
+	return maps.Clone(m), err
+}
+
+// FreshProviderCustomDomains is ProviderCustomDomains read anew: the cache is
+// per replica, and a claim written through another one is not in it yet.
+func (g *RemoteGateway) FreshProviderCustomDomains(ctx context.Context) (map[string]remotegw.CustomDomain, error) {
+	g.domains.drop()
+	return g.ProviderCustomDomains(ctx)
+}
+
+// EnsureProviderClaim makes sure the provider holds a claim on domain with a
+// TXT value, and returns it. A claim the cached list already shows with a
+// value (or verified) is returned without a provider write; otherwise the
+// provider's Add, which is idempotent. Refused with ErrGatewayChangePending
+// while a release of the claim is still queued: the release would remove the
+// claim made now.
+func (g *RemoteGateway) EnsureProviderClaim(ctx context.Context, domain string) (remotegw.CustomDomain, error) {
+	if pending, err := g.st.HasOpenOutbox(domain, OutboxOpDeleteCustomDomain); err != nil {
+		return remotegw.CustomDomain{}, err
+	} else if pending {
+		return remotegw.CustomDomain{}, ErrGatewayChangePending
+	}
+	// A failed list read is not "no claim": the write below still answers.
+	if claims, err := g.ProviderCustomDomains(ctx); err == nil {
+		if d, ok := claims[domain]; ok && (d.TXTValue != "" || d.State == store.ClaimVerified) {
+			return d, nil
+		}
+	}
+	if ok, _ := g.takeClaimWrite(false); !ok {
+		return remotegw.CustomDomain{}, ErrOwnDomainWritesBusy
+	}
+	ctx, cancel := context.WithTimeout(ctx, remoteCallTimeout)
+	defer cancel()
+	defer g.domains.drop()
+	api := g.api()
+	d, err := api.AddCustomDomain(ctx, domain)
+	if err != nil {
+		return remotegw.CustomDomain{}, fmt.Errorf("claim %s on the gateway provider: %w", domain, err)
+	}
+	// A verified claim from before the provider kept its values has none, and
+	// the provider refuses to issue one for a verified claim.
+	if d.TXTValue == "" && d.State != store.ClaimVerified {
+		g.takeClaimWrite(true)
+		if d, err = api.IssueCustomDomainTXT(ctx, domain); err != nil {
+			return remotegw.CustomDomain{}, fmt.Errorf("TXT value for %s from the gateway provider: %w", domain, err)
+		}
+	}
+	return d, nil
+}
+
+// VerifyProviderClaim asks the provider to check its TXT value now; false
+// with no error is "not found yet".
+func (g *RemoteGateway) VerifyProviderClaim(ctx context.Context, domain string) (bool, error) {
+	if ok, _ := g.takeClaimWrite(false); !ok {
+		return false, ErrOwnDomainWritesBusy
+	}
+	ctx, cancel := context.WithTimeout(ctx, remoteCallTimeout)
+	defer cancel()
+	defer g.domains.drop()
+	return g.api().VerifyCustomDomainTXT(ctx, domain)
+}
+
+// ReleaseProviderClaim queues the release of the provider's claim on domain,
+// unless a local claim of any user other than exceptUserID ("" excepts nobody)
+// may still need it (pending or verified): every user here shares the one
+// provider claim. exceptUserID is the user whose claim is going right now and
+// still reads as live, as on a lapse, where the routes go before the claim.
+//
+// Nor while a route row on the domain stays: the release may only follow that
+// row's queued delete (id order brings the delete to the provider first). A
+// row with no delete queued, such as an operator server's route, still uses
+// the claim. The drain finishes a release the provider refuses as in use, so
+// a race past this check cannot hold the domain up.
+func (g *RemoteGateway) ReleaseProviderClaim(domain, exceptUserID string) error {
+	if n, err := g.st.CountLiveCustomDomainClaims(domain, exceptUserID); err != nil || n > 0 {
+		return err
+	}
+	if row, err := g.st.GetRemoteRoute(domain); err != nil {
+		return err
+	} else if row != nil {
+		if deleting, err := g.st.HasOpenOutbox(domain, OutboxOpDelete); err != nil || !deleting {
+			return err
+		}
+	}
+	if queued, err := g.st.HasOpenOutbox(domain, OutboxOpDeleteCustomDomain); err != nil || queued {
+		return err
+	}
+	g.domains.drop()
+	return g.st.EnqueueOutbox(OutboxOpDeleteCustomDomain, domain, struct{}{})
+}
+
+// IsCustomDomain reports whether domain is the customer's own, against the
+// provider's hoster domains (Regions, cached).
+func (g *RemoteGateway) IsCustomDomain(ctx context.Context, domain string) (bool, error) {
+	regions, err := g.Regions(ctx)
+	if err != nil {
+		return false, err
+	}
+	return OwnDomain(domain, regions.HosterDomains), nil
+}
+
+// OwnDomain is true for a domain neither equal to nor under any hoster domain.
+// A bare suffix match is not "under": evilplay.example.com is not under
+// play.example.com.
+func OwnDomain(domain string, hosters []remotegw.HosterDomain) bool {
+	domain = normaliseHost(domain)
+	for _, h := range hosters {
+		base := normaliseHost(h.Domain)
+		if base != "" && (domain == base || strings.HasSuffix(domain, "."+base)) {
+			return false
+		}
+	}
+	return true
+}
+
 // CheckDomain asks the provider whether domain is free; an answer is reused
 // for 10 s, a failure is not.
 func (g *RemoteGateway) CheckDomain(ctx context.Context, domain string) (available bool, reason string, err error) {
@@ -639,6 +823,17 @@ func (g *RemoteGateway) ReportKitLeft(nodeID uint) {
 // CreateServerRoute: ownerID is unused, every customer route meters under the
 // provider API key's owner.
 func (g *RemoteGateway) CreateServerRoute(serverID uint, ownerID string, domain string, port int) error {
+	return g.createServerRoute(serverID, domain, port, nil)
+}
+
+// CreateServerRouteOwnDomain is CreateServerRoute for a caller that has already
+// decided whether domain is an own one (and gated it as such), so the row's
+// flag is that decision rather than a second read of the hoster domains.
+func (g *RemoteGateway) CreateServerRouteOwnDomain(serverID uint, domain string, port int, custom bool) error {
+	return g.createServerRoute(serverID, domain, port, &custom)
+}
+
+func (g *RemoteGateway) createServerRoute(serverID uint, domain string, port int, decided *bool) error {
 	server, err := g.st.GetServerByID(int(serverID))
 	if err != nil {
 		return fmt.Errorf("server not found: %w", err)
@@ -666,10 +861,23 @@ func (g *RemoteGateway) CreateServerRoute(serverID uint, ownerID string, domain 
 	} else if retiring {
 		return ErrGatewayKitRetiring
 	}
+	// Not knowing whether the domain is an own one is not "it is not": the
+	// row's flag is what the reconcile checks the claims of.
+	var custom bool
+	if decided != nil {
+		custom = *decided
+	} else {
+		rctx, rcancel := context.WithTimeout(context.Background(), remoteCallTimeout)
+		custom, err = g.IsCustomDomain(rctx, domain)
+		rcancel()
+		if err != nil {
+			return fmt.Errorf("create route %s: hoster domains: %w", domain, err)
+		}
+	}
 	// The row is claimed BEFORE the provider is asked: the provider sees one
 	// account for every server here, so it would take a second server's put
 	// as an edit and hand it the first server's players.
-	claimed, held, err := g.st.ClaimRemoteRoute(store.RemoteRoute{Domain: domain, ServerUUID: server.UUID, NodeID: node, Port: port})
+	claimed, held, err := g.st.ClaimRemoteRoute(store.RemoteRoute{Domain: domain, ServerUUID: server.UUID, NodeID: node, Port: port, CustomDomain: custom})
 	if err != nil {
 		return err
 	}
@@ -696,10 +904,15 @@ func (g *RemoteGateway) CreateServerRoute(serverID uint, ownerID string, domain 
 		release()
 		return fmt.Errorf("create route %s: %w", domain, err)
 	}
+	if custom {
+		// The provider's route gate may just have proven its claim live; a
+		// cached "pending" would have the sweep delete the route it let in.
+		g.domains.drop()
+	}
 	if !claimed {
 		// The same server creating its address again: the row follows the put.
 		// Should this save fail, reconcile sees the node drift and moves it.
-		held.NodeID, held.Port = node, port
+		held.NodeID, held.Port, held.CustomDomain = node, port, custom
 		if err := g.st.UpsertRemoteRoute(*held); err != nil {
 			return err
 		}

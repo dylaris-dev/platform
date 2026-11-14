@@ -1258,6 +1258,10 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	if linkKeySwapReady.Load() {
 		data["linkKeySwap"] = true
 	}
+	// Where the operator would otherwise type the server network and the
+	// beam address in by hand. Not covered by sig (id and timestamp only).
+	netName, beamTarget := serverNetworkFacts(dm)
+	addServerNetworkFacts(data, netName, beamTarget)
 	jsonData, _ := json.Marshal(data)
 	if err := rdb.Set(ctx, key, jsonData, 15*time.Second).Err(); err != nil {
 		log.Printf("Heartbeat warning: %v", err)

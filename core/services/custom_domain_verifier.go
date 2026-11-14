@@ -65,8 +65,9 @@ type CustomDomainVerifier struct {
 // looked at, sitting pending until someone noticed their domain never verified.
 func (v *CustomDomainVerifier) SetLeader(l leader.Election) { v.leader = l }
 
-// SetGatewayRemote wires the gateway provider mode: unless it is known and
-// local, the gateway work idles (there is no local gateway state to read).
+// SetGatewayRemote wires the gateway provider mode. While it is unknown the
+// verifier idles; local and remote both run it. The proof is a DNS lookup in
+// either mode, and what removing a route means is the remover's business.
 func (v *CustomDomainVerifier) SetGatewayRemote(fn func() (remote, known bool)) { v.gatewayRemote = fn }
 
 func (v *CustomDomainVerifier) shouldRun() bool {
@@ -107,7 +108,7 @@ func (v *CustomDomainVerifier) Start(ctx context.Context) {
 // RunOnce proves what can be proven, fails what has run out of time, then
 // re-checks the claims that are already proven.
 func (v *CustomDomainVerifier) RunOnce(ctx context.Context) {
-	if LocalGatewayErr(v.gatewayRemote) != nil {
+	if err := LocalGatewayErr(v.gatewayRemote); err != nil && !errors.Is(err, ErrGatewayRemote) {
 		return
 	}
 	v.checkPending(ctx)

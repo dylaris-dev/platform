@@ -5,6 +5,7 @@ import {
     USERNAME, EMAIL, SERVER_NAME, SUB_SERVER_NAME,
     PACK_SLUG, NODE_LABEL, LOCATION_NAME, MC_VERSION,
 } from './validation';
+import { DOCKER_NETWORK_NAME, DIGITS_AND_PUNCT } from './gatewayProvider';
 
 /**
  * validation.ts says it is "kept in lockstep with the Go source of truth in
@@ -34,6 +35,9 @@ const MIRRORED: Record<string, RegExp> = {
     Label: NODE_LABEL,
     LocationName: LOCATION_NAME,
     McVersion: MC_VERSION,
+    // The managed link's Docker network (gatewayProvider.ts isDockerNetworkName).
+    dockerNetworkName: DOCKER_NETWORK_NAME,
+    digitsAndPunct: DIGITS_AND_PUNCT,
 };
 
 /**

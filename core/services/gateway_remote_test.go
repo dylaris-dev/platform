@@ -15,6 +15,7 @@ import (
 
 	"dylaris-core/models"
 	"dylaris-core/services/remotegw"
+	"dylaris-core/services/remotegw/remotegwtest"
 	"dylaris-core/store"
 )
 
@@ -54,6 +55,12 @@ type remoteFakeStore struct {
 	release  chan struct{}
 	// stampErr fails SetRemoteKitRetireAt.
 	stampErr error
+	// claims are the local custom-domain claims, of every user; claimErr
+	// fails GetCustomDomainClaim.
+	claims   []store.CustomDomainClaim
+	claimErr error
+	// countErr fails CountLiveCustomDomainClaims.
+	countErr error
 }
 
 func newRemoteFakeStore() *remoteFakeStore {
@@ -178,6 +185,18 @@ func (f *remoteFakeStore) HasOpenOutbox(domain, op string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func (f *remoteFakeStore) OpenOutboxDomains(op string) (map[string]bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]bool{}
+	for _, it := range f.outbox {
+		if !it.done && it.op == op {
+			out[it.domain] = true
+		}
+	}
+	return out, nil
 }
 
 func (f *remoteFakeStore) EnqueueOutbox(op, domain string, payload any) error {
@@ -313,6 +332,47 @@ func (f *remoteFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {
 	return nil, sql.ErrNoRows
 }
 
+func (f *remoteFakeStore) CountLiveCustomDomainClaims(domain, exceptUserID string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.countErr != nil {
+		return 0, f.countErr
+	}
+	n := 0
+	for _, c := range f.claims {
+		if c.Domain == domain && c.UserID != exceptUserID && (c.State == store.ClaimPending || c.State == store.ClaimVerified) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *remoteFakeStore) GetCustomDomainClaim(userID, domain string) (*store.CustomDomainClaim, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.claimErr != nil {
+		return nil, f.claimErr
+	}
+	for _, c := range f.claims {
+		if c.UserID == userID && c.Domain == domain {
+			return &c, nil
+		}
+	}
+	return nil, store.ErrNoClaim
+}
+
+func (f *remoteFakeStore) ListServersByOwner(ownerID string) ([]models.Server, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []models.Server
+	for _, s := range f.servers {
+		if s.OwnerID == ownerID {
+			out = append(out, *s)
+		}
+	}
+	return out, nil
+}
+
 func (f *remoteFakeStore) DeleteRemoteRoute(domain string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -325,9 +385,9 @@ const (
 	uuidB = "1c7a2d3f-7b4e-4d2c-8f80-2b3c4d5e6f70"
 )
 
-func newRemoteTest(t *testing.T) (*RemoteGateway, *remoteFakeStore, *remotegw.Fake) {
+func newRemoteTest(t *testing.T) (*RemoteGateway, *remoteFakeStore, *remotegwtest.Fake) {
 	t.Helper()
-	fake := remotegw.NewFake(t)
+	fake := remotegwtest.NewFake(t)
 	st := newRemoteFakeStore()
 	st.nodes[7] = &models.Node{ID: 7, Name: "node-seven"}
 	st.nodes[9] = &models.Node{ID: 9, Name: "node-nine"}
@@ -335,6 +395,15 @@ func newRemoteTest(t *testing.T) (*RemoteGateway, *remoteFakeStore, *remotegw.Fa
 	st.servers[2] = &models.Server{ID: 2, UUID: uuidB, NodeID: 7, ProxyProtocol: true}
 	g := NewRemoteGateway(st, func() *remotegw.Client { return remotegw.New(fake.URL(), fake.Key) })
 	return g, st, fake
+}
+
+// warmRegions reads the hoster domains a create checks, so a FailNext after it
+// meets the call the test is about.
+func warmRegions(t *testing.T, g *RemoteGateway) {
+	t.Helper()
+	if _, err := g.Regions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func countRemoteCalls(calls []string, prefix string) int {
@@ -386,6 +455,7 @@ func TestRemoteCreatePassesProviderRefusalThrough(t *testing.T) {
 	if _, err := g.EnsureKit(context.Background(), 7); err != nil {
 		t.Fatal(err)
 	}
+	warmRegions(t, g)
 	fake.FailNext(1, 409, "domain_taken", 0)
 	err := g.CreateServerRoute(1, "owner", "taken.example.com", 25565)
 	if !remotegw.IsCode(err, "domain_taken") {
@@ -628,7 +698,7 @@ func TestRemoteCreateOnAnotherServersPendingAddressIsTaken(t *testing.T) {
 // reaches the caller and leaves nothing behind; a failure that may pass is
 // queued as before; off is never sent synchronously.
 func TestRemoteProxyProtocolOnAsksTheProviderFirst(t *testing.T) {
-	setup := func(t *testing.T) (*RemoteGateway, *remoteFakeStore, *remotegw.Fake) {
+	setup := func(t *testing.T) (*RemoteGateway, *remoteFakeStore, *remotegwtest.Fake) {
 		g, st, fake := newRemoteTest(t)
 		if err := g.CreateServerRoute(1, "owner", "a.example.com", 25565); err != nil {
 			t.Fatal(err)
@@ -763,12 +833,13 @@ func TestRemoteDeleteIsNotQueuedTwice(t *testing.T) {
 // the provider never sees the route.
 func TestRemoteCreateSaveFailureAsksNoProvider(t *testing.T) {
 	g, st, fake := newRemoteTest(t)
+	warmRegions(t, g)
 	st.upsertErr = errors.New("db down")
 	if err := g.CreateServerRoute(1, "owner", "a.example.com", 25565); err == nil || !strings.Contains(err.Error(), "db down") {
 		t.Fatalf("err = %v, want the save error", err)
 	}
-	if c := fake.Calls(); len(c) != 0 {
-		t.Fatalf("calls = %v, want none", c)
+	if c := fake.Calls(); len(c) != 1 || c[0] != "GET /regions" {
+		t.Fatalf("calls = %v, want only the hoster-domain read before the failed save", c)
 	}
 }
 
@@ -854,6 +925,7 @@ func TestRemoteCreateProviderFailureReleasesOnlyItsOwnClaim(t *testing.T) {
 	if _, err := g.EnsureKit(context.Background(), 7); err != nil {
 		t.Fatal(err)
 	}
+	warmRegions(t, g)
 	fake.FailNext(1, 503, "unavailable", 0)
 	if err := g.CreateServerRoute(1, "owner", "fresh.example.com", 25565); err == nil {
 		t.Fatal("want the provider error")

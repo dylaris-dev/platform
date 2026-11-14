@@ -13,13 +13,14 @@ import (
 
 	"dylaris-core/services"
 	"dylaris-core/services/remotegw"
+	"dylaris-core/services/remotegw/remotegwtest"
 )
 
 // providerErr makes the fake provider refuse one call and returns what the
 // real client made of the answer.
 func providerErr(t *testing.T, status int, code string, retry time.Duration) error {
 	t.Helper()
-	fake := remotegw.NewFake(t)
+	fake := remotegwtest.NewFake(t)
 	fake.FailNext(1, status, code, retry)
 	_, _, err := remotegw.New(fake.URL(), fake.Key).CheckDomain(context.Background(), "a.example.com")
 	if err == nil {
@@ -42,8 +43,10 @@ func TestGatewayProviderError(t *testing.T) {
 	}{
 		{"domain_taken", func(t *testing.T) error { return providerErr(t, 409, "domain_taken", 0) }, refusal(409, "domain_taken")},
 		{"route_limit", func(t *testing.T) error { return providerErr(t, 403, "route_limit", 0) }, refusal(403, "route_limit")},
-		{"custom_domain_limit", func(t *testing.T) error { return providerErr(t, 403, "custom_domain_limit", 0) }, refusal(403, "custom_domain_limit")},
-		{"domain_unverified", func(t *testing.T) error { return providerErr(t, 403, "domain_unverified", 0) }, refusal(403, "domain_unverified")},
+		{"custom_domain_limit", func(t *testing.T) error { return providerErr(t, 403, "custom_domain_limit", 0) },
+			want{403, "custom_domain_limit", "This platform's own-domain limit at the gateway provider is reached.", ""}},
+		{"domain_unverified", func(t *testing.T) error { return providerErr(t, 403, "domain_unverified", 0) },
+			want{403, "domain_unverified", "The gateway provider has not verified this domain yet. Publish its TXT record shown under Your own domains, then check again.", ""}},
 		{"domain_blocked", func(t *testing.T) error { return providerErr(t, 403, "domain_blocked", 0) }, refusal(403, "domain_blocked")},
 		{"target_not_allowed", func(t *testing.T) error { return providerErr(t, 400, "target_not_allowed", 0) }, refusal(400, "target_not_allowed")},
 		{"invalid_request", func(t *testing.T) error { return providerErr(t, 400, "invalid_request", 0) }, refusal(400, "invalid_request")},
@@ -145,7 +148,7 @@ func TestProviderLimitCodesKeepTheirCode(t *testing.T) {
 	}{
 		{"link_limit", 403, 409, "This plan's host limit is reached. Remove a node's link, or use Replace this node's link on a node you are retiring."},
 		{"route_limit", 403, 403, ""},
-		{"custom_domain_limit", 403, 403, ""},
+		{"custom_domain_limit", 403, 403, "This platform's own-domain limit at the gateway provider is reached."},
 		{"retire_limit", 409, 409, "All replacement slots of this plan are in use. Wait until a link being replaced has run out."},
 		{"retire_budget", 409, 409, "This plan's monthly number of link replacements is used up."},
 		{"retire_not_needed", 409, 409, "This plan has no host limit, so no link needs replacing: add the new node and move the servers to it."},
@@ -168,6 +171,45 @@ func TestProviderLimitCodesKeepTheirCode(t *testing.T) {
 			}
 			if rec.Code != c.status || body.Code != c.code || body.Error != want {
 				t.Fatalf("got %d %+v, want %d %s %q", rec.Code, body, c.status, c.code, want)
+			}
+		})
+	}
+}
+
+// The own-domain codes: each keeps its code with a client status, the
+// cooldown is not read as a rate limit on the key, and a provider message is
+// never passed on where it names the provider's TXT value.
+func TestProviderStatusOwnDomainCodes(t *testing.T) {
+	const value = "dylaris-verify=00112233445566778899aabbccddeeff"
+	for _, c := range []struct {
+		code, providerMsg string
+		in, status        int
+		msg               string
+	}{
+		{"verify_cooldown", "You checked this domain a moment ago. Try again in 5 minutes.", 429, 429, "You checked this domain a moment ago. Try again in 5 minutes."},
+		{"too_many_domains", "You can add up to 50 domains.", 409, 409, "This platform's own-domain limit at the gateway provider is reached."},
+		{"custom_domain_limit", "limit", 403, 403, "This platform's own-domain limit at the gateway provider is reached."},
+		{"domain_in_use", "Delete the routes on play.own.net first.", 409, 409, "Delete the routes on play.own.net first."},
+		{"custom_domains_off", "Your own domains are not enabled on this platform.", 409, 409, "Own domains are not enabled for this account on the managed gateway."},
+		{"domain_unverified", "Prove you own this domain first: add a TXT record _dylaris-verify.play.own.net with the value " + value, 403, 403,
+			"The gateway provider has not verified this domain yet. Publish its TXT record shown under Your own domains, then check again."},
+	} {
+		t.Run(c.code, func(t *testing.T) {
+			err := fmt.Errorf("wrapped: %w", &remotegw.APIError{Status: c.in, Code: c.code, Message: c.providerMsg})
+			rec := httptest.NewRecorder()
+			if !GatewayProviderError(rec, err) {
+				t.Fatal("not handled")
+			}
+			var body struct{ Error, Code string }
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			if rec.Code != c.status || body.Code != c.code || body.Error != c.msg {
+				t.Fatalf("got %d %+v, want %d %s %q", rec.Code, body, c.status, c.code, c.msg)
+			}
+			if strings.Contains(rec.Body.String(), value) || rec.Header().Get("Retry-After") != "" {
+				t.Fatalf("body %s, Retry-After %q", rec.Body, rec.Header().Get("Retry-After"))
+			}
+			if s, code, msg, ok := ProviderErrorAnswer(err); !ok || s != c.status || code != c.code || msg != c.msg {
+				t.Fatalf("ProviderErrorAnswer = %d %s %q %v", s, code, msg, ok)
 			}
 		})
 	}

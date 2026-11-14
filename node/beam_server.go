@@ -361,6 +361,15 @@ func (c *beamConnCleaner) HandleConn(ctx context.Context, st stats.ConnStats) {
 	}
 }
 
+// beamGRPCPort is the port the beam listener binds, also reported in the
+// heartbeat's beamTarget.
+func beamGRPCPort() string {
+	if p := os.Getenv("BEAM_GRPC_PORT"); p != "" {
+		return p
+	}
+	return "25521"
+}
+
 // StartBeamServer starts the BeamNodeService gRPC server on BEAM_GRPC_PORT
 // (default :25521).
 //
@@ -379,10 +388,7 @@ func (c *beamConnCleaner) HandleConn(ctx context.Context, st stats.ConnStats) {
 // (cross-stack, custom service names, mixed global/replicated), where
 // the NodeID is not necessarily a resolvable hostname.
 func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *StorageManager, throttle *BeamThrottle, jwtSecret, nodeID string) {
-	beamPort := os.Getenv("BEAM_GRPC_PORT")
-	if beamPort == "" {
-		beamPort = "25521"
-	}
+	beamPort := beamGRPCPort()
 	listenAddr := ":" + beamPort
 	lis, err := net.Listen("tcp", listenAddr)
 	if err != nil {

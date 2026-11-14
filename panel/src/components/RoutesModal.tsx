@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import CopyText from '@/components/ui/CopyText';
 import {
-    getServerRoutes, createServerRoute, deleteServerRoute, checkDomainAvailability, getServerBedrock,
+    getServerRoutes, createServerRouteWithStatus, deleteServerRoute, checkDomainAvailability, getServerBedrock,
     GatewayRoute, CreateRouteRequest, Server, ServerBedrock,
 } from '@/lib/api';
 import { Globe, Plus, Trash2, X, Check, AlertTriangle } from 'lucide-react';
@@ -15,14 +15,51 @@ import Segmented from '@/components/ui/Segmented';
 import { BedrockSummary, RouteEdition } from '@/components/BedrockRoutes';
 import { canAddBedrock, changeEdition, editionFlags, editionOptions, showBedrock, type Edition } from '@/lib/bedrock';
 import { useAppData } from '@/lib/AppDataContext';
+import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
+import { providerErrorText } from '@/lib/gatewayProvider';
 
 interface RoutesModalProps {
     serverId: number;
     serverName: string;
-    /** For the real-player-IP switch: its current value, software and node class. */
-    server?: Pick<Server, 'installerType' | 'nodeKind' | 'proxyProtocol'>;
+    /** For the real-player-IP switch: its current value, software and node class; and its owner. */
+    server?: Pick<Server, 'installerType' | 'nodeKind' | 'proxyProtocol' | 'ownerId' | 'role'>;
     onClose: () => void;
     onRoutesChanged?: (routes: GatewayRoute[]) => void;
+}
+
+/**
+ * Why a route create failed, or null when it did not. A non-2xx answer is a
+ * failure whatever its body: the success body ({message, domain}) carries no
+ * success flag, and a refusal in the session shape ({success:false, message})
+ * used to be read as a created route. A bare code in `error` (the gateway-off
+ * answer) gives way to its readable message.
+ */
+export function routeCreateRefusal(
+    status: number,
+    body: { success?: boolean; error?: string; message?: string; code?: string } | null | undefined,
+): string | null {
+    const failed = status < 200 || status >= 300 || body?.success === false || !!body?.error;
+    if (!failed) return null;
+    const bareCode = !!body?.error && /^[a-z_]+$/.test(body.error);
+    const error = body?.error && !bareCode ? body.error : '';
+    const code = body?.code || (bareCode ? body!.error! : '');
+    return error || body?.message || providerErrorText(code, 'The route could not be created. Try again.');
+}
+
+/**
+ * Whether the routes dialog offers own domains: route create checks the
+ * SERVER OWNER's claim, so a claim made by a collaborator or an admin on
+ * someone else's server would only spend a provider claim. An admin may act
+ * for a server without an owner.
+ */
+export function ownDomainsHere(
+    server: { ownerId?: string; role?: string } | undefined,
+    viewer: { id?: string; isAdmin?: boolean } | null | undefined,
+): boolean {
+    if (!server || !viewer) return false;
+    if (server.role === 'owner') return true;
+    if (server.ownerId) return !!viewer.id && server.ownerId === viewer.id;
+    return !!viewer.isAdmin;
 }
 
 type AvailabilityState =
@@ -33,7 +70,7 @@ type AvailabilityState =
     | { status: 'invalid'; reason: string };
 
 export default function RoutesModal({ serverId, serverName, server, onClose, onRoutesChanged }: RoutesModalProps) {
-    const { featureFlags, refreshServers, gatewayVisibility } = useAppData();
+    const { featureFlags, refreshServers, gatewayVisibility, gatewayProvider, user } = useAppData();
     // Hidden until the operator opens the feature, except while it is on: an
     // owner must always be able to turn their own forwarding off.
     const showProxySwitch = !!featureFlags.proxyProtocol || !!server?.proxyProtocol;
@@ -137,9 +174,10 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
         // Saved once the Hub has committed the route: Core checks it exists.
         const edition = newEdition;
         try {
-            const res = await createServerRoute(serverId, newRoute);
-            if (res.error) {
-                setRouteError(res.error);
+            const { status, body: res } = await createServerRouteWithStatus(serverId, newRoute);
+            const refusal = routeCreateRefusal(status, res);
+            if (refusal) {
+                setRouteError(refusal);
                 setRouteCreating(false);
                 return;
             }
@@ -348,6 +386,13 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                             </div>
                         )}
                     </div>
+
+                    {/* With the managed gateway the infrastructure page, where own
+                        domains live locally, is off (BYON and route-only must be);
+                        this is where a route on one is made, so its proof is here. */}
+                    {gatewayProvider === 'remote' && (ownDomainsHere(server, user)
+                        ? <CustomDomainsPanel />
+                        : <p className="text-xs text-(--base-06)">Own domains for this server are managed by its owner.</p>)}
                 </div>
 
                 <div className="modal-footer">

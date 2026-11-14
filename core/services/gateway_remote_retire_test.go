@@ -258,7 +258,7 @@ func TestRemoteRevokeOrphanQueuesOnRetryableFailure(t *testing.T) {
 		t.Fatalf("retryable: %v, %v, outbox %+v; want a revoke_kit for %s", queued, err, st.outbox, m.LinkID)
 	}
 	// The drain replays it; then the kit is gone from the provider.
-	if done, _, _ := drainOutboxOnce(ctx, st, cl, nil, time.Now); done != 1 {
+	if done, _, _ := drainOutboxOnce(ctx, st, cl, nil, time.Now, nil); done != 1 {
 		t.Fatalf("drain done = %d, outbox %+v", done, st.outbox)
 	}
 	if kits, _ := cl.Kits(ctx); len(kits) != 0 {
@@ -466,7 +466,7 @@ func TestReconcileRepairSkipsRetiringKit(t *testing.T) {
 	}
 	st.routes["gone.example.com"] = store.RemoteRoute{Domain: "gone.example.com", ServerUUID: uuidA, NodeID: 7, Port: 25565}
 	before := countRemoteCalls(fake.Calls(), "POST /routes")
-	if _, repaired, _, err := reconcileRemoteRoutes(ctx, st, remotegw.New(fake.URL(), fake.Key)); err != nil || repaired != 0 {
+	if _, repaired, _, err := reconcileRemoteRoutes(ctx, st, remotegw.New(fake.URL(), fake.Key), nil); err != nil || repaired != 0 {
 		t.Fatalf("reconcile: repaired %d, %v", repaired, err)
 	}
 	if countRemoteCalls(fake.Calls(), "POST /routes") != before {

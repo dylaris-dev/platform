@@ -96,3 +96,30 @@ func TestServerCountsInOneRead(t *testing.T) {
 		t.Fatalf("a failed read changed the count to %d", nodes[0].ServerCount)
 	}
 }
+
+// An old node's heartbeat (literal, as nodes before 2026.11.13 write it)
+// decodes with both new fields empty, which readers treat as unknown; a new
+// node's carries them.
+func TestNodeHeartbeatDecodesOldAndNewPayloads(t *testing.T) {
+	const old = `{"id":"n1","name":"n1","ip":"","tags":"","region":"eu-central","timestamp":1763050000,` +
+		`"ips":{"public":"","private":["10.0.5.17"],"kinds":{"10.0.5.17":"docker"}},"sig":"5b1e",` +
+		`"cpuUsage":3.2,"ramFree":6123456789,"ramTotal":8000000000,"totalCpu":4,"linkCount":1,"storage":[],` +
+		`"portRange":"25600-25699","netPolicy":true,"netPolicyServers":2,"releaseVersion":"2026.11.13.3"}`
+	newer := strings.TrimSuffix(old, "}") + `,"serverNetwork":"platform_dylaris_net","beamTarget":"10.0.5.17:25521"}`
+	cases := []struct {
+		name, payload, network, beam string
+	}{
+		{"old node", old, "", ""},
+		{"new node", newer, "platform_dylaris_net", "10.0.5.17:25521"},
+	}
+	for _, c := range cases {
+		mr := miniredis.RunT(t)
+		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		mr.Set("dylaris:discovery:n1", c.payload)
+		hb, ok := LoadNodeHeartbeat(t.Context(), rdb, "n1")
+		if !ok || hb.ReleaseVersion != "2026.11.13.3" || hb.ServerNetwork != c.network || hb.BeamTarget != c.beam {
+			t.Errorf("%s: ok=%v network=%q beam=%q release=%q", c.name, ok, hb.ServerNetwork, hb.BeamTarget, hb.ReleaseVersion)
+		}
+		rdb.Close()
+	}
+}

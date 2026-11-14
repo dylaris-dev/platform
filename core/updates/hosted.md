@@ -11,6 +11,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.14
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- When the panel refuses a new address in a server's Routes & Domains dialog, for example during
+  maintenance, the dialog now shows why instead of listing the address as created.
+
 ## 2026.11.13.3
 
 ### Features

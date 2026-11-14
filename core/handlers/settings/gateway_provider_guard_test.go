@@ -13,7 +13,7 @@ import (
 	"dylaris-core/config"
 	"dylaris-core/handlers/health"
 	"dylaris-core/services"
-	"dylaris-core/services/remotegw"
+	"dylaris-core/services/remotegw/remotegwtest"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -22,10 +22,10 @@ import (
 // A stored or env key only ever goes to the URL in force: another address needs
 // the key typed in, and nothing is sent anywhere before that.
 func TestProviderKeyOnlyGoesToTheAddressInForce(t *testing.T) {
-	envKey := func(f *remotegw.Fake) config.Config { return config.Config{GatewayProviderKey: f.Key()} }
+	envKey := func(f *remotegwtest.Fake) config.Config { return config.Config{GatewayProviderKey: f.Key()} }
 	tests := []struct {
 		name   string
-		env    func(*remotegw.Fake) config.Config
+		env    func(*remotegwtest.Fake) config.Config
 		test   bool // the test endpoint, else Save
 		status int
 		code   string
@@ -37,7 +37,7 @@ func TestProviderKeyOnlyGoesToTheAddressInForce(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			inForce := remotegw.NewFake(t)
+			inForce := remotegwtest.NewFake(t)
 			env := config.Config{}
 			if tc.env != nil {
 				env = tc.env(inForce)
@@ -46,7 +46,7 @@ func TestProviderKeyOnlyGoesToTheAddressInForce(t *testing.T) {
 			if tc.env == nil {
 				f.st.settings["gateway.provider_key"] = inForce.Key()
 			}
-			other := remotegw.NewFake(t)
+			other := remotegwtest.NewFake(t)
 			h := f.h.Save
 			body := fmt.Sprintf(`{"mode":"remote","url":%s}`, jsonStr(other.URL()))
 			if tc.test {

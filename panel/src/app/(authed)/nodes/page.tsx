@@ -91,7 +91,7 @@ interface OwnNode {
 const NAME_RULE = '4 to 20 characters: letters, digits and hyphens, not starting or ending with a hyphen.';
 
 function MyNodesInner() {
-    const { featureFlags, entitlement, user, byonEnabled, routeOnlyEnabled, gatewayVisibility } = useAppData();
+    const { featureFlags, entitlement, user, byonEnabled, routeOnlyEnabled } = useAppData();
     const router = useRouter();
     const searchParams = useSearchParams();
 
@@ -536,7 +536,7 @@ function MyNodesInner() {
                     />
                     {/* Renders nothing while own domains are off and the account has
                         no claim; with them on it carries the add-a-domain form. */}
-                    {gatewayVisibility.customDomains && <CustomDomainsPanel />}
+                    <CustomDomainsPanel />
                 </div>
             ) : (
             /* The compose file lives in a column of its own, permanently. It is

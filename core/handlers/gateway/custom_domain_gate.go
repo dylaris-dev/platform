@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/reqctx"
+	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -89,6 +91,98 @@ func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string
 		return nil
 	}
 	return errors.New(customDomainProveFirst(services.TXTVerifyPrefix+domain, claim.TXTToken))
+}
+
+// remoteOwnDomainGate is customDomainGate on the managed gateway, for a route
+// on an own domain, and reports whether it answered (refused). Two proofs:
+//
+//  1. the server owner's verified LOCAL claim: which user of this platform
+//     controls the domain. Every user here shares one provider account, so
+//     the provider cannot tell them apart; a route for user B's server needs
+//     B's own proof, never A's.
+//  2. the PROVIDER's verified claim: that this platform controls it.
+//
+// An admin skips the local proof only for a server without an owner (the
+// operator's own). A tenant's server needs the tenant's claim whoever creates
+// the route, or the reconcile would remove it again.
+//
+// Unlike customDomainGate it never starts a claim: a claim made here would
+// have no provider claim beside it. Adding the domain under Your own domains makes
+// both. No refusal names a TXT value; the records are shown there.
+func (h *GatewayHandler) remoteOwnDomainGate(w http.ResponseWriter, r *http.Request, rg *services.RemoteGateway, srv *models.Server, account, domain string) bool {
+	refuse := func(status int, code, msg string) bool {
+		gate.WriteGatewayError(w, status, code, msg)
+		return true
+	}
+	// The proof is the server owner's: a collaborator or an admin acting on a
+	// tenant's server cannot add it under their own domains.
+	caller, _ := r.Context().Value("userID").(string)
+	byOwner := srv.OwnerID == "" || srv.OwnerID == caller
+	ownerFirst := "The owner of this server has to add and verify " + domain + " under their own domains first."
+	if srv.OwnerID != "" || !reqctx.IsAdmin(r) {
+		claim, err := h.d.Store.GetCustomDomainClaim(account, domain)
+		if err != nil && err != store.ErrNoClaim {
+			// Fail closed, as customDomainGate does.
+			return refuse(http.StatusInternalServerError, "internal", "Could not check the ownership of "+domain+". Try again.")
+		}
+		switch {
+		case claim == nil && !byOwner:
+			return refuse(http.StatusForbidden, "domain_unverified", ownerFirst)
+		case claim == nil:
+			return refuse(http.StatusForbidden, "domain_unverified",
+				"Add "+domain+" under Your own domains first, publish its TXT records and check it there.")
+		case claim.State == store.ClaimPermablocked && !byOwner:
+			return refuse(http.StatusForbidden, "domain_blocked", fmt.Sprintf(
+				"%s is blocked for the owner of this server after %d failed ownership checks. The owner has to check it again under their own domains.", domain, claim.Attempts))
+		case claim.State == store.ClaimPermablocked:
+			return refuse(http.StatusForbidden, "domain_blocked", fmt.Sprintf(
+				"%s is blocked for your account after %d failed ownership checks. Check it again under Your own domains.", domain, claim.Attempts))
+		case claim.State != store.ClaimVerified:
+			// The record may have just been published: checked here as on the
+			// local path, so the customer is not sent round again.
+			res := h.txtResolver
+			if res == nil {
+				res = services.NewNetResolver()
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			found := claim.TXTToken != "" && services.CheckTXTToken(ctx, res, domain, claim.TXTToken)
+			cancel()
+			if !found && !byOwner {
+				return refuse(http.StatusForbidden, "domain_unverified", ownerFirst)
+			}
+			if !found {
+				return refuse(http.StatusForbidden, "domain_unverified",
+					"This platform has not verified "+domain+" yet. Publish its TXT record shown under Your own domains, then check again.")
+			}
+			if err := h.d.Store.MarkCustomDomainVerified(claim.ID); err != nil {
+				return refuse(http.StatusInternalServerError, "internal", "Could not record the ownership of "+domain+". Try again.")
+			}
+		}
+	}
+	claims, err := rg.ProviderCustomDomains(r.Context())
+	if gate.GatewayProviderError(w, err) {
+		return true
+	}
+	if err != nil {
+		return refuse(http.StatusInternalServerError, "internal", "Could not check the ownership of "+domain+". Try again.")
+	}
+	switch pc, ok := claims[domain]; {
+	case pc.State == store.ClaimPermablocked && !byOwner:
+		return refuse(http.StatusForbidden, "domain_blocked",
+			"The gateway provider blocked "+domain+" after failed ownership checks. The owner of this server has to check it again under their own domains.")
+	case (!ok || pc.State != store.ClaimVerified) && !byOwner:
+		return refuse(http.StatusForbidden, "domain_unverified", ownerFirst)
+	case !ok:
+		return refuse(http.StatusForbidden, "domain_unverified",
+			"The gateway provider has no record for "+domain+" yet. Check the domain again under Your own domains to get it.")
+	case pc.State == store.ClaimPermablocked:
+		return refuse(http.StatusForbidden, "domain_blocked",
+			"The gateway provider blocked "+domain+" after failed ownership checks. Check it again under Your own domains.")
+	case pc.State != store.ClaimVerified:
+		return refuse(http.StatusForbidden, "domain_unverified",
+			"The gateway provider has not verified "+domain+" yet. Publish its TXT record shown under Your own domains, then check again.")
+	}
+	return false
 }
 
 // customDomainProveFirst is the refusal for a domain not proven yet.

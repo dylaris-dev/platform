@@ -21,6 +21,7 @@ import (
 //	layer 0  httpx reqctx validate      stdlib, models, mux, google/uuid, pkg/** only
 //	services/**                         never imports handlers/**
 //	handlertest                         only from _test.go files; never imports handlers or a layer-2 package
+//	services/remotegw/remotegwtest      only from _test.go files (it imports testing)
 //
 // Only package main may import the root handlers package. No directory except
 // core/authz may be named authz: the capability enforcement test skips every
@@ -40,6 +41,8 @@ var (
 )
 
 const handlerTestPkg = "handlers/handlertest"
+
+const remotegwTestPkg = "services/remotegw/remotegwtest"
 
 func TestHandlerLayering(t *testing.T) {
 	const module = "dylaris-core/"
@@ -121,6 +124,9 @@ func layeringViolation(from, to string, internal bool) string {
 
 	if to == handlerTestPkg && from != handlerTestPkg {
 		return "handlertest is for _test.go files only"
+	}
+	if to == remotegwTestPkg && from != remotegwTestPkg {
+		return "remotegwtest is for _test.go files only"
 	}
 	if to == "handlers" && from != "" {
 		return "only package main may import the root handlers package"

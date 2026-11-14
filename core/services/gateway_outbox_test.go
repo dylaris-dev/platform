@@ -10,6 +10,7 @@ import (
 
 	"dylaris-core/pkg/leader"
 	"dylaris-core/services/remotegw"
+	"dylaris-core/services/remotegw/remotegwtest"
 	"dylaris-core/store"
 )
 
@@ -25,7 +26,7 @@ func (f outboxLeaderFunc) IsLeader() bool { return f() }
 
 // drainAt drains with a stopped clock and no leader check.
 func drainAt(ctx context.Context, st store.Store, c *remotegw.Client, now time.Time) (done, failed int) {
-	done, failed, _ = drainOutboxOnce(ctx, st, c, nil, func() time.Time { return now })
+	done, failed, _ = drainOutboxOnce(ctx, st, c, nil, func() time.Time { return now }, nil)
 	return done, failed
 }
 
@@ -35,7 +36,7 @@ func tickAt(l *outboxLoop, now time.Time) {
 }
 
 // newOutboxTest is newRemoteTest plus a kit for node 9 to move routes onto.
-func newOutboxTest(t *testing.T) (*remoteFakeStore, *remotegw.Fake, *remotegw.Client, store.RemoteKit) {
+func newOutboxTest(t *testing.T) (*remoteFakeStore, *remotegwtest.Fake, *remotegw.Client, store.RemoteKit) {
 	t.Helper()
 	g, st, fake := newRemoteTest(t)
 	kit, err := g.EnsureKit(context.Background(), 9)
@@ -249,7 +250,7 @@ const uuidGone = "2d8b3e4f-8c5f-4e3d-9a91-3c4d5e6f7081"
 
 func reconcileOK(t *testing.T, st *remoteFakeStore, c *remotegw.Client) (adopted, repaired, foreign int) {
 	t.Helper()
-	adopted, repaired, foreign, err := reconcileRemoteRoutes(context.Background(), st, c)
+	adopted, repaired, foreign, err := reconcileRemoteRoutes(context.Background(), st, c, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +347,7 @@ func TestReconcileDoesNothingWhenListFails(t *testing.T) {
 	st.routes["old.example.com"] = store.RemoteRoute{Domain: "old.example.com", ServerUUID: uuidGone, NodeID: 9, Port: 25565}
 	fake.FailNext(1, 503, "unavailable", 0)
 	before := len(fake.Calls())
-	if _, _, _, err := reconcileRemoteRoutes(context.Background(), st, c); err == nil {
+	if _, _, _, err := reconcileRemoteRoutes(context.Background(), st, c, nil); err == nil {
 		t.Fatal("want the list error")
 	}
 	if got := fake.Calls()[before:]; len(got) != 1 || len(st.routes) != 2 || len(st.outbox) != 0 {
@@ -544,7 +545,7 @@ func TestOutboxBatchStopsInsideTheLease(t *testing.T) {
 			}
 			before := len(fake.Calls())
 			sent := func() int { return len(fake.Calls()) - before }
-			done, failed, pause := drainOutboxOnce(context.Background(), st, c, tc.el(sent), tc.clock(sent))
+			done, failed, pause := drainOutboxOnce(context.Background(), st, c, tc.el(sent), tc.clock(sent), nil)
 			if done != 3 || failed != 0 || !pause.IsZero() || sent() != 3 {
 				t.Fatalf("done %d failed %d pause %v sent %d", done, failed, pause, sent())
 			}
@@ -639,7 +640,7 @@ func TestOutboxRetryAfterCountsFromTheAnswer(t *testing.T) {
 		}
 		return outboxT0.Add(50 * time.Second)
 	}
-	_, failed, pause := drainOutboxOnce(context.Background(), st, c, nil, clock)
+	_, failed, pause := drainOutboxOnce(context.Background(), st, c, nil, clock, nil)
 	want := outboxT0.Add(80 * time.Second)
 	if failed != 1 || !pause.Equal(want) || !st.outbox[0].next.Equal(want) {
 		t.Fatalf("failed %d, pause %v, next %v; want both %v", failed, pause, st.outbox[0].next, want)

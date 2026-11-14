@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"time"
 
+	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -45,4 +46,8 @@ type Deps struct {
 	// A func rather than *metrics.Manager: handler packages do not import
 	// metrics (layering_test).
 	LongTermRead func() *sql.DB
+
+	// Authz answers what the CALLER holds inside a handler, where one answer
+	// carries blocks guarded by different capabilities; nil holds nothing.
+	Authz *authz.Resolver
 }

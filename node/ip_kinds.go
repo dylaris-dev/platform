@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/docker/docker/api/types/network"
 )
@@ -65,6 +66,74 @@ var ipKindsCache struct {
 	sync.Mutex
 	at    time.Time
 	kinds map[string]string
+	// serverNet and beamTarget come from the same NetworkList; see
+	// serverNetworkFacts.
+	serverNet, beamTarget string
+}
+
+// pickServerNetwork names the network this node puts servers on, only when
+// that is unambiguous: the kit's NODE_DOCKER_NETWORK if it exists, else the
+// one network matching isGlobalNetName. With two or more matches it says
+// nothing rather than guess which one ensureGlobalNetwork would take.
+func pickServerNetwork(names []string, override string) string {
+	found := ""
+	for _, n := range names {
+		match := isGlobalNetName(n)
+		if override != "" {
+			match = n == override
+		}
+		if !match {
+			continue
+		}
+		if found != "" {
+			return ""
+		}
+		found = n
+	}
+	if strings.IndexFunc(found, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return ""
+	}
+	return found
+}
+
+// beamTargetFor is the first IPv4 address of this machine inside one of the
+// server network's subnets, with the beam port: what a container on that
+// network dials to reach this node's beam listener. In a container on the
+// network that is the node's own address there; on a host-network node it is
+// the bridge's gateway address.
+func beamTargetFor(subnets []*net.IPNet, addrs []net.IP, port string) string {
+	for _, a := range addrs {
+		ip := a.To4()
+		if ip == nil {
+			continue
+		}
+		for _, s := range subnets {
+			if s.Contains(ip) {
+				return net.JoinHostPort(ip.String(), port)
+			}
+		}
+	}
+	return ""
+}
+
+// serverNetworkFacts is the server network's name and the beam target on it,
+// from the same once-a-minute refresh as privateIPKinds. "" means unknown.
+func serverNetworkFacts(dm *DockerManager) (name, beamTarget string) {
+	privateIPKinds(dm)
+	ipKindsCache.Lock()
+	defer ipKindsCache.Unlock()
+	return ipKindsCache.serverNet, ipKindsCache.beamTarget
+}
+
+// addServerNetworkFacts puts the two facts into a heartbeat, each only when
+// known: an absent key is "unknown" to Core, an empty string would not be.
+func addServerNetworkFacts(data map[string]interface{}, name, beamTarget string) {
+	if name != "" {
+		data["serverNetwork"] = name
+	}
+	if beamTarget != "" {
+		data["beamTarget"] = beamTarget
+	}
 }
 
 // privateIPKinds is classifyPrivateIPs for this machine, refreshed once a
@@ -87,7 +156,9 @@ func privateIPKinds(dm *DockerManager) map[string]string {
 		return ipKindsCache.kinds
 	}
 	var dockerNets []*net.IPNet
+	var names []string
 	for _, n := range nets {
+		names = append(names, n.Name)
 		for _, c := range n.IPAM.Config {
 			if _, ipn, err := net.ParseCIDR(c.Subnet); err == nil {
 				dockerNets = append(dockerNets, ipn)
@@ -99,6 +170,7 @@ func privateIPKinds(dm *DockerManager) map[string]string {
 		return ipKindsCache.kinds
 	}
 	ifaces := map[string][]net.IP{}
+	var local []net.IP // in interface order, so "first" is stable
 	for _, i := range list {
 		addrs, err := i.Addrs()
 		if err != nil {
@@ -107,9 +179,24 @@ func privateIPKinds(dm *DockerManager) map[string]string {
 		for _, a := range addrs {
 			if ipn, ok := a.(*net.IPNet); ok {
 				ifaces[i.Name] = append(ifaces[i.Name], ipn.IP)
+				local = append(local, ipn.IP)
 			}
 		}
 	}
 	ipKindsCache.kinds = classifyPrivateIPs(ifaces, "/sys/class/net", dockerNets)
+	ipKindsCache.serverNet = pickServerNetwork(names, globalNetOverride())
+	ipKindsCache.beamTarget = ""
+	for _, n := range nets {
+		if ipKindsCache.serverNet == "" || n.Name != ipKindsCache.serverNet {
+			continue
+		}
+		var subnets []*net.IPNet
+		for _, c := range n.IPAM.Config {
+			if _, ipn, err := net.ParseCIDR(c.Subnet); err == nil {
+				subnets = append(subnets, ipn)
+			}
+		}
+		ipKindsCache.beamTarget = beamTargetFor(subnets, local, beamGRPCPort())
+	}
 	return ipKindsCache.kinds
 }

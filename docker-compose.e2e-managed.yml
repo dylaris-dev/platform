@@ -27,7 +27,7 @@
 # -----------------------------------------------------------------------------
 
 x-platform-core: &platform-core
-  image: e2e7c/platform-core:${E2E_PLATFORM_TAG:-6b207695}
+  image: e2e7c/platform-core:${E2E_PLATFORM_TAG:-ed9f3e26}
   pull_policy: never
   restart: unless-stopped
   stop_grace_period: 90s
@@ -103,7 +103,10 @@ services:
     volumes:
       - p_core_data:/app/dylaris_data
       - ${E2E_RUN:?}/tls:/e2e/tls:ro
-    networks: [prov_net]
+    # TXT lookups (own domains) go through the system resolver; Docker's
+    # embedded DNS forwards every non-service name to the test DNS.
+    dns: [172.30.53.53]
+    networks: [prov_net, dns_net]
 
   hub-db:
     image: postgres:16-alpine
@@ -170,6 +173,18 @@ services:
       - edge_state:/app/state
     networks: [prov_net]
 
+  # Test DNS for own domains: zone own.e2e.test from E2E_RUN/dns, reloaded every
+  # 2 s, everything else forwarded. The drive script's dns-txt rewrites it.
+  dns:
+    image: coredns/coredns:1.11.3
+    restart: unless-stopped
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes:
+      - ${E2E_RUN:?}/dns:/etc/coredns:ro
+    networks:
+      dns_net:
+        ipv4_address: 172.30.53.53
+
   # ---------------------------------------------------------------- CUSTOMER
   c-db:
     image: timescale/timescaledb:latest-pg16
@@ -229,10 +244,51 @@ services:
     volumes:
       - c_core_data:/app/dylaris_data
       - ${E2E_RUN:?}/tls:/e2e/tls:ro
-    networks: [cust_net, node1_dylaris_net, node2_dylaris_net, node3_dylaris_net]
+    dns: [172.30.53.53]
+    networks: [cust_net, node1_dylaris_net, node2_dylaris_net, node3_dylaris_net, dns_net]
+
+  # A second customer Core on the same database and Redis (profile "replica"):
+  # the two-replica cases, e.g. a sweeping leader with a stale claims cache.
+  c-core2:
+    profiles: [replica]
+    <<: *platform-core
+    depends_on:
+      c-db: {condition: service_healthy}
+      c-redis: {condition: service_started}
+    environment:
+      API_PORT: "25500"
+      FRONTEND_URL: "http://localhost:27500"
+      JWT_SECRET: "${C_JWT_SECRET:?}"
+      BEAM_JWT_SECRET: "${C_BEAM_JWT_SECRET:?}"
+      CLUSTER_SECRET: "${C_CLUSTER_SECRET:?}"
+      DB_HOST: c-db
+      DB_PORT: "5432"
+      DB_USER: dylaris
+      DB_PASSWORD: "${C_DB_PASSWORD:?}"
+      DB_NAME: dylaris
+      DB_TYPE: timescaledb
+      DB_SSLMODE: disable
+      REDIS_ADDR: "c-redis:6379"
+      REDIS_PASSWORD: "${C_REDIS_PASSWORD:?}"
+      REDIS_DB: "0"
+      DYLARIS_GRPC_PORT: "25501"
+      GRPC_TLS_ENABLED: "true"
+      CORE_SERVICE_NAME: c-core
+      # Go reads SSL_CERT_FILE: system roots plus the local CA that signed the
+      # provider's certificate. No image change needed.
+      SSL_CERT_FILE: /e2e/tls/ca-bundle.pem
+      UPDATES_URL_PLATFORM: ""
+      UPDATES_URL_HOSTED: ""
+    extra_hosts: ["panel.dylaris.com:127.0.0.1"]
+    ports: ["0.0.0.0:27501:25500"]
+    volumes:
+      - c_core_data:/app/dylaris_data
+      - ${E2E_RUN:?}/tls:/e2e/tls:ro
+    dns: [172.30.53.53]
+    networks: [cust_net, node1_dylaris_net, node2_dylaris_net, node3_dylaris_net, dns_net]
 
   c-node1:
-    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-6b207695}
+    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-ed9f3e26}
     pull_policy: never
     restart: unless-stopped
     depends_on: [c-core]
@@ -256,7 +312,7 @@ services:
 
   c-node2:
     profiles: [node2]
-    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-6b207695}
+    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-ed9f3e26}
     pull_policy: never
     restart: unless-stopped
     depends_on: [c-core]
@@ -278,7 +334,7 @@ services:
   # link is only minted once node 1's link is retiring).
   c-node3:
     profiles: [node3]
-    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-6b207695}
+    image: e2e7c/platform-node:${E2E_PLATFORM_TAG:-ed9f3e26}
     pull_policy: never
     restart: unless-stopped
     depends_on: [c-core]
@@ -316,3 +372,6 @@ networks:
   node1_dylaris_net:
   node2_dylaris_net:
   node3_dylaris_net:
+  dns_net:
+    ipam:
+      config: [{subnet: 172.30.53.0/24}]

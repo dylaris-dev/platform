@@ -235,6 +235,12 @@ export interface SftpCredentials {
 }
 
 async function fetchAPI(endpoint: string, options: RequestInit = {}) {
+    return (await fetchAPIWithStatus(endpoint, options)).body;
+}
+
+// fetchAPI plus the HTTP status, for a caller that must not read a refusal
+// as a success whatever shape its body has.
+async function fetchAPIWithStatus(endpoint: string, options: RequestInit = {}): Promise<{ status: number; body: any }> {
     // No Authorization: the session cookie is sent automatically on these
     // same-origin requests.
     const headers = {
@@ -243,6 +249,10 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     };
 
     const res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
+    return { status: res.status, body: await readAPIBody(res) };
+}
+
+async function readAPIBody(res: Response) {
     if (handleUnauthorized(res)) {
         return { success: false, error: 'Session expired', message: 'Session expired' };
     }
@@ -1325,6 +1335,9 @@ export interface CreateRouteRequest {
 }
 export const createServerRoute = (serverId: number, data: CreateRouteRequest) =>
     fetchAPI(`/servers/${serverId}/routes`, { method: 'POST', body: JSON.stringify(data) });
+/** createServerRoute with the HTTP status, for routeCreateRefusal. */
+export const createServerRouteWithStatus = (serverId: number, data: CreateRouteRequest) =>
+    fetchAPIWithStatus(`/servers/${serverId}/routes`, { method: 'POST', body: JSON.stringify(data) });
 // Backend identifies routes by full domain (URL: /servers/{id}/routes/{domain:.+}).
 export const deleteServerRoute = (serverId: number, domain: string) =>
     fetchAPI(`/servers/${serverId}/routes/${encodeURIComponent(domain)}`, { method: 'DELETE' });

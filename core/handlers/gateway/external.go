@@ -250,7 +250,7 @@ func (h *ExternalGatewayHandler) GetUsage(w http.ResponseWriter, r *http.Request
 		}
 		sort.SliceStable(out, func(a, b int) bool { return out[a].Bytes > out[b].Bytes })
 		obj["regions"] = out
-		return h.usageStanding(reqctx.ByonCallerID(r), httpx.UsagePeriod(r), time.Now().UTC(), obj)
+		return usageStanding(h.gw.d.Store, reqctx.ByonCallerID(r), httpx.UsagePeriod(r), time.Now().UTC(), obj)
 	})
 }
 
@@ -267,9 +267,9 @@ type externalPool struct {
 //
 // final is true once the month has ended: counters are added to the month the
 // aggregator runs in, so nothing is ever added to a month that is over. Until
-// then every figure is an estimate that grows, as of asOf.
-func (h *ExternalGatewayHandler) usageStanding(userID string, period, now time.Time, obj map[string]interface{}) error {
-	st := h.gw.d.Store
+// then every figure is an estimate that grows, as of asOf. A package func so
+// the admin view of one customer (AdminUserGateway) shows the same standing.
+func usageStanding(st store.Store, userID string, period, now time.Time, obj map[string]interface{}) error {
 	obj["final"] = !period.AddDate(0, 1, 0).After(now)
 	u, err := st.GetTrafficUsage(userID, period)
 	if err != nil {

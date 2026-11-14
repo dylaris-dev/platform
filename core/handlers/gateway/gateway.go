@@ -23,6 +23,7 @@ import (
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/handlers/validate"
 	"dylaris-core/services"
+	"dylaris-core/services/remotegw"
 
 	"github.com/gorilla/mux"
 )
@@ -329,7 +330,7 @@ func (h *GatewayHandler) CheckDomainAvailability(w http.ResponseWriter, r *http.
 // address (the provider sees one account for all of them and would call it
 // free), then from the provider.
 func (h *GatewayHandler) checkDomainRemote(w http.ResponseWriter, r *http.Request, rg *services.RemoteGateway, req *routeDomainRequest) {
-	finalDomain, err, answered := h.resolveRemoteRouteDomain(w, r, rg, req)
+	finalDomain, _, err, answered := h.resolveRemoteRouteDomain(w, r, rg, req)
 	if answered {
 		return
 	}
@@ -394,95 +395,101 @@ type routeDomainRequest = struct {
 
 // remoteRouteDomain is resolveRouteDomain on the managed gateway: the same
 // per-hoster format rules and reserved names, against the PROVIDER's hoster
-// domains. Every tenant here shares one provider account, so a name outside
-// those domains is refused for everyone, admins included: it could be a
-// domain verified on the provider by the operator or another tenant. Custom
-// domains come in a later stage.
-func remoteRouteDomain(req *routeDomainRequest, hosters []services.HosterDomain, blocked map[string]bool) (string, error) {
-	notEnabled := fmt.Errorf("custom domains are not enabled")
+// domains. A name equal to or under one of them is always the hoster path,
+// whatever field carried it. Anything else is a brought (own) domain, with
+// the same rules as on the local path and isCustom=true: its two ownership
+// proofs are checked by the caller (remoteOwnDomainGate).
+func remoteRouteDomain(req *routeDomainRequest, hosters []services.HosterDomain, blocked map[string]bool, customEnabled bool) (dom string, isCustom bool, err error) {
 	switch {
 	case req.Subdomain != "" || req.HosterDomain != "":
 		sub := strings.ToLower(strings.TrimSpace(req.Subdomain))
 		host := validate.NormHost(req.HosterDomain)
 		if sub == "" || host == "" {
-			return "", fmt.Errorf("subdomain and hosterDomain must both be set")
+			return "", false, fmt.Errorf("subdomain and hosterDomain must both be set")
 		}
 		for _, hd := range hosters {
 			if hd.Domain == host {
-				dom, _, err := resolveHosterSubdomain(sub, hd, blocked)
-				return dom, err
+				return resolveHosterSubdomain(sub, hd, blocked)
 			}
 		}
-		return "", fmt.Errorf("hoster domain not configured: %s", host)
+		return "", false, fmt.Errorf("hoster domain not configured: %s", host)
 	case req.CustomDomain != "":
-		return "", notEnabled
+		return resolveBroughtDomain(validate.NormHost(req.CustomDomain), hosters, customEnabled, nil)
 	case req.Domain != "":
 		dom := validate.NormHost(req.Domain)
 		if !validate.IsHostname(dom, 2) {
-			return "", fmt.Errorf("invalid domain format")
+			return "", false, fmt.Errorf("invalid domain format")
 		}
 		for _, hd := range hosters {
 			if dom == hd.Domain || strings.HasSuffix(dom, "."+hd.Domain) {
 				sub := strings.TrimSuffix(strings.TrimSuffix(dom, hd.Domain), ".")
-				d, _, err := resolveHosterSubdomain(sub, hd, blocked)
-				return d, err
+				return resolveHosterSubdomain(sub, hd, blocked)
 			}
 		}
-		return "", notEnabled
+		return resolveBroughtDomain(dom, hosters, customEnabled, nil)
 	}
-	return "", fmt.Errorf("no domain provided")
+	return "", false, fmt.Errorf("no domain provided")
 }
 
-// remoteHosters is the provider's hoster domains (cached in the RemoteGateway).
-func remoteHosters(ctx context.Context, rg *services.RemoteGateway) ([]services.HosterDomain, error) {
-	regions, err := rg.Regions(ctx)
-	if err != nil {
-		return nil, err
-	}
+// providerHosters is the provider's hoster domains from its regions answer.
+func providerHosters(regions remotegw.Regions) []services.HosterDomain {
 	out := make([]services.HosterDomain, 0, len(regions.HosterDomains))
 	for _, hd := range regions.HosterDomains {
 		out = append(out, services.HosterDomain{Domain: validate.NormHost(hd.Domain), Validation: hd.Validation})
 	}
-	return out, nil
+	return out
 }
 
 // resolveRemoteRouteDomain resolves the request against the provider's hoster
 // domains, with the reserved names lifted for an admin as on the local path.
+// Own domains need the provider to allow them for the account and the local
+// setting to allow them, for admins too, as resolveRouteDomain does.
 // It answers the request itself when the provider list cannot be read.
-func (h *GatewayHandler) resolveRemoteRouteDomain(w http.ResponseWriter, r *http.Request, rg *services.RemoteGateway, req *routeDomainRequest) (dom string, resolveErr error, answered bool) {
-	hosters, err := remoteHosters(r.Context(), rg)
+func (h *GatewayHandler) resolveRemoteRouteDomain(w http.ResponseWriter, r *http.Request, rg *services.RemoteGateway, req *routeDomainRequest) (dom string, isCustom bool, resolveErr error, answered bool) {
+	regions, err := rg.Regions(r.Context())
 	if err != nil {
 		if !gate.GatewayProviderError(w, err) {
 			log.Printf("gateway hoster domains: %v", err)
 			httpx.SendJSONError(w, "Could not load the address options. Try again.", http.StatusInternalServerError)
 		}
-		return "", nil, true
+		return "", false, nil, true
 	}
 	blocked := h.loadBlockedRoutePrefixes()
 	if reqctx.IsAdmin(r) {
 		blocked = nil
 	}
-	dom, resolveErr = remoteRouteDomain(req, hosters, blocked)
-	return dom, resolveErr, false
+	enabled, _ := h.d.Store.GetSetting("gateway_custom_domains_enabled")
+	customEnabled := regions.CustomDomainsEnabled && enabled == "true"
+	dom, isCustom, resolveErr = remoteRouteDomain(req, providerHosters(regions), blocked, customEnabled)
+	return dom, isCustom, resolveErr, false
 }
 
 // remoteOwnerRoutes counts the addresses an account holds on the managed
-// gateway: the local rows of the servers it owns, minus pending deletes. All
-// of them are on the provider's hoster domains.
-func remoteOwnerRoutes(st store.Store, rg *services.RemoteGateway, account string) (int64, error) {
+// gateway: the local rows of the servers it owns, minus pending deletes, split
+// into the provider's hoster domains and own domains (each has its own cap).
+func remoteOwnerRoutes(ctx context.Context, st store.Store, rg *services.RemoteGateway, account string) (ours, custom int64, err error) {
 	owned, err := services.OwnedServerUUIDs(st, account)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	var n int64
 	for uuid := range owned {
 		domains, err := rg.ServerDomains(uuid)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
-		n += int64(len(domains))
+		for _, d := range domains {
+			own, err := rg.IsCustomDomain(ctx, d)
+			if err != nil {
+				return 0, 0, err
+			}
+			if own {
+				custom++
+			} else {
+				ours++
+			}
+		}
 	}
-	return n, nil
+	return ours, custom, nil
 }
 
 // ==========================================
@@ -570,7 +577,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	var err error
 	if rg != nil {
 		var answered bool
-		if finalDomain, err, answered = h.resolveRemoteRouteDomain(w, r, rg, &req); answered {
+		if finalDomain, isCustomDomain, err, answered = h.resolveRemoteRouteDomain(w, r, rg, &req); answered {
 			return
 		}
 	} else {
@@ -612,8 +619,13 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Ownership proof for a domain the tenant brought themselves. Admins skip it.
-	if gErr := h.customDomainGate(r, account, finalDomain, isCustomDomain); gErr != nil {
+	// Ownership proof for a domain the tenant brought themselves. Admins skip it,
+	// on the managed gateway only for a server without an owner.
+	if rg != nil {
+		if isCustomDomain && h.remoteOwnDomainGate(w, r, rg, srv, account, finalDomain) {
+			return
+		}
+	} else if gErr := h.customDomainGate(r, account, finalDomain, isCustomDomain); gErr != nil {
 		http.Error(w, gErr.Error(), http.StatusForbidden)
 		return
 	}
@@ -654,21 +666,30 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// separate cap.
 	//
 	// On the managed gateway the count comes from the local route rows (this
-	// Redis holds none), and every address is on one of our hoster domains.
+	// Redis holds none), split by the provider's hoster domains.
 	if !reqctx.IsAdmin(r) && rg != nil {
 		limit := h.effectiveRouteLimit(account)
 		if limit != nil && *limit == 0 {
 			gate.WriteGatewayError(w, http.StatusForbidden, "route_limit", "Route creation is disabled for your account")
 			return
 		}
-		held, cerr := remoteOwnerRoutes(h.d.Store, rg, account)
+		ours, custom, cerr := remoteOwnerRoutes(r.Context(), h.d.Store, rg, account)
+		if gate.GatewayProviderError(w, cerr) {
+			return
+		}
 		if cerr != nil {
 			gate.WriteGatewayError(w, http.StatusInternalServerError, "internal", "Could not count your routes")
 			return
 		}
-		if services.AtOrOver(limit, held) {
+		if !isCustomDomain && services.AtOrOver(limit, ours) {
 			gate.WriteGatewayError(w, http.StatusForbidden, "route_limit", ourDomainsCapMessage(*limit))
 			return
+		}
+		if isCustomDomain {
+			if msg := h.customDomainCapError(account, int(custom)); msg != "" {
+				gate.WriteGatewayError(w, http.StatusForbidden, "custom_domain_cap", msg)
+				return
+			}
 		}
 	}
 	if !reqctx.IsAdmin(r) && rg == nil {
@@ -694,7 +715,16 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	if err := h.d.Gateway.CreateServerRoute(uint(serverID), account, finalDomain, req.TargetPort); err != nil {
+	createRoute := func() error {
+		return h.d.Gateway.CreateServerRoute(uint(serverID), account, finalDomain, req.TargetPort)
+	}
+	if rg != nil {
+		// The row's own-domain flag is the decision the gate above ran on.
+		createRoute = func() error {
+			return rg.CreateServerRouteOwnDomain(uint(serverID), finalDomain, req.TargetPort, isCustomDomain)
+		}
+	}
+	if err := createRoute(); err != nil {
 		if rg != nil {
 			if !gate.GatewayProviderError(w, err) {
 				log.Printf("create route %s: %v", finalDomain, err)
@@ -718,7 +748,11 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// Armed only now that the route exists: every rejection above would
 	// otherwise have left a live claim, and its deadline counts against the
 	// customer whether or not they ever got a route.
-	ownershipNotice := h.armCustomDomainClaim(r, account, finalDomain, isCustomDomain)
+	// Not on the managed gateway: both proofs were checked above.
+	ownershipNotice := ""
+	if rg == nil {
+		ownershipNotice = h.armCustomDomainClaim(r, account, finalDomain, isCustomDomain)
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{

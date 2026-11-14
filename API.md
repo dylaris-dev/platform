@@ -139,14 +139,14 @@ can still show what exists.
 
 ## At a glance
 
-- **663 routes** in 53 sections: 285 GET, 195 POST, 67 PUT, 42 PATCH, 75 DELETE.
+- **664 routes** in 53 sections: 286 GET, 195 POST, 67 PUT, 42 PATCH, 75 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **448** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **157** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **449** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **157** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **49** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
 
-- [/api/admin](#apiadmin) (148)
+- [/api/admin](#apiadmin) (149)
 - [/api/auth](#apiauth) (23)
 - [/api/authz](#apiauthz) (3)
 - [/api/avatar](#apiavatar) (1)
@@ -330,6 +330,7 @@ can still show what exists.
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.read` | RequireTenancyEnabled | `EntitlementHandler.GetForUser` | RequireCap("plans.read"). |
 | POST | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireTenancyEnabled | `EntitlementHandler.Grant` | RequireCap("plans.write"). |
 | DELETE | `/api/admin/users/{id:[0-9a-f-]{36}}/entitlement` | session | `plans.write` | RequireTenancyEnabled | `EntitlementHandler.Revoke` | RequireCap("plans.write"). |
+| GET | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway` | session | `topology.read` | RequireLocalGateway, RequireTenancyEnabled | `GatewayHandler.AdminUserGateway` | one account's managed gateway as the provider holds it: product, billing status, caps, link kits (online and caps), routes (suspended ones too), own domains, this month's traffic, beam key ids and gateway API keys. |
 | GET | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets` | session | `users.write` | RequireLocalGateway | `GatewayHandler.GetPublicTargets` | whether this account's API keys may create gateway routes with public targets. |
 | PUT | `/api/admin/users/{id:[0-9a-f-]{36}}/gateway-public-targets` | session | `users.write` | RequireLocalGateway | `GatewayHandler.SetPublicTargets` | body {"enabled": bool}, lets this account's API keys create gateway routes with public targets. |
 | PATCH | `/api/admin/users/{id:[0-9a-f-]{36}}/limit-overrides` | session | `plans.write` | RequireTenancyEnabled | `PlansHandler.SetUserLimitOverrides` | - |
@@ -508,11 +509,11 @@ can still show what exists.
 | Method | Path | Auth | Capability | Gates | Handler | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | GET | `/api/gateway/check-domain` | session | _no capability_ | LimitUser | `GatewayHandler.CheckDomainAvailability` | tells the panel whether a candidate domain is already registered, so the route-create form can show a live "available / in use" hint while the user types. |
-| GET | `/api/gateway/custom-domains` | session | _in-handler_ | RequireLocalGateway | `CustomDomainHandler.List` | the caller's OWN claims. |
-| POST | `/api/gateway/custom-domains` | session | _in-handler_ | Limit, RequireLocalGateway | `CustomDomainHandler.Add` | body {"domain": "play.example.com"}. |
-| POST | `/api/gateway/custom-domains/{domain:.+}/txt-token` | session | _in-handler_ | RequireLocalGateway | `CustomDomainHandler.IssueTXTToken` | Mints (once) the record that proves ownership. |
-| POST | `/api/gateway/custom-domains/{domain:.+}/verify-txt` | session | _in-handler_ | Limit, RequireLocalGateway | `CustomDomainHandler.VerifyTXT` | Checks the published record now instead of at the next pass, and on success verifies the claim - from pending, out of a block, or out of a run of missed re-checks. |
-| DELETE | `/api/gateway/custom-domains/{domain:[^/]+}` | session | _in-handler_ | RequireLocalGateway | `CustomDomainHandler.Delete` | removes the caller's claim on a domain. |
+| GET | `/api/gateway/custom-domains` | session | _in-handler_ | - | `CustomDomainHandler.List` | the caller's OWN claims. |
+| POST | `/api/gateway/custom-domains` | session | _in-handler_ | Limit | `CustomDomainHandler.Add` | body {"domain": "play.example.com"}. |
+| POST | `/api/gateway/custom-domains/{domain:.+}/txt-token` | session | _in-handler_ | - | `CustomDomainHandler.IssueTXTToken` | Mints (once) the record that proves ownership. |
+| POST | `/api/gateway/custom-domains/{domain:.+}/verify-txt` | session | _in-handler_ | Limit | `CustomDomainHandler.VerifyTXT` | Checks the published record now instead of at the next pass, and on success verifies the claim - from pending, out of a block, or out of a run of missed re-checks. |
+| DELETE | `/api/gateway/custom-domains/{domain:[^/]+}` | session | _in-handler_ | - | `CustomDomainHandler.Delete` | removes the caller's claim on a domain. |
 | GET | `/api/gateway/dns-check` | session | `topology.read` | - | `DNSHandler.CheckDNS` | computes the required DNS records from the operator's OWN config (FRONTEND_URL + gateway settings + registered edges) and verifies them against the public DNS view plus a TCP reachability probe. |
 | GET | `/api/gateway/edges` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetEdges` | every edge currently registered in Redis. |
 | GET | `/api/gateway/errors` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetErrors` | the 50 most recent gateway service errors; ?service= narrows them to one component. |

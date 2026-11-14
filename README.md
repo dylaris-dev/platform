@@ -243,7 +243,22 @@ your Core ---+ HTTPS: routes, link kits, usage
 - **What it does.** Each node gets a link deploy kit in the panel. Server
   addresses on the provider's domains are created, moved with the server and
   removed with it. Real player IP (on/off) works. A change the provider cannot
-  take at once is retried and shown as pending.
+  take at once is retried and shown as pending. The deploy kit fills in the
+  Docker network the node reports for its game servers; a node that cannot tell
+  (an older node, or two matching networks) leaves the field editable.
+- **Own domains.** A domain is proven twice, with two TXT records at the same
+  name: one value for this platform, one for the gateway provider. A route on it
+  needs both proofs; when either lapses, the route is removed. The server's
+  owner manages them under "Your own domains" in the server's "Routes & Domains"
+  dialog; collaborators and admins on someone else's server see a note instead.
+  It needs the Custom Domains switch in Settings > Gateway and a plan that
+  allows own domains. Bounds: at most 3 domains per user waiting for the
+  provider's proof, one shared per-user limit of 10 adds, checks and removals a
+  minute, and the plan's own-domain limit at the provider counts for the whole
+  platform. The leader releases provider proofs no user here holds any more.
+  With several Core replicas this works; a stale view is re-read before
+  anything is removed. **Two installations on one provider account are not
+  supported:** each would release the other's unused proofs.
 - **Replicas, moving, recovery.** Several Core replicas on one database work;
   only the leader sends queued changes to the provider. A moved Core needs its
   database AND the same `CLUSTER_SECRET` (link keys and the provider key are
@@ -255,9 +270,9 @@ your Core ---+ HTTPS: routes, link kits, usage
   counts toward the host limit (at most as many at once as the plan has hosts,
   4 per host per UTC month). Details:
   [the managed edge docs](https://dylaris.com/docs/managed-edge).
-- **Not available with it yet:** voice chat routing, Bedrock, own domains, the
-  edge MOTD, automatic real-IP mode, and BYON / route-only (those two belong to
-  a platform's own gateway).
+- **Not available with it yet:** voice chat routing, Bedrock, the edge MOTD,
+  automatic real-IP mode, and BYON / route-only (those two belong to a
+  platform's own gateway).
 
 ### Main failure sources and operational gotchas
 

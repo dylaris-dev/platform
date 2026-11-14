@@ -10,8 +10,11 @@ import {
   addCustomDomain,
   removeCustomDomain,
   type CustomDomain,
+  type CustomDomainList,
 } from '@/lib/api/customDomains';
 import { getGatewayRouteOptions } from '@/lib/api/types';
+import { useAppData } from '@/lib/AppDataContext';
+import { providerErrorText } from '@/lib/gatewayProvider';
 import { cnameTargetsFor } from '@/lib/cnameTargets';
 import { fmtDateTime } from '@/lib/time';
 
@@ -82,6 +85,110 @@ export function describeClaim(
   }
 }
 
+// --- Managed gateway: two proofs per domain ---------------------------------
+
+export type ProofState = 'pending' | 'verified' | 'lapsing' | 'blocked' | 'missing' | 'unknown';
+
+export interface ProofRecord {
+  purpose: 'platform' | 'provider';
+  label: 'This platform' | 'Gateway provider';
+  state: ProofState;
+  name: string;
+  value: string;
+  lapsesAt?: string;
+  // What the row says about its state, beside the badge; null: the badge says it.
+  detail: string | null;
+}
+
+// Anything outside the known set is "unknown" rather than a crash: Core closes
+// the provider's set, but a newer Core could still add a state.
+function proofState(state: string, lapsesAt?: string): ProofState {
+  if (state === 'verified') return lapsesAt ? 'lapsing' : 'verified';
+  if (state === 'blocked' || state === 'permablocked') return 'blocked';
+  if (state === 'pending' || state === 'missing') return state;
+  return 'unknown';
+}
+
+const PROOF_DETAIL: Record<'platform' | 'provider', Partial<Record<ProofState, string>>> = {
+  platform: {
+    blocked: 'Ownership was not proven in time. Publish this record and check again.',
+    unknown: 'This platform reported a state this panel does not know.',
+  },
+  provider: {
+    missing: 'Not registered at the gateway provider yet. Check now registers it.',
+    blocked: 'The gateway provider refuses this domain.',
+    unknown: 'The gateway provider reported a state this panel does not know.',
+  },
+};
+
+/**
+ * The TXT records a claim needs: one locally, two on the managed gateway (a
+ * claim carrying `provider`, null included), both at the same name.
+ */
+export function ownDomainRecords(d: CustomDomain): ProofRecord[] {
+  const name = d.txtName || d.provider?.txtName || `_dylaris-verify.${d.domain}`;
+  const local = proofState(d.state, d.lapsesAt);
+  const records: ProofRecord[] = [{
+    purpose: 'platform', label: 'This platform',
+    state: local, name, value: d.txtValue ?? '', lapsesAt: d.lapsesAt, detail: PROOF_DETAIL.platform[local] ?? null,
+  }];
+  if (d.provider === undefined) return records;
+  const p = d.provider;
+  const state = p ? proofState(p.state, p.lapsesAt) : 'unknown';
+  records.push({
+    purpose: 'provider', label: 'Gateway provider',
+    state, name, value: p?.txtValue ?? '', lapsesAt: p?.lapsesAt,
+    detail: p ? PROOF_DETAIL.provider[state] ?? null : PROVIDER_UNKNOWN_TEXT,
+  });
+  return records;
+}
+
+/** A lapsing record still counts: the route stays until its lapse time. */
+const proven = (r: ProofRecord) => r.state === 'verified' || r.state === 'lapsing';
+
+/** Whether routes may be added on the domain, and the one line that says so. */
+export function ownDomainSummary(records: ProofRecord[]): { usable: boolean; text: string } {
+  const open = records.filter(r => !proven(r));
+  if (open.length === 0) {
+    return records.some(r => r.state === 'lapsing')
+      ? { usable: true, text: 'Usable for now, but a TXT record has gone missing. Publish it again before the date shown, or the routes on this domain are removed.' }
+      : { usable: true, text: 'Both records are verified. You can add routes on this domain.' };
+  }
+  if (open.length > 1) return { usable: false, text: 'Not usable yet: neither record is verified.' };
+  if (open[0].purpose === 'platform') return { usable: false, text: 'Not usable yet: this platform has not verified its record.' };
+  return open[0].state === 'unknown'
+    ? { usable: false, text: "Not usable yet as far as we know: the gateway provider's status is unknown." }
+    : { usable: false, text: 'Not usable yet: the gateway provider has not verified its record.' };
+}
+
+export const PROOF_BADGE: Record<ProofState, { cls: string; label: string }> = {
+  verified: { cls: 'badge-success', label: 'Verified' },
+  pending: { cls: 'badge-warning', label: 'Pending' },
+  lapsing: { cls: 'badge-warning', label: 'Needs attention' },
+  blocked: { cls: 'badge-error', label: 'Blocked' },
+  missing: { cls: 'badge-neutral', label: 'Not created yet' },
+  unknown: { cls: 'badge-neutral', label: 'Unknown' },
+};
+
+/** The provider plan's own-domain cap for the whole platform, as one line. */
+export function ownDomainCapLine(limit: CustomDomainList['limit']): string | null {
+  if (!limit) return null;
+  const prefix = 'Own-domain addresses on this platform:';
+  if (limit.maxCustomDomains === null || limit.maxCustomDomains === undefined) return `${prefix} ${limit.used}, no limit`;
+  if (limit.maxCustomDomains === 0) return `${prefix} none allowed by the plan`;
+  return `${prefix} ${limit.used} of ${limit.maxCustomDomains}`;
+}
+
+/** A provider failure as the provider row says it: Core's text, else the sentence for its code. */
+export function providerErrorNote(e: { code?: string; message?: string } | null | undefined): string | null {
+  if (!e) return null;
+  if (e.message) return e.message;
+  return e.code ? providerErrorText(e.code) : null;
+}
+
+export const PROVIDER_UNKNOWN_TEXT = 'The gateway provider could not be reached. Its status is unknown.';
+export const PROVIDER_COOLDOWN_TEXT = 'The gateway provider can be checked again in a few minutes.';
+
 function formatDate(iso: string): string {
   const t = Date.parse(iso);
   return Number.isNaN(t) ? 'the deadline' : fmtDateTime(t);
@@ -108,10 +215,21 @@ export function CustomDomainsPanel() {
   const [newDomain, setNewDomain] = useState('');
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState('');
+  // Managed gateway only.
+  const [limit, setLimit] = useState<CustomDomainList['limit']>(undefined);
+  const [listProviderError, setListProviderError] = useState<CustomDomainList['providerError']>(undefined);
+  // The provider side of the last check: its cooldown, or its refusal text.
+  const [providerNote, setProviderNote] = useState<{ domain: string; cooldown: boolean; error: string | null } | null>(null);
+  const [reloading, setReloading] = useState(false);
+  const { gatewayProvider } = useAppData();
+  const remoteMode = gatewayProvider === 'remote';
 
   const load = useCallback(async () => {
     try {
-      setDomains(await listCustomDomains());
+      const list = await listCustomDomains();
+      setDomains(list.domains);
+      setLimit(list.limit);
+      setListProviderError(list.providerError);
       setLoadError(null);
     } catch (e) {
       // Deliberately NOT an empty list: this panel renders nothing at all for
@@ -171,12 +289,20 @@ export function CustomDomainsPanel() {
   const verify = async (domain: string) => {
     setBusy(domain);
     setNote(null);
+    setProviderNote(null);
     try {
       // ok: true is now reachable only when the request actually succeeded.
       // It used to be unconditional, so a 409 ("the TXT record was not found
       // yet") printed Core's failure message in success green under a domain
       // that stayed blocked.
-      setNote({ domain, ok: true, text: await verifyCustomDomainTXT(domain) });
+      const r = await verifyCustomDomainTXT(domain);
+      // On the managed gateway green means both sides are done; a call that
+      // advanced one side still leaves the domain unusable.
+      const ok = r.ok && (r.local === undefined || (r.local === 'verified' && r.provider === 'verified'));
+      setNote({ domain, ok, text: r.message });
+      if (r.providerCooldown || r.providerError) {
+        setProviderNote({ domain, cooldown: r.providerCooldown, error: providerErrorNote(r.providerError) });
+      }
       await load();
     } catch (e) {
       setNote({
@@ -232,6 +358,15 @@ export function CustomDomainsPanel() {
     });
   };
 
+  const reload = async () => {
+    setReloading(true);
+    try {
+      await load();
+    } finally {
+      setReloading(false);
+    }
+  };
+
   if (domains === null) {
     return <div className="h-24 rounded-md bg-(--base-02) animate-pulse" aria-hidden />;
   }
@@ -280,13 +415,39 @@ export function CustomDomainsPanel() {
               {adding ? 'Adding…' : 'Add'}
             </button>
           </div>
-          <p className="text-xs text-(--base-06)">You get a TXT record to publish. Once we find it you can create routes on the domain; nothing runs out meanwhile.</p>
+          <p className="text-xs text-(--base-06)">
+            {remoteMode
+              ? 'You get two TXT records to publish, one for this platform and one for the gateway provider. Once both are verified you can create routes on the domain; nothing runs out meanwhile.'
+              : 'You get a TXT record to publish. Once we find it you can create routes on the domain; nothing runs out meanwhile.'}
+          </p>
           {addError ? <p className="text-xs text-(--warning)" role="alert">{addError}</p> : null}
         </form>
       ) : null}
 
+      {ownDomainCapLine(limit) ? <p className="text-xs text-(--base-06)">{ownDomainCapLine(limit)}</p> : null}
+
       <ul className="space-y-3">
         {domains.map((d) => {
+          if (d.provider !== undefined) {
+            return (
+              <RemoteClaim
+                key={d.domain}
+                d={d}
+                cnameTargets={cnameTargets}
+                busy={busy === d.domain}
+                reloading={reloading}
+                providerNote={providerNote && providerNote.domain === d.domain ? providerNote : null}
+                listProviderError={providerErrorNote(listProviderError)}
+                note={note && note.domain === d.domain ? note : null}
+                copied={copied}
+                onCopy={copy}
+                onRemove={() => remove(d.domain)}
+                onGetToken={() => getToken(d.domain)}
+                onVerify={() => verify(d.domain)}
+                onReload={reload}
+              />
+            );
+          }
           const info = describeClaim(d, cnameTargets, cnameLookupFailed);
           const left = d.state === 'pending' ? timeLeft(d.deadlineAt) : null;
           // A healthy verified claim has nothing to check; the button would only
@@ -374,5 +535,147 @@ export function CustomDomainsPanel() {
         })}
       </ul>
     </div>
+  );
+}
+
+// One claim on the managed gateway: the platform's record and the provider's,
+// at one name. Each row carries its state as text, never as colour alone.
+function RemoteClaim({
+  d, cnameTargets, busy, reloading, providerNote, listProviderError, note, copied, onCopy, onRemove, onGetToken, onVerify, onReload,
+}: {
+  d: CustomDomain;
+  cnameTargets: string[];
+  busy: boolean;
+  reloading: boolean;
+  providerNote: { cooldown: boolean; error: string | null } | null;
+  // The list's provider failure, shown on every provider row.
+  listProviderError: string | null;
+  note: { text: string; ok: boolean } | null;
+  copied: string | null;
+  onCopy: (value: string) => void;
+  onRemove: () => void;
+  onGetToken: () => void;
+  onVerify: () => void;
+  onReload: () => void;
+}) {
+  const records = ownDomainRecords(d);
+  const summary = ownDomainSummary(records);
+  const name = records[0].name;
+  // A healthy pair has nothing to check; the provider being unreachable is
+  // worth a check too, since Check now asks it again.
+  const canCheck = records.some(r => r.state !== 'verified');
+  const nameId = `own-domain-name-${d.domain}`;
+  return (
+    <li className="rounded-md border border-(--base-03) bg-(--base-02) p-3">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 break-all font-mono text-xs text-(--base-09)">{d.domain}</span>
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={busy}
+          title="Remove"
+          aria-label={`Remove ${d.domain}`}
+          className="ml-auto shrink-0 p-1.5 text-(--base-06) hover:text-(--error-light) focus-visible:text-(--error-light) transition-colors disabled:opacity-40"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
+      <p className={`mt-1 flex items-start gap-1 text-xs ${summary.usable ? 'text-(--success-light)' : 'text-(--warning)'}`}>
+        {summary.usable && !records.some(r => r.state === 'lapsing')
+          ? <ShieldCheck size={13} className="mt-px shrink-0" />
+          : <AlertTriangle size={13} className="mt-px shrink-0" />}
+        {summary.text}
+      </p>
+      {cnameTargets.length > 0 ? (
+        <p className="mt-1 text-xs text-(--base-06)">
+          For players to reach it, add a CNAME to {cnameTargets.length === 1 ? cnameTargets[0] : `whichever of these is your region - ${cnameTargets.join(', ')}`}.
+        </p>
+      ) : null}
+
+      <div className="mt-3 space-y-3">
+        <p className="text-xs text-(--base-07)">
+          Add both values as TXT records at the name below. Most DNS providers let you add two TXT records with the same name.
+        </p>
+        <div className="flex flex-col gap-[5px]">
+          <span id={nameId} className="input-label">TXT record name (the same for both)</span>
+          <div className="flex items-center gap-2">
+            <code aria-labelledby={nameId} title={name} className="input-mono min-w-0 flex-1 truncate rounded-md border border-(--base-03) bg-(--base-01) px-3 py-2 text-xs text-(--base-08)">
+              {name}
+            </code>
+            <button type="button" onClick={() => onCopy(name)} aria-label="Copy the TXT record name" title="Copy" className="btn btn-secondary btn-sm shrink-0">
+              {copied === name ? <Check size={12} /> : <Copy size={12} />}
+            </button>
+          </div>
+        </div>
+
+        {records.map(r => {
+          const badge = PROOF_BADGE[r.state];
+          const valueId = `own-domain-${r.purpose}-${d.domain}`;
+          return (
+            <section key={r.purpose} aria-label={`${r.label} record`} className="space-y-2 rounded-md border border-(--base-03) bg-(--base-01) p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-(--base-09)">{r.label}</span>
+                <span className={`badge ${badge.cls}`}>{badge.label}</span>
+              </div>
+
+              {r.purpose === 'provider' && d.provider === null ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="flex-1 text-xs text-(--warning)">{r.detail}</p>
+                  <button type="button" onClick={onReload} disabled={reloading} className="btn btn-secondary btn-sm shrink-0">
+                    {reloading ? 'Retrying…' : 'Try again'}
+                  </button>
+                </div>
+              ) : r.value ? (
+                <div className="flex flex-col gap-[5px]">
+                  <span id={valueId} className="input-label">TXT record value</span>
+                  <div className="flex items-center gap-2">
+                    <code aria-labelledby={valueId} title={r.value} className="input-mono min-w-0 flex-1 truncate rounded-md border border-(--base-03) bg-(--base-02) px-3 py-2 text-xs text-(--base-08)">
+                      {r.value}
+                    </code>
+                    <button type="button" onClick={() => onCopy(r.value)} aria-label={`Copy the ${r.label.toLowerCase()} TXT value`} title="Copy" className="btn btn-secondary btn-sm shrink-0">
+                      {copied === r.value ? <Check size={12} /> : <Copy size={12} />}
+                    </button>
+                  </div>
+                </div>
+              ) : r.purpose === 'platform' && r.state !== 'verified' ? (
+                <button type="button" onClick={onGetToken} disabled={busy} className="btn btn-secondary btn-sm">
+                  {busy ? 'Working…' : 'Show me the record to add'}
+                </button>
+              ) : null}
+
+              {r.detail && !(r.purpose === 'provider' && d.provider === null) ? (
+                <p className={`text-xs ${r.state === 'blocked' ? 'text-(--warning)' : 'text-(--base-06)'}`}>
+                  {r.detail}
+                </p>
+              ) : null}
+
+              {r.state === 'lapsing' && r.lapsesAt ? (
+                <p className="text-xs text-(--warning)">
+                  This record cannot be found. Publish it before {formatDate(r.lapsesAt)}, or the routes on this domain are removed.
+                </p>
+              ) : null}
+              {r.purpose === 'provider' && (providerNote?.error || listProviderError) ? (
+                <p className="text-xs text-(--warning)" role="status">{providerNote?.error || listProviderError}</p>
+              ) : null}
+              {r.purpose === 'provider' && providerNote?.cooldown ? (
+                <p className="text-xs text-(--base-06)">{PROVIDER_COOLDOWN_TEXT}</p>
+              ) : null}
+            </section>
+          );
+        })}
+
+        {canCheck ? (
+          <button type="button" onClick={onVerify} disabled={busy} className="btn btn-primary btn-sm">
+            {busy ? 'Checking…' : "I've added them - check now"}
+          </button>
+        ) : null}
+      </div>
+
+      {note ? (
+        <p className={`mt-2 text-xs ${note.ok ? 'text-(--success-light)' : 'text-(--warning)'}`} role="status">
+          {note.text}
+        </p>
+      ) : null}
+    </li>
   );
 }

@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,9 +16,12 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/remotegw"
+	"dylaris-core/services/remotegw/remotegwtest"
 	"dylaris-core/store"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/mux"
+	"github.com/redis/go-redis/v9"
 )
 
 type remoteKitStore struct {
@@ -64,7 +69,7 @@ func (f *remoteKitStore) InsertAuditIdentity(ev *models.AuditEventIdentity) erro
 	return nil
 }
 
-func newRemoteKitHandler(t *testing.T, remote bool) (*RemoteKitHandler, *remoteKitStore, *remotegw.Fake) {
+func newRemoteKitHandler(t *testing.T, remote bool) (*RemoteKitHandler, *remoteKitStore, *remotegwtest.Fake) {
 	t.Helper()
 	owner := "tenant-1"
 	fs := &remoteKitStore{
@@ -72,7 +77,7 @@ func newRemoteKitHandler(t *testing.T, remote bool) (*RemoteKitHandler, *remoteK
 		kits:     map[uint]store.RemoteKit{},
 		settings: map[string]string{"feature_byon_enabled": "true"},
 	}
-	fake := remotegw.NewFake(t)
+	fake := remotegwtest.NewFake(t)
 	rg := services.NewRemoteGateway(fs, func() *remotegw.Client { return remotegw.New(fake.URL(), fake.Key) })
 	h := NewRemoteKitHandler(Deps{
 		Store:         fs,
@@ -336,6 +341,89 @@ func TestNewManagedLinkEndpointsRefuseLocally(t *testing.T) {
 		if rec.Code != http.StatusConflict || out["code"] != "gateway_local" {
 			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body.String())
 		}
+	}
+	if len(fake.Calls()) != 0 {
+		t.Fatalf("local mode called the provider: %v", fake.Calls())
+	}
+}
+
+// withHeartbeat gives node 3 a token and the handler a Redis holding payload as
+// that node's heartbeat ("" = no heartbeat at all).
+func withHeartbeat(t *testing.T, h *RemoteKitHandler, fs *remoteKitStore, payload string) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	h.d.Redis = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { h.d.Redis.Close() })
+	fs.nodes[3].Token = "tok-3"
+	if payload != "" {
+		mr.Set("dylaris:discovery:tok-3", payload)
+	}
+}
+
+// Review Focus 4: only a valid reported name becomes the compose's network;
+// an absent, old or crafted one ends as today's unknown answer, never echoed.
+func TestManagedLinkUsesOnlyAValidReportedNetwork(t *testing.T) {
+	const oldHB = `{"id":"tok-3","cpuUsage":1,"releaseVersion":"2026.11.13.3"}`
+	hb := func(network, beam string) string {
+		b, _ := json.Marshal(map[string]string{"id": "tok-3", "serverNetwork": network, "beamTarget": beam})
+		return string(b)
+	}
+	cases := []struct {
+		name, payload, network, beam string
+	}{
+		{"no heartbeat", "", "", ""},
+		{"old node", oldHB, "", ""},
+		{"valid name", hb("platform_dylaris_net", "10.0.5.17:25521"), "platform_dylaris_net", "10.0.5.17:25521"},
+		{"valid name, no beam target", hb("dylaris_net", ""), "dylaris_net", ""},
+		{"yaml injection", hb("x\nservices:", "10.0.5.17:25521"), "", "10.0.5.17:25521"},
+		{"path", hb("../x", ""), "", ""},
+		{"200 chars", hb(strings.Repeat("a", 200), ""), "", ""},
+		{"yaml word", hb("true", ""), "", ""},
+		{"bad beam target", hb("dylaris_net", "evil.example.com:25521"), "dylaris_net", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, fs, _ := newRemoteKitHandler(t, true)
+			withHeartbeat(t, h, fs, c.payload)
+			rec, out := getManagedLink(h, "3")
+			if rec.Code != 200 {
+				t.Fatalf("%d %s", rec.Code, rec.Body.String())
+			}
+			if out["network"] != c.network || out["networkKnown"] != (c.network != "") || out["networkHint"] != "dylaris_net" {
+				t.Fatalf("network fields: %s", rec.Body.String())
+			}
+			if got, present := out["beamTarget"]; (c.beam == "" && present) || (c.beam != "" && got != c.beam) {
+				t.Fatalf("beamTarget = %v (present %v), want %q", got, present, c.beam)
+			}
+			if c.network == "" && strings.Contains(rec.Body.String(), "services:") {
+				t.Fatalf("crafted value echoed: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+// A bad reported network is reported once per node, by id, without the value.
+func TestManagedLinkReportsABadNetworkOnce(t *testing.T) {
+	var buf strings.Builder
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	h, fs, _ := newRemoteKitHandler(t, true)
+	withHeartbeat(t, h, fs, `{"id":"tok-3","serverNetwork":"evil\nservices:"}`)
+	getManagedLink(h, "3")
+	getManagedLink(h, "3")
+	if n := strings.Count(buf.String(), "node 3 reports a server network"); n != 1 || strings.Contains(buf.String(), "evil") {
+		t.Fatalf("reported %d times, log:\n%s", n, buf.String())
+	}
+}
+
+// Local mode stays exactly as it was: 409 gateway_local even with a node
+// that reports its network, and no provider call.
+func TestManagedLinkLocalModeUnchanged(t *testing.T) {
+	h, fs, fake := newRemoteKitHandler(t, false)
+	withHeartbeat(t, h, fs, `{"id":"tok-3","serverNetwork":"dylaris_net"}`)
+	rec, out := getManagedLink(h, "3")
+	if rec.Code != http.StatusConflict || out["code"] != "gateway_local" || strings.Contains(rec.Body.String(), "dylaris_net") {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 	if len(fake.Calls()) != 0 {
 		t.Fatalf("local mode called the provider: %v", fake.Calls())

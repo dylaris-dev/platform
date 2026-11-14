@@ -11,6 +11,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/remotegw"
+	"dylaris-core/services/remotegw/remotegwtest"
 	"dylaris-core/store"
 )
 
@@ -40,7 +41,7 @@ func (f *remoteMoveStore) ListRemoteKits() ([]store.RemoteKit, error) {
 // kit that is offline or lacks client-addr is refused.
 func TestRemoteMovePrecheckUsesKitCaps(t *testing.T) {
 	_, base, rdb := newProxyProtoHandler(t, true)
-	fake := remotegw.NewFake(t)
+	fake := remotegwtest.NewFake(t)
 	api := remotegw.New(fake.URL(), fake.Key)
 	fs := &remoteMoveStore{migrationCapStore: migrationCapStore{proxyProtoFakeStore: *base}, kits: map[uint]store.RemoteKit{}}
 	remote := func() (bool, bool) { return true, true }
@@ -96,7 +97,7 @@ func TestRemoteMovePrecheckUsesKitCaps(t *testing.T) {
 // removes it within hours. A move onto a node with a link in normal use passes.
 func TestRemoteMovePrecheckRefusesRetiringTarget(t *testing.T) {
 	_, base, rdb := newProxyProtoHandler(t, true)
-	fake := remotegw.NewFake(t)
+	fake := remotegwtest.NewFake(t)
 	api := remotegw.New(fake.URL(), fake.Key)
 	fs := &remoteMoveStore{migrationCapStore: migrationCapStore{proxyProtoFakeStore: *base}, kits: map[uint]store.RemoteKit{}}
 	remote := func() (bool, bool) { return true, true }

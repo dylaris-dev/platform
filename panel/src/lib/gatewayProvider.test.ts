@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-    visibilityFor, providerErrorText, providerModeOf, outboxWarning, barPercent, isDockerNetworkName,
+    visibilityFor, providerErrorText, providerModeOf, outboxWarning, barPercent, isDockerNetworkName, initialNetwork,
     switchConfirm, purchaseNote, usageFinalLabel, providerGbToBytes, productLabel, testedAccount,
     routingModeWarning, refusalLine,
     RETIRE_CONFIRM, canReplaceLink, retiringLine, ORPHAN_INTRO, showOrphanSection, orphanRevokeConfirm,
@@ -11,7 +11,7 @@ import {
 // so a new field without a decision here fails the "all keys" check below.
 const SURFACES: (keyof RemoteVisibility)[] = [
     'hubDnsCard', 'hosterDomainEditor', 'routeLimits', 'warpTab', 'voice', 'bedrock', 'edgeMotd',
-    'customDomains', 'infrastructureGateway', 'playerCounts', 'tenancy', 'managedLinkKit', 'providerUsage',
+    'infrastructureGateway', 'playerCounts', 'tenancy', 'managedLinkKit', 'providerUsage',
 ];
 
 describe('visibilityFor', () => {
@@ -26,7 +26,8 @@ describe('visibilityFor', () => {
     });
 
     // remote hides each surface whose route answers 409 gateway_remote. Route
-    // limits stay: this Core still enforces them per user.
+    // limits stay: this Core still enforces them per user. Own domains are no
+    // surface here: they show in both modes, as route-options says.
     it.each(SURFACES)('remote: %s', (k) => {
         const expected = k === 'routeLimits' || k === 'managedLinkKit' || k === 'providerUsage';
         expect(visibilityFor('remote')[k]).toBe(expected);
@@ -63,6 +64,31 @@ describe('providerErrorText', () => {
     it('an unknown code gets a generic sentence', () => {
         expect(generic).toMatch(/^[A-Z].*\.$/);
     });
+
+    it('an unknown code gets the fallback when one is given', () => {
+        expect(providerErrorText('something_new', 'Could not add the domain.')).toBe('Could not add the domain.');
+        expect(providerErrorText('domain_in_use', 'x')).not.toBe('x');
+    });
+
+    it.each([
+        'domain_unverified', 'domain_blocked', 'custom_domain_cap', 'custom_domain_limit', 'too_many_domains',
+        'custom_domains_off', 'domain_in_use', 'domain_taken', 'change_pending', 'verify_cooldown', 'pending_domains_limit',
+        'gateway_provider_unknown',
+    ])('own-domain code %s has its own sentence', (code) => {
+        const t = providerErrorText(code);
+        expect(t).toMatch(/^[A-Z].*\.$/);
+        expect(t).not.toBe(generic);
+        expect(t).not.toMatch(/belong|another user/i);
+    });
+
+    // The provider plan's cap is the whole platform's; the per-user one is this
+    // platform's. A user must be able to tell which one stopped them.
+    it('keeps the platform-wide limit apart from the per-user one', () => {
+        const platformWide = "This platform's own-domain limit at the gateway provider is reached. Ask the platform operator.";
+        expect(providerErrorText('custom_domain_limit')).toBe(platformWide);
+        expect(providerErrorText('too_many_domains')).toBe(platformWide);
+        expect(providerErrorText('custom_domain_cap')).not.toBe(platformWide);
+    });
 });
 
 describe('outboxWarning', () => {
@@ -97,7 +123,11 @@ describe('isDockerNetworkName', () => {
         ['has space', false],
         ['a"b', false],
         ['x\ny', false],
-        ['a'.repeat(64), false],
+        ['a'.repeat(64), true],
+        // A long compose project prefix is legitimate; Docker has no cap.
+        ['p'.repeat(88) + '_dylaris_net', true],
+        ['a'.repeat(127), true],
+        ['a'.repeat(128), false],
         // YAML would read these bare words as something other than a string.
         ['true', false],
         ['False', false],
@@ -109,6 +139,21 @@ describe('isDockerNetworkName', () => {
         ['net1', true],
     ])('%j -> %s', (name, want) => {
         expect(isDockerNetworkName(name)).toBe(want);
+    });
+});
+
+describe('initialNetwork', () => {
+    it.each([
+        [{ network: 'platform_dylaris_net', networkKnown: true, networkHint: 'dylaris_net' }, { value: 'platform_dylaris_net', known: true }],
+        // An older node or an older Core: today's editable hint.
+        [{ network: '', networkKnown: false, networkHint: 'byon_dylaris_net' }, { value: 'byon_dylaris_net', known: false }],
+        [{ networkHint: 'dylaris_net' }, { value: 'dylaris_net', known: false }],
+        [{}, { value: '', known: false }],
+        // Known without a name, or a name the field would refuse: never read-only.
+        [{ network: '', networkKnown: true, networkHint: 'dylaris_net' }, { value: 'dylaris_net', known: false }],
+        [{ network: 'x\nservices:', networkKnown: true, networkHint: 'dylaris_net' }, { value: 'dylaris_net', known: false }],
+    ])('%j -> %j', (kit, want) => {
+        expect(initialNetwork(kit)).toEqual(want);
     });
 });
 
@@ -191,6 +236,9 @@ describe('refusalLine', () => {
         expect(refusalLine({ op: 'proxy', domain: 'a.example.com', error: 'gateway provider answered 409 proxy_protocol_disabled: off' }))
             .toBe('Real player IP for a.example.com: gateway provider answered 409 proxy_protocol_disabled: off');
         expect(refusalLine({ op: 'other', domain: 'b.example.com', error: 'x' })).toBe('other for b.example.com: x');
+        expect(refusalLine({ op: 'delete_custom_domain', domain: 'play.own.net', error: 'x' }))
+            .toBe('Release an own-domain proof at the gateway provider for play.own.net: x');
+        expect(refusalLine({ op: 'revoke_kit', domain: 'k', error: 'x' })).toBe('Revoke a link for k: x');
     });
 });
 

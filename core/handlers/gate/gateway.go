@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -42,21 +43,25 @@ func (s Gates) RequireLocalGateway(next http.HandlerFunc) http.HandlerFunc {
 // GatewayModeError writes the answer for a gateway-mode sentinel in err and
 // reports whether it did; any other error (or nil) is left to the caller.
 func GatewayModeError(w http.ResponseWriter, err error) bool {
-	status, code, msg := 0, "", ""
+	status, code, msg, ok := modeAnswer(err)
+	if ok {
+		writeGatewayError(w, status, code, msg)
+	}
+	return ok
+}
+
+func modeAnswer(err error) (status int, code, msg string, ok bool) {
 	switch {
 	case err == nil:
-		return false
+		return 0, "", "", false
 	case errors.Is(err, services.ErrGatewayRemote):
-		status, code, msg = http.StatusConflict, "gateway_remote", "Not available with the managed gateway."
+		return http.StatusConflict, "gateway_remote", "Not available with the managed gateway.", true
 	case errors.Is(err, services.ErrGatewayProviderUnknown):
-		status, code, msg = http.StatusServiceUnavailable, "gateway_provider_unknown", "Gateway provider setting could not be read."
+		return http.StatusServiceUnavailable, "gateway_provider_unknown", "Gateway provider setting could not be read.", true
 	case errors.Is(err, services.ErrGatewayChangePending):
-		status, code, msg = http.StatusConflict, "change_pending", services.ErrGatewayChangePending.Error()
-	default:
-		return false
+		return http.StatusConflict, "change_pending", services.ErrGatewayChangePending.Error(), true
 	}
-	writeGatewayError(w, status, code, msg)
-	return true
+	return 0, "", "", false
 }
 
 // GatewayLocalError answers a route that exists only for the managed gateway
@@ -72,38 +77,58 @@ func GatewayLocalError(w http.ResponseWriter) {
 // is written for end users and is passed through; the key never is (the
 // client redacts it).
 func GatewayProviderError(w http.ResponseWriter, err error) bool {
-	if err == nil {
+	status, code, msg, ok := ProviderErrorAnswer(err)
+	if !ok {
 		return false
 	}
-	if GatewayModeError(w, err) {
-		return true
+	var ae *remotegw.APIError
+	if code == "rate_limited" && errors.As(err, &ae) {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(ae.RetryAfter)))
+	} else if errors.Is(err, services.ErrOwnDomainWritesBusy) {
+		w.Header().Set("Retry-After", "60")
+	}
+	writeGatewayError(w, status, code, msg)
+	return true
+}
+
+// ProviderErrorAnswer is the answer GatewayProviderError would write, for a
+// handler that reports a provider failure inside an answer of its own.
+func ProviderErrorAnswer(err error) (status int, code, msg string, ok bool) {
+	if err == nil {
+		return 0, "", "", false
+	}
+	if status, code, msg, ok := modeAnswer(err); ok {
+		return status, code, msg, true
 	}
 	var ae *remotegw.APIError
 	switch {
 	case errors.Is(err, services.ErrGatewayTargetName):
-		writeGatewayError(w, http.StatusBadRequest, "invalid_target", "This server's id cannot be used as a gateway target.")
+		return http.StatusBadRequest, "invalid_target", "This server's id cannot be used as a gateway target.", true
 	case errors.Is(err, services.ErrGatewayDomainTaken):
-		writeGatewayError(w, http.StatusConflict, "domain_taken", services.ErrGatewayDomainTaken.Error())
+		return http.StatusConflict, "domain_taken", services.ErrGatewayDomainTaken.Error(), true
 	case errors.Is(err, services.ErrGatewayKitRetiring):
-		writeGatewayError(w, http.StatusConflict, "kit_retiring", kitRetiringText)
+		return http.StatusConflict, "kit_retiring", kitRetiringText, true
 	case errors.Is(err, services.ErrGatewayKitKnown):
-		writeGatewayError(w, http.StatusConflict, "kit_known", "This link belongs to a node of this platform. Replace or delete that node instead.")
+		return http.StatusConflict, "kit_known", "This link belongs to a node of this platform. Replace or delete that node instead.", true
 	case errors.Is(err, services.ErrGatewayNoKit):
-		writeGatewayError(w, http.StatusNotFound, "no_kit", "This node has no managed link yet.")
+		return http.StatusNotFound, "no_kit", "This node has no managed link yet.", true
+	case errors.Is(err, services.ErrOwnDomainWritesBusy):
+		return http.StatusTooManyRequests, "rate_limited", services.ErrOwnDomainWritesBusy.Error(), true
 	case errors.As(err, &ae):
 		status, code, msg := providerStatus(ae)
-		if code == "rate_limited" {
-			w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(ae.RetryAfter)))
+		// A provider message naming a TXT value is the record of the one
+		// platform-wide claim: shown under Your own domains to the users holding the
+		// domain, never in an answer that may reach someone else.
+		if strings.Contains(msg, "dylaris-verify=") {
+			msg = "The gateway provider refused this for the domain. Check Your own domains for its records."
 		}
-		writeGatewayError(w, status, code, msg)
+		return status, code, msg, true
 	case errors.Is(err, remotegw.ErrBadAnswer):
-		writeGatewayError(w, http.StatusBadGateway, "provider_error", "The gateway provider sent an answer that could not be read. Try again in a moment.")
+		return http.StatusBadGateway, "provider_error", "The gateway provider sent an answer that could not be read. Try again in a moment.", true
 	case errors.Is(err, remotegw.ErrUnreachable), errors.Is(err, context.DeadlineExceeded):
-		writeGatewayError(w, http.StatusBadGateway, "provider_unreachable", "The gateway provider could not be reached. Try again in a moment.")
-	default:
-		return false
+		return http.StatusBadGateway, "provider_unreachable", "The gateway provider could not be reached. Try again in a moment.", true
 	}
-	return true
+	return 0, "", "", false
 }
 
 // retryAfterSeconds is the provider's wait in whole seconds, rounded up; 30
@@ -119,14 +144,32 @@ func providerStatus(ae *remotegw.APIError) (int, string, string) {
 	switch {
 	case ae.Status == http.StatusUnauthorized || ae.Code == "unauthorized":
 		return http.StatusBadGateway, "provider_key_rejected", "The gateway provider rejected the API key."
+	// Before the generic 429: the provider's manual-check spacing for one
+	// domain, not a rate limit on the key.
+	case ae.Code == "verify_cooldown":
+		return http.StatusTooManyRequests, ae.Code, ae.Message
 	case ae.Status == http.StatusTooManyRequests || ae.Code == "rate_limited":
 		return http.StatusServiceUnavailable, "rate_limited", ae.Message
 	}
 	switch ae.Code {
 	case "domain_taken":
 		return http.StatusConflict, ae.Code, ae.Message
-	case "route_limit", "custom_domain_limit", "domain_unverified", "domain_blocked",
-		"billing_suspended", "no_entitlement", "forbidden":
+	// The provider counts own domains for the whole platform: its words would
+	// read as this user's own allowance.
+	case "custom_domain_limit":
+		return http.StatusForbidden, ae.Code, providerOwnDomainCapText
+	case "too_many_domains":
+		return http.StatusConflict, ae.Code, providerOwnDomainCapText
+	// The provider's message names its TXT value, which is the record of one
+	// platform-wide claim: it is shown under Your own domains to the users holding
+	// the domain, never in a refusal.
+	case "domain_unverified":
+		return http.StatusForbidden, ae.Code, "The gateway provider has not verified this domain yet. Publish its TXT record shown under Your own domains, then check again."
+	case "custom_domains_off":
+		return http.StatusConflict, ae.Code, "Own domains are not enabled for this account on the managed gateway."
+	case "domain_in_use":
+		return http.StatusConflict, ae.Code, ae.Message
+	case "route_limit", "domain_blocked", "billing_suspended", "no_entitlement", "forbidden":
 		return http.StatusForbidden, ae.Code, ae.Message
 	case "target_not_allowed", "invalid_request":
 		return http.StatusBadRequest, ae.Code, ae.Message
@@ -158,6 +201,8 @@ func providerStatus(ae *remotegw.APIError) (int, string, string) {
 }
 
 const kitRetiringText = "This node's link is being replaced. Move the server to another node first."
+
+const providerOwnDomainCapText = "This platform's own-domain limit at the gateway provider is reached."
 
 // WriteGatewayError writes the one body shape of every managed-gateway answer
 // ({success:false, error, code}), for a handler's own remote-mode refusals.
