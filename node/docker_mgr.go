@@ -49,6 +49,10 @@ type DockerManager struct {
 	// was rebuilt: the graceful stop left "stopping" behind, which the panel
 	// and the players' server list showed while it was already coming back.
 	announceStarting func(uuid string)
+	// floodgateRDB is where a start reads the server's Floodgate key from. The
+	// start itself writes it, because not every start comes from a command that
+	// does: a moved server is first started by the reconciler. nil skips it.
+	floodgateRDB *redis.Client
 
 	// Per-server ingress policy. selfContainer is this node's own container name
 	// (its address is one of the two every server always accepts), and
@@ -1259,9 +1263,11 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		// up. The sub-server comes from the container's own working directory, the
 		// same source RestartContainer reads it from.
 		var env []string
+		activeSub := ""
 		if info, ierr := dm.cli.ContainerInspect(dm.ctx, mcName); ierr == nil {
 			env = info.Config.Env
 			if sub := strings.TrimPrefix(info.Config.WorkingDir, "/data/"); sub != "" && sub != info.Config.WorkingDir {
+				activeSub = sub
 				if oerr := ensureSubServerOwnership(filepath.Join(dm.resolveLocalServerPath(uuid), sub)); oerr != nil {
 					log.Printf("mc-user: %v", oerr)
 				}
@@ -1281,6 +1287,9 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 					return dm.RestartContainer(uuid)
 				}
 			}
+		}
+		if dm.floodgateRDB != nil {
+			provisionFloodgateKey(dm.ctx, dm.floodgateRDB, dm.resolveLocalServerPath(uuid), uuid, activeSub)
 		}
 		dm.closeNetGate(uuid)
 		err := dm.cli.ContainerStart(dm.ctx, ref, container.StartOptions{})
@@ -1523,6 +1532,9 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		return containerName, errStartAbandoned
 	}
 	if autoStart {
+		if dm.floodgateRDB != nil {
+			provisionFloodgateKey(dm.ctx, dm.floodgateRDB, localServerPath, config.UUID, config.ActiveSubServer)
+		}
 		dm.closeNetGate(config.UUID)
 		err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{})
 		if err != nil && gameOnly != nil {

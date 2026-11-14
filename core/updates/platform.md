@@ -8,6 +8,21 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.14.3
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A server moved to another node, or restarted after a crash, now starts with its current Bedrock
+  (Floodgate) key. Before, it could keep an old key and refuse Bedrock players until the next manual restart. `node`
+
 ## 2026.11.14.2
 
 ### Features

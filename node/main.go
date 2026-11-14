@@ -348,6 +348,7 @@ func main() {
 		dockerMgr.announceStarting = func(uuid string) {
 			rdb.Set(context.Background(), fmt.Sprintf("dylaris:server:%s:status", uuid), "starting", 30*time.Second)
 		}
+		dockerMgr.floodgateRDB = rdb
 	}
 	if err != nil {
 		log.Fatalf("Failed to init Docker Manager: %v", err)

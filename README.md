@@ -308,9 +308,7 @@ your Core ---+ HTTPS: routes, link kits, usage
   provider (the address was removed and added there) is taken over, with an
   Errors line asking to restart the server. At most 10 such re-checks per
   sweep. The sweep does not rewrite the voice mod's config.
-- **Known limits.** After a server move the new node does not rewrite
-  `key.pem` until the server's next restart, so if its Bedrock key changed
-  since its last restart, restart it once more after the move. A switch the
+- **Known limits.** A switch the
   sweep turned off looks like one that was never on; the Errors screen says
   which.
 - **Not available with it yet:** voice chat and Bedrock on own domains, the
