@@ -503,6 +503,11 @@ func parseTrafficLimits(raw json.RawMessage) ([]models.TrafficLimit, bool, error
 //	                     webhook must not instant-kill a paying tenant. Compare
 //	                     the admin-manual path (handlers/billing.go), which
 //	                     uses the immediate SuspendNow instead.
+//	                     entitlementEnded: true (the plan really ended: last
+//	                     plan or grant, unlink, account deleted) also removes
+//	                     the managed-only rows (user custom-domain row, user
+//	                     "*" edge traffic row); a bare suspend (traffic
+//	                     cutoff) keeps them.
 //
 // This is how a successful Stripe checkout / failed payment / canceled
 // subscription reaches Core. It NEVER deletes user data.
@@ -563,6 +568,12 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// DataBillingEnabled: consent to pay for DATA traffic overage (beam +
 		// custom tabs). Absent = unchanged; never sent = follows the player one.
 		DataBillingEnabled *bool `json:"dataBillingEnabled,omitempty"`
+		// EntitlementEnded, on suspend only: true when the store's suspend ENDS
+		// the entitlement (the last plan or grant ended, unlink, account deleted),
+		// absent or false for a traffic cutoff of a tenant who still pays. Only
+		// then do the managed-only rows go. An older store never sends it, and
+		// an older Core ignores it (the decoder does not refuse unknown fields).
+		EntitlementEnded *bool `json:"entitlementEnded,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.UUID == "" {
 		httpx.SendJSONError(w, "Invalid request", http.StatusBadRequest)
@@ -687,8 +698,9 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		// says the managed plan is not held: omitted clears them like null. Without
 		// that, a plan that ended on "suspend" (unlink, cancel with nothing beside
 		// it) left them behind for whatever cheaper plan activated the user next.
-		// Suspend itself leaves them: a traffic cutoff suspends a managed tenant
+		// A bare suspend leaves them: a traffic cutoff suspends a managed tenant
 		// who is still paying, and the store bills that pool from the "*" row.
+		// A suspend with entitlementEnded removes them (case "suspend").
 		scope := storeclient.UserRouteScope(req.UUID)
 		var derr2 error
 		// The User* variants also keep custom_domain_cap_since in step: removing an
@@ -730,6 +742,20 @@ func (h *StoreHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		if err := h.d.Billing.Suspend(r.Context(), req.UUID); err != nil {
 			httpx.SendJSONError(w, "Failed to suspend", http.StatusInternalServerError)
 			return
+		}
+		// Run even when Suspend was a no-op: a plan that ends while a traffic
+		// cutoff already suspended the account arrives on a suspended account.
+		// The same two deletes as an activate without managed; a resend is
+		// harmless (the cap_since stamp is set only when a row was removed).
+		if req.EntitlementEnded != nil && *req.EntitlementEnded {
+			if err := h.d.Store.ClearUserCustomDomainLimit(req.UUID); err != nil {
+				httpx.SendJSONError(w, "Suspended but failed to clear the custom-domain cap", http.StatusInternalServerError)
+				return
+			}
+			if err := h.d.Store.DeleteTrafficLimit(storeclient.UserRouteScope(req.UUID), services.TrafficRegionAny, services.TrafficKindEdge); err != nil {
+				httpx.SendJSONError(w, "Suspended but failed to clear the traffic limits", http.StatusInternalServerError)
+				return
+			}
 		}
 	default:
 		httpx.SendJSONError(w, "Unknown action", http.StatusBadRequest)

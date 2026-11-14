@@ -26,6 +26,11 @@ type capsStore struct {
 	traffic            map[string]models.TrafficLimit // scope/region/kind
 	// capSince is user_billing.custom_domain_cap_since: the managed plan ended.
 	capSince bool
+	// statusWrites counts billing status writes; deleteErr fails the two
+	// managed-row deletes; beamKeys is what ListBeamIssuerKeysByOwner returns.
+	statusWrites int
+	deleteErr    error
+	beamKeys     []models.BeamIssuerKey
 }
 
 func newCapsStore() *capsStore {
@@ -68,6 +73,9 @@ func (c *capsStore) SetUserCustomDomainLimit(userID string, max *int64) error {
 	return nil
 }
 func (c *capsStore) ClearUserCustomDomainLimit(userID string) error {
+	if c.deleteErr != nil {
+		return c.deleteErr
+	}
 	if _, ok := c.domains["user:"+userID]; ok {
 		delete(c.domains, "user:"+userID)
 		c.capSince = true
@@ -84,6 +92,9 @@ func (c *capsStore) ReplaceTrafficLimits(scope string, rows []models.TrafficLimi
 	return nil
 }
 func (c *capsStore) DeleteTrafficLimit(scope, region, kind string) error {
+	if c.deleteErr != nil {
+		return c.deleteErr
+	}
 	delete(c.traffic, scope+"/"+region+"/"+kind)
 	return nil
 }
