@@ -104,6 +104,20 @@ func (f *remoteExtrasStore) SetRemoteRouteVoice(domain string, port *int, mod, h
 		}
 	}
 	r.VoicePort, r.VoiceMod, r.VoiceHost = port, mod, host
+	if port == nil {
+		r.VoicePublicHost = "" // off deletes the name, as the store does
+	}
+	f.routes[domain] = r
+	return true, nil
+}
+func (f *remoteExtrasStore) SetRemoteRouteVoicePublicHost(domain, host string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.routes[domain]
+	if !ok {
+		return false, nil
+	}
+	r.VoicePublicHost = host
 	f.routes[domain] = r
 	return true, nil
 }
@@ -436,7 +450,8 @@ func TestRemoteVoiceUnknownModeAnswers503(t *testing.T) {
 
 // Local mode answers exactly as before the remote branch existed, with a
 // managed gateway wired that it must never ask. The bodies were captured from
-// the code before that change.
+// the code before that change; the one addition since is nameTarget (Part 3),
+// which offers a white-label name under the server's own domain.
 func TestVoiceLocalModeUnchanged(t *testing.T) {
 	e := newVoiceSwitch(t)
 	fake := remotegwtest.NewFake(t)
@@ -460,7 +475,7 @@ func TestVoiceLocalModeUnchanged(t *testing.T) {
 		t.Fatalf("get before:\n%s\nwant:\n%s", got, want)
 	}
 	rec, _ := e.put(t, `{"enabled":true}`)
-	if got, want := body(rec), `{"restartRequired":true,"success":true,"voice":{"enabled":true,"host":"a.eu.dylaris.com","port":26000,"mod":"svc","allowed":true}}`; rec.Code != 200 || got != want {
+	if got, want := body(rec), `{"restartRequired":true,"success":true,"voice":{"enabled":true,"host":"a.eu.dylaris.com","port":26000,"mod":"svc","allowed":true,"nameTarget":"voice.eu.dylaris.com"}}`; rec.Code != 200 || got != want {
 		t.Fatalf("enable %d:\n%s\nwant:\n%s", rec.Code, got, want)
 	}
 	keys := e.voiceKeys()
@@ -471,7 +486,7 @@ func TestVoiceLocalModeUnchanged(t *testing.T) {
 	if e.fs.row == nil || e.fs.row.Port != 26000 || e.fs.row.Region != "eu" || e.fs.row.Host != "a.eu.dylaris.com" {
 		t.Fatalf("row %+v", e.fs.row)
 	}
-	if got, want := get(), `{"success":true,"voice":{"enabled":true,"host":"a.eu.dylaris.com","port":26000,"mod":"svc","allowed":true}}`; got != want {
+	if got, want := get(), `{"success":true,"voice":{"enabled":true,"host":"a.eu.dylaris.com","port":26000,"mod":"svc","allowed":true,"nameTarget":"voice.eu.dylaris.com"}}`; got != want {
 		t.Fatalf("get after:\n%s\nwant:\n%s", got, want)
 	}
 	rec, _ = e.put(t, `{"enabled":false}`)
@@ -642,6 +657,29 @@ func TestRemoteOwnDomainVoiceOnAnOldProvider(t *testing.T) {
 // "host" in a voice object.
 func stripVoiceHost(t *testing.T, base string) string {
 	t.Helper()
+	return stripVoiceKeys(t, base, "host")
+}
+
+// stripVoiceKeys is stripVoiceHost for any of the voice answer's keys.
+func stripVoiceKeys(t *testing.T, base string, keys ...string) string {
+	t.Helper()
+	return editVoiceAnswer(t, base, func(v map[string]interface{}) {
+		for _, k := range keys {
+			delete(v, k)
+		}
+	})
+}
+
+// rewriteVoiceKey makes the provider's voice answer carry value under key.
+func rewriteVoiceKey(t *testing.T, base, key, value string) string {
+	t.Helper()
+	return editVoiceAnswer(t, base, func(v map[string]interface{}) { v[key] = value })
+}
+
+// editVoiceAnswer is a proxy to base that applies edit to every answer's
+// voice object.
+func editVoiceAnswer(t *testing.T, base string, edit func(v map[string]interface{})) string {
+	t.Helper()
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := http.NewRequest(r.Method, base+r.URL.Path, bytes.NewReader(body))
@@ -656,7 +694,7 @@ func stripVoiceHost(t *testing.T, base string) string {
 		var m map[string]interface{}
 		if json.Unmarshal(raw, &m) == nil {
 			if v, ok := m["voice"].(map[string]interface{}); ok {
-				delete(v, "host")
+				edit(v)
 				raw, _ = json.Marshal(m)
 			}
 		}

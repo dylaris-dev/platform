@@ -145,6 +145,7 @@ var remoteAware = map[string]string{
 	"GET /api/gateway/check-domain":                      "local remote_routes rows first, then the provider (CheckDomain, cached 10 s); 30/min per user",
 	"PUT /api/servers/{id:[0-9]+}/voice/switch":          "remote mode: on through the provider (RemoteGateway.EnableServerVoice), off clears the local column and queues the provider's off; no Redis; an unread mode answers 503 on on",
 	"GET /api/servers/{id:[0-9]+}/voice":                 "remote mode: the local remote_routes voice columns (RemoteGateway.ServerVoice); an unread mode answers 503",
+	"PUT /api/servers/{id:[0-9]+}/voice/name":            "remote mode: drives the provider in remote mode (the provider checks the name, this Core resolves nothing and writes its mod_host into the mod config); no Redis; an unread mode answers 503",
 	// Voice permissions: without them a platform on the managed gateway could
 	// not allow voice for anyone.
 	"GET /api/admin/voice-permissions":            "database rows only, no gateway state",

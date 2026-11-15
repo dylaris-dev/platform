@@ -8,6 +8,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.15.3
+
+### Features
+- Voice chat can announce a name on a user's own domain (for example `voice.play.example.com`) once its
+  record points at the gateway and Check again confirms it; if it stops, Core switches a hosted server's
+  voice mod back to the gateway's name and asks for a restart. `core`
+- A managed-gateway customer can set such a name only once the provider Core runs this version, and
+  follows the provider's switch back only on this version. Update the provider first. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.15.2
 
 ### Features

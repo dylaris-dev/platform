@@ -1370,12 +1370,31 @@ export interface ServerVoice {
     port: number;
     mod: string; // "svc" | "plasmo"
     allowed: boolean;
+    // Only while the server has a white-label name. host is then the mod host
+    // (= modHost); ourHost is our regional name the mod gets back on a cancel
+    // or a fall back. publicState: "pending" | "active" | "fallen_back".
+    modHost?: string;
+    publicHost?: string;
+    publicState?: string;
+    ourHost?: string;
+    // Set whenever voice is on: the CNAME target for a name of its own, ""
+    // when the server has no own domain (no name possible). Absent from an
+    // older Core. nameFailingSince: an active name stopped pointing at the
+    // gateway then; publicStateAt: when publicState last changed.
+    nameTarget?: string;
+    nameFailingSince?: string;
+    publicStateAt?: string;
 }
 type VoiceResult = { success?: boolean; voice?: ServerVoice; restartRequired?: boolean; message?: string; error?: string; code?: string };
 export const getServerVoice = (serverId: number): Promise<VoiceResult> =>
     fetchAPI(`/servers/${serverId}/voice`);
 export const setServerVoice = (serverId: number, enabled: boolean): Promise<VoiceResult> =>
     fetchAPI(`/servers/${serverId}/voice/switch`, { method: 'PUT', body: JSON.stringify({ enabled }) });
+/** Sets, checks again ("Check again" is the same call) or with "" cancels the
+ *  white-label voice name. A 409 voice_host_not_pointing carries no view: the
+ *  name may be stored pending, so read the voice again. */
+export const setServerVoiceName = (serverId: number, name: string): Promise<VoiceResult> =>
+    fetchAPI(`/servers/${serverId}/voice/name`, { method: 'PUT', body: JSON.stringify({ name }) });
 
 // Bedrock on one server's routes. `enabled`: some route has it (stored).
 // `active`: the platform switch is not off, so those routes take Bedrock now.
@@ -1533,8 +1552,16 @@ export interface LinkRoute {
     /** False while the platform switch is off: Bedrock is paused, not forgotten. */
     bedrock_active?: boolean;
 }
-/** host: the name the voice mod is told (our regional voice name for an own domain); absent from an older Core. */
-export interface LinkRouteVoice { enabled: boolean; host?: string; port?: number; target_port?: number }
+/** host: our regional voice name for an own domain, else the address itself; absent from an older Core.
+ *  mod_host: the name the voice mod is told (the white-label public_host while active, else host or the address).
+ *  public_state: "" | "pending" | "active" | "fallen_back".
+ *  name_target: the CNAME target for a name of its own, "" for an address on our domains; absent from an older Core.
+ *  failing_since: an active name stopped pointing at the gateway then; public_state_at: when public_state last changed. */
+export interface LinkRouteVoice {
+    enabled: boolean; host?: string; port?: number; target_port?: number;
+    mod_host?: string; public_host?: string; public_state?: string;
+    name_target?: string; failing_since?: string | null; public_state_at?: string | null;
+}
 /** refusal: why Bedrock cannot be ADDED here now (no Bedrock entry in its region); empty when it can.
  *  dns_*: the last stored DNS check of an own-domain address, "" / null otherwise and from an older Core. */
 export interface LinkRouteBedrock {
@@ -1570,8 +1597,10 @@ export async function downloadLinkRouteFloodgateKey(domain: string): Promise<voi
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-export const setLinkRouteVoice = (domain: string, enabled: boolean, targetPort: number): Promise<{ success?: boolean; voice?: LinkRouteVoice; message?: string; error?: string; code?: string }> =>
-    fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}/voice`, { method: 'PUT', body: JSON.stringify({ enabled, target_port: targetPort }) });
+/** publicHost: the white-label name ("" cancels it); left out, the name stays as it is.
+ *  A 409 voice_host_not_pointing carries no view although voice is on: read the routes again. */
+export const setLinkRouteVoice = (domain: string, enabled: boolean, targetPort: number, publicHost?: string): Promise<{ success?: boolean; voice?: LinkRouteVoice; message?: string; error?: string; code?: string }> =>
+    fetchAPI(`/gateway/link-routes/${encodeURIComponent(domain)}/voice`, { method: 'PUT', body: JSON.stringify(publicHost === undefined ? { enabled, target_port: targetPort } : { enabled, target_port: targetPort, public_host: publicHost }) });
 
 // Link kits: a key + auto link identity bound to the account. The customer runs
 // one container, the link, with the key to expose a LOCAL server through the

@@ -448,6 +448,17 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 	} else {
 		log.Printf("voice: list route voice ports: %v", err)
 	}
+	// Only a list with voice on anywhere reads what the voice name views need.
+	var ni voiceNameInfo
+	if len(voice) > 0 {
+		var rows []*store.LinkRouteVoice
+		for _, v := range voice {
+			if v.OwnerID == userID {
+				rows = append(rows, v)
+			}
+		}
+		ni = h.loadVoiceNameInfo(services.GetEdgesFromRedis(h.ctx(), h.d.Redis), activeVoiceNames(rows...))
+	}
 	allowed := h.linkRouteVoiceAllowed(userID)
 	var mine []services.GatewayRoute
 	var domains []string
@@ -485,7 +496,7 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 	out := make([]linkRoute, 0, len(mine))
 	for _, rt := range mine {
 		out = append(out, linkRoute{PublicRoute: rt.Public(), LinkID: linkIDByToken[rt.TunnelID],
-			Voice: newLinkRouteVoiceView(voice[rt.Domain]), VoiceAllowed: allowed,
+			Voice: newLinkRouteVoiceView(voice[rt.Domain], ni), VoiceAllowed: allowed,
 			Bedrock: bedrock[rt.Domain], BedrockAllowed: bedrockAllowed, BedrockActive: bedrockActive})
 	}
 	// Suspended routes are not in Redis; list them from their rows so the owner
@@ -508,7 +519,7 @@ func (h *GatewayHandler) ListLinkRoutes(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			out = append(out, linkRoute{PublicRoute: services.SuspendedPublicRoute(row), LinkID: linkIDByToken[row.LinkToken],
-				Voice: newLinkRouteVoiceView(voice[row.Domain]), VoiceAllowed: allowed,
+				Voice: newLinkRouteVoiceView(voice[row.Domain], ni), VoiceAllowed: allowed,
 				BedrockAllowed: bedrockAllowed, BedrockActive: bedrockActive})
 		}
 	}

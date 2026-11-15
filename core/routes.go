@@ -289,6 +289,7 @@ var requiredCaps = map[string]string{
 	// Voice chat: reading it is a network read, the switch a network write.
 	"/api/servers/{id:[0-9]+}/voice":        "network.read",
 	"/api/servers/{id:[0-9]+}/voice/switch": "network.write",
+	"/api/servers/{id:[0-9]+}/voice/name":   "network.write",
 	// Bedrock (Floodgate) joins: same split as voice. Off works without the gateway.
 	"/api/servers/{id:[0-9]+}/bedrock": "network.read",
 	// Which editions one route takes (Java, Bedrock, both): a route change.
@@ -1971,6 +1972,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// work with the gateway off and on the managed gateway; SetServerVoice gates
 	// the enable itself.
 	api.HandleFunc("/servers/{id:[0-9]+}/voice/switch", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.SetServerVoice))).Methods("PUT")
+	// Same gating as the switch: cancelling the name must work with the gateway
+	// off; SetServerVoiceName needs voice on and refuses a suspended set itself.
+	api.HandleFunc("/servers/{id:[0-9]+}/voice/name", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.SetServerVoiceName))).Methods("PUT")
 	api.HandleFunc("/servers/{id:[0-9]+}/bedrock", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.read")(gatewayHandler.GetServerBedrock))).Methods("GET")
 	api.HandleFunc("/servers/{id:[0-9]+}/bedrock/routes", authHandler.AuthMiddleware(appState.Authz.RequireCap("network.write")(gatewayHandler.SetRouteEdition))).Methods("PUT")
 	api.HandleFunc("/admin/voice-permissions", authHandler.AuthMiddleware(appState.Authz.RequireCap("settings.read")(gatewayHandler.ListVoicePermissions))).Methods("GET")

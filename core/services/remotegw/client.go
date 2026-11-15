@@ -504,12 +504,25 @@ func (c *Client) Usage(ctx context.Context, period string) (Usage, error) {
 // voice port, TargetPort the voice mod's port on the target host. Both are 0
 // while voice is off. Host is the name the mod is told (the provider's
 // regional voice name for an own domain); "" from an older provider means the
-// address itself.
+// address itself. ModHost is the name the mod is told once a white-label
+// PublicHost is active, else Host; PublicState is empty, pending, active or
+// fallen_back. All three are "" from a provider older than the white-label
+// name.
 type RouteVoice struct {
-	Enabled    bool   `json:"enabled"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	TargetPort int    `json:"target_port"`
+	Enabled     bool   `json:"enabled"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	TargetPort  int    `json:"target_port"`
+	ModHost     string `json:"mod_host"`
+	PublicHost  string `json:"public_host"`
+	PublicState string `json:"public_state"`
+	// NameTarget is the CNAME target for a white-label name, "" for an
+	// address on the provider's domains; nil from an older provider.
+	// FailingSince: an active name's run of misses; PublicStateAt: when the
+	// state last changed.
+	NameTarget    *string    `json:"name_target"`
+	FailingSince  *time.Time `json:"failing_since"`
+	PublicStateAt *time.Time `json:"public_state_at"`
 }
 
 // RouteBedrock is an address's editions on the provider. HasKey: it has a
@@ -530,6 +543,18 @@ type RouteBedrock struct {
 // SetVoice switches the address's voice relay. targetPort 0 is the provider's
 // default (the voice mods' 24454). Turning it on again keeps the port.
 func (c *Client) SetVoice(ctx context.Context, domain string, enabled bool, targetPort int) (RouteVoice, error) {
+	return c.putVoice(ctx, domain, map[string]interface{}{"enabled": enabled, "target_port": targetPort})
+}
+
+// SetVoiceName sets the address's white-label voice name ("" clears it), with
+// voice on at the default target port. The provider checks its DNS and
+// answers mod_host; a 409 voice_host_not_pointing carries no voice. An older
+// provider ignores public_host and answers without mod_host.
+func (c *Client) SetVoiceName(ctx context.Context, domain, name string) (RouteVoice, error) {
+	return c.putVoice(ctx, domain, map[string]interface{}{"enabled": true, "target_port": 0, "public_host": name})
+}
+
+func (c *Client) putVoice(ctx context.Context, domain string, body map[string]interface{}) (RouteVoice, error) {
 	seg, err := segment(domain)
 	if err != nil {
 		return RouteVoice{}, err
@@ -537,7 +562,7 @@ func (c *Client) SetVoice(ctx context.Context, domain string, enabled bool, targ
 	var out struct {
 		Voice *RouteVoice `json:"voice"`
 	}
-	if err := c.do(ctx, http.MethodPut, "/routes/"+seg+"/voice", map[string]interface{}{"enabled": enabled, "target_port": targetPort}, &out); err != nil {
+	if err := c.do(ctx, http.MethodPut, "/routes/"+seg+"/voice", body, &out); err != nil {
 		return RouteVoice{}, err
 	}
 	if out.Voice == nil {

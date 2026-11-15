@@ -47,12 +47,14 @@ func (h *ServerHandler) syncVoiceToSubServer(srv *models.Server, subServer strin
 		log.Printf("voice sync for server %d (%s): %v", srv.ID, subServer, err)
 		return false
 	}
+	// The mod host, so a start keeps an active white-label name and puts our
+	// name back after a cancel or a fall back; the mapping keeps our name.
 	var merged string
 	switch mod {
 	case "plasmo":
-		merged = voicecfg.PlasmoEnable(content, vp.Host, vp.Port)
+		merged = voicecfg.PlasmoEnable(content, vp.ModHost(), vp.Port)
 	default:
-		merged = voicecfg.SvcEnable(content, vp.Host, vp.Port)
+		merged = voicecfg.SvcEnable(content, vp.ModHost(), vp.Port)
 	}
 	if merged != content {
 		if err := nodeops.WriteNodeFileString(h.d.GRPCRegistry, srv.NodeID, srv.UUID, subServer+"/"+rel, merged); err != nil {

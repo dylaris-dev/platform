@@ -210,6 +210,12 @@ func providerStatus(ae *remotegw.APIError) (int, string, string) {
 	// nothing was changed and to try again, which holds here too.
 	case "dns_lookup_failed":
 		return http.StatusServiceUnavailable, ae.Code, ae.Message
+	// The white-label voice name: the provider's sentence names the record
+	// to change and speaks of "the gateway".
+	case "voice_host_invalid":
+		return http.StatusBadRequest, ae.Code, ae.Message
+	case "voice_host_not_pointing":
+		return http.StatusConflict, ae.Code, ae.Message
 	case "bedrock_disabled":
 		return http.StatusConflict, ae.Code, withPlanNeeded("Bedrock is not enabled for this platform's account on the managed gateway.", ae.Message)
 	}

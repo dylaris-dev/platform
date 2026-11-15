@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // LinkRouteVoice is a route-only address's public voice-chat port, with what
@@ -22,24 +23,31 @@ type LinkRouteVoice struct {
 	// regional voice name for an address on the customer's own domain. ''
 	// means Domain, as every row written before the column existed.
 	Host string
+	// PublicHost and PublicState are the white-label voice name, as on
+	// VoicePort. Host stays OUR name: the link resolves it to find the edges.
+	PublicHost  string
+	PublicState string
+	// PublicStateAt is when PublicState last changed; nil without a name.
+	PublicStateAt *time.Time
 	// Suspended mirrors the route's suspension; a suspended route's port must
 	// not be published.
 	Suspended bool
 }
 
 const linkRouteVoiceSelect = `
-	SELECT v.domain, r.owner_id, r.link_token, r.target_host, v.region, v.port, v.target_port, v.uplink_key, v.host, r.suspended_at IS NOT NULL
+	SELECT v.domain, r.owner_id, r.link_token, r.target_host, v.region, v.port, v.target_port, v.uplink_key, v.host, v.public_host, v.public_state, v.public_state_at, r.suspended_at IS NOT NULL
 	FROM link_route_voice v JOIN core_link_routes r ON r.domain = v.domain`
 
 func scanLinkRouteVoice(row interface{ Scan(...any) error }) (LinkRouteVoice, error) {
 	var v LinkRouteVoice
-	err := row.Scan(&v.Domain, &v.OwnerID, &v.LinkToken, &v.TargetHost, &v.Region, &v.Port, &v.TargetPort, &v.UplinkKey, &v.Host, &v.Suspended)
+	err := row.Scan(&v.Domain, &v.OwnerID, &v.LinkToken, &v.TargetHost, &v.Region, &v.Port, &v.TargetPort, &v.UplinkKey, &v.Host, &v.PublicHost, &v.PublicState, &v.PublicStateAt, &v.Suspended)
 	return v, err
 }
 
 // AllocateLinkRouteVoice gives a route-only domain a voice port in region, the
 // same way AllocateVoicePort does for a server: an existing port in the same
-// region keeps its port and key (only target_port and host follow), one in
+// region keeps its port and key (only target_port and host follow, the
+// white-label name stays), one in
 // another region is released for a fresh one.
 func (s *PostgresStore) AllocateLinkRouteVoice(domain, region, host string, targetPort int, key []byte, min, max int) (LinkRouteVoice, error) {
 	for attempt := 0; ; attempt++ {
@@ -101,6 +109,39 @@ func (s *PostgresStore) GetLinkRouteVoice(domain string) (*LinkRouteVoice, error
 		return nil, err
 	}
 	return &v, nil
+}
+
+// ModHost is the name the customer writes into the voice mod: the white-label
+// name while it is active, else Host, else the address itself.
+func (v LinkRouteVoice) ModHost() string {
+	switch {
+	case v.PublicState == VoicePublicActive && v.PublicHost != "":
+		return v.PublicHost
+	case v.Host != "":
+		return v.Host
+	}
+	return v.Domain
+}
+
+// SetLinkRouteVoicePublicHost records the address's white-label voice name and
+// its state (both empty clear it); no voice row is a no-op.
+func (s *PostgresStore) SetLinkRouteVoicePublicHost(domain, host, state string) error {
+	_, err := s.db.Exec(`UPDATE link_route_voice SET public_host = $2, public_state = $3::text,
+		public_state_at = CASE WHEN $3::text = '' THEN NULL WHEN public_state = $3::text THEN public_state_at ELSE NOW() END
+		WHERE domain = $1`, domain, host, state)
+	return err
+}
+
+// FallBackLinkRouteVoicePublicHost is FallBackVoicePublicHost for a route-only
+// address.
+func (s *PostgresStore) FallBackLinkRouteVoicePublicHost(domain, host string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE link_route_voice SET public_state = 'fallen_back', public_state_at = NOW()
+		WHERE domain = $1 AND public_host = $2 AND public_state = 'active'`, domain, host)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // DeleteLinkRouteVoice reports whether a row was removed.

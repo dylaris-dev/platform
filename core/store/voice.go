@@ -19,7 +19,29 @@ type VoicePort struct {
 	InternalPort int
 	UplinkKey    []byte
 	Host         string
-	CreatedAt    time.Time
+	// PublicHost and PublicState are the white-label voice name (phase 71).
+	// Host stays OUR name: it is what the node publishes for the relays.
+	PublicHost  string
+	PublicState string
+	// PublicStateAt is when PublicState last changed; nil without a name.
+	PublicStateAt *time.Time
+	CreatedAt     time.Time
+}
+
+// White-label voice name states. Empty is no name: the mod is told Host.
+const (
+	VoicePublicPending    = "pending"
+	VoicePublicActive     = "active"
+	VoicePublicFallenBack = "fallen_back"
+)
+
+// ModHost is the name written into the voice mod: the white-label name while
+// it is active, else Host.
+func (p VoicePort) ModHost() string {
+	if p.PublicState == VoicePublicActive && p.PublicHost != "" {
+		return p.PublicHost
+	}
+	return p.Host
 }
 
 // ErrVoicePoolFull is a region with no free port left in the voice pool.
@@ -30,7 +52,7 @@ var ErrVoicePoolFull = errors.New("voice port pool exhausted")
 //
 // A server that already holds a port in the SAME region keeps its port and its
 // key - both are already in Redis and in the players' clients - and only mod,
-// internal_port and host follow p. A port in another region is released and a
+// internal_port and host follow p; the white-label name stays. A port in another region is released and a
 // fresh one taken. A new port is the lowest free one in [min, max]. Two
 // allocations racing for the same port meet on UNIQUE(region, port); the loser
 // retries.
@@ -111,12 +133,12 @@ func freeVoicePort(tx *sql.Tx, region string, min, max int) (int, error) {
 }
 
 const voicePortSelect = `
-	SELECT v.server_id, s.uuid, s.name, v.region, v.port, v.mod, v.internal_port, v.uplink_key, v.host, v.created_at
+	SELECT v.server_id, s.uuid, s.name, v.region, v.port, v.mod, v.internal_port, v.uplink_key, v.host, v.public_host, v.public_state, v.public_state_at, v.created_at
 	FROM voice_ports v JOIN servers s ON s.id = v.server_id`
 
 func scanVoicePort(row interface{ Scan(...any) error }) (VoicePort, error) {
 	var p VoicePort
-	err := row.Scan(&p.ServerID, &p.ServerUUID, &p.ServerName, &p.Region, &p.Port, &p.Mod, &p.InternalPort, &p.UplinkKey, &p.Host, &p.CreatedAt)
+	err := row.Scan(&p.ServerID, &p.ServerUUID, &p.ServerName, &p.Region, &p.Port, &p.Mod, &p.InternalPort, &p.UplinkKey, &p.Host, &p.PublicHost, &p.PublicState, &p.PublicStateAt, &p.CreatedAt)
 	return p, err
 }
 
@@ -152,6 +174,29 @@ func (s *PostgresStore) UpdateVoicePortMod(serverID int, region string, port int
 	res, err := s.db.Exec(`UPDATE voice_ports SET mod = $4, internal_port = $5, host = $6
 		WHERE server_id = $1 AND region = $2 AND port = $3`,
 		serverID, region, port, mod, internalPort, host)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// SetVoicePublicHost records the server's white-label voice name and its
+// state (both empty clear it). A server without a voice row is a no-op: the
+// name lives and dies with the row.
+func (s *PostgresStore) SetVoicePublicHost(serverID int, host, state string) error {
+	_, err := s.db.Exec(`UPDATE voice_ports SET public_host = $2, public_state = $3::text,
+		public_state_at = CASE WHEN $3::text = '' THEN NULL WHEN public_state = $3::text THEN public_state_at ELSE NOW() END
+		WHERE server_id = $1`, serverID, host, state)
+	return err
+}
+
+// FallBackVoicePublicHost moves the server's name to fallen_back only while it
+// is still active with host, so a name the customer changed meanwhile is never
+// overwritten. changed=false: nothing matched.
+func (s *PostgresStore) FallBackVoicePublicHost(serverID int, host string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE voice_ports SET public_state = 'fallen_back', public_state_at = NOW()
+		WHERE server_id = $1 AND public_host = $2 AND public_state = 'active'`, serverID, host)
 	if err != nil {
 		return false, err
 	}

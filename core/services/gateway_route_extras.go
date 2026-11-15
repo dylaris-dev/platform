@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,10 +60,18 @@ func VoiceAddressFor(domains []string, own map[string]bool, regions []remotegw.R
 	return "", false
 }
 
-// voiceHostOf is the name the row's mod is told: the provider's host, else the
-// address itself. Only meaningful while the row has a voice port (an older
-// replica switching voice off leaves voice_host behind).
+// voiceHostOf is the name the row's mod is told: the white-label name the
+// provider named, else ourVoiceHostOf. Only meaningful while the row has a
+// voice port (an older replica switching voice off leaves voice_host behind).
 func voiceHostOf(r store.RemoteRoute) string {
+	if r.VoicePublicHost != "" {
+		return r.VoicePublicHost
+	}
+	return ourVoiceHostOf(r)
+}
+
+// ourVoiceHostOf is the provider's host for the row, else the address itself.
+func ourVoiceHostOf(r store.RemoteRoute) string {
 	if r.VoiceHost != "" {
 		return r.VoiceHost
 	}
@@ -85,11 +94,25 @@ func storedVoiceHost(domain, host string) string {
 	if host == domain {
 		return ""
 	}
-	if host != "" && (!plainDNSName.MatchString(host) || len(host) > 253) {
+	if host != "" && !validProviderHost(host) {
 		log.Printf("gateway: provider sent an invalid voice host for %s, using the address", domain)
 		return ""
 	}
 	return host
+}
+
+func validProviderHost(host string) bool {
+	return plainDNSName.MatchString(host) && len(host) <= 253
+}
+
+// storedVoicePublicHost is what voice_public_host holds for the provider's
+// mod_host: empty when it is the row's own host (no white-label name in the
+// mod), else the name.
+func storedVoicePublicHost(r store.RemoteRoute, modHost string) string {
+	if modHost == ourVoiceHostOf(r) {
+		return ""
+	}
+	return modHost
 }
 
 // ServerOwnDomains maps each of the server's addresses (minus pending deletes)
@@ -148,6 +171,47 @@ func (g *RemoteGateway) ServerVoice(serverUUID string) (host string, port int, m
 	return "", 0, "", false, nil
 }
 
+// RemoteVoiceName is the white-label state of a server's voice address for
+// the panel: OurHost is the provider's host this Core stored at enable (what
+// a cancel or a fall back puts back), PublicHost and PublicState are the
+// provider's, as are NameTarget (nil from an older provider), FailingSince
+// and PublicStateAt. Display only.
+type RemoteVoiceName struct {
+	OurHost, PublicHost, PublicState string
+	NameTarget                       *string
+	FailingSince, PublicStateAt      *time.Time
+}
+
+// remoteVoiceName is the provider's voice answer as the panel's state.
+func remoteVoiceName(ourHost string, v *remotegw.RouteVoice) RemoteVoiceName {
+	return RemoteVoiceName{OurHost: ourHost, PublicHost: v.PublicHost, PublicState: v.PublicState,
+		NameTarget: v.NameTarget, FailingSince: v.FailingSince, PublicStateAt: v.PublicStateAt}
+}
+
+// ServerVoiceName is the voice address's white-label state, from the cached
+// provider route list (no DNS, no call while cached). An unreadable list or
+// an older provider (no mod_host) falls back to the column: a name stored
+// here is active, nothing else is known. on=false: voice is off.
+func (g *RemoteGateway) ServerVoiceName(ctx context.Context, serverUUID string) (n RemoteVoiceName, on bool, err error) {
+	routes, err := g.serverRoutes(serverUUID)
+	if err != nil {
+		return n, false, err
+	}
+	for _, r := range routes {
+		if r.VoicePort == nil {
+			continue
+		}
+		n.OurHost = ourVoiceHostOf(r)
+		if p, found, err := g.ProviderRoute(ctx, r.Domain); err == nil && found && p.Voice != nil && p.Voice.ModHost != "" {
+			n = remoteVoiceName(n.OurHost, p.Voice)
+		} else if r.VoicePublicHost != "" {
+			n.PublicHost, n.PublicState = r.VoicePublicHost, store.VoicePublicActive
+		}
+		return n, true, nil
+	}
+	return n, false, nil
+}
+
 // EnableServerVoice turns the provider's voice relay on for domain and records
 // its port and host locally once the provider said yes. host is the name the
 // mod is told: the provider's (our regional voice name there, for an own
@@ -184,7 +248,87 @@ func (g *RemoteGateway) EnableServerVoice(ctx context.Context, serverUUID, domai
 	if !found {
 		return 0, "", fmt.Errorf("voice chat for %s: the route row is gone", domain)
 	}
-	return port, voiceHostOf(store.RemoteRoute{Domain: domain, VoiceHost: stored}), nil
+	// Turning voice on again keeps the white-label name (on the provider and
+	// in the column), so the mod keeps it too.
+	public := ""
+	if row.VoicePort != nil {
+		public = row.VoicePublicHost
+	}
+	return port, voiceHostOf(store.RemoteRoute{Domain: domain, VoiceHost: stored, VoicePublicHost: public}), nil
+}
+
+// ErrRemoteVoiceOff: a voice name needs voice on first.
+var ErrRemoteVoiceOff = errors.New("voice chat is off")
+
+// ErrVoiceNameUnsupported: the provider answered without mod_host, so it is
+// older than the white-label name and ignored it.
+var ErrVoiceNameUnsupported = errors.New("the gateway provider does not offer a voice chat name on your own domain yet")
+
+// ErrVoiceConfigWrite: the node could not write the voice mod config.
+var ErrVoiceConfigWrite = errors.New("the voice mod config could not be written")
+
+// SetServerVoiceName sets the white-label voice name of the server's voice
+// address on the provider ("" cancels it). ONLY the provider checks the
+// name's DNS; its refusals come back as its APIError and nothing is written
+// here. On a yes the provider's mod_host is validated, written into the mod
+// with writeMod (first: a failed write stores nothing, and a retry gets the
+// same answer from the provider), then stored. changed: the mod host moved,
+// so the server needs a restart.
+func (g *RemoteGateway) SetServerVoiceName(ctx context.Context, serverUUID, name string, writeMod func(host string, port int) error) (host string, port int, mod string, state RemoteVoiceName, changed bool, err error) {
+	routes, err := g.serverRoutes(serverUUID)
+	if err != nil {
+		return "", 0, "", state, false, err
+	}
+	var row *store.RemoteRoute
+	for i := range routes {
+		if routes[i].VoicePort != nil {
+			row = &routes[i]
+			break
+		}
+	}
+	if row == nil {
+		return "", 0, "", state, false, ErrRemoteVoiceOff
+	}
+	if err := g.extrasPreflight(row); err != nil {
+		return "", 0, "", state, false, err
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), remoteCallTimeout)
+	defer cancel()
+	defer g.routes.drop()
+	v, err := g.api().SetVoiceName(ctx, row.Domain, name)
+	if err != nil {
+		return "", 0, "", state, false, fmt.Errorf("voice chat name for %s: %w", row.Domain, err)
+	}
+	if !v.Enabled || v.Port != *row.VoicePort {
+		return "", 0, "", state, false, fmt.Errorf("%w: voice chat name for %s answered port %d, not %d", remotegw.ErrBadAnswer, row.Domain, v.Port, *row.VoicePort)
+	}
+	host = v.ModHost
+	// A yes names exactly the name asked for, a cancel our host: anything
+	// else would point the mod at a host nobody here asked for or stored.
+	switch {
+	case host == "" && name != "":
+		return "", 0, "", state, false, ErrVoiceNameUnsupported
+	case host == "":
+		host = ourVoiceHostOf(*row) // an older provider holds no name to cancel
+	case !validProviderHost(host) || (name != "" && !strings.EqualFold(host, name)) || (name == "" && host != ourVoiceHostOf(*row)):
+		log.Printf("gateway: provider answered the voice chat name of %s with mod host %q, nothing written", row.Domain, host)
+		return "", 0, "", state, false, fmt.Errorf("%w: voice chat name for %s: an unexpected mod host", remotegw.ErrBadAnswer, row.Domain)
+	}
+	host = strings.ToLower(host)
+	if err := writeMod(host, *row.VoicePort); err != nil {
+		return "", 0, "", state, false, fmt.Errorf("%w: %v", ErrVoiceConfigWrite, err)
+	}
+	if public := storedVoicePublicHost(*row, host); public != row.VoicePublicHost {
+		found, err := g.st.SetRemoteRouteVoicePublicHost(row.Domain, public)
+		if err != nil {
+			return "", 0, "", state, false, err
+		}
+		if !found {
+			return "", 0, "", state, false, fmt.Errorf("voice chat name for %s: the route row is gone", row.Domain)
+		}
+	}
+	state = remoteVoiceName(ourVoiceHostOf(*row), &v)
+	return host, *row.VoicePort, row.VoiceMod, state, host != voiceHostOf(*row), nil
 }
 
 // DisableServerVoice clears every voice column of the server, then queues the
@@ -348,7 +492,7 @@ const routeExtrasPerSweep = 10
 // ON the record lacks is queued off. A nil half (an older provider) is
 // skipped. The row is read again before any decision and before any write,
 // and left alone once it changed: a switch flipped meanwhile wins.
-func reconcileRouteExtras(ctx context.Context, st store.Store, c *remotegw.Client, publishKey func(ctx context.Context, uuid string, key []byte) (changed bool, err error), row store.RemoteRoute, p remotegw.Route, srv models.Server, budget *int) error {
+func reconcileRouteExtras(ctx context.Context, st store.Store, c *remotegw.Client, publishKey func(ctx context.Context, uuid string, key []byte) (changed bool, err error), rewriteVoice VoiceHostRewriter, row store.RemoteRoute, p remotegw.Route, srv models.Server, budget *int) error {
 	if p.Voice == nil && p.Bedrock == nil {
 		return nil
 	}
@@ -359,7 +503,7 @@ func reconcileRouteExtras(ctx context.Context, st store.Store, c *remotegw.Clien
 	// One change per address and sweep: the next one starts from the row
 	// that change wrote.
 	if p.Voice != nil {
-		if acted, err := reconcileExtrasVoice(ctx, st, c, *fresh, *p.Voice, srv, budget); acted || err != nil {
+		if acted, err := reconcileExtrasVoice(ctx, st, c, rewriteVoice, *fresh, *p.Voice, srv, budget); acted || err != nil {
 			return err
 		}
 	}
@@ -377,7 +521,7 @@ func extrasRowAsRead(st store.Store, row store.RemoteRoute) (*store.RemoteRoute,
 		return nil, err
 	}
 	sameVoice := (again.VoicePort == nil) == (row.VoicePort == nil) && (again.VoicePort == nil || *again.VoicePort == *row.VoicePort)
-	if !again.UpdatedAt.Equal(row.UpdatedAt) || !sameVoice || again.VoiceMod != row.VoiceMod || again.Edition != row.Edition {
+	if !again.UpdatedAt.Equal(row.UpdatedAt) || !sameVoice || again.VoiceMod != row.VoiceMod || again.VoicePublicHost != row.VoicePublicHost || again.Edition != row.Edition {
 		return nil, nil
 	}
 	if writtenMomentsAgo(*again) {
@@ -386,8 +530,18 @@ func extrasRowAsRead(st store.Store, row store.RemoteRoute) (*store.RemoteRoute,
 	return again, nil
 }
 
+// VoiceHostRewriter points a server's voice mod at host:port, replacing from,
+// and reports whether it landed. It reads the row again right before the
+// write and answers ErrVoiceRowChanged once the row no longer has from on
+// port. It returns by ctx's deadline even when the node does not answer.
+type VoiceHostRewriter func(ctx context.Context, srv *models.Server, from, host string, port int) error
+
+// ErrVoiceRowChanged: the voice row moved on before the write, which was
+// left out.
+var ErrVoiceRowChanged = errors.New("the voice chat row changed meanwhile")
+
 // reconcileExtrasVoice: acted is true once the address was changed or queued.
-func reconcileExtrasVoice(ctx context.Context, st store.Store, c *remotegw.Client, row store.RemoteRoute, pv remotegw.RouteVoice, srv models.Server, budget *int) (acted bool, err error) {
+func reconcileExtrasVoice(ctx context.Context, st store.Store, c *remotegw.Client, rewriteVoice VoiceHostRewriter, row store.RemoteRoute, pv remotegw.RouteVoice, srv models.Server, budget *int) (acted bool, err error) {
 	if row.VoicePort == nil {
 		if !pv.Enabled {
 			return false, nil
@@ -402,7 +556,7 @@ func reconcileExtrasVoice(ctx context.Context, st store.Store, c *remotegw.Clien
 	if pv.Enabled && pv.Port == *row.VoicePort {
 		// Agreeing is healthy: a strike from an earlier fault is over.
 		forgetAnswer("voice", row.Domain)
-		return false, nil
+		return adoptVoiceFallBack(ctx, st, rewriteVoice, row, pv, srv, budget)
 	}
 	if *budget <= 0 {
 		return false, nil
@@ -432,6 +586,56 @@ func reconcileExtrasVoice(ctx context.Context, st store.Store, c *remotegw.Clien
 	forgetAnswer("voice", row.Domain)
 	holdExtrasBudget(err, budget)
 	return false, fmt.Errorf("voice chat of %s not confirmed: %w", row.Domain, err)
+}
+
+// adoptVoiceFallBack follows the provider once it took the white-label name
+// out of the mod (its re-check fell back, or the name was cleared there): the
+// column and, in the background, the mod config go to the provider's own
+// host. The one write-back of this sweep (spec 8), and only ever AWAY from a
+// customer's name: a provider naming one the row lacks changes nothing here,
+// that is the set call's to write. An older provider (no mod_host) changes
+// nothing either.
+//
+// The config is written first and the column cleared only once it landed:
+// remote mode has no start sync, so the column still naming the name is what
+// makes the next sweep try again while the node is down. The Errors line is
+// written once, after the switch.
+func adoptVoiceFallBack(ctx context.Context, st store.Store, rewriteVoice VoiceHostRewriter, row store.RemoteRoute, pv remotegw.RouteVoice, srv models.Server, budget *int) (acted bool, err error) {
+	// Our host is the one this Core stored at enable, never a host the same
+	// answer names: a provider answer must not point the mod anywhere else.
+	ours := ourVoiceHostOf(row)
+	if row.VoicePublicHost == "" || pv.ModHost != ours || ours == voiceHostOf(row) {
+		return false, nil
+	}
+	if again, err := extrasRowAsRead(st, row); err != nil || again == nil {
+		return false, err
+	}
+	if rewriteVoice != nil {
+		// The node write waits up to remoteCallTimeout like a provider call.
+		if *budget <= 0 {
+			return false, nil
+		}
+		*budget--
+		wctx, cancel := context.WithTimeout(ctx, remoteCallTimeout)
+		err := rewriteVoice(wctx, &srv, row.VoicePublicHost, ours, *row.VoicePort)
+		cancel()
+		if err != nil {
+			if !errors.Is(err, ErrVoiceRowChanged) {
+				log.Printf("gateway: voice chat of %s: switching the voice mod back to %s failed, tried again next sweep: %v", row.Domain, ours, err)
+			}
+			return true, nil
+		}
+	}
+	found, err := st.SetRemoteRouteVoicePublicHost(row.Domain, "")
+	if err != nil || !found {
+		return true, err
+	}
+	why := "was removed on the gateway provider"
+	if pv.PublicState == store.VoicePublicFallenBack {
+		why = "no longer points at the gateway"
+	}
+	logErrf("gateway-outbox", "voice chat of %s: the name %s %s, so the voice mod was switched back to %s. Restart the server to apply it.", row.Domain, row.VoicePublicHost, why, ours)
+	return true, nil
 }
 
 func reconcileExtrasBedrock(ctx context.Context, st store.Store, c *remotegw.Client, publishKey func(ctx context.Context, uuid string, key []byte) (changed bool, err error), row store.RemoteRoute, pb remotegw.RouteBedrock, srv models.Server, budget *int) error {

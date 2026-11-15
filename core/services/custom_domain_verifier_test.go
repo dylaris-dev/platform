@@ -366,6 +366,15 @@ type bedrockDNSStore struct {
 	recorded []string
 	swept    [][]string
 	writes   int
+	// White-label voice rows, for the sweep's kept set.
+	voice      []store.VoicePort
+	routeVoice []store.LinkRouteVoice
+	voiceErr   error
+}
+
+func (f *bedrockDNSStore) ListVoicePorts() ([]store.VoicePort, error) { return f.voice, f.voiceErr }
+func (f *bedrockDNSStore) ListLinkRouteVoice() ([]store.LinkRouteVoice, error) {
+	return f.routeVoice, nil
 }
 
 func newBedrockDNSStore() *bedrockDNSStore {
@@ -592,6 +601,35 @@ func TestBedrockRecheckSweepsUnusedRows(t *testing.T) {
 
 	broken := newBedrockDNSStore()
 	broken.linksErr = errors.New("pq: connection reset by peer")
+	broken.dns["kept.example.com"] = store.AddressDNSCheck{Name: "kept.example.com", Status: "ok", CheckedAt: now}
+	bedrockVerifier(broken, res, &fakeResolver{}, &fakeRemover{}).RunOnce(context.Background())
+	if len(broken.swept) != 0 || len(broken.dns) != 1 {
+		t.Fatalf("a failed read swept %v, rows %v", broken.swept, broken.dns)
+	}
+}
+
+// A white-label voice name keeps its row in any state: the voice re-check
+// counts its run of misses there. A failed read of the voice rows sweeps
+// nothing.
+func TestBedrockRecheckSweepKeepsWhiteLabelNames(t *testing.T) {
+	now := time.Now()
+	fs := newBedrockDNSStore()
+	fs.voice = []store.VoicePort{{ServerID: 7, PublicHost: "voice.play.example.com", PublicState: store.VoicePublicActive}, {ServerID: 8}}
+	fs.routeVoice = []store.LinkRouteVoice{{Domain: "join.shop.example.com", PublicHost: "chat.shop.example.com", PublicState: store.VoicePublicFallenBack}}
+	for _, n := range []string{"voice.play.example.com", "chat.shop.example.com", "gone.example.com"} {
+		fs.dns[n] = store.AddressDNSCheck{Name: n, Status: "ok", CheckedAt: now}
+	}
+	res := newFakePointingResolver()
+	bedrockVerifier(fs, res, &fakeResolver{}, &fakeRemover{}).RunOnce(context.Background())
+	if _, ok := fs.dns["gone.example.com"]; ok || len(fs.dns) != 2 {
+		t.Fatalf("rows %v", fs.dns)
+	}
+	if res.total() != 0 {
+		t.Fatal("the Bedrock pass checked a voice name")
+	}
+
+	broken := newBedrockDNSStore()
+	broken.voiceErr = errors.New("pq: connection reset by peer")
 	broken.dns["kept.example.com"] = store.AddressDNSCheck{Name: "kept.example.com", Status: "ok", CheckedAt: now}
 	bedrockVerifier(broken, res, &fakeResolver{}, &fakeRemover{}).RunOnce(context.Background())
 	if len(broken.swept) != 0 || len(broken.dns) != 1 {

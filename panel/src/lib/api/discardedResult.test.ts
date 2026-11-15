@@ -30,6 +30,7 @@ const MUTATING = [
     'setServerProxyMode',
     'setLinkRouteProxyProtocol',
     'setLinkRouteVoice',
+    'setServerVoiceName',
     'setRouteEdition',
     'setLinkRouteBedrock',
 ];

@@ -415,8 +415,9 @@ func TestLinkVoiceCarriesOurNameForOwnDomains(t *testing.T) {
 }
 
 // A regional address with voice today: enabling it again, listing it and the
-// relay entry are what they were, with no lookup. The one addition is host,
-// equal to the address itself.
+// relay entry are what they were, with no lookup. The additions are host and
+// mod_host, both equal to the address itself, an empty white-label name, and
+// name_target "" (no name possible) with null stamps; the panel shows nothing new.
 func TestExistingCustomersSeeNoChangeUntilTheyAddSomething(t *testing.T) {
 	t.Run("route-only", existingRouteOnlyCustomerSeesNoChange)
 	t.Run("hosted", existingHostedCustomerSeesNoChange)
@@ -430,7 +431,7 @@ func existingRouteOnlyCustomerSeesNoChange(t *testing.T) {
 
 	rec, _ := m.panelVoice(linkDomain, "owner-1")
 	port := strconv.Itoa(services.VoicePortMin)
-	if got := strings.TrimSpace(rec.Body.String()); got != `{"success":true,"voice":{"enabled":true,"host":"`+linkDomain+`","port":`+port+`,"target_port":24454}}` {
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"success":true,"voice":{"enabled":true,"host":"`+linkDomain+`","port":`+port+`,"target_port":24454,"mod_host":"`+linkDomain+`","public_host":"","public_state":"","name_target":"","failing_since":null,"public_state_at":null}}` {
 		t.Fatalf("enable answer %s", got)
 	}
 	row := m.ms.voice[linkDomain]
@@ -442,7 +443,7 @@ func existingRouteOnlyCustomerSeesNoChange(t *testing.T) {
 		t.Fatalf("relay entry %s", entry)
 	}
 	list := linkCall(m.e, m.e.h.ListLinkRoutes, http.MethodGet, "", "", "owner-1", false)
-	if !strings.Contains(list.Body.String(), `"voice":{"enabled":true,"host":"`+linkDomain+`","port":`+port+`,"target_port":24454}`) {
+	if !strings.Contains(list.Body.String(), `"voice":{"enabled":true,"host":"`+linkDomain+`","port":`+port+`,"target_port":24454,"mod_host":"`+linkDomain+`","public_host":"","public_state":"","name_target":"","failing_since":null,"public_state_at":null}`) {
 		t.Fatalf("list %s", list.Body.String())
 	}
 	if res.count() != 0 {

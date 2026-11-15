@@ -102,10 +102,11 @@ func flipVerdicts(f *flipCNAME, purpose PointingPurpose) map[string]int {
 	return verdicts
 }
 
-// m4: our regional names have no AAAA, so for Bedrock any AAAA in the answer,
-// at the end of an alias included, is ipv6. The voice purposes keep the alias
-// exemption. Both verdicts are the same whichever hop the resolver reports
-// (flipCNAME), and for a fixed one-hop alias to a foreign name.
+// m4: our regional names have no AAAA, so for Bedrock and a white-label voice
+// name (players connect to that name) any AAAA in the answer, at the end of an
+// alias included, is ipv6. The voice region lookup keeps the alias exemption.
+// Both verdicts are the same whichever hop the resolver reports (flipCNAME),
+// and for a fixed one-hop alias to a foreign name.
 func TestPointingBedrockAAAAAtTheEndOfAnAliasIsIPv6(t *testing.T) {
 	for _, c := range []struct {
 		purpose PointingPurpose
@@ -113,7 +114,7 @@ func TestPointingBedrockAAAAAtTheEndOfAnAliasIsIPv6(t *testing.T) {
 	}{
 		{PurposeBedrock, "ipv6//"},
 		{PurposeVoiceRegion, "ok/eu/cname"},
-		{PurposeVoiceName, "ok/eu/cname"},
+		{PurposeVoiceName, "ipv6//"},
 	} {
 		t.Run(string(c.purpose), func(t *testing.T) {
 			f := &flipCNAME{fakePointingResolver: newFakePointingResolver()}

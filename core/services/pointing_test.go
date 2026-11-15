@@ -214,6 +214,13 @@ func pointingRows() []pointingRow {
 			f.cname[ptName] = "route.eu.dylaris.com"
 			f.aaaa[ptName] = []netip.Addr{ptV6}
 		}, status: PointingIPv6},
+		{name: "AAAA judged with a CNAME to us for a voice name", purpose: PurposeVoiceName, setup: func(f *fakePointingResolver) {
+			f.cname[ptName] = "route.eu.dylaris.com"
+			f.aaaa[ptName] = []netip.Addr{ptV6}
+		}, status: PointingIPv6},
+		{name: "a CNAME to us is ok for a voice name", purpose: PurposeVoiceName, setup: func(f *fakePointingResolver) {
+			f.cname[ptName] = "voice.eu.dylaris.com"
+		}, status: PointingOK, region: "eu", via: "cname"},
 		{name: "SRV followed for the voice region", purpose: PurposeVoiceRegion, setup: func(f *fakePointingResolver) {
 			f.srv["_minecraft._tcp."+ptName] = srvTo("mc.host.net")
 			f.a["mc.host.net"] = []netip.Addr{ptUS}

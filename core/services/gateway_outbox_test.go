@@ -274,7 +274,7 @@ const uuidGone = "2d8b3e4f-8c5f-4e3d-9a91-3c4d5e6f7081"
 
 func reconcileOK(t *testing.T, st *remoteFakeStore, c *remotegw.Client) (adopted, repaired, foreign int) {
 	t.Helper()
-	adopted, repaired, foreign, err := reconcileRemoteRoutes(context.Background(), st, c, nil, nil)
+	adopted, repaired, foreign, err := reconcileRemoteRoutes(context.Background(), st, c, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +371,7 @@ func TestReconcileDoesNothingWhenListFails(t *testing.T) {
 	st.routes["old.example.com"] = store.RemoteRoute{Domain: "old.example.com", ServerUUID: uuidGone, NodeID: 9, Port: 25565}
 	fake.FailNext(1, 503, "unavailable", 0)
 	before := len(fake.Calls())
-	if _, _, _, err := reconcileRemoteRoutes(context.Background(), st, c, nil, nil); err == nil {
+	if _, _, _, err := reconcileRemoteRoutes(context.Background(), st, c, nil, nil, nil); err == nil {
 		t.Fatal("want the list error")
 	}
 	if got := fake.Calls()[before:]; len(got) != 1 || len(st.routes) != 2 || len(st.outbox) != 0 {

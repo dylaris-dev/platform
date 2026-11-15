@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"dylaris-core/handlers/handlertest"
@@ -121,5 +122,37 @@ func TestSyncVoiceReleasesThePortWhenTheModIsGone(t *testing.T) {
 	}
 	if len(mr.Keys()) != 0 {
 		t.Fatalf("relay mapping left behind: %v", mr.Keys())
+	}
+}
+
+// A start writes the mod host: an active white-label name, our name in every
+// other state. The relay mapping keeps our name either way.
+func TestSyncVoiceWritesTheModHost(t *testing.T) {
+	const ours, name = "voice.eu.dylaris.com", "voice.play.example.com"
+	for _, c := range []struct {
+		state, want string
+	}{
+		{"", ours},
+		{store.VoicePublicPending, ours},
+		{store.VoicePublicActive, name},
+		{store.VoicePublicFallenBack, ours},
+	} {
+		t.Run("state "+c.state, func(t *testing.T) {
+			row := store.VoicePort{ServerID: 7, ServerUUID: "srv-7", Region: "eu", Port: 26000, Host: ours, UplinkKey: make([]byte, 32)}
+			if c.state != "" {
+				row.PublicHost, row.PublicState = name, c.state
+			}
+			fs := &voiceRaceStore{row: row, current: &row}
+			st, mr, node := voiceNodeState(t, fs, "plugins/voicechat/voicechat-server.properties", "svc_before.properties")
+			if !NewServerHandler(st).syncVoiceToSubServer(&models.Server{ID: 7, UUID: "srv-7", NodeID: 7}, "survival") {
+				t.Fatal("sync failed")
+			}
+			if got := node.WrittenString(); !strings.Contains(got, "voice_host="+c.want+":26000") {
+				t.Fatalf("wrote:\n%s\nwant voice_host=%s:26000", got, c.want)
+			}
+			if key, _ := mr.Get("dylaris:server:srv-7:voice"); !strings.Contains(key, `"host":"`+ours+`"`) {
+				t.Fatalf("relay mapping %s", key)
+			}
+		})
 	}
 }

@@ -202,8 +202,30 @@ func (v *CustomDomainVerifier) recheckBedrockDNS(ctx context.Context) {
 			log.Printf("custom-domain verifier: bedrock dns: store %s: %v", n, err)
 		}
 	}
-	// Part 3's white-label names join the kept set here once they exist.
-	if _, err := v.store.DeleteAddressDNSChecksNotIn(names); err != nil {
+	// White-label voice names keep their rows, in any state: the voice
+	// re-check counts its run of misses there. A failed read sweeps nothing.
+	ports, err := v.store.ListVoicePorts()
+	if err != nil {
+		log.Printf("custom-domain verifier: bedrock dns: list voice ports: %v", err)
+		return
+	}
+	routeVoice, err := v.store.ListLinkRouteVoice()
+	if err != nil {
+		log.Printf("custom-domain verifier: bedrock dns: list route voice ports: %v", err)
+		return
+	}
+	kept := names
+	for _, p := range ports {
+		if p.PublicHost != "" {
+			kept = append(kept, p.PublicHost)
+		}
+	}
+	for _, rv := range routeVoice {
+		if rv.PublicHost != "" {
+			kept = append(kept, rv.PublicHost)
+		}
+	}
+	if _, err := v.store.DeleteAddressDNSChecksNotIn(kept); err != nil {
 		log.Printf("custom-domain verifier: bedrock dns: sweep: %v", err)
 	}
 }

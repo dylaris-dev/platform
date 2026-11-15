@@ -240,6 +240,12 @@ type Store interface {
 	UpdateVoicePortMod(serverID int, region string, port int, mod string, internalPort int, host string) (bool, error)
 	DeleteVoicePort(serverID int) error
 	ListVoicePorts() ([]VoicePort, error)
+	// White-label voice name of a voice row (phase 71). FallBack* moves only
+	// an active row that still holds host; changed=false: nothing matched.
+	SetVoicePublicHost(serverID int, host, state string) error
+	FallBackVoicePublicHost(serverID int, host string) (changed bool, err error)
+	SetLinkRouteVoicePublicHost(domain, host, state string) error
+	FallBackLinkRouteVoicePublicHost(domain, host string) (changed bool, err error)
 	// Voice chat port per route-only domain, same pool. See AllocateLinkRouteVoice.
 	AllocateLinkRouteVoice(domain, region, host string, targetPort int, key []byte, min, max int) (LinkRouteVoice, error)
 	GetLinkRouteVoice(domain string) (*LinkRouteVoice, error)
@@ -275,6 +281,7 @@ type Store interface {
 	// Voice and edition of a remote route; found=false: no row. A second
 	// address of the same server is ErrRemoteVoiceTaken / ErrRemoteBedrockTaken.
 	SetRemoteRouteVoice(domain string, port *int, mod, host string) (found bool, err error)
+	SetRemoteRouteVoicePublicHost(domain, host string) (found bool, err error)
 	SetRemoteRouteEdition(domain, edition string) (found bool, err error)
 	TouchRemoteRoute(domain string) error
 	ListRemoteRoutesByServer(serverUUID string) ([]RemoteRoute, error)

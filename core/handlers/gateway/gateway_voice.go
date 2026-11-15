@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -31,6 +32,8 @@ import (
 // too old even though it has a forwarder.
 const voiceNodeSince = "2026.10.22.2"
 
+// Host is the name players' mods are told (the mod host), so the panel's
+// voice address line is right in every white-label state.
 type voiceView struct {
 	Enabled bool   `json:"enabled"`
 	Host    string `json:"host"`
@@ -39,13 +42,44 @@ type voiceView struct {
 	// Allowed is the resolved permission. The panel shows the switch when it
 	// is true, or when voice is already on so it can be turned off.
 	Allowed bool `json:"allowed"`
+	// Set only while the server has a white-label name, so an answer without
+	// one is byte for byte what it was. OurHost is our regional name, which
+	// the mod gets back on a cancel or a fall back.
+	ModHost     string `json:"modHost,omitempty"`
+	PublicHost  string `json:"publicHost,omitempty"`
+	PublicState string `json:"publicState,omitempty"`
+	OurHost     string `json:"ourHost,omitempty"`
+	// NameTarget is set whenever voice is on: the CNAME target for a
+	// white-label name, "" when the server has no own domain to put one
+	// under. NameFailingSince is the start of an active name's run of misses,
+	// PublicStateAt when PublicState last changed. Absent from an older Core.
+	NameTarget       *string    `json:"nameTarget,omitempty"`
+	NameFailingSince *time.Time `json:"nameFailingSince,omitempty"`
+	PublicStateAt    *time.Time `json:"publicStateAt,omitempty"`
 }
 
 func newVoiceView(vp *store.VoicePort, allowed bool) voiceView {
 	if vp == nil {
 		return voiceView{Allowed: allowed}
 	}
-	return voiceView{Enabled: true, Host: vp.Host, Port: vp.Port, Mod: vp.Mod, Allowed: allowed}
+	v := voiceView{Enabled: true, Host: vp.ModHost(), Port: vp.Port, Mod: vp.Mod, Allowed: allowed}
+	if vp.PublicHost != "" || vp.PublicState != "" {
+		v.ModHost, v.PublicHost, v.PublicState, v.OurHost = vp.ModHost(), vp.PublicHost, vp.PublicState, vp.Host
+	}
+	return v
+}
+
+// withRemoteVoiceName adds the white-label fields to a managed-gateway view,
+// only while there is a name, as newVoiceView does. Host stays the column's:
+// it is what the mod was told.
+// The provider's name target, failing stamp and state time pass through
+// outside that gate: the target also decides whether a name is offered.
+func withRemoteVoiceName(v voiceView, n services.RemoteVoiceName) voiceView {
+	if n.PublicHost != "" || n.PublicState != "" {
+		v.ModHost, v.PublicHost, v.PublicState, v.OurHost = v.Host, n.PublicHost, n.PublicState, n.OurHost
+	}
+	v.NameTarget, v.NameFailingSince, v.PublicStateAt = n.NameTarget, n.FailingSince, n.PublicStateAt
+	return v
 }
 
 // voiceAllowed is ResolveVoiceAllowed failing closed: a read error is "no".
@@ -82,6 +116,9 @@ func (h *GatewayHandler) GetServerVoice(w http.ResponseWriter, r *http.Request) 
 		v := voiceView{Allowed: h.voiceAllowed(srv)}
 		if on {
 			v.Enabled, v.Host, v.Port, v.Mod = true, host, port, mod
+			if n, on, err := rg.ServerVoiceName(r.Context(), srv.UUID); err == nil && on {
+				v = withRemoteVoiceName(v, n)
+			}
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": v})
 		return
@@ -92,7 +129,7 @@ func (h *GatewayHandler) GetServerVoice(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Failed to read the voice chat setting", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newVoiceView(vp, h.voiceAllowed(srv))})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": h.withVoiceNameInfo(r.Context(), newVoiceView(vp, h.voiceAllowed(srv)), srv, vp)})
 }
 
 // SetServerVoice PUT /api/servers/{id}/voice/switch - turns proximity voice
@@ -243,9 +280,11 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	merged := voicecfg.SvcEnable(content, got.Host, got.Port)
+	// The mod host: an active white-label name survives a re-enable in the
+	// same region (the row keeps it); the relays keep our name (PublishVoice).
+	merged := voicecfg.SvcEnable(content, got.ModHost(), got.Port)
 	if mod == "plasmo" {
-		merged = voicecfg.PlasmoEnable(content, got.Host, got.Port)
+		merged = voicecfg.PlasmoEnable(content, got.ModHost(), got.Port)
 	}
 	if merged != content {
 		if err := nodeops.WriteNodeFileString(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
@@ -268,7 +307,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Voice chat could not be published to the gateway. Try again.", http.StatusBadGateway)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newVoiceView(&got, true), "restartRequired": true})
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": h.withVoiceNameInfo(ctx, newVoiceView(&got, true), srv, &got), "restartRequired": true})
 }
 
 // findVoiceConfig is the voice mod config of the server's active sub-server;
@@ -375,8 +414,13 @@ func (h *GatewayHandler) enableRemoteVoice(ctx context.Context, w http.ResponseW
 			return
 		}
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true,
-		"voice": voiceView{Enabled: true, Host: host, Port: port, Mod: mod, Allowed: true}, "restartRequired": true})
+	v := voiceView{Enabled: true, Host: host, Port: port, Mod: mod, Allowed: true}
+	// The white-label fields as the GET shows them (the enable dropped the
+	// cached list, so this is one provider read); a failed read leaves them out.
+	if n, on, err := rg.ServerVoiceName(ctx, srv.UUID); err == nil && on {
+		v = withRemoteVoiceName(v, n)
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": v, "restartRequired": true})
 }
 
 // rollbackVoice undoes a failed enable through the disable path. A server that
@@ -448,6 +492,78 @@ func RevokeServerVoice(ctx context.Context, st store.Store, rdb *redis.Client, r
 		}
 	}()
 	return nil
+}
+
+// RewriteVoiceHostInBackground is the white-label fall back's config write:
+// the mod is pointed at host:port in the background and abandoned after
+// voiceWriteBackTimeout, for the reason RevokeServerVoice gives.
+func RewriteVoiceHostInBackground(st store.Store, reg *nodegrpc.Registry, srv *models.Server, host string, port int) {
+	voiceHostWriteInBackground(srv, func() { rewriteVoiceHost(st, reg, srv, host, port) })
+}
+
+// RewriteRemoteVoiceHost is the fall back's config write on the managed
+// gateway (services.VoiceHostRewriter): the sweep clears its column only once
+// this returned nil, so a node that is down is tried again next sweep. The
+// columns are read again right before the write, which runs only while they
+// still name from on port. It waits at most voiceWriteBackTimeout or ctx;
+// an abandoned write may still land, and the next sweep's write is then a
+// no-op.
+func RewriteRemoteVoiceHost(ctx context.Context, rg *services.RemoteGateway, reg *nodegrpc.Registry, srv *models.Server, from, host string, port int) error {
+	cur, curPort, _, on, err := rg.ServerVoice(srv.UUID)
+	if err != nil {
+		return err
+	}
+	if !on || cur != from || curPort != port {
+		return services.ErrVoiceRowChanged
+	}
+	done := make(chan error, 1)
+	go func() { done <- writeVoiceModHost(reg, srv, host, port) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(voiceWriteBackTimeout):
+		return fmt.Errorf("the node did not answer within %s", voiceWriteBackTimeout)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func voiceHostWriteInBackground(srv *models.Server, write func()) {
+	if srv.ActiveSubServer == "" {
+		return
+	}
+	timeout := voiceWriteBackTimeout
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		write()
+	}()
+	go func() {
+		select {
+		case <-done:
+		case <-time.After(timeout):
+			log.Printf("voice: server %d: voice host write abandoned after %s, the node did not answer", srv.ID, timeout)
+		}
+	}()
+}
+
+// rewriteVoiceHost writes host:port into the mod only while the row still
+// says so. It is read again right before the write: a name the customer set
+// or activated meanwhile (its own path wrote the config), voice turned off or
+// moved, must win over a write decided before it.
+func rewriteVoiceHost(st store.Store, reg *nodegrpc.Registry, srv *models.Server, host string, port int) {
+	cur, err := st.GetVoicePort(srv.ID)
+	if err != nil {
+		log.Printf("voice: server %d: re-read before the voice host write: %v", srv.ID, err)
+		return
+	}
+	if cur == nil || cur.ModHost() != host || cur.Port != port {
+		return
+	}
+	if err := writeVoiceModHost(reg, srv, host, port); err != nil {
+		// The start sync writes the row's host at the next start either way.
+		log.Printf("voice: server %d: write the voice host %s: %v", srv.ID, host, err)
+	}
 }
 
 // writeBackVoiceConfig strips the voice address from the mod config on the

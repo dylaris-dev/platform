@@ -546,7 +546,9 @@ func main() {
 	voiceService.SetRevoke(func(ctx context.Context, srv *models.Server) error {
 		return gateway.RevokeServerVoice(ctx, appState.Store, appState.Redis, appState.GRPCRegistry, srv)
 	})
-	voiceService.Start(bgCtx)
+	voiceService.SetHostWriteBack(func(_ context.Context, srv *models.Server, host string, port int) {
+		gateway.RewriteVoiceHostInBackground(appState.Store, appState.GRPCRegistry, srv, host, port)
+	})
 
 	// The DNS pointing check: ONE instance, so its cache, single flight and
 	// lookup slots bound the whole replica. It resolves only names that are,
@@ -559,6 +561,10 @@ func main() {
 		return services.GatewayRouteCovers(ctx, redisClient, name)
 	})
 	appState.PointingLimiter = httpx.NewIPRateLimiter()
+	// Started only now: the voice reconcile re-checks white-label names with
+	// the checker.
+	voiceService.SetPointing(appState.Pointing)
+	voiceService.Start(bgCtx)
 
 	// Bedrock: the leader rewrites each enabled server's Floodgate key into
 	// Redis every 60 s and sweeps keys that have no row.
@@ -748,7 +754,10 @@ func main() {
 	appState.Gateway = services.NewSwitchingGateway(redisGateway, appState.RemoteGateway, gatewayRemote)
 	// Replays the remote gateway's queued writes; leader-gated per tick and idle
 	// unless remote mode is on, so a local platform makes no outbound call.
-	services.StartGatewayOutbox(bgCtx, pgStore, remoteAPI, coreLeader, gatewayRemote, appState.RemoteGateway, bedrockService.ReplaceKey)
+	services.StartGatewayOutbox(bgCtx, pgStore, remoteAPI, coreLeader, gatewayRemote, appState.RemoteGateway, bedrockService.ReplaceKey,
+		func(ctx context.Context, srv *models.Server, from, host string, port int) error {
+			return gateway.RewriteRemoteVoiceHost(ctx, appState.RemoteGateway, appState.GRPCRegistry, srv, from, host, port)
+		})
 
 	// Which link serves each node is the Hub's answer (hub:node-link:<node>), not
 	// a token Core derives: a self-enrolled Link carries a generated one, and the

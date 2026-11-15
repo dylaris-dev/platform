@@ -42,9 +42,11 @@ const (
 // when a claim release lands; nil skips own-domain rows in the sweep.
 // publishKey puts a server's Floodgate key where its node reads it, reporting
 // whether the node's copy was missing or different; the sweep republishes a
-// key it has confirmed with the provider (nil: not published).
-func StartGatewayOutbox(ctx context.Context, st store.Store, api func() *remotegw.Client, el leader.Election, mode func() (remote, known bool), rg *RemoteGateway, publishKey func(ctx context.Context, uuid string, key []byte) (changed bool, err error)) {
-	l := &outboxLoop{st: st, api: api, el: el, mode: mode, now: time.Now, rg: rg, publishKey: publishKey}
+// key it has confirmed with the provider (nil: not published). rewriteVoice
+// writes the provider's host back into a server's voice mod after a
+// white-label fall back there (nil: not written).
+func StartGatewayOutbox(ctx context.Context, st store.Store, api func() *remotegw.Client, el leader.Election, mode func() (remote, known bool), rg *RemoteGateway, publishKey func(ctx context.Context, uuid string, key []byte) (changed bool, err error), rewriteVoice VoiceHostRewriter) {
+	l := &outboxLoop{st: st, api: api, el: el, mode: mode, now: time.Now, rg: rg, publishKey: publishKey, rewriteVoice: rewriteVoice}
 	go func() {
 		t := time.NewTicker(outboxTick)
 		defer t.Stop()
@@ -68,6 +70,8 @@ type outboxLoop struct {
 	rg   *RemoteGateway
 	// publishKey republishes a Floodgate key the sweep confirmed; may be nil.
 	publishKey func(ctx context.Context, uuid string, key []byte) (changed bool, err error)
+	// rewriteVoice writes a fall back into the voice mod; may be nil.
+	rewriteVoice VoiceHostRewriter
 	// Touched only by the loop goroutine.
 	nextSweep time.Time
 	// pauseUntil: the provider rejected the key or rate-limited us; nothing is
@@ -109,7 +113,7 @@ func (l *outboxLoop) tick(ctx context.Context) {
 	} else if n > 0 {
 		log.Printf("[gateway-outbox] forgot %d link kit(s) the provider has removed", n)
 	}
-	adopted, repaired, foreign, err := reconcileRemoteRoutes(ctx, l.st, c, l.rg, l.publishKey)
+	adopted, repaired, foreign, err := reconcileRemoteRoutes(ctx, l.st, c, l.rg, l.publishKey, l.rewriteVoice)
 	if err != nil {
 		log.Printf("[gateway-outbox] reconcile: %v", err)
 	} else if adopted+repaired > 0 {
@@ -192,7 +196,7 @@ func releaseOrphanProviderClaims(ctx context.Context, st store.Store, rg *Remote
 //
 // A row present on the provider also has its voice and Bedrock compared with
 // the provider's (reconcileRouteExtras), within one re-assert budget per pass.
-func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Client, rg *RemoteGateway, publishKey func(ctx context.Context, uuid string, key []byte) (changed bool, err error)) (adopted, repaired, foreign int, err error) {
+func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Client, rg *RemoteGateway, publishKey func(ctx context.Context, uuid string, key []byte) (changed bool, err error), rewriteVoice VoiceHostRewriter) (adopted, repaired, foreign int, err error) {
 	// The rows first: with the provider list read first, a route another
 	// leader's drain deleted (provider route, then row) in between was adopted
 	// back from the stale list. The repair below re-reads its row for the
@@ -347,7 +351,7 @@ func reconcileRemoteRoutes(ctx context.Context, st store.Store, c *remotegw.Clie
 					return adopted, repaired, foreign, err
 				}
 				before := extrasBudget
-				if err := reconcileRouteExtras(ctx, st, c, publishKey, r, p, srv, &extrasBudget); err != nil {
+				if err := reconcileRouteExtras(ctx, st, c, publishKey, rewriteVoice, r, p, srv, &extrasBudget); err != nil {
 					log.Printf("[gateway-outbox] voice/Bedrock of %s left for the next sweep: %v", r.Domain, err)
 				}
 				if extrasBudget < before {

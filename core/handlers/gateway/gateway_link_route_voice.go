@@ -14,6 +14,7 @@ import (
 	"dylaris-core/handlers/guard"
 
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/validate"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -30,16 +31,28 @@ import (
 // linkCapVoice is what a link announces when it carries route-only voice.
 const linkCapVoice = "voice"
 
-// Host is the name the voice mod is told (no port): our regional voice name
+// Host is our name for the voice address (no port): our regional voice name
 // for an address on the customer's own domain, else the address itself.
+// ModHost is the name the voice mod is told: the white-label PublicHost while
+// PublicState is active, else Host.
 type linkRouteVoiceView struct {
-	Enabled    bool   `json:"enabled"`
-	Host       string `json:"host,omitempty"`
-	Port       int    `json:"port,omitempty"`
-	TargetPort int    `json:"target_port,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	Host        string `json:"host,omitempty"`
+	Port        int    `json:"port,omitempty"`
+	TargetPort  int    `json:"target_port,omitempty"`
+	ModHost     string `json:"mod_host,omitempty"`
+	PublicHost  string `json:"public_host"`
+	PublicState string `json:"public_state"`
+	// NameTarget is the CNAME target for a white-label name, "" for an
+	// address on our domains (no name of its own). FailingSince is the start
+	// of an active name's run of misses, PublicStateAt when PublicState last
+	// changed; null otherwise.
+	NameTarget    string     `json:"name_target"`
+	FailingSince  *time.Time `json:"failing_since"`
+	PublicStateAt *time.Time `json:"public_state_at"`
 }
 
-func newLinkRouteVoiceView(v *store.LinkRouteVoice) linkRouteVoiceView {
+func newLinkRouteVoiceView(v *store.LinkRouteVoice, ni voiceNameInfo) linkRouteVoiceView {
 	if v == nil {
 		return linkRouteVoiceView{}
 	}
@@ -47,7 +60,26 @@ func newLinkRouteVoiceView(v *store.LinkRouteVoice) linkRouteVoiceView {
 	if host == "" {
 		host = v.Domain
 	}
-	return linkRouteVoiceView{Enabled: true, Host: host, Port: v.Port, TargetPort: v.TargetPort}
+	out := linkRouteVoiceView{Enabled: true, Host: host, Port: v.Port, TargetPort: v.TargetPort,
+		ModHost: v.ModHost(), PublicHost: v.PublicHost, PublicState: v.PublicState,
+		FailingSince: ni.failingSince(v.PublicHost, v.PublicState), PublicStateAt: v.PublicStateAt}
+	// The same admission SetLinkRouteVoice applies to a public_host.
+	if !reservedName(validate.NormHost(v.Domain), ni.reserved) {
+		out.NameTarget = ni.target(v.Region, v.Host)
+	}
+	return out
+}
+
+// activeVoiceNames is the white-label names of rows whose name is active, the
+// ones a failing stamp is read for.
+func activeVoiceNames(rows ...*store.LinkRouteVoice) []string {
+	var out []string
+	for _, v := range rows {
+		if v != nil && v.PublicState == store.VoicePublicActive && v.PublicHost != "" {
+			out = append(out, v.PublicHost)
+		}
+	}
+	return out
 }
 
 // routeLookupFailed answers a route table that could not be read: a server
@@ -122,11 +154,18 @@ func (h *GatewayHandler) linkRouteVoiceRefused(r *http.Request, ownerID string) 
 }
 
 // SetLinkRouteVoice PUT /api/gateway/link-routes/{domain}/voice - body
-// {"enabled": bool, "target_port": int}. target_port is the voice mod's port on
-// the route's target host, default 24454. Off is never refused, as for a
-// server. An address on the customer's own domain gets voice once its DNS
-// points at one of our regions, and its mod is told OUR regional voice name
-// (the answer's host).
+// {"enabled": bool, "target_port": int, "public_host": string}. target_port is
+// the voice mod's port on the route's target host, default 24454. Off is never
+// refused, as for a server. An address on the customer's own domain gets voice
+// once its DNS points at one of our regions, and its mod is told OUR regional
+// voice name (the answer's host).
+//
+// public_host is the optional white-label name (absent: unchanged, "":
+// cleared), the address or a name under it. It is checked before voice is
+// turned on, so "could not check" changes nothing; a name that does not point
+// at the voice region is stored pending and answered 409
+// voice_host_not_pointing with voice on and the mod on our name (mod_host).
+// While a name is active a miss changes nothing but the answer (keepActive).
 func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value("userID").(string)
 	isAdmin := r.Context().Value("isAdmin").(bool)
@@ -135,8 +174,9 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		Enabled    *bool `json:"enabled"`
-		TargetPort int   `json:"target_port"`
+		Enabled    *bool   `json:"enabled"`
+		TargetPort int     `json:"target_port"`
+		PublicHost *string `json:"public_host"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.Enabled == nil {
 		httpx.SendJSONError(w, `Invalid request: expected {"enabled": true|false, "target_port": 1-65535}`, http.StatusBadRequest)
@@ -167,7 +207,7 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 			httpx.SendJSONError(w, "Failed to turn voice chat off", http.StatusInternalServerError)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newLinkRouteVoiceView(nil)})
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newLinkRouteVoiceView(nil, voiceNameInfo{})})
 		return
 	}
 
@@ -204,6 +244,24 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONErrorCode(w, refusal, "voice_not_allowed", http.StatusConflict)
 		return
 	}
+	var name string
+	var edges []services.GatewayEdgeInfo
+	if req.PublicHost != nil {
+		if name = validate.NormHost(*req.PublicHost); name != "" {
+			hosters, _, _ := h.loadGatewayDomainConfig()
+			edges = services.GetEdgesFromRedis(ctx, h.d.Redis)
+			reserved := voiceNameReserved(hosters, edges)
+			own := []string{domain}
+			if reservedName(domain, reserved) {
+				own = nil // an address on our domains has no name of its own
+			}
+			var ok bool
+			if name, ok = validVoiceName(name, own, reserved); !ok {
+				voiceNameInvalid(w, name, own)
+				return
+			}
+		}
+	}
 	if ok, err := services.LinkAnnouncesCap(ctx, h.d.Redis, rt.LinkToken, linkCapVoice); err != nil || !ok {
 		httpx.SendJSONErrorCode(w, "The link of this route has not reported that it can carry voice chat. Make sure it is running and up to date, then try again.", "link_without_voice", http.StatusConflict)
 		return
@@ -217,6 +275,23 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 	region, host, ok := h.linkRouteVoiceRegion(ctx, w, r, rt, prior)
 	if !ok {
 		return
+	}
+	var nameState, nameCode, nameMsg string
+	nameStatus := http.StatusOK
+	if name != "" {
+		nameState, nameCode, nameStatus, nameMsg = h.voiceNameVerdict(ctx, r, rt.OwnerID, name, region, "this address's", edges)
+		if nameState == "" {
+			httpx.SendJSONErrorCode(w, nameMsg, nameCode, nameStatus)
+			return
+		}
+		// A row moving region loses its name with the reallocation.
+		if prior != nil && prior.Region == region {
+			if keepActive(nameState, prior.PublicState) {
+				nameState = "" // the active name stays, nothing is stored
+			} else {
+				nameState = keepFallenBack(nameState, name, prior.PublicHost, prior.PublicState)
+			}
+		}
 	}
 	relays, err := services.LiveVoiceRelays(ctx, h.d.Redis)
 	if err != nil {
@@ -263,7 +338,30 @@ func (h *GatewayHandler) SetLinkRouteVoice(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONError(w, "Voice chat could not be published to the gateway. Try again.", http.StatusBadGateway)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newLinkRouteVoiceView(&got)})
+	if req.PublicHost != nil && (name == "" || nameState != "") {
+		if err := h.d.Store.SetLinkRouteVoicePublicHost(domain, name, nameState); err != nil {
+			log.Printf("voice: route %s: save the voice name: %v", domain, err)
+			httpx.SendJSONError(w, "Failed to save the voice chat name", http.StatusInternalServerError)
+			return
+		}
+		if got.PublicState != nameState {
+			now := time.Now()
+			got.PublicStateAt = &now // what the setter just stored
+		}
+		if nameState == "" {
+			got.PublicStateAt = nil
+		}
+		got.PublicHost, got.PublicState = name, nameState
+	}
+	if nameCode != "" {
+		httpx.SendJSONErrorCode(w, nameMsg, nameCode, nameStatus)
+		return
+	}
+	if edges == nil {
+		edges = services.GetEdgesFromRedis(ctx, h.d.Redis)
+	}
+	ni := h.loadVoiceNameInfo(edges, activeVoiceNames(&got))
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newLinkRouteVoiceView(&got, ni)})
 }
 
 // linkRouteVoiceRegion picks the relay region and the host the mod is told,

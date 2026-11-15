@@ -255,6 +255,9 @@ func TestProviderStatusVoiceCodes(t *testing.T) {
 	}{
 		{"dns_lookup_failed", retry, http.StatusServiceUnavailable, http.StatusServiceUnavailable},
 		{"rate_limited", "Too many DNS checks. Wait a minute.", http.StatusTooManyRequests, http.StatusServiceUnavailable},
+		// The white-label voice name (Part 3).
+		{"voice_host_invalid", "voice.other.tld has to be play.acme.tld or a name under it.", http.StatusBadRequest, http.StatusBadRequest},
+		{"voice_host_not_pointing", "voice.acme.tld points at the gateway's region us, but this address's voice chat runs in eu. Point it at voice.eu.example.com.", http.StatusConflict, http.StatusConflict},
 	} {
 		t.Run(c.code, func(t *testing.T) {
 			err := fmt.Errorf("wrapped: %w", &remotegw.APIError{Status: c.in, Code: c.code, Message: c.providerMsg})

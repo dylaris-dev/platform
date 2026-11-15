@@ -4,8 +4,10 @@ import React, { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import Switch from '@/components/ui/Switch';
 import CopyText from '@/components/ui/CopyText';
-import { setLinkRouteVoice, type LinkRouteVoice } from '@/lib/api';
-import { linkRouteVoiceConfig, showVoiceSwitch, validVoicePort, voiceErrorMessage, voiceTargetHost } from '@/lib/voiceChat';
+import VoiceNameState from '@/components/VoiceNameState';
+import { getLinkRoutes, setLinkRouteVoice, type LinkRouteVoice } from '@/lib/api';
+import { refusalText } from '@/lib/gatewayProvider';
+import { fallenBackAt, linkRouteVoiceConfig, showVoiceName, showVoiceSwitch, validVoicePort, voiceErrorMessage, voiceTargetHost } from '@/lib/voiceChat';
 
 const DEFAULT_VOICE_PORT = 24454;
 
@@ -24,6 +26,9 @@ export default function LinkRouteVoiceSwitch({ domain, voice, allowed, onSaved }
     const [targetPort, setTargetPort] = useState(voice?.target_port || DEFAULT_VOICE_PORT);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
+    const [nameBusy, setNameBusy] = useState(false);
+    // The sentence of the last check this view made, for the pending line.
+    const [lastCheck, setLastCheck] = useState('');
 
     if (!showVoiceSwitch(allowed, enabled)) return null;
 
@@ -48,6 +53,41 @@ export default function LinkRouteVoiceSwitch({ domain, voice, allowed, onSaved }
         }
     };
 
+    // Resolves true when the name field may close. The set re-sends voice on
+    // with the current mod port, which is how Core takes public_host.
+    const setName = async (name: string): Promise<boolean> => {
+        setError('');
+        setNameBusy(true);
+        try {
+            const res = await setLinkRouteVoice(domain, true, voice?.target_port || DEFAULT_VOICE_PORT, name);
+            if (res?.success === false || !res?.voice) {
+                const msg = refusalText(res, 'The voice chat name could not be saved.');
+                if (res?.code !== 'voice_host_not_pointing') {
+                    setError(msg);
+                    return false;
+                }
+                // Core may have stored the name pending; this answer has no view.
+                const routes = await getLinkRoutes();
+                const fresh = Array.isArray(routes) ? routes.find(r => r.domain === domain)?.voice : undefined;
+                if (fresh) onSaved(fresh);
+                if (fresh?.public_state === 'pending') {
+                    setLastCheck(msg);
+                    return true;
+                }
+                setError(msg);
+                return false;
+            }
+            onSaved(res.voice);
+            setLastCheck('');
+            return true;
+        } catch {
+            setError('The request could not be sent.');
+            return false;
+        } finally {
+            setNameBusy(false);
+        }
+    };
+
     const cfg = enabled && voice?.port ? linkRouteVoiceConfig(voiceTargetHost(voice, domain), voice.port, voice.target_port || DEFAULT_VOICE_PORT) : null;
 
     return (
@@ -56,7 +96,7 @@ export default function LinkRouteVoiceSwitch({ domain, voice, allowed, onSaved }
                 <span className="text-xs text-(--base-07)">Voice chat</span>
                 <span className="flex items-center gap-2" aria-busy={busy}>
                     {busy && <Loader2 size={14} className="animate-spin text-(--base-06)" aria-hidden="true" />}
-                    <Switch checked={enabled} onChange={toggle} disabled={busy} ariaLabel={`Voice chat for ${domain}`} />
+                    <Switch checked={enabled} onChange={toggle} disabled={busy || nameBusy} ariaLabel={`Voice chat for ${domain}`} />
                 </span>
                 {!enabled && (
                     <label className="flex items-center gap-1.5 text-xs text-(--base-06)">
@@ -74,6 +114,25 @@ export default function LinkRouteVoiceSwitch({ domain, voice, allowed, onSaved }
                     </label>
                 )}
             </div>
+            {/* Core's name_target says whether this address can take a name of its own; an older Core
+                sends none, and then only an address whose host is not the address itself (an own domain) can. */}
+            {enabled && voice?.host && voice.port && showVoiceName(voice.public_state, voice.name_target, voice.host !== domain) ? (
+                <VoiceNameState
+                    input={{
+                        state: voice.public_state,
+                        ourHost: voice.host,
+                        name: voice.public_host,
+                        port: voice.port,
+                        target: voice.name_target || undefined,
+                        lastCheck,
+                        failingSince: voice.failing_since,
+                        fallenBackAt: fallenBackAt(voice.public_state, voice.public_state_at),
+                        routeOnly: true,
+                    }}
+                    busy={busy || nameBusy}
+                    onSet={setName}
+                />
+            ) : null}
             {cfg && (
                 <div className="mt-2 space-y-1.5 text-xs text-(--base-06)">
                     <p>Set this in your voice mod&apos;s config, then restart the server. Your link forwards to port {voice?.target_port || DEFAULT_VOICE_PORT} on the route&apos;s target host.</p>

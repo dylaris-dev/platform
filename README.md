@@ -372,6 +372,17 @@ your Core ---+ HTTPS: routes, link kits, usage
   off on those addresses first. An older Core hands the link the customer's own
   domain as the voice name; a domain that reaches us by SRV record only has no
   address record, so voice stops silently while it still reads as on.
+- **No rollback below 2026.11.15.3 while voice names on own domains are set.**
+  Clear the white-label voice names (or accept the gap for the rollback window)
+  before rolling the provider Core back below this release. An older Core
+  ignores the name and nothing checks its record any more, so a hosted server
+  keeps announcing the customer's name even after it stops pointing at the
+  gateway. A customer Core below this release cannot follow the provider's
+  switch back either.
+- **Rolling update with voice names.** While an older and a newer Core replica
+  run side by side, a server started through the older replica gets the
+  gateway's voice name in its mod config instead of its active own-domain name;
+  its next start through a new replica writes the name again.
 
 ### Main failure sources and operational gotchas
 

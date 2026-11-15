@@ -74,7 +74,16 @@ func (s *extrasStore) SetRemoteRouteVoice(domain string, port *int, mod, host st
 	if port != nil && s.voiceSetErr != nil {
 		return false, s.voiceSetErr
 	}
-	return s.setRow(domain, func(r *store.RemoteRoute) { r.VoicePort, r.VoiceMod, r.VoiceHost = port, mod, host }), nil
+	return s.setRow(domain, func(r *store.RemoteRoute) {
+		r.VoicePort, r.VoiceMod, r.VoiceHost = port, mod, host
+		if port == nil {
+			r.VoicePublicHost = ""
+		}
+	}), nil
+}
+
+func (s *extrasStore) SetRemoteRouteVoicePublicHost(domain, host string) (bool, error) {
+	return s.setRow(domain, func(r *store.RemoteRoute) { r.VoicePublicHost = host }), nil
 }
 
 func (s *extrasStore) SetRemoteRouteEdition(domain, edition string) (bool, error) {
@@ -121,6 +130,8 @@ type extrasEnv struct {
 	logs      *bytes.Buffer
 	// later moves the sweep's clock on, as the next sweep's wait would.
 	later func(time.Duration)
+	// rewrite is the sweep's voice mod writer; nil writes nothing.
+	rewrite VoiceHostRewriter
 }
 
 func newExtrasEnv(t *testing.T) *extrasEnv {
@@ -202,7 +213,7 @@ func (e *extrasEnv) bedrockOn(t *testing.T, srv models.Server, domain string, ja
 
 func (e *extrasEnv) sweep(t *testing.T) {
 	t.Helper()
-	if _, _, _, err := reconcileRemoteRoutes(context.Background(), e.st, e.c, nil, e.publish); err != nil {
+	if _, _, _, err := reconcileRemoteRoutes(context.Background(), e.st, e.c, nil, e.publish, e.rewrite); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -621,7 +632,7 @@ func TestReconcileRouteExtrasIgnoresAnOlderProvider(t *testing.T) {
 	e.st.perms["server:"+strconv.Itoa(srv.ID)] = false
 	budget := routeExtrasPerSweep
 	before := len(e.fake.Calls())
-	if err := reconcileRouteExtras(context.Background(), e.st, e.c, e.publish, e.row(d), remotegw.Route{Domain: d, LinkID: e.kit.LinkID}, srv, &budget); err != nil {
+	if err := reconcileRouteExtras(context.Background(), e.st, e.c, e.publish, nil, e.row(d), remotegw.Route{Domain: d, LinkID: e.kit.LinkID}, srv, &budget); err != nil {
 		t.Fatal(err)
 	}
 	if r := e.row(d); r.VoicePort == nil || r.Edition != "both" || len(openExtrasOps(e.st)) != 0 || len(e.fake.Calls()) != before || budget != routeExtrasPerSweep {

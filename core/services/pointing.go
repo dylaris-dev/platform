@@ -245,6 +245,27 @@ func (c *PointingChecker) RegionOf(ctx context.Context, name string) (string, bo
 	return VoiceRegionFor(normaliseHost(name), c.edges(ctx))
 }
 
+// Admits is Check's admission alone (no DNS): whether name is a regional name
+// or lies under a live gateway route. known is false when that cannot be told
+// (no admission wired, a read error), which a caller must treat as unknown.
+func (c *PointingChecker) Admits(ctx context.Context, name string) (admitted, known bool) {
+	if c == nil || c.admitted == nil {
+		return false, false
+	}
+	name = normaliseHost(name)
+	ok, err := c.admitted(ctx, name)
+	if err != nil {
+		return false, false
+	}
+	if !ok {
+		// Check answers a regional name before it asks the admission.
+		if _, regional := VoiceRegionFor(name, c.edges(ctx)); regional {
+			return true, true
+		}
+	}
+	return ok, true
+}
+
 // pointingNameShape is the cheap sanity check before anything is asked.
 func pointingNameShape(name string) bool {
 	if name == "" || len(name) > 253 || !strings.Contains(name, ".") {
@@ -331,13 +352,15 @@ func (c *PointingChecker) resolve(ctx context.Context, name string, purpose Poin
 // judge asks CNAME, A and AAAA of one name concurrently. decided is false
 // only when the name has no A answer, which is where SRV takes over.
 //
-// For Bedrock ANY AAAA in the answer is ipv6, at the end of an alias too: our
+// For Bedrock and a white-label voice name ANY AAAA in the answer is ipv6, at
+// the end of an alias too: players connect to that very name, and our
 // regional names carry no AAAA, so an AAAA always leads somewhere else. It
 // therefore waits for the AAAA even when the alias is our own name, which
-// also keeps the verdict the same whichever hop Go reports. The voice
-// purposes keep the alias exemption below.
+// also keeps the verdict the same whichever hop Go reports. The voice region
+// lookup keeps the alias exemption below: it only picks a region, and the mod
+// is told our own name.
 func (c *PointingChecker) judge(ctx context.Context, name string, purpose PointingPurpose) (p Pointing, decided bool) {
-	strictV6 := purpose == PurposeBedrock
+	strictV6 := purpose == PurposeBedrock || purpose == PurposeVoiceName
 	type cnameRes struct {
 		name string
 		err  error

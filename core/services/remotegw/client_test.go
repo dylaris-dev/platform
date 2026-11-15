@@ -3,6 +3,7 @@ package remotegw_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -361,5 +362,66 @@ func TestClientVoiceHostOnAnOldProvider(t *testing.T) {
 				t.Fatalf("got %+v, %v; want host %q", v, err, c.want)
 			}
 		})
+	}
+}
+
+// Review Focus 7: a provider older than the white-label name (7b-2 era: no
+// host either) answers without mod_host / public_*; the client reads them as
+// "", which its callers take as "the provider offers no name". A newer one is
+// read field by field, and the request carries public_host.
+func TestClientWhiteLabelFieldsOnAnOldProvider(t *testing.T) {
+	for _, c := range []struct{ name, body, mod, public, state string }{
+		{"7b-2 provider", `{"success":true,"voice":{"enabled":true,"port":26000,"target_port":24454}}`, "", "", ""},
+		{"part 1 provider", `{"success":true,"voice":{"enabled":true,"host":"voice.eu.example.com","port":26000,"target_port":24454}}`, "", "", ""},
+		{"part 3 provider", `{"success":true,"voice":{"enabled":true,"host":"voice.eu.example.com","port":26000,"target_port":24454,"mod_host":"voice.acme.tld","public_host":"voice.acme.tld","public_state":"active"}}`, "voice.acme.tld", "voice.acme.tld", "active"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var sent string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				sent = r.Method + " " + r.URL.Path + " " + string(b)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(c.body))
+			}))
+			defer srv.Close()
+			v, err := remotegw.New(srv.URL, func() string { return "k" }).SetVoiceName(context.Background(), "acme.tld", "voice.acme.tld")
+			if err != nil || v.ModHost != c.mod || v.PublicHost != c.public || v.PublicState != c.state || v.Port != 26000 {
+				t.Fatalf("got %+v, %v", v, err)
+			}
+			if !strings.Contains(sent, "PUT /api/external/gateway/routes/acme.tld/voice") || !strings.Contains(sent, `"public_host":"voice.acme.tld"`) || !strings.Contains(sent, `"enabled":true`) {
+				t.Fatalf("request %s", sent)
+			}
+		})
+	}
+}
+
+// The fake follows the provider: an active name is the mod host, a pending
+// one is a 409 that keeps an active name, a fall back returns the mod to the
+// provider's own host, and "" clears.
+func TestFakeVoiceName(t *testing.T) {
+	c, f := newClient(t)
+	f.AddRoute("link-1", "acme.tld", "mc-srv-7", 25565)
+	if _, err := c.SetVoice(context.Background(), "acme.tld", true, 24454); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.SetVoiceName(context.Background(), "acme.tld", "voice.other.tld"); !remotegw.IsCode(err, "voice_host_invalid") {
+		t.Fatalf("outside the address: %v", err)
+	}
+	v, err := c.SetVoiceName(context.Background(), "acme.tld", "voice.acme.tld")
+	if err != nil || v.ModHost != "voice.acme.tld" || v.PublicState != "active" {
+		t.Fatalf("active: %+v %v", v, err)
+	}
+	f.SetVoiceNameState("acme.tld", "pending")
+	if _, err := c.SetVoiceName(context.Background(), "acme.tld", "v2.acme.tld"); !remotegw.IsCode(err, "voice_host_not_pointing") {
+		t.Fatalf("pending: %v", err)
+	}
+	f.FallBack("acme.tld")
+	v, err = c.SetVoice(context.Background(), "acme.tld", true, 24454)
+	if err != nil || v.ModHost != "acme.tld" || v.PublicHost != "voice.acme.tld" || v.PublicState != "fallen_back" {
+		t.Fatalf("fallen back: %+v %v", v, err)
+	}
+	v, err = c.SetVoiceName(context.Background(), "acme.tld", "")
+	if err != nil || v.ModHost != "acme.tld" || v.PublicHost != "" || v.PublicState != "" {
+		t.Fatalf("cleared: %+v %v", v, err)
 	}
 }

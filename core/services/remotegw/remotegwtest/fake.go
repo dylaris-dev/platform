@@ -48,6 +48,10 @@ type fakeRoute struct {
 type fakeVoice struct {
 	port, targetPort int
 	host             string
+	// The white-label name and its state ('', pending, active, fallen_back).
+	publicHost, publicState string
+	// What the provider's view adds for the panel (SetVoiceNameView).
+	failingSince, publicStateAt *string
 }
 
 type fakeEditions struct {
@@ -132,6 +136,9 @@ type Fake struct {
 	// voiceDNS: the provider's answer to a NEW voice entry on an own domain
 	// whose DNS check did not pass, [code, message] (SetVoiceDNS).
 	voiceDNS map[string][2]string
+	// voiceNameState: the provider's verdict on a white-label name set on an
+	// address (SetVoiceNameState); absent is active.
+	voiceNameState map[string]string
 	// bedrockDNS: the provider's answer to ADDING Bedrock to an own domain
 	// whose DNS check did not pass, [code, message] (SetBedrockDNS).
 	bedrockDNS map[string][2]string
@@ -165,7 +172,8 @@ func NewFake(t testing.TB) *Fake {
 	t.Helper()
 	f := &Fake{key: "dyl_fake_provider_key", nextID: 1, published: map[string]bool{}, checked: map[string]time.Time{},
 		nextVoicePort: fakeVoicePortMin, players: map[string][2]int{}, voiceHosts: map[string]string{}, voiceDNS: map[string][2]string{},
-		bedrockDNS: map[string][2]string{}, bedrockDNSState: map[string]fakeDNSState{}}
+		voiceNameState: map[string]string{},
+		bedrockDNS:     map[string][2]string{}, bedrockDNSState: map[string]fakeDNSState{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -760,6 +768,52 @@ func (f *Fake) SetVoiceDNS(domain, code, message string) {
 	f.voiceDNS[domain] = [2]string{code, message}
 }
 
+// SetVoiceNameState sets the provider's verdict on a white-label name set on
+// domain: active (the default), pending (stored, 409 voice_host_not_pointing),
+// dns_lookup_failed (503) or rate_limited (429), both storing nothing. While
+// a name is active a verdict that is not keeps it, as on the provider.
+func (f *Fake) SetVoiceNameState(domain, state string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.voiceNameState[domain] = state
+}
+
+// SetVoiceNameView sets the failing stamp and the state time domain's voice
+// view answers ("" is null). Its name_target is the voice host: the
+// provider's regional voice name for an own domain, "" for its own domains.
+func (f *Fake) SetVoiceNameView(domain, failingSince, publicStateAt string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rt := f.route(domain)
+	if rt == nil || rt.voice == nil {
+		return
+	}
+	ptr := func(s string) *string {
+		if s == "" {
+			return nil
+		}
+		return &s
+	}
+	rt.voice.failingSince, rt.voice.publicStateAt = ptr(failingSince), ptr(publicStateAt)
+}
+
+// FallBack does what the provider's background re-check does once domain's
+// active white-label name stops pointing at it: fallen_back, and the mod is
+// told the provider's own host again.
+func (f *Fake) FallBack(domain string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if rt := f.route(domain); rt != nil && rt.voice != nil && rt.voice.publicState == "active" {
+		rt.voice.publicState = "fallen_back"
+	}
+}
+
+// VoiceNameMessage is the fake provider's sentence for a voice name answer
+// with code, so a test can tell it was passed through verbatim.
+func VoiceNameMessage(code, name string) string {
+	return "fake provider " + code + ": " + name
+}
+
 // SetBedrockRefusal makes ADDING Bedrock answer 409 with code
 // (bedrock_disabled, bedrock_unavailable, kit_retiring); "" lets it through.
 func (f *Fake) SetBedrockRefusal(code string) {
@@ -863,7 +917,13 @@ func voiceView(domain string, v *fakeVoice) map[string]interface{} {
 	if host == "" {
 		host = domain
 	}
-	return map[string]interface{}{"enabled": true, "host": host, "port": v.port, "target_port": v.targetPort}
+	mod := host
+	if v.publicState == "active" {
+		mod = v.publicHost
+	}
+	return map[string]interface{}{"enabled": true, "host": host, "port": v.port, "target_port": v.targetPort,
+		"mod_host": mod, "public_host": v.publicHost, "public_state": v.publicState,
+		"name_target": v.host, "failing_since": v.failingSince, "public_state_at": v.publicStateAt}
 }
 
 // bedrockView is the provider's linkRouteBedrockView; an address never given
@@ -928,7 +988,38 @@ func (f *Fake) setVoice(w http.ResponseWriter, domain string, body map[string]in
 		f.nextVoicePort++
 	}
 	rt.voice.targetPort = int(target)
+	if name, ok := body["public_host"].(string); ok {
+		if code := f.setVoiceName(domain, rt.voice, strings.ToLower(name)); code != "" {
+			status := map[string]int{"voice_host_invalid": 400, "voice_host_not_pointing": 409, "dns_lookup_failed": 503, "rate_limited": 429}[code]
+			handlerError(w, status, code, VoiceNameMessage(code, name))
+			return
+		}
+	}
 	writeJSON(w, 200, map[string]interface{}{"success": true, "voice": voiceView(domain, rt.voice)})
+}
+
+// setVoiceName follows the provider's public_host: "" clears, a name must be
+// the address or under it, and only an active verdict answers 200.
+func (f *Fake) setVoiceName(domain string, v *fakeVoice, name string) (code string) {
+	if name == "" {
+		v.publicHost, v.publicState = "", ""
+		return ""
+	}
+	if name != domain && !strings.HasSuffix(name, "."+domain) {
+		return "voice_host_invalid"
+	}
+	state := f.voiceNameState[domain]
+	switch state {
+	case "dns_lookup_failed", "rate_limited":
+		return state
+	case "", "active":
+		v.publicHost, v.publicState = name, "active"
+		return ""
+	}
+	if v.publicState != "active" {
+		v.publicHost, v.publicState = name, state
+	}
+	return "voice_host_not_pointing"
 }
 
 // setBedrock follows the provider's SetLinkRouteBedrock: only ADDING Bedrock

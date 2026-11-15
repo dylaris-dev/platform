@@ -289,10 +289,21 @@ type VoiceService struct {
 	// write-back runs in the background. It lives in handlers, which can reach
 	// the node; nil skips revocation.
 	revoke func(ctx context.Context, srv *models.Server) error
+	// pointing re-checks the white-label voice names; nil skips the step.
+	pointing *PointingChecker
+	// hostWriteBack points a server's voice mod at host:port without waiting
+	// on the node (it lives in handlers, like revoke); nil skips the write and
+	// the start sync applies the row at the next start.
+	hostWriteBack func(ctx context.Context, srv *models.Server, host string, port int)
+	now           func() time.Time
+	// nameTried is the last re-check attempt per white-label name, kept by
+	// the leader's reconcile goroutine only. An unknown answer stores nothing,
+	// so without it that name would stay the oldest and head every batch.
+	nameTried map[string]time.Time
 }
 
 func NewVoiceService(st store.Store, rdb *redis.Client) *VoiceService {
-	return &VoiceService{store: st, redis: rdb}
+	return &VoiceService{store: st, redis: rdb, now: time.Now}
 }
 
 // SetLeader wires the leader-election gate. Call once at boot.
@@ -305,6 +316,16 @@ func (v *VoiceService) SetGatewayRemote(fn func() (remote, known bool)) { v.gate
 // SetRevoke wires the disable path the reconcile runs for a server that is no
 // longer allowed voice. Call once at boot.
 func (v *VoiceService) SetRevoke(f func(ctx context.Context, srv *models.Server) error) { v.revoke = f }
+
+// SetPointing wires the shared pointing checker for the white-label re-check.
+// Call once at boot, before Start.
+func (v *VoiceService) SetPointing(c *PointingChecker) { v.pointing = c }
+
+// SetHostWriteBack wires the config write of a white-label fall back. Call
+// once at boot, before Start.
+func (v *VoiceService) SetHostWriteBack(f func(ctx context.Context, srv *models.Server, host string, port int)) {
+	v.hostWriteBack = f
+}
 
 func (v *VoiceService) Start(ctx context.Context) {
 	if v.redis == nil {
@@ -423,7 +444,188 @@ func (v *VoiceService) Reconcile(ctx context.Context) error {
 			return fmt.Errorf("sweep voice orphans: %w", err)
 		}
 	}
+	// Last, under its own budget: a hung resolver must not delay the work above.
+	v.recheckVoiceNames(ctx)
 	return nil
+}
+
+// The white-label re-check cadence (spec 7.4, owner decision). Hourly while a
+// name works, every 5 minutes while it fails; a name falls back after three
+// definitive misses spanning at least 15 minutes, so one flapping resolver
+// answer or a record mid-edit never moves it, and a removed record is acted
+// on in about 15 minutes. At most voiceNameBatch names a tick, and the whole
+// step ends within voiceNameStepBudget: it runs on the goroutine that also
+// republishes, sweeps and meters.
+const (
+	voiceNameRecheckHealthy = time.Hour
+	voiceNameRecheckFailing = 5 * time.Minute
+	voiceNameMisses         = 3
+	voiceNameMinSpan        = 15 * time.Minute
+	voiceNameBatch          = 20
+	voiceNameStepBudget     = 10 * time.Second
+)
+
+// voiceName is one active white-label name: a server's (serverID set) or a
+// route-only address's (domain set). ours is OUR name the mod falls back to.
+type voiceName struct {
+	host, key, region string
+	serverID          int
+	domain            string
+	ours              string
+	port              int
+}
+
+// recheckVoiceNames re-checks the active white-label names that are due and
+// falls a name back to ours once its record has stopped pointing at the voice
+// region (another region is a miss: the relay runs in the row's region). Only
+// active -> fallen_back: a fallen back name is not checked again, only the
+// customer's Check again returns it. The port, the uplink key and the relay
+// keys are never touched; voice keeps working on our name.
+//
+// The checker's raw answer is stored, so an ok in another region stays ok
+// for the Bedrock display of the same name; only the run (misses,
+// failing_since) counts it as a miss here. "Could not check" stores nothing.
+func (v *VoiceService) recheckVoiceNames(ctx context.Context) {
+	if v.pointing == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, voiceNameStepBudget)
+	defer cancel()
+	ports, err := v.store.ListVoicePorts()
+	if err != nil {
+		log.Printf("[voice] white-label re-check: list voice ports: %v", err)
+		return
+	}
+	links, err := v.store.ListLinkRouteVoice()
+	if err != nil {
+		log.Printf("[voice] white-label re-check: list route voice ports: %v", err)
+		return
+	}
+	var names []voiceName
+	for _, p := range ports {
+		if p.PublicState == store.VoicePublicActive && p.PublicHost != "" {
+			names = append(names, voiceName{host: p.PublicHost, key: strings.ToLower(p.PublicHost), region: p.Region, serverID: p.ServerID, ours: p.Host, port: p.Port})
+		}
+	}
+	for _, rv := range links {
+		if rv.PublicState == store.VoicePublicActive && rv.PublicHost != "" && !rv.Suspended {
+			ours := rv.Host
+			if ours == "" {
+				ours = rv.Domain
+			}
+			names = append(names, voiceName{host: rv.PublicHost, key: strings.ToLower(rv.PublicHost), region: rv.Region, domain: rv.Domain, ours: ours, port: rv.Port})
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	keys := make([]string, len(names))
+	for i, n := range names {
+		keys[i] = n.key
+	}
+	checks, err := v.store.GetAddressDNSChecks(keys)
+	if err != nil {
+		log.Printf("[voice] white-label re-check: read checks: %v", err)
+		return
+	}
+	now := v.now()
+	tried := map[string]time.Time{}
+	for _, n := range names {
+		if t, ok := v.nameTried[n.key]; ok {
+			tried[n.key] = t
+		}
+	}
+	v.nameTried = tried // drops the names that are no longer active
+	lastTry := func(n voiceName) time.Time {
+		if t := tried[n.key]; t.After(checks[n.key].CheckedAt) {
+			return t
+		}
+		return checks[n.key].CheckedAt
+	}
+	var due []voiceName
+	for _, n := range names {
+		c, ok := checks[n.key]
+		age := now.Sub(c.CheckedAt)
+		if t, seen := tried[n.key]; seen && now.Sub(t) < voiceNameRecheckFailing {
+			continue
+		}
+		if !ok || age >= voiceNameRecheckHealthy || (c.FailingSince != nil && age >= voiceNameRecheckFailing) {
+			due = append(due, n)
+		}
+	}
+	// Never tried first (zero time), then the longest ago; the rest next tick.
+	sort.SliceStable(due, func(i, j int) bool { return lastTry(due[i]).Before(lastTry(due[j])) })
+	if len(due) > voiceNameBatch {
+		due = due[:voiceNameBatch]
+	}
+	for _, n := range due {
+		if ctx.Err() != nil {
+			return
+		}
+		tried[n.key] = now
+		var p Pointing
+		if admitted, known := v.pointing.Admits(ctx, n.key); !known {
+			continue
+		} else if !admitted {
+			// No live route covers the name any more (deleted, or the own
+			// domain lapsed): our own data says it cannot point at the gateway,
+			// so it is a miss without a lookup, and the normal rule falls it back.
+			p = Pointing{Status: PointingNotFound}
+		} else {
+			// Serial, no per-caller budget: one background pass on the leader.
+			p = v.pointing.Check(ctx, n.key, PurposeVoiceName, nil)
+		}
+		if !p.Known() {
+			continue
+		}
+		ok := p.Status == PointingOK && p.Region == n.region
+		c, err := v.store.RecordAddressDNSCheck(n.key, string(p.Status), p.Region, ok)
+		if err != nil {
+			log.Printf("[voice] white-label re-check: store %s: %v", n.key, err)
+			continue
+		}
+		// The span is read off the stored row (both stamps are the
+		// database's clock), so Core's own clock cannot shorten it.
+		if ok || c.Misses < voiceNameMisses || c.FailingSince == nil || c.CheckedAt.Sub(*c.FailingSince) < voiceNameMinSpan {
+			continue
+		}
+		v.fallBackVoiceName(ctx, n)
+	}
+}
+
+// fallBackVoiceName moves one name to fallen_back, only while it is still
+// the active name (a name the customer changed meanwhile wins), then points
+// a server's mod back at ours in the background. A route-only address only
+// changes state: Core cannot write the customer's config.
+func (v *VoiceService) fallBackVoiceName(ctx context.Context, n voiceName) {
+	if n.serverID == 0 {
+		changed, err := v.store.FallBackLinkRouteVoicePublicHost(n.domain, n.host)
+		if err != nil {
+			log.Printf("[voice] white-label re-check: route %s: fall back: %v", n.domain, err)
+		} else if changed {
+			log.Printf("voice: route %s: %s no longer points at the gateway; voice chat was switched back to %s. Change the voice host to it and restart the server.", n.domain, n.host, n.ours)
+		}
+		return
+	}
+	changed, err := v.store.FallBackVoicePublicHost(n.serverID, n.host)
+	if err != nil {
+		log.Printf("[voice] white-label re-check: server %d: fall back: %v", n.serverID, err)
+		return
+	}
+	if !changed {
+		return
+	}
+	log.Printf("voice: server %d: %s no longer points at the gateway; the voice mod was switched back to %s. Restart the server to apply it.", n.serverID, n.host, n.ours)
+	if v.hostWriteBack == nil {
+		return
+	}
+	srv, err := v.store.GetServerByID(n.serverID)
+	if err != nil || srv == nil {
+		// The row already says ours: the start sync writes it at the next start.
+		log.Printf("[voice] white-label re-check: server %d: read for the config write: %v", n.serverID, err)
+		return
+	}
+	v.hostWriteBack(ctx, srv, n.ours, n.port)
 }
 
 // reconcileLinkRoutes is the server loop above for route-only ports: revoke

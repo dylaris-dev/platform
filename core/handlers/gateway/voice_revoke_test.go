@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -162,3 +163,62 @@ func TestALateWriteBackDoesNotUndoAReEnable(t *testing.T) {
 }
 
 func (f *voiceRevokeStore) ListLinkRouteVoice() ([]store.LinkRouteVoice, error) { return nil, nil }
+
+// The fall back's voice host write lands only while the row still says that
+// host on that port: a name the customer activated meanwhile, voice turned
+// off, or a move must win over a write decided before it.
+func TestRewriteVoiceHostRereadsTheRow(t *testing.T) {
+	srv := &models.Server{ID: 7, UUID: "srv-7", NodeID: 7, ActiveSubServer: "survival"}
+	path := "plugins/voicechat/voicechat-server.properties"
+	ours := "voice.eu.dylaris.com"
+	row := func(name, state string, port int) *store.VoicePort {
+		return &store.VoicePort{ServerID: 7, Region: "eu", Port: port, Host: ours, PublicHost: name, PublicState: state}
+	}
+	cases := []struct {
+		name      string
+		row       *store.VoicePort
+		wantWrite bool
+	}{
+		{"still fallen back: our name is written", row("voice.play.example.com", store.VoicePublicFallenBack, 26000), true},
+		{"another name active meanwhile", row("talk.play.example.com", store.VoicePublicActive, 26000), false},
+		{"voice off meanwhile", nil, false},
+		{"moved to another port", row("voice.play.example.com", store.VoicePublicFallenBack, 26001), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			st, _, node := voiceNodeState(t, &voiceWriteBackStore{row: c.row}, path, "svc_before.properties")
+			rewriteVoiceHost(st.Store, st.GRPCRegistry, srv, ours, 26000)
+			if wrote := node.WriteCount() > 0; wrote != c.wantWrite {
+				t.Fatalf("wrote = %v, want %v", wrote, c.wantWrite)
+			}
+			if c.wantWrite && !strings.Contains(node.WrittenString(), ours) {
+				t.Fatalf("written %q, want our name", node.WrittenString())
+			}
+		})
+	}
+}
+
+// The write runs in the background: a node that never answers does not hold
+// the caller (the reconcile goroutine).
+func TestRewriteVoiceHostInBackgroundDoesNotWait(t *testing.T) {
+	old := voiceWriteBackTimeout
+	voiceWriteBackTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { voiceWriteBackTimeout = old })
+	srv := &models.Server{ID: 7, UUID: "srv-7", NodeID: 7, ActiveSubServer: "survival"}
+	reg := nodegrpc.NewRegistry()
+	node := &hungNode{}
+	reg.Register(7, "tok", node)
+	fs := &voiceWriteBackStore{row: &store.VoicePort{ServerID: 7, Port: 26000, Host: "voice.eu.dylaris.com"}}
+	start := time.Now()
+	RewriteVoiceHostInBackground(fs, reg, srv, "voice.eu.dylaris.com", 26000)
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("the caller waited %s", d)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for node.readCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if node.readCount() == 0 {
+		t.Fatal("the write never reached the node")
+	}
+}

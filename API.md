@@ -139,9 +139,9 @@ can still show what exists.
 
 ## At a glance
 
-- **666 routes** in 53 sections: 288 GET, 195 POST, 67 PUT, 42 PATCH, 75 DELETE.
+- **667 routes** in 53 sections: 288 GET, 195 POST, 68 PUT, 42 PATCH, 75 DELETE.
 - **30** accept no credential at all; read the Gates column before assuming any of them is open.
-- **451** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **157** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
+- **452** declare a capability at the route and **23** enforce authorization inside the handler. Of the rest, **157** need a credential but no capability, **30** are fully public, and **5** carry no capability of their own because the one registered for their path template guards a different method on it.
 - **49** have no usable description yet. Fix one by writing the handler's doc comment, not this file.
 
 ## Contents
@@ -174,7 +174,7 @@ can still show what exists.
 - [/api/regions](#apiregions) (1)
 - [/api/scheduled-tasks](#apischeduled-tasks) (1)
 - [/api/server-roles](#apiserver-roles) (4)
-- [/api/servers](#apiservers) (96)
+- [/api/servers](#apiservers) (97)
 - [/api/settings](#apisettings) (31)
 - [/api/setup](#apisetup) (2)
 - [/api/share](#apishare) (1)
@@ -478,7 +478,7 @@ can still show what exists.
 | PUT | `/api/external/gateway/routes/{domain:[^/]+}/bedrock` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteBedrock` | body {"java": bool, "bedrock": bool}, the address's editions, on one of our domains or on your own domain once its DNS points at one of our regions by a CNAME or A records (409 bedrock_unavailable with what to change, as SRV records and proxies cannot carry Bedrock; 503 dns_lookup_failed when the DNS check could not run, retry); the answer's dns_status, dns_checked_at and dns_failing_since are the last DNS check of an own domain, empty for an address on one of our domains; an active managed gateway plan lifts the platform's Bedrock audience setting for its account (the other checks, such as a suspension, a retiring link or no Bedrock entry in the region, still refuse), any other account only while the platform offers Bedrock to it (409 bedrock_disabled). |
 | GET | `/api/external/gateway/routes/{domain:[^/]+}/floodgate-key` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.GetRouteFloodgateKey` | the Floodgate key of one of the caller's addresses, a credential that needs gateway.write (a gateway.read key is refused) and is never cached (Cache-Control: no-store), as {success, domain, key} with key the standard base64 of the 16 bytes Floodgate reads as key.pem; 404 not_found when the address is not the caller's or has no key yet (give it Bedrock first). |
 | PATCH | `/api/external/gateway/routes/{domain:[^/]+}/proxy-protocol` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteProxyProtocol` | body {"enabled": bool}, real player IP forwarding. |
-| PUT | `/api/external/gateway/routes/{domain:[^/]+}/voice` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteVoice` | body {"enabled": bool, "target_port": int}, voice chat relay, on one of our domains or on your own domain once it points at one of our regions (409 no_routes with what to change; 503 dns_lookup_failed when the DNS check could not run, retry); the answer's host is the name to write into the voice mod, our regional voice name for an own domain; an active managed gateway plan lifts the platform's global voice permission for its account (an explicit per-user deny and the other checks, such as a suspension or a retiring link, still refuse), any other account only where the platform's voice permissions allow (409 voice_not_allowed). |
+| PUT | `/api/external/gateway/routes/{domain:[^/]+}/voice` | user API key | `gateway.write` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.SetRouteVoice` | body {"enabled": bool, "target_port": int, "public_host": string}, voice chat relay, on one of our domains or on your own domain once it points at one of our regions (409 no_routes with what to change; 503 dns_lookup_failed when the DNS check could not run, retry); the answer's host is our name for the voice address, our regional voice name for an own domain, and mod_host is the name to write into the voice mod; the optional public_host is a voice name of your own, the address or a name under it (400 voice_host_invalid otherwise; absent leaves it, "" clears it), used as mod_host once its DNS points at the voice port's region (public_state active; until then pending and 409 voice_host_not_pointing with what to change, voice stays on); name_target is the CNAME target for such a name ("" for an address on our domains, where none is possible), failing_since the start of an active name's run of DNS misses (null otherwise), public_state_at when public_state last changed (null without a name); an active managed gateway plan lifts the platform's global voice permission for its account (an explicit per-user deny and the other checks, such as a suspension or a retiring link, still refuse), any other account only where the platform's voice permissions allow (409 voice_not_allowed). |
 | GET | `/api/external/gateway/usage` | user API key | `gateway.read` | Limit, ExternalOwnerRoute, RequireLocalGateway | `ExternalGatewayHandler.GetUsage` | the period's totals (as /api/external/usage) plus regions [{region, kind, bytes}], final (false while the month runs: an estimate as of asOf) and, for the running month of a managed plan, pool {includedGb, maxPurchaseGb, usedBytes, percent}; ?period=YYYY-MM. |
 | POST | `/api/external/rcon/{uuid}/exec` | user API key | `rcon.exec` | - | `RconHandler.ExecExternal` | automation entry. |
 | GET | `/api/external/servers` | user API key | _no capability_ | - | `APIKeysHandler.ListExternalServers` | the servers this KEY may act on: the servers of its owner, narrowed to the allowlist of the key. |
@@ -525,7 +525,7 @@ can still show what exists.
 | PUT | `/api/gateway/link-routes/{domain:[^/]+}/bedrock` | session | _no capability_ | RequireLocalGateway | `GatewayHandler.SetLinkRouteBedrock` | body {"java": bool, "bedrock": bool}. |
 | GET | `/api/gateway/link-routes/{domain:[^/]+}/floodgate-key` | session | _no capability_ | RequireLocalGateway | `GatewayHandler.GetLinkRouteFloodgateKey` | the address's Floodgate key as key.pem (the 16 raw bytes Floodgate reads). |
 | PATCH | `/api/gateway/link-routes/{domain:[^/]+}/proxy-protocol` | session | _no capability_ | RequireGatewayEnabled, RequireLocalGateway | `GatewayHandler.SetLinkRouteProxyProtocol` | switches real player IP forwarding on one route-only entry. |
-| PUT | `/api/gateway/link-routes/{domain:[^/]+}/voice` | session | _no capability_ | RequireLocalGateway | `GatewayHandler.SetLinkRouteVoice` | body {"enabled": bool, "target_port": int}. |
+| PUT | `/api/gateway/link-routes/{domain:[^/]+}/voice` | session | _no capability_ | RequireLocalGateway | `GatewayHandler.SetLinkRouteVoice` | body {"enabled": bool, "target_port": int, "public_host": string}. |
 | GET | `/api/gateway/links` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetLinks` | every link registered in Redis, each with its online flag. |
 | GET | `/api/gateway/logs` | session | `topology.read` | RequireLocalGateway | `GatewayHandler.GetLogs` | hub logs are not shipped to Redis, so this answers with the last 100 service error entries instead. |
 | GET | `/api/gateway/provider/orphan-kits` | session | `topology.write` | - | `RemoteKitHandler.OrphanKits` | lists the links the provider holds for this account that no node of this platform has (after a lost or restored database), from the 30 s kit cache. |
@@ -868,6 +868,7 @@ can still show what exists.
 | POST | `/api/servers/{id:[0-9]+}/transfer` | session | `server.settings.write` | RequireGatewayEnabled | `ServerHandler.TransferServer` | (tenant) queues a node-to-node migration of a server the caller OWNS to a target node they may place on. |
 | POST | `/api/servers/{id:[0-9]+}/version-update` | session | `server.settings.write` | - | `ServerModsHandler.VersionUpdate` | - |
 | GET | `/api/servers/{id:[0-9]+}/voice` | session | `network.read` | RequireGatewayEnabled | `GatewayHandler.GetServerVoice` | the server's voice port, if any, and whether it may turn voice on. |
+| PUT | `/api/servers/{id:[0-9]+}/voice/name` | session | `network.write` | - | `GatewayHandler.SetServerVoiceName` | body {"name": "..."}, the server's white-label voice name: equal to or under one of its own domains. |
 | PUT | `/api/servers/{id:[0-9]+}/voice/switch` | session | `network.write` | - | `GatewayHandler.SetServerVoice` | turns proximity voice chat on or off for one server. |
 
 ## /api/settings

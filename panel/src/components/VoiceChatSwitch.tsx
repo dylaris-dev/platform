@@ -5,8 +5,9 @@ import { Loader2 } from 'lucide-react';
 import Switch from '@/components/ui/Switch';
 import CopyText from '@/components/ui/CopyText';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
-import { getServerVoice, setServerVoice, serverPower, type ServerVoice } from '@/lib/api';
-import { managedVoiceHelp, showVoiceSwitch, voiceAddress, voiceErrorMessage } from '@/lib/voiceChat';
+import VoiceNameState from '@/components/VoiceNameState';
+import { getServerVoice, setServerVoice, setServerVoiceName, serverPower, type ServerVoice } from '@/lib/api';
+import { fallenBackAt, managedVoiceHelp, showVoiceName, showVoiceSwitch, voiceAddress, voiceErrorMessage } from '@/lib/voiceChat';
 import { refusalText } from '@/lib/gatewayProvider';
 import { useAppData } from '@/lib/AppDataContext';
 
@@ -27,6 +28,10 @@ export default function VoiceChatSwitch({ serverId }: { serverId: number }) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const [pendingRestart, setPendingRestart] = useState(false);
+    // The sentence of the last check this view made, for the pending line.
+    const [lastCheck, setLastCheck] = useState('');
+    // Separate from busy: the switch's own spinner is for the switch.
+    const [nameBusy, setNameBusy] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -93,6 +98,44 @@ export default function VoiceChatSwitch({ serverId }: { serverId: number }) {
         if (restart) await offerRestart();
     };
 
+    // Resolves true when the name field may close.
+    const setName = async (name: string): Promise<boolean> => {
+        setError('');
+        setNameBusy(true);
+        let restart = false;
+        try {
+            const res = await setServerVoiceName(serverId, name);
+            if (res?.success === false || !res?.voice) {
+                const msg = refusalText(res, 'The voice chat name could not be saved.');
+                if (res?.code !== 'voice_host_not_pointing') {
+                    setError(msg);
+                    return false;
+                }
+                // Core may have stored the name pending; this answer has no view.
+                const fresh = await getServerVoice(serverId);
+                if (fresh?.voice) setVoice(fresh.voice);
+                if (fresh?.voice?.publicState === 'pending') {
+                    setLastCheck(msg);
+                    return true;
+                }
+                setError(msg);
+                return false;
+            }
+            setVoice(res.voice);
+            setLastCheck('');
+            restart = !!res.restartRequired;
+            if (restart) setPendingRestart(true);
+        } catch {
+            setError('The request could not be sent.');
+            return false;
+        } finally {
+            setNameBusy(false);
+        }
+        // Not awaited: the name line's spinner is for the request, not the dialog.
+        if (restart) void offerRestart();
+        return true;
+    };
+
     return (
         <div className="bg-(--base-02) rounded-md border border-(--base-03) px-3 py-2.5">
             <div className="flex items-center gap-3 justify-between">
@@ -110,7 +153,7 @@ export default function VoiceChatSwitch({ serverId }: { serverId: number }) {
                     <Switch
                         checked={voice.enabled}
                         onChange={toggle}
-                        disabled={busy}
+                        disabled={busy || nameBusy}
                         ariaLabel="Voice chat"
                     />
                 </span>
@@ -121,6 +164,24 @@ export default function VoiceChatSwitch({ serverId }: { serverId: number }) {
                     <CopyText value={voiceAddress(voice)} className="text-xs font-mono text-(--base-08)" />
                     {MOD_LABEL[voice.mod] && <span className="text-xs text-(--base-06)">{MOD_LABEL[voice.mod]}</span>}
                 </div>
+            )}
+            {voice.enabled && voice.host && voice.port > 0 && showVoiceName(voice.publicState, voice.nameTarget, false) && (
+                <VoiceNameState
+                    input={{
+                        state: voice.publicState,
+                        ourHost: voice.ourHost || voice.host,
+                        name: voice.publicHost,
+                        port: voice.port,
+                        target: voice.nameTarget || undefined,
+                        lastCheck,
+                        failingSince: voice.nameFailingSince,
+                        fallenBackAt: fallenBackAt(voice.publicState, voice.publicStateAt),
+                    }}
+                    busy={busy || nameBusy}
+                    onSet={setName}
+                    // The restart note below has its own button while it shows.
+                    onRestart={pendingRestart ? undefined : offerRestart}
+                />
             )}
             {pendingRestart && (
                 <p className="text-xs text-(--warning-light) mt-2">

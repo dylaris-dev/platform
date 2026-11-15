@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.15.3
+
+### Features
+- Voice chat can announce a name on your own domain (for example `voice.play.example.com`): create the
+  CNAME the panel shows, then press Check again. If the record stops pointing at us, we switch your
+  server's voice mod back to our name and the panel asks you to restart it.
+- On a route-only address you put the voice host line the panel shows into your mod's config by hand,
+  both for your name and again after a switch back, then restart.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.15.2
 
 ### Features

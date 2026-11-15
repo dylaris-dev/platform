@@ -71,6 +71,9 @@ func (m *managedStore) GetLinkRouteVoice(domain string) (*store.LinkRouteVoice, 
 }
 func (m *managedStore) AllocateLinkRouteVoice(domain, region, host string, targetPort int, key []byte, min, _ int) (store.LinkRouteVoice, error) {
 	v := store.LinkRouteVoice{Domain: domain, OwnerID: "owner-1", LinkToken: "tok", TargetHost: "127.0.0.1", Region: region, Port: min, TargetPort: targetPort, UplinkKey: key, Host: host}
+	if prior, ok := m.voice[domain]; ok && prior.Region == region {
+		v.PublicHost, v.PublicState = prior.PublicHost, prior.PublicState // as the store keeps them
+	}
 	m.voice[domain] = v
 	return v, nil
 }

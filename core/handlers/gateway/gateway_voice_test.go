@@ -38,6 +38,7 @@ type voiceSwitchStore struct {
 	global   string
 	routing  string // routing_mode; "" reads as ip_port, the gateway off
 	billing  *store.UserBilling
+	dns      map[string]store.AddressDNSCheck // RecordAddressDNSCheck
 }
 
 func (f *voiceSwitchStore) GetServerByID(id int) (*models.Server, error) {
@@ -62,6 +63,9 @@ func (f *voiceSwitchStore) AllocateVoicePort(p store.VoicePort, min, _ int) (sto
 		return store.VoicePort{}, store.ErrVoicePoolFull
 	}
 	p.ServerUUID, p.Port = f.server.UUID, min
+	if f.row != nil && f.row.Region == p.Region {
+		p.PublicHost, p.PublicState = f.row.PublicHost, f.row.PublicState // as the store keeps them
+	}
 	f.row = &p
 	return p, nil
 }
@@ -652,6 +656,7 @@ func TestHostedOwnDomainVoiceKeepsItsRegion(t *testing.T) {
 // A hosted server with voice on a regional address today, which also holds an
 // own domain pointing elsewhere: enabling it again answers, writes and
 // publishes exactly what it did before, rewrites no mod config and asks no DNS.
+// The one addition is nameTarget, which offers a name under the own domain.
 func existingHostedCustomerSeesNoChange(t *testing.T) {
 	e, res := newHostedOwnDomain(t)
 	e.addHostedRoute("a.eu.dylaris.com")
@@ -663,7 +668,7 @@ func existingHostedCustomerSeesNoChange(t *testing.T) {
 	e.node.File = handlertest.VoiceFixture(t, "svc_after.properties")
 
 	rec, _ := e.put(t, `{"enabled":true}`)
-	if got, want := strings.TrimSpace(rec.Body.String()), `{"restartRequired":true,"success":true,"voice":{"enabled":true,"host":"a.eu.dylaris.com","port":26000,"mod":"svc","allowed":true}}`; got != want {
+	if got, want := strings.TrimSpace(rec.Body.String()), `{"restartRequired":true,"success":true,"voice":{"enabled":true,"host":"a.eu.dylaris.com","port":26000,"mod":"svc","allowed":true,"nameTarget":"voice.eu.dylaris.com"}}`; got != want {
 		t.Fatalf("enable answer\n got %s\nwant %s", got, want)
 	}
 	if r := e.fs.row; r.Host != "a.eu.dylaris.com" || r.Region != "eu" || r.Port != 26000 {

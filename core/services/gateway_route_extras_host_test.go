@@ -104,7 +104,7 @@ func TestServerVoiceIgnoresAHostWithoutAPort(t *testing.T) {
 	}
 }
 
-// Review Focus 5: the codes parts 1 and 2 add are about the moment, never final.
+// Review Focus 5: the codes parts 1, 2 and 3 add are about the moment, never final.
 // (The sweep tests use addServer: an own-domain row also passes the claim
 // check, which is not what these pin, and the host rule does not read it.)
 // A re-assert answered with any of them, twice a sweep apart, changes nothing.
@@ -113,6 +113,9 @@ func TestReconcileRouteExtrasNewCodesAreNotFinal(t *testing.T) {
 		{"no_routes", "Voice chat needs to know which region this server's players arrive in."},
 		{"dns_lookup_failed", "The lookup of the address failed right now. Nothing was changed. Try again in a moment."},
 		{"rate_limited", "Too many DNS checks. Wait a minute."},
+		// Part 3: the white-label name's codes.
+		{"voice_host_invalid", "voice.other.tld has to be the address or a name under it."},
+		{"voice_host_not_pointing", "voice.acme.tld does not point at the gateway yet."},
 	} {
 		t.Run(c.code, func(t *testing.T) {
 			e := newExtrasEnv(t)
@@ -142,7 +145,7 @@ func TestReconcileRouteExtrasNewCodesAreNotFinal(t *testing.T) {
 			}
 		})
 	}
-	for _, code := range []string{"no_routes", "dns_lookup_failed", "rate_limited"} {
+	for _, code := range []string{"no_routes", "dns_lookup_failed", "rate_limited", "voice_host_invalid", "voice_host_not_pointing"} {
 		if voiceRefusalIsFinal(&remotegw.APIError{Status: 409, Code: code}) {
 			t.Fatalf("%s reads as final", code)
 		}
@@ -225,7 +228,7 @@ func TestReconcileRouteExtrasKeepsTheHostOnAnOldProvider(t *testing.T) {
 	srv := *e.st.servers[101]
 	budget := routeExtrasPerSweep
 	p := remotegw.Route{Domain: d, LinkID: e.kit.LinkID, Voice: &remotegw.RouteVoice{Enabled: true, Port: port, TargetPort: VoiceInternalPort}}
-	if err := reconcileRouteExtras(context.Background(), e.st, e.c, e.publish, e.row(d), p, srv, &budget); err != nil {
+	if err := reconcileRouteExtras(context.Background(), e.st, e.c, e.publish, nil, e.row(d), p, srv, &budget); err != nil {
 		t.Fatal(err)
 	}
 	if r := e.row(d); r.VoiceHost != ownVoiceName || r.VoicePort == nil || *r.VoicePort != port {
