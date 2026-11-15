@@ -20,10 +20,6 @@ import (
 	"dylaris-core/store"
 )
 
-// ErrGatewayOwnDomainExtras refuses Bedrock on a customer's own domain on the
-// managed gateway: not offered yet. Voice chat is (the provider checks DNS).
-var ErrGatewayOwnDomainExtras = errors.New("Bedrock is not available on an own domain")
-
 // VoiceDomainFor is the remote-mode twin of VoiceRouteFor: the lexically first
 // of domains exactly one label under an ONLINE region's wildcard, and that
 // region. It goes through VoiceRegionFor, so both modes share one rule; an own
@@ -124,14 +120,11 @@ func (g *RemoteGateway) serverRoute(serverUUID, domain string) (*store.RemoteRou
 }
 
 // extrasPreflight is what every synchronous ON checks before the provider is
-// asked: no own domain for Bedrock (voice on an own domain is the provider's
-// DNS check to make), no change waiting for the address (a queued OFF that
-// runs after this ON would leave the provider off while the row says on), and
-// the row touched, so the sweep can tell this flip in flight from drift.
-func (g *RemoteGateway) extrasPreflight(row *store.RemoteRoute, feature string) error {
-	if row.CustomDomain && feature == "bedrock" {
-		return ErrGatewayOwnDomainExtras
-	}
+// asked: no change waiting for the address (a queued OFF that runs after this
+// ON would leave the provider off while the row says on), and the row touched,
+// so the sweep can tell this flip in flight from drift. An own domain is the
+// provider's DNS check to make, for voice and Bedrock alike.
+func (g *RemoteGateway) extrasPreflight(row *store.RemoteRoute) error {
 	if pending, err := g.st.HasOpenOutbox(row.Domain, ""); err != nil {
 		return err
 	} else if pending {
@@ -167,7 +160,7 @@ func (g *RemoteGateway) EnableServerVoice(ctx context.Context, serverUUID, domai
 	if err != nil {
 		return 0, "", err
 	}
-	if err := g.extrasPreflight(row, "voice"); err != nil {
+	if err := g.extrasPreflight(row); err != nil {
 		return 0, "", err
 	}
 	// Not the caller's context: a closed tab must not cut the call off between
@@ -255,7 +248,7 @@ func (g *RemoteGateway) AddBedrock(ctx context.Context, serverID int, serverUUID
 	if err != nil {
 		return false, err
 	}
-	if err := g.extrasPreflight(row, "bedrock"); err != nil {
+	if err := g.extrasPreflight(row); err != nil {
 		return false, err
 	}
 	prev := row.Edition

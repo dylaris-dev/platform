@@ -132,6 +132,12 @@ type Fake struct {
 	// voiceDNS: the provider's answer to a NEW voice entry on an own domain
 	// whose DNS check did not pass, [code, message] (SetVoiceDNS).
 	voiceDNS map[string][2]string
+	// bedrockDNS: the provider's answer to ADDING Bedrock to an own domain
+	// whose DNS check did not pass, [code, message] (SetBedrockDNS).
+	bedrockDNS map[string][2]string
+	// bedrockDNSState: the last stored DNS check the provider reports for an
+	// address (SetBedrockDNSState); absent is never checked.
+	bedrockDNSState map[string]fakeDNSState
 	// bedrockUntold: an editions change is stored, then answered 502 like the
 	// real handler when its gateway could not be told yet.
 	bedrockUntold bool
@@ -143,6 +149,12 @@ type Fake struct {
 	peak *remotegw.PlayersPeak
 }
 
+// fakeDNSState is one address's dns_status, dns_checked_at, dns_failing_since.
+type fakeDNSState struct {
+	status                  string
+	checkedAt, failingSince *time.Time
+}
+
 // fakeClaimCap is the provider's per-account claim bound (maxClaimsPerUser).
 const fakeClaimCap = 50
 
@@ -152,7 +164,8 @@ const fakeVerifyCooldown = 5 * time.Minute
 func NewFake(t testing.TB) *Fake {
 	t.Helper()
 	f := &Fake{key: "dyl_fake_provider_key", nextID: 1, published: map[string]bool{}, checked: map[string]time.Time{},
-		nextVoicePort: fakeVoicePortMin, players: map[string][2]int{}, voiceHosts: map[string]string{}, voiceDNS: map[string][2]string{}}
+		nextVoicePort: fakeVoicePortMin, players: map[string][2]int{}, voiceHosts: map[string]string{}, voiceDNS: map[string][2]string{},
+		bedrockDNS: map[string][2]string{}, bedrockDNSState: map[string]fakeDNSState{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -406,7 +419,7 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			items = append(items, map[string]interface{}{"domain": rt.domain, "target_ip": rt.host, "target_port": rt.port,
 				"server_uuid": "", "link_id": rt.linkID, "proxy_protocol": rt.proxy,
-				"voice": voiceView(rt.domain, voice), "bedrock": bedrockView(editions)})
+				"voice": voiceView(rt.domain, voice), "bedrock": bedrockView(editions, f.bedrockDNSState[rt.domain])})
 		}
 		writeJSON(w, 200, map[string]interface{}{"success": true, "items": items})
 	case r.Method == http.MethodPost && path == "/routes":
@@ -755,6 +768,29 @@ func (f *Fake) SetBedrockRefusal(code string) {
 	f.bedrockRefusal = code
 }
 
+// SetBedrockDNS makes ADDING Bedrock to domain answer as the provider does
+// when its DNS check of an own domain did not pass: bedrock_unavailable (409,
+// the provider's sentence, or an older provider's), dns_lookup_failed (503) or
+// rate_limited (429), with message. Re-asserting an existing Bedrock entry
+// runs no DNS check, as on the provider. "" lets it through again.
+func (f *Fake) SetBedrockDNS(domain, code, message string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if code == "" {
+		delete(f.bedrockDNS, domain)
+		return
+	}
+	f.bedrockDNS[domain] = [2]string{code, message}
+}
+
+// SetBedrockDNSState makes the provider report status, checkedAt and
+// failingSince as domain's last stored DNS check.
+func (f *Fake) SetBedrockDNSState(domain, status string, checkedAt, failingSince *time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bedrockDNSState[domain] = fakeDNSState{status: status, checkedAt: checkedAt, failingSince: failingSince}
+}
+
 // SetBedrockStoredUntold makes the editions endpoint store the change, then
 // answer as the provider's external API does when SetLinkRouteBedrock could
 // not publish to its gateway: 502 with the code its error wrapper stamps on
@@ -832,11 +868,13 @@ func voiceView(domain string, v *fakeVoice) map[string]interface{} {
 
 // bedrockView is the provider's linkRouteBedrockView; an address never given
 // editions reads Java only.
-func bedrockView(e *fakeEditions) map[string]interface{} {
-	if e == nil {
-		return map[string]interface{}{"java": true, "bedrock": false, "has_key": false}
+func bedrockView(e *fakeEditions, dns fakeDNSState) map[string]interface{} {
+	v := map[string]interface{}{"java": true, "bedrock": false, "has_key": false,
+		"dns_status": dns.status, "dns_checked_at": dns.checkedAt, "dns_failing_since": dns.failingSince}
+	if e != nil {
+		v["java"], v["bedrock"], v["has_key"] = e.java, e.bedrock, true
 	}
-	return map[string]interface{}{"java": e.java, "bedrock": e.bedrock, "has_key": true}
+	return v
 }
 
 // setVoice follows the provider's SetLinkRouteVoice: off is never refused, on
@@ -920,9 +958,20 @@ func (f *Fake) setBedrock(w http.ResponseWriter, domain string, body map[string]
 			handlerError(w, 409, "kit_retiring", "This link is being replaced and takes no new routes.")
 			return
 		}
+		if d, ok := f.bedrockDNS[domain]; ok {
+			status := 409
+			switch d[0] {
+			case "dns_lookup_failed":
+				status = 503
+			case "rate_limited":
+				status = 429
+			}
+			handlerError(w, status, d[0], d[1])
+			return
+		}
 	}
 	if rt.editions == nil && !bedrock {
-		writeJSON(w, 200, map[string]interface{}{"success": true, "bedrock": bedrockView(nil)})
+		writeJSON(w, 200, map[string]interface{}{"success": true, "bedrock": bedrockView(nil, f.bedrockDNSState[domain])})
 		return
 	}
 	if rt.editions == nil {
@@ -937,7 +986,7 @@ func (f *Fake) setBedrock(w http.ResponseWriter, domain string, body map[string]
 		handlerError(w, http.StatusBadGateway, "internal", "The route was saved, but the gateway could not be told yet. It applies within a minute.")
 		return
 	}
-	writeJSON(w, 200, map[string]interface{}{"success": true, "bedrock": bedrockView(rt.editions)})
+	writeJSON(w, 200, map[string]interface{}{"success": true, "bedrock": bedrockView(rt.editions, f.bedrockDNSState[domain])})
 }
 
 // floodgateKey follows the provider's GetRouteFloodgateKey.

@@ -36,6 +36,7 @@ type odResolver struct {
 	mu    sync.Mutex
 	cname map[string]string
 	a     map[string][]netip.Addr
+	aaaa  map[string][]netip.Addr // nil: no name has one
 	srv   map[string][]*net.SRV
 	fail  error
 	calls int
@@ -88,9 +89,15 @@ func (f *odResolver) LookupA(ctx context.Context, h string) ([]netip.Addr, error
 	}
 	return nil, odNotFound
 }
-func (f *odResolver) LookupAAAA(ctx context.Context, _ string) ([]netip.Addr, error) {
+func (f *odResolver) LookupAAAA(ctx context.Context, h string) ([]netip.Addr, error) {
 	if err := f.enter(ctx); err != nil {
 		return nil, err
+	}
+	if c, ok := f.cname[h]; ok {
+		h = c
+	}
+	if v := f.aaaa[h]; len(v) > 0 {
+		return v, nil
 	}
 	return nil, odNotFound
 }
@@ -157,7 +164,7 @@ func (m *managedEnv) voicePortKeys() []string {
 
 func notPointingText(name string) string {
 	return "Voice chat needs to know which region this server's players arrive in. " + name +
-		" does not point at us yet: add a CNAME from " + name + " to the address shown under Your own domains, or add an address on one of our domains."
+		" does not point at the gateway yet: add a CNAME from " + name + " to the address shown under Your own domains, or add an address on one of the gateway's domains."
 }
 
 func TestLinkRouteVoiceOwnDomain(t *testing.T) {
@@ -179,11 +186,11 @@ func TestLinkRouteVoiceOwnDomain(t *testing.T) {
 		{"elsewhere", func(r *odResolver) { r.a[odDomain] = addrs(foreignAddr) }, 409, "no_routes", notPointingText(odDomain)},
 		{"not found", func(*odResolver) {}, 409, "no_routes", notPointingText(odDomain)},
 		{"partial", func(r *odResolver) { r.a[odDomain] = addrs(edgeAddr, foreignAddr) }, 409, "no_routes",
-			odDomain + " points to us and also to " + foreignAddr + ". Remove the records that are not ours, or use a CNAME to the address shown under Your own domains."},
+			odDomain + " points to the gateway and also to " + foreignAddr + ". Remove the records that do not lead to the gateway, or use a CNAME to the address shown under Your own domains."},
 		{"private", func(r *odResolver) { r.a[odDomain] = addrs("10.0.0.5") }, 409, "no_routes",
 			odDomain + " resolves to an address that is not on the public internet."},
 		{"lookup failed", func(r *odResolver) { r.fail = &net.DNSError{Err: "server misbehaving", IsTemporary: true} }, 503, "dns_lookup_failed",
-			"We could not look up " + odDomain + " right now. Nothing was changed. Try again in a moment."},
+			"The lookup of " + odDomain + " failed right now. Nothing was changed. Try again in a moment."},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -248,7 +255,7 @@ func TestLinkRouteVoiceOwnDomain(t *testing.T) {
 		var out map[string]interface{}
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)
 		if rec.Code != 503 || out["code"] != "dns_lookup_failed" || out["success"] != false ||
-			out["error"] != "We could not look up "+odDomain+" right now. Nothing was changed. Try again in a moment." {
+			out["error"] != "The lookup of "+odDomain+" failed right now. Nothing was changed. Try again in a moment." {
 			t.Fatalf("%d %v", rec.Code, out)
 		}
 	})

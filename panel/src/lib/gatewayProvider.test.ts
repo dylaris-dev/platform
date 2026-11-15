@@ -84,7 +84,7 @@ describe('providerErrorText', () => {
 
     it.each([
         'voice_not_allowed', 'link_without_voice', 'no_relay', 'voice_pool_full', 'no_routes',
-        'bedrock_disabled', 'bedrock_unavailable', 'bedrock_one_address', 'voice_one_address', 'own_domain_unsupported',
+        'bedrock_disabled', 'bedrock_unavailable', 'bedrock_one_address', 'voice_one_address',
     ])('voice/Bedrock code %s has its own sentence', (code) => {
         const t = providerErrorText(code);
         expect(t).toMatch(/^[A-Z].*\.$/);

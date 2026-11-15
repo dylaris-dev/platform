@@ -104,14 +104,14 @@ func TestServerVoiceIgnoresAHostWithoutAPort(t *testing.T) {
 	}
 }
 
-// Review Focus 5: the codes part 1 adds are about the moment, never final.
+// Review Focus 5: the codes parts 1 and 2 add are about the moment, never final.
 // (The sweep tests use addServer: an own-domain row also passes the claim
 // check, which is not what these pin, and the host rule does not read it.)
 // A re-assert answered with any of them, twice a sweep apart, changes nothing.
 func TestReconcileRouteExtrasNewCodesAreNotFinal(t *testing.T) {
 	for _, c := range []struct{ code, msg string }{
 		{"no_routes", "Voice chat needs to know which region this server's players arrive in."},
-		{"dns_lookup_failed", "We could not look up the address right now. Nothing was changed. Try again in a moment."},
+		{"dns_lookup_failed", "The lookup of the address failed right now. Nothing was changed. Try again in a moment."},
 		{"rate_limited", "Too many DNS checks. Wait a minute."},
 	} {
 		t.Run(c.code, func(t *testing.T) {
@@ -145,6 +145,47 @@ func TestReconcileRouteExtrasNewCodesAreNotFinal(t *testing.T) {
 	for _, code := range []string{"no_routes", "dns_lookup_failed", "rate_limited"} {
 		if voiceRefusalIsFinal(&remotegw.APIError{Status: 409, Code: code}) {
 			t.Fatalf("%s reads as final", code)
+		}
+	}
+
+	// Bedrock (part 2): the provider's add check of an own domain answers
+	// these when its entry was lost and the re-assert has to add it again.
+	for _, c := range []struct{ code, msg string }{
+		{"bedrock_unavailable", "play.acme.tld points to 192.0.2.50, not to the gateway. Add a CNAME from play.acme.tld to the address shown under Your own domains."},
+		{"dns_lookup_failed", "The lookup of the address failed right now. Nothing was changed. Try again in a moment."},
+		{"rate_limited", "Too many DNS checks. Wait a minute."},
+	} {
+		t.Run("Bedrock "+c.code, func(t *testing.T) {
+			e := newExtrasEnv(t)
+			srv, d := e.addServer(1)
+			key := e.bedrockOn(t, srv, d, true)
+			e.fake.DropRouteExtras(d)
+			e.fake.SetBedrockDNS(d, c.code, c.msg)
+			before := len(e.fake.Calls())
+			for i := 0; i < 3; i++ {
+				e.sweep(t)
+				e.later(outboxSweepEvery)
+			}
+			if n := extrasWrites(e.fake.Calls()[before:]); n < 2 {
+				t.Fatalf("%d re-asserts in three sweeps; the code was never answered twice", n)
+			}
+			if r := e.row(d); r.Edition != "both" {
+				t.Fatalf("edition %q, want both", r.Edition)
+			}
+			if got := e.st.keys[srv.ID]; string(got) != string(key) {
+				t.Fatalf("stored key changed: %s, want %s", extrasKeyID(got), extrasKeyID(key))
+			}
+			if ops := openExtrasOps(e.st); len(ops) != 0 {
+				t.Fatalf("queued %v", ops)
+			}
+			if strings.Contains(e.logs.String(), "switch it on again") {
+				t.Fatalf("a switch-off was logged:\n%s", e.logs.String())
+			}
+		})
+	}
+	for _, code := range []string{"bedrock_unavailable", "dns_lookup_failed", "rate_limited"} {
+		if bedrockRefusalIsFinal(&remotegw.APIError{Status: 409, Code: code}) {
+			t.Fatalf("Bedrock %s reads as final", code)
 		}
 	}
 }

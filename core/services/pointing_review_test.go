@@ -75,24 +75,64 @@ func (f *flipCNAME) LookupCNAME(ctx context.Context, h string) (string, error) {
 	return "route.eu.dylaris.com.", nil
 }
 
-// I2: play -> mid -> route.eu (our name, A = our edge, AAAA ours too). The
-// verdict must not depend on which hop the resolver reports, and an AAAA
-// that belongs to our own name is never the customer's to remove.
+// I2: play -> mid -> route.eu (our name, A = our edge, AAAA at the end). For
+// the voice purposes the verdict must not depend on which hop the resolver
+// reports, and an AAAA at the end of the alias is not judged.
 func TestPointingTwoHopChainIsDeterministic(t *testing.T) {
 	f := &flipCNAME{fakePointingResolver: newFakePointingResolver()}
 	f.a[ptName] = []netip.Addr{ptEU1}
 	f.aaaa[ptName] = []netip.Addr{ptV6}
-	verdicts := map[string]int{}
-	for i := 0; i < 40; i++ {
-		c, _ := newTestPointing(f, ptEdges()) // fresh: no cache between runs
-		got := c.Check(context.Background(), ptName, PurposeBedrock, nil)
-		verdicts[fmt.Sprintf("%s/%s/%s", got.Status, got.Region, got.Via)]++
-	}
-	if len(verdicts) != 1 || verdicts["ok/eu/cname"] != 40 {
-		t.Fatalf("verdicts %v, want ok/eu/cname every time", verdicts)
+	if got := flipVerdicts(f, PurposeVoiceRegion); len(got) != 1 || got["ok/eu/cname"] != 40 {
+		t.Fatalf("verdicts %v, want ok/eu/cname every time", got)
 	}
 	if f.n.Load() < 40 {
 		t.Fatalf("CNAME asked %d times", f.n.Load())
+	}
+}
+
+// flipVerdicts runs 40 fresh checks (no cache between them) and counts the
+// verdicts as status/region/via.
+func flipVerdicts(f *flipCNAME, purpose PointingPurpose) map[string]int {
+	verdicts := map[string]int{}
+	for i := 0; i < 40; i++ {
+		c, _ := newTestPointing(f, ptEdges())
+		got := c.Check(context.Background(), ptName, purpose, nil)
+		verdicts[fmt.Sprintf("%s/%s/%s", got.Status, got.Region, got.Via)]++
+	}
+	return verdicts
+}
+
+// m4: our regional names have no AAAA, so for Bedrock any AAAA in the answer,
+// at the end of an alias included, is ipv6. The voice purposes keep the alias
+// exemption. Both verdicts are the same whichever hop the resolver reports
+// (flipCNAME), and for a fixed one-hop alias to a foreign name.
+func TestPointingBedrockAAAAAtTheEndOfAnAliasIsIPv6(t *testing.T) {
+	for _, c := range []struct {
+		purpose PointingPurpose
+		want    string
+	}{
+		{PurposeBedrock, "ipv6//"},
+		{PurposeVoiceRegion, "ok/eu/cname"},
+		{PurposeVoiceName, "ok/eu/cname"},
+	} {
+		t.Run(string(c.purpose), func(t *testing.T) {
+			f := &flipCNAME{fakePointingResolver: newFakePointingResolver()}
+			f.a[ptName] = []netip.Addr{ptEU1}
+			f.aaaa[ptName] = []netip.Addr{ptV6}
+			if got := flipVerdicts(f, c.purpose); len(got) != 1 || got[c.want] != 40 {
+				t.Fatalf("two-hop verdicts %v, want %s every time", got, c.want)
+			}
+
+			one := newFakePointingResolver()
+			one.cname[ptName] = "lb.host.net"
+			one.a[ptName] = []netip.Addr{ptEU1}
+			one.aaaa[ptName] = []netip.Addr{ptV6}
+			chk, _ := newTestPointing(one, ptEdges())
+			got := chk.Check(context.Background(), ptName, c.purpose, nil)
+			if v := fmt.Sprintf("%s/%s/%s", got.Status, got.Region, got.Via); v != c.want {
+				t.Fatalf("one-hop alias %s, want %s", v, c.want)
+			}
+		})
 	}
 }
 
@@ -120,7 +160,7 @@ func TestPointingEdgePlusPrivateIsPartial(t *testing.T) {
 		t.Fatalf("got %+v, want partial with nothing echoed", got)
 	}
 	msg := PointingRefusal(got, ptName, nil, PurposeBedrock)
-	if msg != ptName+" points to us and also to an address that is not on the public internet. Remove the records that are not ours, or use a CNAME to the address shown under Your own domains." {
+	if msg != ptName+" points to the gateway and also to an address that is not on the public internet. Remove the records that do not lead to the gateway, or use a CNAME to the address shown under Your own domains." {
 		t.Fatalf("%q", msg)
 	}
 }
@@ -137,10 +177,10 @@ func TestPointingUnknownIsNeverARefusal(t *testing.T) {
 			t.Fatalf("%+v has a refusal %q", p, msg)
 		}
 	}
-	if got := PointingUnknownText(Pointing{Status: PointingLookupFailed}, ptName); got != "We could not look up "+ptName+" right now. Nothing was changed. Try again in a moment." {
+	if got := PointingUnknownText(Pointing{Status: PointingLookupFailed}, ptName); got != "The lookup of "+ptName+" failed right now. Nothing was changed. Try again in a moment." {
 		t.Fatalf("lookup_failed text %q", got)
 	}
-	if got := PointingUnknownText(Pointing{}, ptName); got != "We could not look up "+ptName+" right now. Nothing was changed. Try again in a moment." {
+	if got := PointingUnknownText(Pointing{}, ptName); got != "The lookup of "+ptName+" failed right now. Nothing was changed. Try again in a moment." {
 		t.Fatalf("zero value text %q", got)
 	}
 	if got := PointingUnknownText(Pointing{Status: PointingRateLimited}, ptName); got != "Too many DNS checks. Wait a minute." {

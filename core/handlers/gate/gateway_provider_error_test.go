@@ -248,7 +248,7 @@ func TestProviderStatusVoiceCodes(t *testing.T) {
 	// The provider could not check an own domain's DNS: retryable, its
 	// sentence (nothing was changed, try again) passed through. Its DNS-check
 	// rate limit keeps the generic rate_limited answer.
-	const retry = "We could not look up play.acme.tld right now. Nothing was changed. Try again in a moment."
+	const retry = "The lookup of play.acme.tld failed right now. Nothing was changed. Try again in a moment."
 	for _, c := range []struct {
 		code, providerMsg string
 		in, status        int

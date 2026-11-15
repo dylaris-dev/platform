@@ -106,6 +106,11 @@ func (f *extStore) GetUserPanelAuthz(string) (*int, store.CapOverrides, error) {
 
 func (f *extStore) ListLinkRouteEditions() ([]store.LinkRouteEdition, error) { return nil, nil }
 
+// No own-domain address has been checked here.
+func (f *extStore) GetAddressDNSChecks([]string) (map[string]store.AddressDNSCheck, error) {
+	return map[string]store.AddressDNSCheck{}, nil
+}
+
 func (f *extStore) ListWarpAPIKeysByOwner(owner string) ([]store.WarpAPIKey, error) {
 	var out []store.WarpAPIKey
 	for _, k := range f.kits {

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"dylaris-core/handlers/gate"
@@ -22,9 +23,9 @@ import (
 // the domain (sys:route:editions) and a key name (the bridge's
 // floodgateSubject), so what a server route gets from its node, a route-only
 // customer does by hand: they download the address's Floodgate key and put it
-// on their server.
-
-const bedrockNoPlatformDomain = "Bedrock needs an address on one of the platform's domains."
+// on their server. An address on the customer's own domain gets Bedrock once
+// its DNS points at one of our regions: the check runs only when Bedrock is
+// ADDED, and its verdict is stored for the list to show.
 
 type linkRouteBedrockView struct {
 	Java    bool `json:"java"`
@@ -33,23 +34,84 @@ type linkRouteBedrockView struct {
 	HasKey bool `json:"has_key"`
 	// Refusal is why Bedrock cannot be ADDED now; empty when it can.
 	Refusal string `json:"refusal,omitempty"`
+	// The last stored DNS check of an address on the customer's own domain:
+	// "" and null for an address on one of our domains and for one never
+	// checked. Display only: the add always checks afresh.
+	DNSStatus       string     `json:"dns_status"`
+	DNSCheckedAt    *time.Time `json:"dns_checked_at"`
+	DNSFailingSince *time.Time `json:"dns_failing_since"`
+}
+
+// withDNS copies a stored check into v.
+func (v linkRouteBedrockView) withDNS(c store.AddressDNSCheck) linkRouteBedrockView {
+	at := c.CheckedAt
+	v.DNSStatus, v.DNSCheckedAt, v.DNSFailingSince = c.Status, &at, c.FailingSince
+	return v
+}
+
+func hasBedrockEntry(region string, entries []services.BedrockEntry) bool {
+	for _, e := range entries {
+		if e.Region == region {
+			return true
+		}
+	}
+	return false
 }
 
 // linkRouteBedrockRefusal is why a route-only address cannot be given Bedrock
 // right now, or "" when it can: its region, read off the edge wildcard the
-// domain sits under, must have a live Bedrock entry. entries is passed in so a
-// list asks Redis once.
+// domain sits under, must have a live Bedrock entry. Callers pass only a
+// regional domain. entries is passed in so a list asks Redis once.
 func linkRouteBedrockRefusal(domain string, edges []services.GatewayEdgeInfo, entries []services.BedrockEntry) string {
-	region, ok := services.VoiceRegionFor(domain, edges)
-	if !ok {
-		return bedrockNoPlatformDomain
-	}
-	for _, e := range entries {
-		if e.Region == region {
-			return ""
-		}
+	region, _ := services.VoiceRegionFor(domain, edges)
+	if hasBedrockEntry(region, entries) {
+		return ""
 	}
 	return bedrockNoEntry
+}
+
+// bedrockOwnDomainCheck is the add check of an address on the customer's own
+// domain, for route-only and hosted Bedrock alike: the pointing check, its
+// verdict stored (a refusal too, so the list can show it), and the region it
+// points at must have a live entry. domain must be a route the caller already
+// admitted as its own; owner bounds the lookups one owner runs at once. code
+// "" means Bedrock may be added, with the stored check. "Could not check"
+// (dns_lookup_failed 503, rate_limited 429) stores and changes nothing.
+func (h *GatewayHandler) bedrockOwnDomainCheck(ctx context.Context, r *http.Request, owner, domain string, entries []services.BedrockEntry) (stored store.AddressDNSCheck, code string, status int, msg string) {
+	// A nil checker answers lookup_failed.
+	p := h.d.Pointing.CheckFor(ctx, owner, domain, services.PurposeBedrock, h.pointingAllow(r))
+	switch {
+	case p.Status == services.PointingRateLimited:
+		return stored, "rate_limited", http.StatusTooManyRequests, services.PointingUnknownText(p, domain)
+	case !p.Known():
+		return stored, "dns_lookup_failed", http.StatusServiceUnavailable, services.PointingUnknownText(p, domain)
+	}
+	ok := p.Status == services.PointingOK
+	stored, err := h.d.Store.RecordAddressDNSCheck(domain, string(p.Status), p.Region, ok)
+	if err != nil {
+		// Display state only: the verdict itself still decides.
+		log.Printf("bedrock: %s: store dns check: %v", domain, err)
+		stored = store.AddressDNSCheck{Name: domain, Status: string(p.Status), Region: p.Region, CheckedAt: time.Now()}
+	}
+	if !ok {
+		return store.AddressDNSCheck{}, "bedrock_unavailable", http.StatusConflict,
+			services.PointingRefusal(p, domain, h.pointingCNAMETargets(), services.PurposeBedrock)
+	}
+	if !hasBedrockEntry(p.Region, entries) {
+		return store.AddressDNSCheck{}, "bedrock_unavailable", http.StatusConflict, bedrockNoEntry
+	}
+	return stored, "", http.StatusOK, ""
+}
+
+// pointingCNAMETargets is where a refusal tells the customer to point their
+// CNAME: the operator's label under each hoster domain.
+func (h *GatewayHandler) pointingCNAMETargets() []string {
+	hosters, _, cname := h.loadGatewayDomainConfig()
+	bases := make([]string, 0, len(hosters))
+	for _, hd := range hosters {
+		bases = append(bases, hd.Domain)
+	}
+	return services.CNAMETargets(cname, bases)
 }
 
 // SetLinkRouteBedrock PUT /api/gateway/link-routes/{domain}/bedrock - body
@@ -94,6 +156,9 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
+	// Set only when this request ran the own-domain check (an ADD).
+	var dnsCheck store.AddressDNSCheck
+	checked := false
 	if *req.Bedrock && (prior == nil || !prior.Bedrock) {
 		allowed, settingErr := h.bedrockAllowedChecked(r)
 		if !allowed && !managedAPICall(r, rt.OwnerID) {
@@ -127,9 +192,20 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 			httpx.SendJSONError(w, "Could not check the Bedrock entries. Try again.", http.StatusBadGateway)
 			return
 		}
-		if refusal := linkRouteBedrockRefusal(domain, services.GetEdgesFromRedis(ctx, h.d.Redis), entries); refusal != "" {
-			httpx.SendJSONErrorCode(w, refusal, "bedrock_unavailable", http.StatusConflict)
-			return
+		edges := services.GetEdgesFromRedis(ctx, h.d.Redis)
+		if _, regional := services.VoiceRegionFor(domain, edges); regional {
+			if refusal := linkRouteBedrockRefusal(domain, edges, entries); refusal != "" {
+				httpx.SendJSONErrorCode(w, refusal, "bedrock_unavailable", http.StatusConflict)
+				return
+			}
+		} else {
+			var code, msg string
+			var status int
+			if dnsCheck, code, status, msg = h.bedrockOwnDomainCheck(ctx, r, rt.OwnerID, rt.Domain, entries); code != "" {
+				httpx.SendJSONErrorCode(w, msg, code, status)
+				return
+			}
+			checked = true
 		}
 	}
 	if prior == nil && !*req.Bedrock {
@@ -152,8 +228,11 @@ func (h *GatewayHandler) SetLinkRouteBedrock(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "The route was saved, but the gateway could not be told yet. It applies within a minute.", http.StatusBadGateway)
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"success": true,
-		"bedrock": linkRouteBedrockView{Java: *req.Java, Bedrock: *req.Bedrock, HasKey: true}})
+	view := linkRouteBedrockView{Java: *req.Java, Bedrock: *req.Bedrock, HasKey: true}
+	if checked {
+		view = view.withDNS(dnsCheck)
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "bedrock": view})
 }
 
 // GetLinkRouteFloodgateKey GET /api/gateway/link-routes/{domain}/floodgate-key
@@ -204,7 +283,9 @@ func (h *GatewayHandler) linkRouteFloodgateKey(userID string, isAdmin bool, doma
 }
 
 // linkRouteBedrockViews is the Bedrock part of the route-only list: each
-// address's stored editions and, when Bedrock cannot be added, why.
+// address's stored editions, its stored DNS check and, when Bedrock cannot be
+// added, why. It never resolves: an own domain's refusal is "" unless the
+// region its last check found has no entry (the add checks afresh anyway).
 func (h *GatewayHandler) linkRouteBedrockViews(ctx context.Context, domains []string) map[string]linkRouteBedrockView {
 	stored := map[string]store.LinkRouteEdition{}
 	if rows, err := h.d.Store.ListLinkRouteEditions(); err == nil {
@@ -219,16 +300,41 @@ func (h *GatewayHandler) linkRouteBedrockViews(ctx context.Context, domains []st
 	if err != nil {
 		log.Printf("bedrock: link routes: %v", err)
 	}
+	regional := make(map[string]bool, len(domains))
+	var own []string
+	for _, d := range domains {
+		if _, ok := services.VoiceRegionFor(d, edges); ok {
+			regional[d] = true
+		} else {
+			own = append(own, d)
+		}
+	}
+	checks := map[string]store.AddressDNSCheck{}
+	if len(own) > 0 {
+		got, cerr := h.d.Store.GetAddressDNSChecks(own)
+		if cerr != nil {
+			log.Printf("bedrock: list dns checks: %v", cerr)
+		} else {
+			checks = got
+		}
+	}
 	out := make(map[string]linkRouteBedrockView, len(domains))
 	for _, d := range domains {
 		v := linkRouteBedrockView{Java: true}
 		if e, ok := stored[d]; ok {
 			v = linkRouteBedrockView{Java: e.Java, Bedrock: e.Bedrock, HasKey: true}
 		}
-		if err != nil {
+		c, checked := checks[strings.ToLower(d)]
+		if checked && !regional[d] {
+			v = v.withDNS(c)
+		}
+		switch {
+		case err != nil:
 			v.Refusal = "Could not check the Bedrock entries. Try again."
-		} else {
+		case regional[d]:
 			v.Refusal = linkRouteBedrockRefusal(d, edges, entries)
+		case checked && c.Region != "" && !hasBedrockEntry(c.Region, entries):
+			v.Refusal = bedrockNoEntry
 		}
 		out[d] = v
 	}

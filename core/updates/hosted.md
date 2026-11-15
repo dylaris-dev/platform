@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.15.2
+
+### Features
+- Bedrock on your own domain: give an address on your own domain Bedrock as usual, once its DNS points
+  at one of our regions (a CNAME to the address shown under Your own domains is enough).
+- When the DNS does not point at us, the panel says which record to create. Each own-domain Bedrock
+  address shows whether its DNS still points at us; nothing is switched off when it stops.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Giving an address Bedrock now checks that address's own region, not the server's first address.
+
 ## 2026.11.15
 
 ### Features

@@ -16,7 +16,7 @@ import { BedrockSummary, RouteEdition } from '@/components/BedrockRoutes';
 import { bedrockTakenElsewhere, canAddBedrock, editionFlags, editionOptions, saveEdition, showBedrock, type Edition } from '@/lib/bedrock';
 import { useAppData } from '@/lib/AppDataContext';
 import { CustomDomainsPanel } from '@/components/infra/CustomDomainsPanel';
-import { OWN_DOMAIN_EXTRAS_TEXT, providerErrorText } from '@/lib/gatewayProvider';
+import { providerErrorText } from '@/lib/gatewayProvider';
 
 interface RoutesModalProps {
     serverId: number;
@@ -122,14 +122,24 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
             .catch(() => {});
         return () => { cancelled = true; };
     }, [serverId, gatewayVisibility.bedrock]);
-    const bedrockShown = !!bedrock && showBedrock(bedrock);
+    const bedrockShown = !!bedrock && showBedrock(bedrock, routes.map(r => r.domain));
 
     // Mirrors what Core stored: Java only has no row.
     const editionSaved = (domain: string, e: Edition) => {
+        // An add has just stored a fresh DNS check that the PUT answer does
+        // not carry; without a re-read the line under it keeps the old state.
+        const added = e !== 'java' && !bedrock?.routes.some(r => r.domain === domain && r.bedrock);
+        if (added) {
+            getServerBedrock(serverId)
+                .then(res => { if (res?.success !== false && res?.bedrock) setBedrock(res.bedrock); })
+                .catch(() => {});
+        }
         setBedrock(prev => {
             if (!prev) return prev;
+            // An own-domain address stays listed with its DNS state, as Core lists it.
+            const old = prev.routes.find(r => r.domain === domain);
             const routes = prev.routes.filter(r => r.domain !== domain);
-            if (e !== 'java') routes.push({ domain, ...editionFlags(e) });
+            if (e !== 'java' || old?.ownDomain) routes.push({ ...old, domain, ...editionFlags(e) });
             return { ...prev, routes, enabled: routes.some(r => r.bedrock) };
         });
     };
@@ -164,16 +174,13 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
         return () => clearTimeout(handle);
     }, [hasRouteInput, newRoute.domain, newRoute.subdomain, newRoute.hosterDomain, newRoute.customDomain]);
 
-    // A route typed in as an own domain cannot take Bedrock on the managed gateway.
-    const newOwnDomain = gatewayProvider === 'remote' && !!newRoute.customDomain;
-
     const handleCreateRoute = async () => {
         setRouteError('');
         setRouteNotice('');
         if (!hasRouteInput) { setRouteError('Domain is required'); return; }
         setRouteCreating(true);
         // Saved once the Hub has committed the route: Core checks it exists.
-        const edition = newOwnDomain ? 'java' : newEdition;
+        const edition = newEdition;
         try {
             const { status, body: res } = await createServerRouteWithStatus(serverId, newRoute);
             const refusal = routeCreateRefusal(status, res);
@@ -355,11 +362,10 @@ export default function RoutesModal({ serverId, serverName, server, onClose, onR
                                 <span className="text-xs text-(--base-06)">Players</span>
                                 <Segmented
                                     ariaLabel="Players on the new route"
-                                    value={newOwnDomain ? 'java' : newEdition}
+                                    value={newEdition}
                                     onChange={setNewEdition}
-                                    options={editionOptions('java', true, '', gatewayProvider === 'remote' ? bedrockTakenElsewhere(bedrock, '') : null, newOwnDomain)}
+                                    options={editionOptions('java', true, '', gatewayProvider === 'remote' ? bedrockTakenElsewhere(bedrock, '') : null)}
                                 />
-                                {newOwnDomain && <span className="text-xs text-(--base-06)">{OWN_DOMAIN_EXTRAS_TEXT}</span>}
                             </div>
                         )}
 

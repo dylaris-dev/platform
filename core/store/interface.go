@@ -686,6 +686,11 @@ type Store interface {
 	RaisePlayerPeak(ownerID string, day time.Time, java, bedrock, total int) error
 	ListPlayerPeaks(ownerID string, since time.Time) ([]PlayerPeak, error)
 	PurgePlayerPeaks(before time.Time) (int64, error)
+	// Last DNS pointing check of an own-domain address. See AddressDNSCheck.
+	RecordAddressDNSCheck(name, status, region string, ok bool) (AddressDNSCheck, error)
+	GetAddressDNSChecks(names []string) (map[string]AddressDNSCheck, error)
+	ListAddressDNSChecksDue(before time.Time, limit int) ([]AddressDNSCheck, error)
+	DeleteAddressDNSChecksNotIn(names []string) (int64, error)
 	ListWarpLeadersByRegion(region string) ([]WarpLeader, error)
 	UpsertWarpLeader(leaderID, region, endpoint string, enabled bool) error
 	DeleteWarpLeader(leaderID string) (bool, error)

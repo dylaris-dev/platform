@@ -1,7 +1,8 @@
 // Pure helpers for Bedrock on routes (RoutesModal, BedrockRoutes).
-import { setRouteEdition, type ServerBedrock } from './api';
+import { setRouteEdition, type BedrockRouteEdition, type LinkRouteBedrock, type ServerBedrock } from './api';
 import type { SegmentedOption } from '@/components/ui/Segmented';
-import { OWN_DOMAIN_EXTRAS_TEXT, refusalText } from './gatewayProvider';
+import { refusalText } from './gatewayProvider';
+import { fmtDate, fmtDateTime } from './time';
 
 export type Edition = 'java' | 'bedrock' | 'both';
 
@@ -28,22 +29,27 @@ export function canAddBedrock(b: Pick<ServerBedrock, 'allowed' | 'available'>): 
     return b.allowed && b.available;
 }
 
-/** Shown when Bedrock can be added here, or when a route already has it: an
- *  owner must always be able to take it away again. */
-export function showBedrock(b: Pick<ServerBedrock, 'allowed' | 'available' | 'enabled'>): boolean {
-    return canAddBedrock(b) || b.enabled;
+/** Whether the server summary lets this address be given Bedrock. The summary's
+ *  refusal is about its `address` only: Core decides every other address when
+ *  it is added (its own region, or the DNS check of an own domain), so those
+ *  are left to the add request, whose refusal is shown. */
+export function canAddBedrockTo(b: Pick<ServerBedrock, 'allowed' | 'available'> & { address?: string }, domain: string): boolean {
+    return b.allowed && (b.available || (!!b.address && domain !== b.address));
+}
+
+/** Shown when Bedrock can be added to one of `domains` (the server's
+ *  addresses), or when a route already has it: an owner must always be able
+ *  to take it away again. */
+export function showBedrock(b: Pick<ServerBedrock, 'allowed' | 'available' | 'enabled'> & { address?: string }, domains: string[] = []): boolean {
+    return canAddBedrock(b) || b.enabled || domains.some(d => canAddBedrockTo(b, d));
 }
 
 /** The three choices for one route. Options that would ADD Bedrock are
  *  disabled while it cannot be added; the current one never is. `takenBy` is
- *  the managed gateway's one-address rule: the other address that has it.
- *  `ownDomain`: the address is on an own domain, where Bedrock is not offered. */
-export function editionOptions(current: Edition, canAdd: boolean, why: string, takenBy?: string | null, ownDomain?: boolean): SegmentedOption<Edition>[] {
+ *  the managed gateway's one-address rule: the other address that has it. */
+export function editionOptions(current: Edition, canAdd: boolean, why: string, takenBy?: string | null): SegmentedOption<Edition>[] {
     const adds = (e: Edition) => editionFlags(e).bedrock && !editionFlags(current).bedrock;
-    if (ownDomain) {
-        canAdd = false;
-        why = OWN_DOMAIN_EXTRAS_TEXT;
-    } else if (takenBy) {
+    if (takenBy) {
         canAdd = false;
         why = `This server already has a Bedrock address: ${takenBy}.`;
     }
@@ -54,16 +60,16 @@ export function editionOptions(current: Edition, canAdd: boolean, why: string, t
     ] as SegmentedOption<Edition>[]).map(o => (adds(o.id) && !canAdd ? { ...o, disabled: true, hint: why } : o));
 }
 
-/** The visible line under an address whose Bedrock options a managed-gateway
- *  rule disables (an own domain, or the server's one Bedrock address is
- *  another), so the reason is not only a hover hint on the disabled options.
- *  null otherwise, and always in local mode (no takenBy, no ownDomain). */
-export function editionBlockedNote(current: Edition, takenBy?: string | null, ownDomain?: boolean): string | null {
-    if (ownDomain) return OWN_DOMAIN_EXTRAS_TEXT;
-    if (takenBy && !editionFlags(current).bedrock) {
+/** The visible line under an address whose options that add Bedrock are
+ *  disabled, so the reason is not only a hover hint on them: the managed
+ *  gateway's one-address rule (`takenBy`), else `refusal`, the summary's
+ *  reason when the caller found it disables this address. null otherwise. */
+export function editionBlockedNote(current: Edition, takenBy?: string | null, refusal?: string | null): string | null {
+    if (editionFlags(current).bedrock) return null;
+    if (takenBy) {
         return `This server already has a Bedrock address: ${takenBy}. With the managed gateway a server has one; take Bedrock off ${takenBy} first to give it to this address.`;
     }
-    return null;
+    return refusal || null;
 }
 
 /** The other address of this server that has Bedrock, or null. */
@@ -71,9 +77,22 @@ export function bedrockTakenElsewhere(b: Pick<ServerBedrock, 'routes'>, domain: 
     return b.routes.find(r => r.bedrock && r.domain !== domain)?.domain ?? null;
 }
 
-/** Whether Core marked this address as one on an own domain (managed gateway). */
-export function isOwnDomainRoute(b: Pick<ServerBedrock, 'routes'> | null, domain: string): boolean {
-    return !!b?.routes.find(r => r.domain === domain)?.ownDomain;
+/** The last stored DNS check of an own-domain address, as a visible line
+ *  under it: Core's (or the gateway provider's) stored answer, never a lookup.
+ *  null for an address without Bedrock, for one on the gateway's domains,
+ *  and for a route-only address never checked (its view cannot tell the two
+ *  apart). */
+export function bedrockDNSNote(r: BedrockRouteEdition | LinkRouteBedrock): string | null {
+    // Only an address WITH Bedrock is re-checked. Without it a stored row is a
+    // refused add's miss, which says nothing true about this Java-only address.
+    if (!r.bedrock) return null;
+    const [status, checkedAt, failingSince, ownDomain] = 'has_key' in r
+        ? [r.dns_status, r.dns_checked_at, r.dns_failing_since, false]
+        : [r.dnsStatus, r.dnsCheckedAt, r.dnsFailingSince, !!r.ownDomain];
+    if (!status) return ownDomain ? 'Not checked yet.' : null;
+    if (status === 'ok') return `DNS checked ${checkedAt ? fmtDateTime(checkedAt) : 'recently'}: points at the gateway.`;
+    const since = failingSince || checkedAt;
+    return `No longer points at the gateway${since ? ` since ${fmtDate(since)}` : ''}. Bedrock players cannot reach this address until the record is back.`;
 }
 
 /** Why Bedrock cannot be added, for the disabled options' hint. */

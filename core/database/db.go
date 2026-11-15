@@ -468,6 +468,10 @@ func ensureSchema(db *sql.DB, useTimescale bool) error {
 		return err
 	}
 
+	if err := applyAddressDNSChecks(db); err != nil {
+		return err
+	}
+
 	seedSystemModules(db)
 
 	// After the seed, so every row it owns is guaranteed to exist.

@@ -143,7 +143,7 @@ func (h *ExternalGatewayHandler) SetRouteVoice(w http.ResponseWriter, r *http.Re
 	externalGateway(h.gw.SetLinkRouteVoice)(w, withManagedAPI(r, h.gw.d.Store, reqctx.ByonCallerID(r)))
 }
 
-// SetRouteBedrock PUT /api/external/gateway/routes/{domain}/bedrock - body {"java": bool, "bedrock": bool}, the address's editions; an active managed gateway plan lifts the platform's Bedrock audience setting for its account (the other checks, such as a suspension, a retiring link or no Bedrock entry in the region, still refuse), any other account only while the platform offers Bedrock to it (409 bedrock_disabled).
+// SetRouteBedrock PUT /api/external/gateway/routes/{domain}/bedrock - body {"java": bool, "bedrock": bool}, the address's editions, on one of our domains or on your own domain once its DNS points at one of our regions by a CNAME or A records (409 bedrock_unavailable with what to change, as SRV records and proxies cannot carry Bedrock; 503 dns_lookup_failed when the DNS check could not run, retry); the answer's dns_status, dns_checked_at and dns_failing_since are the last DNS check of an own domain, empty for an address on one of our domains; an active managed gateway plan lifts the platform's Bedrock audience setting for its account (the other checks, such as a suspension, a retiring link or no Bedrock entry in the region, still refuse), any other account only while the platform offers Bedrock to it (409 bedrock_disabled).
 func (h *ExternalGatewayHandler) SetRouteBedrock(w http.ResponseWriter, r *http.Request) {
 	externalGateway(h.gw.SetLinkRouteBedrock)(w, withManagedAPI(r, h.gw.d.Store, reqctx.ByonCallerID(r)))
 }

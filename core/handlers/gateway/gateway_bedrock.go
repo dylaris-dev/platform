@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"dylaris-core/handlers/gate"
@@ -26,9 +27,13 @@ type bedrockRouteView struct {
 	Domain  string `json:"domain"`
 	Java    bool   `json:"java"`
 	Bedrock bool   `json:"bedrock"`
-	// OwnDomain (managed gateway only): the address is on the customer's own
-	// domain, where Bedrock is not offered yet.
+	// OwnDomain: the address is on the customer's own domain.
 	OwnDomain bool `json:"ownDomain,omitempty"`
+	// The last stored DNS check of an own-domain address (Core's own in local
+	// mode, the provider's in remote mode), absent until the first one. Display only: the add always checks afresh.
+	DNSStatus       string     `json:"dnsStatus,omitempty"`
+	DNSCheckedAt    *time.Time `json:"dnsCheckedAt,omitempty"`
+	DNSFailingSince *time.Time `json:"dnsFailingSince,omitempty"`
 }
 
 type bedrockView struct {
@@ -43,7 +48,8 @@ type bedrockView struct {
 	Refusal   string `json:"refusal,omitempty"`
 	Address   string `json:"address"`
 	Loader    string `json:"loader"`
-	// Routes lists only the routes that differ from Java only.
+	// Routes lists the routes that differ from Java only, and in local mode
+	// also the own-domain routes, so their DNS state can be shown.
 	Routes []bedrockRouteView `json:"routes"`
 }
 
@@ -90,34 +96,73 @@ func (h *GatewayHandler) bedrockService() *services.BedrockService {
 	return svc
 }
 
-// bedrockAvailability reports whether Bedrock can be turned on and, when it
-// cannot, why. address is the voice address rule's pick: the lexically first
-// route domain exactly one label under an online edge's wildcard, because that
-// is the only name that resolves and the only one whose region is known.
-func (h *GatewayHandler) bedrockAvailability(ctx context.Context, srv *models.Server) (address, refusal string) {
+// bedrockAvailability is the server summary, without any DNS lookup. With a
+// route on one of our domains, address is the voice address rule's pick (the
+// lexically first route exactly one label under an online edge's wildcard)
+// and its region must have a live entry. With only own-domain routes, address
+// is the lexically first of them and any live entry offers Bedrock: the real
+// decision is the per-address add (bedrockAddRefusal). own lists the server's
+// own-domain routes, lower case and sorted.
+func (h *GatewayHandler) bedrockAvailability(ctx context.Context, srv *models.Server) (address, refusal string, own []string) {
 	if !services.GatewayRoutingEnabled(h.d.Store) || h.d.Redis == nil {
-		return "", bedrockNotRouted
+		return "", bedrockNotRouted, nil
 	}
 	routes, err := services.ReadRoutesFromRedis(ctx, h.d.Redis)
 	if err != nil {
 		log.Printf("bedrock: server %d: read routes: %v", srv.ID, err)
-		return "", "Could not read this server's routes. Try again."
+		return "", "Could not read this server's routes. Try again.", nil
 	}
-	host, region, ok := services.VoiceRouteFor(routes, services.GetEdgesFromRedis(ctx, h.d.Redis), srv.UUID)
-	if !ok {
-		return "", bedrockNotRouted
+	edges := services.GetEdgesFromRedis(ctx, h.d.Redis)
+	for _, rt := range routes {
+		if !services.RouteBelongsToServer(rt, srv.UUID) {
+			continue
+		}
+		if _, regional := services.VoiceRegionFor(rt.Domain, edges); !regional {
+			own = append(own, strings.ToLower(rt.Domain))
+		}
+	}
+	sort.Strings(own)
+	host, region, regional := services.VoiceRouteFor(routes, edges, srv.UUID)
+	if !regional {
+		if len(own) == 0 {
+			return "", bedrockNotRouted, nil
+		}
+		host = own[0]
 	}
 	entries, err := services.LiveBedrockEntries(ctx, h.d.Redis)
 	if err != nil {
 		log.Printf("bedrock: server %d: %v", srv.ID, err)
-		return host, "Could not check the Bedrock entries. Try again."
+		return host, "Could not check the Bedrock entries. Try again.", own
 	}
 	for _, e := range entries {
-		if e.Region == region {
-			return host, ""
+		if !regional || e.Region == region {
+			return host, "", own
 		}
 	}
-	return host, bedrockNoEntry
+	return host, bedrockNoEntry, own
+}
+
+// bedrockAddRefusal is the add check for ONE address of a hosted server,
+// asked only when Bedrock is added to it. An address on one of our domains
+// needs a live entry in its region; an own domain gets the route-only check
+// (bedrockOwnDomainCheck), which resolves. code "" means it may be added.
+func (h *GatewayHandler) bedrockAddRefusal(ctx context.Context, r *http.Request, owner, domain string) (code string, status int, msg string) {
+	if !services.GatewayRoutingEnabled(h.d.Store) || h.d.Redis == nil {
+		return "bedrock_unavailable", http.StatusConflict, bedrockNotRouted
+	}
+	entries, err := services.LiveBedrockEntries(ctx, h.d.Redis)
+	if err != nil {
+		log.Printf("bedrock: route %s: %v", domain, err)
+		return "bedrock_unavailable", http.StatusConflict, "Could not check the Bedrock entries. Try again."
+	}
+	if region, regional := services.VoiceRegionFor(domain, services.GetEdgesFromRedis(ctx, h.d.Redis)); regional {
+		if !hasBedrockEntry(region, entries) {
+			return "bedrock_unavailable", http.StatusConflict, bedrockNoEntry
+		}
+		return "", http.StatusOK, ""
+	}
+	_, code, status, msg = h.bedrockOwnDomainCheck(ctx, r, owner, domain, entries)
+	return code, status, msg
 }
 
 // GetServerBedrock GET /api/servers/{id}/bedrock.
@@ -143,15 +188,46 @@ func (h *GatewayHandler) GetServerBedrock(w http.ResponseWriter, r *http.Request
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	addr, refusal := h.bedrockAvailability(ctx, srv)
+	addr, refusal, own := h.bedrockAvailability(ctx, srv)
 	v := bedrockView{
 		Active: services.BedrockActive(r.Context(), h.d.FeatureFlags), Allowed: h.bedrockAllowed(r),
 		Available: refusal == "", Refusal: refusal, Address: addr,
 		Loader: modcompat.DefaultTargetDirForLoader(srv.InstallerType), Routes: []bedrockRouteView{},
 	}
+	isOwn := make(map[string]bool, len(own))
+	for _, d := range own {
+		isOwn[d] = true
+	}
+	checks := map[string]store.AddressDNSCheck{}
+	if len(own) > 0 {
+		// Stored answers only: this view never resolves.
+		if got, err := h.d.Store.GetAddressDNSChecks(own); err != nil {
+			log.Printf("bedrock: server %d: dns checks: %v", srv.ID, err)
+		} else {
+			checks = got
+		}
+	}
+	route := func(domain string, java, bedrock bool) bedrockRouteView {
+		rv := bedrockRouteView{Domain: domain, Java: java, Bedrock: bedrock}
+		d := strings.ToLower(domain)
+		if rv.OwnDomain = isOwn[d]; rv.OwnDomain {
+			if c, ok := checks[d]; ok {
+				at := c.CheckedAt
+				rv.DNSStatus, rv.DNSCheckedAt, rv.DNSFailingSince = c.Status, &at, c.FailingSince
+			}
+		}
+		return rv
+	}
+	listed := map[string]bool{}
 	for _, e := range rows {
 		v.Enabled = v.Enabled || e.Bedrock
-		v.Routes = append(v.Routes, bedrockRouteView{Domain: e.Domain, Java: e.Java, Bedrock: e.Bedrock})
+		v.Routes = append(v.Routes, route(e.Domain, e.Java, e.Bedrock))
+		listed[strings.ToLower(e.Domain)] = true
+	}
+	for _, d := range own {
+		if !listed[d] {
+			v.Routes = append(v.Routes, route(d, true, false))
+		}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "bedrock": v})
 }
@@ -230,8 +306,8 @@ func (h *GatewayHandler) SetRouteEdition(w http.ResponseWriter, r *http.Request)
 		if guard.RefuseIfSuspended(w, r, h.d.Store, h.d.SuspendGrace, srv) {
 			return
 		}
-		if _, refusal := h.bedrockAvailability(ctx, srv); refusal != "" {
-			httpx.SendJSONErrorCode(w, refusal, "bedrock_unavailable", http.StatusConflict)
+		if code, status, msg := h.bedrockAddRefusal(ctx, r, srv.OwnerID, req.Domain); code != "" {
+			httpx.SendJSONErrorCode(w, msg, code, status)
 			return
 		}
 	}
@@ -250,7 +326,7 @@ func (h *GatewayHandler) SetRouteEdition(w http.ResponseWriter, r *http.Request)
 }
 
 const (
-	remoteBedrockNoAddress   = "Bedrock needs an address on one of the gateway provider's domains."
+	remoteBedrockNoAddress   = "Bedrock needs an address on the managed gateway. Add one first."
 	remoteBedrockUnreachable = "The managed gateway could not be reached. Try again."
 	remoteBedrockKeyLate     = "Bedrock is on, but its key could not be handed to the server's node yet. It is retried within a minute; restart the server after that."
 )
@@ -276,8 +352,11 @@ func (h *GatewayHandler) republishMissingKey(ctx context.Context, srv *models.Se
 }
 
 // getRemoteBedrock is GetServerBedrock on the managed gateway: the editions
-// from the local columns, the refusal from the provider's route list. It
-// carries no key, and the panel offers no key download here.
+// from the local columns, the refusal and the DNS state of an own-domain
+// address from the provider's route list (this Core never resolves). Address
+// is the server's Bedrock address, else the voice address rule's pick (a
+// regional address first, else the lexically first own domain). It carries
+// no key, and the panel offers no key download here.
 func (h *GatewayHandler) getRemoteBedrock(w http.ResponseWriter, r *http.Request, rg *services.RemoteGateway, srv *models.Server) {
 	editions, err := rg.ServerEditions(srv.UUID)
 	if err != nil {
@@ -303,22 +382,36 @@ func (h *GatewayHandler) getRemoteBedrock(w http.ResponseWriter, r *http.Request
 		return
 	}
 	for _, d := range domains {
-		if ed := editions[d]; ed != "" {
-			v.Enabled, v.Address = true, d
-			v.Routes = append(v.Routes, bedrockRouteView{Domain: d, Java: ed == "both", Bedrock: true, OwnDomain: own[d]})
-		} else if own[d] {
-			// Listed so the panel can say up front that this address cannot take Bedrock.
-			v.Routes = append(v.Routes, bedrockRouteView{Domain: d, Java: true, OwnDomain: true})
+		ed := editions[d]
+		if ed == "" && !own[d] {
+			continue
 		}
+		// Own-domain addresses are listed with Java only too, so their DNS
+		// state can be shown before Bedrock is added.
+		rv := bedrockRouteView{Domain: d, Java: ed != "bedrock", Bedrock: ed != "", OwnDomain: own[d]}
+		if ed != "" {
+			v.Enabled, v.Address = true, d
+		}
+		if own[d] {
+			// Display only: an unreadable list shows no state.
+			if p, found, err := rg.ProviderRoute(ctx, d); err == nil && found && p.Bedrock != nil {
+				rv.DNSStatus, rv.DNSCheckedAt, rv.DNSFailingSince = p.Bedrock.DNSStatus, p.Bedrock.DNSCheckedAt, p.Bedrock.DNSFailingSince
+			}
+		}
+		v.Routes = append(v.Routes, rv)
 	}
 	refusal := ""
 	if v.Address == "" {
-		if regions, err := rg.Regions(ctx); err != nil {
+		if len(domains) == 0 {
+			refusal = remoteBedrockNoAddress
+		} else if regions, err := rg.Regions(ctx); err != nil {
 			refusal = remoteBedrockUnreachable
-		} else if d, _, ok := services.VoiceDomainFor(domains, regions.Items); ok {
+		} else if d, ok := services.VoiceAddressFor(domains, own, regions.Items); ok {
 			v.Address = d
 		} else {
-			refusal = remoteBedrockNoAddress
+			// Only addresses in a region that is offline now: the provider's
+			// refusal for the first one says why.
+			v.Address = domains[0]
 		}
 	}
 	if refusal == "" {
@@ -388,9 +481,6 @@ func (h *GatewayHandler) setRemoteRouteEdition(w http.ResponseWriter, r *http.Re
 			}
 		}
 		httpx.SendJSONErrorCode(w, "With the managed gateway a server has one Bedrock address. Take Bedrock off "+other+" first.", "bedrock_one_address", http.StatusConflict)
-		return
-	case errors.Is(err, services.ErrGatewayOwnDomainExtras):
-		httpx.SendJSONErrorCode(w, gate.RemoteOwnDomainExtrasText, "own_domain_unsupported", http.StatusConflict)
 		return
 	case err != nil:
 		if !gate.GatewayProviderError(w, err) {

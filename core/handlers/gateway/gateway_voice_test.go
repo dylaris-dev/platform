@@ -536,7 +536,7 @@ func TestHostedOwnDomainVoiceRefusalsWriteNothing(t *testing.T) {
 		{"lookup failed", func(_ *voiceSwitchEnv, r *odResolver) {
 			r.fail = &net.DNSError{Err: "server misbehaving", IsTemporary: true}
 		},
-			503, "dns_lookup_failed", "We could not look up " + odDomain + " right now. Nothing was changed. Try again in a moment."},
+			503, "dns_lookup_failed", "The lookup of " + odDomain + " failed right now. Nothing was changed. Try again in a moment."},
 		{"rate limited", func(e *voiceSwitchEnv, r *odResolver) {
 			r.a[odDomain] = addrs(edgeAddr)
 			e.h.d.PointingLimiter = httpx.NewIPRateLimiter()
@@ -545,7 +545,7 @@ func TestHostedOwnDomainVoiceRefusalsWriteNothing(t *testing.T) {
 			}
 		}, 429, "rate_limited", "Too many DNS checks. Wait a minute."},
 		{"no checker", func(e *voiceSwitchEnv, _ *odResolver) { e.h.d.Pointing = nil },
-			503, "dns_lookup_failed", "We could not look up " + odDomain + " right now. Nothing was changed. Try again in a moment."},
+			503, "dns_lookup_failed", "The lookup of " + odDomain + " failed right now. Nothing was changed. Try again in a moment."},
 		{"no routes at all", func(e *voiceSwitchEnv, _ *odResolver) { e.mr.Del("route:" + odDomain) },
 			409, "no_routes", "Voice chat needs an address on one of the platform's domains. Add a route first."},
 	} {

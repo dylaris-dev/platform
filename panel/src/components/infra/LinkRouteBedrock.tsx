@@ -6,7 +6,7 @@ import Segmented from '@/components/ui/Segmented';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from '@/components/ui/Toast';
 import { downloadLinkRouteFloodgateKey, setLinkRouteBedrock, type LinkRouteBedrock as View } from '@/lib/api';
-import { editionFlags, editionOptions, linkEdition, pausedNotice, type Edition } from '@/lib/bedrock';
+import { bedrockDNSNote, editionFlags, editionOptions, linkEdition, pausedNotice, type Edition } from '@/lib/bedrock';
 
 /**
  * Java / Java + Bedrock / Bedrock for one route-only address, one block in the
@@ -68,6 +68,7 @@ export default function LinkRouteBedrock({ domain, bedrock, allowed, active, onS
     };
 
     const notice = pausedNotice(current, active);
+    const dnsNote = bedrock ? bedrockDNSNote(bedrock) : null;
     return (
         <div className="mt-1.5 space-y-1.5">
             <span className="flex flex-wrap items-center gap-2" aria-busy={busy}>
@@ -81,6 +82,11 @@ export default function LinkRouteBedrock({ domain, bedrock, allowed, active, onS
                 {current !== 'java' && !active && <Badge variant="warning">Bedrock paused</Badge>}
                 {slow && <Loader2 size={14} className="animate-spin text-(--base-06)" aria-hidden="true" />}
             </span>
+            {dnsNote && (
+                <p className={`text-xs ${bedrock?.dns_status !== 'ok' ? 'text-(--warning-light)' : 'text-(--base-06)'}`} role="status">
+                    {dnsNote}
+                </p>
+            )}
             {notice && <p className="text-xs text-(--warning-light)">{notice}</p>}
             {current !== 'java' && bedrock?.has_key && (
                 <div className="space-y-1.5 text-xs text-(--base-06)">

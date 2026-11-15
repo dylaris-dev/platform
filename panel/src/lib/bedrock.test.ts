@@ -4,10 +4,10 @@ vi.mock('./api', () => ({ setRouteEdition: vi.fn() }));
 import { setRouteEdition } from './api';
 import {
     addBlockedReason, canAddBedrock, changeEdition, editionFlags, editionOf, editionOptions,
-    floodgateLink, linkEdition, pausedNotice, showBedrock, bedrockTakenElsewhere, saveEdition, isOwnDomainRoute,
-    editionBlockedNote,
+    floodgateLink, linkEdition, pausedNotice, showBedrock, bedrockTakenElsewhere, saveEdition,
+    editionBlockedNote, canAddBedrockTo, bedrockDNSNote,
 } from './bedrock';
-import { OWN_DOMAIN_EXTRAS_TEXT } from './gatewayProvider';
+import { fmtDate, fmtDateTime } from './time';
 
 const set = vi.mocked(setRouteEdition);
 beforeEach(() => set.mockReset());
@@ -153,27 +153,22 @@ describe('linkEdition', () => {
     });
 });
 
-describe('own domains on the managed gateway', () => {
-    const b = { routes: [
-        { domain: 'play.acme.tld', java: true, bedrock: false, ownDomain: true },
-        { domain: 'a.eu.p.com', java: true, bedrock: true },
-    ] };
+describe('per-address adds', () => {
+    const mixed = { allowed: true, available: false, address: 'a.eu.example.com', enabled: false };
 
-    it('isOwnDomainRoute reads the flag Core sends', () => {
-        expect(isOwnDomainRoute(b, 'play.acme.tld')).toBe(true);
-        expect(isOwnDomainRoute(b, 'a.eu.p.com')).toBe(false);
-        expect(isOwnDomainRoute(b, 'unknown.example.com')).toBe(false);
-        expect(isOwnDomainRoute(null, 'play.acme.tld')).toBe(false);
+    it('blocks only the address the summary is about', () => {
+        expect(canAddBedrockTo(mixed, 'a.eu.example.com')).toBe(false);
+        expect(canAddBedrockTo(mixed, 'b.us.example.com')).toBe(true);
     });
-
-    it('disables the options that add Bedrock and says why, over every other reason', () => {
-        const opts = editionOptions('java', true, '', 'a.eu.p.com', true);
-        expect(opts.map(o => !!o.disabled)).toEqual([false, true, true]);
-        expect(opts[1].hint).toBe(OWN_DOMAIN_EXTRAS_TEXT);
+    it('blocks every address without one to speak of, or for a caller who may not', () => {
+        expect(canAddBedrockTo({ ...mixed, address: '' }, 'b.us.example.com')).toBe(false);
+        expect(canAddBedrockTo({ ...mixed, allowed: false }, 'b.us.example.com')).toBe(false);
+        expect(canAddBedrockTo({ ...mixed, available: true }, 'a.eu.example.com')).toBe(true);
     });
-
-    it('leaves the options alone for an ordinary address', () => {
-        expect(editionOptions('java', true, '', null, false)).toEqual(editionOptions('java', true, ''));
+    it('shows the controls when another address may take it, as before for a single address', () => {
+        expect(showBedrock(mixed, ['a.eu.example.com', 'b.us.example.com'])).toBe(true);
+        expect(showBedrock(mixed, ['a.eu.example.com'])).toBe(false);
+        expect(showBedrock(mixed)).toBe(false);
     });
 });
 
@@ -181,11 +176,43 @@ describe('editionBlockedNote', () => {
     it('says visibly why a second address cannot get Bedrock', () => {
         expect(editionBlockedNote('java', 'both.example.com')).toMatch(/^This server already has a Bedrock address: both\.example\.com\. /);
     });
-    it('is the own-domain sentence on an own domain', () => {
-        expect(editionBlockedNote('java', null, true)).toBe(OWN_DOMAIN_EXTRAS_TEXT);
+    it('shows the refusal the caller found applies to this address', () => {
+        expect(editionBlockedNote('java', null, 'No entry.')).toBe('No entry.');
     });
     it('is nothing for the address that has it, and in local mode', () => {
         expect(editionBlockedNote('both', 'other.example.com')).toBeNull();
+        expect(editionBlockedNote('both', null, 'No entry.')).toBeNull();
         expect(editionBlockedNote('java')).toBeNull();
+    });
+});
+
+describe('editionOptions has no own-domain block', () => {
+    it('offers Bedrock on any address the caller may add it to', () => {
+        expect(editionOptions('java', true, '', null).some(x => x.disabled)).toBe(false);
+    });
+});
+
+describe('bedrockDNSNote', () => {
+    const at = '2026-11-15T09:30:00Z';
+    const since = '2026-11-14T09:00:00Z';
+    const missing = (d: string) => `No longer points at the gateway since ${fmtDate(d)}. Bedrock players cannot reach this address until the record is back.`;
+    it.each([
+        ['hosted ok', { domain: 'play.acme.tld', java: true, bedrock: true, ownDomain: true, dnsStatus: 'ok', dnsCheckedAt: at },
+            `DNS checked ${fmtDateTime(at)}: points at the gateway.`],
+        ['hosted failing', { domain: 'play.acme.tld', java: true, bedrock: true, ownDomain: true, dnsStatus: 'elsewhere', dnsCheckedAt: at, dnsFailingSince: since },
+            missing(since)],
+        ['hosted never checked, with Bedrock', { domain: 'play.acme.tld', java: true, bedrock: true, ownDomain: true }, 'Not checked yet.'],
+        ['hosted never checked, without Bedrock', { domain: 'play.acme.tld', java: true, bedrock: false, ownDomain: true }, null],
+        ['hosted regional', { domain: 'a.eu.example.com', java: true, bedrock: true }, null],
+        ['hosted Java only with a stored miss', { domain: 'play.acme.tld', java: true, bedrock: false, ownDomain: true, dnsStatus: 'elsewhere', dnsCheckedAt: at, dnsFailingSince: since }, null],
+        ['route-only Java only with a stored miss', { java: true, bedrock: false, has_key: false, dns_status: 'elsewhere', dns_checked_at: at, dns_failing_since: since }, null],
+        ['route-only ok', { java: true, bedrock: true, has_key: true, dns_status: 'ok', dns_checked_at: at, dns_failing_since: null },
+            `DNS checked ${fmtDateTime(at)}: points at the gateway.`],
+        ['route-only failing', { java: true, bedrock: true, has_key: true, dns_status: 'srv_only', dns_checked_at: at, dns_failing_since: since },
+            missing(since)],
+        ['route-only regional or never checked', { java: true, bedrock: false, has_key: false, dns_status: '', dns_checked_at: null, dns_failing_since: null }, null],
+        ['route-only from an older Core', { java: true, bedrock: true, has_key: true }, null],
+    ] as const)('%s', (_name, r, want) => {
+        expect(bedrockDNSNote(r)).toBe(want);
     });
 });

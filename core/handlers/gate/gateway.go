@@ -237,10 +237,6 @@ const kitRetiringText = "This node's link is being replaced. Move the server to 
 // for a server without an address on one of the provider's domains.
 const RemoteVoiceNoRoutesText = "Voice chat needs an address on one of the gateway provider's domains. Add one first."
 
-// RemoteOwnDomainExtrasText is the refusal of Bedrock on an address on the
-// customer's own domain (own_domain_unsupported).
-const RemoteOwnDomainExtrasText = "Bedrock is not available on your own domain yet. Use an address on the gateway provider's domain for it."
-
 // RemoteOwnDomainVoiceOldProviderText replaces an older provider's no_routes
 // for an own-domain address, which speaks of "the platform's domains" (the
 // provider's, read here as the customer's).

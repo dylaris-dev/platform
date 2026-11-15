@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sort"
 	"time"
 
 	"dylaris-core/pkg/leader"
@@ -52,6 +53,8 @@ type CustomDomainVerifier struct {
 	// ungated, which is what the tests want.
 	leader        leader.Election
 	gatewayRemote func() (remote, known bool)
+	// pointing runs the daily Bedrock DNS re-check; nil skips it.
+	pointing *PointingChecker
 }
 
 // SetLeader gates the poll loop so only one Core acts on a claim.
@@ -69,6 +72,10 @@ func (v *CustomDomainVerifier) SetLeader(l leader.Election) { v.leader = l }
 // verifier idles; local and remote both run it. The proof is a DNS lookup in
 // either mode, and what removing a route means is the remover's business.
 func (v *CustomDomainVerifier) SetGatewayRemote(fn func() (remote, known bool)) { v.gatewayRemote = fn }
+
+// SetPointing wires the shared pointing checker for the daily Bedrock DNS
+// re-check. Call once at boot.
+func (v *CustomDomainVerifier) SetPointing(c *PointingChecker) { v.pointing = c }
 
 func (v *CustomDomainVerifier) shouldRun() bool {
 	return v.leader == nil || v.leader.IsLeader()
@@ -113,6 +120,92 @@ func (v *CustomDomainVerifier) RunOnce(ctx context.Context) {
 	}
 	v.checkPending(ctx)
 	v.recheckVerified(ctx)
+	// A customer Core has no edges and checks nothing.
+	if LocalGatewayErr(v.gatewayRemote) == nil {
+		v.recheckBedrockDNS(ctx)
+	}
+}
+
+// recheckBedrockDNS refreshes the stored DNS state of the own-domain addresses
+// that have Bedrock, each once a day, for the panel to show. Display only: it
+// never writes an edition, never publishes sys:route:editions and never
+// touches a claim, because a pointing miss must not count toward the claim's
+// lapse, which removes routes. "Could not check" stores nothing. Rows of
+// names that no longer need a check are swept, after the checks.
+func (v *CustomDomainVerifier) recheckBedrockDNS(ctx context.Context) {
+	if v.pointing == nil {
+		return
+	}
+	// This read only tells regional names apart; Check reads the registry again
+	// per name. Empty means nothing can be told apart or checked (Check answers
+	// lookup_failed), so the pass waits.
+	edges := v.pointing.edges(ctx)
+	if len(edges) == 0 {
+		return
+	}
+	hosted, err := v.store.ListRouteEditions(0)
+	if err != nil {
+		log.Printf("custom-domain verifier: bedrock dns: list route editions: %v", err)
+		return
+	}
+	links, err := v.store.ListLinkRouteEditions()
+	if err != nil {
+		log.Printf("custom-domain verifier: bedrock dns: list link route editions: %v", err)
+		return
+	}
+	var names []string
+	seen := map[string]bool{}
+	add := func(domain string, bedrock bool) {
+		d := normaliseHost(domain)
+		if !bedrock || seen[d] {
+			return
+		}
+		if _, regional := VoiceRegionFor(d, edges); regional {
+			return
+		}
+		seen[d] = true
+		names = append(names, d)
+	}
+	for _, e := range hosted {
+		add(e.Domain, e.Bedrock)
+	}
+	for _, e := range links {
+		add(e.Domain, e.Bedrock)
+	}
+	checks, err := v.store.GetAddressDNSChecks(names)
+	if err != nil {
+		log.Printf("custom-domain verifier: bedrock dns: read checks: %v", err)
+		return
+	}
+	cutoff := time.Now().Add(-CustomDomainRecheckEvery)
+	var due []string
+	for _, n := range names {
+		if c, ok := checks[n]; !ok || c.CheckedAt.Before(cutoff) {
+			due = append(due, n)
+		}
+	}
+	// Never checked first (zero time), then the oldest; the rest next pass.
+	sort.SliceStable(due, func(i, j int) bool { return checks[due[i]].CheckedAt.Before(checks[due[j]].CheckedAt) })
+	if len(due) > customDomainRecheckBatch {
+		due = due[:customDomainRecheckBatch]
+	}
+	for _, n := range due {
+		if ctx.Err() != nil {
+			return
+		}
+		// Serial, no per-caller budget: one background pass on the leader.
+		p := v.pointing.Check(ctx, n, PurposeBedrock, nil)
+		if !p.Known() {
+			continue
+		}
+		if _, err := v.store.RecordAddressDNSCheck(n, string(p.Status), p.Region, p.Status == PointingOK); err != nil {
+			log.Printf("custom-domain verifier: bedrock dns: store %s: %v", n, err)
+		}
+	}
+	// Part 3's white-label names join the kept set here once they exist.
+	if _, err := v.store.DeleteAddressDNSChecksNotIn(names); err != nil {
+		log.Printf("custom-domain verifier: bedrock dns: sweep: %v", err)
+	}
 }
 
 // checkPending proves what can be proven, then fails what has run out of time.

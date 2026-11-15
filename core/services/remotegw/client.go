@@ -513,12 +513,18 @@ type RouteVoice struct {
 }
 
 // RouteBedrock is an address's editions on the provider. HasKey: it has a
-// Floodgate key to download. Refusal is why Bedrock cannot be added now.
+// Floodgate key to download. Refusal is why Bedrock cannot be added now. The
+// DNS fields are the provider's last stored check of an own-domain address
+// ("" and nil for an address on its domains, one never checked, and from an
+// older provider). Display only.
 type RouteBedrock struct {
-	Java    bool   `json:"java"`
-	Bedrock bool   `json:"bedrock"`
-	HasKey  bool   `json:"has_key"`
-	Refusal string `json:"refusal"`
+	Java            bool       `json:"java"`
+	Bedrock         bool       `json:"bedrock"`
+	HasKey          bool       `json:"has_key"`
+	Refusal         string     `json:"refusal"`
+	DNSStatus       string     `json:"dns_status"`
+	DNSCheckedAt    *time.Time `json:"dns_checked_at"`
+	DNSFailingSince *time.Time `json:"dns_failing_since"`
 }
 
 // SetVoice switches the address's voice relay. targetPort 0 is the provider's

@@ -1382,8 +1382,13 @@ export const setServerVoice = (serverId: number, enabled: boolean): Promise<Voic
 // `allowed`: this caller may give a route Bedrock. `available`: routed through
 // the gateway and a Bedrock entry runs in the region (`refusal` says why not).
 // `routes` lists only routes that differ from Java only.
-// `ownDomain` (managed gateway only): the address is on an own domain, where Bedrock is not offered yet.
-export interface BedrockRouteEdition { domain: string; java: boolean; bedrock: boolean; ownDomain?: boolean }
+// `ownDomain`: the address is on an own domain; those are listed with Java only
+// too, so `dnsStatus`/`dnsCheckedAt`/`dnsFailingSince` (the last stored DNS
+// check, display only, absent until the first) can be shown.
+export interface BedrockRouteEdition {
+    domain: string; java: boolean; bedrock: boolean; ownDomain?: boolean;
+    dnsStatus?: string; dnsCheckedAt?: string | null; dnsFailingSince?: string | null;
+}
 export interface ServerBedrock {
     enabled: boolean;
     active: boolean;
@@ -1530,8 +1535,12 @@ export interface LinkRoute {
 }
 /** host: the name the voice mod is told (our regional voice name for an own domain); absent from an older Core. */
 export interface LinkRouteVoice { enabled: boolean; host?: string; port?: number; target_port?: number }
-/** refusal: why Bedrock cannot be ADDED here now (region, custom domain); empty when it can. */
-export interface LinkRouteBedrock { java: boolean; bedrock: boolean; has_key: boolean; refusal?: string }
+/** refusal: why Bedrock cannot be ADDED here now (no Bedrock entry in its region); empty when it can.
+ *  dns_*: the last stored DNS check of an own-domain address, "" / null otherwise and from an older Core. */
+export interface LinkRouteBedrock {
+    java: boolean; bedrock: boolean; has_key: boolean; refusal?: string;
+    dns_status?: string; dns_checked_at?: string | null; dns_failing_since?: string | null;
+}
 export interface CreateLinkRouteRequest extends CreateRouteRequest {
     linkId: string;    // the Link kit's id (warp key node_id)
     targetHost: string; // the LOCAL target the Link dials (LAN / loopback allowed)

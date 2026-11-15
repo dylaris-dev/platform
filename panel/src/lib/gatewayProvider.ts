@@ -68,10 +68,6 @@ export function routeOptionsFailure(mode: GatewayProviderMode, failed: boolean):
         : null;
 }
 
-/** Bedrock on an address on the customer's own domain (Core's own_domain_unsupported). Voice chat is offered there. */
-export const OWN_DOMAIN_EXTRAS_TEXT =
-    "Bedrock is not available on your own domain yet. Use an address on the gateway provider's domain for it.";
-
 const PROVIDER_ERRORS: Record<string, string> = {
     unauthorized: 'The provider rejected this key. Check that it was copied in full and has not been revoked.',
     forbidden: 'The provider refused this key. The account may be suspended, or the key lacks the gateway permission.',
@@ -125,9 +121,8 @@ const PROVIDER_ERRORS: Record<string, string> = {
     dns_lookup_failed: 'The gateway provider could not look up this address right now. Nothing was changed. Try again in a moment.',
     voice_one_address: 'With the managed gateway a server has one voice chat address. Turn voice chat off, then on again.',
     bedrock_disabled: 'Bedrock is not enabled for this server. Ask an admin.',
-    bedrock_unavailable: "Bedrock needs an address on one of the gateway provider's domains. Own domains are not supported yet.",
+    bedrock_unavailable: "Bedrock needs an address on one of the gateway provider's domains, or an own domain that points at it.",
     bedrock_one_address: 'With the managed gateway a server has one Bedrock address. Take Bedrock off the other address first.',
-    own_domain_unsupported: OWN_DOMAIN_EXTRAS_TEXT,
 };
 
 /** The sentence for a refusal code; an unknown code gets `fallback`, else a generic sentence. */

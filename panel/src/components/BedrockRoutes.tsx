@@ -7,8 +7,8 @@ import { Badge } from '@/components/ui/Badge';
 import { toast } from '@/components/ui/Toast';
 import type { ServerBedrock } from '@/lib/api';
 import {
-    addBlockedReason, bedrockTakenElsewhere, canAddBedrock, editionBlockedNote, editionOf, editionOptions,
-    floodgateLink, isOwnDomainRoute, pausedNotice, saveEdition, type Edition,
+    addBlockedReason, bedrockDNSNote, bedrockTakenElsewhere, canAddBedrock, canAddBedrockTo, editionBlockedNote, editionOf,
+    editionOptions, floodgateLink, pausedNotice, saveEdition, type Edition,
 } from '@/lib/bedrock';
 import { useAppData } from '@/lib/AppDataContext';
 
@@ -69,9 +69,10 @@ function ManagedBedrockSummary({ bedrock, link }: { bedrock: ServerBedrock; link
         <div className="bg-(--base-02) rounded-md border border-(--base-03) px-3 py-2.5 space-y-1.5">
             <div className="text-sm font-medium text-(--base-09)">Bedrock players</div>
             <p className="text-xs text-(--base-06)">
-                Bedrock players join through the managed gateway. One address per server, on the gateway
-                provider&apos;s domain: own domains are not supported yet. Bedrock players (phone, tablet, Windows)
-                type the address with no port; consoles cannot add custom servers.
+                Bedrock players join through the managed gateway, on one address per server. On your own domain,
+                Bedrock needs a CNAME to the address shown under Your own domains; an SRV record alone is not
+                enough. Bedrock players (phone, tablet, Windows) type the address with no port; consoles cannot add
+                custom servers.
             </p>
             {bedrock.enabled && !bedrock.available && bedrock.refusal && (
                 <p className="text-xs text-(--warning-light)">Bedrock players cannot join right now. {bedrock.refusal}</p>
@@ -115,11 +116,14 @@ export function RouteEdition({ serverId, domain, bedrock, onChanged }: {
     const { gatewayProvider } = useAppData();
     // The managed gateway allows one Bedrock address per server.
     const takenBy = gatewayProvider === 'remote' ? bedrockTakenElsewhere(bedrock, domain) : null;
-    // Not offered on an own domain yet, or the server's one Bedrock address is
-    // another: said here, not only as a hint on the disabled options.
-    const ownDomain = gatewayProvider === 'remote' && isOwnDomainRoute(bedrock, domain);
-    const blockedNote = editionBlockedNote(current, takenBy, ownDomain);
+    const canAdd = canAddBedrockTo(bedrock, domain);
+    // The server's one Bedrock address is another, or the summary's refusal
+    // is about this address: said here, not only as a hint on the disabled
+    // options. While a route has Bedrock the summary already says it.
+    const blockedNote = editionBlockedNote(current, takenBy, !canAdd && !bedrock.enabled ? addBlockedReason(bedrock) : null);
     const ownNoteId = useId();
+    const route = bedrock.routes.find(r => r.domain === domain);
+    const dnsNote = route ? bedrockDNSNote(route) : null;
     const [busy, setBusy] = useState(false);
     const [slow, setSlow] = useState(false);
     const [error, setError] = useState('');
@@ -156,12 +160,17 @@ export function RouteEdition({ serverId, domain, bedrock, onChanged }: {
                     ariaLabel={`Players on ${domain}`}
                     value={current}
                     onChange={pick}
-                    options={editionOptions(current, canAddBedrock(bedrock), addBlockedReason(bedrock), takenBy, ownDomain)}
+                    options={editionOptions(current, canAdd, addBlockedReason(bedrock), takenBy)}
                 />
                 {current !== 'java' && !bedrock.active && <Badge variant="warning">Bedrock paused</Badge>}
                 {slow && <Loader2 size={14} className="animate-spin text-(--base-06)" aria-hidden="true" />}
             </span>
             {blockedNote && <p id={ownNoteId} className="text-xs text-(--base-06)">{blockedNote}</p>}
+            {dnsNote && (
+                <p className={`text-xs ${route?.dnsStatus && route.dnsStatus !== 'ok' ? 'text-(--warning-light)' : 'text-(--base-06)'}`} role="status">
+                    {dnsNote}
+                </p>
+            )}
             {notice && <p className="text-xs text-(--warning-light)">{notice}</p>}
             {restartNote && (
                 <p className="text-xs text-(--warning-light)" role="status">Restart the server so it loads the new Bedrock key.</p>

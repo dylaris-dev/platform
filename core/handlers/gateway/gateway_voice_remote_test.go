@@ -559,8 +559,8 @@ func TestRemoteVoiceRegionalAddressFirst(t *testing.T) {
 }
 
 func TestRemoteOwnDomainVoiceLookupFailed(t *testing.T) {
-	const providerSentence = "Voice chat needs to know which region this server's players arrive in. play.acme.tld does not point at us yet: add a CNAME from play.acme.tld to the address shown under Your own domains, or add an address on one of our domains."
-	const retry = "We could not look up play.acme.tld right now. Nothing was changed. Try again in a moment."
+	const providerSentence = "Voice chat needs to know which region this server's players arrive in. play.acme.tld does not point at the gateway yet: add a CNAME from play.acme.tld to the address shown under Your own domains, or add an address on one of the gateway's domains."
+	const retry = "The lookup of play.acme.tld failed right now. Nothing was changed. Try again in a moment."
 	for _, c := range []struct {
 		name, code, providerMsg string
 		status                  int
@@ -666,25 +666,4 @@ func stripVoiceHost(t *testing.T, base string) string {
 	}))
 	t.Cleanup(proxy.Close)
 	return proxy.URL
-}
-
-// Bedrock on an own domain stays refused up front until part 2, with its own
-// sentence, and the provider is never asked.
-func TestRemoteOwnDomainBedrockStaysBlocked(t *testing.T) {
-	e, res := newRemoteOwnDomain(t)
-	before := len(e.fake.Calls())
-	rec, out := bedrockCall(e.voiceSwitchEnv, http.MethodPut, bedrockBody(remoteOwn, true, true), false)
-	if rec.Code != http.StatusConflict || out["code"] != "own_domain_unsupported" ||
-		out["message"] != "Bedrock is not available on your own domain yet. Use an address on the gateway provider's domain for it." {
-		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
-	}
-	puts := 0
-	for _, c := range e.fake.Calls()[before:] {
-		if strings.HasPrefix(c, "PUT /routes/") {
-			puts++
-		}
-	}
-	if puts != 0 || e.rs.row(remoteOwn).Edition != "" || res.count() != 0 {
-		t.Fatalf("provider writes %d, edition %q, lookups %d", puts, e.rs.row(remoteOwn).Edition, res.count())
-	}
 }

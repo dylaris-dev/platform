@@ -35,10 +35,10 @@ describe('voiceErrorMessage', () => {
         expect(voiceErrorMessage('voice_pool_full', 'x')).toContain('Every voice port');
     });
 
-    it("shows Core's sentence for an own domain that does not point at us yet, and for a DNS check that could not run", () => {
-        const dns = "Voice chat needs to know which region this server's players arrive in. play.example.com does not point at us yet: add a CNAME from play.example.com to the address shown under Your own domains, or add an address on one of our domains.";
+    it("shows Core's sentence for an own domain that does not point at the gateway yet, and for a DNS check that could not run", () => {
+        const dns = "Voice chat needs to know which region this server's players arrive in. play.example.com does not point at the gateway yet: add a CNAME from play.example.com to the address shown under Your own domains, or add an address on one of the gateway's domains.";
         expect(voiceErrorMessage('no_routes', dns)).toBe(dns);
-        const retry = 'We could not look up play.example.com right now. Nothing was changed. Try again in a moment.';
+        const retry = 'The lookup of play.example.com failed right now. Nothing was changed. Try again in a moment.';
         expect(voiceErrorMessage('dns_lookup_failed', retry)).toBe(retry);
         expect(voiceErrorMessage('rate_limited', 'Too many DNS checks. Wait a minute.')).toBe('Too many DNS checks. Wait a minute.');
         // A server with no address at all keeps the sentence it had.

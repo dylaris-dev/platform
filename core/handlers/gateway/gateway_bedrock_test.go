@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/services"
 	"dylaris-core/store"
@@ -209,9 +210,40 @@ type linkBedrockStore struct {
 	*bedrockSwitchStore
 	core  []store.CoreLinkRoute
 	links map[string]store.LinkRouteEdition
+	// dns is address_dns_checks, with the store's run rule.
+	dns map[string]store.AddressDNSCheck
 }
 
 func (f *linkBedrockStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) { return f.core, nil }
+
+func (f *linkBedrockStore) RecordAddressDNSCheck(name, status, region string, ok bool) (store.AddressDNSCheck, error) {
+	if status == "lookup_failed" || status == "rate_limited" || status == "" {
+		return store.AddressDNSCheck{}, errors.New("not a verdict")
+	}
+	c := f.dns[name]
+	c.Name, c.Status, c.Region, c.CheckedAt = name, status, region, time.Now()
+	if ok {
+		c.Misses, c.FailingSince = 0, nil
+	} else {
+		c.Misses++
+		if c.FailingSince == nil {
+			at := c.CheckedAt
+			c.FailingSince = &at
+		}
+	}
+	f.dns[name] = c
+	return c, nil
+}
+
+func (f *linkBedrockStore) GetAddressDNSChecks(names []string) (map[string]store.AddressDNSCheck, error) {
+	out := map[string]store.AddressDNSCheck{}
+	for _, n := range names {
+		if c, ok := f.dns[n]; ok {
+			out[n] = c
+		}
+	}
+	return out, nil
+}
 
 // No retiring kits here.
 func (f *linkBedrockStore) ListWarpAPIKeysByOwner(string) ([]store.WarpAPIKey, error) {
@@ -251,7 +283,7 @@ const linkDomain = "r.eu.dylaris.com"
 func newLinkBedrock(t *testing.T) (*voiceSwitchEnv, *linkBedrockStore) {
 	t.Helper()
 	e, bs := newBedrockSwitch(t)
-	ls := &linkBedrockStore{bedrockSwitchStore: bs, links: map[string]store.LinkRouteEdition{},
+	ls := &linkBedrockStore{bedrockSwitchStore: bs, links: map[string]store.LinkRouteEdition{}, dns: map[string]store.AddressDNSCheck{},
 		core: []store.CoreLinkRoute{
 			{Domain: linkDomain, OwnerID: "owner-1", LinkToken: "tok"},
 			{Domain: "play.example.com", OwnerID: "owner-1", LinkToken: "tok"},
@@ -319,7 +351,9 @@ func TestLinkRouteBedrockRefusals(t *testing.T) {
 		{"another owner", linkDomain, `{"java":true,"bedrock":true}`, "owner-2", "", http.StatusNotFound, false, func(*linkBedrockStore) {}},
 		{"switch admin only", linkDomain, `{"java":true,"bedrock":true}`, "owner-1", "bedrock_disabled", http.StatusConflict, false,
 			func(ls *linkBedrockStore) { ls.audience = "admin" }},
-		{"custom domain", "play.example.com", `{"java":true,"bedrock":true}`, "owner-1", "bedrock_unavailable", http.StatusConflict, false, func(*linkBedrockStore) {}},
+		// No pointing checker wired: an own domain cannot be checked, which is
+		// never a "no" (TestLinkRouteBedrockOwnDomain has the verdicts).
+		{"own domain, nothing to check with", "play.example.com", `{"java":true,"bedrock":true}`, "owner-1", "dns_lookup_failed", http.StatusServiceUnavailable, false, func(*linkBedrockStore) {}},
 		{"neither edition", linkDomain, `{"java":false,"bedrock":false}`, "owner-1", "edition_invalid", http.StatusBadRequest, false, func(*linkBedrockStore) {}},
 	} {
 		t.Run(c.name, func(t *testing.T) {

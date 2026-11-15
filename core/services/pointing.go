@@ -282,7 +282,7 @@ func (c *PointingChecker) lookup(ctx context.Context, key pointingKey, edges []G
 // transient: do not cache p. Set for a failed SRV hop, which the caller sees
 // as not_found (see below) but which the next try must ask again.
 func (c *PointingChecker) resolve(ctx context.Context, name string, purpose PointingPurpose, edges []GatewayEdgeInfo) (p Pointing, transient bool) {
-	if p, decided := c.judge(ctx, name); decided {
+	if p, decided := c.judge(ctx, name, purpose); decided {
 		return p, false
 	}
 	srvs, err := c.res.LookupSRV(ctx, "_minecraft._tcp."+name)
@@ -315,7 +315,7 @@ func (c *PointingChecker) resolve(ctx context.Context, name string, purpose Poin
 	// read as a target with no address. Only a failed hop is not cached, so a
 	// transient SERVFAIL of a real target does not stick for the negative TTL;
 	// status and sentence stay the same.
-	p, decided := c.judge(ctx, target)
+	p, decided := c.judge(ctx, target, purpose)
 	switch {
 	case p.Status == PointingLookupFailed:
 		return Pointing{Status: PointingNotFound}, true
@@ -330,7 +330,14 @@ func (c *PointingChecker) resolve(ctx context.Context, name string, purpose Poin
 
 // judge asks CNAME, A and AAAA of one name concurrently. decided is false
 // only when the name has no A answer, which is where SRV takes over.
-func (c *PointingChecker) judge(ctx context.Context, name string) (p Pointing, decided bool) {
+//
+// For Bedrock ANY AAAA in the answer is ipv6, at the end of an alias too: our
+// regional names carry no AAAA, so an AAAA always leads somewhere else. It
+// therefore waits for the AAAA even when the alias is our own name, which
+// also keeps the verdict the same whichever hop Go reports. The voice
+// purposes keep the alias exemption below.
+func (c *PointingChecker) judge(ctx context.Context, name string, purpose PointingPurpose) (p Pointing, decided bool) {
+	strictV6 := purpose == PurposeBedrock
 	type cnameRes struct {
 		name string
 		err  error
@@ -349,6 +356,7 @@ func (c *PointingChecker) judge(ctx context.Context, name string) (p Pointing, d
 
 	var a, a6 addrRes
 	failed, aliased := false, false
+	ourAlias := "" // region of an alias to our own name (strictV6 only)
 	for pending := 3; pending > 0; pending-- {
 		select {
 		case <-ctx.Done():
@@ -363,7 +371,10 @@ func (c *PointingChecker) judge(ctx context.Context, name string) (p Pointing, d
 			if canon := normaliseHost(cn.name); cn.err == nil && canon != name {
 				aliased = true
 				if region, ok := c.wildcardRegion(canon); ok {
-					return Pointing{Status: PointingOK, Region: region, Via: "cname"}, true
+					if !strictV6 {
+						return Pointing{Status: PointingOK, Region: region, Via: "cname"}, true
+					}
+					ourAlias = region
 				}
 			}
 		case a = <-aCh:
@@ -374,6 +385,12 @@ func (c *PointingChecker) judge(ctx context.Context, name string) (p Pointing, d
 	}
 	if failed {
 		return pointingFailed, true
+	}
+	if ourAlias != "" {
+		if len(a6.addrs) > 0 {
+			return Pointing{Status: PointingIPv6}, true
+		}
+		return Pointing{Status: PointingOK, Region: ourAlias, Via: "cname"}, true
 	}
 	if len(a.addrs) == 0 {
 		return Pointing{}, false
@@ -403,13 +420,13 @@ func (c *PointingChecker) judge(ctx context.Context, name string) (p Pointing, d
 		return Pointing{Status: PointingPartial, Found: found}, true
 	case known > 0 && len(regions) > 1:
 		return Pointing{Status: PointingMultiRegion}, true
-	case known > 0 && len(a6.addrs) > 0 && !aliased:
+	case known > 0 && len(a6.addrs) > 0 && (!aliased || strictV6):
 		return Pointing{Status: PointingIPv6}, true
 	case known > 0:
-		// An alias holds no AAAA of its own: with every A ours, the AAAA
-		// belong to the chain end, which is ours. Go reports the first hop or
-		// the end of a longer chain at random, so an alias is ok/cname either
-		// way, never a flip to ipv6.
+		// Voice: an alias holds no AAAA of its own: with every A ours, the
+		// AAAA belong to the chain end, which is ours. Go reports the first
+		// hop or the end of a longer chain at random, so an alias is ok/cname
+		// either way, never a flip to ipv6.
 		var region string
 		for r := range regions {
 			region = r // exactly one
@@ -546,11 +563,13 @@ func PointingUnknownText(p Pointing, name string) string {
 	case p.Status == PointingRateLimited:
 		return "Too many DNS checks. Wait a minute."
 	}
-	return fmt.Sprintf("We could not look up %s right now. Nothing was changed. Try again in a moment.", name)
+	return fmt.Sprintf("The lookup of %s failed right now. Nothing was changed. Try again in a moment.", name)
 }
 
 // PointingRefusal is the customer's sentence for a VERDICT that is not ok
-// (spec section 11). targets are the full CNAME targets from CNAMETargets;
+// (spec section 11). It names "the gateway", never "us": a customer Core on the
+// managed gateway passes it verbatim to its own users, for whom "us" would be
+// their hoster. targets are the full CNAME targets from CNAMETargets;
 // none means the operator never set the label. "" for ok and for an unknown
 // verdict, so no caller can refuse on "could not check" by accident: branch
 // on Known first and use PointingUnknownText for the rest.
@@ -572,36 +591,36 @@ func PointingRefusal(p Pointing, name string, targets []string, purpose Pointing
 	}
 	switch p.Status {
 	case PointingPartial:
-		return fmt.Sprintf("%s points to us and also to %s. Remove the records that are not ours, or use a CNAME to %s.", name, found, to)
+		return fmt.Sprintf("%s points to the gateway and also to %s. Remove the records that do not lead to the gateway, or use a CNAME to %s.", name, found, to)
 	case PointingMultiRegion:
 		one := to
 		if len(targets) > 1 {
 			one = strings.Join(targets, ", ")
 		}
-		return fmt.Sprintf("%s points at more than one of our regions. Point it at one: %s.", name, one)
+		return fmt.Sprintf("%s points at more than one of the gateway's regions. Point it at one: %s.", name, one)
 	case PointingIPv6:
-		return fmt.Sprintf("%s has an IPv6 (AAAA) record that does not lead to us. Remove it, or use a CNAME to %s.", name, to)
+		return fmt.Sprintf("%s has an IPv6 (AAAA) record that does not lead to the gateway. Remove it, or use a CNAME to %s.", name, to)
 	case PointingPrivate:
 		return fmt.Sprintf("%s resolves to an address that is not on the public internet.", name)
 	}
 	if purpose == PurposeVoiceRegion {
 		return fmt.Sprintf("Voice chat needs to know which region this server's players arrive in. "+
-			"%s does not point at us yet: add a CNAME from %s to %s, or add an address on one of our domains.", name, name, to)
+			"%s does not point at the gateway yet: add a CNAME from %s to %s, or add an address on one of the gateway's domains.", name, name, to)
 	}
 	bedrock := purpose == PurposeBedrock
 	switch p.Status {
 	case PointingElsewhere:
 		if bedrock {
-			return fmt.Sprintf("%s points to %s, not to us. Add a CNAME from %s to %s. "+
+			return fmt.Sprintf("%s points to %s, not to the gateway. Add a CNAME from %s to %s. "+
 				"A proxy or DDoS filter in front of the domain cannot carry Bedrock.", name, found, name, to)
 		}
-		return fmt.Sprintf("%s points to %s, not to us. Add a CNAME from %s to %s.", name, found, name, to)
+		return fmt.Sprintf("%s points to %s, not to the gateway. Add a CNAME from %s to %s.", name, found, name, to)
 	case PointingSRVOnly:
 		if bedrock {
-			return fmt.Sprintf("%s reaches us only through an SRV record, and Bedrock ignores SRV records. "+
-				"Add a CNAME from %s to %s, or give Bedrock to an address on one of our domains.", name, name, to)
+			return fmt.Sprintf("%s reaches the gateway only through an SRV record, and Bedrock ignores SRV records. "+
+				"Add a CNAME from %s to %s, or give Bedrock to an address on one of the gateway's domains.", name, name, to)
 		}
-		return fmt.Sprintf("%s reaches us only through an SRV record, and a voice name needs an address. "+
+		return fmt.Sprintf("%s reaches the gateway only through an SRV record, and a voice name needs an address. "+
 			"Add a CNAME from %s to %s.", name, name, to)
 	}
 	if bedrock {

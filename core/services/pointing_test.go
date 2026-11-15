@@ -206,10 +206,14 @@ func pointingRows() []pointingRow {
 			f.a[ptName] = []netip.Addr{ptEU1}
 			f.aaaa[ptName] = []netip.Addr{ptV6}
 		}, status: PointingIPv6},
-		{name: "AAAA not judged with a CNAME to us", setup: func(f *fakePointingResolver) {
+		{name: "AAAA not judged with a CNAME to us for the voice region", purpose: PurposeVoiceRegion, setup: func(f *fakePointingResolver) {
 			f.cname[ptName] = "route.eu.dylaris.com"
 			f.aaaa[ptName] = []netip.Addr{ptV6}
 		}, status: PointingOK, region: "eu", via: "cname"},
+		{name: "AAAA judged with a CNAME to us for Bedrock", setup: func(f *fakePointingResolver) {
+			f.cname[ptName] = "route.eu.dylaris.com"
+			f.aaaa[ptName] = []netip.Addr{ptV6}
+		}, status: PointingIPv6},
 		{name: "SRV followed for the voice region", purpose: PurposeVoiceRegion, setup: func(f *fakePointingResolver) {
 			f.srv["_minecraft._tcp."+ptName] = srvTo("mc.host.net")
 			f.a["mc.host.net"] = []netip.Addr{ptUS}
@@ -707,15 +711,15 @@ func TestPointingRefusalSentences(t *testing.T) {
 	}{
 		{PointingOK, PurposeBedrock, nil, false},
 		{PointingNotFound, PurposeBedrock, []string{"does not resolve yet", "Bedrock players connect straight"}, true},
-		{PointingNotFound, PurposeVoiceRegion, []string{"Voice chat needs to know which region", "does not point at us yet"}, true},
+		{PointingNotFound, PurposeVoiceRegion, []string{"Voice chat needs to know which region", "does not point at the gateway yet"}, true},
 		{PointingNotFound, PurposeVoiceName, []string{"does not resolve yet"}, true},
-		{PointingElsewhere, PurposeBedrock, []string{"points to 192.0.2.50, not to us", "cannot carry Bedrock"}, true},
+		{PointingElsewhere, PurposeBedrock, []string{"points to 192.0.2.50, not to the gateway", "cannot carry Bedrock"}, true},
 		{PointingElsewhere, PurposeVoiceRegion, []string{"Voice chat needs to know which region"}, true},
-		{PointingElsewhere, PurposeVoiceName, []string{"points to 192.0.2.50, not to us"}, true},
+		{PointingElsewhere, PurposeVoiceName, []string{"points to 192.0.2.50, not to the gateway"}, true},
 		{PointingSRVOnly, PurposeBedrock, []string{"only through an SRV record", "Bedrock ignores SRV records"}, true},
 		{PointingSRVOnly, PurposeVoiceName, []string{"only through an SRV record"}, true},
-		{PointingPartial, PurposeBedrock, []string{"points to us and also to 192.0.2.50"}, true},
-		{PointingMultiRegion, PurposeVoiceName, []string{"more than one of our regions"}, true},
+		{PointingPartial, PurposeBedrock, []string{"points to the gateway and also to 192.0.2.50"}, true},
+		{PointingMultiRegion, PurposeVoiceName, []string{"more than one of the gateway's regions"}, true},
 		{PointingIPv6, PurposeBedrock, []string{"IPv6 (AAAA) record"}, true},
 		{PointingPrivate, PurposeBedrock, []string{"not on the public internet"}, false},
 	}

@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.15.2
+
+### Features
+- Bedrock on an address on a user's own domain, once its DNS points at one of the gateway's regions (a CNAME
+  to the address shown is enough). When it does not, the panel says which record to create. `core`
+- Each own-domain Bedrock address shows whether its DNS still points at the gateway. Nothing is switched
+  off when it stops. `core`
+- A managed-gateway customer can add Bedrock on an own domain only once the provider Core runs this
+  version. Update the provider first. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Giving an address Bedrock now checks that address's own region, not the server's first address. `core`
+
 ## 2026.11.15
 
 ### Features

@@ -933,6 +933,7 @@ func main() {
 		// start, and leadership moves at runtime anyway.
 		customDomainVerifier.SetLeader(coreLeader)
 		customDomainVerifier.SetGatewayRemote(gatewayRemote)
+		customDomainVerifier.SetPointing(appState.Pointing)
 		customDomainVerifier.Start(context.Background())
 	}
 	// Direct-mode server domains: writes A/SRV records into the zones of the

@@ -3,6 +3,8 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -347,5 +349,252 @@ func TestAClaimWithoutATokenGetsOneAndAFreshGrant(t *testing.T) {
 	}
 	if len(fs.tokens) != 1 || len(fs.rearmed) != 1 {
 		t.Fatalf("tokens=%v rearmed=%v, want one of each", fs.tokens, fs.rearmed)
+	}
+}
+
+// --- The daily Bedrock DNS re-check (display only). ---
+
+// bedrockDNSStore is the verifier's store plus the Bedrock rows and
+// address_dns_checks. Edition writes are counted so a test can say none
+// happened; claim writes are recorded by recheckFakeStore.
+type bedrockDNSStore struct {
+	*recheckFakeStore
+	hosted   []store.RouteEdition
+	links    []store.LinkRouteEdition
+	linksErr error
+	dns      map[string]store.AddressDNSCheck
+	recorded []string
+	swept    [][]string
+	writes   int
+}
+
+func newBedrockDNSStore() *bedrockDNSStore {
+	return &bedrockDNSStore{recheckFakeStore: &recheckFakeStore{}, dns: map[string]store.AddressDNSCheck{}}
+}
+
+func (f *bedrockDNSStore) ListRouteEditions(int) ([]store.RouteEdition, error) { return f.hosted, nil }
+func (f *bedrockDNSStore) ListLinkRouteEditions() ([]store.LinkRouteEdition, error) {
+	return f.links, f.linksErr
+}
+func (f *bedrockDNSStore) SetRouteEdition(int, string, bool, bool) error { f.writes++; return nil }
+func (f *bedrockDNSStore) DeleteRouteEdition(string) error               { f.writes++; return nil }
+func (f *bedrockDNSStore) SetLinkRouteEdition(string, bool, bool, []byte) error {
+	f.writes++
+	return nil
+}
+func (f *bedrockDNSStore) GetAddressDNSChecks(names []string) (map[string]store.AddressDNSCheck, error) {
+	out := map[string]store.AddressDNSCheck{}
+	for _, n := range names {
+		if c, ok := f.dns[n]; ok {
+			out[n] = c
+		}
+	}
+	return out, nil
+}
+func (f *bedrockDNSStore) RecordAddressDNSCheck(name, status, region string, ok bool) (store.AddressDNSCheck, error) {
+	f.recorded = append(f.recorded, name)
+	c := f.dns[name]
+	c.Name, c.Status, c.Region, c.CheckedAt = name, status, region, time.Now()
+	if ok {
+		c.Misses, c.FailingSince = 0, nil
+	} else {
+		c.Misses++
+		if c.FailingSince == nil {
+			at := c.CheckedAt
+			c.FailingSince = &at
+		}
+	}
+	f.dns[name] = c
+	return c, nil
+}
+func (f *bedrockDNSStore) DeleteAddressDNSChecksNotIn(names []string) (int64, error) {
+	f.swept = append(f.swept, append([]string(nil), names...))
+	keep := map[string]bool{}
+	for _, n := range names {
+		keep[n] = true
+	}
+	var n int64
+	for k := range f.dns {
+		if !keep[k] {
+			delete(f.dns, k)
+			n++
+		}
+	}
+	return n, nil
+}
+
+func bedrockVerifier(fs *bedrockDNSStore, res PointingResolver, txt DomainResolver, rm RouteRemover) *CustomDomainVerifier {
+	v := NewCustomDomainVerifier(fs, txt, rm)
+	c, _ := newTestPointing(res, ptEdges())
+	v.SetPointing(c)
+	return v
+}
+
+func hostedBedrockRow(domain string) store.RouteEdition {
+	return store.RouteEdition{Domain: domain, ServerID: 7, ServerUUID: "srv-7", Java: true, Bedrock: true}
+}
+
+// A miss is stored with its start; no edition row is written. The verifier
+// holds no Redis client, so it cannot publish sys:route:editions at all.
+func TestBedrockRecheckDisplayOnly(t *testing.T) {
+	fs := newBedrockDNSStore()
+	fs.hosted = []store.RouteEdition{hostedBedrockRow(ptName), hostedBedrockRow("s.eu.dylaris.com"),
+		{Domain: "java.example.com", ServerID: 7, Java: true}}
+	fs.links = []store.LinkRouteEdition{{Domain: "Link.Example.com", OwnerID: "u1", Java: true, Bedrock: true}}
+	res := newFakePointingResolver()
+	res.a[ptName] = []netip.Addr{ptForeign}
+	res.a["link.example.com"] = []netip.Addr{ptEU1}
+	bedrockVerifier(fs, res, &fakeResolver{}, &fakeRemover{}).RunOnce(context.Background())
+
+	if row := fs.dns[ptName]; row.Status != string(PointingElsewhere) || row.FailingSince == nil || row.Misses != 1 {
+		t.Fatalf("hosted row %+v", row)
+	}
+	if row := fs.dns["link.example.com"]; row.Status != string(PointingOK) || row.Region != "eu" || row.FailingSince != nil {
+		t.Fatalf("route-only row %+v", row)
+	}
+	// The regional address and the Java-only one are never checked.
+	if len(fs.dns) != 2 || res.names["s.eu.dylaris.com"] || res.names["java.example.com"] {
+		t.Fatalf("rows %v, resolved %v", fs.dns, res.names)
+	}
+	if fs.writes != 0 {
+		t.Fatalf("%d edition writes", fs.writes)
+	}
+}
+
+// Review Focus 1: "could not check" writes nothing and keeps the last answer.
+func TestBedrockRecheckLookupFailedWritesNothing(t *testing.T) {
+	fs := newBedrockDNSStore()
+	fs.hosted = []store.RouteEdition{hostedBedrockRow(ptName)}
+	old := store.AddressDNSCheck{Name: ptName, Status: "ok", Region: "eu", CheckedAt: time.Now().Add(-25 * time.Hour)}
+	fs.dns[ptName] = old
+	res := newFakePointingResolver()
+	res.a[ptName] = []netip.Addr{ptForeign}
+	res.fail["A "+ptName] = errServFail
+	bedrockVerifier(fs, res, &fakeResolver{}, &fakeRemover{}).RunOnce(context.Background())
+	if res.total() == 0 {
+		t.Fatal("the due name was not checked")
+	}
+	if len(fs.recorded) != 0 || fs.dns[ptName] != old || fs.writes != 0 {
+		t.Fatalf("recorded %v row %+v writes %d", fs.recorded, fs.dns[ptName], fs.writes)
+	}
+}
+
+// A pointing miss on a name that also has a verified claim does not count
+// toward the claim's lapse, and removes no route.
+func TestBedrockRecheckNeverTouchesAClaim(t *testing.T) {
+	fs := newBedrockDNSStore()
+	fs.due = []store.CustomDomainClaim{verifiedClaim(1)}
+	fs.hosted = []store.RouteEdition{hostedBedrockRow("mc.example.com")}
+	rm := &fakeRemover{}
+	res := newFakePointingResolver()
+	res.a["mc.example.com"] = []netip.Addr{ptForeign}
+	bedrockVerifier(fs, res, published(), rm).RunOnce(context.Background())
+	if fs.dns["mc.example.com"].Status != string(PointingElsewhere) {
+		t.Fatalf("row %+v", fs.dns["mc.example.com"])
+	}
+	// verified [1] is the TXT re-check, which still passes.
+	if len(fs.verified) != 1 || len(fs.misses) != 0 || len(fs.lapsed) != 0 || len(fs.failed) != 0 || len(rm.removed) != 0 {
+		t.Fatalf("verified %v misses %v lapsed %v failed %v removed %v", fs.verified, fs.misses, fs.lapsed, fs.failed, rm.removed)
+	}
+}
+
+// At most customDomainRecheckBatch names a pass, the rest the next pass; a
+// row checked within the day is skipped, one older than a day is due.
+func TestBedrockRecheckBatchAndDue(t *testing.T) {
+	fs := newBedrockDNSStore()
+	res := newFakePointingResolver()
+	for i := 0; i < 150; i++ {
+		d := fmt.Sprintf("s%03d.example.com", i)
+		fs.hosted = append(fs.hosted, hostedBedrockRow(d))
+		res.a[d] = []netip.Addr{ptEU1}
+	}
+	fs.hosted = append(fs.hosted, hostedBedrockRow("fresh.example.com"), hostedBedrockRow("stale.example.com"))
+	fs.dns["fresh.example.com"] = store.AddressDNSCheck{Name: "fresh.example.com", Status: "ok", Region: "eu", CheckedAt: time.Now().Add(-time.Hour)}
+	fs.dns["stale.example.com"] = store.AddressDNSCheck{Name: "stale.example.com", Status: "ok", Region: "eu", CheckedAt: time.Now().Add(-25 * time.Hour)}
+	v := bedrockVerifier(fs, res, &fakeResolver{}, &fakeRemover{})
+
+	v.RunOnce(context.Background())
+	if len(fs.recorded) != customDomainRecheckBatch {
+		t.Fatalf("pass 1 checked %d, want %d", len(fs.recorded), customDomainRecheckBatch)
+	}
+	for _, n := range fs.recorded {
+		if n == "fresh.example.com" || n == "stale.example.com" {
+			t.Fatalf("pass 1 checked %s before the never-checked names", n)
+		}
+	}
+	fs.recorded = nil
+	v.RunOnce(context.Background())
+	got := map[string]bool{}
+	for _, n := range fs.recorded {
+		got[n] = true
+	}
+	if len(fs.recorded) != 51 || !got["stale.example.com"] || got["fresh.example.com"] {
+		t.Fatalf("pass 2 checked %d (stale %v, fresh %v), want the 50 left plus stale", len(fs.recorded), got["stale.example.com"], got["fresh.example.com"])
+	}
+	fs.recorded = nil
+	v.RunOnce(context.Background())
+	if len(fs.recorded) != 0 {
+		t.Fatalf("pass 3 checked %v, every row is fresh", fs.recorded)
+	}
+}
+
+// A customer Core has no edges and checks nothing; neither does one whose
+// mode is unknown.
+func TestBedrockRecheckIdleInRemoteMode(t *testing.T) {
+	for name, mode := range map[string]func() (bool, bool){
+		"remote":  func() (bool, bool) { return true, true },
+		"unknown": func() (bool, bool) { return false, false },
+	} {
+		fs := newBedrockDNSStore()
+		fs.hosted = []store.RouteEdition{hostedBedrockRow(ptName)}
+		res := newFakePointingResolver()
+		v := bedrockVerifier(fs, res, &fakeResolver{}, &fakeRemover{})
+		v.SetGatewayRemote(mode)
+		v.RunOnce(context.Background())
+		if res.total() != 0 || len(fs.recorded) != 0 || len(fs.swept) != 0 {
+			t.Fatalf("%s: lookups %d recorded %v swept %v", name, res.total(), fs.recorded, fs.swept)
+		}
+	}
+}
+
+// A follower runs no pass, so it checks no Bedrock address either.
+func TestBedrockRecheckFollowerIdle(t *testing.T) {
+	fs := newBedrockDNSStore()
+	fs.hosted = []store.RouteEdition{hostedBedrockRow(ptName)}
+	res := newFakePointingResolver()
+	v := bedrockVerifier(fs, res, &fakeResolver{}, &fakeRemover{})
+	v.SetLeader(&flippingElection{leader: false})
+	ctx, cancel := context.WithCancel(context.Background())
+	v.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	if res.total() != 0 || len(fs.recorded) != 0 || len(fs.swept) != 0 {
+		t.Fatalf("a follower checked: lookups %d recorded %v swept %v", res.total(), fs.recorded, fs.swept)
+	}
+}
+
+// Rows of names that no longer have Bedrock are swept once a pass, after the
+// checks; a failed read sweeps nothing.
+func TestBedrockRecheckSweepsUnusedRows(t *testing.T) {
+	now := time.Now()
+	fs := newBedrockDNSStore()
+	fs.hosted = []store.RouteEdition{hostedBedrockRow(ptName)}
+	fs.dns[ptName] = store.AddressDNSCheck{Name: ptName, Status: "ok", Region: "eu", CheckedAt: now}
+	fs.dns["gone.example.com"] = store.AddressDNSCheck{Name: "gone.example.com", Status: "ok", CheckedAt: now}
+	res := newFakePointingResolver()
+	bedrockVerifier(fs, res, &fakeResolver{}, &fakeRemover{}).RunOnce(context.Background())
+	if len(fs.swept) != 1 || len(fs.swept[0]) != 1 || fs.swept[0][0] != ptName {
+		t.Fatalf("swept %v", fs.swept)
+	}
+	if _, ok := fs.dns["gone.example.com"]; ok || len(fs.dns) != 1 {
+		t.Fatalf("rows %v", fs.dns)
+	}
+
+	broken := newBedrockDNSStore()
+	broken.linksErr = errors.New("pq: connection reset by peer")
+	broken.dns["kept.example.com"] = store.AddressDNSCheck{Name: "kept.example.com", Status: "ok", CheckedAt: now}
+	bedrockVerifier(broken, res, &fakeResolver{}, &fakeRemover{}).RunOnce(context.Background())
+	if len(broken.swept) != 0 || len(broken.dns) != 1 {
+		t.Fatalf("a failed read swept %v, rows %v", broken.swept, broken.dns)
 	}
 }

@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strings"
@@ -201,11 +203,6 @@ func TestRemoteBedrockAddRefusals(t *testing.T) {
 		{"setting read fails", false, http.StatusInternalServerError, "", func(e *remoteExtrasEnv) { e.rs.settingErr = errors.New("pq: connection reset by peer") }},
 		{"admin only, caller is not", false, http.StatusConflict, "bedrock_disabled", func(e *remoteExtrasEnv) { e.rs.audience = "admin" }},
 		{"suspended", false, http.StatusForbidden, "", func(e *remoteExtrasEnv) { e.fs.billing = &store.UserBilling{Status: "suspended"} }},
-		{"own domain", false, http.StatusConflict, "own_domain_unsupported", func(e *remoteExtrasEnv) {
-			r := e.rs.routes[remoteAddr]
-			r.CustomDomain = true
-			e.rs.routes[remoteAddr] = r
-		}},
 		{"change pending", false, http.StatusConflict, "change_pending", func(e *remoteExtrasEnv) {
 			e.rs.outbox = append(e.rs.outbox, queuedOp{services.OutboxOpBedrock, remoteAddr, services.OutboxBedrock{Java: true}})
 		}},
@@ -333,10 +330,12 @@ func TestRemoteBedrockViewRefusals(t *testing.T) {
 		break_                 func(e *remoteExtrasEnv)
 	}{
 		{"qualifying address", remoteAddr, "", func(*remoteExtrasEnv) {}},
-		{"own domain only", "", remoteBedrockNoAddress, func(e *remoteExtrasEnv) {
+		// An own domain is the address asked about now; the provider decides.
+		{"own domain only", "play.acme.tld", "", func(e *remoteExtrasEnv) {
 			delete(e.rs.routes, remoteAddr)
 			e.addAddress("play.acme.tld", true)
 		}},
+		{"no address at all", "", remoteBedrockNoAddress, func(e *remoteExtrasEnv) { delete(e.rs.routes, remoteAddr) }},
 		{"provider unreachable", "", remoteBedrockUnreachable, func(e *remoteExtrasEnv) { e.fake.FailNext(5, 503, "unavailable", 0) }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -352,8 +351,9 @@ func TestRemoteBedrockViewRefusals(t *testing.T) {
 	}
 }
 
-// The Bedrock view says which addresses are on an own domain, so the panel can
-// disable Bedrock there up front.
+// The Bedrock view says which addresses are on an own domain. Display only
+// since part 2: the panel shows their DNS state there, and adding Bedrock to
+// one is the provider's decision, never refused here up front.
 func TestRemoteViewsFlagOwnDomains(t *testing.T) {
 	const own = "play.acme.tld"
 	for _, c := range []struct {
@@ -396,6 +396,11 @@ func TestRemoteViewsFlagOwnDomains(t *testing.T) {
 					t.Fatalf("voice answer still flags own domains: %s", body)
 				}
 			}
+			if c.ownInBedrock {
+				if rec, _ := bedrockCall(e.voiceSwitchEnv, http.MethodPut, bedrockBody(own, true, true), false); rec.Code != http.StatusOK || e.rs.row(own).Edition != "both" {
+					t.Fatalf("Bedrock on the own domain: %d %s", rec.Code, rec.Body.String())
+				}
+			}
 		})
 	}
 }
@@ -420,6 +425,9 @@ func TestBedrockLocalModeUnchanged(t *testing.T) {
 	fake := remotegwtest.NewFake(t)
 	e.h.d.GatewayRemote = func() (bool, bool) { return false, true }
 	e.h.d.RemoteGateway = services.NewRemoteGateway(bs, func() *remotegw.Client { return remotegw.New(fake.URL(), fake.Key) })
+	// A regional address takes the shortcut: the checker is wired and never resolves.
+	res := &odResolver{cname: map[string]string{}, a: map[string][]netip.Addr{}, srv: map[string][]*net.SRV{}}
+	e.h.d.Pointing = odChecker(e.h.d.Redis, res)
 	body := func(rec *httptest.ResponseRecorder) string { return strings.TrimSpace(rec.Body.String()) }
 
 	rec, _ := bedrockCall(e, http.MethodGet, "", false)
@@ -449,5 +457,8 @@ func TestBedrockLocalModeUnchanged(t *testing.T) {
 	}
 	if c := fake.Calls(); len(c) != 0 {
 		t.Fatalf("local mode asked the provider: %v", c)
+	}
+	if n := res.count(); n != 0 {
+		t.Fatalf("a regional address made %d lookups", n)
 	}
 }

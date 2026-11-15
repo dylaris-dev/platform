@@ -661,10 +661,39 @@ func (h *HealthHandler) bedrockComponent(ctx context.Context) healthComponent {
 	}
 	edges := services.GetEdgesFromRedis(cctx, h.d.Redis)
 	enabled := map[string]int{}
+	// A server with only own-domain routes counts under the region its stored
+	// DNS check found (the lexically first route with an ok). Health never
+	// resolves; no stored ok is not counted.
+	ownOnly := map[string][]string{}
+	var ownNames []string
 	for _, s := range servers {
 		// The same region rule the switch uses (bedrockAvailability).
 		if _, region, ok := services.VoiceRouteFor(routes, edges, s.ServerUUID); ok {
 			enabled[region]++
+			continue
+		}
+		for _, rt := range routes {
+			if services.RouteBelongsToServer(rt, s.ServerUUID) {
+				d := strings.ToLower(rt.Domain)
+				ownOnly[s.ServerUUID] = append(ownOnly[s.ServerUUID], d)
+				ownNames = append(ownNames, d)
+			}
+		}
+	}
+	if len(ownNames) > 0 {
+		checks, err := h.d.Store.GetAddressDNSChecks(ownNames)
+		if err != nil {
+			comp.Status, comp.Detail, comp.Reason = "degraded", "Bedrock DNS checks unreadable", err.Error()
+			return comp
+		}
+		for _, domains := range ownOnly {
+			sort.Strings(domains)
+			for _, d := range domains {
+				if c, ok := checks[d]; ok && c.Status == "ok" && c.Region != "" {
+					enabled[c.Region]++
+					break
+				}
+			}
 		}
 	}
 	comp.Status, comp.Detail, comp.Reason, comp.Items = bedrockVerdict(enabled, entries)

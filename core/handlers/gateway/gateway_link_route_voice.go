@@ -309,12 +309,7 @@ func (h *GatewayHandler) voiceRegionRefusal(w http.ResponseWriter, p services.Po
 	case p.Status == services.PointingOK:
 		httpx.SendJSONErrorCode(w, "No edge of this domain's region is online right now. Try again in a moment.", "no_routes", http.StatusConflict)
 	default:
-		hosters, _, cname := h.loadGatewayDomainConfig()
-		bases := make([]string, 0, len(hosters))
-		for _, hd := range hosters {
-			bases = append(bases, hd.Domain)
-		}
-		httpx.SendJSONErrorCode(w, services.PointingRefusal(p, domain, services.CNAMETargets(cname, bases), services.PurposeVoiceRegion),
+		httpx.SendJSONErrorCode(w, services.PointingRefusal(p, domain, h.pointingCNAMETargets(), services.PurposeVoiceRegion),
 			"no_routes", http.StatusConflict)
 	}
 }

@@ -294,9 +294,10 @@ your Core ---+ HTTPS: routes, link kits, usage
   address: the provider checks the domain's DNS and answers the name the voice
   mod is told (its regional voice name), which Core stores and writes into the
   mod config; the customer's DNS needs no change. A regional address is still
-  preferred when the server has one. Bedrock on an own domain is not available
-  yet: the routes dialog shows it disabled and the API refuses it (409
-  `own_domain_unsupported`).
+  preferred when the server has one. Bedrock on an own domain is the
+  provider's DNS check too: its refusal sentence (409 `bedrock_unavailable`,
+  503 `dns_lookup_failed`) is passed through, and the routes dialog shows the
+  provider's last stored DNS state of each own-domain address.
 - **Player counts.** The sidebar shows each server's players, with Java and
   Bedrock in its tooltip. Counts are a few seconds old (the provider samples
   its edges every 3 seconds, this Core caches 5 seconds). When the provider
@@ -315,8 +316,7 @@ your Core ---+ HTTPS: routes, link kits, usage
 - **Known limits.** A switch the
   sweep turned off looks like one that was never on; the Errors screen says
   which.
-- **Not available with it yet:** Bedrock on own domains, the
-  edge MOTD, automatic real-IP mode, Beam over the provider's relays, and BYON /
+- **Not available with it yet:** the edge MOTD, automatic real-IP mode, Beam over the provider's relays, and BYON /
   route-only (those two belong to a platform's own gateway).
 
 #### Running the provider side (your own gateway, managed customers)
@@ -967,6 +967,11 @@ Bedrock players join gateway-routed servers through Geyser at the gateway; the s
   accounts with a managed gateway plan (see [Managed gateway provider](#managed-gateway-provider)).
 - Players add the route domain without a port. Consoles are not supported (no custom servers).
 - Signaling is plaintext, so each player sees a one-time trust prompt per region.
+- An address on an own domain gets Bedrock only after Core checks its DNS when Bedrock is added:
+  it must lead to one of the gateway's regions with a Bedrock entry (a CNAME to the address shown
+  under Your own domains is enough; SRV only, a proxy in front, a foreign or IPv6 record are refused with the record to
+  fix). The leader re-checks those addresses once a day and only shows the result
+  (`address_dns_checks`); nothing is switched off by DNS.
 
 What a server owner does, once per server:
 
