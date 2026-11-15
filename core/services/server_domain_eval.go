@@ -58,6 +58,16 @@ func (n *netServerDomainResolver) LookupAAAA(ctx context.Context, host string) (
 	return n.r.LookupNetIP(ctx, "ip6", absoluteName(host))
 }
 
+// LookupCNAME is the pointing check's canonical-name lookup, absolute like the
+// rest. It errors with not-found for a name that has no address records. For
+// a chain of more than one CNAME Go may answer the first hop instead of the
+// end (measured, see TestNetPointingResolverAsksAbsoluteNames).
+func (n *netServerDomainResolver) LookupCNAME(ctx context.Context, host string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, domainLookupTimeout)
+	defer cancel()
+	return n.r.LookupCNAME(ctx, absoluteName(host))
+}
+
 func (n *netServerDomainResolver) LookupSRV(ctx context.Context, host string) ([]*net.SRV, error) {
 	ctx, cancel := context.WithTimeout(ctx, domainLookupTimeout)
 	defer cancel()

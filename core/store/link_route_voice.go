@@ -18,28 +18,32 @@ type LinkRouteVoice struct {
 	Port       int
 	TargetPort int
 	UplinkKey  []byte
+	// Host is the name the voice mod is told when it is not Domain: our
+	// regional voice name for an address on the customer's own domain. ''
+	// means Domain, as every row written before the column existed.
+	Host string
 	// Suspended mirrors the route's suspension; a suspended route's port must
 	// not be published.
 	Suspended bool
 }
 
 const linkRouteVoiceSelect = `
-	SELECT v.domain, r.owner_id, r.link_token, r.target_host, v.region, v.port, v.target_port, v.uplink_key, r.suspended_at IS NOT NULL
+	SELECT v.domain, r.owner_id, r.link_token, r.target_host, v.region, v.port, v.target_port, v.uplink_key, v.host, r.suspended_at IS NOT NULL
 	FROM link_route_voice v JOIN core_link_routes r ON r.domain = v.domain`
 
 func scanLinkRouteVoice(row interface{ Scan(...any) error }) (LinkRouteVoice, error) {
 	var v LinkRouteVoice
-	err := row.Scan(&v.Domain, &v.OwnerID, &v.LinkToken, &v.TargetHost, &v.Region, &v.Port, &v.TargetPort, &v.UplinkKey, &v.Suspended)
+	err := row.Scan(&v.Domain, &v.OwnerID, &v.LinkToken, &v.TargetHost, &v.Region, &v.Port, &v.TargetPort, &v.UplinkKey, &v.Host, &v.Suspended)
 	return v, err
 }
 
 // AllocateLinkRouteVoice gives a route-only domain a voice port in region, the
 // same way AllocateVoicePort does for a server: an existing port in the same
-// region keeps its port and key (only target_port follows), one in another
-// region is released for a fresh one.
-func (s *PostgresStore) AllocateLinkRouteVoice(domain, region string, targetPort int, key []byte, min, max int) (LinkRouteVoice, error) {
+// region keeps its port and key (only target_port and host follow), one in
+// another region is released for a fresh one.
+func (s *PostgresStore) AllocateLinkRouteVoice(domain, region, host string, targetPort int, key []byte, min, max int) (LinkRouteVoice, error) {
 	for attempt := 0; ; attempt++ {
-		got, err := s.allocateLinkRouteVoiceOnce(domain, region, targetPort, key, min, max)
+		got, err := s.allocateLinkRouteVoiceOnce(domain, region, host, targetPort, key, min, max)
 		if err != nil && isUniqueViolation(err) && attempt < 3 {
 			continue
 		}
@@ -47,7 +51,7 @@ func (s *PostgresStore) AllocateLinkRouteVoice(domain, region string, targetPort
 	}
 }
 
-func (s *PostgresStore) allocateLinkRouteVoiceOnce(domain, region string, targetPort int, key []byte, min, max int) (LinkRouteVoice, error) {
+func (s *PostgresStore) allocateLinkRouteVoiceOnce(domain, region, host string, targetPort int, key []byte, min, max int) (LinkRouteVoice, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return LinkRouteVoice{}, err
@@ -60,7 +64,7 @@ func (s *PostgresStore) allocateLinkRouteVoiceOnce(domain, region string, target
 	err = tx.QueryRow(`SELECT region FROM link_route_voice WHERE domain = $1 FOR UPDATE`, domain).Scan(&cur)
 	switch {
 	case err == nil && cur == region:
-		if _, err := tx.Exec(`UPDATE link_route_voice SET target_port = $2 WHERE domain = $1`, domain, targetPort); err != nil {
+		if _, err := tx.Exec(`UPDATE link_route_voice SET target_port = $2, host = $3 WHERE domain = $1`, domain, targetPort, host); err != nil {
 			return LinkRouteVoice{}, err
 		}
 	case err == nil || errors.Is(err, sql.ErrNoRows):
@@ -73,8 +77,8 @@ func (s *PostgresStore) allocateLinkRouteVoiceOnce(domain, region string, target
 		if err != nil {
 			return LinkRouteVoice{}, err
 		}
-		if _, err := tx.Exec(`INSERT INTO link_route_voice (domain, region, port, target_port, uplink_key) VALUES ($1, $2, $3, $4, $5)`,
-			domain, region, port, targetPort, key); err != nil {
+		if _, err := tx.Exec(`INSERT INTO link_route_voice (domain, region, port, target_port, uplink_key, host) VALUES ($1, $2, $3, $4, $5, $6)`,
+			domain, region, port, targetPort, key, host); err != nil {
 			return LinkRouteVoice{}, err
 		}
 	default:

@@ -1370,8 +1370,6 @@ export interface ServerVoice {
     port: number;
     mod: string; // "svc" | "plasmo"
     allowed: boolean;
-    // Managed gateway only: every address of the server is on an own domain.
-    ownDomainOnly?: boolean;
 }
 type VoiceResult = { success?: boolean; voice?: ServerVoice; restartRequired?: boolean; message?: string; error?: string; code?: string };
 export const getServerVoice = (serverId: number): Promise<VoiceResult> =>
@@ -1530,7 +1528,8 @@ export interface LinkRoute {
     /** False while the platform switch is off: Bedrock is paused, not forgotten. */
     bedrock_active?: boolean;
 }
-export interface LinkRouteVoice { enabled: boolean; port?: number; target_port?: number }
+/** host: the name the voice mod is told (our regional voice name for an own domain); absent from an older Core. */
+export interface LinkRouteVoice { enabled: boolean; host?: string; port?: number; target_port?: number }
 /** refusal: why Bedrock cannot be ADDED here now (region, custom domain); empty when it can. */
 export interface LinkRouteBedrock { java: boolean; bedrock: boolean; has_key: boolean; refusal?: string }
 export interface CreateLinkRouteRequest extends CreateRouteRequest {

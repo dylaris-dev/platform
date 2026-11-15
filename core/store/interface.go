@@ -241,7 +241,7 @@ type Store interface {
 	DeleteVoicePort(serverID int) error
 	ListVoicePorts() ([]VoicePort, error)
 	// Voice chat port per route-only domain, same pool. See AllocateLinkRouteVoice.
-	AllocateLinkRouteVoice(domain, region string, targetPort int, key []byte, min, max int) (LinkRouteVoice, error)
+	AllocateLinkRouteVoice(domain, region, host string, targetPort int, key []byte, min, max int) (LinkRouteVoice, error)
 	GetLinkRouteVoice(domain string) (*LinkRouteVoice, error)
 	DeleteLinkRouteVoice(domain string) (bool, error)
 	ListLinkRouteVoice() ([]LinkRouteVoice, error)
@@ -274,7 +274,7 @@ type Store interface {
 	DeleteRemoteRoute(domain string) error
 	// Voice and edition of a remote route; found=false: no row. A second
 	// address of the same server is ErrRemoteVoiceTaken / ErrRemoteBedrockTaken.
-	SetRemoteRouteVoice(domain string, port *int, mod string) (found bool, err error)
+	SetRemoteRouteVoice(domain string, port *int, mod, host string) (found bool, err error)
 	SetRemoteRouteEdition(domain, edition string) (found bool, err error)
 	TouchRemoteRoute(domain string) error
 	ListRemoteRoutesByServer(serverUUID string) ([]RemoteRoute, error)

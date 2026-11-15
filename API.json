@@ -2241,7 +2241,7 @@
       "path": "/api/external/gateway/routes/{domain:[^/]+}/voice",
       "auth": "user API key",
       "authorization": "gateway.write",
-      "description": "body {\"enabled\": bool, \"target_port\": int}, voice chat relay; an active managed gateway plan lifts the platform's global voice permission for its account (an explicit per-user deny and the other checks, such as a suspension or a retiring link, still refuse), any other account only where the platform's voice permissions allow (409 voice_not_allowed).",
+      "description": "body {\"enabled\": bool, \"target_port\": int}, voice chat relay, on one of our domains or on your own domain once it points at one of our regions (409 no_routes with what to change; 503 dns_lookup_failed when the DNS check could not run, retry); the answer's host is the name to write into the voice mod, our regional voice name for an own domain; an active managed gateway plan lifts the platform's global voice permission for its account (an explicit per-user deny and the other checks, such as a suspension or a retiring link, still refuse), any other account only where the platform's voice permissions allow (409 voice_not_allowed).",
       "handler": "ExternalGatewayHandler.SetRouteVoice",
       "group": "external",
       "external": true

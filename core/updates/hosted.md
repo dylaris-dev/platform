@@ -11,6 +11,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.15
+
+### Features
+- Voice chat on your own domain: switch it on as usual on a server or route-only address whose address
+  is your own domain. The voice address players get is on our domain, so your DNS needs no change.
+- Turning voice chat on for an own domain checks that the domain already points at one of our regions,
+  and says what to change when it does not.
+- `voice` is now a reserved route name: a route called `voice.<your hoster domain>` can no longer be
+  added.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.14.3
 
 ### Features

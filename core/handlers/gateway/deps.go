@@ -6,6 +6,7 @@ import (
 
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
 	"dylaris-core/store"
 
@@ -50,4 +51,10 @@ type Deps struct {
 	// Authz answers what the CALLER holds inside a handler, where one answer
 	// carries blocks guarded by different capabilities; nil holds nothing.
 	Authz *authz.Resolver
+
+	// Pointing is the one shared DNS pointing check; nil means own domains
+	// are not checked (every caller reads that as lookup_failed).
+	// PointingLimiter is the per-user budget of panel-triggered checks.
+	Pointing        *services.PointingChecker
+	PointingLimiter *httpx.IPRateLimiter
 }

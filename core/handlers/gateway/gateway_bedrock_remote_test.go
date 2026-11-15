@@ -352,23 +352,22 @@ func TestRemoteBedrockViewRefusals(t *testing.T) {
 	}
 }
 
-// The views say which addresses are on an own domain, so the panel can disable
-// voice chat and Bedrock there up front.
+// The Bedrock view says which addresses are on an own domain, so the panel can
+// disable Bedrock there up front.
 func TestRemoteViewsFlagOwnDomains(t *testing.T) {
 	const own = "play.acme.tld"
 	for _, c := range []struct {
 		name          string
 		setup         func(e *remoteExtrasEnv)
 		ownInBedrock  bool
-		voiceOwnOnly  bool
 		bedrockRoutes int
 	}{
-		{"provider address only", func(*remoteExtrasEnv) {}, false, false, 0},
-		{"own and provider address", func(e *remoteExtrasEnv) { e.addAddress(own, true) }, true, false, 1},
+		{"provider address only", func(*remoteExtrasEnv) {}, false, 0},
+		{"own and provider address", func(e *remoteExtrasEnv) { e.addAddress(own, true) }, true, 1},
 		{"own address only", func(e *remoteExtrasEnv) {
 			delete(e.rs.routes, remoteAddr)
 			e.addAddress(own, true)
-		}, true, true, 1},
+		}, true, 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newRemoteExtras(t)
@@ -385,15 +384,17 @@ func TestRemoteViewsFlagOwnDomains(t *testing.T) {
 					t.Fatalf("route %v", m)
 				}
 			}
-			if _, vv := e.getVoice(t); vv.OwnDomainOnly != c.voiceOwnOnly {
-				t.Fatalf("voice view %+v", vv)
+			// Voice chat is offered on an own domain now (the provider checks
+			// its DNS): neither the view nor the OFF answer flags it any more.
+			view := e.getVoiceBody(t)
+			off, _ := e.put(t, `{"enabled":false}`)
+			if off.Code != http.StatusOK {
+				t.Fatalf("off: status %d body %s", off.Code, off.Body.String())
 			}
-			// The OFF answer carries the same view, so the switch does not
-			// read as available until the panel reloads.
-			rec, off := e.put(t, `{"enabled":false}`)
-			ov, _ := off["voice"].(map[string]interface{})
-			if rec.Code != http.StatusOK || (ov["ownDomainOnly"] == true) != c.voiceOwnOnly {
-				t.Fatalf("off answer %d %s", rec.Code, rec.Body.String())
+			for _, body := range []string{view, off.Body.String()} {
+				if strings.Contains(body, "ownDomainOnly") {
+					t.Fatalf("voice answer still flags own domains: %s", body)
+				}
 			}
 		})
 	}

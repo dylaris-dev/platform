@@ -68,9 +68,9 @@ export function routeOptionsFailure(mode: GatewayProviderMode, failed: boolean):
         : null;
 }
 
-/** Voice chat and Bedrock on an address on the customer's own domain (Core's own_domain_unsupported). */
+/** Bedrock on an address on the customer's own domain (Core's own_domain_unsupported). Voice chat is offered there. */
 export const OWN_DOMAIN_EXTRAS_TEXT =
-    "Voice chat and Bedrock are not available on your own domain yet. Use an address on the gateway provider's domain for them.";
+    "Bedrock is not available on your own domain yet. Use an address on the gateway provider's domain for it.";
 
 const PROVIDER_ERRORS: Record<string, string> = {
     unauthorized: 'The provider rejected this key. Check that it was copied in full and has not been revoked.',
@@ -121,7 +121,8 @@ const PROVIDER_ERRORS: Record<string, string> = {
     link_without_voice: "This node's managed link has not reported that it can carry voice chat. Make sure it is running and up to date.",
     no_relay: "The managed gateway has no voice relay in this server's region yet. Try again later.",
     voice_pool_full: "Every voice port of the managed gateway in this server's region is taken. Try again later.",
-    no_routes: "Voice chat needs an address on one of the gateway provider's domains. Own domains are not supported yet.",
+    no_routes: "Voice chat needs an address on one of the gateway provider's domains, or an own domain that points at it.",
+    dns_lookup_failed: 'The gateway provider could not look up this address right now. Nothing was changed. Try again in a moment.',
     voice_one_address: 'With the managed gateway a server has one voice chat address. Turn voice chat off, then on again.',
     bedrock_disabled: 'Bedrock is not enabled for this server. Ask an admin.',
     bedrock_unavailable: "Bedrock needs an address on one of the gateway provider's domains. Own domains are not supported yet.",

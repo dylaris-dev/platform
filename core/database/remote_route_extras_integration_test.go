@@ -83,26 +83,26 @@ func TestIntegrationRemoteRouteOneVoicePerServer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if found, err := st.SetRemoteRouteVoice(d[0], intp(24454), "plasmo"); err != nil || !found {
+	if found, err := st.SetRemoteRouteVoice(d[0], intp(24454), "plasmo", ""); err != nil || !found {
 		t.Fatalf("first = %v, %v", found, err)
 	}
-	if _, err := st.SetRemoteRouteVoice(d[1], intp(24455), "plasmo"); !errors.Is(err, store.ErrRemoteVoiceTaken) {
+	if _, err := st.SetRemoteRouteVoice(d[1], intp(24455), "plasmo", ""); !errors.Is(err, store.ErrRemoteVoiceTaken) {
 		t.Fatalf("second address of the server = %v, want ErrRemoteVoiceTaken", err)
 	}
-	if found, err := st.SetRemoteRouteVoice(d[2], intp(24456), "voicechat"); err != nil || !found {
+	if found, err := st.SetRemoteRouteVoice(d[2], intp(24456), "voicechat", ""); err != nil || !found {
 		t.Fatalf("other server = %v, %v", found, err)
 	}
-	if found, err := st.SetRemoteRouteVoice(d[0], nil, ""); err != nil || !found {
+	if found, err := st.SetRemoteRouteVoice(d[0], nil, "", ""); err != nil || !found {
 		t.Fatalf("clear = %v, %v", found, err)
 	}
-	if found, err := st.SetRemoteRouteVoice(d[1], intp(24455), "plasmo"); err != nil || !found {
+	if found, err := st.SetRemoteRouteVoice(d[1], intp(24455), "plasmo", ""); err != nil || !found {
 		t.Fatalf("after clearing the first = %v, %v", found, err)
 	}
 	r, err := st.GetRemoteRoute(d[1])
 	if err != nil || r == nil || r.VoicePort == nil || *r.VoicePort != 24455 || r.VoiceMod != "plasmo" {
 		t.Fatalf("read back = %+v, %v", r, err)
 	}
-	if found, err := st.SetRemoteRouteVoice("missing-"+d[0], intp(1), "plasmo"); err != nil || found {
+	if found, err := st.SetRemoteRouteVoice("missing-"+d[0], intp(1), "plasmo", ""); err != nil || found {
 		t.Fatalf("missing domain = %v, %v; want not found", found, err)
 	}
 }
@@ -163,7 +163,7 @@ func TestIntegrationRemoteRouteExtrasRace(t *testing.T) {
 			if on {
 				p = intp(24454)
 			}
-			_, err := st.SetRemoteRouteVoice(dom, p, "plasmo")
+			_, err := st.SetRemoteRouteVoice(dom, p, "plasmo", "")
 			return err
 		}, store.ErrRemoteVoiceTaken},
 		{"bedrock", func(dom string, on bool) error {
@@ -223,7 +223,7 @@ func TestIntegrationUpsertKeepsVoiceAndEdition(t *testing.T) {
 	if err := st.UpsertRemoteRoute(store.RemoteRoute{Domain: d, ServerUUID: "srv-k", NodeID: 1, Port: 25565}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SetRemoteRouteVoice(d, intp(24460), "plasmo"); err != nil {
+	if _, err := st.SetRemoteRouteVoice(d, intp(24460), "plasmo", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.SetRemoteRouteEdition(d, "both"); err != nil {
@@ -424,17 +424,17 @@ func TestIntegrationRemoteRouteExtrasMapByIndexName(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = db.Exec(`DROP INDEX IF EXISTS dy_test_one_voice_mod`) })
-	if _, err := st.SetRemoteRouteVoice(d[0], nil, "unique-mod"); err != nil {
+	if _, err := st.SetRemoteRouteVoice(d[0], nil, "unique-mod", ""); err != nil {
 		t.Fatal(err)
 	}
-	_, err := st.SetRemoteRouteVoice(d[1], nil, "unique-mod")
+	_, err := st.SetRemoteRouteVoice(d[1], nil, "unique-mod", "")
 	if err == nil || errors.Is(err, store.ErrRemoteVoiceTaken) || errors.Is(err, store.ErrRemoteBedrockTaken) {
 		t.Fatalf("violation of another index = %v, want a plain error, not a remote-route sentinel", err)
 	}
-	if _, err := st.SetRemoteRouteVoice(d[0], intp(24454), "svc"); err != nil {
+	if _, err := st.SetRemoteRouteVoice(d[0], intp(24454), "svc", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SetRemoteRouteVoice(d[1], intp(24455), "svc"); !errors.Is(err, store.ErrRemoteVoiceTaken) {
+	if _, err := st.SetRemoteRouteVoice(d[1], intp(24455), "svc", ""); !errors.Is(err, store.ErrRemoteVoiceTaken) {
 		t.Fatalf("voice index violation = %v, want ErrRemoteVoiceTaken", err)
 	}
 }

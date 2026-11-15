@@ -161,8 +161,9 @@ func LiveVoiceRelays(ctx context.Context, rdb *redis.Client) ([]VoiceRelay, erro
 //
 // Only a domain exactly one label under an online edge's wildcard qualifies,
 // because that is the only name the wildcard A record resolves. A custom domain
-// has no voice address. Among several qualifying routes the lexically first wins,
-// so the answer does not depend on Redis ordering.
+// never qualifies here; VoiceTargetFor gives it our regional voice name. Among
+// several qualifying routes the lexically first wins, so the answer does not
+// depend on Redis ordering.
 func VoiceRouteFor(routes []GatewayRoute, edges []GatewayEdgeInfo, serverUUID string) (host, region string, ok bool) {
 	var domains []string
 	for _, rt := range routes {
@@ -193,6 +194,86 @@ func VoiceRegionFor(domain string, edges []GatewayEdgeInfo) (region string, ok b
 		}
 	}
 	return "", false
+}
+
+// VoiceHostLabel is the label of our regional voice name, reserved for tenants
+// (DefaultBlockedRoutePrefixes).
+const VoiceHostLabel = "voice"
+
+// VoiceHostFor is our voice name of a region: "voice" under the lexically
+// first online edge wildcard of that region ("*.eu.dylaris.com" ->
+// "voice.eu.dylaris.com"). It is what an own-domain server's mod is told, so
+// the customer's DNS never steers the relay path.
+func VoiceHostFor(region string, edges []GatewayEdgeInfo) (string, bool) {
+	var suffixes []string
+	for _, e := range edges {
+		if e.Status == "online" && e.Region == region && strings.HasPrefix(e.Wildcard, "*.") {
+			suffixes = append(suffixes, strings.ToLower(e.Wildcard[1:]))
+		}
+	}
+	if len(suffixes) == 0 {
+		return "", false
+	}
+	sort.Strings(suffixes)
+	return VoiceHostLabel + suffixes[0], true
+}
+
+// VoiceTargetFor is the hosted server's voice host (what its mod is told) and
+// relay region, in order:
+//  1. a regional address: VoiceRouteFor, today's answer, no DNS;
+//  2. a server that already has voice and still has an address keeps prior's
+//     host and region, no DNS: the region is fixed when the port is allocated,
+//     so a later DNS change neither moves a running server's voice nor turns
+//     enabling it again into a refusal;
+//  3. its own domains in lexical order, under one pointingTimeout: the first
+//     that points at a region gives that region and our voice name there. An
+//     unknown answer (lookup failed, rate limited) ends the walk with it, so an
+//     unknown first name never hands voice to the second by luck; otherwise the
+//     first name's refusal is the answer.
+//
+// When ok is false, host is the own domain the answer is about ("" with a zero
+// refusal: the server has no address at all); refusal.Status is ok when that
+// domain points at a region with no online edge left. owner bounds the lookups
+// one account waits on (CheckFor); the routes are the server's own (the caller
+// admitted them by RouteBelongsToServer), never request text.
+func VoiceTargetFor(ctx context.Context, pc *PointingChecker, owner string, routes []GatewayRoute, edges []GatewayEdgeInfo, serverUUID string, prior *store.VoicePort, allow func() bool) (host, region string, refusal Pointing, ok bool) {
+	if host, region, ok := VoiceRouteFor(routes, edges, serverUUID); ok {
+		return host, region, Pointing{}, true
+	}
+	var own []string
+	for _, rt := range routes {
+		if RouteBelongsToServer(rt, serverUUID) {
+			own = append(own, strings.ToLower(rt.Domain))
+		}
+	}
+	if len(own) == 0 {
+		return "", "", Pointing{}, false
+	}
+	if prior != nil {
+		return prior.Host, prior.Region, Pointing{}, true
+	}
+	sort.Strings(own)
+	ctx, cancel := context.WithTimeout(ctx, pointingTimeout)
+	defer cancel()
+	var first Pointing
+	firstName := ""
+	for _, d := range own {
+		p := pc.CheckFor(ctx, owner, d, PurposeVoiceRegion, allow)
+		if !p.Known() {
+			return d, "", p, false
+		}
+		if p.Status == PointingOK {
+			h, found := VoiceHostFor(p.Region, edges)
+			if !found {
+				return d, p.Region, p, false
+			}
+			return h, p.Region, p, true
+		}
+		if firstName == "" {
+			first, firstName = p, d
+		}
+	}
+	return firstName, "", first, false
 }
 
 // VoiceService keeps Redis in step with the voice_ports table. Core is the

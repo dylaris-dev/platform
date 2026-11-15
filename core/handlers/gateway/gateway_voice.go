@@ -19,6 +19,7 @@ import (
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/services/remotegw"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -38,9 +39,6 @@ type voiceView struct {
 	// Allowed is the resolved permission. The panel shows the switch when it
 	// is true, or when voice is already on so it can be turned off.
 	Allowed bool `json:"allowed"`
-	// OwnDomainOnly (managed gateway only): the server has addresses and every
-	// one is on the customer's own domain, where voice chat is not offered yet.
-	OwnDomainOnly bool `json:"ownDomainOnly,omitempty"`
 }
 
 func newVoiceView(vp *store.VoicePort, allowed bool) voiceView {
@@ -73,8 +71,9 @@ func (h *GatewayHandler) GetServerVoice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if rg != nil {
-		// The managed gateway's port, from the local columns.
-		domain, port, mod, on, err := rg.ServerVoice(srv.UUID)
+		// The managed gateway's port and the host its mod was told, from the
+		// local columns.
+		host, port, mod, on, err := rg.ServerVoice(srv.UUID)
 		if err != nil {
 			log.Printf("voice: server %d: %v", srv.ID, err)
 			httpx.SendJSONError(w, "Failed to read the voice chat setting", http.StatusInternalServerError)
@@ -82,15 +81,8 @@ func (h *GatewayHandler) GetServerVoice(w http.ResponseWriter, r *http.Request) 
 		}
 		v := voiceView{Allowed: h.voiceAllowed(srv)}
 		if on {
-			v.Enabled, v.Host, v.Port, v.Mod = true, domain, port, mod
+			v.Enabled, v.Host, v.Port, v.Mod = true, host, port, mod
 		}
-		own, err := rg.ServerOwnDomains(srv.UUID)
-		if err != nil {
-			log.Printf("voice: server %d: %v", srv.ID, err)
-			httpx.SendJSONError(w, "Failed to read the voice chat setting", http.StatusInternalServerError)
-			return
-		}
-		v.OwnDomainOnly = allOwnDomains(own)
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": v})
 		return
 	}
@@ -164,15 +156,7 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		if changed && srv.ActiveSubServer != "" {
 			writeBackVoiceConfig(h.d.Store, h.d.GRPCRegistry, srv)
 		}
-		v := newVoiceView(nil, h.voiceAllowed(srv))
-		// The same view as the GET. Off already happened, so a failed read
-		// only leaves the flag out; it does not turn the success into an error.
-		if own, err := rg.ServerOwnDomains(srv.UUID); err != nil {
-			log.Printf("voice: server %d: %v", srv.ID, err)
-		} else {
-			v.OwnDomainOnly = allOwnDomains(own)
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": v, "restartRequired": changed})
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "voice": newVoiceView(nil, h.voiceAllowed(srv)), "restartRequired": changed})
 		return
 	}
 	if !enabled {
@@ -206,9 +190,20 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Could not read this server's routes. Try again.", http.StatusBadGateway)
 		return
 	}
-	host, region, ok := services.VoiceRouteFor(routes, services.GetEdgesFromRedis(ctx, h.d.Redis), srv.UUID)
+	prior, err := h.d.Store.GetVoicePort(srv.ID)
+	if err != nil {
+		log.Printf("voice: server %d: %v", srv.ID, err)
+		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
+		return
+	}
+	host, region, refusal, ok := services.VoiceTargetFor(ctx, h.d.Pointing, srv.OwnerID, routes,
+		services.GetEdgesFromRedis(ctx, h.d.Redis), srv.UUID, prior, h.pointingAllow(r))
 	if !ok {
-		httpx.SendJSONErrorCode(w, "Voice chat needs an address on one of the platform's domains. Add a route first.", "no_routes", http.StatusConflict)
+		if host == "" {
+			httpx.SendJSONErrorCode(w, "Voice chat needs an address on one of the platform's domains. Add a route first.", "no_routes", http.StatusConflict)
+		} else {
+			h.voiceRegionRefusal(w, refusal, host)
+		}
 		return
 	}
 	relays, err := services.LiveVoiceRelays(ctx, h.d.Redis)
@@ -230,12 +225,6 @@ func (h *GatewayHandler) SetServerVoice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	prior, err := h.d.Store.GetVoicePort(srv.ID)
-	if err != nil {
-		log.Printf("voice: server %d: %v", srv.ID, err)
-		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
-		return
-	}
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
@@ -305,22 +294,20 @@ func (h *GatewayHandler) findVoiceConfig(w http.ResponseWriter, srv *models.Serv
 	return mod, rel, content, true
 }
 
-// allOwnDomains: there is at least one address and every one is on an own domain.
-func allOwnDomains(own map[string]bool) bool {
-	for _, o := range own {
-		if !o {
-			return false
-		}
-	}
-	return len(own) > 0
-}
-
 // enableRemoteVoice is the ON of the switch on the managed gateway, after the
 // suspension and permission checks. Not asked here: the node's release (the
 // managed link forwards voice, not the node), the relays and the port pool
-// (the provider checks both and answers no_relay / voice_pool_full).
+// (the provider checks both and answers no_relay / voice_pool_full), and the
+// DNS of an own domain: ONLY the provider resolves it, and its answer (the
+// host for the mod, or its refusal sentence) is passed through.
 func (h *GatewayHandler) enableRemoteVoice(ctx context.Context, w http.ResponseWriter, rg *services.RemoteGateway, srv *models.Server) {
 	domains, err := rg.ServerDomains(srv.UUID)
+	if err != nil {
+		log.Printf("voice: server %d: %v", srv.ID, err)
+		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
+		return
+	}
+	own, err := rg.ServerOwnDomains(srv.UUID)
 	if err != nil {
 		log.Printf("voice: server %d: %v", srv.ID, err)
 		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
@@ -333,18 +320,8 @@ func (h *GatewayHandler) enableRemoteVoice(ctx context.Context, w http.ResponseW
 		}
 		return
 	}
-	domain, _, ok := services.VoiceDomainFor(domains, regions.Items)
+	domain, ok := services.VoiceAddressFor(domains, own, regions.Items)
 	if !ok {
-		own, err := rg.ServerOwnDomains(srv.UUID)
-		if err != nil {
-			log.Printf("voice: server %d: %v", srv.ID, err)
-			httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
-			return
-		}
-		if allOwnDomains(own) {
-			httpx.SendJSONErrorCode(w, gate.RemoteOwnDomainExtrasText, "own_domain_unsupported", http.StatusConflict)
-			return
-		}
 		httpx.SendJSONErrorCode(w, gate.RemoteVoiceNoRoutesText, "no_routes", http.StatusConflict)
 		return
 	}
@@ -358,13 +335,20 @@ func (h *GatewayHandler) enableRemoteVoice(ctx context.Context, w http.ResponseW
 		httpx.SendJSONError(w, "Failed to turn voice chat on", http.StatusInternalServerError)
 		return
 	}
-	port, err := rg.EnableServerVoice(ctx, srv.UUID, domain, mod)
+	port, host, err := rg.EnableServerVoice(ctx, srv.UUID, domain, mod)
+	var ae *remotegw.APIError
 	switch {
 	case errors.Is(err, store.ErrRemoteVoiceTaken):
 		httpx.SendJSONErrorCode(w, "With the managed gateway a server has one voice chat address. Turn voice chat off, then on again.", "voice_one_address", http.StatusConflict)
 		return
-	case errors.Is(err, services.ErrGatewayOwnDomainExtras):
-		httpx.SendJSONErrorCode(w, gate.RemoteOwnDomainExtrasText, "own_domain_unsupported", http.StatusConflict)
+	case own[domain] && errors.As(err, &ae) && ae.Code == "no_routes":
+		// The provider's own sentence names the record to change; an older
+		// provider's speaks of "the platform's domains".
+		msg := ae.Message
+		if msg == "" || gate.IsOldProviderVoiceNoRoutes(msg) {
+			msg = gate.RemoteOwnDomainVoiceOldProviderText
+		}
+		gate.WriteGatewayError(w, http.StatusConflict, "no_routes", msg)
 		return
 	case err != nil:
 		if !gate.GatewayProviderError(w, err) {
@@ -373,9 +357,9 @@ func (h *GatewayHandler) enableRemoteVoice(ctx context.Context, w http.ResponseW
 		}
 		return
 	}
-	merged := voicecfg.SvcEnable(content, domain, port)
+	merged := voicecfg.SvcEnable(content, host, port)
 	if mod == "plasmo" {
-		merged = voicecfg.PlasmoEnable(content, domain, port)
+		merged = voicecfg.PlasmoEnable(content, host, port)
 	}
 	if merged != content {
 		if err := nodeops.WriteNodeFileString(h.d.GRPCRegistry, srv.NodeID, srv.UUID, srv.ActiveSubServer+"/"+rel, merged); err != nil {
@@ -392,7 +376,7 @@ func (h *GatewayHandler) enableRemoteVoice(ctx context.Context, w http.ResponseW
 		}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true,
-		"voice": voiceView{Enabled: true, Host: domain, Port: port, Mod: mod, Allowed: true}, "restartRequired": true})
+		"voice": voiceView{Enabled: true, Host: host, Port: port, Mod: mod, Allowed: true}, "restartRequired": true})
 }
 
 // rollbackVoice undoes a failed enable through the disable path. A server that

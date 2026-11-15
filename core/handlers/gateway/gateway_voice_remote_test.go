@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 
+	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services"
 	"dylaris-core/services/remotegw"
@@ -85,7 +89,7 @@ func (f *remoteExtrasStore) TouchRemoteRoute(domain string) error {
 	f.touchedAt[domain] = f.calls()
 	return nil
 }
-func (f *remoteExtrasStore) SetRemoteRouteVoice(domain string, port *int, mod string) (bool, error) {
+func (f *remoteExtrasStore) SetRemoteRouteVoice(domain string, port *int, mod, host string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r, ok := f.routes[domain]
@@ -99,7 +103,7 @@ func (f *remoteExtrasStore) SetRemoteRouteVoice(domain string, port *int, mod st
 			}
 		}
 	}
-	r.VoicePort, r.VoiceMod = port, mod
+	r.VoicePort, r.VoiceMod, r.VoiceHost = port, mod, host
 	f.routes[domain] = r
 	return true, nil
 }
@@ -281,10 +285,6 @@ func TestRemoteVoiceEnableRefusals(t *testing.T) {
 	}{
 		{"suspended", http.StatusForbidden, "", func(e *remoteExtrasEnv) { e.fs.billing = &store.UserBilling{Status: "suspended"} }},
 		{"local permission", http.StatusConflict, "voice_not_allowed", func(e *remoteExtrasEnv) { e.fs.global = "" }},
-		{"own domain only", http.StatusConflict, "own_domain_unsupported", func(e *remoteExtrasEnv) {
-			delete(e.rs.routes, remoteAddr)
-			e.addAddress("play.acme.tld", true)
-		}},
 		{"two labels deep", http.StatusConflict, "no_routes", func(e *remoteExtrasEnv) {
 			delete(e.rs.routes, remoteAddr)
 			e.addAddress("x.a.eu.example.com", false)
@@ -305,6 +305,11 @@ func TestRemoteVoiceEnableRefusals(t *testing.T) {
 			rec, out := e.put(t, `{"enabled":true}`)
 			if rec.Code != c.status || (c.code != "" && out["code"] != c.code) {
 				t.Fatalf("status %d body %s, want %d %s", rec.Code, rec.Body.String(), c.status, c.code)
+			}
+			// A regional address keeps the regional sentence: the own-domain
+			// pass-through is for own domains only (review m2).
+			if c.name == "provider no_routes" && out["error"] != gate.RemoteVoiceNoRoutesText {
+				t.Fatalf("error %q, want %q", out["error"], gate.RemoteVoiceNoRoutesText)
 			}
 			for d, r := range e.rs.routes {
 				if r.VoicePort != nil {
@@ -437,6 +442,11 @@ func TestVoiceLocalModeUnchanged(t *testing.T) {
 	fake := remotegwtest.NewFake(t)
 	e.h.d.GatewayRemote = func() (bool, bool) { return false, true }
 	e.h.d.RemoteGateway = services.NewRemoteGateway(e.fs, func() *remotegw.Client { return remotegw.New(fake.URL(), fake.Key) })
+	// The shared checker is wired and the server also holds an own domain that
+	// points at us: a regional address must still never ask DNS.
+	res := &odResolver{cname: map[string]string{}, a: map[string][]netip.Addr{odDomain: addrs(edgeAddr)}, srv: map[string][]*net.SRV{}}
+	e.h.d.Pointing = odChecker(e.h.d.Redis, res)
+	e.addHostedRoute(odDomain)
 
 	get := func() string {
 		r := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/api/servers/7/voice", nil), map[string]string{"id": "7"})
@@ -473,5 +483,208 @@ func TestVoiceLocalModeUnchanged(t *testing.T) {
 	}
 	if c := fake.Calls(); len(c) != 0 {
 		t.Fatalf("local mode asked the provider: %v", c)
+	}
+	if n := res.count(); n != 0 {
+		t.Fatalf("local mode made %d resolver calls for a regional address, want 0", n)
+	}
+}
+
+func (e *remoteExtrasEnv) getVoiceBody(t *testing.T) string {
+	t.Helper()
+	r := mux.SetURLVars(httptest.NewRequest(http.MethodGet, "/api/servers/7/voice", nil), map[string]string{"id": "7"})
+	rec := httptest.NewRecorder()
+	e.h.GetServerVoice(rec, r)
+	return rec.Body.String()
+}
+
+// --- Voice on an own-domain address on the managed gateway. ---
+
+const (
+	remoteOwn      = "play.acme.tld"
+	remoteOwnVoice = "voice.eu.example.com"
+)
+
+// newRemoteOwnDomain is newRemoteExtras with the server's only address on the
+// customer's own domain, and a pointing checker wired that counts every
+// lookup: the customer Core must never resolve (only the provider does).
+func newRemoteOwnDomain(t *testing.T) (*remoteExtrasEnv, *odResolver) {
+	t.Helper()
+	e := newRemoteExtras(t)
+	delete(e.rs.routes, remoteAddr)
+	e.addAddress(remoteOwn, true)
+	res := &odResolver{cname: map[string]string{}, a: map[string][]netip.Addr{remoteOwn: addrs(edgeAddr)}, srv: map[string][]*net.SRV{}}
+	e.mr.Set("edge:registry:e1", `{"edge_id":"e1","status":"online","region":"eu","wildcard":"*.eu.dylaris.com","ip":"`+edgeAddr+`"}`)
+	e.mr.Set("route:"+remoteOwn, `{"target_ip":"mc_srv-7","target_port":25565,"server_uuid":"srv-7"}`)
+	e.h.d.Pointing = odChecker(e.h.d.Redis, res)
+	return e, res
+}
+
+func TestRemoteOwnDomainVoiceEnable(t *testing.T) {
+	e, res := newRemoteOwnDomain(t)
+	e.fake.SetVoiceHost(remoteOwn, remoteOwnVoice)
+	rec, out := e.put(t, `{"enabled":true}`)
+	if rec.Code != http.StatusOK || out["restartRequired"] != true {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if v, _ := out["voice"].(map[string]interface{}); v["host"] != remoteOwnVoice || v["port"] != float64(30000) {
+		t.Fatalf("voice %v", v)
+	}
+	if row := e.rs.row(remoteOwn); row.VoicePort == nil || *row.VoicePort != 30000 || row.VoiceHost != remoteOwnVoice {
+		t.Fatalf("column %+v", row)
+	}
+	if want := voicecfg.SvcEnable(handlertest.VoiceFixture(t, "svc_before.properties"), remoteOwnVoice, 30000); e.written() != want {
+		t.Fatalf("config written:\n%s\nwant:\n%s", e.written(), want)
+	}
+	if _, view := e.getVoice(t); !view.Enabled || view.Host != remoteOwnVoice || view.Port != 30000 {
+		t.Fatalf("view %+v", view)
+	}
+	if n := res.count(); n != 0 {
+		t.Fatalf("the customer Core made %d DNS lookups, want 0: only the provider resolves", n)
+	}
+}
+
+// A regional address beside an own domain is still the one asked for.
+func TestRemoteVoiceRegionalAddressFirst(t *testing.T) {
+	e := newRemoteExtras(t)
+	e.addAddress("aaa.acme.tld", true)
+	if rec, _ := e.put(t, `{"enabled":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	if row := e.rs.row(remoteAddr); row.VoicePort == nil || row.VoiceHost != "" {
+		t.Fatalf("regional column %+v", row)
+	}
+	if row := e.rs.row("aaa.acme.tld"); row.VoicePort != nil {
+		t.Fatalf("own domain got voice: %+v", row)
+	}
+}
+
+func TestRemoteOwnDomainVoiceLookupFailed(t *testing.T) {
+	const providerSentence = "Voice chat needs to know which region this server's players arrive in. play.acme.tld does not point at us yet: add a CNAME from play.acme.tld to the address shown under Your own domains, or add an address on one of our domains."
+	const retry = "We could not look up play.acme.tld right now. Nothing was changed. Try again in a moment."
+	for _, c := range []struct {
+		name, code, providerMsg string
+		status                  int
+		want                    string
+	}{
+		{"provider could not look it up", "dns_lookup_failed", retry, http.StatusServiceUnavailable, retry},
+		{"provider's DNS sentence passed through", "no_routes", providerSentence, http.StatusConflict, providerSentence},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e, res := newRemoteOwnDomain(t)
+			e.fake.SetVoiceDNS(remoteOwn, c.code, c.providerMsg)
+			rec, out := e.put(t, `{"enabled":true}`)
+			if rec.Code != c.status || out["code"] != c.code || out["error"] != c.want {
+				t.Fatalf("status %d body %s, want %d %s %q", rec.Code, rec.Body.String(), c.status, c.code, c.want)
+			}
+			if row := e.rs.row(remoteOwn); row.VoicePort != nil || row.VoiceHost != "" {
+				t.Fatalf("a refusal wrote the column: %+v", row)
+			}
+			if e.written() != "" || len(e.rs.outbox) != 0 || res.count() != 0 {
+				t.Fatalf("file %q outbox %v lookups %d", e.written(), e.rs.outbox, res.count())
+			}
+		})
+	}
+}
+
+// Review Focus 7, both directions of version skew (the other one, an older
+// customer Core reading a newer provider's host, is
+// TestOldClientParsesVoiceAnswerWithHost):
+//   - an older provider refuses an own domain with its old no_routes sentence,
+//     which speaks of "the platform's domains": the customer reads its own;
+//   - an older provider names no host: the address is written, as before.
+func TestRemoteOwnDomainVoiceOnAnOldProvider(t *testing.T) {
+	// Both endings an older provider used: its route-only and its hosted
+	// refusal (matched by the start, review m3).
+	for _, old := range []string{
+		"Voice chat needs an address on one of the platform's domains.",
+		"Voice chat needs an address on one of the platform's domains. Add a route first.",
+	} {
+		t.Run("old refusal of an own domain: "+old, func(t *testing.T) {
+			e, _ := newRemoteOwnDomain(t)
+			e.fake.SetVoiceDNS(remoteOwn, "no_routes", old)
+			rec, out := e.put(t, `{"enabled":true}`)
+			if rec.Code != http.StatusConflict || out["code"] != "no_routes" || out["error"] != gate.RemoteOwnDomainVoiceOldProviderText {
+				t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+			}
+			if row := e.rs.row(remoteOwn); row.VoicePort != nil || e.written() != "" {
+				t.Fatalf("column %+v file %q", row, e.written())
+			}
+		})
+	}
+	t.Run("old answer without host", func(t *testing.T) {
+		for _, addr := range []string{remoteAddr, remoteOwn} {
+			t.Run(addr, func(t *testing.T) {
+				e := newRemoteExtras(t)
+				if addr == remoteOwn {
+					delete(e.rs.routes, remoteAddr)
+					e.addAddress(remoteOwn, true)
+				}
+				e.base = stripVoiceHost(t, e.fake.URL())
+				rec, out := e.put(t, `{"enabled":true}`)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+				}
+				if v, _ := out["voice"].(map[string]interface{}); v["host"] != addr {
+					t.Fatalf("voice %v, want host %s", v, addr)
+				}
+				if row := e.rs.row(addr); row.VoiceHost != "" {
+					t.Fatalf("column %+v", row)
+				}
+				if want := voicecfg.SvcEnable(handlertest.VoiceFixture(t, "svc_before.properties"), addr, 30000); e.written() != want {
+					t.Fatalf("config written:\n%s\nwant:\n%s", e.written(), want)
+				}
+			})
+		}
+	})
+}
+
+// stripVoiceHost is the provider at base as one before part 1 answers: no
+// "host" in a voice object.
+func stripVoiceHost(t *testing.T, base string) string {
+	t.Helper()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		req, _ := http.NewRequest(r.Method, base+r.URL.Path, bytes.NewReader(body))
+		req.Header = r.Header.Clone()
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		var m map[string]interface{}
+		if json.Unmarshal(raw, &m) == nil {
+			if v, ok := m["voice"].(map[string]interface{}); ok {
+				delete(v, "host")
+				raw, _ = json.Marshal(m)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(raw)
+	}))
+	t.Cleanup(proxy.Close)
+	return proxy.URL
+}
+
+// Bedrock on an own domain stays refused up front until part 2, with its own
+// sentence, and the provider is never asked.
+func TestRemoteOwnDomainBedrockStaysBlocked(t *testing.T) {
+	e, res := newRemoteOwnDomain(t)
+	before := len(e.fake.Calls())
+	rec, out := bedrockCall(e.voiceSwitchEnv, http.MethodPut, bedrockBody(remoteOwn, true, true), false)
+	if rec.Code != http.StatusConflict || out["code"] != "own_domain_unsupported" ||
+		out["message"] != "Bedrock is not available on your own domain yet. Use an address on the gateway provider's domain for it." {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	puts := 0
+	for _, c := range e.fake.Calls()[before:] {
+		if strings.HasPrefix(c, "PUT /routes/") {
+			puts++
+		}
+	}
+	if puts != 0 || e.rs.row(remoteOwn).Edition != "" || res.count() != 0 {
+		t.Fatalf("provider writes %d, edition %q, lookups %d", puts, e.rs.row(remoteOwn).Edition, res.count())
 	}
 }

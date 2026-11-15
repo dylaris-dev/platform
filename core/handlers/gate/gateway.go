@@ -206,6 +206,10 @@ func providerStatus(ae *remotegw.APIError) (int, string, string) {
 		return http.StatusConflict, ae.Code, RemoteVoiceNoRoutesText
 	case "no_relay", "voice_pool_full", "bedrock_unavailable":
 		return http.StatusConflict, ae.Code, ae.Message
+	// The provider could not check an own domain's DNS: its sentence says
+	// nothing was changed and to try again, which holds here too.
+	case "dns_lookup_failed":
+		return http.StatusServiceUnavailable, ae.Code, ae.Message
 	case "bedrock_disabled":
 		return http.StatusConflict, ae.Code, withPlanNeeded("Bedrock is not enabled for this platform's account on the managed gateway.", ae.Message)
 	}
@@ -233,9 +237,25 @@ const kitRetiringText = "This node's link is being replaced. Move the server to 
 // for a server without an address on one of the provider's domains.
 const RemoteVoiceNoRoutesText = "Voice chat needs an address on one of the gateway provider's domains. Add one first."
 
-// RemoteOwnDomainExtrasText is the refusal of voice chat and Bedrock on an
-// address on the customer's own domain (own_domain_unsupported).
-const RemoteOwnDomainExtrasText = "Voice chat and Bedrock are not available on your own domain yet. Use an address on the gateway provider's domain for them."
+// RemoteOwnDomainExtrasText is the refusal of Bedrock on an address on the
+// customer's own domain (own_domain_unsupported).
+const RemoteOwnDomainExtrasText = "Bedrock is not available on your own domain yet. Use an address on the gateway provider's domain for it."
+
+// RemoteOwnDomainVoiceOldProviderText replaces an older provider's no_routes
+// for an own-domain address, which speaks of "the platform's domains" (the
+// provider's, read here as the customer's).
+const RemoteOwnDomainVoiceOldProviderText = "The gateway provider does not offer voice chat on your own domain yet. Use an address on the gateway provider's domain for it."
+
+// OldProviderVoiceNoRoutes starts the no_routes sentence of a provider before
+// voice on own domains: the one way to tell its refusal from the DNS
+// sentences of a newer one, which are passed through. A start, not the whole
+// sentence: its two call sites ended it differently (" Add a route first.").
+const OldProviderVoiceNoRoutes = "Voice chat needs an address on one of the platform's domains"
+
+// IsOldProviderVoiceNoRoutes tells an older provider's no_routes sentence.
+func IsOldProviderVoiceNoRoutes(msg string) bool {
+	return strings.HasPrefix(msg, OldProviderVoiceNoRoutes)
+}
 
 const providerOwnDomainCapText = "This platform's own-domain limit at the gateway provider is reached."
 

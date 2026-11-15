@@ -64,7 +64,7 @@ func TestIntegrationLinkRouteVoiceCarriesSuspension(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.DeleteCoreLinkRoute(r.Domain) })
-	if _, err := st.AllocateLinkRouteVoice(r.Domain, "eu", 24454, make([]byte, 32), 30000, 30050); err != nil {
+	if _, err := st.AllocateLinkRouteVoice(r.Domain, "eu", "", 24454, make([]byte, 32), 30000, 30050); err != nil {
 		t.Fatalf("AllocateLinkRouteVoice: %v", err)
 	}
 	get := func() bool {

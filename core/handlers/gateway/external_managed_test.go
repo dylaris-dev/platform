@@ -69,8 +69,8 @@ func (m *managedStore) GetLinkRouteVoice(domain string) (*store.LinkRouteVoice, 
 	}
 	return nil, nil
 }
-func (m *managedStore) AllocateLinkRouteVoice(domain, region string, targetPort int, key []byte, min, _ int) (store.LinkRouteVoice, error) {
-	v := store.LinkRouteVoice{Domain: domain, OwnerID: "owner-1", LinkToken: "tok", TargetHost: "127.0.0.1", Region: region, Port: min, TargetPort: targetPort, UplinkKey: key}
+func (m *managedStore) AllocateLinkRouteVoice(domain, region, host string, targetPort int, key []byte, min, _ int) (store.LinkRouteVoice, error) {
+	v := store.LinkRouteVoice{Domain: domain, OwnerID: "owner-1", LinkToken: "tok", TargetHost: "127.0.0.1", Region: region, Port: min, TargetPort: targetPort, UplinkKey: key, Host: host}
 	m.voice[domain] = v
 	return v, nil
 }

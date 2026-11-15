@@ -290,9 +290,13 @@ your Core ---+ HTTPS: routes, link kits, usage
   and puts it where the node reads it; the node writes `key.pem` at the next
   start, so restart the server once. Floodgate must be installed; there is no
   key download in this mode. Taking Bedrock off is never refused.
-- **Own domains and voice / Bedrock.** Not available yet: an address on an own
-  domain shows both as disabled with a sentence saying so, and the API refuses
-  them (409 `own_domain_unsupported`). Planned as its own stage.
+- **Own domains and voice / Bedrock.** Voice chat works on an own-domain
+  address: the provider checks the domain's DNS and answers the name the voice
+  mod is told (its regional voice name), which Core stores and writes into the
+  mod config; the customer's DNS needs no change. A regional address is still
+  preferred when the server has one. Bedrock on an own domain is not available
+  yet: the routes dialog shows it disabled and the API refuses it (409
+  `own_domain_unsupported`).
 - **Player counts.** The sidebar shows each server's players, with Java and
   Bedrock in its tooltip. Counts are a few seconds old (the provider samples
   its edges every 3 seconds, this Core caches 5 seconds). When the provider
@@ -311,7 +315,7 @@ your Core ---+ HTTPS: routes, link kits, usage
 - **Known limits.** A switch the
   sweep turned off looks like one that was never on; the Errors screen says
   which.
-- **Not available with it yet:** voice chat and Bedrock on own domains, the
+- **Not available with it yet:** Bedrock on own domains, the
   edge MOTD, automatic real-IP mode, Beam over the provider's relays, and BYON /
   route-only (those two belong to a platform's own gateway).
 
@@ -362,6 +366,12 @@ your Core ---+ HTTPS: routes, link kits, usage
   unavoidable, first set the global voice switch and the Bedrock audience so
   the old rules allow those accounts. The earlier rule (never below
   2026.11.13.2 once a link replacement was used) still holds.
+- **No rollback below 2026.11.15 while own-domain voice is on.** Do not roll the
+  provider Core back below this release while managed-gateway or route-only
+  addresses on a customer's own domain have voice switched on, or switch voice
+  off on those addresses first. An older Core hands the link the customer's own
+  domain as the voice name; a domain that reaches us by SRV record only has no
+  address record, so voice stops silently while it still reads as on.
 
 ### Main failure sources and operational gotchas
 

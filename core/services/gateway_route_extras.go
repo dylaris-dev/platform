@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"sync"
@@ -19,9 +20,9 @@ import (
 	"dylaris-core/store"
 )
 
-// ErrGatewayOwnDomainExtras refuses voice chat and Bedrock on a customer's own
-// domain on the managed gateway: not offered yet.
-var ErrGatewayOwnDomainExtras = errors.New("voice chat and Bedrock are not available on an own domain")
+// ErrGatewayOwnDomainExtras refuses Bedrock on a customer's own domain on the
+// managed gateway: not offered yet. Voice chat is (the provider checks DNS).
+var ErrGatewayOwnDomainExtras = errors.New("Bedrock is not available on an own domain")
 
 // VoiceDomainFor is the remote-mode twin of VoiceRouteFor: the lexically first
 // of domains exactly one label under an ONLINE region's wildcard, and that
@@ -42,6 +43,57 @@ func VoiceDomainFor(domains []string, regions []remotegw.Region) (domain, region
 		}
 	}
 	return "", "", false
+}
+
+// VoiceAddressFor is the address a managed server's voice chat is asked for:
+// VoiceDomainFor's regional address first, as on our own gateway, else the
+// lexically first of its own domains (own[domain]), whose region the PROVIDER
+// decides by DNS. One provider call, a predictable answer (owner decision).
+func VoiceAddressFor(domains []string, own map[string]bool, regions []remotegw.Region) (domain string, ok bool) {
+	if d, _, ok := VoiceDomainFor(domains, regions); ok {
+		return d, true
+	}
+	sorted := append([]string(nil), domains...)
+	sort.Strings(sorted)
+	for _, d := range sorted {
+		if own[d] {
+			return d, true
+		}
+	}
+	return "", false
+}
+
+// voiceHostOf is the name the row's mod is told: the provider's host, else the
+// address itself. Only meaningful while the row has a voice port (an older
+// replica switching voice off leaves voice_host behind).
+func voiceHostOf(r store.RemoteRoute) string {
+	if r.VoiceHost != "" {
+		return r.VoiceHost
+	}
+	return r.Domain
+}
+
+// plainDNSName: lowercase LDH labels of 1-63 characters. services never imports
+// handlers, so handlers/validate is not usable here.
+var plainDNSName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$`)
+
+// storedVoiceHost is what voice_host holds for the provider's answer: empty
+// for the address itself (and for an older provider, which names none), so a
+// regional address's row stays as it is today.
+//
+// The host is written into the customer's voice mod config, and it comes from
+// another organisation's Core: anything that is not a plain DNS name (a newline
+// would add lines to voicechat-server.properties) is treated as no host, so the
+// address itself is used, and logged.
+func storedVoiceHost(domain, host string) string {
+	if host == domain {
+		return ""
+	}
+	if host != "" && (!plainDNSName.MatchString(host) || len(host) > 253) {
+		log.Printf("gateway: provider sent an invalid voice host for %s, using the address", domain)
+		return ""
+	}
+	return host
 }
 
 // ServerOwnDomains maps each of the server's addresses (minus pending deletes)
@@ -72,11 +124,12 @@ func (g *RemoteGateway) serverRoute(serverUUID, domain string) (*store.RemoteRou
 }
 
 // extrasPreflight is what every synchronous ON checks before the provider is
-// asked: no own domain, no change waiting for the address (a queued OFF that
+// asked: no own domain for Bedrock (voice on an own domain is the provider's
+// DNS check to make), no change waiting for the address (a queued OFF that
 // runs after this ON would leave the provider off while the row says on), and
 // the row touched, so the sweep can tell this flip in flight from drift.
-func (g *RemoteGateway) extrasPreflight(row *store.RemoteRoute) error {
-	if row.CustomDomain {
+func (g *RemoteGateway) extrasPreflight(row *store.RemoteRoute, feature string) error {
+	if row.CustomDomain && feature == "bedrock" {
 		return ErrGatewayOwnDomainExtras
 	}
 	if pending, err := g.st.HasOpenOutbox(row.Domain, ""); err != nil {
@@ -87,31 +140,35 @@ func (g *RemoteGateway) extrasPreflight(row *store.RemoteRoute) error {
 	return g.st.TouchRemoteRoute(row.Domain)
 }
 
-// ServerVoice is the server's voice address from the local columns.
-func (g *RemoteGateway) ServerVoice(serverUUID string) (domain string, port int, mod string, on bool, err error) {
+// ServerVoice is the server's voice host (what its mod is told), port and mod
+// from the local columns.
+func (g *RemoteGateway) ServerVoice(serverUUID string) (host string, port int, mod string, on bool, err error) {
 	routes, err := g.serverRoutes(serverUUID)
 	if err != nil {
 		return "", 0, "", false, err
 	}
 	for _, r := range routes {
 		if r.VoicePort != nil {
-			return r.Domain, *r.VoicePort, r.VoiceMod, true, nil
+			return voiceHostOf(r), *r.VoicePort, r.VoiceMod, true, nil
 		}
 	}
 	return "", 0, "", false, nil
 }
 
 // EnableServerVoice turns the provider's voice relay on for domain and records
-// its port locally once the provider said yes. A failed local write leaves the
-// provider on and the row off: voice reads as off here, a retry keeps the
-// provider's port, and the sweep switches the provider off.
-func (g *RemoteGateway) EnableServerVoice(ctx context.Context, serverUUID, domain, mod string) (int, error) {
+// its port and host locally once the provider said yes. host is the name the
+// mod is told: the provider's (our regional voice name there, for an own
+// domain), or the address when the provider names none (older than part 1).
+// A failed local write leaves the provider on and the row off: voice reads as
+// off here, a retry keeps the provider's port, and the sweep switches the
+// provider off.
+func (g *RemoteGateway) EnableServerVoice(ctx context.Context, serverUUID, domain, mod string) (port int, host string, err error) {
 	row, err := g.serverRoute(serverUUID, domain)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	if err := g.extrasPreflight(row); err != nil {
-		return 0, err
+	if err := g.extrasPreflight(row, "voice"); err != nil {
+		return 0, "", err
 	}
 	// Not the caller's context: a closed tab must not cut the call off between
 	// the provider's commit and the local write.
@@ -120,20 +177,21 @@ func (g *RemoteGateway) EnableServerVoice(ctx context.Context, serverUUID, domai
 	defer g.routes.drop()
 	v, err := g.api().SetVoice(ctx, domain, true, VoiceInternalPort)
 	if err != nil {
-		return 0, fmt.Errorf("voice chat for %s: %w", domain, err)
+		return 0, "", fmt.Errorf("voice chat for %s: %w", domain, err)
 	}
 	if !v.Enabled || v.Port <= 0 {
-		return 0, fmt.Errorf("%w: voice chat for %s answered without a port", remotegw.ErrBadAnswer, domain)
+		return 0, "", fmt.Errorf("%w: voice chat for %s answered without a port", remotegw.ErrBadAnswer, domain)
 	}
-	port := v.Port
-	found, err := g.st.SetRemoteRouteVoice(domain, &port, mod)
+	port = v.Port
+	stored := storedVoiceHost(domain, v.Host)
+	found, err := g.st.SetRemoteRouteVoice(domain, &port, mod, stored)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	if !found {
-		return 0, fmt.Errorf("voice chat for %s: the route row is gone", domain)
+		return 0, "", fmt.Errorf("voice chat for %s: the route row is gone", domain)
 	}
-	return port, nil
+	return port, voiceHostOf(store.RemoteRoute{Domain: domain, VoiceHost: stored}), nil
 }
 
 // DisableServerVoice clears every voice column of the server, then queues the
@@ -148,7 +206,7 @@ func (g *RemoteGateway) DisableServerVoice(serverUUID string) (changed bool, err
 		if r.VoicePort == nil {
 			continue
 		}
-		if _, err := g.st.SetRemoteRouteVoice(r.Domain, nil, ""); err != nil {
+		if _, err := g.st.SetRemoteRouteVoice(r.Domain, nil, "", ""); err != nil {
 			return changed, err
 		}
 		changed = true
@@ -197,7 +255,7 @@ func (g *RemoteGateway) AddBedrock(ctx context.Context, serverID int, serverUUID
 	if err != nil {
 		return false, err
 	}
-	if err := g.extrasPreflight(row); err != nil {
+	if err := g.extrasPreflight(row, "bedrock"); err != nil {
 		return false, err
 	}
 	prev := row.Edition
@@ -538,7 +596,7 @@ func switchVoiceOff(st store.Store, row store.RemoteRoute, why string) error {
 	if again, err := extrasRowAsRead(st, row); err != nil || again == nil {
 		return err
 	}
-	if _, err := st.SetRemoteRouteVoice(row.Domain, nil, ""); err != nil {
+	if _, err := st.SetRemoteRouteVoice(row.Domain, nil, "", ""); err != nil {
 		return err
 	}
 	logErrf("gateway-outbox", "voice chat was switched off for %s: %s; switch it on again in the panel", row.Domain, why)

@@ -502,11 +502,14 @@ func (c *Client) Usage(ctx context.Context, period string) (Usage, error) {
 
 // RouteVoice is an address's voice relay on the provider: Port is the public
 // voice port, TargetPort the voice mod's port on the target host. Both are 0
-// while voice is off.
+// while voice is off. Host is the name the mod is told (the provider's
+// regional voice name for an own domain); "" from an older provider means the
+// address itself.
 type RouteVoice struct {
-	Enabled    bool `json:"enabled"`
-	Port       int  `json:"port"`
-	TargetPort int  `json:"target_port"`
+	Enabled    bool   `json:"enabled"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	TargetPort int    `json:"target_port"`
 }
 
 // RouteBedrock is an address's editions on the provider. HasKey: it has a

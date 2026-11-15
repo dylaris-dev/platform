@@ -342,3 +342,24 @@ func TestClientRetireKit(t *testing.T) {
 		t.Fatalf("dot segment: %v", err)
 	}
 }
+
+// Review Focus 7: an older provider answers voice without host; the client
+// reads "" (the caller writes the address, as before), a newer one its name.
+func TestClientVoiceHostOnAnOldProvider(t *testing.T) {
+	for _, c := range []struct{ name, body, want string }{
+		{"old provider", `{"success":true,"voice":{"enabled":true,"port":26000,"target_port":24454}}`, ""},
+		{"new provider", `{"success":true,"voice":{"enabled":true,"host":"voice.eu.example.com","port":26000,"target_port":24454}}`, "voice.eu.example.com"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(c.body))
+			}))
+			defer srv.Close()
+			v, err := remotegw.New(srv.URL, func() string { return "k" }).SetVoice(context.Background(), "play.acme.tld", true, 24454)
+			if err != nil || v.Host != c.want || v.Port != 26000 || !v.Enabled {
+				t.Fatalf("got %+v, %v; want host %q", v, err, c.want)
+			}
+		})
+	}
+}

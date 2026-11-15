@@ -548,6 +548,18 @@ func main() {
 	})
 	voiceService.Start(bgCtx)
 
+	// The DNS pointing check: ONE instance, so its cache, single flight and
+	// lookup slots bound the whole replica. It resolves only names that are,
+	// or lie under, a live gateway route.
+	appState.Pointing = services.NewPointingChecker(services.NewNetPointingResolver(),
+		func(ctx context.Context) []services.GatewayEdgeInfo {
+			return services.GatewayEdgeRegistry(ctx, redisClient)
+		})
+	appState.Pointing.SetAdmitted(func(ctx context.Context, name string) (bool, error) {
+		return services.GatewayRouteCovers(ctx, redisClient, name)
+	})
+	appState.PointingLimiter = httpx.NewIPRateLimiter()
+
 	// Bedrock: the leader rewrites each enabled server's Floodgate key into
 	// Redis every 60 s and sweeps keys that have no row.
 	bedrockService := services.NewBedrockService(pgStore, redisClient)

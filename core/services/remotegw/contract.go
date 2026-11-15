@@ -19,7 +19,7 @@ var ContractKeys = map[string][]string{
 	"routes":                   {"success", "items"},
 	"routes.item":              {"domain", "target_ip", "target_port", "link_id", "proxy_protocol", "voice", "bedrock"},
 	"routes.voice":             {"success", "voice"},
-	"routes.voice.voice":       {"enabled", "port", "target_port"},
+	"routes.voice.voice":       {"enabled", "host", "port", "target_port"},
 	"routes.bedrock":           {"success", "bedrock"},
 	"routes.bedrock.bedrock":   {"java", "bedrock", "has_key"},
 	"routes.floodgate-key":     {"success", "domain", "key"},

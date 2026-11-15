@@ -44,7 +44,7 @@ func TestEnableServerVoiceOutlivesTheCaller(t *testing.T) {
 	}))
 	defer proxy.Close()
 	g := NewRemoteGateway(e.st, func() *remotegw.Client { return remotegw.New(proxy.URL, e.fake.Key) })
-	port, err := g.EnableServerVoice(ctx, srv.UUID, d, "plasmo")
+	port, _, err := g.EnableServerVoice(ctx, srv.UUID, d, "plasmo")
 	if err != nil {
 		t.Fatalf("enable with the caller gone: %v", err)
 	}
@@ -88,5 +88,24 @@ func TestAddBedrockUndoesWhenTheKeyCannotBeStored(t *testing.T) {
 	}
 	if r := e.row(d); r.Edition != "" {
 		t.Fatalf("edition %q, want the reservation taken back", r.Edition)
+	}
+}
+
+func TestStoredVoiceHostRejectsAnInvalidProviderHost(t *testing.T) {
+	const d = "play.example.org"
+	for _, tc := range []struct{ name, host, want string }{
+		{"same as address", d, ""},
+		{"old provider", "", ""},
+		{"regional name", "voice.eu.dylaris.com", "voice.eu.dylaris.com"},
+		{"newline injection", "voice.eu.dylaris.com\nport=1", ""},
+		{"trailing newline", "voice.eu.dylaris.com\n", ""},
+		{"space", "voice eu.dylaris.com", ""},
+		{"control char", "voice.\x00eu.dylaris.com", ""},
+		{"underscore", "voice_eu.dylaris.com", ""},
+		{"too long", strings.Repeat("a.", 130) + "com", ""},
+	} {
+		if got := storedVoiceHost(d, tc.host); got != tc.want {
+			t.Errorf("%s: storedVoiceHost(%q) = %q, want %q", tc.name, tc.host, got, tc.want)
+		}
 	}
 }

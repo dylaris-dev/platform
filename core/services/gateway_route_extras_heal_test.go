@@ -148,29 +148,29 @@ func TestReconcileRouteExtrasHealsEveryProviderOnLocalOff(t *testing.T) {
 	}{
 		{"voice: provider yes, local write failed", true, func(t *testing.T, e *extrasEnv, g *RemoteGateway, srv models.Server, d string) {
 			e.st.voiceSetErr = errors.New("connection reset")
-			if _, err := g.EnableServerVoice(ctx, srv.UUID, d, "plasmo"); err == nil {
+			if _, _, err := g.EnableServerVoice(ctx, srv.UUID, d, "plasmo"); err == nil {
 				t.Fatal("enable succeeded")
 			}
 		}},
 		{"voice: second address refused by the index (review M-1)", true, func(t *testing.T, e *extrasEnv, g *RemoteGateway, srv models.Server, d string) {
 			e.st.voiceSetErr = store.ErrRemoteVoiceTaken
-			if _, err := g.EnableServerVoice(ctx, srv.UUID, d, "plasmo"); !errors.Is(err, store.ErrRemoteVoiceTaken) {
+			if _, _, err := g.EnableServerVoice(ctx, srv.UUID, d, "plasmo"); !errors.Is(err, store.ErrRemoteVoiceTaken) {
 				t.Fatalf("enable: %v", err)
 			}
 		}},
 		{"voice: the answer was lost", true, func(t *testing.T, e *extrasEnv, g *RemoteGateway, srv models.Server, d string) {
 			e.fake.LoseNextAnswer()
-			if _, err := g.EnableServerVoice(ctx, srv.UUID, d, "plasmo"); err == nil {
+			if _, _, err := g.EnableServerVoice(ctx, srv.UUID, d, "plasmo"); err == nil {
 				t.Fatal("enable succeeded")
 			}
 		}},
 		{"voice: an off whose enqueue failed", true, func(t *testing.T, e *extrasEnv, g *RemoteGateway, srv models.Server, d string) {
-			if _, err := g.EnableServerVoice(ctx, srv.UUID, d, "plasmo"); err != nil {
+			if _, _, err := g.EnableServerVoice(ctx, srv.UUID, d, "plasmo"); err != nil {
 				t.Fatal(err)
 			}
 			e.st.enqueueErr = errors.New("connection reset")
 			// Only this address: the other one keeps voice for the M-1 check.
-			if _, err := e.st.SetRemoteRouteVoice(d, nil, ""); err != nil {
+			if _, err := e.st.SetRemoteRouteVoice(d, nil, "", ""); err != nil {
 				t.Fatal(err)
 			}
 			if err := e.st.EnqueueOutbox(OutboxOpVoice, d, OutboxVoice{}); err == nil {

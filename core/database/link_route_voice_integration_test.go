@@ -27,7 +27,7 @@ func TestIntegrationLinkRouteVoiceSharesThePoolWithServers(t *testing.T) {
 	}
 	rt := linkRoute(t, st)
 	key := bytes.Repeat([]byte{0x42}, 32)
-	got, err := st.AllocateLinkRouteVoice(rt.Domain, region, 24454, key, 26000, 26999)
+	got, err := st.AllocateLinkRouteVoice(rt.Domain, region, "", 24454, key, 26000, 26999)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestIntegrationLinkRouteVoiceSharesThePoolWithServers(t *testing.T) {
 		t.Fatalf("second server got %d, want 26002", p.Port)
 	}
 	// Same region again keeps port and key; only the target port follows.
-	again, err := st.AllocateLinkRouteVoice(rt.Domain, region, 24455, bytes.Repeat([]byte{0x99}, 32), 26000, 26999)
+	again, err := st.AllocateLinkRouteVoice(rt.Domain, region, "", 24455, bytes.Repeat([]byte{0x99}, 32), 26000, 26999)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestIntegrationLinkRouteVoiceGoesWithTheRoute(t *testing.T) {
 	_, st := integrationDB(t)
 	region := voiceRegion()
 	rt := linkRoute(t, st)
-	if _, err := st.AllocateLinkRouteVoice(rt.Domain, region, 24454, make([]byte, 32), 26000, 26999); err != nil {
+	if _, err := st.AllocateLinkRouteVoice(rt.Domain, region, "", 24454, make([]byte, 32), 26000, 26999); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.DeleteCoreLinkRoute(rt.Domain); err != nil {

@@ -45,7 +45,10 @@ type fakeRoute struct {
 	editions             *fakeEditions // nil: never given editions (Java only, no key)
 }
 
-type fakeVoice struct{ port, targetPort int }
+type fakeVoice struct {
+	port, targetPort int
+	host             string
+}
 
 type fakeEditions struct {
 	java, bedrock bool
@@ -123,6 +126,12 @@ type Fake struct {
 	liveReverify bool
 
 	voiceRefusal, bedrockRefusal string
+	// voiceHosts: the name the provider tells the mod for an address on an
+	// own domain (our regional voice name); absent is the address itself.
+	voiceHosts map[string]string
+	// voiceDNS: the provider's answer to a NEW voice entry on an own domain
+	// whose DNS check did not pass, [code, message] (SetVoiceDNS).
+	voiceDNS map[string][2]string
 	// bedrockUntold: an editions change is stored, then answered 502 like the
 	// real handler when its gateway could not be told yet.
 	bedrockUntold bool
@@ -143,7 +152,7 @@ const fakeVerifyCooldown = 5 * time.Minute
 func NewFake(t testing.TB) *Fake {
 	t.Helper()
 	f := &Fake{key: "dyl_fake_provider_key", nextID: 1, published: map[string]bool{}, checked: map[string]time.Time{},
-		nextVoicePort: fakeVoicePortMin, players: map[string][2]int{}}
+		nextVoicePort: fakeVoicePortMin, players: map[string][2]int{}, voiceHosts: map[string]string{}, voiceDNS: map[string][2]string{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -397,7 +406,7 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			items = append(items, map[string]interface{}{"domain": rt.domain, "target_ip": rt.host, "target_port": rt.port,
 				"server_uuid": "", "link_id": rt.linkID, "proxy_protocol": rt.proxy,
-				"voice": voiceView(voice), "bedrock": bedrockView(editions)})
+				"voice": voiceView(rt.domain, voice), "bedrock": bedrockView(editions)})
 		}
 		writeJSON(w, 200, map[string]interface{}{"success": true, "items": items})
 	case r.Method == http.MethodPost && path == "/routes":
@@ -714,6 +723,30 @@ func (f *Fake) SetVoiceRefusal(code string) {
 	f.voiceRefusal = code
 }
 
+// SetVoiceHost makes a NEW voice entry on domain answer host as the name the
+// mod is told, as the provider does for an own domain that points at one of
+// its regions; "" is the address itself again.
+func (f *Fake) SetVoiceHost(domain, host string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.voiceHosts[domain] = host
+}
+
+// SetVoiceDNS makes a NEW voice entry on domain answer as the provider does
+// when its DNS check of an own domain did not pass: code no_routes (409, the
+// provider's sentence, or an older provider's), dns_lookup_failed (503) or
+// rate_limited (429), with message. An existing entry is re-asserted without
+// DNS, as on the provider. "" lets it through again.
+func (f *Fake) SetVoiceDNS(domain, code, message string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if code == "" {
+		delete(f.voiceDNS, domain)
+		return
+	}
+	f.voiceDNS[domain] = [2]string{code, message}
+}
+
 // SetBedrockRefusal makes ADDING Bedrock answer 409 with code
 // (bedrock_disabled, bedrock_unavailable, kit_retiring); "" lets it through.
 func (f *Fake) SetBedrockRefusal(code string) {
@@ -784,13 +817,17 @@ func (f *Fake) kitRetiring(linkID string) bool {
 	return false
 }
 
-// voiceView is the provider's linkRouteVoiceView: port and target_port are
-// left out while voice is off.
-func voiceView(v *fakeVoice) map[string]interface{} {
+// voiceView is the provider's linkRouteVoiceView: host, port and target_port
+// are left out while voice is off; host is the address unless it has another.
+func voiceView(domain string, v *fakeVoice) map[string]interface{} {
 	if v == nil {
 		return map[string]interface{}{"enabled": false}
 	}
-	return map[string]interface{}{"enabled": true, "port": v.port, "target_port": v.targetPort}
+	host := v.host
+	if host == "" {
+		host = domain
+	}
+	return map[string]interface{}{"enabled": true, "host": host, "port": v.port, "target_port": v.targetPort}
 }
 
 // bedrockView is the provider's linkRouteBedrockView; an address never given
@@ -825,7 +862,7 @@ func (f *Fake) setVoice(w http.ResponseWriter, domain string, body map[string]in
 	}
 	if !enabled {
 		rt.voice = nil
-		writeJSON(w, 200, map[string]interface{}{"success": true, "voice": voiceView(nil)})
+		writeJSON(w, 200, map[string]interface{}{"success": true, "voice": voiceView(domain, nil)})
 		return
 	}
 	if f.kitRetiring(rt.linkID) {
@@ -836,12 +873,24 @@ func (f *Fake) setVoice(w http.ResponseWriter, domain string, body map[string]in
 		handlerError(w, 409, f.voiceRefusal, "fake voice refusal")
 		return
 	}
+	if d, ok := f.voiceDNS[domain]; ok && rt.voice == nil {
+		status := 409
+		switch d[0] {
+		case "dns_lookup_failed":
+			status = 503
+		case "rate_limited":
+			status = 429
+		}
+		handlerError(w, status, d[0], d[1])
+		return
+	}
 	if rt.voice == nil {
-		rt.voice = &fakeVoice{port: f.nextVoicePort}
+		// Like the provider, the host is fixed when the port is allocated.
+		rt.voice = &fakeVoice{port: f.nextVoicePort, host: f.voiceHosts[domain]}
 		f.nextVoicePort++
 	}
 	rt.voice.targetPort = int(target)
-	writeJSON(w, 200, map[string]interface{}{"success": true, "voice": voiceView(rt.voice)})
+	writeJSON(w, 200, map[string]interface{}{"success": true, "voice": voiceView(domain, rt.voice)})
 }
 
 // setBedrock follows the provider's SetLinkRouteBedrock: only ADDING Bedrock

@@ -70,11 +70,11 @@ func (s *extrasStore) setRow(domain string, change func(*store.RemoteRoute)) boo
 	return true
 }
 
-func (s *extrasStore) SetRemoteRouteVoice(domain string, port *int, mod string) (bool, error) {
+func (s *extrasStore) SetRemoteRouteVoice(domain string, port *int, mod, host string) (bool, error) {
 	if port != nil && s.voiceSetErr != nil {
 		return false, s.voiceSetErr
 	}
-	return s.setRow(domain, func(r *store.RemoteRoute) { r.VoicePort, r.VoiceMod = port, mod }), nil
+	return s.setRow(domain, func(r *store.RemoteRoute) { r.VoicePort, r.VoiceMod, r.VoiceHost = port, mod, host }), nil
 }
 
 func (s *extrasStore) SetRemoteRouteEdition(domain, edition string) (bool, error) {

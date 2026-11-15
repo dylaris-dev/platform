@@ -7,6 +7,7 @@ import (
 
 	"dylaris-core/authz"
 	nodegrpc "dylaris-core/grpc"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/services/corestorage"
@@ -56,6 +57,11 @@ type AppState struct {
 	// node-enrol arrives through the tunnel, so its peer is the warp leader).
 	// nil = no admission configured, and the gate is skipped.
 	Admission *services.AdmissionGate
+	// Pointing is the one shared DNS pointing check (does an own domain lead
+	// to one of our regions); PointingLimiter the per-user budget of the
+	// checks a panel user triggers. Built once in main.go.
+	Pointing        *services.PointingChecker
+	PointingLimiter *httpx.IPRateLimiter
 	// FrontendURL is the panel base URL — used by mailers to build absolute
 	// links into the UI (verify-email, password-reset, ticket replies, etc).
 	FrontendURL string

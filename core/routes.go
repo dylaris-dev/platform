@@ -767,6 +767,8 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		GatewayRemote:         appState.GatewayRemote,
 		RemoteGateway:         appState.RemoteGateway,
 		GatewayProviderConfig: appState.GatewayProviderConfig,
+		Pointing:              appState.Pointing,
+		PointingLimiter:       appState.PointingLimiter,
 	}
 	storageapiDeps := storageapi.Deps{
 		Store:            appState.Store,

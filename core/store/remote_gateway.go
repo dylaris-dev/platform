@@ -46,10 +46,13 @@ type RemoteRoute struct {
 	CustomDomain bool
 	// VoicePort is the provider's voice port, nil while voice is off; VoiceMod
 	// is the mod whose config carries it. Edition is '' (Java only), 'both' or
-	// 'bedrock'. All three are written only by SetRemoteRouteVoice and
-	// SetRemoteRouteEdition, never by an upsert or a claim.
+	// 'bedrock'. All four (VoiceHost too) are written only by
+	// SetRemoteRouteVoice and SetRemoteRouteEdition, never by an upsert or a
+	// claim. VoiceHost is the name the provider told the mod to use; '' means
+	// the address itself.
 	VoicePort *int
 	VoiceMod  string
+	VoiceHost string
 	Edition   string
 	// UpdatedAt is read, never written: the column follows every write.
 	UpdatedAt time.Time
@@ -236,11 +239,12 @@ var (
 	ErrRemoteBedrockTaken = errors.New("remote gateway: another address of this server has Bedrock")
 )
 
-// SetRemoteRouteVoice records the provider's voice port for domain (nil = voice
-// off). The partial unique index keeps one voice address per server even
-// against a racing writer: its violation is ErrRemoteVoiceTaken.
-func (s *PostgresStore) SetRemoteRouteVoice(domain string, port *int, mod string) (bool, error) {
-	res, err := s.db.Exec(`UPDATE remote_routes SET voice_port = $2, voice_mod = $3, updated_at = NOW() WHERE domain = $1`, domain, port, mod)
+// SetRemoteRouteVoice records the provider's voice port and host for domain
+// (nil = voice off, host empty). The partial unique index keeps one voice
+// address per server even against a racing writer: its violation is
+// ErrRemoteVoiceTaken.
+func (s *PostgresStore) SetRemoteRouteVoice(domain string, port *int, mod, host string) (bool, error) {
+	res, err := s.db.Exec(`UPDATE remote_routes SET voice_port = $2, voice_mod = $3, voice_host = $4, updated_at = NOW() WHERE domain = $1`, domain, port, mod, host)
 	if isUniqueViolationOf(err, remoteOneVoiceIndex) {
 		return false, ErrRemoteVoiceTaken
 	}
@@ -307,7 +311,7 @@ func (s *PostgresStore) GetRemoteRoute(domain string) (*RemoteRoute, error) {
 }
 
 func (s *PostgresStore) listRemoteRoutes(where string, args ...any) ([]RemoteRoute, error) {
-	rows, err := s.db.Query(`SELECT domain, server_uuid, node_id, port, proxy_protocol, custom_domain, voice_port, voice_mod, edition, updated_at,
+	rows, err := s.db.Query(`SELECT domain, server_uuid, node_id, port, proxy_protocol, custom_domain, voice_port, voice_mod, voice_host, edition, updated_at,
 		GREATEST(EXTRACT(EPOCH FROM (NOW() - updated_at)), 0)::float8 FROM remote_routes `+where+` ORDER BY domain`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("remote gateway: list routes: %w", err)
@@ -318,7 +322,7 @@ func (s *PostgresStore) listRemoteRoutes(where string, args ...any) ([]RemoteRou
 		var r RemoteRoute
 		var voice sql.NullInt64
 		var age float64
-		if err := rows.Scan(&r.Domain, &r.ServerUUID, &r.NodeID, &r.Port, &r.ProxyProtocol, &r.CustomDomain, &voice, &r.VoiceMod, &r.Edition, &r.UpdatedAt, &age); err != nil {
+		if err := rows.Scan(&r.Domain, &r.ServerUUID, &r.NodeID, &r.Port, &r.ProxyProtocol, &r.CustomDomain, &voice, &r.VoiceMod, &r.VoiceHost, &r.Edition, &r.UpdatedAt, &age); err != nil {
 			return nil, fmt.Errorf("remote gateway: list routes: %w", err)
 		}
 		r.Age, r.AgeKnown = time.Duration(age*float64(time.Second)), true

@@ -818,18 +818,68 @@ func GetEdgesFromRedis(ctx context.Context, rdb *redis.Client) []GatewayEdgeInfo
 	return edges
 }
 
-// listEdgeRegistry reads every edge:registry:* entry, without stats.
+// GatewayEdgeRegistry is the edge registry without the per-edge stats reads,
+// for the pointing check: a read that did not complete is NO list (unknown),
+// never a partial one, which would make a domain pointing at an omitted edge
+// look foreign.
+func GatewayEdgeRegistry(ctx context.Context, rdb *redis.Client) []GatewayEdgeInfo {
+	edges, err := readEdgeRegistry(ctx, rdb, true)
+	if err != nil {
+		log.Printf("[pointing] edge registry: %v", err)
+		return nil
+	}
+	return edges
+}
+
+// GatewayRouteCovers reports whether name is, or lies under, a live gateway
+// route: the pointing check's admission. A route on an own domain exists only
+// after the TXT ownership gate passed at create (or an admin made it), so this
+// keeps every other name away from the resolver. One EXISTS over the name and
+// its parents.
+func GatewayRouteCovers(ctx context.Context, rdb *redis.Client, name string) (bool, error) {
+	labels := strings.Split(normaliseHost(name), ".")
+	var keys []string
+	for i := 0; i+2 <= len(labels); i++ {
+		keys = append(keys, "route:"+strings.Join(labels[i:], "."))
+	}
+	if len(keys) == 0 {
+		return false, nil
+	}
+	n, err := rdb.Exists(ctx, keys...).Result()
+	if err != nil {
+		return false, fmt.Errorf("route lookup for %s: %w", name, err)
+	}
+	return n > 0, nil
+}
+
+// listEdgeRegistry reads every edge:registry:* entry, without stats. A key
+// whose GET fails is skipped and the scan goes on, as its display callers
+// always had.
 func listEdgeRegistry(ctx context.Context, rdb *redis.Client) []GatewayEdgeInfo {
+	edges, _ := readEdgeRegistry(ctx, rdb, false)
+	return edges
+}
+
+// readEdgeRegistry is listEdgeRegistry that reports a read that did not
+// complete: strict stops at the first failed GET, otherwise that key is
+// skipped. A key that expired between SCAN and GET is simply gone.
+func readEdgeRegistry(ctx context.Context, rdb *redis.Client, strict bool) ([]GatewayEdgeInfo, error) {
 	var edges []GatewayEdgeInfo
 	var cursor uint64
 	for {
 		keys, next, err := rdb.Scan(ctx, cursor, "edge:registry:*", 100).Result()
 		if err != nil {
-			break
+			return edges, fmt.Errorf("scan edge registry: %w", err)
 		}
 		for _, key := range keys {
 			val, err := rdb.Get(ctx, key).Result()
+			if errors.Is(err, redis.Nil) {
+				continue
+			}
 			if err != nil {
+				if strict {
+					return edges, fmt.Errorf("read %s: %w", key, err)
+				}
 				continue
 			}
 			var e GatewayEdgeInfo
@@ -845,7 +895,7 @@ func listEdgeRegistry(ctx context.Context, rdb *redis.Client) []GatewayEdgeInfo 
 			break
 		}
 	}
-	return edges
+	return edges, nil
 }
 
 // readLatestEdgeStats fetches the newest entry from the per-edge stats stream

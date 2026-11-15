@@ -80,10 +80,14 @@ func customDomainCap(st CustomDomainCapReader, userID string, strict bool) (*int
 // the platform's official address, not as one customer's. Admins are exempt
 // (resolveRouteDomain's allowReserved), so reserving them costs the operator
 // nothing and keeps them available.
+// "voice" (VoiceHostLabel) because Core writes voice.<regional domain> into the
+// mod config of every server whose address is an own domain: a tenant holding
+// that name would look like our voice address (and take its Java routing).
+// Voice itself is UDP to the edge addresses by port, not a route.
 var DefaultBlockedRoutePrefixes = []string{
 	"admin", "dylaris", "app", "api", "www", "panel", "gateway", "edge", "hub",
 	"link", "warp", "beam", "mail", "ns", "status", "support", "staff", "system", "root",
-	"route",
+	"route", VoiceHostLabel,
 	"minecraft", "mc", "play", "server", "store", "shop", "billing", "account",
 	"login", "auth", "cdn", "docs", "help",
 }

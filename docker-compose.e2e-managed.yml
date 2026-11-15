@@ -4,7 +4,8 @@
 # Two platforms on one Docker host:
 #   PROVIDER  p-core (+ p-db, p-redis), the gateway hub (+ hub-db), one edge
 #             that spawns its host-networked splice on :25565, a voice relay
-#             (voice-net + voice), Geyser and the Bedrock bridge (stage 7b-2).
+#             (voice-net + voice), Geyser and the Bedrock bridge (stage 7b-2),
+#             and p-node1 for hosted servers under the profile "pnode".
 #   CUSTOMER  c-core (+ c-db, c-redis) with its panel, node1 (node2 and node3 under
 #             their profiles). Each node has its own server network, the way
 #             two machines would; the managed link kit joins that network.
@@ -60,10 +61,13 @@ services:
     # Loopback: the host-networked splice reaches Redis at 127.0.0.1:6379.
     ports: ["127.0.0.1:6379:6379"]
     volumes: [p_redis:/data]
-    networks: [prov_net]
+    # p-node1's game containers' log shipper reaches Redis on its server network.
+    networks: [prov_net, pnode1_dylaris_net]
 
   p-core:
     <<: *platform-core
+    # Version matrix: E2E_PCORE_TAG / E2E_CCORE_TAG swap one Core's image only.
+    image: ${E2E_IMG:-e2e7c}/platform-core:${E2E_PCORE_TAG:-${E2E_PLATFORM_TAG:-ed9f3e26}}
     depends_on:
       p-db: {condition: service_healthy}
       p-redis: {condition: service_started}
@@ -107,7 +111,47 @@ services:
     # TXT lookups (own domains) go through the system resolver; Docker's
     # embedded DNS forwards every non-service name to the test DNS.
     dns: [172.30.53.53]
-    networks: [prov_net, dns_net]
+    networks: [prov_net, dns_net, pnode1_dylaris_net]
+
+  # Provider-side node (profile "pnode"): a HOSTED server in local mode, so
+  # the provider's own voice path (voice_ports, the node's voice forwarder)
+  # runs here too. It pairs over CLUSTER_SECRET like c-node1. Its forwarder
+  # resolves the voice host, so it uses the test DNS.
+  p-node1:
+    profiles: [pnode]
+    image: ${E2E_IMG:-e2e7c}/platform-node:${E2E_PNODE_TAG:-${E2E_PLATFORM_TAG:-ed9f3e26}}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on: [p-core]
+    environment:
+      CLUSTER_SECRET: "${P_CLUSTER_SECRET:?}"
+      CORE_GRPC_ADDR: "p-core:25501"
+      NODE_HOSTNAME: e2e-pnode-1
+      PORT_RANGE: "26800-26849"
+      NODE_DOCKER_NETWORK: e2e7c_pnode1_dylaris_net
+      GRPC_TLS_ENABLED: "true"
+      BEAM_JWT_SECRET: "${P_BEAM_JWT_SECRET:?}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - pnode1_data:/app/dylaris_data
+    dns: [172.30.53.53]
+    networks: [prov_net, pnode1_dylaris_net, dns_net]
+
+  # p-node1's hosted link, as the control-plane stack runs it (self-enrolled
+  # over CLUSTER_SECRET at the Hub, which joins it to the node by host name).
+  # Without it the Hub drops a hosted route create: it needs the node's link.
+  p-link1:
+    profiles: [pnode]
+    image: ${E2E_IMG:-e2e7c}/gateway-link:${E2E_GATEWAY_TAG:-cd910633}
+    pull_policy: never
+    restart: unless-stopped
+    depends_on: [hub, p-node1]
+    environment:
+      CLUSTER_SECRET: "${P_CLUSTER_SECRET:?}"
+      HUB_INTERNAL_URL: "http://hub:25530"
+      NODE_HOSTNAME: e2e-pnode-1
+      LINK_DRAIN_TIMEOUT: "1m"
+    networks: [prov_net, pnode1_dylaris_net]
 
   hub-db:
     image: postgres:16-alpine
@@ -270,7 +314,9 @@ services:
       - bedrock_bridge_state:/app/state
 
   # Test DNS for own domains: zone own.e2e.test from E2E_RUN/dns, reloaded every
-  # 2 s, everything else forwarded. The drive script's dns-txt rewrites it.
+  # 2 s, everything else forwarded. The drive script's dns-txt and dns-records
+  # rewrite it. TEST-ONLY: every zone has the `log` plugin on, so "no lookup"
+  # is a count of query lines in this container's log, not a belief.
   dns:
     image: coredns/coredns:1.11.3
     restart: unless-stopped
@@ -308,6 +354,7 @@ services:
 
   c-core:
     <<: *platform-core
+    image: ${E2E_IMG:-e2e7c}/platform-core:${E2E_CCORE_TAG:-${E2E_PLATFORM_TAG:-ed9f3e26}}
     depends_on:
       c-db: {condition: service_healthy}
       c-redis: {condition: service_started}
@@ -463,9 +510,11 @@ volumes:
   node1_data:
   node2_data:
   node3_data:
+  pnode1_data:
 
 networks:
   prov_net:
+  pnode1_dylaris_net:
   cust_net:
   node1_dylaris_net:
   node2_dylaris_net:

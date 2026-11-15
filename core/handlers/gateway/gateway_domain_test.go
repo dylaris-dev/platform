@@ -579,3 +579,22 @@ func TestRouteDomainsAreNormalisedAndStrict(t *testing.T) {
 		}
 	}
 }
+
+// Core writes voice.<regional domain> into every own-domain server's mod
+// config, so a tenant must not hold that name. The default list applies only
+// while the operator never saved one; a saved list is honoured as it is.
+func TestDefaultReservedIncludesVoice(t *testing.T) {
+	hosters := `[{"domain":"dylaris.com","validation":"letters"}]`
+	h := newGatewayDomainHandler(map[string]string{"gateway_hoster_domains": hosters})
+	if _, _, err := h.resolveRouteDomain(routeDomainReq("", "voice", "dylaris.com", "", 25565), false); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("err = %v, want 'voice' reserved while the list was never saved", err)
+	}
+	saved := newGatewayDomainHandler(map[string]string{
+		"gateway_hoster_domains":         hosters,
+		"gateway_blocked_route_prefixes": `["admin","route"]`,
+	})
+	got, _, err := saved.resolveRouteDomain(routeDomainReq("", "voice", "dylaris.com", "", 25565), false)
+	if err != nil || got != "voice.dylaris.com" {
+		t.Fatalf("saved list without voice: got %q err %v, want voice.dylaris.com allowed as today", got, err)
+	}
+}

@@ -245,6 +245,30 @@ func TestProviderStatusVoiceCodes(t *testing.T) {
 		{"voice_pool_full", "Every voice port in this region is taken.", "Every voice port in this region is taken."},
 		{"kit_retiring", "This link is being replaced and takes no new routes.", kitRetiringText},
 	})
+	// The provider could not check an own domain's DNS: retryable, its
+	// sentence (nothing was changed, try again) passed through. Its DNS-check
+	// rate limit keeps the generic rate_limited answer.
+	const retry = "We could not look up play.acme.tld right now. Nothing was changed. Try again in a moment."
+	for _, c := range []struct {
+		code, providerMsg string
+		in, status        int
+	}{
+		{"dns_lookup_failed", retry, http.StatusServiceUnavailable, http.StatusServiceUnavailable},
+		{"rate_limited", "Too many DNS checks. Wait a minute.", http.StatusTooManyRequests, http.StatusServiceUnavailable},
+	} {
+		t.Run(c.code, func(t *testing.T) {
+			err := fmt.Errorf("wrapped: %w", &remotegw.APIError{Status: c.in, Code: c.code, Message: c.providerMsg})
+			rec := httptest.NewRecorder()
+			if !GatewayProviderError(rec, err) {
+				t.Fatal("not handled")
+			}
+			var body struct{ Error, Code string }
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			if rec.Code != c.status || body.Code != c.code || body.Error != c.providerMsg {
+				t.Fatalf("got %d %+v, want %d %s %q", rec.Code, body, c.status, c.code, c.providerMsg)
+			}
+		})
+	}
 }
 
 func TestProviderStatusBedrockCodes(t *testing.T) {

@@ -6,7 +6,7 @@ import Switch from '@/components/ui/Switch';
 import CopyText from '@/components/ui/CopyText';
 import { confirmDialog } from '@/components/ui/ConfirmDialog';
 import { getServerVoice, setServerVoice, serverPower, type ServerVoice } from '@/lib/api';
-import { showVoiceSwitch, voiceAddress, voiceErrorMessage, voiceOwnDomainBlocked } from '@/lib/voiceChat';
+import { managedVoiceHelp, showVoiceSwitch, voiceAddress, voiceErrorMessage } from '@/lib/voiceChat';
 import { refusalText } from '@/lib/gatewayProvider';
 import { useAppData } from '@/lib/AppDataContext';
 
@@ -93,9 +93,6 @@ export default function VoiceChatSwitch({ serverId }: { serverId: number }) {
         if (restart) await offerRestart();
     };
 
-    // Every address of this server is on an own domain: say so up front, not as a refusal after a click.
-    const ownDomainNote = voiceOwnDomainBlocked(managed, voice);
-
     return (
         <div className="bg-(--base-02) rounded-md border border-(--base-03) px-3 py-2.5">
             <div className="flex items-center gap-3 justify-between">
@@ -105,12 +102,7 @@ export default function VoiceChatSwitch({ serverId }: { serverId: number }) {
                         Gives Simple Voice Chat or Plasmo Voice a public address through the gateway. The mod must be installed.
                     </div>
                     {managed && (
-                        <div className="text-xs text-(--base-06) mt-1">
-                            Voice chat runs through the managed gateway&apos;s relay. It needs an address on the gateway
-                            provider&apos;s domain, not on an own domain, and a server has one voice address. Restart the
-                            server after switching it on.
-                            {!voice.enabled && " If it went off on its own, the managed gateway's side changed: switch it on again, then restart."}
-                        </div>
+                        <div className="text-xs text-(--base-06) mt-1">{managedVoiceHelp(voice.enabled)}</div>
                     )}
                 </div>
                 <span className="flex items-center gap-2 shrink-0" aria-busy={busy}>
@@ -118,12 +110,11 @@ export default function VoiceChatSwitch({ serverId }: { serverId: number }) {
                     <Switch
                         checked={voice.enabled}
                         onChange={toggle}
-                        disabled={busy || !!ownDomainNote}
+                        disabled={busy}
                         ariaLabel="Voice chat"
                     />
                 </span>
             </div>
-            {ownDomainNote && <p className="text-xs text-(--warning-light) mt-2">{ownDomainNote}</p>}
             {voice.enabled && voice.host && voice.port > 0 && (
                 <div className="flex flex-wrap items-center gap-2 mt-2">
                     <span className="mono-label">Voice address</span>

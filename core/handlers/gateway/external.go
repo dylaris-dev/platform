@@ -138,7 +138,7 @@ func (h *ExternalGatewayHandler) SetRouteProxyProtocol(w http.ResponseWriter, r 
 	externalGateway(h.requireGateway(h.gw.SetLinkRouteProxyProtocol))(w, r)
 }
 
-// SetRouteVoice PUT /api/external/gateway/routes/{domain}/voice - body {"enabled": bool, "target_port": int}, voice chat relay; an active managed gateway plan lifts the platform's global voice permission for its account (an explicit per-user deny and the other checks, such as a suspension or a retiring link, still refuse), any other account only where the platform's voice permissions allow (409 voice_not_allowed).
+// SetRouteVoice PUT /api/external/gateway/routes/{domain}/voice - body {"enabled": bool, "target_port": int}, voice chat relay, on one of our domains or on your own domain once it points at one of our regions (409 no_routes with what to change; 503 dns_lookup_failed when the DNS check could not run, retry); the answer's host is the name to write into the voice mod, our regional voice name for an own domain; an active managed gateway plan lifts the platform's global voice permission for its account (an explicit per-user deny and the other checks, such as a suspension or a retiring link, still refuse), any other account only where the platform's voice permissions allow (409 voice_not_allowed).
 func (h *ExternalGatewayHandler) SetRouteVoice(w http.ResponseWriter, r *http.Request) {
 	externalGateway(h.gw.SetLinkRouteVoice)(w, withManagedAPI(r, h.gw.d.Store, reqctx.ByonCallerID(r)))
 }
@@ -413,8 +413,31 @@ func (c *capturedResponse) Write(b []byte) (int, error) {
 	return c.body.Write(b)
 }
 
+// externalCallKey marks a request that came in through the external API.
+type externalCallKey struct{}
+
+// pointingChecksPerMin is a panel user's budget of DNS pointing checks.
+const pointingChecksPerMin = 10
+
+// pointingAllow is the per-caller budget handed to PointingChecker.Check. An
+// external API call has none here: the key's write class already bounds it.
+// A nil limiter (tests) is no budget either.
+func (h *GatewayHandler) pointingAllow(r *http.Request) func() bool {
+	if ext, _ := r.Context().Value(externalCallKey{}).(bool); ext || h.d.PointingLimiter == nil {
+		return nil
+	}
+	key, _ := r.Context().Value("userID").(string)
+	if key == "" {
+		key = "ip:" + httpx.ClientIP(r)
+	} else {
+		key = "user:" + key
+	}
+	return func() bool { return h.d.PointingLimiter.Allow(key, pointingChecksPerMin) }
+}
+
 func serveExternal(w http.ResponseWriter, r *http.Request, next http.HandlerFunc, reshape reshapeFunc) {
 	r = r.WithContext(context.WithValue(r.Context(), "isAdmin", false))
+	r = r.WithContext(context.WithValue(r.Context(), externalCallKey{}, true))
 	c := &capturedResponse{header: http.Header{}}
 	next(c, r)
 	if c.status == 0 {
@@ -434,9 +457,10 @@ func serveExternal(w http.ResponseWriter, r *http.Request, next http.HandlerFunc
 	dec.UseNumber() // byte counts survive the round trip exactly
 	isJSON := len(raw) > 0 && dec.Decode(&parsed) == nil
 
-	// Only the gate's own 503 is written for the caller; any other 503 (a
-	// handler relaying a Redis/DB fault) is masked like the rest of 5xx.
-	if c.status >= 500 && !isGatewayDisabled(c.status, parsed, isJSON) {
+	// Only the gate's own 503 and the DNS check's retryable 503 (a sentence
+	// we wrote, no raw error) are written for the caller; any other 5xx (a
+	// handler relaying a Redis/DB fault) is masked.
+	if c.status >= 500 && !isGatewayDisabled(c.status, parsed, isJSON) && !isDNSLookupFailed(c.status, parsed, isJSON) {
 		// Session handlers put raw Redis/Postgres errors in 5xx bodies; the
 		// panel tolerates that, a public API must not.
 		log.Printf("external gateway %s %s: %d %s", r.Method, r.URL.Path, c.status, strings.TrimSpace(string(raw)))
@@ -475,6 +499,11 @@ func serveExternal(w http.ResponseWriter, r *http.Request, next http.HandlerFunc
 func isGatewayDisabled(status int, parsed interface{}, isJSON bool) bool {
 	obj, ok := parsed.(map[string]interface{})
 	return status == http.StatusServiceUnavailable && isJSON && ok && obj["error"] == "gateway_disabled"
+}
+
+func isDNSLookupFailed(status int, parsed interface{}, isJSON bool) bool {
+	obj, ok := parsed.(map[string]interface{})
+	return status == http.StatusServiceUnavailable && isJSON && ok && obj["code"] == "dns_lookup_failed"
 }
 
 func writeExternalError(w http.ResponseWriter, status int, msg, code string) {

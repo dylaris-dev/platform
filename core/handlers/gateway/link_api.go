@@ -452,8 +452,15 @@ func (h *WarpHandler) LinkVoice(w http.ResponseWriter, r *http.Request) {
 		if v.LinkToken != token || v.OwnerID != key.OwnerID {
 			continue
 		}
+		// The link resolves Domain only to find the relays; for an address
+		// on the customer's own domain that is OUR regional name, so their DNS
+		// never steers the relay path. Subject stays the route's.
+		lookup := v.Domain
+		if v.Host != "" {
+			lookup = v.Host
+		}
 		out = append(out, linkVoiceRoute{
-			Domain:  v.Domain,
+			Domain:  lookup,
 			Subject: services.LinkRouteVoiceSubject(v.OwnerID, v.Domain),
 			Port:    v.Port,
 			Key:     hex.EncodeToString(v.UplinkKey),

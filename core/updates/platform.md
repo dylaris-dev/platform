@@ -8,6 +8,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.15
+
+### Features
+- Voice chat works for a server whose only address is on its own domain: the voice mod is given our
+  regional voice address, `voice.<region domain>`. Turning it on checks that the domain already points
+  at one of our regions. `core` `panel`
+- A managed-gateway customer can use own-domain voice only once the provider Core runs this version.
+  Update the provider first. `core`
+- `voice` is a reserved route name on platforms that never saved their own reserved list. If you saved
+  one, add `voice` to it under Settings, Gateway. `core`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- Nothing.
+
 ## 2026.11.14.3
 
 ### Features

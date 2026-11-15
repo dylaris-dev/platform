@@ -5,7 +5,7 @@ import { Loader2 } from 'lucide-react';
 import Switch from '@/components/ui/Switch';
 import CopyText from '@/components/ui/CopyText';
 import { setLinkRouteVoice, type LinkRouteVoice } from '@/lib/api';
-import { linkRouteVoiceConfig, showVoiceSwitch, validVoicePort, voiceErrorMessage } from '@/lib/voiceChat';
+import { linkRouteVoiceConfig, showVoiceSwitch, validVoicePort, voiceErrorMessage, voiceTargetHost } from '@/lib/voiceChat';
 
 const DEFAULT_VOICE_PORT = 24454;
 
@@ -48,7 +48,7 @@ export default function LinkRouteVoiceSwitch({ domain, voice, allowed, onSaved }
         }
     };
 
-    const cfg = enabled && voice?.port ? linkRouteVoiceConfig(domain, voice.port, voice.target_port || DEFAULT_VOICE_PORT) : null;
+    const cfg = enabled && voice?.port ? linkRouteVoiceConfig(voiceTargetHost(voice, domain), voice.port, voice.target_port || DEFAULT_VOICE_PORT) : null;
 
     return (
         <div className="mt-1">
