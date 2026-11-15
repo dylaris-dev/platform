@@ -721,7 +721,7 @@ func TestPointingRefusalSentences(t *testing.T) {
 		{PointingNotFound, PurposeVoiceRegion, []string{"Voice chat needs to know which region", "does not point at the gateway yet"}, true},
 		{PointingNotFound, PurposeVoiceName, []string{"does not resolve yet"}, true},
 		{PointingElsewhere, PurposeBedrock, []string{"points to 192.0.2.50, not to the gateway", "cannot carry Bedrock"}, true},
-		{PointingElsewhere, PurposeVoiceRegion, []string{"Voice chat needs to know which region"}, true},
+		{PointingElsewhere, PurposeVoiceRegion, []string{"Voice chat needs to know which region", "points to 192.0.2.50, not to the gateway"}, true},
 		{PointingElsewhere, PurposeVoiceName, []string{"points to 192.0.2.50, not to the gateway"}, true},
 		{PointingSRVOnly, PurposeBedrock, []string{"only through an SRV record", "Bedrock ignores SRV records"}, true},
 		{PointingSRVOnly, PurposeVoiceName, []string{"only through an SRV record"}, true},

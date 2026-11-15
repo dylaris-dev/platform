@@ -509,6 +509,9 @@ func TestAPIKeyMiddleware_PerKeyRateLimitExceeded(t *testing.T) {
 	if !strings.Contains(rec2.Body.String(), "Rate limit exceeded") {
 		t.Fatalf("body = %s, want 'Rate limit exceeded'", rec2.Body.String())
 	}
+	if !strings.Contains(rec2.Body.String(), `"code":"rate_limited"`) {
+		t.Fatalf("body = %s, want code rate_limited", rec2.Body.String())
+	}
 }
 
 // TestAPIKeyMiddleware_PerIPThrottleExceeded pins the pre-lookup per-IP

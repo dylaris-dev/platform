@@ -8,6 +8,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.15.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- The gateway API's check-domain answers `unverified` for an own domain the key's owner has not
+  verified yet. It said available, and the route create then refused it. `core`
+- The per-key rate limit's 429 carries `code: rate_limited`, like every other API error. `core`
+- The voice chat refusal for an own domain that points somewhere else names the address it found. `core`
+
 ## 2026.11.15.3
 
 ### Features

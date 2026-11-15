@@ -128,6 +128,14 @@ func checkDomain(t *testing.T, f *extFixture, owner, domain string) map[string]i
 
 func TestExternalCheckDomain(t *testing.T) {
 	f := newExtFixture(t)
+	f.st.claims = append(f.st.claims,
+		store.CustomDomainClaim{ID: 901, UserID: extTenantA, Domain: "pending.acme.net", State: store.ClaimPending},
+		store.CustomDomainClaim{ID: 902, UserID: extTenantA, Domain: "proven.acme.net", State: store.ClaimVerified},
+		store.CustomDomainClaim{ID: 903, UserID: extTenantA, Domain: "blocked.acme.net", State: store.ClaimPermablocked},
+		// Another tenant's proof is not the caller's.
+		store.CustomDomainClaim{ID: 904, UserID: extTenantB, Domain: "play.acme.net", State: store.ClaimVerified},
+	)
+	before := len(f.st.claims)
 	for _, c := range []struct {
 		name, domain string
 		available    bool
@@ -140,7 +148,12 @@ func TestExternalCheckDomain(t *testing.T) {
 		{"malformed", "bad_name!.example.com", false, "invalid"},
 		{"hoster apex", "example.com", false, "invalid"},
 		{"empty", "", false, "invalid"},
-		{"own domain shape", "play.acme.net", true, ""},
+		// An own domain is creatable only with the caller's verified claim,
+		// as route create demands; asking must not start one.
+		{"own domain, no claim", "play.acme.net", false, "unverified"},
+		{"own domain, pending claim", "pending.acme.net", false, "unverified"},
+		{"own domain, verified claim", "proven.acme.net", true, ""},
+		{"own domain, blocked claim", "blocked.acme.net", false, "blocked"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			out := checkDomain(t, f, extTenantA, c.domain)
@@ -148,6 +161,10 @@ func TestExternalCheckDomain(t *testing.T) {
 				t.Fatalf("answer = %v, want available %v reason %q", out, c.available, c.reason)
 			}
 		})
+	}
+
+	if len(f.st.claims) != before {
+		t.Errorf("claims %d -> %d: check-domain started a claim", before, len(f.st.claims))
 	}
 
 	t.Run("not hosted", func(t *testing.T) {

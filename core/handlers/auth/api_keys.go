@@ -649,7 +649,9 @@ func (h *APIKeysHandler) apiKeyMiddleware(shape keyRouteShape, requiredPerm stri
 			}
 			if !h.rateLimiter.allow(key.ID, key.RatePerMin) {
 				w.Header().Set("Retry-After", "60")
-				httpx.SendJSONError(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				// The key-class limiter's code: a client that handles rate_limited
+				// handles both 429s.
+				httpx.SendJSONErrorCode(w, "Rate limit exceeded", "rate_limited", http.StatusTooManyRequests)
 				return
 			}
 			// Best-effort last-used stamp, throttled to ~once/min/key so a

@@ -535,7 +535,7 @@ func TestHostedOwnDomainVoiceRefusalsWriteNothing(t *testing.T) {
 		message string
 	}{
 		{"points elsewhere", func(_ *voiceSwitchEnv, r *odResolver) { r.a[odDomain] = addrs(foreignAddr) },
-			409, "no_routes", notPointingText(odDomain)},
+			409, "no_routes", pointsElsewhereText(odDomain, foreignAddr)},
 		{"no record", func(*voiceSwitchEnv, *odResolver) {}, 409, "no_routes", notPointingText(odDomain)},
 		{"lookup failed", func(_ *voiceSwitchEnv, r *odResolver) {
 			r.fail = &net.DNSError{Err: "server misbehaving", IsTemporary: true}

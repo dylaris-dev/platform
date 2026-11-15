@@ -117,7 +117,7 @@ func domainRefusalReason(err error) string {
 	return "invalid"
 }
 
-// CheckDomain GET /api/external/gateway/check-domain?domain=<fqdn> - whether the caller could create a route on that domain: available, and a reason (taken, blocked, invalid, not_hosted) when not. A domain the caller already holds is available; nothing is said about who holds a taken one.
+// CheckDomain GET /api/external/gateway/check-domain?domain=<fqdn> - whether the caller could create a route on that domain: available, and a reason (taken, blocked, invalid, not_hosted, unverified) when not. A domain the caller already holds is available; nothing is said about who holds a taken one.
 func (h *ExternalGatewayHandler) CheckDomain(w http.ResponseWriter, r *http.Request) {
 	owner := reqctx.ByonCallerID(r)
 	if owner == "" {
@@ -137,12 +137,35 @@ func (h *ExternalGatewayHandler) CheckDomain(w http.ResponseWriter, r *http.Requ
 		TargetPort   int    `json:"targetPort"`
 	}{Domain: in}
 	// isAdmin=false: the blocked prefixes apply to a key, whoever owns it.
-	final, _, err := h.gw.resolveRouteDomain(&req, false)
+	final, isCustom, err := h.gw.resolveRouteDomain(&req, false)
 	if err != nil {
 		answer(in, false, domainRefusalReason(err))
 		return
 	}
 	d := h.gw.d
+	// Free of routes is not yet creatable: route create refuses an own domain
+	// without the caller's verified claim, so a yes here was wrong for every
+	// own domain not proven yet. Read only - route create is what starts a
+	// claim, a question must not.
+	free := func() {
+		if isCustom {
+			claim, cerr := d.Store.GetCustomDomainClaim(owner, final)
+			if cerr != nil && cerr != store.ErrNoClaim {
+				log.Printf("external check-domain %s: %v", owner, cerr)
+				writeExternalError(w, http.StatusInternalServerError, "Internal error. Try again later.", "internal")
+				return
+			}
+			switch {
+			case claim != nil && claim.State == store.ClaimPermablocked:
+				answer(final, false, "blocked")
+				return
+			case claim == nil || claim.State != store.ClaimVerified:
+				answer(final, false, "unverified")
+				return
+			}
+		}
+		answer(final, true, "")
+	}
 	// The stored row first, as route create asks it: it outranks Redis and
 	// is the only place a suspended route still shows. Ownership before
 	// suspension, so another owner learns only "taken".
@@ -162,7 +185,7 @@ func (h *ExternalGatewayHandler) CheckDomain(w http.ResponseWriter, r *http.Requ
 	}
 	val, err := d.Redis.Get(h.gw.ctx(), "route:"+final).Result()
 	if errors.Is(err, redis.Nil) { // no route: free
-		answer(final, true, "")
+		free()
 		return
 	}
 	if err != nil {

@@ -167,6 +167,13 @@ func notPointingText(name string) string {
 		" does not point at the gateway yet: add a CNAME from " + name + " to the address shown under Your own domains, or add an address on one of the gateway's domains."
 }
 
+// pointsElsewhereText is notPointingText for a record that resolves to an
+// address that is not ours: it names that address.
+func pointsElsewhereText(name, found string) string {
+	return "Voice chat needs to know which region this server's players arrive in. " + name +
+		" points to " + found + ", not to the gateway: add a CNAME from " + name + " to the address shown under Your own domains, or add an address on one of the gateway's domains."
+}
+
 func TestLinkRouteVoiceOwnDomain(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -183,7 +190,7 @@ func TestLinkRouteVoiceOwnDomain(t *testing.T) {
 		{"ok by srv", func(r *odResolver) {
 			r.srv["_minecraft._tcp."+odDomain] = []*net.SRV{{Target: "route.eu.dylaris.com.", Port: 25565}}
 		}, 200, "", ""},
-		{"elsewhere", func(r *odResolver) { r.a[odDomain] = addrs(foreignAddr) }, 409, "no_routes", notPointingText(odDomain)},
+		{"elsewhere", func(r *odResolver) { r.a[odDomain] = addrs(foreignAddr) }, 409, "no_routes", pointsElsewhereText(odDomain, foreignAddr)},
 		{"not found", func(*odResolver) {}, 409, "no_routes", notPointingText(odDomain)},
 		{"partial", func(r *odResolver) { r.a[odDomain] = addrs(edgeAddr, foreignAddr) }, 409, "no_routes",
 			odDomain + " points to the gateway and also to " + foreignAddr + ". Remove the records that do not lead to the gateway, or use a CNAME to the address shown under Your own domains."},

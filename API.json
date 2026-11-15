@@ -2051,7 +2051,7 @@
       "path": "/api/external/gateway/check-domain",
       "auth": "user API key",
       "authorization": "gateway.read",
-      "description": "whether the caller could create a route on that domain: available, and a reason (taken, blocked, invalid, not_hosted) when not.",
+      "description": "whether the caller could create a route on that domain: available, and a reason (taken, blocked, invalid, not_hosted, unverified) when not.",
       "handler": "ExternalGatewayHandler.CheckDomain",
       "group": "external",
       "external": true

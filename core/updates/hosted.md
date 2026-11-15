@@ -11,6 +11,24 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.15.4
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A route created for a server on a brand new node, before the node's link had connected, could be
+  lost although it was confirmed. It now goes live as soon as the link connects. Nothing to update.
+- The gateway API's check-domain answers `unverified` for your own domain until it is verified,
+  instead of saying it is available.
+- The voice chat refusal for your own domain names the address the domain points to now.
+
 ## 2026.11.15.3
 
 ### Features

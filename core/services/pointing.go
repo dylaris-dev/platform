@@ -627,8 +627,14 @@ func PointingRefusal(p Pointing, name string, targets []string, purpose Pointing
 		return fmt.Sprintf("%s resolves to an address that is not on the public internet.", name)
 	}
 	if purpose == PurposeVoiceRegion {
+		// Name what was found, as the Bedrock sentence does: "not yet" reads as
+		// "wait" to a customer whose record points somewhere else.
+		state := "does not point at the gateway yet"
+		if p.Status == PointingElsewhere && found != "" {
+			state = "points to " + found + ", not to the gateway"
+		}
 		return fmt.Sprintf("Voice chat needs to know which region this server's players arrive in. "+
-			"%s does not point at the gateway yet: add a CNAME from %s to %s, or add an address on one of the gateway's domains.", name, name, to)
+			"%s %s: add a CNAME from %s to %s, or add an address on one of the gateway's domains.", name, state, name, to)
 	}
 	bedrock := purpose == PurposeBedrock
 	switch p.Status {

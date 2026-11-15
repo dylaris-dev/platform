@@ -632,7 +632,7 @@ function RemoteClaim({
                     <code aria-labelledby={valueId} title={r.value} className="input-mono min-w-0 flex-1 truncate rounded-md border border-(--base-03) bg-(--base-02) px-3 py-2 text-xs text-(--base-08)">
                       {r.value}
                     </code>
-                    <button type="button" onClick={() => onCopy(r.value)} aria-label={`Copy the ${r.label.toLowerCase()} TXT value`} title="Copy" className="btn btn-secondary btn-sm shrink-0">
+                    <button type="button" onClick={() => onCopy(r.value)} aria-label={r.purpose === 'platform' ? 'Copy the TXT value for this platform' : 'Copy the TXT value for the gateway provider'} title="Copy" className="btn btn-secondary btn-sm shrink-0">
                       {copied === r.value ? <Check size={12} /> : <Copy size={12} />}
                     </button>
                   </div>

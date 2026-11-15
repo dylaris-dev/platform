@@ -380,6 +380,8 @@ func remoteCheckReason(code, domain string) string {
 		return "custom domains are not enabled"
 	case "invalid":
 		return "invalid domain format"
+	case "unverified":
+		return "verify " + domain + " under Your own domains first"
 	}
 	return ""
 }

@@ -502,6 +502,7 @@ func TestRemoteCheckReasonSentences(t *testing.T) {
 		"blocked":    `subdomain "admin" is reserved`,
 		"not_hosted": "custom domains are not enabled",
 		"invalid":    "invalid domain format",
+		"unverified": "verify admin.example.com under Your own domains first",
 		"new_code":   "",
 	} {
 		if got := remoteCheckReason(code, "admin.example.com"); got != want {

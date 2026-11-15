@@ -148,6 +148,9 @@ func providerStatus(ae *remotegw.APIError) (int, string, string) {
 	// domain, not a rate limit on the key.
 	case ae.Code == "verify_cooldown":
 		return http.StatusTooManyRequests, ae.Code, ae.Message
+	// 503, not 429: the provider limits this platform's one shared key, not
+	// the user who clicked, so a 429 would blame them. GatewayProviderError
+	// carries the provider's Retry-After.
 	case ae.Status == http.StatusTooManyRequests || ae.Code == "rate_limited":
 		return http.StatusServiceUnavailable, "rate_limited", ae.Message
 	}
