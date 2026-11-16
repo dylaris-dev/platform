@@ -1035,16 +1035,61 @@ var subSizeCache = struct {
 	m  map[string]subSizeEntry
 }{m: map[string]subSizeEntry{}}
 
+// forgetSubServerSizes drops the cached breakdown of a server that is going
+// away; the cache is keyed by directory, which ends in the server's UUID.
+func forgetSubServerSizes(uuid string) {
+	subSizeCache.mu.Lock()
+	defer subSizeCache.mu.Unlock()
+	for dir := range subSizeCache.m {
+		if filepath.Base(dir) == uuid {
+			delete(subSizeCache.m, dir)
+		}
+	}
+}
+
+// subServerSizesMax bounds the breakdown, because the server root is the
+// tenant's: anyone with files.write can mkdir there, and each directory cost one
+// du fork and one entry in the shared stats:disk payload. Same bound and filter
+// as shipperGuardSubServers. Core counts sub-servers against its limit from a
+// node listing, not from this map, so the cap cannot lift that limit.
+// ponytail: a server with more valid sub-servers than this has the rest left out
+// of its breakdown; the active one is measured first so it is never the one cut.
+const subServerSizesMax = 64
+
+// subServerDuSlots bounds the du processes breakdowns run at once: the
+// collector, the stopped-server sweep and disk_guard on every write all reach
+// it, and a cache miss under concurrent writes would otherwise fork in parallel.
+var subServerDuSlots = make(chan struct{}, 2)
+
+// subServerDirSize is dirSize, a var so a test can count the calls.
+var subServerDirSize = dirSize
+
 func scanSubServerSizes(serverDir string) map[string]int64 {
 	sizes := make(map[string]int64)
 	entries, err := os.ReadDir(serverDir)
 	if err != nil {
 		return sizes
 	}
+	names := make([]string, 0, subServerSizesMax)
+	active := readActiveSubServer(serverDir)
 	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			sizes[e.Name()] = dirSize(filepath.Join(serverDir, e.Name()))
+		if e.IsDir() && e.Name() == active {
+			names = append(names, active)
+			break
 		}
+	}
+	for _, e := range entries {
+		if len(names) >= subServerSizesMax {
+			break
+		}
+		if e.IsDir() && e.Name() != active && validate.IsSubServerName(e.Name()) {
+			names = append(names, e.Name())
+		}
+	}
+	for _, name := range names {
+		subServerDuSlots <- struct{}{}
+		sizes[name] = subServerDirSize(filepath.Join(serverDir, name))
+		<-subServerDuSlots
 	}
 	return sizes
 }

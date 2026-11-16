@@ -551,6 +551,7 @@ func forgetDiskLimit(ctx context.Context, rdb *redis.Client, uuid string) {
 	if uuid == "" {
 		return
 	}
+	forgetSubServerSizes(uuid)
 	if nodeSecretDir != "" {
 		if err := os.Remove(diskCountedPath(uuid)); err != nil && !os.IsNotExist(err) {
 			log.Printf("quota: counted marker of %s not removed: %v", uuid, err)
