@@ -446,8 +446,8 @@ files and starts everything. Linux (Debian, Ubuntu, 64-bit Raspberry Pi OS;
 amd64 and arm64):
 
 ```bash
-curl -fsSLO https://github.com/dylaris-dev/platform/releases/download/installer-latest/install.sh
-curl -fsSLO https://github.com/dylaris-dev/platform/releases/download/installer-latest/SHA256SUMS
+curl -fsSLO https://dylaris.com/install.sh
+curl -fsSLO https://dylaris.com/install/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS && sudo bash install.sh
 ```
 
@@ -455,7 +455,7 @@ Windows 10/11, in an elevated PowerShell (sets up WSL2 with Ubuntu, then runs
 the same installer inside it):
 
 ```powershell
-Invoke-WebRequest https://github.com/dylaris-dev/platform/releases/download/installer-latest/install.ps1 -OutFile install.ps1
+Invoke-WebRequest https://dylaris.com/install.ps1 -OutFile install.ps1
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
@@ -485,7 +485,9 @@ anything.
 
 There is one installer release, `installer-latest`, always the newest; no
 version numbers. `install.sh --version` prints the date and commit it was
-built from.
+built from. The `dylaris.com` addresses redirect to that release on GitHub and
+count the download (day, file and client kind such as curl or PowerShell; no
+IP, User-Agent or cookie is stored). The installer itself reports nothing.
 
 Files land in `/opt/dylaris`: `.env` (secrets, mode 600), `docker-compose.yml`
 or `docker-stack.yml`, and `valkey-acl/users.acl`. A rerun keeps existing
