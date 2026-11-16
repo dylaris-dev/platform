@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -58,7 +59,7 @@ func TestVersionUpdateRefusesWhatItWouldBreak(t *testing.T) {
 		// to the target version's.
 		{"a mod still being installed",
 			models.Server{ID: 1, ActiveSubServer: "main", Status: "stopped", InstallerType: "fabric"},
-			[]models.ServerMod{{ID: 2, Title: "Lithium", FileName: "lithium-new.jar", Status: models.ServerModInstalling}},
+			[]models.ServerMod{{ID: 2, Title: "Lithium", FileName: "lithium-new.jar", Status: models.ServerModInstalling, InstalledAt: time.Now()}},
 			`{"minecraft":"1.21.4","loader":"fabric"}`, "mods_installing"},
 	}
 	for _, c := range cases {
@@ -70,6 +71,37 @@ func TestVersionUpdateRefusesWhatItWouldBreak(t *testing.T) {
 			h.VersionUpdate(rec, req)
 			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), c.wantCode) {
 				t.Fatalf("answered %d %s, want 409 %s", rec.Code, rec.Body.String(), c.wantCode)
+			}
+		})
+	}
+}
+
+// S04: a row whose install report was lost (a Core restart drops the pub/sub
+// message) stayed "installing" for good, and refused every move. Past the
+// bound Uninstall and Copy use, it no longer blocks.
+func TestVersionUpdateWaitsOnlyForAnInstallInFlight(t *testing.T) {
+	cases := []struct {
+		name    string
+		age     time.Duration
+		refused bool
+	}{
+		{"install in flight", time.Minute, true},
+		{"report lost long ago", 2 * modInstallInFlightFor, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// No hash and no project id: the resolve asks Modrinth nothing and
+			// answers "unavailable", which is past the guard under test.
+			mods := []models.ServerMod{{ID: 2, Title: "Lithium", FileName: "lithium.jar",
+				Status: models.ServerModInstalling, InstalledAt: time.Now().Add(-c.age)}}
+			srv := models.Server{ID: 1, ActiveSubServer: "main", Status: "stopped", InstallerType: "fabric"}
+			h := NewServerModsHandler(testDeps(Deps{Store: &versionGuardStore{srv: srv, mods: mods}}))
+			req := httptest.NewRequest(http.MethodPost, "/api/servers/1/version-update", strings.NewReader(`{"minecraft":"1.21.4","loader":"fabric"}`))
+			req = mux.SetURLVars(req, map[string]string{"id": "1"})
+			rec := httptest.NewRecorder()
+			h.VersionUpdate(rec, req)
+			if refused := strings.Contains(rec.Body.String(), "mods_installing"); refused != c.refused {
+				t.Fatalf("answered %d %s, want refused=%v", rec.Code, rec.Body.String(), c.refused)
 			}
 		})
 	}
@@ -254,6 +286,15 @@ func TestAMovedModRowForgetsTheEarlierInstall(t *testing.T) {
 		PreviousFileName: "a.jar", PreviousTargetDir: "plugins", PreviousSHA512: "a-hash",
 	}}
 	row := movedModRow(in, "mods")
+	if row.Status != models.ServerModFailed {
+		t.Errorf("status = %q, want the failed one kept", row.Status)
+	}
+	// Only a stale "installing" row reaches the move, and its attempt id is
+	// cleared, so no report could ever settle it.
+	in.mod.Status = models.ServerModInstalling
+	if got := movedModRow(in, "mods").Status; got != models.ServerModInstalled {
+		t.Errorf("stale installing row moved as %q, want installed", got)
+	}
 	if row.FileName != "c.jar" || row.SHA512 != "c-hash" || row.ModrinthVersionID != "VC" || row.TargetDir != "mods" {
 		t.Errorf("row = %+v, want it to name the moved jar", row)
 	}

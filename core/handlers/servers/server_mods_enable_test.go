@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
@@ -134,6 +135,42 @@ func TestSwitchingAModOffAndOnMovesItsJar(t *testing.T) {
 	}
 	if len(fs.disabled) != 0 {
 		t.Fatalf("stored %v after a failed move", fs.disabled)
+	}
+}
+
+// S04: a row whose install report was lost stayed "installing" for good, and
+// the mod could never be switched off. Past the bound Uninstall uses, it can.
+func TestSwitchingOffWaitsOnlyForAnInstallInFlight(t *testing.T) {
+	cases := []struct {
+		name    string
+		age     time.Duration
+		refused bool
+	}{
+		{"install in flight", time.Minute, true},
+		{"report lost long ago", 2 * modInstallInFlightFor, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &modEnableStore{
+				srv: models.Server{ID: 5, UUID: "srv-5", NodeID: 7, ActiveSubServer: "main", InstallerType: "fabric"},
+				mod: models.ServerMod{ID: 9, ServerID: 5, FileName: "lithium.jar", TargetDir: "mods",
+					Status: models.ServerModInstalling, InstalledAt: time.Now().Add(-c.age)},
+			}
+			reg := nodegrpc.NewRegistry()
+			node := &fileOpNode{}
+			node.conn = reg.Register(7, "tok", node)
+			h := NewServerModsHandler(testDeps(Deps{Store: fs, GRPCRegistry: reg}))
+			req := httptest.NewRequest("PUT", "/api/servers/5/mods/9/enabled", strings.NewReader(`{"enabled":false}`))
+			req = mux.SetURLVars(req, map[string]string{"id": "5", "modId": "9"})
+			rec := httptest.NewRecorder()
+			h.SetEnabled(rec, req)
+			if refused := rec.Code == 409; refused != c.refused {
+				t.Fatalf("answered %d %s, want refused=%v", rec.Code, rec.Body.String(), c.refused)
+			}
+			if !c.refused && (len(fs.disabled) != 1 || !fs.disabled[0]) {
+				t.Errorf("stored %v, want [true]", fs.disabled)
+			}
+		})
 	}
 }
 

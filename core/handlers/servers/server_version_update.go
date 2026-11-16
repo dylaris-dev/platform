@@ -411,13 +411,15 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// A mod still being installed is refused too: its row already names the
 	// jar the node has not written yet, so the move would leave the old one on
 	// disk beside the target version's. install_mod takes no node_busy, so
-	// RefuseIfServerBusy does not see it.
+	// RefuseIfServerBusy does not see it. One whose report was lost stops
+	// blocking after the same bound Uninstall and Copy use.
 	var off, installing []string
-	for _, m := range mods {
+	now := time.Now()
+	for i, m := range mods {
 		if m.Disabled {
 			off = append(off, m.Title+" ("+m.FileName+")")
 		}
-		if m.Status == models.ServerModInstalling {
+		if modInstallInFlight(&mods[i], now) {
 			installing = append(installing, m.Title)
 		}
 	}
@@ -635,6 +637,10 @@ func movedModRow(in serverModTarget, targetDir string) models.ServerMod {
 	row.TargetDir = targetDir
 	row.InstallID = ""
 	row.PreviousFileName, row.PreviousTargetDir, row.PreviousSHA512 = "", "", ""
+	if row.Status == models.ServerModInstalling {
+		// Only a stale one gets here, as in copiedModRow.
+		row.Status = models.ServerModInstalled
+	}
 	return row
 }
 

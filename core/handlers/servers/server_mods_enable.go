@@ -86,7 +86,7 @@ func (h *ServerModsHandler) SetEnabled(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "This mod's file name cannot be moved safely; remove and reinstall it.", http.StatusConflict)
 		return
 	}
-	if target.Status == models.ServerModInstalling {
+	if modInstallInFlight(target, time.Now()) {
 		httpx.SendJSONError(w, "This mod is still being installed.", http.StatusConflict)
 		return
 	}
