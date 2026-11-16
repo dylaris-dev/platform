@@ -13,7 +13,7 @@ var ContractKeys = map[string][]string{
 	"custom-domains.add":       {"success", "domain"},
 	"custom-domains.txt-token": {"success", "domain"},
 	"link-kits":                {"success", "items"},
-	"link-kits.item":           {"id", "name", "link_id", "created_at", "region", "caps"},
+	"link-kits.item":           {"id", "name", "link_id", "created_at", "region", "online", "caps"},
 	"link-kits.mint":           {"success", "link_key", "link_id"},
 	"link-kits.retire":         {"success", "link_id", "retire_at"},
 	"routes":                   {"success", "items"},
