@@ -226,6 +226,11 @@ func (c *remoteCache[T]) get(ctx context.Context, now func() time.Time, ttl time
 		c.mu.Unlock()
 		select {
 		case <-ch:
+			// select picks at random when both are ready, so a caller that has
+			// already given up would otherwise sometimes go on with the answer.
+			if err := ctx.Err(); err != nil {
+				return zero, err
+			}
 		case <-ctx.Done():
 			return zero, ctx.Err()
 		}
