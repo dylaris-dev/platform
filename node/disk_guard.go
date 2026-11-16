@@ -429,6 +429,9 @@ func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uu
 			// An error here recounts without a grace rather than leaving a
 			// limit a crash lifted off until some later boot.
 			if l, err := rdb.Exists(ctx, diskLiftedKey(uuid)).Result(); err == nil && l == 0 {
+				if n == 0 {
+					repairDiskStateLostWithRedis(ctx, rdb, q, uuid)
+				}
 				return false, nil
 			}
 			// Counted already: the grace stays once per server.
@@ -442,6 +445,26 @@ func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uu
 		}
 	}
 	return true, countDiskUsage(ctx, rdb, q, uuid, knownDiskLimitMB(ctx, rdb, q, uuid), allowGrace)
+}
+
+// repairDiskStateLostWithRedis is the boot of a server counted on disk whose
+// Redis keys are gone. Skipping it skipped the recount that rebuilt a lost
+// grace, and the grace's ceiling stayed on the project as its limit for good.
+// No walk and no new grace: only what the project and the known limit show.
+func repairDiskStateLostWithRedis(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string) {
+	markDiskCounted(ctx, rdb, uuid)
+	limitMB := knownDiskLimitMB(ctx, rdb, q, uuid)
+	before := q.GetDiskUsage(uuid)
+	if limitMB <= 0 || before == nil {
+		return
+	}
+	recordDiskLimit(ctx, rdb, uuid, limitMB)
+	restoreLostDiskGrace(ctx, rdb, uuid, limitMB<<20, before)
+	if _, ok := loadDiskGrace(ctx, rdb, uuid); !ok && before.Limit != limitMB<<20 {
+		if err := q.SetLimit(uuid, limitMB); err != nil {
+			log.Printf("quota: put the limit of %s back after Redis lost it: %v", uuid, err)
+		}
+	}
 }
 
 // knownDiskLimitMB is the limit Core last pushed, else the one on the project

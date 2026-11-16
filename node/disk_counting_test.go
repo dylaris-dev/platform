@@ -948,3 +948,47 @@ func TestTheCountedMarkerSurvivesARedisThatLostIt(t *testing.T) {
 		t.Fatal("a forgotten server kept its counted marker on disk")
 	}
 }
+
+// S08/S09: the counted marker on disk kept a boot after a Valkey restart from
+// walking the tree, and with the walk it skipped the only repair of the grace
+// Valkey lost too. The ceiling stayed on the project as the server's limit
+// for good. The boot repairs it from the known limit without walking.
+func TestABootAfterRedisLostItRepairsTheGraceWithoutAWalk(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		before    *DiskUsagePayload
+		wantGrace bool
+		wantSet   []int64
+	}{
+		{"graced and still over", usageOf(150*mib, 250*mib), true, nil},
+		{"grace over, ceiling still on", usageOf(50*mib, 250*mib), false, []int64{100}},
+		{"never graced", usageOf(10*mib, 100*mib), false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := nodeSecretDir
+			nodeSecretDir = t.TempDir()
+			t.Cleanup(func() { nodeSecretDir = prev })
+			rdb := newDiskGuardRedis(t)
+			ctx := context.Background()
+			markDiskCounted(ctx, rdb, "srv")
+			if err := rdb.FlushAll(ctx).Err(); err != nil {
+				t.Fatal(err)
+			}
+			recordDiskLimit(ctx, rdb, "srv", 100)
+			q := &fakeQuota{before: tc.before, after: tc.before, limitMB: tc.before.Limit >> 20}
+			if done, err := reconcileServer(ctx, rdb, q, "srv"); done || err != nil || q.assigned {
+				t.Fatalf("done=%v err=%v assigned=%v, want no walk", done, err, q.assigned)
+			}
+			g, ok := loadDiskGrace(ctx, rdb, "srv")
+			if ok != tc.wantGrace || (ok && (g.limit != 100*mib || g.ceiling != 250*mib)) {
+				t.Fatalf("grace = %+v (%v), want %v", g, ok, tc.wantGrace)
+			}
+			if fmt.Sprint(q.setLimits) != fmt.Sprint(tc.wantSet) {
+				t.Fatalf("limits set %v, want %v", q.setLimits, tc.wantSet)
+			}
+			if n, _ := rdb.Exists(ctx, diskCountedKey("srv")).Result(); n != 1 {
+				t.Fatal("the counted key was not put back in Redis")
+			}
+		})
+	}
+}

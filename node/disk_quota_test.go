@@ -54,3 +54,23 @@ Project         used    soft    hard  grace    used  soft  hard  grace
 		t.Fatalf("got (%d, %d), want (-1, 0)", used, limit)
 	}
 }
+
+// S10: a mount point covers a path only up to a path-component boundary, so
+// /mnt/data2 is not bound to the quota database of /mnt/data.
+func TestMountCoversOnlyWholePathComponents(t *testing.T) {
+	for _, tc := range []struct {
+		mp, path string
+		want     bool
+	}{
+		{"/", "/mnt/data2/srv", true},
+		{"/mnt/data", "/mnt/data", true},
+		{"/mnt/data", "/mnt/data/srv", true},
+		{"/mnt/data", "/mnt/data2", false},
+		{"/mnt/data", "/mnt/data2/srv", false},
+		{"/mnt/data/", "/mnt/data/srv", true},
+	} {
+		if got := mountCovers(tc.mp, tc.path); got != tc.want {
+			t.Errorf("mountCovers(%q, %q) = %v, want %v", tc.mp, tc.path, got, tc.want)
+		}
+	}
+}

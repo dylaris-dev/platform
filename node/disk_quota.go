@@ -437,8 +437,7 @@ func detectFSType(path string) (fsType, mountPoint string) {
 		}
 		mp := fields[1]
 		fs := fields[2]
-		// Check if this mount point is a prefix of our path and is the longest match
-		if strings.HasPrefix(path, mp) && len(mp) > len(bestMount) {
+		if mountCovers(mp, path) && len(mp) > len(bestMount) {
 			if fs == "xfs" || fs == "ext4" {
 				bestMount = mp
 				bestFS = fs
@@ -447,6 +446,12 @@ func detectFSType(path string) (fsType, mountPoint string) {
 	}
 
 	return bestFS, bestMount
+}
+
+// mountCovers reports whether path lies on the mount at mp. A plain prefix
+// bound /mnt/data2 to the /mnt/data mount and its quota database.
+func mountCovers(mp, path string) bool {
+	return path == mp || strings.HasPrefix(path, strings.TrimSuffix(mp, "/")+"/")
 }
 
 // ensureProjectEntry adds a line to /etc/projects if not present.
