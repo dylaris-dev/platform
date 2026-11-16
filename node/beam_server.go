@@ -1048,8 +1048,10 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	size := int64(len(req.Content))
 	username := s.extractUsername(ctx)
 	// What the file held before: an overwrite frees it, as SFTP credits it.
+	// Stat, not Lstat: the open below follows a link that stays in the Root
+	// and truncates its target, so that is the size freed.
 	var prior int64
-	if st, err := root.Lstat(name); err == nil && st.Mode().IsRegular() {
+	if st, err := root.Stat(name); err == nil && st.Mode().IsRegular() {
 		prior = st.Size()
 	}
 	// Reserved on the counters uploads in progress hold, before checking, as

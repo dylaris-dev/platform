@@ -133,6 +133,22 @@ func TestFileOperationsDuringAStorageMoveAreRefusedWithoutWaiting(t *testing.T) 
 	}
 }
 
+// S03: a backup delete during a cross-node move's staging left no trace for
+// writesSince, so the archive already read into the staged zip came back on
+// the target with no row. It counts as a write like the other file requests.
+// It is not refused during a fenced move: Core drops the row either way.
+func TestABackupDeleteDuringMoveStagingIsSeenAsAWrite(t *testing.T) {
+	h, uuid, _ := seedNodeOwned(t)
+	writesSince, err := h.storageMgr.watchWrites(uuid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Handle(&pb.NodeMessage{RequestId: "bd", ServerUuid: uuid, Payload: &pb.NodeMessage_BackupDeleteReq{BackupDeleteReq: &pb.BackupDeleteReq{Key: "a.tar.gz"}}})
+	if !writesSince() {
+		t.Fatal("a backup delete during staging was not reported as a write")
+	}
+}
+
 // L30: migrate_storage stopped the server before the move's refusals, so a
 // move refused for a running upload or backup took the server and its players
 // down for nothing. CheckMigration makes those refusals up front and moves

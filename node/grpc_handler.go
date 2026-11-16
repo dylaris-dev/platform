@@ -55,6 +55,12 @@ func (h *StreamHandler) Handle(msg *pb.NodeMessage) []*pb.NodeMessage {
 			return []*pb.NodeMessage{errorMsg(msg.RequestId, 409, "The server's storage is being moved; try again when the move finishes")}
 		}
 		defer unhold()
+	case *pb.NodeMessage_BackupDeleteReq:
+		// Held so migrate_out's writesSince sees it: an archive deleted after
+		// it was staged came back on the target with no row. Waited for rather
+		// than refused: Core drops the row even when the node refuses, so a
+		// refusal would leave the archive untracked instead.
+		defer h.storageMgr.holdWriter(msg.ServerUuid)()
 	}
 	switch p := msg.Payload.(type) {
 	case *pb.NodeMessage_ListReq:

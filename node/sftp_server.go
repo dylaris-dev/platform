@@ -864,9 +864,10 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 		flags |= os.O_EXCL
 	}
 	// What the file held before: a truncating overwrite frees it, so only the
-	// growth past it is new on the disk.
+	// growth past it is new on the disk. Stat, not Lstat: the open follows a
+	// link that stays in the Root and truncates its target.
 	var prior int64
-	if st, err := root.Lstat(leaf); err == nil && st.Mode().IsRegular() {
+	if st, err := root.Stat(leaf); err == nil && st.Mode().IsRegular() {
 		prior = st.Size()
 	}
 	f, err := openTenantWriteIn(root, leaf, flags, 0644, serverDir)
