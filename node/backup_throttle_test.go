@@ -396,7 +396,7 @@ func TestSpoolReservationIsSharedAcrossRuns(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			inflightWrites.Store(tt.inflight)
-			limit, release, why := reserveSpool(on, 30*gb, 50*gb)
+			limit, release, _, why := reserveSpool(on, 30*gb, 50*gb)
 			defer release(0)
 			if (limit > 0) != tt.wantOK {
 				t.Fatalf("limit=%d why=%q, want ok=%v", limit, why, tt.wantOK)
@@ -405,11 +405,11 @@ func TestSpoolReservationIsSharedAcrossRuns(t *testing.T) {
 	}
 
 	inflightWrites.Store(0)
-	limit, release, _ := reserveSpool(on, 30*gb, 50*gb)
+	limit, release, _, _ := reserveSpool(on, 30*gb, 50*gb)
 	if limit <= 0 {
 		t.Fatal("first run refused")
 	}
-	if l2, r2, why := reserveSpool(on, 30*gb, 50*gb); l2 > 0 {
+	if l2, r2, _, why := reserveSpool(on, 30*gb, 50*gb); l2 > 0 {
 		r2(0)
 		t.Fatalf("second run of 30 GB spooled into 50 GB beside the first (limit %d, %q)", l2, why)
 	}
@@ -547,7 +547,7 @@ func TestAReleasedSpoolLandsWhatItWrote(t *testing.T) {
 	t.Cleanup(func() { restoreDiskBudget = prev })
 	g := inflightWrites.Load()
 
-	_, release, why := reserveSpool(on, s, 100*gb)
+	_, release, _, why := reserveSpool(on, s, 100*gb)
 	if why != "" {
 		t.Fatal(why)
 	}
@@ -560,5 +560,35 @@ func TestAReleasedSpoolLandsWhatItWrote(t *testing.T) {
 	b.release()
 	if got := inflightWrites.Load(); got != g {
 		t.Fatalf("inflightWrites = %d, want %d", got, g)
+	}
+}
+
+// The spool file is deleted after its upload, but what releasing it booked as
+// landed stayed booked: every write budget running across the run counted the
+// archive as used disk until it ended.
+func TestARemovedSpoolGivesItsLandedBytesBack(t *testing.T) {
+	on := &backupPolicy{SpoolEnabled: true, SpoolMaxGB: 100}
+	const gb = 1_000_000_000
+	const s = 10 * gb
+	prev := restoreDiskBudget
+	restoreDiskBudget = func(string) int64 { return 2 * s }
+	t.Cleanup(func() { restoreDiskBudget = prev })
+	g, l := inflightWrites.Load(), landedWrites.Load()
+
+	b := nodeWriteBudget(t.TempDir()) // starts before the spool: 2s left
+	_, release, removed, why := reserveSpool(on, s, 100*gb)
+	if why != "" {
+		t.Fatal(why)
+	}
+	release(s)
+	removed()
+	removed() // idempotent
+	if !b.spend(2 * s) {
+		b.release()
+		t.Fatal("the deleted spool file still counts against a running budget")
+	}
+	b.releaseWritten(0)
+	if gi, li := inflightWrites.Load(), landedWrites.Load(); gi != g || li != l {
+		t.Fatalf("inflight %d landed %d, want %d %d", gi, li, g, l)
 	}
 }

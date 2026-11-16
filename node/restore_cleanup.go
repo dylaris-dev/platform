@@ -159,8 +159,16 @@ func runRestoreCleanup(sm *StorageManager) {
 					cutoff = now
 				}
 			}
-			if info.ModTime().Before(cutoff) {
-				log.Printf("restore-cleanup: removing %s %s (age %v)", label, path, now.Sub(info.ModTime()).Round(time.Minute))
+			age := info.ModTime()
+			if m := preRestoreStash.FindString(base); m != "" {
+				// The stash is the renamed directory and keeps its mtime, days old
+				// on an idle server; only the name says when it was made.
+				if at, err := time.Parse("20060102-150405", strings.TrimPrefix(m, ".pre-restore-")); err == nil && at.After(age) {
+					age = at
+				}
+			}
+			if age.Before(cutoff) {
+				log.Printf("restore-cleanup: removing %s %s (age %v)", label, path, now.Sub(age).Round(time.Minute))
 				if err := os.RemoveAll(path); err == nil {
 					if isRestore {
 						purgedRestore++

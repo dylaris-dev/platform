@@ -66,3 +66,38 @@ func TestRestoreCleanupOnlyRemovesItsOwnLeftovers(t *testing.T) {
 		}
 	}
 }
+
+// A stash is made by renaming the server or sub-server directory, which keeps
+// that directory's own mtime: an idle server's is days old. Judged by it, a
+// stash a node died with mid-swap was gone 30 seconds after the restart instead
+// of after the day the TTL promises.
+func TestAPreRestoreStashAgesFromItsName(t *testing.T) {
+	sm, _ := newPlacementManager(t, 1)
+	root := sm.Paths()[0]
+	old := time.Now().Add(-72 * time.Hour)
+	stamp := func(at time.Time) string { return at.UTC().Format("20060102-150405") }
+	tests := []struct {
+		name     string
+		stashed  time.Time
+		wantKept bool
+	}{
+		{"stashed now from an idle directory", time.Now(), true},
+		{"stashed two days ago", time.Now().Add(-48 * time.Hour), false},
+	}
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := filepath.Join(root, "srv-"+string(rune('a'+i))+".pre-restore-"+stamp(tt.stashed))
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(dir, old, old); err != nil {
+				t.Fatal(err)
+			}
+			runRestoreCleanup(sm)
+			_, err := os.Stat(dir)
+			if kept := err == nil; kept != tt.wantKept {
+				t.Fatalf("kept=%v, want %v (stat err %v)", kept, tt.wantKept, err)
+			}
+		})
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // The spool packs a backup into a local file before uploading it. World saving
@@ -102,8 +103,10 @@ var spoolSlackBytes int64 = 256 << 20
 // granted holds its source size plus slack in inflightWrites until release, so
 // the next run, restore or copy sees it as taken. release is idempotent; landed is
 // what the spool file holds on the disk at that moment, booked as landed so a
-// budget measured before those bytes were there still counts them.
-func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, func(landed int64), string) {
+// budget measured before those bytes were there still counts them. removed,
+// once the file is deleted, takes those landed bytes back out: the disk has
+// them again, and landed bytes count against every budget still running.
+func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, func(landed int64), func(), string) {
 	spoolReserveMu.Lock()
 	defer spoolReserveMu.Unlock()
 	if held := inflightWrites.Load(); held > 0 {
@@ -111,20 +114,24 @@ func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, 
 	}
 	limit, why := spoolBudget(p, sourceBytes, freeBytes)
 	if limit <= 0 {
-		return 0, func(int64) {}, why
+		return 0, func(int64) {}, func() {}, why
 	}
 	// The file is bound by what it holds, not by the free space: the size is
 	// du's, which does not follow a link the archive takes as its target, and
 	// every byte past the reservation was invisible to the writes beside it.
 	held := min(limit, sourceBytes+spoolSlackBytes)
 	inflightWrites.Add(held)
-	var once sync.Once
-	return held, func(landed int64) {
+	var once, gone sync.Once
+	var booked atomic.Int64
+	release := func(landed int64) {
 		once.Do(func() {
 			inflightWrites.Add(-held)
-			landedWrites.Add(max(landed, 0))
+			booked.Store(max(landed, 0))
+			landedWrites.Add(booked.Load())
 		})
-	}, ""
+	}
+	removed := func() { gone.Do(func() { landedWrites.Add(-booked.Swap(0)) }) }
+	return held, release, removed, ""
 }
 
 var errSpoolFull = errors.New("the archive outgrew the space reserved for the spool")

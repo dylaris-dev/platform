@@ -31,7 +31,7 @@ func TestSpoolFileIsBoundByItsReservation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			inflightWrites.Store(0)
-			limit, release, why := reserveSpool(on, tt.src, tt.free)
+			limit, release, _, why := reserveSpool(on, tt.src, tt.free)
 			defer release(0)
 			if limit <= 0 {
 				t.Fatalf("refused: %s", why)
