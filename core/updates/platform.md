@@ -25,7 +25,8 @@ Newest release first. The format is fixed and checked in CI - see the
   ceiling as its limit; the node now restores the plan limit at boot. `node`
 - A mod stuck in installing for more than 15 minutes no longer blocks a version move or switching it off. `core`
 - Node fixes: a backup deleted during a server move no longer reappears on the target, saving through a
-  symlink at the disk limit works, the installer's network helper is removed at boot. `node`
+  symlink at the disk limit works, the installer's network helper is removed at boot, and a quota mount
+  no longer covers a sibling path (`/mnt/data` and `/mnt/data2`). `node`
 
 ## 2026.11.15.4
 
