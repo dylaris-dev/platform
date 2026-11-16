@@ -88,6 +88,11 @@ func TestInstallerRunsBehindTheEgressRules(t *testing.T) {
 	if holderHC, _ := d.creates[0]["HostConfig"].(map[string]any); holderHC["AutoRemove"] != true {
 		t.Error("the holder does not remove itself; a node that dies mid-install leaves it behind")
 	}
+	// S01/S02: the boot sweep finds leftovers by these two labels only.
+	holderLabels, _ := d.creates[0]["Labels"].(map[string]any)
+	if holderLabels[roleLabel] != roleInstaller || holderLabels[ownerLabel] != nodeIdentity(nodeSecretDir) {
+		t.Errorf("holder labels = %v; removeOrphanInstallers cannot find it after a restart", holderLabels)
+	}
 	helperHC, _ := d.creates[1]["HostConfig"].(map[string]any)
 	if helperHC["NetworkMode"] != "container:c1" {
 		t.Errorf("policy helper joined %v, want the holder", helperHC["NetworkMode"])

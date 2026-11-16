@@ -810,7 +810,7 @@ func (dm *DockerManager) installerNetwork(ctx context.Context, egress func() (*n
 		return "", nc, none
 	}
 	// AutoRemove: a node that dies mid-install leaves no holder behind once
-	// its sleep ends; nothing else would ever look for it.
+	// its sleep ends, or sooner when the boot sweep stops it (labels below).
 	hc := &container.HostConfig{AutoRemove: true}
 	applyPidsLimit(hc)
 	hardenTenantContainer(hc)
@@ -818,6 +818,10 @@ func (dm *DockerManager) installerNetwork(ctx context.Context, egress func() (*n
 		Image:      dm.netPolicyImage,
 		Entrypoint: []string{},
 		Cmd:        []string{"sleep", "86400"},
+		// The installer's labels: after a restart mid-install the boot sweep
+		// (removeOrphanInstallers) stops it with the installer instead of it
+		// sleeping out the day.
+		Labels: map[string]string{roleLabel: roleInstaller, ownerLabel: nodeIdentity(nodeSecretDir)},
 	}
 	holder.User = mcUserSpec()
 	resp, err := dm.cli.ContainerCreate(ctx, holder, hc, nc, nil, "")
