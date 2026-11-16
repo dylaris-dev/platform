@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.16
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- The per-sub-server disk breakdown measures at most 64 valid sub-server folders, two at a time. A server
+  with thousands of folders made the node start one `du` per folder. `node`
+
+### Fixes
+- A server in disk grace whose Valkey keys were lost (a Valkey restart, then a node restart) kept the grace
+  ceiling as its limit; the node now restores the plan limit at boot. `node`
+- A mod stuck in installing for more than 15 minutes no longer blocks a version move or switching it off. `core`
+- Node fixes: a backup deleted during a server move no longer reappears on the target, saving through a
+  symlink at the disk limit works, the installer's network helper is removed at boot. `node`
+
 ## 2026.11.15.4
 
 ### Features

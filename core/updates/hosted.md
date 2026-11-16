@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.16
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A mod stuck in installing for more than 15 minutes no longer blocks a version move or switching it off.
+  This was fixed on our side; there is nothing to update.
+- BYON: a server in disk grace keeps the right disk limit after a restart, a backup deleted during a
+  server move no longer reappears on the target, and saving through a symlink at the disk limit works. `node`
+
 ## 2026.11.15.4
 
 ### Features
