@@ -232,3 +232,17 @@ func clearRunBlockers(ctx context.Context, rdb *redis.Client, uuid string) {
 	rdb.Del(ctx, fmt.Sprintf("dylaris:server:%s:reconcile_failed", uuid), stoppedByServerKey(uuid),
 		fmt.Sprintf("dylaris:server:%s:input", uuid))
 }
+
+// serverInstallLocks order create, setup and reinstall of one server. Core
+// answers a create at once, so a setup can arrive while the create still pulls
+// the image: the two then removed and created mc_<uuid> side by side, and the
+// container left was create's slot with no command (load test, five creates).
+// Only the same server waits; a waiting setup runs once the create is done.
+var serverInstallLocks sync.Map // uuid -> *sync.Mutex
+
+func lockServerInstall(uuid string) func() {
+	m, _ := serverInstallLocks.LoadOrStore(uuid, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}

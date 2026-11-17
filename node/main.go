@@ -1599,6 +1599,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 	case "create":
 		// Step 1: create a stopped container slot with no software installed.
 		log.Printf("Creating server slot for %s (pending setup)...", cmd.Config.UUID)
+		defer lockServerInstall(cmd.Config.UUID)()
 		// A create and a delete queued together (node offline, restarting) run
 		// in parallel, and the delete usually finishes first.
 		if serverDeleted(cmd.Config.UUID) {
@@ -1607,6 +1608,17 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 				return
 			}
 			log.Printf("create %s: a server deleted here is created again under its UUID, tombstone cleared", cmd.Config.UUID)
+		}
+
+		// A create redelivered after a node restart, or one whose setup took
+		// the lock first, would replace the installed server with an empty
+		// slot and move its storage key to an empty path. Setup writes
+		// .active_server, so its presence means the slot is long done.
+		if dir := storage.GetServerDir(cmd.Config.UUID); dir != "" {
+			if _, err := readServerRootFile(dir, ".active_server"); err == nil {
+				log.Printf("create %s: the server is already set up on this node, leaving it as it is", cmd.Config.UUID)
+				return
+			}
 		}
 
 		// Assign storage path: the one the create asked for, else balanced by
@@ -1648,6 +1660,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer commandsInFlight.leave("setup:" + cmd.Config.UUID)
+		defer lockServerInstall(cmd.Config.UUID)()
 		subName := cmd.Config.ActiveSubServer
 		if subName == "" {
 			subName = "server"
@@ -1671,6 +1684,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
+		if serverPath == "" {
+			log.Printf("Setup of %s/%s refused: no storage path resolved, it is not mounted on this node", cmd.Config.UUID, subName)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("the server's storage path is not mounted on this node"))
+			return
+		}
 
 		// Forge / NeoForge installers need to run inside a Java
 		// container; copy the Java image + container UUID from
@@ -2257,12 +2276,21 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer commandsInFlight.leave(softwareKey(cmd.Config.UUID))
+		defer lockServerInstall(cmd.Config.UUID)()
 		// Hold the reconciler off for the whole reinstall: we are about to stop a
 		// container whose desired_state is still "online" and then delete its JARs.
 		releaseBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
 		defer releaseBusy()
 		// Same as the setup path: a reinstall ends by starting the server.
 		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
+
+		serverPath := storage.GetServerDir(cmd.Config.UUID)
+		if serverPath == "" {
+			log.Printf("Reinstall of %s/%s refused: no storage path resolved, it is not mounted on this node", cmd.Config.UUID, subName)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("the server's storage path is not mounted on this node"))
+			return
+		}
 
 		// Stop the container first. Its jars are moved aside next, so a server
 		// that could not be stopped is not reinstalled under its running JVM.
@@ -2274,7 +2302,6 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		time.Sleep(3 * time.Second)
 
-		serverPath := storage.GetServerDir(cmd.Config.UUID)
 		subServerDir := filepath.Join(serverPath, subName)
 
 		// Old JARs and generated directories are moved aside, not deleted, until
