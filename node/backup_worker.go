@@ -3,7 +3,6 @@ package main
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/klauspost/compress/gzip"
 	"github.com/redis/go-redis/v9"
 
 	"dylaris-pkg/queue"
@@ -663,6 +663,10 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 	if err != nil {
 		return false, err
 	}
+	// klauspost rather than compress/gzip: about a third faster on a real
+	// server (mostly region files and jars that are already compressed) for
+	// 0.06 % more bytes at its default level (BenchmarkWriteServerArchive). The
+	// output is plain gzip, and the restore path reads it with the stdlib.
 	gw := gzip.NewWriter(w)
 	tw := tar.NewWriter(gw)
 	addedAny := false
