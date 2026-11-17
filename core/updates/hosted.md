@@ -26,6 +26,8 @@ Newest release first. The format is fixed and checked in CI - see the
 ### Fixes
 - BYON: a storage disk that did not mount is skipped instead of running servers on an empty folder, and a
   backup restarted after a node update starts a fresh upload instead of failing. `node`
+- Route-only: a newer link uses less CPU and keeps other players connected when one player stalls during an
+  edge restart. To get it, run `docker compose pull && docker compose up -d` where your link runs.
 
 ## 2026.11.17
 

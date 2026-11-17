@@ -18,7 +18,8 @@ Newest release first. The format is fixed and checked in CI - see the
 - Nothing.
 
 ### Security
-- Nothing.
+- Nodes prove their hostname to the gateway hub with the cluster secret, so a BYON node can no longer take over
+  a platform host's link. `node`
 
 ### Fixes
 - A storage path whose disk did not mount is skipped with a warning instead of running servers on an empty
@@ -26,6 +27,8 @@ Newest release first. The format is fixed and checked in CI - see the
 - A backup restarted after a node update starts a fresh upload instead of failing on the earlier parts. `node` `core`
 - Node fixes: a server moved back onto a node where it was once deleted starts, an install upload whose top
   folder clashes is refused, and an out-of-memory banner no longer depends on the node's clock. `node` `core`
+- Warp leaders of a region whose subnet was saved with host bits register again, and a revoked warp key
+  can no longer be re-added by a racing enrol. `core`
 
 ## 2026.11.17
 
