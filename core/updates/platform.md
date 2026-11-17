@@ -8,6 +8,27 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.17
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Crash-restart detection reads each console line once. A server flooding its console made the node re-read
+  up to 5000 lines from Valkey on every failed ping. `node`
+
+### Fixes
+- A backup whose node restarted while Core completed its object-storage upload is kept and shows as
+  successful; before, the redelivered run deleted the finished archive. `core`
+- A console stop shortly after an in-game /restart, or after a /say that mentions a restart, keeps the
+  server stopped instead of bringing it back. `node`
+- Node fixes: reinstall and version move of one server exclude each other, setup survives a failed container
+  create, free-space checks count per disk, and a server on an unmounted storage path is not reported deleted. `node`
+- A copy that fails on the node right away no longer leaves a sub-server with mods in the panel. `core`
+
 ## 2026.11.16
 
 ### Features

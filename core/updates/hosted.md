@@ -11,6 +11,23 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.17
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A backup whose node restarted during the upload is kept and shows as successful instead of being
+  deleted. This was fixed on our side; there is nothing to update.
+- BYON: a console stop shortly after an in-game /restart keeps the server stopped, a reinstall and a
+  version move of one server can no longer run at once, and free-space checks count per disk. `node`
+
 ## 2026.11.16
 
 ### Features
