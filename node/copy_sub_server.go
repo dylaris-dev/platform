@@ -55,6 +55,11 @@ func runCopySubServer(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	serverPath := storage.GetServerDir(pl.UUID)
 	if serverPath == "" {
 		log.Printf("copy_sub_server: storage lookup for %s returned empty path", pl.UUID)
+		// Reported, or the target's rows and copy_pending stay for a copy that
+		// never ran. Only for a real id: an invalid one is not a copy Core queued.
+		if validate.IsServerUUID(pl.UUID) {
+			reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, "the server's storage is not available on this node")
+		}
 		return
 	}
 	// Two keys: a redelivery of the running copy is dropped quietly, but a

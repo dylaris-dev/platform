@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -116,7 +117,10 @@ func NewStorageManager(pathsCSV string, rdb *redis.Client) *StorageManager {
 		}
 
 		sm.paths = append(sm.paths, abs)
-		log.Printf("storage: [ok] %s", abs)
+	}
+	sm.paths = sm.dropUnmountedPaths(sm.paths)
+	for _, p := range sm.paths {
+		log.Printf("storage: [ok] %s", p)
 	}
 
 	// Fallback if no paths are valid
@@ -152,6 +156,73 @@ func validateStoragePath(path string) error {
 	os.Remove(testFile)
 
 	return nil
+}
+
+// storageMarkerName sits in the root of every storage path this node took. It
+// lists every path the node ever marked, so each disk vouches for the others.
+const storageMarkerName = ".dylaris-storage"
+
+// dropUnmountedPaths leaves out a path another marker lists, that has no
+// marker of its own and holds nothing: a disk that did not mount, whose empty
+// mountpoint passed every check above. Servers keyed there ran on an empty
+// tree on the root disk, and new servers filled the OS disk. Every path kept is
+// marked, and given the full list.
+//
+// ponytail: a single path, or a boot where every path is unmounted at once,
+// has no other marker to vouch for it and is taken as before.
+func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
+	known := map[string]bool{}
+	marked := map[string]bool{}
+	for _, p := range paths {
+		b, err := os.ReadFile(filepath.Join(p, storageMarkerName))
+		if err != nil {
+			continue
+		}
+		marked[p] = true
+		for _, line := range strings.Split(string(b), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				known[line] = true
+			}
+		}
+	}
+	var kept []string
+	for _, p := range paths {
+		if !marked[p] && known[p] && dirHoldsNothing(p) {
+			log.Printf("storage: [warn] %s was a storage path of this node and is now empty without its %s marker, so its disk is most likely not mounted; skipping. If it is a new empty disk, create %s to use it", p, storageMarkerName, filepath.Join(p, storageMarkerName))
+			sm.skipped++
+			continue
+		}
+		kept = append(kept, p)
+		known[p] = true
+	}
+	list := make([]string, 0, len(known))
+	for p := range known {
+		list = append(list, p)
+	}
+	sort.Strings(list)
+	body := []byte(strings.Join(list, "\n") + "\n")
+	for _, p := range kept {
+		if err := os.WriteFile(filepath.Join(p, storageMarkerName), body, 0o644); err != nil {
+			log.Printf("storage: [warn] cannot write the storage marker on %s: %v", p, err)
+		}
+	}
+	return kept
+}
+
+// dirHoldsNothing reports whether dir has no entries but the node's own dot
+// files (beacons, write test), which an empty mountpoint can carry from a boot
+// that ran on it.
+func dirHoldsNothing(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), ".") {
+			return false
+		}
+	}
+	return true
 }
 
 // Paths returns the list of available storage paths.
@@ -463,11 +534,21 @@ func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (strin
 	}
 	scanned := currentPath == ""
 	if scanned {
+		var copies []string
 		for _, p := range sm.paths {
 			if stat, err := os.Stat(filepath.Join(p, serverUUID)); err == nil && stat.IsDir() {
-				currentPath = p
-				break
+				copies = append(copies, p)
 			}
+		}
+		// Only the storage key can vouch for which copy is live. Refused
+		// before the already-on-path answer too: with the first copy on the
+		// target, that answer finished a move that never ran, and the finish
+		// force-removed the container running on the other copy.
+		if len(copies) > 1 {
+			return "", fmt.Errorf("server %s has a directory on %s and no storage key says which one is live; refusing the move", serverUUID, strings.Join(copies, ", "))
+		}
+		if len(copies) == 1 {
+			currentPath = copies[0]
 		}
 	}
 	if currentPath == "" {

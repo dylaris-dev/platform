@@ -101,12 +101,6 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		log.Printf("update_server_version: invalid target dir %q", targetDir)
 		return
 	}
-	serverPath := storage.GetServerDir(pl.UUID)
-	if serverPath == "" {
-		log.Printf("update_server_version: storage lookup for %s returned empty path", pl.UUID)
-		return
-	}
-
 	statusKey := fmt.Sprintf("dylaris:server:%s:status", pl.UUID)
 	// Every abort before the stop leaves the server as it was, so it reports
 	// what Docker shows rather than the busy hold's "installing": Core landed
@@ -118,6 +112,18 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 			rdb.Set(ctx, statusKey, statusAfterFailedStop(dm, pl.UUID), 30*time.Second)
 		}
 		abandonVersionUpdate(ctx, rdb, pl.UUID, reason)
+	}
+
+	serverPath := storage.GetServerDir(pl.UUID)
+	if serverPath == "" {
+		log.Printf("update_server_version: storage lookup for %s returned empty path", pl.UUID)
+		// Reported, or Core's rewritten version and mod rows outlive the undo
+		// record for a move that never ran. Only for a real id: an invalid one
+		// is not a server Core is waiting on.
+		if validate.IsServerUUID(pl.UUID) {
+			abort("the server's storage is not available on this node")
+		}
+		return
 	}
 
 	if !commandsInFlight.enter("version_update:" + pl.UUID) {
