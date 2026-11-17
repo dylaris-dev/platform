@@ -46,6 +46,9 @@ type StorageManager struct {
 	// archives without a fence, so it tells a write that began and ended
 	// while it read the tree by this number moving. See watchWrites.
 	writeGen map[string]uint64
+	// readers counts, per server, folder zip downloads in progress. Apart
+	// from writers so a download does not bump writeGen. See holdReader.
+	readers map[string]int
 }
 
 // Placement modes for new-server assignment. Aliases of the shared constants so
@@ -539,9 +542,9 @@ func (sm *StorageManager) dropStaleCopies(serverUUID string) {
 func (sm *StorageManager) fenceMove(serverUUID string) (func(), error) {
 	ch := make(chan struct{})
 	sm.movingMu.Lock()
-	if n := sm.writers[serverUUID]; n > 0 {
+	if err := sm.holdsLocked(serverUUID); err != nil {
 		sm.movingMu.Unlock()
-		return nil, writersInProgress(serverUUID, n)
+		return nil, err
 	}
 	if sm.moving == nil {
 		sm.moving = map[string]chan struct{}{}
@@ -554,6 +557,18 @@ func (sm *StorageManager) fenceMove(serverUUID string) (func(), error) {
 		sm.movingMu.Unlock()
 		close(ch)
 	}, nil
+}
+
+// holdsLocked is the refusal a local move makes for writers and folder
+// downloads. Under movingMu.
+func (sm *StorageManager) holdsLocked(serverUUID string) error {
+	if n := sm.writers[serverUUID]; n > 0 {
+		return writersInProgress(serverUUID, n)
+	}
+	if n := sm.readers[serverUUID]; n > 0 {
+		return fmt.Errorf("server %s has %d folder download(s) in progress; retry the move once they finish", serverUUID, n)
+	}
+	return nil
 }
 
 func writersInProgress(serverUUID string, n int) error {
@@ -569,10 +584,10 @@ func (sm *StorageManager) CheckMigration(serverUUID, targetPath string) error {
 		return err
 	}
 	sm.movingMu.Lock()
-	n := sm.writers[serverUUID]
+	err = sm.holdsLocked(serverUUID)
 	sm.movingMu.Unlock()
-	if n > 0 {
-		return writersInProgress(serverUUID, n)
+	if err != nil {
+		return err
 	}
 	// The move clears a leftover copy at the target before its own check.
 	dstDir := filepath.Join(targetPath, serverUUID)
@@ -639,6 +654,33 @@ func (sm *StorageManager) holdWriterUnlessMoving(serverUUID string, refuseMoving
 			sm.movingMu.Unlock()
 		})
 	}, true
+}
+
+// holdReader registers a folder zip download until the returned func runs.
+// Its walk reads through a Root on the source tree, and a move deleted that
+// tree under it: every vanished file was skipped and the truncated zip was
+// reported complete. A single file needs none, its open fd survives the
+// unlink. Taken before the path resolves, as holdWriter is.
+func (sm *StorageManager) holdReader(serverUUID string) func() {
+	if sm == nil {
+		return func() {}
+	}
+	sm.movingMu.Lock()
+	if sm.readers == nil {
+		sm.readers = map[string]int{}
+	}
+	sm.readers[serverUUID]++
+	sm.movingMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			sm.movingMu.Lock()
+			if sm.readers[serverUUID]--; sm.readers[serverUUID] <= 0 {
+				delete(sm.readers, serverUUID)
+			}
+			sm.movingMu.Unlock()
+		})
+	}
 }
 
 // watchWrites is for a reader of the whole tree that must not make lookups

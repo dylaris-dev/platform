@@ -103,6 +103,7 @@ func (h *StreamHandler) Handle(msg *pb.NodeMessage) []*pb.NodeMessage {
 func (h *StreamHandler) HandleStreaming(msg *pb.NodeMessage, sendFn func(*pb.NodeMessage) error) {
 	// SelectiveReadReq: zip selected files/folders
 	if selReq := msg.GetSelectiveReadReq(); selReq != nil {
+		defer h.storageMgr.holdReader(msg.ServerUuid)()
 		h.streamSelectiveZip(msg.RequestId, msg.ServerUuid, selReq, sendFn)
 		return
 	}
@@ -122,6 +123,9 @@ func (h *StreamHandler) HandleStreaming(msg *pb.NodeMessage, sendFn func(*pb.Nod
 		return
 	}
 
+	if readReq.ZipIfDir {
+		defer h.storageMgr.holdReader(msg.ServerUuid)()
+	}
 	root, name, err := h.jail(msg.ServerUuid, readReq.Path)
 	if err != nil {
 		sendFn(jailError(msg.RequestId, err))

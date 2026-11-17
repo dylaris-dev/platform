@@ -77,6 +77,18 @@ func TestOnlyWrittenBytesLandOnTheNode(t *testing.T) {
 				t.Fatalf("a save past the node's free space: %v, %+v", err, resp)
 			}
 		}, 0},
+		// S10: the budget is measured while the old file is still on disk, so
+		// an overwrite is charged and lands only what it grows, as SFTP does.
+		{"beam overwrite larger than the budget but within the file it frees", func(t *testing.T) {
+			bs, uuid, ctx := newTestBeamServer(t)
+			dir := filepath.Join(bs.storageMgr.GetServerDir(uuid), "survival")
+			os.MkdirAll(dir, 0o755)
+			os.WriteFile(filepath.Join(dir, "server.properties"), make([]byte, 1200), 0o644)
+			resp, err := bs.SaveFileContent(ctx, &pb.BeamFileSaveReq{Path: "survival/server.properties", Content: string(make([]byte, 1500))})
+			if err != nil || !resp.Success {
+				t.Fatalf("an overwrite that grows by 300 of 1000 free: %v, %+v", err, resp)
+			}
+		}, 300},
 		{"copy refused mid-read", func(t *testing.T) {
 			b := nodeWriteBudget(t.TempDir())
 			n, err := io.Copy(io.Discard, b.reader(bytes.NewReader(make([]byte, 2000))))

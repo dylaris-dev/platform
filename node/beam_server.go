@@ -1072,10 +1072,13 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	if ok, used, limit := quota.CheckDailyQuota(ctx, s.rdb, username, userTotal); !ok {
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("daily upload quota reached: %d of %d bytes used today", used, *limit)}, nil
 	}
+	// Measured while prior is still on disk, so only the growth is charged and
+	// lands. Not built after the truncating open as SFTP does: a refusal there
+	// would leave the file already emptied.
 	budget := nodeWriteBudget(serverDir)
 	var written int
-	defer func() { budget.releaseWritten(int64(written)) }()
-	if !budget.spend(size) {
+	defer func() { budget.releaseWritten(int64(written) - prior) }()
+	if !budget.spend(max(size-prior, 0)) {
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("not enough free space on the node for a save of %d bytes", size)}, nil
 	}
 
@@ -1293,6 +1296,9 @@ func (s *beamServer) DownloadFile(req *pb.BeamDownloadReq, stream grpc.ServerStr
 	}
 	ctx := stream.Context()
 	serverUUID := s.extractServerUUID(ctx)
+	if req.ZipIfDir {
+		defer s.storageMgr.holdReader(serverUUID)()
+	}
 	root, name, err := s.jailBeam(req.Path, serverUUID, "read")
 	if err != nil {
 		return status.Error(codes.PermissionDenied, err.Error())
@@ -1833,6 +1839,7 @@ func (s *beamServer) DownloadSelective(req *pb.BeamSelectiveReq, stream grpc.Ser
 		return err
 	}
 	serverUUID := s.extractServerUUID(stream.Context())
+	defer s.storageMgr.holdReader(serverUUID)()
 	root, baseName, err := s.jailBeam(req.BasePath, serverUUID, "read")
 	if err != nil {
 		return status.Error(codes.PermissionDenied, err.Error())
