@@ -820,6 +820,13 @@ func (sm *StorageManager) moveInProgress(serverUUID string) chan struct{} {
 	return sm.moving[serverUUID]
 }
 
+// isMoving reports whether a lookup of this server would wait for a move. A
+// fence set right after the check still makes the caller wait; it only keeps
+// the requests that arrive during a move from each waiting out all of it.
+func (sm *StorageManager) isMoving(serverUUID string) bool {
+	return sm != nil && sm.moveInProgress(serverUUID) != nil
+}
+
 // migrateCopyTree is a var so a test can hold the copy open.
 var migrateCopyTree = copyTree
 

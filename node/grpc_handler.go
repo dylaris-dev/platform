@@ -53,9 +53,15 @@ func (h *StreamHandler) Handle(msg *pb.NodeMessage) []*pb.NodeMessage {
 	case *pb.NodeMessage_CreateReq, *pb.NodeMessage_DeleteReq, *pb.NodeMessage_RenameReq, *pb.NodeMessage_CopyReq:
 		unhold, ok := h.storageMgr.tryHoldWriter(msg.ServerUuid)
 		if !ok {
-			return []*pb.NodeMessage{errorMsg(msg.RequestId, 409, "The server's storage is being moved; try again when the move finishes")}
+			return []*pb.NodeMessage{storageMovingMsg(msg.RequestId)}
 		}
 		defer unhold()
+	case *pb.NodeMessage_ListReq, *pb.NodeMessage_HashFilesReq, *pb.NodeMessage_BackupListReq, *pb.NodeMessage_BackupUsageReq, *pb.NodeMessage_InspectOrphanReq:
+		// Reads too: each waited out the move in a file slot, and four of
+		// them left every later request for the server answered "busy".
+		if h.storageMgr.isMoving(msg.ServerUuid) {
+			return []*pb.NodeMessage{storageMovingMsg(msg.RequestId)}
+		}
 	case *pb.NodeMessage_BackupDeleteReq:
 		// Held so migrate_out's writesSince sees it: an archive deleted after
 		// it was staged came back on the target with no row. Waited for rather
@@ -103,9 +109,19 @@ func (h *StreamHandler) Handle(msg *pb.NodeMessage) []*pb.NodeMessage {
 	}
 }
 
+func storageMovingMsg(reqID string) *pb.NodeMessage {
+	return errorMsg(reqID, 409, "The server's storage is being moved; try again when the move finishes")
+}
+
 // HandleStreaming processes read operations by streaming chunks via sendFn callback.
 // This avoids buffering entire files/zips in memory (~128KB constant RAM per download).
 func (h *StreamHandler) HandleStreaming(msg *pb.NodeMessage, sendFn func(*pb.NodeMessage) error) {
+	// The lookup would wait out the move holding a download slot, which has
+	// no timeout, so the next downloads queued behind it for the whole move.
+	if h.storageMgr.isMoving(msg.ServerUuid) {
+		sendFn(storageMovingMsg(msg.RequestId))
+		return
+	}
 	// SelectiveReadReq: zip selected files/folders
 	if selReq := msg.GetSelectiveReadReq(); selReq != nil {
 		defer h.storageMgr.holdReader(msg.ServerUuid)()

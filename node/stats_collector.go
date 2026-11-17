@@ -660,6 +660,11 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	// the shown CPU % after a 4 -> 8 core change.
 	var cpuLimit, cpuDiv float64
 	refreshCPULimit := func() {
+		// Its port and status-ping lookups wait out a storage move, an hour
+		// parked blind to ctx. A fenced server is stopped: nothing to refresh.
+		if globalStorageMgr.isMoving(uuid) {
+			return
+		}
 		info, err := dm.cli.ContainerInspect(dm.ctx, containerName)
 		if err != nil || info.HostConfig == nil {
 			return // keep the last good values
