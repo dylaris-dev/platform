@@ -2466,6 +2466,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Target side: pull the staged archive and extract it. No
 		// container start here: Core sends "reconfigure" with its config next,
 		// and the reconciler creates the container from that.
+		if !admitMoveOfDeletedServer(ctx, rdb, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.IssuedAt) {
+			break
+		}
 		handleMigrateIn(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.ExpectedSize, cmd.SourcePrivateIPs)
 		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit, cmd.Config.Docker.DiskGrace)
 
@@ -2489,6 +2492,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 
 	case "migrate_pull_r2":
 		// Target side (cross-LAN BYON fallback): download from R2, verify, extract.
+		if !admitMoveOfDeletedServer(ctx, rdb, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.IssuedAt) {
+			break
+		}
 		handleMigratePullR2(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.PresignedGetURL, cmd.ExpectedSha256, cmd.ExpectedSize)
 		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit, cmd.Config.Docker.DiskGrace)
 

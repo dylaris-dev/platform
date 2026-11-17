@@ -84,6 +84,56 @@ func TestIntegrationBackupRunUploadIsStoredOnce(t *testing.T) {
 	}
 }
 
+// T06: a rerun's fresh upload replaces the stored one only while that one is
+// still the stored upload, uncompleted, on a running run.
+func TestIntegrationBackupRunUploadIsReplacedOnce(t *testing.T) {
+	_, st := integrationDB(t)
+	f := newFixture(t, st)
+
+	jobID, err := st.CreateBackupJob(&models.BackupJob{ServerID: f.server.ID, Name: "t06", Schedule: "manual", RetentionCount: 3, Enabled: true})
+	if err != nil {
+		t.Fatalf("CreateBackupJob: %v", err)
+	}
+	t.Cleanup(func() { st.DeleteBackupJob(jobID) })
+	newRun := func(key string) int {
+		id, err := st.CreateBackupRun(&models.BackupRun{JobID: jobID, Status: "running", StorageKey: key})
+		if err != nil {
+			t.Fatalf("CreateBackupRun: %v", err)
+		}
+		if stored, err := st.SetBackupRunUpload(id, "upload-old", 64<<20); err != nil || !stored {
+			t.Fatalf("SetBackupRunUpload = %v, %v", stored, err)
+		}
+		return id
+	}
+
+	runID := newRun("backups/t06/run.tar.gz")
+	if ok, err := st.ReplaceBackupRunUpload(runID, "upload-old", "upload-new", 32<<20); err != nil || !ok {
+		t.Fatalf("first replace = %v, %v; want replaced", ok, err)
+	}
+	if ok, err := st.ReplaceBackupRunUpload(runID, "upload-old", "upload-other", 32<<20); err != nil || ok {
+		t.Fatalf("second replace of the same old upload = %v, %v; want refused", ok, err)
+	}
+	if run, err := st.GetBackupRun(runID); err != nil || run.UploadID != "upload-new" || run.PartSize != 32<<20 {
+		t.Fatalf("stored %+v, %v; want upload-new / %d", run, err, 32<<20)
+	}
+
+	completed := newRun("backups/t06/completed.tar.gz")
+	if stored, err := st.SetBackupRunUploaded(completed, 4096); err != nil || !stored {
+		t.Fatalf("SetBackupRunUploaded = %v, %v", stored, err)
+	}
+	if ok, err := st.ReplaceBackupRunUpload(completed, "upload-old", "upload-new", 32<<20); err != nil || ok {
+		t.Fatalf("replace on a completed upload = %v, %v; want refused", ok, err)
+	}
+
+	closed := newRun("backups/t06/closed.tar.gz")
+	if err := st.UpdateBackupRunStatus(closed, "failed", "reaped", 0, "backups/t06/closed.tar.gz", time.Now()); err != nil {
+		t.Fatalf("UpdateBackupRunStatus: %v", err)
+	}
+	if ok, err := st.ReplaceBackupRunUpload(closed, "upload-old", "upload-new", 32<<20); err != nil || ok {
+		t.Fatalf("replace on a failed run = %v, %v; want refused", ok, err)
+	}
+}
+
 // A fresh install gets both columns from the first boot.
 func TestIntegrationBackupRunUploadColumnsOnAFreshSchema(t *testing.T) {
 	db := freshSchemaDB(t)

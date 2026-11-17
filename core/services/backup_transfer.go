@@ -260,7 +260,12 @@ func (t *BackupTransfer) uploadPartURLs(ctx context.Context, node nodegrpc.Node,
 		if err != nil {
 			return nil, err
 		}
-	} else if err := t.checkUploadSoFar(ctx, u, uploadID, partSize, parts); err != nil {
+	} else if err := t.checkUploadSoFar(ctx, u, uploadID, partSize, parts); errors.Is(err, errStaleUpload) {
+		uploadID, partSize, err = t.restartUpload(ctx, run, prov, uploadID)
+		if err != nil {
+			return nil, err
+		}
+	} else if err != nil {
 		return nil, err
 	}
 	if err := t.store.TouchBackupRunTransfer(run.ID); err != nil {
@@ -297,6 +302,13 @@ func (t *BackupTransfer) checkUploadSoFar(ctx context.Context, u *runUpload, upl
 	if err != nil {
 		return fmt.Errorf("list the parts uploaded so far: %w", err)
 	}
+	// The node opens every attempt with a batch from part 1 and retries part 1
+	// alone, so an opening request on an upload that holds parts is a rerun
+	// (a redelivery after a node restart). Complete takes every part the upload
+	// holds, and the earlier attempt's tail would break or join the new archive.
+	if parts[0] == 1 && len(parts) > 1 && usage.Parts > 0 {
+		return errStaleUpload
+	}
 	var refusal error
 	switch {
 	case usage.Largest > partSize:
@@ -316,6 +328,40 @@ func (t *BackupTransfer) checkUploadSoFar(ctx context.Context, u *runUpload, upl
 		}
 	}
 	return nil
+}
+
+// errStaleUpload is checkUploadSoFar's answer for an upload an earlier attempt
+// of the run left parts in.
+var errStaleUpload = errors.New("the upload holds an earlier attempt's parts")
+
+// restartUpload replaces the run's upload oldID with a fresh one and aborts the
+// old one. A replica that lost the swap to another aborts its own and uses the
+// stored one, as in startUpload.
+func (t *BackupTransfer) restartUpload(ctx context.Context, run *models.BackupRun, prov backupstorage.Storage, oldID string) (string, int64, error) {
+	created, err := prov.CreateMultipart(ctx, run.StorageKey)
+	if err != nil {
+		return "", 0, fmt.Errorf("create multipart upload: %w", err)
+	}
+	stored, err := t.store.ReplaceBackupRunUpload(run.ID, oldID, created, t.partSize)
+	abort := created
+	if err == nil && stored {
+		abort = oldID
+	}
+	if aerr := prov.AbortMultipart(ctx, run.StorageKey, abort); aerr != nil {
+		log.Printf("backup transfer: run %d: could not abort the upload %s for %s: %v", run.ID, abort, run.StorageKey, aerr)
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("store upload id: %w", err)
+	}
+	if stored {
+		log.Printf("backup transfer: run %d: a rerun started at part 1, replaced the earlier attempt's upload", run.ID)
+		return created, t.partSize, nil
+	}
+	again, err := t.store.GetBackupRun(run.ID)
+	if err != nil || again == nil || again.UploadID == "" || again.Status != "running" || again.UploadedBytes != nil {
+		return "", 0, refused("backup run %d is no longer running", run.ID)
+	}
+	return again.UploadID, again.PartSize, nil
 }
 
 // startUpload creates the run's multipart upload and stores it, or, when a

@@ -635,6 +635,25 @@ func (s *PostgresStore) SetBackupRunUpload(runID int, uploadID string, partSize 
 	return n == 1, nil
 }
 
+// ReplaceBackupRunUpload swaps the run's upload for a fresh one, only while the
+// run is running, its upload is still oldUploadID and was not completed. The
+// same race as SetBackupRunUpload: of two replicas replacing one upload, one
+// write lands and the other aborts its own.
+func (s *PostgresStore) ReplaceBackupRunUpload(runID int, oldUploadID, uploadID string, partSize int64) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE backup_runs SET upload_id = $1, part_size = $2 WHERE id = $3 AND upload_id = $4 AND uploaded_bytes IS NULL AND status = 'running'`,
+		uploadID, partSize, runID, oldUploadID,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
 // SetBackupRunUploaded records the size of the archive Core just completed for
 // a run, and reports whether the run was still running to take it. A run that
 // was closed while the completion was under way reports false, and the caller

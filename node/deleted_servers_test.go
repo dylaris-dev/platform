@@ -192,3 +192,49 @@ func TestACreateIssuedAfterTheDeleteClearsTheTombstone(t *testing.T) {
 		})
 	}
 }
+
+// T01: a move Core issued after the delete brings the server back just like a
+// create does. Without clearing the tombstone the move landed, Core cut over
+// and removed the source copy, and nothing here could build the container.
+// A move that cannot show it came after the delete fails before any byte is
+// pulled, so Core rolls back while the source still has the server.
+func TestAMoveIssuedAfterTheDeleteClearsTheTombstone(t *testing.T) {
+	cases := []struct {
+		name         string
+		tombstone    bool
+		deleteIssued int64
+		moveIssued   int64
+		wantAdmit    bool
+	}{
+		{"no tombstone", false, 0, 0, true},
+		{"move issued after the delete", true, 1000, 2000, true},
+		{"move queued before the delete", true, 1000, 990, false},
+		{"old core: move has no issuedAt", true, 1000, 0, false},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			uuid := "7d1e0000-0000-4000-8000-0000000006a" + string(rune('0'+i))
+			prev := nodeSecretDir
+			nodeSecretDir = t.TempDir()
+			t.Cleanup(func() { nodeSecretDir = prev; forgetTombstoneInMemory(uuid) })
+			rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+			if c.tombstone {
+				markServerDeletedIssued(uuid, c.deleteIssued)
+			}
+
+			if got := admitMoveOfDeletedServer(context.Background(), rdb, "tok", uuid, uuid, c.moveIssued); got != c.wantAdmit {
+				t.Fatalf("admitted = %v, want %v", got, c.wantAdmit)
+			}
+			if serverDeleted(uuid) == c.wantAdmit {
+				t.Fatalf("serverDeleted = %v after admit %v", serverDeleted(uuid), c.wantAdmit)
+			}
+			st := readMigrationStatusMaybe(rdb, uuid)
+			if c.wantAdmit && st.Phase != "" {
+				t.Fatalf("an admitted move wrote status %q", st.Phase)
+			}
+			if !c.wantAdmit && st.Phase != "error" {
+				t.Fatalf("a refused move wrote phase %q, want error so Core rolls back", st.Phase)
+			}
+		})
+	}
+}

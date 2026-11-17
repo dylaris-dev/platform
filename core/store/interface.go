@@ -514,6 +514,9 @@ type Store interface {
 	// where none is stored yet and the run is still running, and reports whether
 	// this call's values were the ones stored.
 	SetBackupRunUpload(runID int, uploadID string, partSize int64) (bool, error)
+	// ReplaceBackupRunUpload swaps a running run's stored upload oldUploadID for
+	// uploadID before it completed, and reports whether it did.
+	ReplaceBackupRunUpload(runID int, oldUploadID, uploadID string, partSize int64) (bool, error)
 	// SetBackupRunUploaded records the size Core measured on completing a run's
 	// upload, only while the run is still running, and reports whether it did.
 	SetBackupRunUploaded(runID int, size int64) (bool, error)

@@ -129,6 +129,17 @@ func (f *transferFakeStore) SetBackupRunUpload(runID int, uploadID string, partS
 	return true, nil
 }
 
+func (f *transferFakeStore) ReplaceBackupRunUpload(runID int, oldUploadID, uploadID string, partSize int64) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.runs[runID]
+	if !ok || r.UploadID != oldUploadID || r.UploadedBytes != nil || r.Status != "running" {
+		return false, nil
+	}
+	r.UploadID, r.PartSize = uploadID, partSize
+	return true, nil
+}
+
 func (f *transferFakeStore) UpdateBackupRunStatus(id int, status, message string, size int64, key string, _ time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -450,6 +461,55 @@ func TestBackupTransfer_PartURLsStartTheUploadOnce(t *testing.T) {
 	}
 	if st.runs[1].UploadID != "upload-1" || st.runs[1].PartSize != backupPartSize {
 		t.Errorf("stored upload %q part size %d", st.runs[1].UploadID, st.runs[1].PartSize)
+	}
+}
+
+// T06: a backup redelivered after a node restart starts its archive again at
+// part 1, into the upload the killed attempt left behind. Complete takes every
+// part the upload holds, so the old attempt's tail broke the completion or, on
+// an exact part boundary, was spliced onto the new archive. The node's opening
+// request (a batch from part 1) on an upload that already holds parts gets a
+// fresh upload; a retry of part 1 alone and later batches keep the stored one.
+func TestBackupTransfer_ARerunStartsAFreshUpload(t *testing.T) {
+	cases := []struct {
+		name        string
+		parts       []int32
+		heldParts   int
+		wantRestart bool
+	}{
+		{"rerun opens on an upload holding parts", []int32{1, 2, 3, 4}, 3, true},
+		{"opening on an upload holding nothing", []int32{1, 2, 3, 4}, 0, false},
+		{"retry of part 1 alone", []int32{1}, 3, false},
+		{"next batch", []int32{5, 6, 7, 8}, 4, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			st := newTransferFakeStore()
+			st.runs[1].UploadID, st.runs[1].PartSize = "upload-old", backupPartSize
+			prov := &fakeMultipartStorage{usage: backupstorage.MultipartUsage{Parts: c.heldParts, Bytes: int64(c.heldParts) * backupPartSize, Largest: backupPartSize}}
+			tr := newTestTransfer(st, prov)
+
+			resp := tr.HandleUploadPartURLs(context.Background(), hostingNode, partURLsMsg("1", c.parts...)).GetUploadPartUrlsResponse()
+			if resp.Error != "" {
+				t.Fatalf("error: %s", resp.Error)
+			}
+			want := "upload-old"
+			if c.wantRestart {
+				want = "upload-1"
+			}
+			if resp.UploadId != want || st.runs[1].UploadID != want {
+				t.Fatalf("answered %q, stored %q, want %q", resp.UploadId, st.runs[1].UploadID, want)
+			}
+			for _, u := range resp.Urls {
+				if !strings.Contains(u.Url, "uploadId="+want) {
+					t.Errorf("url %q not signed for %q", u.Url, want)
+				}
+			}
+			aborted := len(prov.aborted) == 1 && prov.aborted[0] == "upload-old"
+			if aborted != c.wantRestart || (!c.wantRestart && len(prov.aborted) != 0) {
+				t.Fatalf("aborted = %v, want the old upload aborted: %v", prov.aborted, c.wantRestart)
+			}
+		})
 	}
 }
 

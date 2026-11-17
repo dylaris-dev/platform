@@ -177,3 +177,21 @@ var removeTreeVerified = func(dir string) error {
 	}
 	return err
 }
+
+// admitMoveOfDeletedServer reports whether a move into uuid may land here. A
+// move is the other command that brings a deleted server back: Core reuses a
+// UUID, and the tombstone would otherwise refuse every container build for the
+// server once the move had cut over and the source copy was gone. The same
+// rule as a create decides; a refused move fails before any byte is pulled.
+func admitMoveOfDeletedServer(ctx context.Context, rdb *redis.Client, nodeToken, uuid, progressID string, issuedAt int64) bool {
+	if !serverDeleted(uuid) {
+		return true
+	}
+	if !clearTombstoneForCreate(uuid, issuedAt) {
+		log.Printf("move %s: the server was deleted on this node after the move was issued, refusing it", uuid)
+		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "the server was deleted on the target node")
+		return false
+	}
+	log.Printf("move %s: a server deleted here moves back under its UUID, tombstone cleared", uuid)
+	return true
+}
