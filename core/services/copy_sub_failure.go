@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dylaris-core/models"
+	"dylaris-core/store"
 	"dylaris-pkg/validate"
 )
 
@@ -86,15 +87,7 @@ func (s *StatusWatcherService) consumeCopySubFailures(ctx context.Context) bool 
 				continue
 			}
 			log.Printf("Server %s: the copy to sub-server %q failed on the node (%s), removing its rows", srv.UUID, rep.Target, rep.Reason)
-			if err := s.store.ReplaceServerMods(srv.ID, rep.Target, nil); err != nil {
-				log.Printf("Server %s: could not remove the mod rows of %q: %v", srv.UUID, rep.Target, err)
-			}
-			if err := s.store.DeleteSubServerInstall(srv.ID, rep.Target); err != nil {
-				log.Printf("Server %s: could not remove the install record of %q: %v", srv.UUID, rep.Target, err)
-			}
-			if err := s.store.ReplaceServerModpackContents(srv.ID, rep.Target, nil); err != nil {
-				log.Printf("Server %s: could not remove the modpack snapshot of %q: %v", srv.UUID, rep.Target, err)
-			}
+			RemoveCopyTargetRows(s.store, srv, rep.Target)
 			reason := rep.Reason
 			if reason == "" {
 				reason = "the node could not copy the files"
@@ -107,6 +100,20 @@ func (s *StatusWatcherService) consumeCopySubFailures(ctx context.Context) bool 
 		if cursor == 0 {
 			return changed
 		}
+	}
+}
+
+// RemoveCopyTargetRows removes the rows CopySubServer wrote for target: its
+// mod rows, install record and modpack snapshot.
+func RemoveCopyTargetRows(st store.Store, srv *models.Server, target string) {
+	if err := st.ReplaceServerMods(srv.ID, target, nil); err != nil {
+		log.Printf("Server %s: could not remove the mod rows of %q: %v", srv.UUID, target, err)
+	}
+	if err := st.DeleteSubServerInstall(srv.ID, target); err != nil {
+		log.Printf("Server %s: could not remove the install record of %q: %v", srv.UUID, target, err)
+	}
+	if err := st.ReplaceServerModpackContents(srv.ID, target, nil); err != nil {
+		log.Printf("Server %s: could not remove the modpack snapshot of %q: %v", srv.UUID, target, err)
 	}
 }
 

@@ -2246,6 +2246,14 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer commandsInFlight.leave("reinstall:" + cmd.Config.UUID)
+		// Shared with a version move: both stash the jars in the one dir. The
+		// move holds the busy status, so the refusal writes none of its own.
+		if !commandsInFlight.enter(softwareKey(cmd.Config.UUID)) {
+			log.Printf("Reinstall of %s/%s refused: a version move of this server is running on this node", cmd.Config.UUID, subName)
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("a version move of this server was still running"))
+			return
+		}
+		defer commandsInFlight.leave(softwareKey(cmd.Config.UUID))
 		// Hold the reconciler off for the whole reinstall: we are about to stop a
 		// container whose desired_state is still "online" and then delete its JARs.
 		releaseBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)

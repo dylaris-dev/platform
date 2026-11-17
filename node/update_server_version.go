@@ -136,6 +136,13 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		return
 	}
 	defer commandsInFlight.leave("copy_sub:" + pl.UUID)
+	if !commandsInFlight.enter(softwareKey(pl.UUID)) {
+		log.Printf("update_server_version: a reinstall of %s is running on this node, refusing the move", pl.UUID)
+		// The reinstall's own hold reports its status; this one has written none.
+		abandonVersionUpdate(ctx, rdb, pl.UUID, "a reinstall of this server was still running")
+		return
+	}
+	defer commandsInFlight.leave(softwareKey(pl.UUID))
 
 	// Hold the reconciler off for the whole move, exactly like reinstall: the
 	// container is about to be stopped while its desired_state is still online.

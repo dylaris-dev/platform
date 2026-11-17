@@ -32,6 +32,12 @@ type jarStash struct {
 	complete bool
 }
 
+// softwareKey is the commandsInFlight key every command that stashes a
+// server's jars holds (reinstall, update_server_version). Their own keys did
+// not exclude each other, and both work on the one stash dir per sub-server:
+// one's recovery put the other's live stash back over its install.
+func softwareKey(uuid string) string { return "software:" + uuid }
+
 // stashServerJars moves aside what CleanServerJars removes from sub: the root
 // jars and the generated directories, plus the Forge/NeoForge launch dirs a
 // loader install clears (clearLoaderLaunchDirs), which hold the unix_args.txt

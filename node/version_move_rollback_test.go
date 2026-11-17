@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -519,5 +520,49 @@ func TestVersionMoveRecoversAStrandedStashBeforeItCanAbort(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(root, uuid, ".main.oldjars")); !os.IsNotExist(err) {
 		t.Errorf("the stash is still there: %v", err)
+	}
+}
+
+// A version move never runs beside a reinstall of the same server: both set
+// the old software aside in the one stash dir, and the move's stranded-stash
+// recovery put a running reinstall's stash back over the reinstall's install.
+// Refused before the stash is touched.
+func TestVersionMoveRefusesBesideARunningReinstall(t *testing.T) {
+	root := t.TempDir()
+	const uuid = "srv-move-reinstalling"
+	stashed := filepath.Join(root, uuid, ".main.oldjars", "main", "server.jar")
+	writeTestFile(t, stashed, "old jar")
+	commandsInFlight.enter(softwareKey(uuid))
+	defer commandsInFlight.leave(softwareKey(uuid))
+	rdb := newMiniRedis(t)
+	payload, _ := json.Marshal(map[string]interface{}{"config": map[string]interface{}{
+		"uuid": uuid, "activeSubServer": "main", "targetDir": "plugins",
+	}})
+	// dm is nil: reaching the stop would panic, which is the point.
+	runUpdateServerVersion(context.Background(), rdb, nil, &StorageManager{paths: []string{root}},
+		NodeCommand{Installer: InstallerConfig{Type: "paper"}}, string(payload))
+
+	if got, _ := rdb.Get(context.Background(), "dylaris:server:"+uuid+":version_update_failed").Result(); got == "" {
+		t.Error("Core was not told the move did not happen")
+	}
+	if readTestFile(stashed) != "old jar" {
+		t.Error("the reinstall's stash was touched beside it")
+	}
+}
+
+// The reinstall takes the same software key, so whichever of the two comes
+// second is refused. The case is inline in the command switch, so this pins it
+// in the source like TestDestructiveCommandsGuardAgainstADuplicate does.
+func TestReinstallTakesTheSoftwareKey(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	m := regexp.MustCompile(`(?s)case "reinstall":(.*?)stashServerJars\(`).FindStringSubmatch(string(src))
+	if m == nil {
+		t.Fatal("reinstall case or its stash not found")
+	}
+	if !strings.Contains(m[1], "commandsInFlight.enter(softwareKey(") {
+		t.Fatal("reinstall stashes the jars without taking the software key a version move takes")
 	}
 }

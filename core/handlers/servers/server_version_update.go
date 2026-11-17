@@ -933,26 +933,11 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Before the dispatch, so a version move can never see the copy as neither
-	// queued nor running (refuseUntilCopyLanded).
-	if h.d.Redis != nil {
-		h.d.Redis.Set(r.Context(), services.CopyPendingKey(srv.UUID), req.TargetName, services.CopyPendingTTL)
-	}
-	if err := h.d.Queue.SendCommand(context.Background(), node.Token, "copy_sub_server", map[string]interface{}{
-		"uuid":            srv.UUID,
-		"sourceSubServer": srv.ActiveSubServer,
-		"targetSubServer": req.TargetName,
-	}, nil); err != nil {
-		if h.d.Redis != nil {
-			h.d.Redis.Del(r.Context(), services.CopyPendingKey(srv.UUID))
-		}
-		httpx.SendJSONError(w, "Failed to queue the copy", http.StatusInternalServerError)
-		return
-	}
-
 	// The mod inventory is per sub-server, so the copy needs its own rows or it
 	// would look like a server with no mods installed while the jars are right
-	// there on disk.
+	// there on disk. Written BEFORE the dispatch: the node reports a copy it
+	// cannot make within milliseconds, and rows landing after the status
+	// watcher removed the failed target's rows stayed for good.
 	for _, m := range mods {
 		copied := copiedModRow(m, req.TargetName)
 		_, _ = h.d.Store.UpsertServerMod(&copied)
@@ -990,6 +975,24 @@ func (h *ServerModsHandler) CopySubServer(w http.ResponseWriter, r *http.Request
 			log.Printf("CopySubServer: could not copy the modpack snapshot for server %d/%s: %v",
 				serverID, req.TargetName, err)
 		}
+	}
+
+	// Before the dispatch, so a version move can never see the copy as neither
+	// queued nor running (refuseUntilCopyLanded).
+	if h.d.Redis != nil {
+		h.d.Redis.Set(r.Context(), services.CopyPendingKey(srv.UUID), req.TargetName, services.CopyPendingTTL)
+	}
+	if err := h.d.Queue.SendCommand(context.Background(), node.Token, "copy_sub_server", map[string]interface{}{
+		"uuid":            srv.UUID,
+		"sourceSubServer": srv.ActiveSubServer,
+		"targetSubServer": req.TargetName,
+	}, nil); err != nil {
+		if h.d.Redis != nil {
+			h.d.Redis.Del(r.Context(), services.CopyPendingKey(srv.UUID))
+		}
+		services.RemoveCopyTargetRows(h.d.Store, srv, req.TargetName)
+		httpx.SendJSONError(w, "Failed to queue the copy", http.StatusInternalServerError)
+		return
 	}
 
 	h.d.Events.Publish(r.Context(), "servers.changed", nil)
