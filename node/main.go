@@ -2742,6 +2742,9 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) error {
 		return fmt.Errorf("%s belongs to node %s on this Docker daemon, not stopping it", mcName, info.Config.Labels[ownerLabel])
 	}
 
+	// Before the stop: the reconciler ticks while it runs. See nodeStops.
+	nodeStops.Store(uuid, time.Now())
+
 	// Set stop flag so log-shipper knows not to restart Java
 	rdb.Set(ctx, stopKey, "1", 120*time.Second)
 	// And drop it once the container is down. The log-shipper deletes it when
@@ -2758,6 +2761,9 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) error {
 		cInfo, cErr := dm.cli.ContainerInspect(ctx, mcName)
 		if cErr != nil || cInfo.State == nil || !cInfo.State.Running {
 			rdb.Del(ctx, stopKey)
+		} else {
+			// The stop did not take: a later stop of this run is not the node's.
+			nodeStops.Delete(uuid)
 		}
 		if client.IsErrNotFound(cErr) || (cErr == nil && (cInfo.State == nil || !cInfo.State.Running)) {
 			rdb.Del(ctx, inputKey)

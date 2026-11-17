@@ -27,7 +27,7 @@ import (
 // lines, reads as "restart it".
 func (dm *DockerManager) stoppedItself(ctx context.Context, rdb *redis.Client, uuid string) bool {
 	info, err := dm.cli.ContainerInspect(dm.ctx, "mc_"+uuid)
-	if err != nil || !exitedCleanlyAfter(info.State, nodeStartedAt) || stoppedByDiskGuard(uuid, info.State) {
+	if err != nil || !exitedCleanlyAfter(info.State, nodeStartedAt) || stoppedByNode(uuid, info.State) {
 		return false
 	}
 	started, err := time.Parse(time.RFC3339Nano, info.State.StartedAt)
@@ -51,18 +51,21 @@ func (dm *DockerManager) stoppedItself(ctx context.Context, rdb *redis.Client, u
 	return !logTailAsksRestart(ctx, rdb, serverLogStreamKey(uuid, sub), since)
 }
 
-// diskGuardTrips is when the disk guard last stopped each server (uuid ->
-// time.Time). Its stop exits 0 like "stop" in the console, and without this the
-// reconciler read it as the server stopping itself once the hold was lifted,
-// so a server whose owner freed space stayed down until someone pressed Start.
+// nodeStops is when this node last stopped each server itself (uuid ->
+// time.Time): gracefulStop for a setup, reinstall, version move, restart or
+// the disk guard. Such a stop exits 0 like "stop" in the console, and without
+// this the reconciler read it as the server stopping itself, so a server whose
+// reinstall failed, or whose owner freed space after a disk guard trip, stayed
+// down until someone pressed Start. A stop Core asked for flips desired_state
+// to "stopped" first, so the reconciler never asks about it.
 // Node memory only: after a node restart the stop predates nodeStartedAt and
 // exitedCleanlyAfter already lets the server come back.
-var diskGuardTrips sync.Map
+var nodeStops sync.Map
 
-// stoppedByDiskGuard reports whether st is the run the disk guard stopped:
-// it was running when the guard tripped and ended after.
-func stoppedByDiskGuard(uuid string, st *container.State) bool {
-	v, ok := diskGuardTrips.Load(uuid)
+// stoppedByNode reports whether st is the run this node stopped: it was
+// running when the stop began and ended after.
+func stoppedByNode(uuid string, st *container.State) bool {
+	v, ok := nodeStops.Load(uuid)
 	if !ok || st == nil {
 		return false
 	}

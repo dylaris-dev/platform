@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/redis/go-redis/v9"
 )
@@ -113,5 +114,66 @@ func TestFileWorkAbortsOnAFailedStop(t *testing.T) {
 	}
 	if !strings.Contains(string(rs), "err := gracefulStop(") || regexp.MustCompile(`(?m)^\s*gracefulStop\(`).Match(rs) {
 		t.Error("RunRestore does not check gracefulStop's error")
+	}
+}
+
+// V02: a setup, reinstall, version move or restart stops the server through
+// gracefulStop, and the JVM exits 0. When the work then failed and left the
+// server down, the reconciler read that exit as the server stopping itself and
+// Core cleared its intent to run. The run gracefulStop stopped must read as
+// the node's stop; a stop that did not take must not mark the run.
+func TestGracefulStopMarksTheRunAsTheNodes(t *testing.T) {
+	prevWait := gracefulStopWait
+	gracefulStopWait = 300 * time.Millisecond
+	t.Cleanup(func() { gracefulStopWait = prevWait })
+
+	const uuid = "cdcdcdcd-2222-3333-4444-666666666666"
+	for _, c := range []struct {
+		name     string
+		exits    bool // the container is down after the stop
+		wantMark bool
+	}{
+		{"stopped", true, true},
+		{"still running after a failed forced stop", false, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			nodeStops.Delete(uuid)
+			t.Cleanup(func() { nodeStops.Delete(uuid) })
+			var inspects atomic.Int32
+			started := time.Now().Add(-time.Millisecond)
+			startedAt := started.Format(time.RFC3339Nano) // just started: no 3s save-all
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/containers/mc_"+uuid+"/json"):
+					if inspects.Add(1) == 1 || !c.exits {
+						w.Write([]byte(`{"Id":"c","State":{"Running":true,"StartedAt":"` + startedAt + `"}}`))
+						return
+					}
+					w.Write([]byte(`{"Id":"c","State":{"Running":false}}`))
+				case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/stop"):
+					w.WriteHeader(http.StatusInternalServerError)
+					w.Write([]byte(`{"message":"cannot stop"}`))
+				default:
+					w.Write([]byte(`{}`))
+				}
+			}))
+			t.Cleanup(srv.Close)
+			cli, err := client.NewClientWithOpts(client.WithHost("tcp://"+strings.TrimPrefix(srv.URL, "http://")), client.WithVersion("1.44"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { cli.Close() })
+			dm := &DockerManager{cli: cli, ctx: t.Context(), localDataPath: t.TempDir()}
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+			gracefulStop(rdb, uuid, dm)
+
+			run := &container.State{ExitCode: 0, StartedAt: startedAt, FinishedAt: time.Now().Format(time.RFC3339Nano)}
+			if got := stoppedByNode(uuid, run); got != c.wantMark {
+				t.Errorf("stoppedByNode = %v, want %v", got, c.wantMark)
+			}
+		})
 	}
 }

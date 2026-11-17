@@ -873,14 +873,14 @@ func holdForDiskFull(_ context.Context, rdb *redis.Client, uuid, liveKey string,
 		log.Printf("Disk guard could not mark %s, retrying on the next measurement: %v", uuid, err)
 		return
 	}
-	diskGuardTrips.Store(uuid, time.Now())
+	nodeStops.Store(uuid, time.Now())
 	if err := stop(); err != nil {
 		// The server may still be running and writing. Undo the trip so the
 		// next disk tick tries again, instead of the marker holding a running
 		// server as disk_full for its whole TTL.
 		log.Printf("Disk guard could not stop %s, retrying on the next measurement: %v", uuid, err)
 		rdb.Del(context.Background(), diskFullKey(uuid))
-		diskGuardTrips.Delete(uuid)
+		nodeStops.Delete(uuid)
 		return
 	}
 	// A fresh timeout: the stop can take most of the first one.
@@ -908,7 +908,7 @@ func releaseDiskHold(ctx context.Context, rdb *redis.Client, uuid, liveKey strin
 		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
 	} else {
 		// The guard's stop did not take: a later stop of this run is the owner's.
-		diskGuardTrips.Delete(uuid)
+		nodeStops.Delete(uuid)
 	}
 	evt, _ := json.Marshal(map[string]interface{}{
 		"type":    "disk_warning",

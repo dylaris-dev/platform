@@ -20,7 +20,7 @@ func TestTheDiskGuardsStopIsNotTheServerStoppingItself(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	const uuid = "dddddddd-1111-2222-3333-555555555555"
 	const other = "dddddddd-1111-2222-3333-666666666666"
-	t.Cleanup(func() { diskGuardTrips.Delete(uuid) })
+	t.Cleanup(func() { nodeStops.Delete(uuid) })
 
 	before := time.Now().Add(-time.Minute)
 	holdForDiskFull(context.Background(), rdb, uuid, "live", &DiskUsagePayload{Total: 2, Limit: 1}, func() error { return nil })
@@ -41,7 +41,7 @@ func TestTheDiskGuardsStopIsNotTheServerStoppingItself(t *testing.T) {
 		{"a server the guard never tripped", other, stoppedByGuard, false},
 		{"no state", uuid, nil, false},
 	} {
-		if got := stoppedByDiskGuard(c.uuid, c.st); got != c.want {
+		if got := stoppedByNode(c.uuid, c.st); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}
@@ -49,7 +49,7 @@ func TestTheDiskGuardsStopIsNotTheServerStoppingItself(t *testing.T) {
 	// A hold lifted from a still-running container: the guard's stop did not
 	// take, so a later clean stop of that run is the owner's own.
 	releaseDiskHold(context.Background(), rdb, uuid, "live", &DiskUsagePayload{Total: 0, Limit: 1}, true)
-	if stoppedByDiskGuard(uuid, stoppedByGuard) {
+	if stoppedByNode(uuid, stoppedByGuard) {
 		t.Error("a run still running at the release still counts as the guard's stop")
 	}
 }
@@ -61,7 +61,7 @@ func TestAFailedDiskGuardStopDoesNotHold(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	const uuid = "dddddddd-1111-2222-3333-777777777777"
-	t.Cleanup(func() { diskGuardTrips.Delete(uuid) })
+	t.Cleanup(func() { nodeStops.Delete(uuid) })
 
 	holdForDiskFull(context.Background(), rdb, uuid, "live", &DiskUsagePayload{Total: 2, Limit: 1}, func() error {
 		return errors.New("inspect: daemon busy")
@@ -70,7 +70,7 @@ func TestAFailedDiskGuardStopDoesNotHold(t *testing.T) {
 	if mr.Exists(diskFullKey(uuid)) {
 		t.Error("marker kept after a failed stop")
 	}
-	if _, ok := diskGuardTrips.Load(uuid); ok {
+	if _, ok := nodeStops.Load(uuid); ok {
 		t.Error("trip recorded after a failed stop")
 	}
 	if mr.Exists(fmt.Sprintf("dylaris:server:%s:status", uuid)) {

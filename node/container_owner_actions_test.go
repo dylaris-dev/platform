@@ -29,6 +29,9 @@ type sharedDaemon struct {
 	// noImage: a create answers 404 "No such image" until an image is pulled,
 	// as the Engine API does (only the docker CLI pulls on create).
 	noImage, pulled bool
+	// extraPorts is mc_<uuid>'s extraPortsLabel; startErr, when set, is what
+	// a start of it answers (500), as a host port taken by something else.
+	extraPorts, startErr string
 }
 
 func (d *sharedDaemon) changed() []string {
@@ -66,8 +69,17 @@ func newSharedDaemon(t *testing.T, owner string, running bool, onPull func()) (*
 			}
 			d.mu.Lock()
 			env, _ := json.Marshal(d.env)
+			lbl := labels
+			if d.extraPorts != "" {
+				l := map[string]string{extraPortsLabel: d.extraPorts}
+				if owner != "" {
+					l[ownerLabel] = owner
+				}
+				b, _ := json.Marshal(l)
+				lbl = string(b)
+			}
 			d.mu.Unlock()
-			w.Write([]byte(`{"Id":"c-id","State":{"Running":` + run + `},"Config":{"Image":"img:1","WorkingDir":"/data/main","Env":` + string(env) + `,"Labels":` + labels + `},"HostConfig":{},"NetworkSettings":{"Networks":{}}}`))
+			w.Write([]byte(`{"Id":"c-id","State":{"Running":` + run + `},"Config":{"Image":"img:1","WorkingDir":"/data/main","Env":` + string(env) + `,"Labels":` + lbl + `},"HostConfig":{},"NetworkSettings":{"Networks":{}}}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(p, "/containers/new-id-0123456789ab/json"):
 			w.Write([]byte(`{"Id":"new-id-0123456789ab","State":{"Running":true},"Config":{"Labels":{}},"NetworkSettings":{"Networks":{"dylaris_net":{}}}}`))
 		case strings.HasSuffix(p, "/images/create"):
@@ -113,6 +125,14 @@ func newSharedDaemon(t *testing.T, owner string, running bool, onPull func()) (*
 				return
 			}
 			d.record(verb + " " + parts[0])
+			d.mu.Lock()
+			startErr := d.startErr
+			d.mu.Unlock()
+			if verb == "start" && parts[0] != "new-id-0123456789ab" && startErr != "" {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"message":"` + startErr + `"}`))
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			w.Write([]byte(`{}`))
@@ -519,6 +539,32 @@ func TestReconcileRedisEnvLeavesAStoppedServerStopped(t *testing.T) {
 			}
 			if got := slices.Contains(ch, "start new-id-0123456789ab"); got != tc.start {
 				t.Errorf("started = %v (%v), want %v", got, ch, tc.start)
+			}
+		})
+	}
+}
+
+// V01: the reconciler's crash-restart and the first start after a host reboot
+// start the existing container, which still carries its extra port bindings.
+// With one of those ports taken on the host the start failed every pass and
+// the server stayed down, while a panel Start (a recreate) fell back to the
+// game port alone. A failed start of a container with extra ports recreates it.
+func TestAStartWithATakenExtraPortFallsBackToARecreate(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		extraPorts string
+		recreates  bool
+	}{
+		{"extra ports", "udp:24454", true},
+		{"no extra ports", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dm, d := newSharedDaemon(t, "node-a", false, nil)
+			d.extraPorts = c.extraPorts
+			d.startErr = "Bind for 0.0.0.0:24454 failed: port is already allocated"
+			dm.PowerAction(sharedDaemonUUID, "start")
+			if got := slices.Contains(d.changed(), "create"); got != c.recreates {
+				t.Errorf("recreated = %v (%v), want %v", got, d.changed(), c.recreates)
 			}
 		})
 	}

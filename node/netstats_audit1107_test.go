@@ -112,7 +112,7 @@ func TestADiskTripOnACancelledCollectorKeepsItsMarker(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
 	const uuid = "aaaaaaaa-1111-2222-3333-444444444444"
-	t.Cleanup(func() { diskGuardTrips.Delete(uuid) })
+	t.Cleanup(func() { nodeStops.Delete(uuid) })
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

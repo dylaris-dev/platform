@@ -1275,9 +1275,10 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		// up. The sub-server comes from the container's own working directory, the
 		// same source RestartContainer reads it from.
 		var env []string
-		activeSub := ""
+		activeSub, extraPorts := "", ""
 		if info, ierr := dm.cli.ContainerInspect(dm.ctx, mcName); ierr == nil {
 			env = info.Config.Env
+			extraPorts = containerLabel(info, extraPortsLabel)
 			if sub := strings.TrimPrefix(info.Config.WorkingDir, "/data/"); sub != "" && sub != info.Config.WorkingDir {
 				activeSub = sub
 				if oerr := ensureSubServerOwnership(filepath.Join(dm.resolveLocalServerPath(uuid), sub)); oerr != nil {
@@ -1318,6 +1319,14 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 				}
 			}
 			err = dm.cli.ContainerStart(dm.ctx, ref, container.StartOptions{})
+		}
+		if err != nil && extraPorts != "" {
+			// Most likely an extra port is now held by something else on the
+			// host, and this container keeps its bindings. A recreate goes
+			// through startMinecraftContainer's game-port-only fallback, as a
+			// panel Start does, instead of failing every reconciler pass.
+			log.Printf("start %s with extra ports %s failed (%v), recreating", mcName, extraPorts, err)
+			return dm.RestartContainer(uuid)
 		}
 		if err == nil {
 			dm.openNetGate(uuid)
