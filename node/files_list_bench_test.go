@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	pb "dylaris-proto/node"
 )
@@ -80,4 +81,48 @@ func TestListingSumsFolderSizes(t *testing.T) {
 		return
 	}
 	t.Fatalf("survival not listed: %v", msg)
+}
+
+// A folder size is reused within dirSizeTTL, recomputed after it, and dropped
+// for the server when the node itself changes a file there.
+func TestListingCachesFolderSizes(t *testing.T) {
+	h, uuid, root := seedNodeOwned(t)
+	clock := time.Unix(1000, 0)
+	nowDirSize = func() time.Time { return clock }
+	t.Cleanup(func() { nowDirSize = time.Now })
+
+	survivalSize := func() int64 {
+		t.Helper()
+		for _, f := range h.handleList("l", uuid, &pb.ListFilesReq{Path: "."}).GetListResp().GetFiles() {
+			if f.Name == "survival" {
+				return f.Size
+			}
+		}
+		t.Fatal("survival not listed")
+		return 0
+	}
+	grow := func(name string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, "survival", name), make([]byte, 100), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := survivalSize(); got != 10 {
+		t.Fatalf("first listing: %d, want 10", got)
+	}
+	grow("a.bin") // written behind the node's back, as the game server does
+	if got := survivalSize(); got != 10 {
+		t.Fatalf("within the TTL: %d, want the cached 10", got)
+	}
+	clock = clock.Add(dirSizeTTL + time.Second)
+	if got := survivalSize(); got != 110 {
+		t.Fatalf("after the TTL: %d, want 110", got)
+	}
+
+	grow("b.bin")
+	h.Handle(&pb.NodeMessage{RequestId: "c", ServerUuid: uuid, Payload: &pb.NodeMessage_CreateReq{CreateReq: &pb.CreateFileReq{Path: "survival/new.txt"}}})
+	if got := survivalSize(); got != 210 {
+		t.Fatalf("after a node write: %d, want 210", got)
+	}
 }

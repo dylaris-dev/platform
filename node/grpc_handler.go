@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"dylaris-pkg/validate"
 	pb "dylaris-proto/node"
@@ -61,6 +62,10 @@ func (h *StreamHandler) Handle(msg *pb.NodeMessage) []*pb.NodeMessage {
 		// than refused: Core drops the row even when the node refuses, so a
 		// refusal would leave the archive untracked instead.
 		defer h.storageMgr.holdWriter(msg.ServerUuid)()
+	}
+	switch msg.Payload.(type) {
+	case *pb.NodeMessage_WriteReq, *pb.NodeMessage_CreateReq, *pb.NodeMessage_DeleteReq, *pb.NodeMessage_RenameReq, *pb.NodeMessage_CopyReq:
+		defer dirSizes.forget(h.serverDir(msg.ServerUuid))
 	}
 	switch p := msg.Payload.(type) {
 	case *pb.NodeMessage_ListReq:
@@ -386,6 +391,7 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 	// of 50 folders cost twice the CPU for barely less wall time (measured,
 	// BenchmarkHandleList).
 	if len(dirs) > 0 && !req.GetNamesOnly() {
+		serverDir := h.serverDir(serverUUID)
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, 4)
 		for _, de := range dirs {
@@ -393,7 +399,7 @@ func (h *StreamHandler) handleList(reqID, serverUUID string, req *pb.ListFilesRe
 			sem <- struct{}{}
 			go func(f *pb.FileInfo, name string) {
 				defer func() { <-sem; wg.Done() }()
-				f.Size = dirSizeIn(root, name)
+				f.Size = dirSizes.get(serverDir, name, func() int64 { return dirSizeIn(root, name) })
 			}(de.info, de.name)
 		}
 		wg.Wait()
@@ -451,6 +457,71 @@ func dirSizeIn(root *os.Root, name string) int64 {
 	}
 	defer sub.Close()
 	return treeSize(sub)
+}
+
+// dirSizeTTL is how stale a folder size in the panel's listing may be. Each
+// listing walked every folder below it in full, about 4.7 % of a vCPU per
+// listing per second on a real world, and the panel lists again on every
+// navigation. Only the listing reads this cache: the disk guard and the quotas
+// measure with dirSize themselves, so nothing that enforces a limit sees it.
+const dirSizeTTL = 30 * time.Second
+
+// dirSizeMax bounds the cache. ponytail: dropped whole when full, an LRU if a
+// node ever lists more folders than this within one TTL.
+const dirSizeMax = 4096
+
+var nowDirSize = time.Now
+
+// dirSizes caches folder sizes per server directory, then Root name.
+var dirSizes = &dirSizeCache{m: map[string]map[string]dirSizeEntry{}}
+
+type dirSizeEntry struct {
+	size int64
+	at   time.Time
+}
+
+type dirSizeCache struct {
+	mu sync.Mutex
+	m  map[string]map[string]dirSizeEntry
+	n  int
+}
+
+// get returns the cached size of name under serverDir, or computes it. Two
+// listings racing on a cold folder both walk it; that is no worse than before.
+func (c *dirSizeCache) get(serverDir, name string, compute func() int64) int64 {
+	now := nowDirSize()
+	c.mu.Lock()
+	e, ok := c.m[serverDir][name]
+	c.mu.Unlock()
+	if ok && now.Sub(e.at) < dirSizeTTL {
+		return e.size
+	}
+	size := compute()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.n >= dirSizeMax {
+		c.m, c.n = map[string]map[string]dirSizeEntry{}, 0
+	}
+	byName := c.m[serverDir]
+	if byName == nil {
+		byName = map[string]dirSizeEntry{}
+		c.m[serverDir] = byName
+	}
+	if _, had := byName[name]; !had {
+		c.n++
+	}
+	byName[name] = dirSizeEntry{size: size, at: now}
+	return size
+}
+
+// forget drops every cached size of one server, after the node itself changed
+// a file there: a panel user who deletes a folder sees its parent shrink at
+// once instead of up to dirSizeTTL later.
+func (c *dirSizeCache) forget(serverDir string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.n -= len(c.m[serverDir])
+	delete(c.m, serverDir)
 }
 
 // treeSize walks r one directory handle at a time. fs.WalkDir over root.FS()
