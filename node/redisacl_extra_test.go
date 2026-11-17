@@ -35,3 +35,13 @@ func TestACLGoldenVectorsExtended(t *testing.T) {
 		t.Errorf("aclClusterProof vector drift vs Core:\n got  %s\n want %s", got, want)
 	}
 }
+
+// TestACLHostProofGoldenVector MUST match gateway/hub/pkg/hub
+// TestNodeHostProofGoldenVector. The Hub believes a heartbeat's hostname only
+// with this proof; a drift on one side stops every self-enrolled link from
+// being joined to its node, with nothing failing anywhere.
+func TestACLHostProofGoldenVector(t *testing.T) {
+	if got, want := aclHostProof("test-cluster-secret", "node-uuid-1", "eu-worker-01"), "0d064872716b4b008e26cfd9b26096e6e7e48d195c22aa09b7fc009b7ea6fe5f"; got != want {
+		t.Errorf("aclHostProof vector drift vs Hub:\n got  %s\n want %s", got, want)
+	}
+}

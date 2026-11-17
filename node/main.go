@@ -1166,10 +1166,13 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	// Only a node holding CLUSTER_SECRET is a platform machine with a
 	// self-enrolled Link to join. A BYON owner picks NODE_HOSTNAME freely, and a
 	// name that matches a platform machine would move that machine's Link
-	// mapping onto the BYON node. Not the security boundary (a tenant can patch
-	// their node); it stops accidental collisions.
+	// mapping onto the BYON node. That alone is not the security boundary (a
+	// tenant can patch their node); host_proof is: the Hub believes the hostname
+	// only with an HMAC under CLUSTER_SECRET, which a BYON node never holds.
 	if clusterSecret != "" {
-		data["hostname"] = machineHostname()
+		host := machineHostname()
+		data["hostname"] = host
+		data["host_proof"] = aclHostProof(clusterSecret, id, host)
 	}
 	// Auth: the node stamps a per-node HMAC signature instead of shipping the raw
 	// CLUSTER_SECRET over Redis. The secret is guaranteed non-nil after the

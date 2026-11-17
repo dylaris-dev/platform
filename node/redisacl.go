@@ -72,6 +72,17 @@ func aclClusterProof(clusterSecret, token string) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
+// aclHostProof is HMAC(CLUSTER_SECRET, id+hostname), sent beside the hostname in
+// the heartbeat. The Hub joins a self-enrolled Link to a node by hostname and
+// believes the pair only with this proof, since a BYON node can write any
+// payload into its own discovery key. CROSS-REPO: byte-identical to
+// gateway/hub/pkg/hub nodeHostProof.
+func aclHostProof(clusterSecret, id, hostname string) string {
+	m := hmac.New(sha256.New, []byte(clusterSecret))
+	m.Write([]byte("dylaris-node-host-proof:v1:" + id + ":" + hostname))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
 func aclDerive(secret []byte, domain string) string {
 	m := hmac.New(sha256.New, secret)
 	m.Write([]byte(domain))
