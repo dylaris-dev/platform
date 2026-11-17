@@ -47,6 +47,34 @@ func (s *inflightSet) enter(id string) bool {
 // and both ran: the restore swapped the tree the backup was archiving.
 var serverWorkMu sync.Mutex
 
+// treeChangesRunning counts, per server, the commands that rewrite its tree
+// (reinstall, version update, storage move, sub-server copy), under
+// serverWorkMu. A backup walking the tree while one of them moved the jars
+// aside or emptied the source left those parts out and still reported
+// success, and retention then deleted an older intact archive.
+var treeChangesRunning = map[string]int{}
+
+// enterTreeChangeOfServer marks a tree-changing command of the server as
+// running, or returns why it must not start. On "" the caller calls leave.
+func enterTreeChangeOfServer(uuid string) (leave func(), reason string) {
+	serverWorkMu.Lock()
+	defer serverWorkMu.Unlock()
+	if backupsInFlight.has("server:" + uuid) {
+		return nil, "a backup of this server is running on its node; try again once it has finished"
+	}
+	if restoreServersInFlight.has(uuid) {
+		return nil, "a restore of this server is running on its node; try again once it has finished"
+	}
+	treeChangesRunning[uuid]++
+	return func() {
+		serverWorkMu.Lock()
+		defer serverWorkMu.Unlock()
+		if treeChangesRunning[uuid]--; treeChangesRunning[uuid] <= 0 {
+			delete(treeChangesRunning, uuid)
+		}
+	}, ""
+}
+
 // enterBackupOfServer marks a backup of the server as running, or returns why
 // it must not start. On "" the caller leaves backupsInFlight "server:<uuid>".
 func enterBackupOfServer(uuid string) string {
@@ -54,6 +82,9 @@ func enterBackupOfServer(uuid string) string {
 	defer serverWorkMu.Unlock()
 	if restoreServersInFlight.has(uuid) {
 		return "a restore of this server was running on the node"
+	}
+	if treeChangesRunning[uuid] > 0 {
+		return "a reinstall, version update, storage move or copy of this server was running on the node"
 	}
 	if !backupsInFlight.enter("server:" + uuid) {
 		return "another backup of this server was still running on the node"
@@ -68,6 +99,9 @@ func enterRestoreOfServer(uuid string) string {
 	defer serverWorkMu.Unlock()
 	if backupsInFlight.has("server:" + uuid) {
 		return "a backup of this server is running on its node; restore once it has finished"
+	}
+	if treeChangesRunning[uuid] > 0 {
+		return "a reinstall, version update, storage move or copy of this server is running on its node; restore once it has finished"
 	}
 	if !restoreServersInFlight.enter(uuid) {
 		return "another restore of this server is still running on its node"

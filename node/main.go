@@ -2276,6 +2276,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer commandsInFlight.leave(softwareKey(cmd.Config.UUID))
+		leaveTree, treeBusy := enterTreeChangeOfServer(cmd.Config.UUID)
+		if treeBusy != "" {
+			log.Printf("Reinstall of %s/%s refused: %s", cmd.Config.UUID, subName, treeBusy)
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New(treeBusy))
+			return
+		}
+		defer leaveTree()
 		defer lockServerInstall(cmd.Config.UUID)()
 		// Hold the reconciler off for the whole reinstall: we are about to stop a
 		// container whose desired_state is still "online" and then delete its JARs.
@@ -2407,6 +2414,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer commandsInFlight.leave("migrate_storage:" + cmd.Config.UUID)
+		leaveTree, treeBusy := enterTreeChangeOfServer(cmd.Config.UUID)
+		if treeBusy != "" {
+			log.Printf("Storage migration of %s refused: %s", cmd.Config.UUID, treeBusy)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+			return
+		}
+		defer leaveTree()
 		releaseMigrateBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
 		defer releaseMigrateBusy()
 

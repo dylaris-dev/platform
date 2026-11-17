@@ -71,3 +71,56 @@ func TestBackupAndRestoreSetsAreIndependent(t *testing.T) {
 		t.Error("the same id in the other set was blocked; a backup and a restore would serialise against each other")
 	}
 }
+
+// A backup archiving a server while a reinstall, version update, storage move
+// or copy rewrote its tree reported success for an archive missing the parts
+// that were moved aside, and a restore ran beside them the same way. Each side
+// must refuse while the other runs, and leave must lift it.
+func TestTreeChangesExcludeBackupAndRestoreOfTheServer(t *testing.T) {
+	const uuid = "tree-change-interlock"
+	cases := []struct {
+		name  string
+		enter func() (leave func(), reason string)
+	}{
+		{"backup", func() (func(), string) {
+			return func() { backupsInFlight.leave("server:" + uuid) }, enterBackupOfServer(uuid)
+		}},
+		{"restore", func() (func(), string) {
+			return func() { restoreServersInFlight.leave(uuid) }, enterRestoreOfServer(uuid)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+" first", func(t *testing.T) {
+			leave, reason := tc.enter()
+			if reason != "" {
+				t.Fatalf("%s refused on an idle server: %s", tc.name, reason)
+			}
+			if _, reason := enterTreeChangeOfServer(uuid); reason == "" {
+				t.Errorf("a tree change started while a %s of the server ran", tc.name)
+			}
+			leave()
+			leaveTree, reason := enterTreeChangeOfServer(uuid)
+			if reason != "" {
+				t.Fatalf("tree change still refused after the %s left: %s", tc.name, reason)
+			}
+			leaveTree()
+		})
+		t.Run("tree change first, "+tc.name+" second", func(t *testing.T) {
+			// Two at once (a reinstall beside a storage move): the second's
+			// leave must not lift the first's hold.
+			leaveA, _ := enterTreeChangeOfServer(uuid)
+			leaveB, _ := enterTreeChangeOfServer(uuid)
+			leaveB()
+			if leave, reason := tc.enter(); reason == "" {
+				leave()
+				t.Errorf("a %s started while a tree change of the server ran", tc.name)
+			}
+			leaveA()
+			leave, reason := tc.enter()
+			if reason != "" {
+				t.Fatalf("%s still refused after the tree changes left: %s", tc.name, reason)
+			}
+			leave()
+		})
+	}
+}

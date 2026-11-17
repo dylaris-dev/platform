@@ -743,6 +743,30 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 		if len(include) > 0 && !matchAny(rel, include) {
 			return nil
 		}
+		// Opened before its header is written: that write can block on the
+		// upload for minutes, and a plugin's short-lived file (a journal, a
+		// tile written then renamed) removed in that window failed the whole
+		// backup. Gone before the open, it is left out like any file removed
+		// before the walk reached it; once open, its removal no longer matters.
+		//
+		// Judged by what was opened, not by the listing: the tenant can swap
+		// the listed file for a link onto the node's config or an earlier
+		// archive in between, and the open follows it.
+		var f *os.File
+		if !info.IsDir() {
+			var err error
+			f, err = openArchiveEntry(root, name, stored)
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			if info, err = f.Stat(); err != nil {
+				return err
+			}
+		}
 		hdr, err := tar.FileInfoHeader(info, "")
 		if err != nil {
 			return err
@@ -751,9 +775,6 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 		id, hasID := identityOf(info)
 		hasID = hasID && !info.IsDir()
 		if hasID {
-			if stored[id] {
-				return nil
-			}
 			if first, dup := seen[id]; dup {
 				hdr.Typeflag, hdr.Linkname, hdr.Size = tar.TypeLink, first, 0
 				if err := tw.WriteHeader(hdr); err != nil {
@@ -762,25 +783,6 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 				addedAny = true
 				return nil
 			}
-		}
-		// Opened before its header is written: that write can block on the
-		// upload for minutes, and a plugin's short-lived file (a journal, a
-		// tile written then renamed) removed in that window failed the whole
-		// backup. Gone before the open, it is left out like any file removed
-		// before the walk reached it; once open, its removal no longer matters.
-		var f *os.File
-		if !info.IsDir() {
-			var err error
-			f, err = openRegularIn(root, name)
-			if errors.Is(err, fs.ErrNotExist) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-		}
-		if hasID {
 			seen[id] = rel
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
@@ -810,6 +812,10 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 	}
 	return addedAny, nil
 }
+
+// openArchiveEntry opens a listed file for the archive. A var so a test can
+// swap the name between the listing and the open.
+var openArchiveEntry = openTenantReadIn
 
 // countingWriter sums the byte count of an in-flight stream without
 // buffering. Used so we can report the compressed archive size even though

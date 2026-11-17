@@ -77,6 +77,13 @@ func runCopySubServer(ctx context.Context, rdb *redis.Client, storage *StorageMa
 		return
 	}
 	defer commandsInFlight.leave("copy_sub:" + pl.UUID)
+	leaveTree, treeBusy := enterTreeChangeOfServer(pl.UUID)
+	if treeBusy != "" {
+		log.Printf("copy_sub_server: copy of %s to %q refused: %s", pl.UUID, pl.TargetSubServer, treeBusy)
+		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, treeBusy)
+		return
+	}
+	defer leaveTree()
 
 	src, err := resolveWithinDir(serverPath, pl.SourceSubServer)
 	if err != nil {

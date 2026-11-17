@@ -149,6 +149,13 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		return
 	}
 	defer commandsInFlight.leave(softwareKey(pl.UUID))
+	leaveTree, treeBusy := enterTreeChangeOfServer(pl.UUID)
+	if treeBusy != "" {
+		log.Printf("update_server_version: %s refused: %s", pl.UUID, treeBusy)
+		abandonVersionUpdate(ctx, rdb, pl.UUID, treeBusy)
+		return
+	}
+	defer leaveTree()
 
 	// Hold the reconciler off for the whole move, exactly like reinstall: the
 	// container is about to be stopped while its desired_state is still online.
