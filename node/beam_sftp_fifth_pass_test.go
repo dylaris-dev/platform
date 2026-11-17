@@ -13,6 +13,7 @@ import (
 	"dylaris-pkg/beam/quota"
 	"dylaris-pkg/fileperms"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/pkg/sftp"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/peer"
@@ -325,8 +326,13 @@ func TestTheEULAIsNotWrittenThroughALinkToANodeFile(t *testing.T) {
 // lookup, so the copy is caught after its hold and before it finishes.
 func TestAPanelFileChangeHoldsTheServerAgainstAMove(t *testing.T) {
 	h, uuid, _ := seedNodeOwned(t)
-	h.storageMgr.mu.Lock()
-	release := h.storageMgr.mu.Unlock
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	hang := hangGet{key: "node:" + nodeID + ":server:" + uuid + ":storage", hung: make(chan struct{}, 1), release: make(chan struct{})}
+	rdb.AddHook(hang)
+	h.storageMgr.rdb = rdb
+	release := func() { close(hang.release) }
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

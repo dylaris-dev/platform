@@ -183,8 +183,9 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 		<-ch
 	}
 
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
+	// No sm.mu: sm.paths is fixed after NewStorageManager, and a Redis GET or
+	// os.Stat on a hung NFS path under the read lock, with a SetPlacement
+	// queued behind it, blocked every server's path lookup on the node.
 
 	// 1. Redis lookup
 	keyed := false
@@ -224,7 +225,13 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 		return found
 	}
 
-	// 3. Not found — return first path as default
+	// 3. Not found: the default is for a NEW server. One whose key names a
+	// path that is not mounted lives there, and paths[0] had delete and
+	// migrate_cleanup clear an empty directory, report success and drop the
+	// key and limit while the real tree stayed behind.
+	if keyed {
+		return ""
+	}
 	if len(sm.paths) > 0 {
 		return sm.paths[0]
 	}
@@ -421,14 +428,11 @@ func (sm *StorageManager) LogStorageInfo() {
 }
 
 // resolveMigration validates a storage move and finds the server's current
-// path. Only this part needs sm.mu: the copy in MigrateServerPath can take
-// minutes, and holding the write lock through it stalled the heartbeat and
-// every other server's path lookup on the node. migrate_storage of one server
-// is already serialised by the command in-flight guard.
+// path. No sm.mu: sm.paths is fixed after NewStorageManager, and a stat on a
+// hung NFS path under the lock stalled every other server's path lookup on the
+// node. migrate_storage of one server is already serialised by the command
+// in-flight guard.
 func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (string, error) {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
 	// Validate target is in our configured paths
 	validTarget := false
 	for _, p := range sm.paths {

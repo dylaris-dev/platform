@@ -246,6 +246,11 @@ func pickContainerIP(networks map[string]*network.EndpointSettings) net.IP {
 func (dm *DockerManager) resolveHostServerPath(serverUUID string) string {
 	if dm.storageMgr != nil {
 		storagePath := dm.storageMgr.GetServerPath(serverUUID)
+		if storagePath == "" {
+			// Not the legacy path: the server's storage is known and not
+			// mounted, and a bind there starts it on an empty directory.
+			return ""
+		}
 		if hostBase, ok := dm.hostPathCache[storagePath]; ok {
 			return filepath.Join(hostBase, serverUUID)
 		}
@@ -1026,6 +1031,9 @@ func (dm *DockerManager) CreateServerPodStopped(config ServerConfig) error {
 
 	// Host path for Docker bind mount
 	hostServerPath := dm.resolveHostServerPath(config.UUID)
+	if hostServerPath == "" {
+		return fmt.Errorf("could not resolve host path for server %s", config.UUID)
+	}
 
 	// RAM: user-specified + padding (default 512MB) against the OOM killer
 	bookedRAM := int64(config.Docker.RAM) * 1024 * 1024
@@ -1377,6 +1385,9 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 
 	// Host path for Docker bind mount
 	hostServerPath := dm.resolveHostServerPath(config.UUID)
+	if hostServerPath == "" {
+		return "", fmt.Errorf("could not resolve host path for server %s", config.UUID)
+	}
 
 	// RAM: user-specified + padding (default 512MB) against the OOM killer
 	bookedRAM := int64(config.Docker.RAM) * 1024 * 1024
@@ -1956,7 +1967,8 @@ func (dm *DockerManager) removeStaleServerContainer(ctx context.Context, uuid st
 		log.Printf("storage move %s: %s belongs to node %s on this Docker daemon, leaving it alone", uuid, mcName, info.Config.Labels[ownerLabel])
 		return nil
 	}
-	if info.HostConfig == nil || !dataBindStale(info.HostConfig.Binds, dm.resolveHostServerPath(uuid)) {
+	// An unresolved path is not a stale bind: the server's storage is not mounted.
+	if hostPath := dm.resolveHostServerPath(uuid); hostPath == "" || info.HostConfig == nil || !dataBindStale(info.HostConfig.Binds, hostPath) {
 		return nil
 	}
 	// By the inspected ID, not the name (ownedRef).

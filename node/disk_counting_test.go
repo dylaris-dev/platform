@@ -949,6 +949,26 @@ func TestTheCountedMarkerSurvivesARedisThatLostIt(t *testing.T) {
 	}
 }
 
+// S11: a server counted before the marker went to disk had it in Redis only,
+// and the boot skipped it without writing the file. A Valkey restart then had
+// the next boot walk it again with the once-only grace allowed.
+func TestTheBootBackfillsTheCountedMarkerOnDisk(t *testing.T) {
+	prev := nodeSecretDir
+	nodeSecretDir = t.TempDir()
+	t.Cleanup(func() { nodeSecretDir = prev })
+	rdb := newDiskGuardRedis(t)
+	ctx := context.Background()
+	recordDiskLimit(ctx, rdb, "srv", 100)
+	rdb.Set(ctx, diskCountedKey("srv"), 1, 0)
+	q := &fakeQuota{before: usageOf(10*mib, 100*mib), after: usageOf(150*mib, 100*mib), limitMB: 100}
+	if done, err := reconcileServer(ctx, rdb, q, "srv"); done || err != nil || q.assigned {
+		t.Fatalf("done=%v err=%v assigned=%v, want no walk", done, err, q.assigned)
+	}
+	if !diskCountedOnDisk("srv") {
+		t.Fatal("the boot left the counted marker in Redis only")
+	}
+}
+
 // S08/S09: the counted marker on disk kept a boot after a Valkey restart from
 // walking the tree, and with the walk it skipped the only repair of the grace
 // Valkey lost too. The ceiling stayed on the project as the server's limit

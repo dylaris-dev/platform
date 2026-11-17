@@ -425,7 +425,13 @@ func reconcileServer(ctx context.Context, rdb *redis.Client, q quotaAssigner, uu
 		if err != nil {
 			return false, fmt.Errorf("read counted marker: %w", err)
 		}
-		if n == 1 || diskCountedOnDisk(uuid) {
+		onDisk := diskCountedOnDisk(uuid)
+		if n == 1 && !onDisk {
+			// Counted before the marker went to disk: without the backfill
+			// a Valkey restart had the next boot walk it again, grace allowed.
+			markDiskCounted(ctx, rdb, uuid)
+		}
+		if n == 1 || onDisk {
 			// An error here recounts without a grace rather than leaving a
 			// limit a crash lifted off until some later boot.
 			if l, err := rdb.Exists(ctx, diskLiftedKey(uuid)).Result(); err == nil && l == 0 {
