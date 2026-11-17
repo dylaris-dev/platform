@@ -41,13 +41,16 @@ func TestSettleObjectStorageReport(t *testing.T) {
 			wantApply: true, wantStatus: "failed", wantSize: 0, wantMessage: "never completed",
 		},
 		{
-			name: "failure after Core completed the upload counts nothing", report: "failed",
+			// Only a rerun of the run reports failure after Core completed it:
+			// the node redelivered the command after a restart in the
+			// completion wait. Failing the run would delete the good archive.
+			name: "failure after Core completed the upload keeps the archive", report: "failed",
 			run:       models.BackupRun{Status: "running", UploadID: "u", UploadedBytes: &uploaded},
-			wantApply: true, wantStatus: "failed", wantSize: 0,
+			wantApply: true, wantStatus: "success", wantSize: uploaded,
 		},
 		{
 			name: "a status that is neither is a failure", report: "done",
-			run:       models.BackupRun{Status: "running", UploadID: "u", UploadedBytes: &uploaded},
+			run:       models.BackupRun{Status: "running", UploadID: "u"},
 			wantApply: true, wantStatus: "failed", wantSize: 0,
 		},
 		{

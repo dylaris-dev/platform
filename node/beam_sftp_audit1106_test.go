@@ -129,7 +129,7 @@ func TestAnSFTPUploadStopsAtTheNodesFreeSpace(t *testing.T) {
 	if _, err := w.WriteAt(make([]byte, 4), 0); err != nil {
 		t.Fatalf("a write inside the free space: %v", err)
 	}
-	if n := inflightWrites.Load(); n != 4 {
+	if n := writesOn("").inflight.Load(); n != 4 {
 		t.Errorf("the open handle holds %d bytes of the reserve, want 4", n)
 	}
 	if _, err := w.WriteAt(make([]byte, 8), 4); err == nil {
@@ -138,7 +138,7 @@ func TestAnSFTPUploadStopsAtTheNodesFreeSpace(t *testing.T) {
 	if err := w.(io.Closer).Close(); err != nil {
 		t.Fatal(err)
 	}
-	if n := inflightWrites.Load(); n != 0 {
+	if n := writesOn("").inflight.Load(); n != 0 {
 		t.Errorf("%d bytes still held after close", n)
 	}
 }
@@ -157,7 +157,7 @@ func TestABeamSaveStopsAtTheNodesFreeSpace(t *testing.T) {
 	if resp.Success {
 		t.Error("a save past the node's free space was written")
 	}
-	if n := inflightWrites.Load(); n != 0 {
+	if n := writesOn("").inflight.Load(); n != 0 {
 		t.Errorf("%d bytes still held after the save", n)
 	}
 }

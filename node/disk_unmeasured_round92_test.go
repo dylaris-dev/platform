@@ -379,7 +379,7 @@ func TestAMeshUploadReservesItsSize(t *testing.T) {
 			for _, id := range []string{"a", "b"} {
 				m.handleRequest(cc, &nodepb.NodeMessage{RequestId: id, Payload: &nodepb.NodeMessage_TransferDone{TransferDone: &nodepb.TransferDone{}}})
 			}
-			if n := inflightWrites.Load(); n != 0 {
+			if n := writesOn("").inflight.Load(); n != 0 {
 				t.Errorf("%d bytes still reserved after both uploads ended", n)
 			}
 		})

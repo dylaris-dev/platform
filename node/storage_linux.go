@@ -1,6 +1,9 @@
 package main
 
-import "syscall"
+import (
+	"path/filepath"
+	"syscall"
+)
 
 // getDiskSpace returns (total, free) bytes for the filesystem at path.
 func getDiskSpace(path string) (uint64, uint64) {
@@ -22,4 +25,20 @@ func getInodes(path string) (uint64, uint64) {
 		return 0, 0
 	}
 	return stat.Files, stat.Ffree
+}
+
+// fsID names the filesystem holding path, or of its nearest existing parent:
+// a write's target directory may not exist yet.
+func fsID(path string) uint64 {
+	for {
+		var st syscall.Stat_t
+		if syscall.Stat(path, &st) == nil {
+			return uint64(st.Dev)
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return 0
+		}
+		path = parent
+	}
 }

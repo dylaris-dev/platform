@@ -118,7 +118,7 @@ func TestATargetMoveSharesTheDiskWithTheOtherWrites(t *testing.T) {
 	const budget = 1 << 20
 	prev := restoreDiskBudget
 	restoreDiskBudget = func(string) int64 { return budget }
-	t.Cleanup(func() { restoreDiskBudget = prev; inflightWrites.Store(0) })
+	t.Cleanup(func() { restoreDiskBudget = prev; writesOn("").inflight.Store(0) })
 
 	tests := []struct {
 		name      string
@@ -130,10 +130,10 @@ func TestATargetMoveSharesTheDiskWithTheOtherWrites(t *testing.T) {
 	}
 	for i, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			inflightWrites.Store(tc.other)
+			writesOn("").inflight.Store(tc.other)
 			heldDuringPull := make(chan int64, 4)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				heldDuringPull <- inflightWrites.Load()
+				heldDuringPull <- writesOn("").inflight.Load()
 				w.Write(zipBody)
 			}))
 			defer srv.Close()
@@ -145,12 +145,12 @@ func TestATargetMoveSharesTheDiskWithTheOtherWrites(t *testing.T) {
 			if st := readMigrationStatus(t, rdb, progress); st.Phase != tc.wantPhase {
 				t.Fatalf("phase = %q (%s), want %q", st.Phase, st.Error, tc.wantPhase)
 			}
-			if got := inflightWrites.Load(); got != tc.other {
-				t.Fatalf("inflightWrites = %d after the move, want the other writes' %d back", got, tc.other)
+			if got := writesOn("").inflight.Load(); got != tc.other {
+				t.Fatalf("inflight writes = %d after the move, want the other writes' %d back", got, tc.other)
 			}
 			if tc.wantPhase == "transferred" {
 				if held := <-heldDuringPull; held < tc.other+size {
-					t.Fatalf("inflightWrites = %d during the pull, want at least %d", held, tc.other+size)
+					t.Fatalf("inflight writes = %d during the pull, want at least %d", held, tc.other+size)
 				}
 			}
 		})
@@ -158,7 +158,7 @@ func TestATargetMoveSharesTheDiskWithTheOtherWrites(t *testing.T) {
 
 	// The unpack's budget leaves out what the other writes claimed.
 	restoreDiskBudget = func(string) int64 { return 8 }
-	inflightWrites.Store(4)
+	writesOn("").inflight.Store(4)
 	storage := t.TempDir()
 	zipPath := writeMoveZip(t, map[string]string{"survival/a": "1234", "survival/b": "5678"})
 	if err := extractMovedServer(zipPath, storage, filepath.Join(storage, "srv"), nil); !errors.Is(err, migration.ErrExtractBudget) {

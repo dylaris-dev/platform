@@ -206,7 +206,7 @@ func TestAnArchiveEntryPaysForTheDirectoriesItMakes(t *testing.T) {
 		if err := installFromUploadZip(dest, "direct"); err != nil {
 			t.Fatal(err)
 		}
-		if n := inflightWrites.Load(); n != 0 {
+		if n := writesOn("").inflight.Load(); n != 0 {
 			t.Errorf("a finished extraction left %d bytes reserved", n)
 		}
 	})
@@ -217,7 +217,7 @@ func TestAnArchiveEntryPaysForTheDirectoriesItMakes(t *testing.T) {
 // is given back when it ends.
 func TestRunningWritesCountAgainstTheNext(t *testing.T) {
 	withDiskBudget(t, 100<<10, 1000)
-	if n := inflightWrites.Load(); n != 0 {
+	if n := writesOn("").inflight.Load(); n != 0 {
 		t.Fatalf("inflight %d before the test", n)
 	}
 	a := newWriteBudget("x")
@@ -233,7 +233,7 @@ func TestRunningWritesCountAgainstTheNext(t *testing.T) {
 	h, uuid, _ := seedNodeOwned(t)
 	h.handleCopy("c", uuid, &pb.CopyFileReq{SrcPath: "survival", DstPath: "creative"})
 	h.handleCopy("c", uuid, &pb.CopyFileReq{SrcPath: "survival/server.properties", DstPath: "survival/c.properties"})
-	if n := inflightWrites.Load(); n != 0 {
+	if n := writesOn("").inflight.Load(); n != 0 {
 		t.Errorf("finished copies left %d bytes reserved", n)
 	}
 }

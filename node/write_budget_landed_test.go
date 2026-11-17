@@ -88,12 +88,12 @@ func TestOnlyWrittenBytesLandOnTheNode(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withDiskBudget(t, 1000, 1000)
-			l0 := landedWrites.Load()
+			l0 := writesOn("").landed.Load()
 			tc.run(t)
-			if got := landedWrites.Load() - l0; got != tc.want {
+			if got := writesOn("").landed.Load() - l0; got != tc.want {
 				t.Errorf("%d bytes booked as landed, want %d", got, tc.want)
 			}
-			if n := inflightWrites.Load(); n != 0 {
+			if n := writesOn("").inflight.Load(); n != 0 {
 				t.Errorf("%d bytes still held", n)
 			}
 		})

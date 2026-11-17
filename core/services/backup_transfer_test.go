@@ -370,6 +370,24 @@ func TestBackupTransfer_RefusesWhatIsNoLongerRunning(t *testing.T) {
 	}
 }
 
+// A run redelivered to a restarted node after Core completed its upload asks
+// for part URLs of an upload that no longer exists. It is told the upload is
+// complete instead of being sent on to the backend, whose NoSuchUpload would
+// read as a failed backup.
+func TestBackupTransfer_PartURLsForACompletedUploadAreRefused(t *testing.T) {
+	st := newTransferFakeStore()
+	uploaded := int64(987654)
+	st.runs[1].UploadID, st.runs[1].PartSize, st.runs[1].UploadedBytes = "upload-1", backupPartSize, &uploaded
+	prov := &fakeMultipartStorage{listErr: errors.New("NoSuchUpload: the upload does not exist")}
+	msg := transferError(t, newTestTransfer(st, prov).HandleUploadPartURLs(context.Background(), hostingNode, partURLsMsg("1", 1)))
+	if !strings.Contains(msg, "already completed") {
+		t.Errorf("error = %q, want an already-completed refusal", msg)
+	}
+	if prov.creates != 0 || len(prov.aborted) != 0 || len(prov.deleted) != 0 {
+		t.Errorf("storage was touched: creates=%d aborted=%v deleted=%v", prov.creates, prov.aborted, prov.deleted)
+	}
+}
+
 func TestBackupTransfer_RefusesBadPartRequests(t *testing.T) {
 	ctx := context.Background()
 	for name, msg := range map[string]*pb.NodeMessage{

@@ -237,14 +237,15 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	stopMeasure := reportMigrationProgress(ctx, rdb, nodeToken, progressID, "staging", measured.Load)
 	need := migrateOutMeasure(srcDir, &measured)
 	stopMeasure()
-	if budget := restoreDiskBudget(storagePath) - inflightWrites.Load(); need > budget {
+	disk := writesOn(storagePath)
+	if budget := restoreDiskBudget(storagePath) - disk.inflight.Load(); need > budget {
 		log.Printf("migrate_out %s: %d bytes to stage, %d bytes of free space to give", serverUUID, need, budget)
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", fmt.Sprintf(
 			"not enough free space on the source node to stage the move: need %s, can use %s", formatBytes(uint64(need)), formatBytes(uint64(max(budget, 0)))))
 		return
 	}
-	inflightWrites.Add(need)
-	defer inflightWrites.Add(-need)
+	disk.inflight.Add(need)
+	defer disk.inflight.Add(-need)
 
 	stagingDir := filepath.Join(storagePath, migrationStagingDir)
 	if err := os.MkdirAll(stagingDir, 0755); err != nil {
@@ -492,7 +493,8 @@ func receiveMovedServer(ctx context.Context, rdb *redis.Client, nodeToken, serve
 	// region data barely compresses, so the copy is at least as large again.
 	// Halving the budget rather than doubling a size the source node reports
 	// keeps a huge one from overflowing past the check.
-	if budget := restoreDiskBudget(targetPath) - inflightWrites.Load(); expectedSize > 0 && expectedSize > budget/2 {
+	disk := writesOn(targetPath)
+	if budget := restoreDiskBudget(targetPath) - disk.inflight.Load(); expectedSize > 0 && expectedSize > budget/2 {
 		log.Printf("%s %s: %d bytes announced, %d bytes of free space to give", cmd, serverUUID, expectedSize, budget)
 		fail(fmt.Sprintf("not enough free space on the target node to receive and unpack the move: need %s, can use %s",
 			formatBytes(2*uint64(expectedSize)), formatBytes(uint64(max(budget, 0)))))
@@ -502,9 +504,9 @@ func receiveMovedServer(ctx context.Context, rdb *redis.Client, nodeToken, serve
 	tmpZip := filepath.Join(targetPath, serverUUID+".migration-in.zip")
 	defer os.Remove(tmpZip)
 	maxBytes := pullCap(expectedSize, targetPath)
-	inflightWrites.Add(maxBytes)
+	disk.inflight.Add(maxBytes)
 	err := pull(tmpZip, maxBytes, func(n int64) { moved.Add(n) })
-	inflightWrites.Add(-maxBytes)
+	disk.inflight.Add(-maxBytes)
 	if err != nil {
 		log.Printf("%s %s: pull failed: %v", cmd, serverUUID, err)
 		fail(pullFailed)
@@ -520,10 +522,10 @@ func receiveMovedServer(ctx context.Context, rdb *redis.Client, nodeToken, serve
 		return
 	}
 	var written int64
-	defer func() { inflightWrites.Add(-written) }()
+	defer func() { disk.inflight.Add(-written) }()
 	if err := extractMovedServer(tmpZip, targetPath, targetDir, func(n int64) {
 		moved.Add(n)
-		inflightWrites.Add(n)
+		disk.inflight.Add(n)
 		written += n
 	}); err != nil {
 		log.Printf("%s %s: extract failed: %v", cmd, serverUUID, err)
@@ -545,7 +547,7 @@ func receiveMovedServer(ctx context.Context, rdb *redis.Client, nodeToken, serve
 // the temp file lands on the storage path every server here shares. 0 from an
 // older Core means "not announced", never "no bound".
 func pullCap(announced int64, storagePath string) int64 {
-	budget := restoreDiskBudget(storagePath) - inflightWrites.Load()
+	budget := restoreDiskBudget(storagePath) - writesOn(storagePath).inflight.Load()
 	if budget < 1 {
 		budget = 1 // no room at all: any byte overflows rather than 0 = unbounded
 	}
@@ -582,7 +584,7 @@ func pullableEndpoint(endpoint string) bool {
 // .active_server is not read to start anything and the backups are the
 // tenant's, so both stay.
 func extractMovedServer(zipPath, storagePath, targetDir string, onWrite func(int64)) error {
-	if err := migration.Extract(zipPath, targetDir, restoreDiskBudget(storagePath)-inflightWrites.Load(), onWrite); err != nil {
+	if err := migration.Extract(zipPath, targetDir, restoreDiskBudget(storagePath)-writesOn(storagePath).inflight.Load(), onWrite); err != nil {
 		return err
 	}
 	for _, name := range []string{".node_config.json", ".dylaris.json"} {

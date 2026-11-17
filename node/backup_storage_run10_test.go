@@ -113,12 +113,12 @@ func TestAFailedWriteBooksNothingAsLanded(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			l0, g0 := landedWrites.Load(), inflightWrites.Load()
+			l0, g0 := writesOn("").landed.Load(), writesOn("").inflight.Load()
 			tc.run(t)
-			if got := landedWrites.Load() - l0; got != 0 {
+			if got := writesOn("").landed.Load() - l0; got != 0 {
 				t.Errorf("%d bytes booked as landed, want 0", got)
 			}
-			if got := inflightWrites.Load() - g0; got != 0 {
+			if got := writesOn("").inflight.Load() - g0; got != 0 {
 				t.Errorf("%d bytes still held", got)
 			}
 		})

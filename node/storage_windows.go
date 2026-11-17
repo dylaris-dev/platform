@@ -18,3 +18,6 @@ func getDiskSpace(path string) (uint64, uint64) {
 
 // getInodes has no meaning on Windows; 0 is "unknown".
 func getInodes(string) (uint64, uint64) { return 0, 0 }
+
+// fsID is one filesystem for every path on Windows, a development build only.
+func fsID(string) uint64 { return 0 }

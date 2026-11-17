@@ -15,11 +15,11 @@ import (
 // A symlink inside the server is archived as its target while the size
 // estimate does not follow it, so the spool file outgrew its reservation and
 // the writes beside it never saw the difference. The file may now hold no more
-// than what is held in inflightWrites for it.
+// than what is held in the inflight write count for it.
 func TestSpoolFileIsBoundByItsReservation(t *testing.T) {
 	const gb = 1_000_000_000
 	on := &backupPolicy{SpoolEnabled: true, SpoolMaxGB: 100}
-	t.Cleanup(func() { inflightWrites.Store(0) })
+	t.Cleanup(func() { writesOn("").inflight.Store(0) })
 	tests := []struct {
 		name string
 		src  int64
@@ -30,13 +30,13 @@ func TestSpoolFileIsBoundByItsReservation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			inflightWrites.Store(0)
+			writesOn("").inflight.Store(0)
 			limit, release, _, why := reserveSpool(on, tt.src, tt.free)
 			defer release(0)
 			if limit <= 0 {
 				t.Fatalf("refused: %s", why)
 			}
-			if held := inflightWrites.Load(); limit > held {
+			if held := writesOn("").inflight.Load(); limit > held {
 				t.Fatalf("spool file may grow to %d, only %d is reserved for it", limit, held)
 			}
 			if limit < tt.src {
@@ -54,7 +54,7 @@ func TestRunBackupFallsBackWhenTheSpoolIsOutgrown(t *testing.T) {
 	t.Cleanup(func() {
 		globalSpoolDir, pauseSaves, spoolSlackBytes = prevDir, prevPause, prevSlack
 		backupPolicyNow.Store(prevPolicy)
-		inflightWrites.Store(0)
+		writesOn("").inflight.Store(0)
 	})
 	globalSpoolDir = spool
 	backupPolicyNow.Store(&backupPolicy{HeadroomPct: i64(30), SpoolEnabled: true, SpoolMaxGB: 1})
@@ -72,8 +72,8 @@ func TestRunBackupFallsBackWhenTheSpoolIsOutgrown(t *testing.T) {
 	if entries, _ := os.ReadDir(spool); len(entries) != 0 {
 		t.Fatalf("spool left %v behind", entries)
 	}
-	if got := inflightWrites.Load(); got != 0 {
-		t.Fatalf("inflightWrites = %d after the run, want 0", got)
+	if got := writesOn("").inflight.Load(); got != 0 {
+		t.Fatalf("inflight writes = %d after the run, want 0", got)
 	}
 }
 

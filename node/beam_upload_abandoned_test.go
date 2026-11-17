@@ -101,7 +101,7 @@ func TestABeamUploadIsBoundByTheNodesFreeSpace(t *testing.T) {
 	if err := bs.UploadFile(stream); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("err = %v, want ResourceExhausted", err)
 	}
-	if n := inflightWrites.Load(); n != 0 {
+	if n := writesOn("").inflight.Load(); n != 0 {
 		t.Fatalf("the refused upload left %d bytes claimed", n)
 	}
 }

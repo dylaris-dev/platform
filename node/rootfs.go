@@ -652,6 +652,7 @@ type writeBudget struct {
 	// private left saw nothing a sibling started at the same time wrote, so
 	// two copies started together each had the whole free space.
 	nodeCap, inflight0, landed0 int64
+	disk                        *diskWrites
 	srvCap, srv0, sftp0, noted0 int64
 }
 
@@ -659,18 +660,30 @@ type writeBudget struct {
 // server past the disk it was given.
 var errServerDiskLimit = errors.New("this writes more than the server's disk limit leaves room for")
 
-// inflightWrites is what running budgets have written and not yet released.
-// Each budget measured the free space on its own, so four copies of a world
-// started together each saw the whole of it and together went past the
-// reserve.
-var inflightWrites atomic.Int64
+// diskWrites is what the writes on one filesystem hold. inflight is what
+// running budgets have written and not yet released: each budget measured the
+// free space on its own, so four copies of a world started together each saw
+// the whole of it and together went past the reserve. landed is what released
+// budgets wrote, and only grows: those bytes left inflight but are on the
+// disk, which a running budget measured before they were there.
+//
+// Per filesystem because the free space is measured per directory: one
+// node-wide count made a spool or restore held on one disk refuse a write to
+// another, untouched disk as out of space.
+type diskWrites struct{ inflight, landed atomic.Int64 }
 
-// landedWrites is what released budgets wrote, and only grows: those bytes
-// left inflightWrites but are on the disk, which a running budget measured
-// before they were there.
-var landedWrites atomic.Int64
+var diskWritesByFS sync.Map // fsID -> *diskWrites
 
-// serverInflight is inflightWrites per server (uuid -> *atomic.Int64): what
+// fsIDOf names the filesystem holding dir. A variable for tests.
+var fsIDOf = fsID
+
+// writesOn is the write count of the filesystem holding dir.
+func writesOn(dir string) *diskWrites {
+	w, _ := diskWritesByFS.LoadOrStore(fsIDOf(dir), new(diskWrites))
+	return w.(*diskWrites)
+}
+
+// serverInflight is the inflight write count per server (uuid -> *atomic.Int64): what
 // copies, extracts and installs have written, and the declared size panel and
 // Beam uploads have reserved. SFTP's written bytes are apart, in
 // uploadServerInflight, because a copy measuring the disk live already sees
@@ -732,9 +745,10 @@ func newWriteBudget(dir string) *writeBudget {
 // nodeWriteBudget bounds a write by the node's free space less its reserve
 // and what other writes in progress hold.
 func nodeWriteBudget(dir string) *writeBudget {
-	g0, l0 := inflightWrites.Load(), landedWrites.Load()
+	disk := writesOn(dir)
+	g0, l0 := disk.inflight.Load(), disk.landed.Load()
 	c := restoreDiskBudget(dir) - g0
-	return &writeBudget{left: c, nodeCap: c, inflight0: g0, landed0: l0, dirs: map[string]bool{}, err: errUnpackBudget}
+	return &writeBudget{left: c, nodeCap: c, inflight0: g0, landed0: l0, disk: disk, dirs: map[string]bool{}, err: errUnpackBudget}
 }
 
 // boundServer also bounds it by headroom, what the server uuid may still
@@ -749,8 +763,8 @@ func (b *writeBudget) boundServer(uuid string, headroom int64) {
 }
 
 func (b *writeBudget) release() {
-	inflightWrites.Add(-b.used)
-	landedWrites.Add(b.used)
+	b.disk.inflight.Add(-b.used)
+	b.disk.landed.Add(b.used)
 	if b.srv != nil {
 		// Into the noted count before out of the in-flight one, as an SFTP or
 		// Beam close does: an open SFTP handle reads both, and a finished copy
@@ -783,8 +797,8 @@ func (b *writeBudget) releaseWritten(written int64) {
 // sees the earlier.
 func (b *writeBudget) spend(n int64) bool {
 	b.used += n
-	g := inflightWrites.Add(n)
-	b.left, b.err = b.nodeCap-(g-b.inflight0)-(landedWrites.Load()-b.landed0), errUnpackBudget
+	g := b.disk.inflight.Add(n)
+	b.left, b.err = b.nodeCap-(g-b.inflight0)-(b.disk.landed.Load()-b.landed0), errUnpackBudget
 	if b.srv != nil {
 		s := b.srv.Add(n)
 		if l := b.srvCap - (s - b.srv0) - (uploadServerInflight(b.uuid).Load() - b.sftp0) - (notedFor(b.uuid).Load() - b.noted0); l < b.left {
@@ -798,7 +812,7 @@ func (b *writeBudget) spend(n int64) bool {
 func (b *writeBudget) unspend(n int64) {
 	b.used -= n
 	b.left += n
-	inflightWrites.Add(-n)
+	b.disk.inflight.Add(-n)
 	if b.srv != nil {
 		b.srv.Add(-n)
 	}

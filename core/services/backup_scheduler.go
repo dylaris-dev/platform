@@ -381,9 +381,12 @@ func (b *BackupScheduler) runOnObjectStorage(run *models.BackupRun, job *models.
 //   - success is written only for an upload Core completed, with Core's size;
 //     a node reporting a size of one byte for hundreds of GiB is thereby
 //     reporting nothing at all;
-//   - anything else is a failure of size 0, and the caller discards the upload
-//     and whatever it completed - a node that reports failure after Core
-//     completed its upload must not leave an archive no quota counts;
+//   - an upload Core completed is a success with Core's size whatever the
+//     node reports: every node path after a completion reports success, so a
+//     failure then comes from a rerun of the same run (the node was restarted
+//     while waiting for the completion and the command was redelivered), and
+//     failing the run would delete the archive Core just verified;
+//   - anything else is a failure of size 0, and the caller discards the upload;
 //   - a run that is no longer running is left alone. Whoever closed it (the
 //     reaper, a refused completion) already discarded its upload, so a late
 //     success would point at an archive that is gone.
@@ -391,13 +394,13 @@ func settleObjectStorageReport(status, message string, run *models.BackupRun) (a
 	if run.Status != "running" {
 		return false, "", "", 0
 	}
+	if run.UploadedBytes != nil {
+		return true, "success", "", *run.UploadedBytes
+	}
 	if status != "success" {
 		return true, "failed", message, 0
 	}
-	if run.UploadedBytes == nil {
-		return true, "failed", "The node reported success, but Core never completed its upload.", 0
-	}
-	return true, "success", message, *run.UploadedBytes
+	return true, "failed", "The node reported success, but Core never completed its upload.", 0
 }
 
 // enforceRetention deletes successful runs that exceed the job's retention

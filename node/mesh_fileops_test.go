@@ -205,7 +205,7 @@ func TestADroppedConnectionReleasesItsUploads(t *testing.T) {
 	if _, ok := m.pendingWrites["b"]; !ok {
 		t.Fatal("another connection's upload was dropped")
 	}
-	if n := inflightWrites.Load(); n != 200 {
+	if n := writesOn("").inflight.Load(); n != 200 {
 		t.Errorf("%d bytes reserved, want only the live upload's 200", n)
 	}
 	m.handleRequest(other, &pb.NodeMessage{RequestId: "b", Payload: &pb.NodeMessage_TransferDone{TransferDone: &pb.TransferDone{}}})

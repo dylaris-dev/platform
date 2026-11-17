@@ -258,12 +258,12 @@ func TestARestoreSeesWritesThatLandAfterItStarted(t *testing.T) {
 	t.Cleanup(func() { restoreDiskBudget = prev })
 	restoreDiskBudget = func(string) int64 {
 		// A sibling write lands the moment this restore has measured.
-		landedWrites.Add(2 * restoreEntryCost)
+		writesOn("").landed.Add(2 * restoreEntryCost)
 		return 2 * restoreEntryCost
 	}
-	g := inflightWrites.Load()
+	g := writesOn("").inflight.Load()
 	restoreFails(t, []tar.Header{{Name: "a.txt", Mode: 0o644, Typeflag: tar.TypeReg}})
-	if got := inflightWrites.Load(); got != g {
-		t.Fatalf("inflightWrites = %d after the restore, want %d", got, g)
+	if got := writesOn("").inflight.Load(); got != g {
+		t.Fatalf("inflight writes = %d after the restore, want %d", got, g)
 	}
 }

@@ -100,7 +100,8 @@ var spoolSlackBytes int64 = 256 << 20
 
 // reserveSpool is spoolBudget against the node's shared write budget: free
 // less what other writes (restores, copies, other spools) hold. A spool that is
-// granted holds its source size plus slack in inflightWrites until release, so
+// granted holds its source size plus slack in the spool disk's inflight count
+// until release, so
 // the next run, restore or copy sees it as taken. release is idempotent; landed is
 // what the spool file holds on the disk at that moment, booked as landed so a
 // budget measured before those bytes were there still counts them. removed,
@@ -109,7 +110,8 @@ var spoolSlackBytes int64 = 256 << 20
 func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, func(landed int64), func(), string) {
 	spoolReserveMu.Lock()
 	defer spoolReserveMu.Unlock()
-	if held := inflightWrites.Load(); held > 0 {
+	disk := writesOn(globalSpoolDir)
+	if held := disk.inflight.Load(); held > 0 {
 		freeBytes -= min(freeBytes, uint64(held))
 	}
 	limit, why := spoolBudget(p, sourceBytes, freeBytes)
@@ -120,17 +122,17 @@ func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, 
 	// du's, which does not follow a link the archive takes as its target, and
 	// every byte past the reservation was invisible to the writes beside it.
 	held := min(limit, sourceBytes+spoolSlackBytes)
-	inflightWrites.Add(held)
+	disk.inflight.Add(held)
 	var once, gone sync.Once
 	var booked atomic.Int64
 	release := func(landed int64) {
 		once.Do(func() {
-			inflightWrites.Add(-held)
+			disk.inflight.Add(-held)
 			booked.Store(max(landed, 0))
-			landedWrites.Add(booked.Load())
+			disk.landed.Add(booked.Load())
 		})
 	}
-	removed := func() { gone.Do(func() { landedWrites.Add(-booked.Swap(0)) }) }
+	removed := func() { gone.Do(func() { disk.landed.Add(-booked.Swap(0)) }) }
 	return held, release, removed, ""
 }
 

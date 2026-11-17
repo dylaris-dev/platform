@@ -383,8 +383,8 @@ func TestPutToLANIsPacedByStorageCap(t *testing.T) {
 func TestSpoolReservationIsSharedAcrossRuns(t *testing.T) {
 	const gb = 1_000_000_000
 	on := &backupPolicy{SpoolEnabled: true, SpoolMaxGB: 50}
-	t.Cleanup(func() { inflightWrites.Store(0) })
-	inflightWrites.Store(0)
+	t.Cleanup(func() { writesOn("").inflight.Store(0) })
+	writesOn("").inflight.Store(0)
 	tests := []struct {
 		name     string
 		inflight int64
@@ -395,7 +395,7 @@ func TestSpoolReservationIsSharedAcrossRuns(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			inflightWrites.Store(tt.inflight)
+			writesOn("").inflight.Store(tt.inflight)
 			limit, release, _, why := reserveSpool(on, 30*gb, 50*gb)
 			defer release(0)
 			if (limit > 0) != tt.wantOK {
@@ -404,7 +404,7 @@ func TestSpoolReservationIsSharedAcrossRuns(t *testing.T) {
 		})
 	}
 
-	inflightWrites.Store(0)
+	writesOn("").inflight.Store(0)
 	limit, release, _, _ := reserveSpool(on, 30*gb, 50*gb)
 	if limit <= 0 {
 		t.Fatal("first run refused")
@@ -415,8 +415,8 @@ func TestSpoolReservationIsSharedAcrossRuns(t *testing.T) {
 	}
 	release(0)
 	release(0) // idempotent
-	if got := inflightWrites.Load(); got != 0 {
-		t.Fatalf("inflightWrites = %d after release, want 0", got)
+	if got := writesOn("").inflight.Load(); got != 0 {
+		t.Fatalf("inflight writes = %d after release, want 0", got)
 	}
 }
 
@@ -463,18 +463,18 @@ func TestSpoolReservationEndsOnceTheArchiveIsOnDisk(t *testing.T) {
 	t.Cleanup(func() {
 		globalSpoolDir, pauseSaves = prevDir, prevPause
 		backupPolicyNow.Store(prevPolicy)
-		inflightWrites.Store(0)
+		writesOn("").inflight.Store(0)
 	})
 	globalSpoolDir = spool
 	backupPolicyNow.Store(&backupPolicy{HeadroomPct: i64(30), SpoolEnabled: true, SpoolMaxGB: 1})
-	inflightWrites.Store(0)
+	writesOn("").inflight.Store(0)
 
 	core := newFakeCore(t, 1024)
 	heldAtSaveOn := int64(-1)
 	pauseSaves = func(_ context.Context, _ *redis.Client, _ *DockerManager, uuid, _ string) *worldSaveGuard {
 		return &worldSaveGuard{uuid: uuid, send: func(cmd string) error {
 			if cmd == "save-on" && heldAtSaveOn < 0 {
-				heldAtSaveOn = inflightWrites.Load()
+				heldAtSaveOn = writesOn("").inflight.Load()
 			}
 			return nil
 		}}
@@ -483,7 +483,7 @@ func TestSpoolReservationEndsOnceTheArchiveIsOnDisk(t *testing.T) {
 		t.Fatalf("report = %v, want success", report)
 	}
 	if heldAtSaveOn != 0 {
-		t.Fatalf("inflightWrites = %d while the spooled archive uploads, want 0", heldAtSaveOn)
+		t.Fatalf("inflight writes = %d while the spooled archive uploads, want 0", heldAtSaveOn)
 	}
 }
 
@@ -545,7 +545,7 @@ func TestAReleasedSpoolLandsWhatItWrote(t *testing.T) {
 	prev := restoreDiskBudget
 	restoreDiskBudget = func(string) int64 { return 2 * s }
 	t.Cleanup(func() { restoreDiskBudget = prev })
-	g := inflightWrites.Load()
+	g := writesOn("").inflight.Load()
 
 	_, release, _, why := reserveSpool(on, s, 100*gb)
 	if why != "" {
@@ -558,8 +558,8 @@ func TestAReleasedSpoolLandsWhatItWrote(t *testing.T) {
 		t.Fatal("a write started during packing may use the space the spool file holds")
 	}
 	b.release()
-	if got := inflightWrites.Load(); got != g {
-		t.Fatalf("inflightWrites = %d, want %d", got, g)
+	if got := writesOn("").inflight.Load(); got != g {
+		t.Fatalf("inflight writes = %d, want %d", got, g)
 	}
 }
 
@@ -573,7 +573,7 @@ func TestARemovedSpoolGivesItsLandedBytesBack(t *testing.T) {
 	prev := restoreDiskBudget
 	restoreDiskBudget = func(string) int64 { return 2 * s }
 	t.Cleanup(func() { restoreDiskBudget = prev })
-	g, l := inflightWrites.Load(), landedWrites.Load()
+	g, l := writesOn("").inflight.Load(), writesOn("").landed.Load()
 
 	b := nodeWriteBudget(t.TempDir()) // starts before the spool: 2s left
 	_, release, removed, why := reserveSpool(on, s, 100*gb)
@@ -588,7 +588,7 @@ func TestARemovedSpoolGivesItsLandedBytesBack(t *testing.T) {
 		t.Fatal("the deleted spool file still counts against a running budget")
 	}
 	b.releaseWritten(0)
-	if gi, li := inflightWrites.Load(), landedWrites.Load(); gi != g || li != l {
+	if gi, li := writesOn("").inflight.Load(), writesOn("").landed.Load(); gi != g || li != l {
 		t.Fatalf("inflight %d landed %d, want %d %d", gi, li, g, l)
 	}
 }

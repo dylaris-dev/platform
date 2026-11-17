@@ -248,6 +248,12 @@ func (t *BackupTransfer) uploadPartURLs(ctx context.Context, node nodegrpc.Node,
 		return nil, err
 	}
 	run, prov := u.run, u.prov
+	if run.UploadedBytes != nil {
+		// A rerun after a node restart in the completion wait. The upload id
+		// is spent, so checking it would fail the request with the backend's
+		// NoSuchUpload; the archive is complete and the run settles as success.
+		return nil, refused("backup run %d already completed its upload (%d bytes)", run.ID, *run.UploadedBytes)
+	}
 	uploadID, partSize := run.UploadID, run.PartSize
 	if uploadID == "" {
 		uploadID, partSize, err = t.startUpload(ctx, run, prov)
