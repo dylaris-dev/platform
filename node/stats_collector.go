@@ -159,23 +159,38 @@ func (r *startReadiness) isReady() bool {
 	return r.ready
 }
 
+// shipperScanPage bounds one read of the console stream. A tenant's lines run
+// to 64 KiB, so a page is at most ~12 MiB of the shared Redis' time.
+const shipperScanPage = 200
+
 // shipperRestartAfter reports whether the console stream holds the
-// log-shipper's crash-restart line after the entry id mark. No mark (nothing
-// read since the last answer) is "no": an old crash must not count again.
-func shipperRestartAfter(ctx context.Context, rdb *redis.Client, key, mark string) bool {
+// log-shipper's crash-restart line after the entry id mark, and returns the
+// mark to scan from next: the last entry it read. No mark (nothing read since
+// the last answer) is "no": an old crash must not count again.
+//
+// It reads forward from the mark and hands the mark on, so a run of failed
+// pings reads each entry once. Re-reading the whole window on every failure
+// made a server that stopped answering cost the shared Redis up to the full
+// stream (~64 MiB) every ping interval.
+func shipperRestartAfter(ctx context.Context, rdb *redis.Client, key, mark string) (bool, string) {
 	if mark == "" {
-		return false
+		return false, ""
 	}
-	msgs, err := rdb.XRevRangeN(ctx, key, "+", "("+mark, 5000).Result()
-	if err != nil {
-		return false
-	}
-	for _, m := range msgs {
-		if line, _ := m.Values["line"].(string); strings.HasPrefix(line, "[Server crashed (exit code") {
-			return true
+	for {
+		msgs, err := rdb.XRangeN(ctx, key, "("+mark, "+", shipperScanPage).Result()
+		if err != nil {
+			return false, mark
+		}
+		for _, m := range msgs {
+			mark = m.ID
+			if line, _ := m.Values["line"].(string); strings.HasPrefix(line, "[Server crashed (exit code") {
+				return true, mark
+			}
+		}
+		if len(msgs) < shipperScanPage {
+			return false, mark
 		}
 	}
-	return false
 }
 
 // newestStreamID is the id of the stream's newest entry, "0-0" for an empty
@@ -616,8 +631,11 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			defer pinging.Store(false)
 			resp, err := pingOnce()
 			key, _ := logKey.Load().(string)
-			if err != nil && key != "" && readiness.isReady() && shipperRestartAfter(ctx, rdb, key, logMark) {
-				readiness.restartedInside(time.Now())
+			if err != nil && key != "" && readiness.isReady() {
+				var crashed bool
+				if crashed, logMark = shipperRestartAfter(ctx, rdb, key, logMark); crashed {
+					readiness.restartedInside(time.Now())
+				}
 			}
 			readiness.pinged(err == nil)
 			if err == nil && key != "" {

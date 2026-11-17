@@ -132,19 +132,35 @@ func TestShipperRestartAfter(t *testing.T) {
 	}
 	add("[Server crashed (exit code 1) - restarting automatically (1/3)...]")
 	mark := add("[12:00:00] [Server thread/INFO]: Done (3.1s)!")
-	if shipperRestartAfter(ctx, rdb, key, mark) {
+	found, next := shipperRestartAfter(ctx, rdb, key, mark)
+	if found {
 		t.Fatal("a crash before the mark counted")
 	}
-	add("[12:00:05] [Server thread/ERROR]: something")
-	if shipperRestartAfter(ctx, rdb, key, mark) {
+	if next != mark {
+		t.Fatalf("nothing new moved the mark: %q, want %q", next, mark)
+	}
+	// More than one page of ordinary lines: every one is read once and the
+	// mark ends on the newest, so the next failed ping does not read them again.
+	var last string
+	for i := 0; i < 2*shipperScanPage+7; i++ {
+		last = add("[12:00:05] [Server thread/ERROR]: something")
+	}
+	if found, next = shipperRestartAfter(ctx, rdb, key, mark); found {
 		t.Fatal("an ordinary line counted as a restart")
+	}
+	if next != last {
+		t.Fatalf("mark after a clean scan: %q, want the newest id %q", next, last)
+	}
+	mark = next
+	if _, again := shipperRestartAfter(ctx, rdb, key, mark); again != mark {
+		t.Fatalf("a rescan with no new entries moved the mark to %q", again)
 	}
 	add("[Server crashed (exit code 137) - restarting automatically (2/3)...]")
 	add("[12:00:20] [main/INFO]: Loading libraries")
-	if !shipperRestartAfter(ctx, rdb, key, mark) {
+	if found, _ = shipperRestartAfter(ctx, rdb, key, mark); !found {
 		t.Fatal("the crash-restart line after the mark was missed")
 	}
-	if shipperRestartAfter(ctx, rdb, key, "") {
+	if found, next := shipperRestartAfter(ctx, rdb, key, ""); found || next != "" {
 		t.Fatal("no mark must not read the whole stream")
 	}
 }
