@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -183,4 +185,29 @@ func ownBinds(info container.InspectResponse) []string {
 		return nil
 	}
 	return append([]string{}, info.HostConfig.Binds...)
+}
+
+// restartBinds is ownBinds for a recreate that reuses them verbatim, minus a
+// /data bind whose tree a storage move deleted. A start waiting on the move's
+// fence inspected the container before the move removed it, and Docker made
+// the deleted directory again, empty: the server ran a fresh world there for
+// good. Only a bind whose directory is gone is dropped (the default bind then
+// names where the server lives); one that still exists is kept, so a path
+// resolution that drifted cannot move a live server.
+func (dm *DockerManager) restartBinds(info container.InspectResponse, uuid string) []string {
+	binds := ownBinds(info)
+	hostDir := dm.resolveHostServerPath(uuid)
+	if hostDir == "" || !dataBindStale(binds, hostDir) {
+		return binds
+	}
+	for local, host := range dm.hostPathCache {
+		if dataBindStale(binds, filepath.Join(host, uuid)) {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(local, uuid)); errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		break
+	}
+	return binds
 }

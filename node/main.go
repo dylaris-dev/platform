@@ -2421,13 +2421,22 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer leaveTree()
-		releaseMigrateBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
-		defer releaseMigrateBusy()
 
 		// The refusals first: made after the stop, they took a live server
 		// and its players down for a move that never ran, and reported it
-		// "stopped" like a finished one.
-		if err := storage.CheckMigration(cmd.Config.UUID, targetPath); errors.Is(err, errAlreadyOnPath) {
+		// "stopped" like a finished one. And before node_busy: the key is
+		// shared, and a refusal's release deleted the hold of the restore or
+		// install it was refused for, so the reconciler started the server
+		// in the middle of that.
+		checkErr := storage.CheckMigration(cmd.Config.UUID, targetPath)
+		if checkErr != nil && !errors.Is(checkErr, errAlreadyOnPath) {
+			log.Printf("Storage migration of %s refused: %v", cmd.Config.UUID, checkErr)
+			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+			return
+		}
+		releaseMigrateBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
+		defer releaseMigrateBusy()
+		if checkErr != nil {
 			// The key already names the target: either a repeat of a move
 			// that finished, or one killed after its key flip (a Watchtower
 			// restart) that left the container bound to the half-deleted
@@ -2439,10 +2448,6 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 				return
 			}
 			log.Printf("Storage migration of %s: already on %s, finished what an earlier move left", cmd.Config.UUID, targetPath)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
-			return
-		} else if err != nil {
-			log.Printf("Storage migration of %s refused: %v", cmd.Config.UUID, err)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
 			return
 		}

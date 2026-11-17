@@ -8,7 +8,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"dylaris-core/services"
+
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/mux"
+	"github.com/redis/go-redis/v9"
 )
 
 // TestStripStorageServerUUIDs proves the co-tenant identifiers are removed from
@@ -75,18 +79,28 @@ func TestStripStorageServerUUIDsPassesThroughUnexpectedShapes(t *testing.T) {
 // the tree out from under it. A move to another node staged its archive under
 // the old path, and its abort then looked under the new one and left the
 // full-size zip behind. UpdateServerResources refuses both; so does this.
+//
+// V11: a restore runs under status "restarting" and holds node_busy; the move
+// went through and, refused on the node, dropped the restore's interlock.
 func TestMigrateServerStorage_RefusedWhileInstallingOrMigrating(t *testing.T) {
 	for _, tc := range []struct {
-		status  string
-		refused bool
+		status   string
+		nodeBusy string
+		refused  bool
 	}{
-		{"installing", true},
-		{"migrating", true},
-		{"stopped", false},
+		{"installing", "", true},
+		{"migrating", "", true},
+		{"stopped", "", false},
+		{"restarting", "restarting", true},
 	} {
 		t.Run(tc.status, func(t *testing.T) {
 			fake := &resourcesFakeStore{server: resourcesServer(tc.status)}
-			h := &ServerHandler{d: testDeps(Deps{Store: fake})}
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			if tc.nodeBusy != "" {
+				mr.Set(services.NodeBusyKey("srv-1"), tc.nodeBusy)
+			}
+			h := &ServerHandler{d: testDeps(Deps{Store: fake, Redis: rdb})}
 
 			r := httptest.NewRequest(http.MethodPost, "/api/servers/1/migrate-storage", bytes.NewReader([]byte(`{"targetPath":"/mnt/b"}`)))
 			r = mux.SetURLVars(r, map[string]string{"id": "1"})

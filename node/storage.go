@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -162,6 +163,14 @@ func validateStoragePath(path string) error {
 // lists every path the node ever marked, so each disk vouches for the others.
 const storageMarkerName = ".dylaris-storage"
 
+// storageMarkerGen prefixes the marker line that numbers the boot which wrote
+// it. Every boot writes the same number onto every path it took, so a marker
+// older than another one was not rewritten while its path was taken: it is
+// the copy a boot wrote onto the bare mountpoint, hidden under the disk since,
+// or the disk's own after a boot it was missing from. Either way it does not
+// vouch for the path. Old nodes read the line as a path no one configures.
+const storageMarkerGen = "#gen "
+
 // dropUnmountedPaths leaves out a path another marker lists, that has no
 // marker of its own and holds nothing: a disk that did not mount, whose empty
 // mountpoint passed every check above. Servers keyed there ran on an empty
@@ -173,6 +182,8 @@ const storageMarkerName = ".dylaris-storage"
 func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 	known := map[string]bool{}
 	marked := map[string]bool{}
+	gens := map[string]uint64{}
+	var maxGen uint64
 	for _, p := range paths {
 		b, err := os.ReadFile(filepath.Join(p, storageMarkerName))
 		if err != nil {
@@ -180,15 +191,30 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 		}
 		marked[p] = true
 		for _, line := range strings.Split(string(b), "\n") {
-			if line = strings.TrimSpace(line); line != "" {
+			line = strings.TrimSpace(line)
+			if g, ok := strings.CutPrefix(line, storageMarkerGen); ok {
+				if n, err := strconv.ParseUint(g, 10, 64); err == nil {
+					gens[p] = n
+					maxGen = max(maxGen, n)
+				}
+				continue
+			}
+			if line != "" {
 				known[line] = true
 			}
+		}
+	}
+	// A marker without a number (an old node's, or one an operator made) is
+	// taken as current.
+	for p, g := range gens {
+		if g < maxGen {
+			marked[p] = false
 		}
 	}
 	var kept []string
 	for _, p := range paths {
 		if !marked[p] && known[p] && dirHoldsNothing(p) {
-			log.Printf("storage: [warn] %s was a storage path of this node and is now empty without its %s marker, so its disk is most likely not mounted; skipping. If it is a new empty disk, create %s to use it", p, storageMarkerName, filepath.Join(p, storageMarkerName))
+			log.Printf("storage: [warn] %s was a storage path of this node and is now empty without a current %s marker, so its disk is most likely not mounted; skipping. If it is a new empty disk, replace %s with an empty file to use it", p, storageMarkerName, filepath.Join(p, storageMarkerName))
 			sm.skipped++
 			continue
 		}
@@ -200,6 +226,7 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 		list = append(list, p)
 	}
 	sort.Strings(list)
+	list = append(list, storageMarkerGen+strconv.FormatUint(maxGen+1, 10))
 	body := []byte(strings.Join(list, "\n") + "\n")
 	for _, p := range kept {
 		if err := os.WriteFile(filepath.Join(p, storageMarkerName), body, 0o644); err != nil {
@@ -209,16 +236,18 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 	return kept
 }
 
-// dirHoldsNothing reports whether dir has no entries but the node's own dot
-// files (beacons, write test), which an empty mountpoint can carry from a boot
-// that ran on it.
+// dirHoldsNothing reports whether dir holds no server: no directory but the
+// node's own dot ones. Plain files do not count: an empty mountpoint carries
+// the ones a boot that ran on it wrote (beacons, write test, and on the first
+// path sftp_host_key, <uuid>.counted and <uuid>.deleted), and a server is a
+// directory.
 func dirHoldsNothing(dir string) bool {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
 	}
 	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), ".") {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
 			return false
 		}
 	}

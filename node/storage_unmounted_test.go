@@ -30,6 +30,21 @@ func TestNewStorageManagerSkipsAnUnmountedKnownPath(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, false},
+		// V13: the first storage path is nodeSecretDir, and a boot that dropped
+		// it still wrote the node's own root files onto the mountpoint.
+		{"empty mountpoint holding the node's root files", func(t *testing.T, disk2 string) {
+			if err := os.RemoveAll(disk2); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(disk2, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range []string{"sftp_host_key", unmountedUUID + ".counted", unmountedUUID + ".deleted"} {
+				if err := os.WriteFile(filepath.Join(disk2, f), []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}, false},
 		{"marker lost but data there", func(t *testing.T, disk2 string) {
 			if err := os.Remove(filepath.Join(disk2, storageMarkerName)); err != nil {
 				t.Fatal(err)
@@ -60,6 +75,53 @@ func TestNewStorageManagerSkipsAnUnmountedKnownPath(t *testing.T) {
 				t.Errorf("skipped = %d, want %d", sm.skipped, wantSkipped)
 			}
 		})
+	}
+}
+
+// V10: a boot that took an empty mountpoint (the first boot of this version,
+// or every path unmounted at once) wrote the marker onto the root disk's
+// directory. Hidden under the mount while the disk is there, it vouched for
+// the path the next time the disk was missing.
+func TestAMarkerWrittenOntoTheMountpointDoesNotVouchForIt(t *testing.T) {
+	disk1, mnt := t.TempDir(), t.TempDir()
+	csv := disk1 + "," + mnt
+	// Boot A: the disk is not mounted, mnt is the bare mountpoint.
+	if sm := NewStorageManager(csv, nil); len(sm.Paths()) != 2 {
+		t.Fatalf("boot A took %v, want both", sm.Paths())
+	}
+	// Boot B: the disk mounts over it, holding a server.
+	under := mnt + "-under"
+	if err := os.Rename(mnt, under); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(mnt, unmountedUUID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if sm := NewStorageManager(csv, nil); len(sm.Paths()) != 2 {
+		t.Fatalf("boot B took %v, want both", sm.Paths())
+	}
+	// Boot C: the disk is missing again; the mountpoint shows boot A's marker.
+	if err := os.Rename(mnt, mnt+"-disk"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(under, mnt); err != nil {
+		t.Fatal(err)
+	}
+	sm := NewStorageManager(csv, nil)
+	for _, p := range sm.Paths() {
+		if p == mnt {
+			t.Fatalf("paths = %v, the unmounted path was taken on its stale marker", sm.Paths())
+		}
+	}
+	// Boot D: mounted again, its own (older) marker and its server are back.
+	if err := os.Rename(mnt, under); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(mnt+"-disk", mnt); err != nil {
+		t.Fatal(err)
+	}
+	if sm := NewStorageManager(csv, nil); len(sm.Paths()) != 2 {
+		t.Fatalf("boot D took %v, want the remounted disk back", sm.Paths())
 	}
 }
 

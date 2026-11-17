@@ -133,6 +133,11 @@ func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Requ
 		httpx.SendJSONError(w, "The server is being moved to another node. Move its storage when the move has finished.", http.StatusConflict)
 		return
 	}
+	// A restore runs as "restarting" and is seen only in node_busy, like the
+	// copies and installs its sibling file operations refuse.
+	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
+		return
+	}
 
 	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {

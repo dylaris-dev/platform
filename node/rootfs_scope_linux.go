@@ -113,6 +113,10 @@ func isLinkAt(dir *os.File, name string) bool {
 // the link under its new name for the moment a parallel save needs - measured
 // winnable in milliseconds. So it lands first under a name every write path
 // refuses (isProtectedFile), is judged there, and only then takes its name.
+// renameStagedHook runs after the first renameat (judged false) and after the
+// link check (judged true); tests swap the staged entry there. nil in production.
+var renameStagedHook func(nd *os.File, tmp string, judged bool)
+
 func renameNoFollow(rootDir, oldRel, newRel string) error {
 	od, ol, err := openParentNoFollow(rootDir, oldRel, false)
 	if err != nil {
@@ -136,14 +140,21 @@ func renameNoFollow(rootDir, oldRel, newRel string) error {
 	if err := unix.Renameat(int(od.Fd()), ol, int(nd.Fd()), tmp); err != nil {
 		return &os.LinkError{Op: "rename", Old: oldRel, New: newRel, Err: err}
 	}
+	if renameStagedHook != nil {
+		renameStagedHook(nd, tmp, false)
+	}
 	if isLinkAt(nd, tmp) {
-		if unix.Renameat(int(nd.Fd()), tmp, int(od.Fd()), ol) != nil {
-			_ = unix.Unlinkat(int(nd.Fd()), tmp, 0)
-		}
+		// Not what was moved: ol was no link. nd may be the tenant's, so the
+		// link was swapped in there, and moving it "back" put it at od - the
+		// server's top level when the rename went down into survival/.
+		_ = unix.Unlinkat(int(nd.Fd()), tmp, 0)
 		return errLink
 	}
+	if renameStagedHook != nil {
+		renameStagedHook(nd, tmp, true)
+	}
 	if err := unix.Renameat(int(nd.Fd()), tmp, int(nd.Fd()), nl); err != nil {
-		if rerr := unix.Renameat(int(nd.Fd()), tmp, int(od.Fd()), ol); rerr != nil {
+		if rerr := moveStagedBack(od, nd, tmp, ol); rerr != nil {
 			return fmt.Errorf("rename %s to %s: %w; and moving it back failed (%v), it is parked as %s next to %s",
 				oldRel, newRel, err, rerr, tmp, path.Base(newRel))
 		}
@@ -154,6 +165,27 @@ func renameNoFollow(rootDir, oldRel, newRel string) error {
 	// nothing, keeping it hid it from the tenant for good.
 	_ = unix.Unlinkat(int(nd.Fd()), tmp, 0)
 	return nil
+}
+
+// moveStagedBack returns what sits at nd/tmp to od/ol, judged the way the
+// forward move is: it lands in od under a name every write path refuses, is
+// checked there, and only then takes ol. Since the link check, nd/tmp could be
+// swapped again, and a plain renameat into od handed the tenant's link to the
+// server's top level.
+func moveStagedBack(od, nd *os.File, tmp, ol string) error {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return err
+	}
+	back := renameStageOwn + hex.EncodeToString(b)
+	if err := unix.Renameat(int(nd.Fd()), tmp, int(od.Fd()), back); err != nil {
+		return err
+	}
+	if isLinkAt(od, back) {
+		_ = unix.Unlinkat(int(od.Fd()), back, 0)
+		return fmt.Errorf("%w: what came back is a link, and it was dropped", os.ErrPermission)
+	}
+	return unix.Renameat(int(od.Fd()), back, int(od.Fd()), ol)
 }
 
 // pinDir opens the directory rel inside rootDir without following a link,
