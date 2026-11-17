@@ -1046,8 +1046,10 @@ func installFromUploadZip(destDir, structure string) error {
 		}
 		// Refused before extracting: afterwards the zip was gone, so the retry
 		// the message asks for needed a re-upload, and <top>/ stayed behind.
+		// top itself too: an existing <top>/ would take the upload in, and the
+		// move up would then lift the server's old contents along with it.
 		if top != "" {
-			if err := uploadClash(destDir, top, children); err != nil {
+			if err := uploadClash(destDir, top, append([]string{top}, children...)); err != nil {
 				return err
 			}
 		}

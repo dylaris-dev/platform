@@ -149,12 +149,13 @@ func TestMemoryGuardCriticalNotificationIsThrottledButActionRepeats(t *testing.T
 
 func TestMemoryGuardOOMKilledRecordsCrash(t *testing.T) {
 	m, st, q, rdb := newMemGuardTest(t, "stop", "online")
-	pushMemEvent(t, rdb, memoryEvent{Event: MemoryEventOOM, At: 1700000000})
-	pushMemEvent(t, rdb, memoryEvent{Event: MemoryEventOOM, At: 1700000060})
+	latest := time.Now().Add(-time.Minute).Unix()
+	pushMemEvent(t, rdb, memoryEvent{Event: MemoryEventOOM, At: latest - 60})
+	pushMemEvent(t, rdb, memoryEvent{Event: MemoryEventOOM, At: latest})
 	if !m.scan(context.Background()) {
 		t.Fatal("scan reported no change after an OOM kill")
 	}
-	if st.crash != models.CrashReasonOOMKilled || st.crashAt.Unix() != 1700000060 {
+	if st.crash != models.CrashReasonOOMKilled || st.crashAt.Unix() != latest {
 		t.Errorf("last crash = %q at %d, want oom_killed at the latest event", st.crash, st.crashAt.Unix())
 	}
 	if len(q.actions) != 0 {
@@ -162,6 +163,38 @@ func TestMemoryGuardOOMKilledRecordsCrash(t *testing.T) {
 	}
 	if len(st.notes) != 1 || !strings.Contains(st.notes[0].Body, "killed: out of memory") {
 		t.Errorf("notifications = %+v, want exactly one (rate-limited) OOM notice", st.notes)
+	}
+}
+
+// T11: the kill time is the node host's clock. A BYON machine running fast put
+// it in the future, which the panel's banner window hides; one far off put it
+// before anything the node could still have queued. Either is Core's clock.
+func TestMemoryGuardOOMTimeFromASkewedNode(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name     string
+		at       int64
+		wantNode bool
+	}{
+		{"in sync", now.Add(-2 * time.Minute).Unix(), true},
+		{"node clock 5 minutes fast", now.Add(5 * time.Minute).Unix(), false},
+		{"node clock a day slow", now.Add(-24 * time.Hour).Unix(), false},
+		{"no time", 0, false},
+	}
+	for _, c := range cases {
+		m, st, _, rdb := newMemGuardTest(t, "off", "online")
+		pushMemEvent(t, rdb, memoryEvent{Event: MemoryEventOOM, At: c.at})
+		before := time.Now()
+		m.scan(context.Background())
+		if c.wantNode {
+			if st.crashAt.Unix() != c.at {
+				t.Errorf("%s: crash at %v, want the node's %v", c.name, st.crashAt, time.Unix(c.at, 0))
+			}
+			continue
+		}
+		if st.crashAt.Before(before.Truncate(time.Second)) || st.crashAt.After(time.Now()) {
+			t.Errorf("%s: crash at %v, want Core's clock (%v)", c.name, st.crashAt, before)
+		}
 	}
 }
 

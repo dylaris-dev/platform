@@ -41,6 +41,9 @@ const (
 	// memory_critical repeats once memory drops and climbs again, and with
 	// 'restart' that can be every few minutes.
 	memoryCriticalNotifyEvery = 6 * time.Hour
+	// memoryEventMaxAge is the node's TTL on the event list: no real event
+	// can be older than this when it is drained.
+	memoryEventMaxAge = time.Hour
 )
 
 // memoryEvent mirrors the node's struct.
@@ -211,9 +214,14 @@ func (m *MemoryGuardService) handle(ctx context.Context, uuid string, ev memoryE
 		return acted
 
 	case MemoryEventOOM:
+		// ev.At is the node host's clock, unchecked on BYON hardware. Core
+		// drains within seconds of the kill, so a time in the future or older
+		// than the list could hold is skew, and Core's clock is the better one:
+		// a fast node clock kept the panel's OOM banner hidden.
+		now := time.Now()
 		at := time.Unix(ev.At, 0)
-		if ev.At <= 0 {
-			at = time.Now()
+		if ev.At <= 0 || at.After(now) || at.Before(now.Add(-memoryEventMaxAge)) {
+			at = now
 		}
 		if err := m.store.SetServerLastCrash(srv.ID, models.CrashReasonOOMKilled, at); err != nil {
 			log.Printf("memory guard: record OOM kill of %s: %v", uuid, err)

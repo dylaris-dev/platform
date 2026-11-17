@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -122,5 +123,45 @@ func TestStoppedDiskSweepRearmsGaugesFirst(t *testing.T) {
 	}
 	if mr.Exists(diskGaugeKey(never)) {
 		t.Error("re-arming created a gauge that was never measured")
+	}
+}
+
+// T10: a running server's walk that outlasted its tick skipped the next one,
+// and the gauge, kept alive only by the publish TTL, expired in the gap. Every
+// disk tick re-arms the existing gauge, the skipped one included.
+func TestRunningDiskTickRearmsGauge(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	const measured = "aaaaaaaa-1111-2222-3333-444444444444"
+	const never = "cccccccc-1111-2222-3333-444444444444"
+	rdb.Set(ctx, diskGaugeKey(measured), `{"total":1}`, time.Minute)
+
+	cases := []struct {
+		name      string
+		uuid      string
+		busy      bool
+		wantStart bool
+	}{
+		{"idle", measured, false, true},
+		{"walk still running", measured, true, false},
+		{"never measured", never, false, true},
+	}
+	for _, c := range cases {
+		mr.SetTTL(diskGaugeKey(measured), time.Minute)
+		var measuring atomic.Bool
+		measuring.Store(c.busy)
+		if got := startDiskTick(ctx, rdb, c.uuid, &measuring); got != c.wantStart {
+			t.Errorf("%s: start %v, want %v", c.name, got, c.wantStart)
+		}
+		if c.uuid == never {
+			if mr.Exists(diskGaugeKey(never)) {
+				t.Errorf("%s: re-arming created a gauge", c.name)
+			}
+			continue
+		}
+		if got := mr.TTL(diskGaugeKey(measured)); got != runningDiskUsageTTL {
+			t.Errorf("%s: ttl %v, want %v", c.name, got, runningDiskUsageTTL)
+		}
 	}
 }

@@ -12,32 +12,45 @@ import (
 
 	"dylaris-pkg/queue"
 
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 )
 
 // P14: a Beam audit record named the peer as "ip:port", which Core casts to
 // INET, so Postgres refused every Beam row. It names the host, like SFTP.
+// T07: on the plain listener the peer is the Link's relay hop, the same
+// internal address for every user, so no address is recorded there.
 func TestABeamAuditRecordNamesTheHostWithoutItsPort(t *testing.T) {
-	_, rdb := gaugeRedis(t)
-	sub := rdb.Subscribe(context.Background(), queue.SFTPAuditChannel(nodeID))
-	defer sub.Close()
-	if _, err := sub.Receive(context.Background()); err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name string
+		auth credentials.AuthInfo
+		want string
+	}{
+		{"LAN fast path (TLS)", credentials.TLSInfo{}, "10.0.1.7"},
+		{"relayed through the Link", nil, ""},
 	}
-	s := &beamServer{rdb: rdb}
-	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("10.0.1.7"), Port: 43122}})
-	s.auditBeam(ctx, "srv", "write", "plugins/x.yml")
-	select {
-	case msg := <-sub.Channel():
-		var rec queue.SFTPAuditRecord
-		if err := json.Unmarshal([]byte(msg.Payload), &rec); err != nil {
+	for _, c := range cases {
+		_, rdb := gaugeRedis(t)
+		sub := rdb.Subscribe(context.Background(), queue.SFTPAuditChannel(nodeID))
+		if _, err := sub.Receive(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if rec.RemoteIP != "10.0.1.7" {
-			t.Fatalf("RemoteIP = %q, want the host alone", rec.RemoteIP)
+		s := &beamServer{rdb: rdb}
+		ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("10.0.1.7"), Port: 43122}, AuthInfo: c.auth})
+		s.auditBeam(ctx, "srv", "write", "plugins/x.yml")
+		select {
+		case msg := <-sub.Channel():
+			var rec queue.SFTPAuditRecord
+			if err := json.Unmarshal([]byte(msg.Payload), &rec); err != nil {
+				t.Fatal(err)
+			}
+			if rec.RemoteIP != c.want {
+				t.Errorf("%s: RemoteIP = %q, want %q", c.name, rec.RemoteIP, c.want)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s: no audit record was published", c.name)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("no audit record was published")
+		sub.Close()
 	}
 }
 

@@ -651,7 +651,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 	go func() {
 		measuredFrom := time.Now()
 		if usage := getDiskUsage(ctx, rdb, uuid, quota); usage != nil {
-			publishDiskUsage(ctx, rdb, uuid, usage, measuredFrom, 10*time.Minute)
+			publishDiskUsage(ctx, rdb, uuid, usage, measuredFrom, runningDiskUsageTTL)
 		}
 	}()
 
@@ -796,10 +796,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 			refreshCPULimit()
 			pingNow()
 		case <-diskTicker.C:
-			// One measurement at a time. A walk that outlasted the tick (a big
-			// world, a slow disk) used to get a second one started next to it,
-			// and each slowed the other down.
-			if !measuring.CompareAndSwap(false, true) {
+			if !startDiskTick(ctx, rdb, uuid, &measuring) {
 				continue
 			}
 			go func() {
@@ -810,7 +807,7 @@ func collectForContainer(ctx context.Context, rdb *redis.Client, dm *DockerManag
 				// fail and read as "no grace, no hold", tripping on half the
 				// facts. A start over the limit is caught by the next collector.
 				if usage != nil && ctx.Err() == nil {
-					publishDiskUsage(ctx, rdb, uuid, usage, measuredFrom, 10*time.Minute)
+					publishDiskUsage(ctx, rdb, uuid, usage, measuredFrom, runningDiskUsageTTL)
 
 					graced := diskGraced(ctx, rdb, quota, uuid, usage)
 					if usage.Warning == "full" && !graced {
@@ -1133,6 +1130,22 @@ func dirSize(path string) int64 {
 		return nil
 	})
 	return size
+}
+
+// runningDiskUsageTTL is the gauge's lifetime between a running server's
+// measurements: two fallback ticks, which startDiskTick re-arms on each tick.
+const runningDiskUsageTTL = 10 * time.Minute
+
+// startDiskTick re-arms the server's existing gauge, then claims the one
+// measurement slot. One measurement at a time: a walk that outlasted the tick
+// (a big world, a slow disk) used to get a second one started next to it, and
+// each slowed the other down. The re-arm comes first so the skipped tick also
+// keeps the gauge alive - otherwise only the publish TTL held it, and a walk
+// longer than the tick let it expire, which every upload check reads as no
+// limit. Expire never creates a key, so an unmeasured server stays unmeasured.
+func startDiskTick(ctx context.Context, rdb *redis.Client, uuid string, measuring *atomic.Bool) bool {
+	rdb.Expire(ctx, diskGaugeKey(uuid), runningDiskUsageTTL)
+	return measuring.CompareAndSwap(false, true)
 }
 
 // stoppedDiskUsageTTL outlives two sweeps, so one slow sweep does not leave a

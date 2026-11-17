@@ -30,7 +30,7 @@ func TestDiskMeasurementsDoNotStack(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	if !strings.Contains(s, "if !measuring.CompareAndSwap(false, true) {") || !strings.Contains(s, "defer measuring.Store(false)") {
+	if !strings.Contains(s, "if !startDiskTick(ctx, rdb, uuid, &measuring) {") || !strings.Contains(s, "return measuring.CompareAndSwap(false, true)") || !strings.Contains(s, "defer measuring.Store(false)") {
 		t.Error("a disk measurement can start while the previous one still runs")
 	}
 	q, err := os.ReadFile("disk_quota.go")

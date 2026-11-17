@@ -245,10 +245,16 @@ func (s *beamServer) auditBeam(ctx context.Context, serverUUID, kind, rel string
 		return
 	}
 	// The host only, as SFTP sends it: Core stores it as INET, which refuses
-	// "ip:port".
+	// "ip:port". Only from the LAN TLS listener, whose peer is the client: the
+	// plain listener is reached through the Link's splice, so its peer is the
+	// relay hop - one internal address for every user - and the frozen beam
+	// header carries no client address to put in its place. No address beats
+	// a wrong one in an audit trail.
 	var ip string
 	if p, ok := peer.FromContext(ctx); ok && p != nil {
-		ip = remoteAddr(p.Addr)
+		if _, direct := p.AuthInfo.(credentials.TLSInfo); direct {
+			ip = remoteAddr(p.Addr)
+		}
 	}
 	a := newSFTPAudit(s.extractUsername(ctx), ip)
 	a.via = "beam"

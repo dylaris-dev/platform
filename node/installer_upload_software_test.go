@@ -197,6 +197,33 @@ func TestUploadZip_SubfolderClashRefused(t *testing.T) {
 	}
 }
 
+// T04: a zip whose one folder is named like a folder the server already has
+// merged into it and then lifted the OLD contents up with the new.
+func TestUploadZip_SubfolderNamedLikeExistingFolderRefused(t *testing.T) {
+	for _, top := range []string{"world", "mods"} {
+		t.Run(top, func(t *testing.T) {
+			data := t.TempDir()
+			dir := filepath.Join(data, "main")
+			os.MkdirAll(filepath.Join(dir, top), 0o755)
+			os.WriteFile(filepath.Join(dir, top, "old.dat"), []byte("old"), 0o644)
+			writeUploadZip(t, dir, map[string]string{top + "/new.dat": "new"})
+			_, err := InstallServer(data, "main", InstallerConfig{Type: "upload-zip", Structure: "subfolder"})
+			if err == nil || !strings.Contains(err.Error(), top) {
+				t.Fatalf("want a refusal naming %s, got %v", top, err)
+			}
+			if !exists(filepath.Join(dir, top, "old.dat")) || exists(filepath.Join(dir, "old.dat")) {
+				t.Error("the existing folder was taken apart")
+			}
+			if exists(filepath.Join(dir, top, "new.dat")) {
+				t.Error("the refused upload was extracted into the existing folder")
+			}
+			if !exists(filepath.Join(dir, ".upload.zip")) {
+				t.Error("the upload was deleted, a retry needs a re-upload")
+			}
+		})
+	}
+}
+
 // A file beside the folder means the archive is the server's top folder.
 func TestUploadZip_FileBesideFolderNotMoved(t *testing.T) {
 	data := t.TempDir()
