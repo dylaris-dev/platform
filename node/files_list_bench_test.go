@@ -126,3 +126,61 @@ func TestListingCachesFolderSizes(t *testing.T) {
 		t.Fatalf("after a node write: %d, want 210", got)
 	}
 }
+
+// An upload streams into a staging file for as long as Core takes to send it,
+// and a listing in that window caches the partial size. The commit is the
+// write the panel waits for, so it drops the cache; the WriteReq that opened
+// the upload came too early to.
+func TestAnUploadCommitDropsTheFolderSizes(t *testing.T) {
+	h, uuid, _ := seedNodeOwned(t)
+	clock := time.Unix(1000, 0)
+	nowDirSize = func() time.Time { return clock }
+	t.Cleanup(func() { nowDirSize = time.Now })
+
+	survivalSize := func() int64 {
+		t.Helper()
+		for _, f := range h.handleList("l", uuid, &pb.ListFilesReq{Path: "."}).GetListResp().GetFiles() {
+			if f.Name == "survival" {
+				return f.Size
+			}
+		}
+		t.Fatal("survival not listed")
+		return 0
+	}
+
+	f, tmp, err := h.createUploadTemp(uuid, "survival/world.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write(make([]byte, 40))
+	// The partial size itself is the OS's to report (NTFS updates it lazily);
+	// what matters is that this listing caches something.
+	survivalSize()
+	f.Write(make([]byte, 60))
+	f.Close()
+	if _, err := h.commitUpload(uuid, "survival/world.zip", tmp); err != nil {
+		t.Fatal(err)
+	}
+	if got := survivalSize(); got != 110 {
+		t.Fatalf("after the commit: %d, want 110", got)
+	}
+}
+
+// A walk that started before a forget measured the tree as it was; storing
+// it afterwards would undo the forget for a whole TTL.
+func TestAWalkFromBeforeAForgetIsNotCached(t *testing.T) {
+	c := &dirSizeCache{m: map[string]map[string]dirSizeEntry{}}
+	got := c.get("/srv/a", "survival", func() int64 {
+		c.forget("/srv/a") // a delete lands while the walk runs
+		return 10
+	})
+	if got != 10 {
+		t.Fatalf("the walk's own caller got %d, want 10", got)
+	}
+	if got := c.get("/srv/a", "survival", func() int64 { return 99 }); got != 99 {
+		t.Fatalf("after the forget: %d, want a fresh 99", got)
+	}
+	if got := c.get("/srv/a", "survival", func() int64 { return 7 }); got != 99 {
+		t.Fatalf("an undisturbed walk: %d, want the cached 99", got)
+	}
+}

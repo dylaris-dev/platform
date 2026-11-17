@@ -484,6 +484,11 @@ type dirSizeCache struct {
 	mu sync.Mutex
 	m  map[string]map[string]dirSizeEntry
 	n  int
+	// gen counts the forgets per server directory. A walk stores its result
+	// only if no forget came while it ran: it measured the tree from before
+	// that change, and stored, it would outlive the forget by a whole TTL.
+	// ponytail: one counter per server directory ever forgotten, never pruned.
+	gen map[string]uint64
 }
 
 // get returns the cached size of name under serverDir, or computes it. Two
@@ -492,6 +497,7 @@ func (c *dirSizeCache) get(serverDir, name string, compute func() int64) int64 {
 	now := nowDirSize()
 	c.mu.Lock()
 	e, ok := c.m[serverDir][name]
+	gen := c.gen[serverDir]
 	c.mu.Unlock()
 	if ok && now.Sub(e.at) < dirSizeTTL {
 		return e.size
@@ -499,6 +505,9 @@ func (c *dirSizeCache) get(serverDir, name string, compute func() int64) int64 {
 	size := compute()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.gen[serverDir] != gen {
+		return size
+	}
 	if c.n >= dirSizeMax {
 		c.m, c.n = map[string]map[string]dirSizeEntry{}, 0
 	}
@@ -522,6 +531,10 @@ func (c *dirSizeCache) forget(serverDir string) {
 	defer c.mu.Unlock()
 	c.n -= len(c.m[serverDir])
 	delete(c.m, serverDir)
+	if c.gen == nil {
+		c.gen = map[string]uint64{}
+	}
+	c.gen[serverDir]++
 }
 
 // treeSize walks r one directory handle at a time. fs.WalkDir over root.FS()
@@ -942,7 +955,13 @@ func (h *StreamHandler) commitUpload(serverUUID, reqPath, tempName string) (int6
 	if st, err := root.Lstat(name); err == nil && st.Mode().IsRegular() {
 		grown -= st.Size()
 	}
-	return grown, root.Rename(tempName, name)
+	if err := root.Rename(tempName, name); err != nil {
+		return 0, err
+	}
+	// Here and not on the WriteReq alone: a listing while Core streamed the
+	// upload cached the folder with the partial staging file in it.
+	dirSizes.forget(h.serverDir(serverUUID))
+	return grown, nil
 }
 
 // removeUploadTemp discards a staging file that will not be committed. The
