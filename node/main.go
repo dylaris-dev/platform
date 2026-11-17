@@ -1792,8 +1792,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		} else {
 			started = startIt
 			log.Printf("Server %s/%s deployed (started: %v)", cmd.Config.UUID, subName, startIt)
-			saveNodeConfig(serverPath, cmd.Config)
 		}
+		// Saved whatever the recreate does, as reinstall does: a failed one
+		// already removed the container, and the reconciler rebuilds it only
+		// from a config that names the installed sub-server.
+		saveNodeConfig(serverPath, cmd.Config)
 		// Best-effort metadata refresh regardless of RecreateWithCommand result
 		// (installation succeeded; the sub-server directory is valid).
 		refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)

@@ -43,7 +43,12 @@ func (dm *DockerManager) stoppedItself(ctx context.Context, rdb *redis.Client, u
 	if crashReportSince(filepath.Join(dm.resolveLocalServerPath(uuid), sub, "crash-reports"), started) {
 		return false
 	}
-	return !logTailAsksRestart(ctx, rdb, serverLogStreamKey(uuid, sub))
+	// The stream holds every run of the server, so only lines since this run
+	// started may ask for a restart. StartedAt is this machine's clock and the
+	// line ids are Redis's, hence the offset. ponytail: the offset is only
+	// applied past redisClockTolerance, so up to 10s of skew remains.
+	since := started.Add(heartbeatClock(rdb, nodeID).now(ctx).Sub(time.Now()))
+	return !logTailAsksRestart(ctx, rdb, serverLogStreamKey(uuid, sub), since)
 }
 
 // diskGuardTrips is when the disk guard last stopped each server (uuid ->
@@ -105,8 +110,9 @@ const restartWindow = 2 * time.Minute
 // "Startup script ... does not exist! Stopping server." that /restart prints
 // when no script is set. Player chat does not count - "<Steve> restart pls"
 // must not bring back a server its owner stopped. Unreadable reads as "no",
-// which keeps the stop.
-func logTailAsksRestart(ctx context.Context, rdb *redis.Client, key string) bool {
+// which keeps the stop. Lines before since (Redis's clock; zero for no bound)
+// are an earlier run's and do not count.
+func logTailAsksRestart(ctx context.Context, rdb *redis.Client, key string, since time.Time) bool {
 	newest, err := rdb.XRevRangeN(ctx, key, "+", "-", 1).Result()
 	if err != nil || len(newest) == 0 {
 		return false
@@ -115,14 +121,24 @@ func logTailAsksRestart(ctx context.Context, rdb *redis.Client, key string) bool
 	if err != nil {
 		return false
 	}
-	from := strconv.FormatInt(ms-restartWindow.Milliseconds(), 10)
-	msgs, err := rdb.XRevRangeN(ctx, key, "+", from, 5000).Result()
+	fromMs := ms - restartWindow.Milliseconds()
+	if !since.IsZero() && since.UnixMilli() > fromMs {
+		fromMs = since.UnixMilli()
+	}
+	msgs, err := rdb.XRevRangeN(ctx, key, "+", strconv.FormatInt(fromMs, 10), 5000).Result()
 	if err != nil {
 		return false
 	}
+	sayers := map[string]bool{}
 	for _, m := range msgs {
 		line, _ := m.Values["line"].(string)
-		if chatLine(line) || shipperLine(line) {
+		if name, cmd, ok := strings.Cut(consoleMessage(line), " issued server command: "); ok && sayCommand(cmd) {
+			sayers[name] = true
+		}
+	}
+	for _, m := range msgs {
+		line, _ := m.Values["line"].(string)
+		if chatLine(line) || shipperLine(line) || sayLine(line, sayers) {
 			continue
 		}
 		msg := consoleMessage(line)
@@ -197,6 +213,32 @@ func restartCommand(cmd string) bool {
 	name, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(cmd), "/"), " ")
 	name = strings.ToLower(name)
 	return name == "restart" || strings.HasSuffix(name, ":restart")
+}
+
+// sayCommand reports a player's /say ("/say", "/minecraft:say").
+func sayCommand(cmd string) bool {
+	name, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimSpace(cmd), "/"), " ")
+	name = strings.ToLower(name)
+	return name == "say" || strings.HasSuffix(name, ":say")
+}
+
+// sayLine reports a /say broadcast: "[Server thread/INFO]: [Steve] text",
+// "[Server] text" from the console, "[Not Secure] [Steve] text" when unsigned.
+// Its "[Steve] " looks like a plugin's tag, so a bare player-name tag counts
+// only for a player seen issuing /say (sayers): a restart plugin's "[Name] "
+// announcement must still bring the server back. ponytail: vanilla logs no
+// issued commands, so its signed player /say is not caught.
+func sayLine(line string, sayers map[string]bool) bool {
+	i := strings.Index(line, "]: ")
+	if i < 0 {
+		return false
+	}
+	msg := line[i+3:]
+	if strings.HasPrefix(msg, "[Not Secure] [") {
+		return true
+	}
+	name, _, ok := strings.Cut(strings.TrimPrefix(msg, "["), "] ")
+	return ok && strings.HasPrefix(msg, "[") && (name == "Server" || sayers[name])
 }
 
 // chatLine reports a player's chat message: "[12:00:00] [Server thread/INFO]:

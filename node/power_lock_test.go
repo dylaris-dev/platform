@@ -254,18 +254,18 @@ func TestACleanExitAfterACrashOrARestartIsNotAStop(t *testing.T) {
 	add("[12:00:00] [Server thread/INFO]: <Steve> restart pls")
 	add("[12:00:00] [Server thread/INFO]: [Not Secure] <Alex> restart?")
 	add("[Server thread/INFO]: Stopping server")
-	if logTailAsksRestart(ctx, rdb, key) {
+	if logTailAsksRestart(ctx, rdb, key, time.Time{}) {
 		t.Fatal("a plain stop, player chat, the shipper's own crash line, or a line from before the window read as a restart")
 	}
 	add("[Server thread/INFO]: Startup script './start.sh' does not exist! Stopping server.")
-	if !logTailAsksRestart(ctx, rdb, key) {
+	if !logTailAsksRestart(ctx, rdb, key, time.Time{}) {
 		t.Fatal("Paper's /restart without a script did not read as a restart")
 	}
 	// A spam after the restart line does not push it out of reach.
 	for i := range 300 {
 		add(fmt.Sprintf("[DH-World Gen Thread[0]/WARN]: spam %d", i))
 	}
-	if !logTailAsksRestart(ctx, rdb, key) {
+	if !logTailAsksRestart(ctx, rdb, key, time.Time{}) {
 		t.Fatal("a log spam hid the restart line")
 	}
 }
@@ -414,7 +414,7 @@ func TestAPluginNamedRestartDoesNotTurnAStopIntoARestart(t *testing.T) {
 			ms++
 			rdb.XAdd(ctx, &redis.XAddArgs{Stream: key, ID: fmt.Sprintf("%d-0", ms), Values: map[string]interface{}{"line": l}})
 		}
-		if got := logTailAsksRestart(ctx, rdb, key); got != c.want {
+		if got := logTailAsksRestart(ctx, rdb, key, time.Time{}); got != c.want {
 			t.Errorf("case %d: asks restart = %v, want %v", i, got, c.want)
 		}
 	}
