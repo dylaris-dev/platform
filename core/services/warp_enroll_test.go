@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
@@ -20,6 +21,11 @@ type fakeWarpStore struct {
 	regions []store.WarpRegion
 	leaders []store.WarpLeader
 	nextID  int
+	// onGet and onDelete run inside the lookups, so a test can land another
+	// caller's write between a read and what the reader does with it.
+	onGet       func(pubkey string)
+	onDelete    func(pubkey string)
+	onSetLeader func(pubkey string)
 }
 
 func newFakeWarpStore() *fakeWarpStore {
@@ -43,10 +49,16 @@ func (f *fakeWarpStore) InsertWarpPeer(p store.WarpPeer) (int, error) {
 	return p.ID, nil
 }
 func (f *fakeWarpStore) GetWarpPeerByPubkey(pk string) (*store.WarpPeer, error) {
-	if p, ok := f.peers[pk]; ok {
+	p, ok := f.peers[pk]
+	if f.onGet != nil {
+		hook := f.onGet
+		f.onGet = nil
+		hook(pk)
+	}
+	if ok {
 		return &p, nil
 	}
-	return nil, errNotFound
+	return nil, sql.ErrNoRows // what the Postgres store returns
 }
 func (f *fakeWarpStore) ListWarpPeersByRegion(region string) ([]store.WarpPeer, error) {
 	var out []store.WarpPeer
@@ -67,6 +79,9 @@ func (f *fakeWarpStore) ListWarpPeersByKey(apiKeyID int) ([]store.WarpPeer, erro
 	return out, nil
 }
 func (f *fakeWarpStore) DeleteWarpPeerByPubkey(pubkey string) error {
+	if f.onDelete != nil {
+		f.onDelete(pubkey)
+	}
 	delete(f.peers, pubkey)
 	return nil
 }
@@ -96,6 +111,9 @@ func (f *fakeWarpStore) SetWarpPeerAssignedLeader(pubkey, leaderID string) error
 	}
 	p.AssignedLeader = leaderID
 	f.peers[pubkey] = p
+	if f.onSetLeader != nil {
+		f.onSetLeader(pubkey)
+	}
 	return nil
 }
 

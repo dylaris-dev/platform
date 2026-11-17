@@ -460,6 +460,16 @@ var ErrWarpLimitReached = errors.New("warp connection limit reached")
 // to another peer - a graceful form of the wg_ip UNIQUE violation.
 var ErrWarpIPTaken = errors.New("warp fixed IP already allocated")
 
+// ErrWarpKeyRevoked is returned by EnrollPeerTx when the key was revoked after
+// the request authenticated.
+var ErrWarpKeyRevoked = errors.New("warp key revoked")
+
+// warpEnrollKeyLiveSQL re-reads the enrolling key inside the transaction. FOR
+// SHARE makes a concurrent revoke wait for this insert, so the revoke's peer
+// teardown runs after the row exists; a revoke that got there first leaves no
+// row to share and the enroll is refused.
+const warpEnrollKeyLiveSQL = `SELECT 1 FROM warp_api_keys WHERE id = $1 AND revoked_at IS NULL FOR SHARE`
+
 // warpEnrollLock serializes all warp enrollments cluster-wide via a Postgres
 // transaction advisory lock, so concurrent enrolls (across N Cores) can never
 // exceed a key's max connections or collide on an allocated IP. Enroll is rare,
@@ -481,6 +491,13 @@ func (s *PostgresStore) EnrollPeerTx(keyID, limit int, onNewConn, pubkey, fixedI
 	defer func() { _ = tx.Rollback() }() // no-op after a successful Commit
 
 	if _, err = tx.Exec(`SELECT pg_advisory_xact_lock($1)`, warpEnrollLock); err != nil {
+		return "", "", err
+	}
+	var live int
+	if err = tx.QueryRow(warpEnrollKeyLiveSQL, keyID).Scan(&live); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", ErrWarpKeyRevoked
+		}
 		return "", "", err
 	}
 

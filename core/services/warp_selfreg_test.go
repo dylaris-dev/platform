@@ -178,6 +178,39 @@ func TestSelfReg_SubnetMismatch_ChangesNothing(t *testing.T) {
 	}
 }
 
+// The leader announces its subnet in network form, and the panel stores what the
+// operator typed - host bits and all. Compared as strings, "10.77.0.1/16" and
+// "10.77.0.0/16" disagreed, and every leader of that region was refused forever
+// with a message telling the operator to fix two values naming one network.
+func TestSelfReg_SubnetComparedAsANetwork(t *testing.T) {
+	for _, tc := range []struct {
+		stored  string
+		joins   bool
+		comment string
+	}{
+		{"10.77.0.1/16", true, "host bits typed into the panel"},
+		{" 10.77.0.0/16", true, "stray whitespace"},
+		{"10.77.0.0/16", true, "already canonical"},
+		{"10.77.0.0/24", false, "a different prefix is a different network"},
+		{"not-a-cidr", false, "unparseable stays a mismatch"},
+	} {
+		t.Run(tc.comment, func(t *testing.T) {
+			r, st, mr := selfRegFixture(t)
+			st.regions["eu-central"] = store.WarpRegion{Region: "eu-central", Subnet: tc.stored, Enabled: true}
+			announce(t, mr, "eu-edge-02", liveAnnouncement())
+
+			r.RunOnce(context.Background())
+
+			if _, ok := st.leaders["eu-edge-02"]; ok != tc.joins {
+				t.Errorf("stored %q vs announced 10.77.0.0/16: registered=%v, want %v", tc.stored, ok, tc.joins)
+			}
+			if got := st.regions["eu-central"].Subnet; got != tc.stored {
+				t.Errorf("stored subnet = %q, want it untouched", got)
+			}
+		})
+	}
+}
+
 // Without a subnet there is nothing to create a region FROM, but the leader is
 // still legitimate - it just cannot be the reason a region exists.
 func TestSelfReg_NoSubnet_JoinsExistingRegionOnly(t *testing.T) {

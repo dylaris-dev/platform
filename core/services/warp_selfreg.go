@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"net"
 	"strings"
 	"time"
 
@@ -249,6 +250,19 @@ func (s *WarpSelfRegistrar) applyLeader(id string, a LeaderAnnouncement, byID ma
 	log.Printf("[warp] leader %s moved: %s/%s -> %s/%s", id, l.Region, l.Endpoint, a.Region, a.Endpoint)
 }
 
+// sameNetwork reports whether two CIDRs name the same network. The leader
+// announces the masked form and the panel stores what the operator typed, host
+// bits included, so a string compare refused every leader of such a region. An
+// unparseable side falls back to the exact string.
+func sameNetwork(a, b string) bool {
+	_, na, errA := net.ParseCIDR(strings.TrimSpace(a))
+	_, nb, errB := net.ParseCIDR(strings.TrimSpace(b))
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	return na.String() == nb.String()
+}
+
 // ensureRegion makes sure the announced region exists, and reports whether the
 // leader may be registered into it. `subnetByRegion` is the region registry as
 // it was read at the start of the pass; a region created here is added to it so
@@ -260,7 +274,7 @@ func (s *WarpSelfRegistrar) ensureRegion(id string, a LeaderAnnouncement, subnet
 		// so overwriting it would strand every one of them; and the leader
 		// bounds its peers by its own, so routing them through it would fail
 		// anyway. Say which two values disagree and change nothing.
-		if a.Subnet != "" && stored != a.Subnet {
+		if a.Subnet != "" && !sameNetwork(stored, a.Subnet) {
 			log.Printf("[warp] leader %s announces subnet %s but region %s is %s; not registering it. Fix WARP_WG_SUBNET or the region.",
 				id, a.Subnet, a.Region, stored)
 			return false

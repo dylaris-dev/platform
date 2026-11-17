@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -213,12 +214,28 @@ type EnrollResult struct {
 
 // --- Redis keys (all per-leader; queue/events already existed) ---
 
-func (s *WarpService) leaderQueueKey(leaderID string) string {
-	return warpLeaderQueueKey(leaderID)
-}
-
 func warpLeaderQueueKey(leaderID string) string {
 	return "dylaris:warp:" + leaderID + ":queue"
+}
+
+// warpLeaderQueueMax bounds a leader's command queue. The row of a leader that
+// stopped announcing is kept on purpose and still gets every remove of its
+// region, and nothing pops that queue, so it grew for as long as the row lived.
+// A leader that comes back is resynced in full on boot, so the oldest commands
+// are the ones that can go.
+//
+// ponytail: fixed cap far above any live backlog; a live leader drains in ms.
+const warpLeaderQueueMax = 10000
+
+// rpushLeaderQueue is the one way a command reaches a leader's queue.
+func rpushLeaderQueue(ctx context.Context, rdb *redis.Client, leaderID string, b []byte) error {
+	key := warpLeaderQueueKey(leaderID)
+	_, err := rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		p.RPush(ctx, key, b)
+		p.LTrim(ctx, key, -warpLeaderQueueMax, -1)
+		return nil
+	})
+	return err
 }
 func (s *WarpService) resyncKey(leaderID string) string {
 	return "dylaris:warp:" + leaderID + ":resync-request"
@@ -278,7 +295,7 @@ func (s *WarpService) pushToRegion(ctx context.Context, region string, cmd map[s
 		if l.Region != region || !l.Enabled {
 			continue
 		}
-		if err := s.redis.RPush(ctx, s.leaderQueueKey(l.LeaderID), b).Err(); err != nil {
+		if err := rpushLeaderQueue(ctx, s.redis, l.LeaderID, b); err != nil {
 			log.Printf("[warp] pushToRegion %s -> %s: %v", region, l.LeaderID, err)
 		}
 	}
@@ -291,8 +308,21 @@ func (s *WarpService) pushToLeader(ctx context.Context, leaderID string, cmd map
 		log.Printf("[warp] pushToLeader %s: marshal: %v", leaderID, err)
 		return
 	}
-	if err := s.redis.RPush(ctx, s.leaderQueueKey(leaderID), b).Err(); err != nil {
+	if err := rpushLeaderQueue(ctx, s.redis, leaderID, b); err != nil {
 		log.Printf("[warp] pushToLeader %s: %v", leaderID, err)
+	}
+}
+
+// pushAddPeer queues add_peer for a peer read from its row, then checks the row
+// is still there. A revoke deletes the row and then queues remove_peer; a reader
+// that saw the row before the delete could queue its add behind that remove and
+// leave a revoked machine on the leader, with no row left to ever remove it. If
+// the row went in the meantime, the remove is queued again, after the add.
+func (s *WarpService) pushAddPeer(ctx context.Context, leaderID, pubkey, wgIP string) {
+	s.pushToLeader(ctx, leaderID, addPeerCmd(pubkey, wgIP))
+	// Only a definite miss: a read error must not cut a live tunnel.
+	if _, err := s.warp.GetWarpPeerByPubkey(pubkey); errors.Is(err, sql.ErrNoRows) {
+		s.pushToLeader(ctx, leaderID, removePeerCmd(pubkey))
 	}
 }
 
@@ -537,7 +567,7 @@ func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey s
 		// minutes and whenever its tunnel fails, and an add without replace is
 		// harmless to repeat.
 		if existing.AssignedLeader != "" {
-			s.pushToLeader(ctx, existing.AssignedLeader, addPeerCmd(existing.Pubkey, existing.WGIP))
+			s.pushAddPeer(ctx, existing.AssignedLeader, existing.Pubkey, existing.WGIP)
 		}
 		return s.buildResult(ctx, existing.Region, existing.WGIP, existing.AssignedLeader)
 	}
@@ -601,7 +631,7 @@ func (s *WarpService) Enroll(ctx context.Context, key store.WarpAPIKey, pubkey s
 		}
 	}
 	if home != "" {
-		s.pushToLeader(ctx, home, addPeerCmd(pubkey, wgIP))
+		s.pushAddPeer(ctx, home, pubkey, wgIP)
 	}
 	return s.buildResult(ctx, region, wgIP, home)
 }
@@ -632,6 +662,9 @@ func (s *WarpService) Assignment(ctx context.Context, key store.WarpAPIKey, pubk
 // Best-effort per peer and per leader: a leader that is down misses the command
 // but converges on its next resync, which rebuilds the peer set from the DB
 // rows this function has already deleted. Returns how many peers were removed.
+//
+// The row goes BEFORE the remove_peer (see pushAddPeer). A failed delete still
+// sends the remove: the tunnel goes, and a retry finds the row to finish it.
 func (s *WarpService) DisconnectKeyPeers(ctx context.Context, keyID int) int {
 	// A nil service is a state callers legitimately hold (no overlay wired), and
 	// they hand it over as an INTERFACE - where a nil pointer is not nil to a nil
@@ -647,8 +680,9 @@ func (s *WarpService) DisconnectKeyPeers(ctx context.Context, keyID int) int {
 	}
 	removed := 0
 	for _, p := range peers {
-		s.pushToRegion(ctx, p.Region, map[string]interface{}{"type": "remove_peer", "pubkey": p.Pubkey})
-		if derr := s.warp.DeleteWarpPeerByPubkey(p.Pubkey); derr != nil {
+		derr := s.warp.DeleteWarpPeerByPubkey(p.Pubkey)
+		s.pushToRegion(ctx, p.Region, removePeerCmd(p.Pubkey))
+		if derr != nil {
 			log.Printf("warp: delete peer %s: %v", p.Pubkey, derr)
 			continue
 		}
@@ -698,7 +732,7 @@ func (s *WarpService) processResync(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := s.redis.RPush(ctx, s.leaderQueueKey(l.LeaderID), b).Err(); err != nil {
+		if err := rpushLeaderQueue(ctx, s.redis, l.LeaderID, b); err != nil {
 			return err
 		}
 		if err := s.redis.Del(ctx, s.resyncKey(l.LeaderID)).Err(); err != nil {
@@ -773,7 +807,7 @@ func (s *WarpService) reconcileHomes(ctx context.Context, now time.Time) error {
 				log.Printf("[warp] rehome %s: %v", p.Pubkey, err)
 				continue
 			}
-			s.pushToLeader(ctx, target, addPeerCmd(p.Pubkey, p.WGIP))
+			s.pushAddPeer(ctx, target, p.Pubkey, p.WGIP)
 			for _, id := range ids {
 				if id != target {
 					s.pushToLeader(ctx, id, removePeerCmd(p.Pubkey))

@@ -338,7 +338,7 @@ func (w *WarpRebalancer) push(ctx context.Context, leaderID string, cmd map[stri
 	if err != nil {
 		return
 	}
-	if err := w.redis.RPush(ctx, warpLeaderQueueKey(leaderID), b).Err(); err != nil {
+	if err := rpushLeaderQueue(ctx, w.redis, leaderID, b); err != nil {
 		logErrf("warp-rebalancer", "push to %s: %v", leaderID, err)
 	}
 }

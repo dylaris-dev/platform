@@ -187,6 +187,10 @@ func (h *WarpHandler) Enroll(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Connection limit reached for this key", http.StatusConflict)
 			return
 		}
+		if errors.Is(err, store.ErrWarpKeyRevoked) {
+			httpx.SendJSONError(w, "Key revoked", http.StatusUnauthorized)
+			return
+		}
 		if errors.Is(err, services.ErrInvalidFixedWGIP) || errors.Is(err, store.ErrWarpIPTaken) {
 			httpx.SendJSONError(w, err.Error(), http.StatusConflict)
 			return
