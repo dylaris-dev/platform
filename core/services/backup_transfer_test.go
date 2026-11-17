@@ -315,12 +315,18 @@ func TestBackupTransfer_RefusesAnotherNode(t *testing.T) {
 	tr := newTestTransfer(st, prov)
 	ctx := context.Background()
 
-	for name, call := range map[string]func(nodegrpc.Node) *pb.NodeMessage{
-		"part URLs": func(n nodegrpc.Node) *pb.NodeMessage { return tr.HandleUploadPartURLs(ctx, n, partURLsMsg("1", 1)) },
-		"complete":  func(n nodegrpc.Node) *pb.NodeMessage { return tr.HandleCompleteUpload(ctx, n, completeMsg("1")) },
-		"restore":   func(n nodegrpc.Node) *pb.NodeMessage { return tr.HandleRestoreURL(ctx, n, restoreURLMsg("20")) },
+	// A slice, not a map: the control call of "complete" finishes the upload, and a
+	// run whose upload completed gets no more part URLs, so "complete" must run last.
+	for _, tc := range []struct {
+		name string
+		call func(nodegrpc.Node) *pb.NodeMessage
+	}{
+		{"part URLs", func(n nodegrpc.Node) *pb.NodeMessage { return tr.HandleUploadPartURLs(ctx, n, partURLsMsg("1", 1)) }},
+		{"restore", func(n nodegrpc.Node) *pb.NodeMessage { return tr.HandleRestoreURL(ctx, n, restoreURLMsg("20")) }},
+		{"complete", func(n nodegrpc.Node) *pb.NodeMessage { return tr.HandleCompleteUpload(ctx, n, completeMsg("1")) }},
 	} {
-		t.Run(name, func(t *testing.T) {
+		call := tc.call
+		t.Run(tc.name, func(t *testing.T) {
 			resp := call(otherNode)
 			if msg := transferError(t, resp); msg == "" {
 				t.Fatalf("a foreign node was served: %v", resp)

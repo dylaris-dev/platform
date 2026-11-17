@@ -57,7 +57,10 @@ func TestAMoveNeedsRoomForTheArchiveAndItsUnpackedCopy(t *testing.T) {
 func TestTheBootSweepsDropTheTempFilesOfTheProcessBefore(t *testing.T) {
 	prev := nodeStartedAt
 	t.Cleanup(func() { nodeStartedAt = prev })
-	nodeStartedAt = time.Now()
+	// A second back: the kernel stamps a file's mtime from a coarse clock that can
+	// trail time.Now() by milliseconds, which made a file written after this line
+	// look older than the process now and then.
+	nodeStartedAt = time.Now().Add(-time.Second)
 	dead := nodeStartedAt.Add(-time.Minute)
 
 	root := t.TempDir()
