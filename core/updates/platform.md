@@ -8,6 +8,25 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.17.2
+
+### Features
+- Backups compress about a third faster. The file manager caches folder sizes for up to 30 s, so a folder a
+  server writes into can show a slightly older size; uploads through the panel update it at once. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- A storage path whose disk did not mount is skipped with a warning instead of running servers on an empty
+  tree on the OS disk; a move of a server with two unkeyed copies is refused. `node`
+- A backup restarted after a node update starts a fresh upload instead of failing on the earlier parts. `node` `core`
+- Node fixes: a server moved back onto a node where it was once deleted starts, an install upload whose top
+  folder clashes is refused, and an out-of-memory banner no longer depends on the node's clock. `node` `core`
+
 ## 2026.11.17
 
 ### Features

@@ -11,6 +11,22 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.17.2
+
+### Features
+- BYON: backups compress about a third faster, and the file manager shows folder sizes faster; a folder your
+  server writes into can show a size up to 30 seconds old. `node`
+
+### Breaking
+- Nothing.
+
+### Security
+- Nothing.
+
+### Fixes
+- BYON: a storage disk that did not mount is skipped instead of running servers on an empty folder, and a
+  backup restarted after a node update starts a fresh upload instead of failing. `node`
+
 ## 2026.11.17
 
 ### Features
