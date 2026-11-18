@@ -512,7 +512,9 @@ export default function OverviewView({ server }: OverviewViewProps) {
           && !backupUsage.degraded;
         const foldedBackupBytes = folded ? (backupUsage?.usedBytes ?? 0) : 0;
 
-        const total = diskUsage.total + foldedBackupBytes;
+        // The backup folder lives inside the server directory, so the node's
+        // total already holds the archives; the segment only breaks them out.
+        const total = diskUsage.total;
         const capacity = diskUsage.limit > 0 ? diskUsage.limit : total;
         const freeBytes = diskUsage.limit > 0 ? Math.max(diskUsage.limit - total, 0) : 0;
 
