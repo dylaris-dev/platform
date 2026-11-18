@@ -1660,11 +1660,27 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer commandsInFlight.leave("setup:" + cmd.Config.UUID)
-		defer lockServerInstall(cmd.Config.UUID)()
 		subName := cmd.Config.ActiveSubServer
 		if subName == "" {
 			subName = "server"
 		}
+		// The same guards as reinstall, in the same order before the install
+		// lock: setup wipes and installs into the tree a version move stashes
+		// and a backup archives. Nothing has changed yet, so no status write.
+		if !commandsInFlight.enter(softwareKey(cmd.Config.UUID)) {
+			log.Printf("Setup of %s/%s refused: a version move of this server is running on this node", cmd.Config.UUID, subName)
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("a version move of this server was still running"))
+			return
+		}
+		defer commandsInFlight.leave(softwareKey(cmd.Config.UUID))
+		leaveTree, treeBusy := enterTreeChangeOfServer(cmd.Config.UUID)
+		if treeBusy != "" {
+			log.Printf("Setup of %s/%s refused: %s", cmd.Config.UUID, subName, treeBusy)
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New(treeBusy))
+			return
+		}
+		defer leaveTree()
+		defer lockServerInstall(cmd.Config.UUID)()
 		log.Printf("Setting up server %s (sub-server: %s)...", cmd.Config.UUID, subName)
 
 		// Set install-start timestamp for cooldown tracking

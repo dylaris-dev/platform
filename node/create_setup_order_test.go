@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,5 +133,55 @@ func TestACreateLeavesASetUpServerAlone(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(filepath.Join(dir, ".node_config.json")); string(got) != string(saved) {
 		t.Errorf("create overwrote the saved config: %s", got)
+	}
+}
+
+// W05/W07: setup rewrites the tree like a reinstall does, so it is refused
+// beside a backup of the server and beside a version move, and says why.
+func TestSetupRefusesBesideABackupOrAVersionMove(t *testing.T) {
+	const uuid = "f7f7f7f7-2222-3333-4444-555555555555"
+	for _, tc := range []struct {
+		name string
+		hold func() func()
+		want string
+	}{
+		{"backup", func() func() {
+			backupsInFlight.enter("server:" + uuid)
+			return func() { backupsInFlight.leave("server:" + uuid) }
+		}, "backup"},
+		{"version move", func() func() {
+			commandsInFlight.enter(softwareKey(uuid))
+			return func() { commandsInFlight.leave(softwareKey(uuid)) }
+		}, "version move"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			storage := NewStorageManager(t.TempDir(), rdb)
+			// Past the guard, the unmounted path ends the setup with a report
+			// of its own, which the reason below tells apart.
+			rdb.Set(context.Background(), "node:"+nodeID+":server:"+uuid+":storage", "/not/mounted", 0)
+			sub := rdb.Subscribe(context.Background(), queue.SetupResultsChannel(nodeID))
+			defer sub.Close()
+			if _, err := sub.Receive(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			defer tc.hold()()
+
+			cmd := NodeCommand{Action: "setup"}
+			cmd.Config.UUID = uuid
+			cmd.Installer.Type = "paper"
+			processCommand(context.Background(), cmd, "", rdb, nil, "node-a", nil, storage)
+
+			select {
+			case msg := <-sub.Channel():
+				if !strings.Contains(msg.Payload, tc.want) {
+					t.Errorf("setup beside a %s went on: report %s", tc.name, msg.Payload)
+				}
+			case <-time.After(2 * time.Second):
+				t.Errorf("setup beside a %s reported nothing", tc.name)
+			}
+		})
 	}
 }

@@ -501,6 +501,12 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
 		return
 	}
+	// As Reinstall: an install queued but not yet started holds no busy key on
+	// the node, which drops a second setup as a duplicate without a report.
+	if srv.Status == "installing" {
+		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
+		return
+	}
 	// Before the cooldown below is claimed: a refusal here is answered by
 	// ticking a box, and must not cost the 30 seconds of a real install.
 	actorID, _ := r.Context().Value("userID").(string)

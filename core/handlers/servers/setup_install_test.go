@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"dylaris-core/handlers/handlertest"
@@ -162,5 +163,33 @@ func TestReinstallRefusesAServerBeingInstalled(t *testing.T) {
 	}
 	if n := len(queuedInstaller(t, rdb)); n != 0 {
 		t.Fatalf("%d reinstall(s) queued beside a running install", n)
+	}
+}
+
+// An install queued but not yet started holds no busy key on the node, so the
+// node dropped a second setup as a duplicate without a report and the DB kept
+// naming what was never installed. Only a server still installing is refused.
+func TestSetupRefusesAServerStillInstalling(t *testing.T) {
+	for _, tt := range []struct {
+		status  string
+		refused bool
+	}{
+		{"installing", true},
+		{"pending_setup", false},
+		{"stopped", false},
+	} {
+		t.Run(tt.status, func(t *testing.T) {
+			h, fs, rdb := newInstallTest(t)
+			fs.server.Status = tt.status
+			rec := httptest.NewRecorder()
+			h.SetupServer(rec, installRequest("setup", setupBody(map[string]string{"type": "paper", "version": "1.21.1"}), true))
+			refused := rec.Code == http.StatusConflict && strings.Contains(rec.Body.String(), "server_installing")
+			if refused != tt.refused {
+				t.Fatalf("answered %d %s, want refused=%v", rec.Code, rec.Body.String(), tt.refused)
+			}
+			if tt.refused && len(queuedInstaller(t, rdb)) > 0 {
+				t.Fatal("the refused setup was queued for the node")
+			}
+		})
 	}
 }
