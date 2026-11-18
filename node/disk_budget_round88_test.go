@@ -92,7 +92,7 @@ func TestExtractorsStopAtTheEntryCount(t *testing.T) {
 			over["overrides/"+n] = ""
 		}
 		zipWith(t, filepath.Join(dir, "p.mrpack"), over)
-		if err := extractOverrides(filepath.Join(dir, "p.mrpack"), filepath.Join(dir, "srv")); err == nil {
+		if err := extractOverrides(filepath.Join(dir, "p.mrpack"), filepath.Join(dir, "srv"), InstallerConfig{}.claimFile); err == nil {
 			t.Fatal("unpacked more overrides than allowed")
 		}
 	})
@@ -196,7 +196,7 @@ func TestAnArchiveEntryPaysForTheDirectoriesItMakes(t *testing.T) {
 	t.Run("mrpack", func(t *testing.T) {
 		dir := t.TempDir()
 		zipWith(t, filepath.Join(dir, "p.mrpack"), map[string]string{"overrides/" + deep: "x"})
-		if err := extractOverrides(filepath.Join(dir, "p.mrpack"), filepath.Join(dir, "srv")); err == nil {
+		if err := extractOverrides(filepath.Join(dir, "p.mrpack"), filepath.Join(dir, "srv"), InstallerConfig{}.claimFile); err == nil {
 			t.Fatal("a deep entry was charged as one")
 		}
 	})

@@ -121,7 +121,7 @@ func TestExtractOverridesDoesNotFollowAPlantedSymlink(t *testing.T) {
 		"overrides/config/keep.yml":   "fine",
 	})
 
-	err := extractOverrides(mrpack, dest)
+	err := extractOverrides(mrpack, dest, InstallerConfig{}.claimFile)
 	if err == nil {
 		t.Fatal("extractOverrides accepted an entry that resolves outside destDir")
 	}

@@ -136,7 +136,7 @@ func installTechnic(destDir string, cfg InstallerConfig) error {
 		if err := liftSoleDirectory(stage); err != nil {
 			return err
 		}
-		if err := mergeStage(root, stageName, "."); err != nil {
+		if err := mergeStage(root, stageName, ".", cfg.claimFile); err != nil {
 			return err
 		}
 		return makeTechnicServerLaunchable(destDir, cfg)
@@ -154,7 +154,7 @@ func installTechnic(destDir string, cfg InstallerConfig) error {
 	if err := os.RemoveAll(filepath.Join(stage, "bin")); err != nil {
 		return err
 	}
-	return mergeStage(root, stageName, ".")
+	return mergeStage(root, stageName, ".", cfg.claimFile)
 }
 
 func checkTechnicURL(raw string) error {
@@ -252,7 +252,7 @@ func liftSoleDirectory(dir string) error {
 
 // mergeStage moves every entry of stageName/rel into rel, merging directories
 // and replacing files, all through root (see installTechnic).
-func mergeStage(root *os.Root, stageName, rel string) error {
+func mergeStage(root *os.Root, stageName, rel string, claim func(string) error) error {
 	entries, err := fs.ReadDir(root.FS(), path.Join(stageName, rel))
 	if err != nil {
 		return err
@@ -267,11 +267,14 @@ func mergeStage(root *os.Root, stageName, rel string) error {
 		}
 		if e.IsDir() {
 			if fi, err := root.Lstat(to); err == nil && fi.IsDir() {
-				if err := mergeStage(root, stageName, to); err != nil {
+				if err := mergeStage(root, stageName, to, claim); err != nil {
 					return err
 				}
 				continue
 			}
+		}
+		if err := claim(to); err != nil {
+			return fmt.Errorf("setting %s aside failed: %w", to, err)
 		}
 		if err := root.RemoveAll(to); err != nil {
 			return fmt.Errorf("replacing %s failed: %w", to, err)

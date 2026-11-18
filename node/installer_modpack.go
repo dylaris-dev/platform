@@ -244,7 +244,7 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 		return fmt.Errorf("unsupported game %q in mrpack", idx.Game)
 	}
 
-	if err := extractOverrides(mrpackPath, destDir); err != nil {
+	if err := extractOverrides(mrpackPath, destDir, cfg.claimFile); err != nil {
 		return fmt.Errorf("extract overrides: %w", err)
 	}
 
@@ -261,7 +261,7 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 		if env := f.Env["server"]; env == "unsupported" {
 			continue
 		}
-		n, err := fetchModpackFile(destDir, f)
+		n, err := fetchModpackFile(destDir, f, cfg.claimFile)
 		totalBytes += n
 		if err != nil {
 			log.Printf("modpack: file %s failed: %v", f.Path, err)
@@ -377,7 +377,8 @@ func readMrpackIndex(path string) (*mrpackIndex, error) {
 // extractOverrides walks overrides/ and server-overrides/ inside the
 // .mrpack zip and copies entries into destDir. server-overrides applies
 // on top so server-only tweaks override client values for the same path.
-func extractOverrides(mrpackPath, destDir string) error {
+// claim is told of every file before it is written (InstallerConfig.claim).
+func extractOverrides(mrpackPath, destDir string, claim func(string) error) error {
 	zf, err := openNoFollow(mrpackPath)
 	if err != nil {
 		return err
@@ -427,6 +428,9 @@ func extractOverrides(mrpackPath, destDir string) error {
 				}
 				continue
 			}
+			if err := claim(name); err != nil {
+				return err
+			}
 			rc, err := f.Open()
 			if err != nil {
 				return err
@@ -443,7 +447,7 @@ func extractOverrides(mrpackPath, destDir string) error {
 
 // fetchModpackFile downloads one manifest entry and returns the bytes it left
 // on disk, so the caller can bound the pack by what was really written.
-func fetchModpackFile(destDir string, f mrpackFile) (int64, error) {
+func fetchModpackFile(destDir string, f mrpackFile, claim func(string) error) (int64, error) {
 	if len(f.Downloads) == 0 {
 		return 0, fmt.Errorf("no download URLs")
 	}
@@ -484,6 +488,10 @@ func fetchModpackFile(destDir string, f mrpackFile) (int64, error) {
 				lastErr = fmt.Errorf("sha512 mismatch for %s", f.Path)
 				continue
 			}
+		}
+		if err := claim(name); err != nil {
+			root.Remove(tmp)
+			return 0, err
 		}
 		if err := root.Rename(tmp, name); err != nil {
 			root.Remove(tmp)

@@ -81,6 +81,19 @@ type InstallerConfig struct {
 	// on and asks for the matching config (proxy_protocol_default.go). Only
 	// ever sent with a first setup of Paper, Velocity, Waterfall or BungeeCord.
 	ProxyProtocol bool `json:"proxyProtocol,omitempty"`
+	// claim is the stash of a setup or reinstall over an installed server
+	// (jarStash.claim), told of every file a pack is about to write. Never
+	// sent by Core; nil when there is nothing to put back.
+	claim func(rel string) error
+}
+
+// claimFile hands rel (relative to the sub-server) to claim, if there is one,
+// before a pack writes it.
+func (c InstallerConfig) claimFile(rel string) error {
+	if c.claim == nil {
+		return nil
+	}
+	return c.claim(rel)
 }
 
 // CleanServerJars removes server JARs and cached/generated directories while preserving

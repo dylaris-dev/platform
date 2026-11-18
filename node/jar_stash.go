@@ -35,6 +35,9 @@ type jarStash struct {
 	// keep is what discard puts back (stashBeforeSetup): taken only for the
 	// rollback, not something the install was asked to clear.
 	keep []string
+	// owned is every name claim knows to be this attempt's or in the stash
+	// already, so a second write to it does not stash the first one's file.
+	owned map[string]bool
 }
 
 // softwareKey is the commandsInFlight key every command that stashes a
@@ -351,6 +354,35 @@ func (s *jarStash) add(rel string) {
 	s.record(stashAddedList, rel)
 }
 
+// claim is InstallerConfig.claim: rel (relative to the sub-server) is about
+// to be written by a pack, so what sits there now is taken and the name is
+// recorded as added. A pack lays its overrides and files over config/ and
+// mods/ the owner did not tick to clear, and a put-back that only had the
+// stash restored left them as the failed pack's while reporting the old pack
+// back.
+func (s *jarStash) claim(rel string) error {
+	rel = path.Join(s.sub, rel)
+	if s.owned == nil {
+		s.owned = map[string]bool{}
+		for _, r := range s.moved {
+			s.owned[r] = true
+		}
+	}
+	// Under a name taken or claimed before, what is in place came from this
+	// attempt; taking it would rename it over the stashed original.
+	for p := rel; p != s.sub && p != "." && p != "/"; p = path.Dir(p) {
+		if s.owned[p] {
+			return nil
+		}
+	}
+	if err := s.take(rel); err != nil {
+		return err
+	}
+	s.add(rel)
+	s.owned[rel] = true
+	return nil
+}
+
 // record appends rel to one of the stash's own lists.
 func (s *jarStash) record(list, rel string) {
 	if f, err := s.root.OpenFile(path.Join(s.dir, list), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600); err == nil {
@@ -375,7 +407,8 @@ func (s *jarStash) putBack() error {
 		if removed[rel] {
 			continue
 		}
-		s.root.Remove(rel)
+		// All of it: a pack claims a directory it moves in whole.
+		s.root.RemoveAll(rel)
 		putBackStep()
 		s.record(stashRemovedList, rel)
 		putBackStep()

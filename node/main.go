@@ -1817,6 +1817,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			putBack(fmt.Errorf("the old server software could not be set aside: %w", serr))
 			return
 		}
+		if stash != nil {
+			installerCfg.claim = stash.claim
+		}
 		manifest, err := InstallServer(serverPath, subName, installerCfg)
 		if discardIfDeleted(cmd.Config.UUID, serverPath) {
 			if stash != nil {
@@ -2462,6 +2465,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		reportProxy := proxyProtocolReporter(ctx, rdb, installerCfg, cmd.Config.UUID, subName)
 		defer reportProxy(false)
 
+		installerCfg.claim = stash.claim
 		_, err := InstallServer(serverPath, subName, installerCfg)
 		if discardIfDeleted(cmd.Config.UUID, serverPath) {
 			stash.root.Close()
