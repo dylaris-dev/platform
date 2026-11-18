@@ -16,26 +16,6 @@ import (
 	"dylaris-pkg/queue"
 )
 
-// ext4's chattr sets the project id on the inodes it is NAMED, so without -R a
-// server directory that already held data counted only bytes written later.
-// xfs `project -s` walks the tree on its own.
-func TestProjectAssignCommandTagsTheWholeTree(t *testing.T) {
-	for _, tc := range []struct {
-		fs   string
-		want []string
-	}{
-		{"ext4", []string{"chattr", "-R", "+P", "-p", "7", "/srv/x"}},
-		{"xfs", []string{"xfs_quota", "-x", "-c", "project -s -p /srv/x 7", "/mnt"}},
-	} {
-		t.Run(tc.fs, func(t *testing.T) {
-			got := projectAssignCmd(tc.fs, "/srv/x", 7, "/mnt").Args
-			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
-				t.Fatalf("args = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 // fakeQuota reports `before` until AssignQuota ran and `after` from then on,
 // which is what re-tagging an already populated directory does to the count.
 // It records the hard limit in force when the tag ran and every limit set.

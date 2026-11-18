@@ -103,18 +103,8 @@ func (qp *QuotaProvider) probeProjectSupport() error {
 	defer os.RemoveAll(dir)
 
 	pid := projectID("dylaris-quota-probe")
-	switch qp.fsType {
-	case "xfs":
-		cmd := exec.Command("xfs_quota", "-x", "-c",
-			fmt.Sprintf("project -s -p %s %d", dir, pid), qp.mountPoint)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
-		}
-	case "ext4":
-		cmd := exec.Command("chattr", "+P", "-p", fmt.Sprintf("%d", pid), dir)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
-		}
+	if err := tagProjectTree(dir, pid); err != nil {
+		return err
 	}
 	// A project id is not a limit. Setting the LIMIT is a separate quotactl
 	// that needs CAP_SYS_ADMIN and a mount with project quotas enforced, and a
@@ -227,29 +217,14 @@ func (qp *QuotaProvider) AssignQuota(uuid string) error {
 		return fmt.Errorf("quota: failed to write projid entry: %w", err)
 	}
 
-	if cmd := projectAssignCmd(qp.fsType, serverPath, pid, qp.mountPoint); cmd != nil {
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("quota: project setup (%s): %s: %w", qp.fsType, strings.TrimSpace(string(out)), err)
-		}
+	// Everything already in the tree too, not only the directory: data a move,
+	// a restore or the first start with quotas put there counts from now on.
+	// The walk is fd-based because the tenant writes to this tree while it
+	// runs; see walkProjectTree.
+	if err := tagProjectTree(serverPath, pid); err != nil {
+		return fmt.Errorf("quota: project setup (%s): %w", qp.fsType, err)
 	}
 
-	return nil
-}
-
-// projectAssignCmd tags a server directory AND everything already in it with
-// its project id. ext4's chattr only touches the inodes it is named, so without
-// -R a directory that already held data (a move, a storage migration, a
-// restore, the first start with quotas) counted only bytes written afterwards.
-// chattr -R skips symlinks but exits 1 on them; the rest of the tree is still
-// tagged, so that exit is logged by the caller and not fatal.
-func projectAssignCmd(fsType, serverPath string, pid uint32, mountPoint string) *exec.Cmd {
-	switch fsType {
-	case "xfs":
-		return exec.Command("xfs_quota", "-x", "-c",
-			fmt.Sprintf("project -s -p %s %d", serverPath, pid), mountPoint)
-	case "ext4":
-		return exec.Command("chattr", "-R", "+P", "-p", fmt.Sprintf("%d", pid), serverPath)
-	}
 	return nil
 }
 
