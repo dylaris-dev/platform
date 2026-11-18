@@ -286,11 +286,25 @@ func TestIdentityDirUnmountedBootsAnExistingIdentity(t *testing.T) {
 			return ptr(""), ptr(a + "\n" + b + "\n#gen 5\n")
 		}, false},
 	}
-	identities := []string{"", ".node_id", ".node_secret", ".node_key", ".redis_addr"}
+	// R24-10: only .node_id and .node_secret stop a fresh enrolment. .node_key
+	// is written before the node enrols and .redis_addr is a cache, so a first
+	// path holding only those is a bare mountpoint as far as the boot rule goes.
+	identities := []struct {
+		files []string
+		boots bool
+	}{
+		{nil, false},
+		{[]string{".node_id"}, true},
+		{[]string{".node_secret"}, true},
+		{[]string{".node_id", ".node_secret", ".node_key", ".redis_addr"}, true},
+		{[]string{".node_key"}, false},
+		{[]string{".redis_addr"}, false},
+		{[]string{".node_key", ".redis_addr"}, false},
+	}
 	for _, l := range layouts {
 		for _, id := range identities {
-			name := l.name + "/identity " + id
-			if id == "" {
+			name := l.name + "/identity " + strings.Join(id.files, "+")
+			if len(id.files) == 0 {
 				name = l.name + "/no identity"
 			}
 			t.Run(name, func(t *testing.T) {
@@ -313,12 +327,11 @@ func TestIdentityDirUnmountedBootsAnExistingIdentity(t *testing.T) {
 				if err := os.Mkdir(filepath.Join(disk2, "srv"), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				want := l.unmounted
-				if id != "" {
-					if err := os.WriteFile(filepath.Join(disk1, id), []byte("x"), 0o600); err != nil {
+				want := l.unmounted && !id.boots
+				for _, f := range id.files {
+					if err := os.WriteFile(filepath.Join(disk1, f), []byte("x"), 0o600); err != nil {
 						t.Fatal(err)
 					}
-					want = false
 				}
 				if got := identityDirUnmounted(disk1 + "," + disk2); got != want {
 					t.Fatalf("identityDirUnmounted = %v, want %v", got, want)
@@ -344,3 +357,77 @@ func TestIdentityDirUnmountedBootsAnExistingIdentity(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// R24-11: an identity left on the bare mountpoint by a boot that ran there
+// (a fresh .node_key, or a phantom enrolment's .node_id and .node_secret)
+// vouched for the path, so the node booted on it and dropUnmountedPaths gave it
+// a current marker. Once a marker records the node id, only the matching
+// .node_id counts, and a real disk whose own marker went stale still boots.
+func TestIdentityDirUnmountedChecksTheRecordedNodeID(t *testing.T) {
+	tests := []struct {
+		name  string
+		bare  bool              // disk1 is the bare mountpoint, not the real disk
+		stale bool              // disk1 shows the marker of the boot before the last
+		files map[string]string // identity files on disk1 at the next boot
+		want  bool
+	}{
+		{"bare mountpoint with a fresh key", true, true, map[string]string{".node_key": "k"}, true},
+		{"bare mountpoint with a phantom enrolment", true, true, map[string]string{".node_id": "phantom", ".node_secret": "s", ".node_key": "k"}, true},
+		{"bare mountpoint holding the real id", true, true, map[string]string{".node_id": "real"}, false},
+		{"real disk with its own marker stale", false, true, map[string]string{".node_id": "real", ".node_secret": "s"}, false},
+		{"real disk re-paired as a new node", false, false, map[string]string{".node_id": "new"}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			disk1, disk2 := t.TempDir(), t.TempDir()
+			csv := disk1 + "," + disk2
+			if err := os.WriteFile(filepath.Join(disk1, ".node_id"), []byte("real\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			NewStorageManager(csv, nil)
+			old, err := os.ReadFile(filepath.Join(disk1, storageMarkerName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			NewStorageManager(csv, nil)
+			if b, _ := os.ReadFile(filepath.Join(disk2, storageMarkerName)); !strings.Contains(string(b), storageMarkerNode+"real\n") {
+				t.Fatalf("marker = %q, want the node id recorded", b)
+			}
+			if tc.bare {
+				if err := os.Rename(disk1, disk1+"-disk"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(disk1, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Remove(filepath.Join(disk1, ".node_id")); err != nil {
+				t.Fatal(err)
+			}
+			if tc.stale {
+				if err := os.WriteFile(filepath.Join(disk1, storageMarkerName), old, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for f, v := range tc.files {
+				if err := os.WriteFile(filepath.Join(disk1, f), []byte(v), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := identityDirUnmounted(csv); got != tc.want {
+				t.Fatalf("identityDirUnmounted = %v, want %v", got, tc.want)
+			}
+			sm := NewStorageManager(csv, nil)
+			if kept := len(sm.Paths()) == 2; kept == tc.want {
+				t.Fatalf("paths = %v, want first path kept=%v", sm.Paths(), !tc.want)
+			}
+			if b, _ := os.ReadFile(filepath.Join(disk1, storageMarkerName)); tc.want && string(b) != string(old) {
+				t.Fatalf("the skipped path's marker was rewritten to %q", b)
+			}
+			if id, ok := tc.files[".node_id"]; ok && !tc.want {
+				if b, _ := os.ReadFile(filepath.Join(disk2, storageMarkerName)); !strings.Contains(string(b), storageMarkerNode+id+"\n") {
+					t.Fatalf("marker = %q, want %s recorded", b, id)
+				}
+			}
+		})
+	}
+}

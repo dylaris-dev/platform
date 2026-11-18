@@ -191,16 +191,24 @@ const storageMarkerGen = "#gen "
 // before the disk was last taken, so it still does not match.
 const storageMarkerKept = "#kept "
 
+// storageMarkerNode prefixes the marker line naming the node id (.node_id)
+// the boot that wrote it ran as. A first path whose own identity files are to
+// vouch for it must hold that id: a bare mountpoint can carry identity files
+// too, written by a boot that ran on it (R24-11). Old nodes read the line as a
+// path no one configures and write it back unchanged.
+const storageMarkerNode = "#node "
+
 // readStorageMarkers reads the markers on paths: every path any of them
 // lists, which paths carry a current marker of their own, the last gen that
-// took each path, and the highest gen seen. A path is unmounted when it is
-// known, not marked, and holds nothing.
-func readStorageMarkers(paths []string) (known, marked map[string]bool, lastKept map[string]uint64, maxGen uint64) {
+// took each path, the highest gen seen, and the node ids the current markers
+// record. A path is unmounted when it is known, not marked, and holds nothing.
+func readStorageMarkers(paths []string) (known, marked map[string]bool, lastKept map[string]uint64, maxGen uint64, nodeIDs map[string]bool) {
 	known = map[string]bool{}
 	marked = map[string]bool{}
 	listed := map[string]bool{}
 	gens := map[string]uint64{}
 	lastKept = map[string]uint64{}
+	ids := map[string]string{}
 	for _, p := range paths {
 		b, err := os.ReadFile(filepath.Join(p, storageMarkerName))
 		if err != nil {
@@ -214,6 +222,10 @@ func readStorageMarkers(paths []string) (known, marked map[string]bool, lastKept
 					gens[p] = n
 					maxGen = max(maxGen, n)
 				}
+				continue
+			}
+			if id, ok := strings.CutPrefix(line, storageMarkerNode); ok {
+				ids[p] = id
 				continue
 			}
 			if k, ok := strings.CutPrefix(line, storageMarkerKept); ok {
@@ -245,7 +257,15 @@ func readStorageMarkers(paths []string) (known, marked map[string]bool, lastKept
 			}
 		}
 	}
-	return known, marked, lastKept, maxGen
+	// Only a current marker's id counts: a stale one may be the copy a boot on
+	// the bare mountpoint wrote, naming the identity it enrolled there.
+	nodeIDs = map[string]bool{}
+	for p, id := range ids {
+		if marked[p] && id != "" {
+			nodeIDs[id] = true
+		}
+	}
+	return known, marked, lastKept, maxGen, nodeIDs
 }
 
 // identityDirUnmounted reports whether the first storage path, which holds the
@@ -268,21 +288,36 @@ func identityDirUnmounted(pathsCSV string) bool {
 		return false
 	}
 	p := paths[0]
-	// An identity on disk proves the disk is there, and the refusal only exists
-	// to stop a fresh enrolment. Markers written by 2026.11.17.2 and 2026.11.18
-	// (gen-less, or gens without #kept lines) leave a healthy first path reading
-	// as stale, and a node that ran fine on them must not crash-loop on upgrade.
-	if holdsNodeIdentity(p) {
+	known, marked, _, _, nodeIDs := readStorageMarkers(paths)
+	if marked[p] || !known[p] || !dirHoldsNothing(p) {
 		return false
 	}
-	known, marked, _, _ := readStorageMarkers(paths)
-	return !marked[p] && known[p] && dirHoldsNothing(p)
+	// The refusal only exists to stop a fresh enrolment. Markers written by
+	// 2026.11.17.2 and 2026.11.18 (gen-less, or gens without #kept lines) leave
+	// a healthy first path reading as stale, and a node that ran fine on them
+	// must not crash-loop on upgrade.
+	if holdsNodeIdentity(p, nodeIDs) {
+		log.Printf("storage: [warn] the first storage path %s reads as a disk that is not mounted (empty, without a current %s marker), but it holds this node's identity, so the node boots from it. Check that the disk is mounted", p, storageMarkerName)
+		return false
+	}
+	return true
 }
 
-// holdsNodeIdentity reports whether dir carries any of the node's identity
-// files, which proves the disk is the one this node runs from.
-func holdsNodeIdentity(dir string) bool {
-	for _, f := range []string{".node_id", ".node_secret", nodeKeyFileName, redisAddrFileName} {
+// holdsNodeIdentity reports whether dir holds an identity that proves it is the
+// disk this node runs from. .node_key is written before the node enrols and
+// .redis_addr is a cache, so neither stops a fresh enrolment and neither counts
+// (R24-10). Once a current marker records the node id, only that id in .node_id
+// counts: a boot that ran on the bare mountpoint left its own identity there
+// (R24-11). Until then (markers from before 2026.11.19) either file counts.
+//
+// ponytail: on the first boot of this release a phantom .node_id/.node_secret
+// on a bare first mountpoint still passes; every boot after it records the id.
+func holdsNodeIdentity(dir string, nodeIDs map[string]bool) bool {
+	if len(nodeIDs) > 0 {
+		id, err := cachedNodeID(dir)
+		return err == nil && nodeIDs[id]
+	}
+	for _, f := range []string{".node_id", ".node_secret"} {
 		if _, err := os.Lstat(filepath.Join(dir, f)); err == nil {
 			return true
 		}
@@ -299,12 +334,12 @@ func holdsNodeIdentity(dir string) bool {
 // ponytail: a single path, or a boot where every path is unmounted at once,
 // has no other marker to vouch for it and is taken as before.
 func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
-	known, marked, lastKept, maxGen := readStorageMarkers(paths)
+	known, marked, lastKept, maxGen, nodeIDs := readStorageMarkers(paths)
 	var kept []string
 	for _, p := range paths {
 		// The identity exception matches identityDirUnmounted: a path the node
 		// booted from is kept, and keeping it rewrites its stale marker.
-		if !marked[p] && known[p] && dirHoldsNothing(p) && !holdsNodeIdentity(p) {
+		if !marked[p] && known[p] && dirHoldsNothing(p) && !holdsNodeIdentity(p, nodeIDs) {
 			log.Printf("storage: [warn] %s was a storage path of this node and is now empty without a current %s marker, so its disk is most likely not mounted; skipping. If it is a new empty disk, replace %s with an empty file to use it", p, storageMarkerName, filepath.Join(p, storageMarkerName))
 			sm.skipPath(p)
 			continue
@@ -323,6 +358,21 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 			list = append(list, storageMarkerKept+strconv.FormatUint(g, 10)+" "+p)
 		}
 	}
+	// The id of the boot writing this, read from the kept path that holds it
+	// (this runs after enrolment). Without one, the ids on record are kept.
+	ids := nodeIDs
+	for _, p := range kept {
+		if id, err := cachedNodeID(p); err == nil && id != "" {
+			ids = map[string]bool{id: true}
+			break
+		}
+	}
+	idLines := make([]string, 0, len(ids))
+	for id := range ids {
+		idLines = append(idLines, storageMarkerNode+id)
+	}
+	sort.Strings(idLines)
+	list = append(list, idLines...)
 	list = append(list, storageMarkerGen+strconv.FormatUint(maxGen+1, 10))
 	body := []byte(strings.Join(list, "\n") + "\n")
 	for _, p := range kept {
