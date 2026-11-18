@@ -333,15 +333,17 @@ func TestNormalizeBackupNotFound(t *testing.T) {
 
 // fakeModpackKeys is a ModpackKeySource double. Local to this file.
 type fakeModpackKeys struct {
-	keys    []string
-	sha512s map[string]string
-	keysErr error
+	keys      []string
+	sha512s   map[string]string
+	keysErr   error
+	hintCalls int
 }
 
 func (f *fakeModpackKeys) ListModpackStorageKeys() ([]string, error) {
 	return f.keys, f.keysErr
 }
 func (f *fakeModpackKeys) ListModversionSHA512ByStorageKey() (map[string]string, error) {
+	f.hintCalls++
 	return f.sha512s, nil
 }
 
@@ -466,6 +468,53 @@ func TestModpackDataSet_ExposesChecksumHints(t *testing.T) {
 	}
 	if _, _, ok := hinter.ChecksumHint("b.jar"); ok {
 		t.Error("ChecksumHint reported a hint for a key with none")
+	}
+}
+
+func TestModpackDataSet_LoadsTheHintTableOncePerDataSet(t *testing.T) {
+	// One capture hashes every object; a table scan per object is N*M rows.
+	keys := &fakeModpackKeys{sha512s: map[string]string{"a.jar": "aa", "b.jar": "bb"}}
+	ds := NewModpackDataSet(DataSetModpacks, "Modpacks", modpack.NewCoreStorageProvider(&storage.LocalProvider{BasePath: t.TempDir()}), keys)
+	hinter := ds.(ChecksumHinter)
+	for _, k := range []string{"a.jar", "b.jar", "c.jar", "a.jar"} {
+		hinter.ChecksumHint(k)
+	}
+	if keys.hintCalls != 1 {
+		t.Fatalf("hint table loaded %d times for 4 lookups, want 1", keys.hintCalls)
+	}
+}
+
+func TestProviderDataSet_ExcludedTopLevelDirsAreNeitherListedNorWalked(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	prov := &storage.LocalProvider{BasePath: root}
+	for _, k := range []string{"ticket-attachments/a.png", ".dylaris-fleet/core-1", ".dylaris-fleet/core-2.acks/core-1", ".dylaris-reachability/r1/core-1", "top.txt"} {
+		if err := prov.WriteFile(ctx, k, strings.NewReader("x")); err != nil {
+			t.Fatalf("WriteFile %s: %v", k, err)
+		}
+	}
+	cases := []struct {
+		name    string
+		exclude []string
+		want    []string
+	}{
+		{"none", nil, []string{".dylaris-fleet/core-1", ".dylaris-fleet/core-2.acks/core-1", ".dylaris-reachability/r1/core-1", "ticket-attachments/a.png", "top.txt"}},
+		{"machine dirs", []string{".dylaris-fleet", ".dylaris-reachability"}, []string{"ticket-attachments/a.png", "top.txt"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			refs, err := NewProviderDataSet(DataSetAttachments, "x", prov, c.exclude...).List(ctx)
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			got := []string{}
+			for _, r := range refs {
+				got = append(got, r.Key)
+			}
+			if strings.Join(got, ",") != strings.Join(c.want, ",") {
+				t.Fatalf("List = %v, want %v", got, c.want)
+			}
+		})
 	}
 }
 

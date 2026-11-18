@@ -19,6 +19,7 @@ import (
 	"dylaris-core/services"
 	"dylaris-core/services/corestorage"
 	"dylaris-core/services/storagemigrate"
+	"dylaris-core/services/storagereach"
 	"dylaris-core/storage"
 	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/storage/modpack"
@@ -238,7 +239,7 @@ func (r *StorageDataSetResolver) Resolve(ctx context.Context, id string) (storag
 		if err != nil {
 			return nil, "", err
 		}
-		return storagemigrate.NewProviderDataSet(id, label, prov), coreStorageBackendLabel(cfg, subPrefix), nil
+		return storagemigrate.NewProviderDataSet(id, label, prov, coreStorageExcludes(id)...), coreStorageBackendLabel(cfg, subPrefix), nil
 	}
 
 	switch id {
@@ -667,7 +668,19 @@ func (r *StorageDataSetResolver) ResolveTarget(_ context.Context, sourceID strin
 	if sourceID == storagemigrate.DataSetModpacks {
 		return storagemigrate.NewModpackDataSet(sourceID, "Migration target", modpack.NewCoreStorageProvider(prov), r.st), label, nil
 	}
-	return storagemigrate.NewProviderDataSet(sourceID, "Migration target", prov), label, nil
+	return storagemigrate.NewProviderDataSet(sourceID, "Migration target", prov, coreStorageExcludes(sourceID)...), label, nil
+}
+
+// coreStorageExcludes is what a data set rooted at the Core storage root
+// leaves out: the reachability verifier's own files, which every Core
+// rewrites on its own schedule (see storagereach.MachineOwnedDirs). Excluded on
+// the target too, so the verify's extra-object check does not count the
+// beacons the live fleet writes there after a switch.
+func coreStorageExcludes(id string) []string {
+	if id == CoreStorageDataSetID {
+		return storagereach.MachineOwnedDirs()
+	}
+	return nil
 }
 
 // SwitchConfig makes the target config the ACTIVE one for sourceID. Called only
@@ -717,47 +730,35 @@ func (r *StorageDataSetResolver) SwitchConfig(ctx context.Context, sourceID stri
 	return r.cs.PersistConfig(cfg, cfg.S3SecretKey)
 }
 
-// switchModpackConfig repoints the modpack_storage_* settings at cfg.
+// switchModpackConfig repoints the modpack_storage_* settings at cfg, as one
+// group: corestorage.WriteSettings restores the earlier keys on a failure.
 func (r *StorageDataSetResolver) switchModpackConfig(cfg corestorage.Config) error {
-	set := func(k, v string) error {
-		if err := r.st.SetSetting(k, v); err != nil {
-			return fmt.Errorf("save setting %s: %w", k, err)
-		}
-		return nil
-	}
 	// Point (or un-point) modpack storage at a saved connection. Written
 	// unconditionally so an inline switch clears a previously-selected connection
 	// too; buildModpackStorageProvider checks this id before the inline settings.
-	if err := set(corestorage.KeyModpackConnectionID, corestorage.ConnIDSetting(cfg.ConnectionID)); err != nil {
-		return err
-	}
+	kv := [][2]string{{corestorage.KeyModpackConnectionID, corestorage.ConnIDSetting(cfg.ConnectionID)}}
 	if cfg.Backend == "s3" {
-		for _, p := range []struct{ k, v string }{
-			{"modpack_storage_provider", "s3"},
-			{"modpack_storage_s3_endpoint", cfg.S3Endpoint},
-			{"modpack_storage_s3_bucket", cfg.S3Bucket},
-			{"modpack_storage_s3_region", cfg.S3Region},
-			{"modpack_storage_s3_access_key", cfg.S3AccessKey},
-			{"modpack_storage_s3_secret_key", cfg.S3SecretKey},
-		} {
-			if err := set(p.k, p.v); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := set("modpack_storage_provider", "local"); err != nil {
-		return err
+		kv = append(kv,
+			[2]string{"modpack_storage_provider", "s3"},
+			[2]string{"modpack_storage_s3_endpoint", cfg.S3Endpoint},
+			[2]string{"modpack_storage_s3_bucket", cfg.S3Bucket},
+			[2]string{"modpack_storage_s3_region", cfg.S3Region},
+			[2]string{"modpack_storage_s3_access_key", cfg.S3AccessKey},
+			[2]string{"modpack_storage_s3_secret_key", cfg.S3SecretKey},
+		)
+		return corestorage.WriteSettings(r.st, kv)
 	}
 	// Clear the stored s3 secret when the backend leaves s3, mirroring
 	// persistCoreStorageConfig: an orphaned credential for a backend nothing
 	// reads any more is a liability, and it leaves the settings form reporting
 	// a secret is set for a provider that has none.
-	if err := set("modpack_storage_s3_secret_key", ""); err != nil {
-		return err
-	}
 	pathsJSON, _ := json.Marshal([]string{corestorage.Root(cfg, corestorage.PrefixModpacks)})
-	return set("modpack_storage_paths", string(pathsJSON))
+	kv = append(kv,
+		[2]string{"modpack_storage_provider", "local"},
+		[2]string{"modpack_storage_s3_secret_key", ""},
+		[2]string{"modpack_storage_paths", string(pathsJSON)},
+	)
+	return corestorage.WriteSettings(r.st, kv)
 }
 
 // storageMigrationAuditPayload builds the audit detail for a start request.

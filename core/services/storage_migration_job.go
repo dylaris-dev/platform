@@ -83,6 +83,11 @@ var ErrStorageMigrationRunning = errors.New("a storage migration is already runn
 // cancel.
 var ErrNoStorageMigrationJob = errors.New("no storage migration job to cancel")
 
+// ErrStorageConfigPartiallyWritten marks a config switch that failed partway
+// AND could not put the earlier keys back, so neither the source nor the
+// target config is reliably the live one.
+var ErrStorageConfigPartiallyWritten = errors.New("the storage config is only partly written")
+
 // StorageMigrationJob is the shared, Redis-backed record every admin can poll.
 type StorageMigrationJob struct {
 	ID            string                `json:"id"`
@@ -733,6 +738,10 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 				// states that nothing was deleted and which config is live, and
 				// it names the verification's SCOPE rather than claiming a
 				// blanket "verified".
+				if errors.Is(serr, ErrStorageConfigPartiallyWritten) {
+					s.fail(storagemigrate.SwitchPartialFailureReport(s.sourceLabel(), s.targetLabel()) + " (" + serr.Error() + ")")
+					return
+				}
 				s.fail(storagemigrate.SwitchFailureReport(s.sourceLabel(), s.targetLabel(), report.Mode) + " (" + serr.Error() + ")")
 				return
 			}

@@ -15,6 +15,8 @@ import (
 
 	"dylaris-core/handlers/handlertest"
 	"dylaris-core/services/corestorage"
+	"dylaris-core/services/storagemigrate"
+	"dylaris-core/storage"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -1154,5 +1156,46 @@ func TestSubPrefixContains(t *testing.T) {
 				t.Errorf("subPrefixContains(%q, %q) = %v, want %v", c.outer, c.inner, got, c.want)
 			}
 		})
+	}
+}
+
+// The fleet beacons at the Core storage root are rewritten by every Core every
+// two minutes, so a manifest that includes them never survives to the copy.
+// Both sides of the combined data set leave them out; a namespace data set is
+// scoped below the root and has none to skip.
+func TestStorageDataSetResolver_CoreStorageSkipsTheReachabilityFiles(t *testing.T) {
+	ctx := context.Background()
+	srcRoot := storageMigrationTestRoot(t, "src")
+	tgtRoot := storageMigrationTestRoot(t, "tgt")
+	for _, root := range []string{srcRoot, tgtRoot} {
+		prov := &storage.LocalProvider{BasePath: root}
+		for _, k := range []string{"ticket-attachments/1/a.png", ".dylaris-fleet/core-a", ".dylaris-fleet/core-b.acks/core-a", ".dylaris-reachability/r1/core-a"} {
+			if err := prov.WriteFile(ctx, k, strings.NewReader("x")); err != nil {
+				t.Fatalf("WriteFile %s: %v", k, err)
+			}
+		}
+	}
+	fs := newStorageMigrationFakeStore()
+	fs.kv[corestorage.KeyBackend] = "path"
+	fs.kv[corestorage.KeyPath] = srcRoot
+	fs.kv[corestorage.KeyPathConfirm] = "true"
+	res := newResolver(testDeps(Deps{Store: fs, Redis: multiCoreRedis(t, "core-a")}))
+
+	src, _, err := res.Resolve(ctx, CoreStorageDataSetID)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	tgt, _, err := res.ResolveTarget(ctx, CoreStorageDataSetID, services.StorageTargetConfig{Backend: "path", Path: tgtRoot, PathConfirmed: true})
+	if err != nil {
+		t.Fatalf("ResolveTarget: %v", err)
+	}
+	for name, ds := range map[string]storagemigrate.DataSet{"source": src, "target": tgt} {
+		refs, err := ds.List(ctx)
+		if err != nil {
+			t.Fatalf("%s List: %v", name, err)
+		}
+		if len(refs) != 1 || refs[0].Key != "ticket-attachments/1/a.png" {
+			t.Errorf("%s List = %+v, want only ticket-attachments/1/a.png", name, refs)
+		}
 	}
 }

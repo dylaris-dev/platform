@@ -1,8 +1,10 @@
 package corestorage
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 
 	"dylaris-core/services"
 	"dylaris-core/storage"
+	"dylaris-core/store"
 )
 
 // This file holds everything that must be true about an AD-HOC target storage
@@ -130,9 +133,15 @@ func SameLocation(src, tgt Config, srcSubPrefix, tgtSubPrefix string) (bool, err
 		// "https://s3.example.com" to be different locations would accept a
 		// target that really is the source, which is exactly the outcome this
 		// function exists to prevent.
-		return strings.Trim(src.S3Endpoint, "/") == strings.Trim(tgt.S3Endpoint, "/") &&
-			strings.Trim(src.S3Bucket, "/") == strings.Trim(tgt.S3Bucket, "/") &&
-			effectiveS3Prefix(src, srcSubPrefix) == effectiveS3Prefix(tgt, tgtSubPrefix), nil
+		if !strings.EqualFold(strings.Trim(src.S3Bucket, "/"), strings.Trim(tgt.S3Bucket, "/")) ||
+			effectiveS3Prefix(src, srcSubPrefix) != effectiveS3Prefix(tgt, tgtSubPrefix) {
+			return false, nil
+		}
+		srcEP, srcOK := s3EndpointIdentity(src.S3Endpoint)
+		tgtEP, tgtOK := s3EndpointIdentity(tgt.S3Endpoint)
+		// Same bucket and prefix behind an endpoint that cannot be read is
+		// refused rather than guessed distinct.
+		return !srcOK || !tgtOK || srcEP == tgtEP, nil
 	}
 
 	// Two configs naming the exact same root are trivially the same location,
@@ -162,6 +171,37 @@ func SameLocation(src, tgt Config, srcSubPrefix, tgtSubPrefix string) (bool, err
 		return false, fmt.Errorf("stat target root: %w", err)
 	}
 	return os.SameFile(srcInfo, tgtInfo), nil
+}
+
+// s3EndpointIdentity reduces an endpoint to the server it names: lowercased
+// host, effective port and path, so "https://S3.example.com:443/" and
+// "s3.example.com" compare equal. Every AWS host, and the empty endpoint (the
+// SDK's AWS default), is one identity: AWS bucket names are global, so the
+// region or host spelling cannot make one bucket name a different bucket.
+func s3EndpointIdentity(endpoint string) (string, bool) {
+	ep := strings.Trim(strings.TrimSpace(endpoint), "/")
+	if ep == "" {
+		return "aws", true
+	}
+	if !strings.Contains(ep, "://") {
+		ep = "https://" + ep
+	}
+	u, err := url.Parse(ep)
+	if err != nil || u.Hostname() == "" {
+		return "", false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "amazonaws.com" || strings.HasSuffix(host, ".amazonaws.com") {
+		return "aws", true
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+		if strings.EqualFold(u.Scheme, "http") {
+			port = "80"
+		}
+	}
+	return host + ":" + port + "/" + strings.Trim(u.Path, "/"), true
 }
 
 // EnsureDistinctLocation refuses a same-location target. It runs at
@@ -237,15 +277,46 @@ func (s *Manager) PersistConfig(cfg Config, secret string) error {
 	} else if cfg.Backend != "s3" {
 		pairs = append(pairs, struct{ k, v string }{KeyS3SecretKey, ""})
 	}
+	kv := make([][2]string, 0, len(pairs))
 	for _, p := range pairs {
-		if err := s.Store.SetSetting(p.k, p.v); err != nil {
-			return &SettingWriteError{Key: p.k, Err: err}
-		}
+		kv = append(kv, [2]string{p.k, p.v})
+	}
+	if err := WriteSettings(s.Store, kv); err != nil {
+		return err
 	}
 	// The watched root follows the config. Being the one writer is exactly why
 	// this belongs here: a second writer would leave the watchdog probing a
 	// path the platform no longer uses.
 	s.SyncGate()
+	return nil
+}
+
+// WriteSettings writes a group of settings that only make sense together. The
+// store has no multi-key write, so on a failure it puts back the keys already
+// written; a config half new and half old would otherwise be the live one.
+// The previous values are read before anything is written, so a read failure
+// changes nothing. If the restore fails too, the error also wraps
+// services.ErrStorageConfigPartiallyWritten.
+func WriteSettings(st store.Store, kv [][2]string) error {
+	prev := make([]string, len(kv))
+	for i, p := range kv {
+		v, err := st.GetSetting(p[0])
+		if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrSettingNull) {
+			return fmt.Errorf("read setting %s before writing it: %w", p[0], err)
+		}
+		prev[i] = v
+	}
+	for i, p := range kv {
+		if err := st.SetSetting(p[0], p[1]); err != nil {
+			werr := &SettingWriteError{Key: p[0], Err: err}
+			for j := i - 1; j >= 0; j-- {
+				if rerr := st.SetSetting(kv[j][0], prev[j]); rerr != nil {
+					return fmt.Errorf("%w (restoring %s: %v): %w", services.ErrStorageConfigPartiallyWritten, kv[j][0], rerr, werr)
+				}
+			}
+			return werr
+		}
+	}
 	return nil
 }
 

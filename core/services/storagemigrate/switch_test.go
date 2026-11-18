@@ -99,3 +99,15 @@ func TestSwitchFailureReport_StatesTheVerificationScope(t *testing.T) {
 		})
 	}
 }
+
+func TestSwitchPartialFailureReport_ClaimsNoActiveConfig(t *testing.T) {
+	msg := SwitchPartialFailureReport("path:/mnt/old", "s3:https://new.example.com/b")
+	for _, want := range []string{"path:/mnt/old", "s3:https://new.example.com/b", "Nothing was deleted", "MIX"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("report %q does not contain %q", msg, want)
+		}
+	}
+	if strings.Contains(msg, "still active") {
+		t.Errorf("report %q claims a config is still active, which a half-written switch cannot", msg)
+	}
+}

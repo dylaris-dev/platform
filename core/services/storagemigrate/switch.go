@@ -53,3 +53,15 @@ func SwitchFailureReport(sourceLabel, targetLabel, verifyMode string) string {
 			"everything already identical.",
 		verified, sourceLabel, targetLabel, sourceLabel)
 }
+
+// SwitchPartialFailureReport is the message for a switch that failed partway
+// and could not restore the earlier settings. Unlike SwitchFailureReport it
+// cannot name an active config, because the saved one is a mix of both.
+func SwitchPartialFailureReport(sourceLabel, targetLabel string) string {
+	return fmt.Sprintf(
+		"The copy completed and verified, but switching the active config failed partway and the previous settings could not be restored. "+
+			"The data exists in both places: %s (source) and %s (target). Nothing was deleted. "+
+			"The saved config is now a MIX of both, so open the storage settings, save the config you want "+
+			"(either location holds every object), and only then re-run.",
+		sourceLabel, targetLabel)
+}

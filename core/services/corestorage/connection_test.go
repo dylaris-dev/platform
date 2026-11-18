@@ -1,11 +1,14 @@
 package corestorage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
+	"dylaris-core/storage"
 	"dylaris-core/store"
 )
 
@@ -172,5 +175,49 @@ func TestEffectiveCoreStorageConfig_FallsBackToInline(t *testing.T) {
 	}
 	if cfg.S3Bucket != "inline-bucket" || cfg.S3SecretKey != "inline-secret" {
 		t.Fatalf("no-connection case did not fall back to the inline config: %+v", cfg)
+	}
+}
+
+// A saved connection is a different backend from Core file storage, so its
+// failures must not flip Core storage's shared S3 state into reconnecting
+// (every Core storage upload then waits, and the panel reports an outage that
+// does not exist), nor wait on that state when Core storage is the one down.
+func TestConnectionProviders_DoNotShareCoreStorageS3State(t *testing.T) {
+	// Port 1 on loopback refuses at once: a connection-class failure.
+	connCfg, _ := json.Marshal(ConnectionConfig{Endpoint: "http://127.0.0.1:1", Region: "eu", Bucket: "b", ForcePathStyle: true})
+	conn := &models.StorageConnection{ID: 7, Name: "customer", Provider: "s3", Config: connCfg, AccessKey: "AK", SecretAccessKey: "SK"}
+	cases := []struct {
+		name string
+		call func(t *testing.T, m *Manager, ctx context.Context) error
+	}{
+		{"backup builder", func(t *testing.T, m *Manager, ctx context.Context) error {
+			st, err := m.ConnectionBackupBuilder()(7, "backups")
+			if err != nil {
+				t.Fatalf("ConnectionBackupBuilder: %v", err)
+			}
+			_, err = st.List(ctx, "")
+			return err
+		}},
+		{"template store", func(t *testing.T, m *Manager, ctx context.Context) error {
+			prov, _, err := m.TemplateStore(&models.Template{ID: 1, OwnerID: "u", StorageConnectionID: 7})
+			if err != nil {
+				t.Fatalf("TemplateStore: %v", err)
+			}
+			_, err = prov.ListFiles(ctx, "")
+			return err
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := &Manager{Store: &resolveFakeStore{settings: map[string]string{}, conn: conn}, S3: storage.NewS3Resilience()}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := c.call(t, m, ctx); err == nil {
+				t.Fatal("call against a refusing endpoint succeeded")
+			}
+			if reconnecting, _, _ := m.S3.State(); reconnecting {
+				t.Fatal("a storage connection's failure put Core file storage's S3 state into reconnecting")
+			}
+		})
 	}
 }

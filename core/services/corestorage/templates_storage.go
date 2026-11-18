@@ -68,7 +68,9 @@ func (s *Manager) TemplateStore(t *models.Template) (storage.StorageProvider, st
 	if err := Validate(cfg); err != nil {
 		return nil, "", fmt.Errorf("template %d: storage connection %q is not usable: %w", t.ID, conn.Name, err)
 	}
-	prov, err := NewProviderForConfig(cfg, PrefixTemplates, s.Gate, s.S3)
+	// Raw, like ConnectionBackupBuilder: the gate and the s3 resilience state
+	// belong to the live Core file storage, not to this connection.
+	prov, err := NewProviderForConfig(cfg, PrefixTemplates, nil, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("template %d: storage connection %q: %w", t.ID, conn.Name, err)
 	}

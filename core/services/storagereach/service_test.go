@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -653,5 +654,46 @@ func TestStart_AHungStorageBackendDoesNotStallRoundParticipation(t *testing.T) {
 	case <-svc.Done():
 	case <-time.After(2 * time.Second):
 		t.Fatal("the service loop did not stop while round participation was hung; a wedged mount would freeze round answering forever")
+	}
+}
+
+// A finished participant must not probe the same round again: the current-round
+// key outlives its report until the coordinator returns, and every re-run
+// rewrites probe files the coordinator may already have cleaned up.
+func TestStart_TakesPartInEachRoundOnce(t *testing.T) {
+	deps := testDeps(t, t.TempDir(), "core-a", []string{"core-a"})
+	inner := deps.NewProvider
+	var mu sync.Mutex
+	roundBuilds := 0
+	deps.ConfigFor = func() (Config, bool) { return Config{Backend: "path", Path: "/mnt/self"}, true }
+	deps.NewProvider = func(cfg Config) (storage.StorageProvider, error) {
+		if cfg.Path == "/mnt/shared" { // the staged round config, not the self-check's
+			mu.Lock()
+			roundBuilds++
+			mu.Unlock()
+		}
+		return inner(cfg)
+	}
+	svc := NewService(deps)
+	svc.pollEvery = 5 * time.Millisecond
+	svc.selfCheckEvery = 10 * time.Second
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	publishPendingRoundFor(t, deps.Redis, "core-a", "core-other")
+	svc.Start(ctx)
+
+	waitUntil(t, "the participant built a provider for the round", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return roundBuilds > 0
+	})
+	time.Sleep(200 * time.Millisecond) // forty more polls of the still-open round
+	cancel()
+	<-svc.Done()
+	mu.Lock()
+	defer mu.Unlock()
+	if roundBuilds != 1 {
+		t.Fatalf("took part in the same round %d times, want 1", roundBuilds)
 	}
 }

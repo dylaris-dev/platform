@@ -193,6 +193,46 @@ func TestEnsureDistinctCoreStorageLocation_S3(t *testing.T) {
 	}
 }
 
+// Two spellings of one S3 host are one location. Judging them distinct is the
+// under-refusal direction: the copy skips everything as identical, verify
+// passes, and deleteSource removes the only copy.
+func TestSameLocation_S3EndpointSpellings(t *testing.T) {
+	cases := []struct {
+		name      string
+		srcEP     string
+		srcRegion string
+		tgtEP     string
+		tgtRegion string
+		wantSame  bool
+	}{
+		{"empty AWS default vs explicit regional endpoint", "", "eu-central-1", "https://s3.eu-central-1.amazonaws.com", "eu-central-1", true},
+		{"empty AWS default vs explicit endpoint, region case", "", "EU-Central-1", "https://s3.eu-central-1.amazonaws.com", "", true},
+		{"global AWS host is us-east-1", "https://s3.amazonaws.com", "", "https://s3.us-east-1.amazonaws.com", "us-east-1", true},
+		{"host case", "https://S3.Example.com", "", "https://s3.example.com", "", true},
+		{"explicit default port", "https://s3.example.com:443", "", "https://s3.example.com", "", true},
+		{"no scheme", "s3.example.com", "", "https://s3.example.com", "", true},
+		{"unparseable endpoint refuses", "https://s3.example.com/%zz", "", "https://s3.example.com", "", true},
+		{"different port is a different server", "http://minio.local:9000", "", "http://minio.local:9001", "", false},
+		// AWS bucket names are global, so one bucket name is one bucket
+		// whatever region a config claims.
+		{"different AWS regions", "", "eu-central-1", "", "us-east-1", true},
+		{"different hosts", "https://a.example.com", "", "https://b.example.com", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			src := Config{Backend: "s3", S3Endpoint: c.srcEP, S3Region: c.srcRegion, S3Bucket: "dylaris", S3Prefix: "prod"}
+			tgt := Config{Backend: "s3", S3Endpoint: c.tgtEP, S3Region: c.tgtRegion, S3Bucket: "dylaris", S3Prefix: "prod"}
+			got, err := SameLocation(src, tgt, "", "")
+			if err != nil {
+				t.Fatalf("SameLocation: %v", err)
+			}
+			if got != c.wantSame {
+				t.Fatalf("SameLocation(%q/%q, %q/%q) = %v, want %v", c.srcEP, c.srcRegion, c.tgtEP, c.tgtRegion, got, c.wantSame)
+			}
+		})
+	}
+}
+
 func TestEnsureDistinctCoreStorageLocation_PathIdenticalString(t *testing.T) {
 	root := t.TempDir()
 	cfg := Config{Backend: "path", Path: root, PathConfirmed: true}
@@ -406,5 +446,75 @@ func TestPersistCoreStorageConfig_RoundTripsThroughLoadCoreStorageConfig(t *test
 	}
 	if !got.S3SecretSet {
 		t.Error("S3SecretSet = false after writing a secret")
+	}
+}
+
+// failingSettingsStore fails the write of one key, and optionally every write
+// after that, so a test can stop PersistConfig halfway through.
+type failingSettingsStore struct {
+	coreStorageTargetFakeStore
+	failKey     string
+	failedOnce  bool
+	failForever bool
+}
+
+func (f *failingSettingsStore) SetSetting(k, v string) error {
+	if f.failForever && f.failedOnce {
+		return errors.New("db gone")
+	}
+	if k == f.failKey && !f.failedOnce {
+		f.failedOnce = true
+		return errors.New("db blip")
+	}
+	f.kv[k] = v
+	return nil
+}
+
+// A switch that fails partway must not leave a hybrid of the new backend and
+// the old fields as the live config: the migration then reports the SOURCE as
+// still active, which is only true if the earlier keys are put back.
+func TestPersistConfig_PartialFailureRestoresThePreviousConfig(t *testing.T) {
+	old := map[string]string{
+		KeyBackend: "path", KeyPath: "/mnt/old", KeyPathConfirm: "true",
+		KeyS3SecretKey: "OLD-SECRET",
+	}
+	newCfg := Config{
+		Backend: "s3", S3Endpoint: "https://new.example.com", S3Bucket: "dylaris-new",
+		S3Region: "eu-central-1", S3AccessKey: "AKIA-NEW", S3Prefix: "prod",
+	}
+	cases := []struct {
+		name        string
+		failForever bool
+		wantPartial bool
+	}{
+		{"restore succeeds", false, false},
+		{"restore fails too", true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &failingSettingsStore{coreStorageTargetFakeStore: *newCoreStorageTargetFakeStore(), failKey: KeyS3Bucket, failForever: c.failForever}
+			for k, v := range old {
+				fs.kv[k] = v
+			}
+			err := (&Manager{Store: fs}).PersistConfig(newCfg, "NEW-SECRET")
+			var swe *SettingWriteError
+			if !errors.As(err, &swe) || swe.Key != KeyS3Bucket {
+				t.Fatalf("err = %v, want a SettingWriteError naming %s", err, KeyS3Bucket)
+			}
+			if got := errors.Is(err, services.ErrStorageConfigPartiallyWritten); got != c.wantPartial {
+				t.Fatalf("errors.Is(err, ErrStorageConfigPartiallyWritten) = %v, want %v (err %v)", got, c.wantPartial, err)
+			}
+			if c.wantPartial {
+				return
+			}
+			for k, want := range old {
+				if fs.kv[k] != want {
+					t.Errorf("setting %s = %q after a failed write, want the previous %q", k, fs.kv[k], want)
+				}
+			}
+			if fs.kv[KeyS3Endpoint] != "" {
+				t.Errorf("setting %s = %q after a failed write, want it restored to empty", KeyS3Endpoint, fs.kv[KeyS3Endpoint])
+			}
+		})
 	}
 }

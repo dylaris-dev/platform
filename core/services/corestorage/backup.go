@@ -51,8 +51,10 @@ func (s *Manager) ConnectionBackupBuilder() func(connectionID int, prefix string
 		}
 		// Same provider construction Core file storage uses, so a connection
 		// behaves identically whichever subsystem points at it - including the
-		// connection's own prefix, which nests ABOVE the backup prefix.
-		prov, err := NewProviderForConfig(cfg, prefix, s.Gate, s.S3)
+		// connection's own prefix, which nests ABOVE the backup prefix. No gate
+		// and no s3 resilience: both describe the LIVE Core file storage, and a
+		// connection is another backend (see NewReachProvider).
+		prov, err := NewProviderForConfig(cfg, prefix, nil, nil)
 		if err != nil {
 			return nil, fmt.Errorf("storage connection %q: %w", conn.Name, err)
 		}

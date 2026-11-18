@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"dylaris-core/storage"
 	"dylaris-core/storage/backup"
@@ -64,15 +65,29 @@ type ChecksumHinter interface {
 // ---------- StorageProvider-backed data sets (ticket-attachments, ticket-backups) ----------
 
 type providerDataSet struct {
-	id    string
-	label string
-	prov  storage.StorageProvider
+	id      string
+	label   string
+	prov    storage.StorageProvider
+	exclude map[string]bool
 }
 
 // NewProviderDataSet adapts a Core file storage provider that the caller has
 // already scoped to a sub-prefix, so every key here is provider-relative.
-func NewProviderDataSet(id, label string, prov storage.StorageProvider) DataSet {
-	return &providerDataSet{id: id, label: label, prov: prov}
+//
+// excludeDirs names top-level directories that are not part of the data set
+// and are neither listed nor walked. The Core storage root holds the
+// reachability verifier's beacons, which every Core rewrites on its own
+// schedule: inside a manifest they change between capture and copy and fail
+// the job on a checksum mismatch every time.
+func NewProviderDataSet(id, label string, prov storage.StorageProvider, excludeDirs ...string) DataSet {
+	var exclude map[string]bool
+	if len(excludeDirs) > 0 {
+		exclude = make(map[string]bool, len(excludeDirs))
+		for _, d := range excludeDirs {
+			exclude[d] = true
+		}
+	}
+	return &providerDataSet{id: id, label: label, prov: prov, exclude: exclude}
 }
 
 func (d *providerDataSet) ID() string    { return d.id }
@@ -81,14 +96,41 @@ func (d *providerDataSet) Label() string { return d.label }
 // List walks the WHOLE key space. StorageProvider.ListFiles is one directory
 // level only, so the recursion is mandatory - see storage.WalkProvider.
 func (d *providerDataSet) List(ctx context.Context) ([]ObjectRef, error) {
-	files, err := storage.WalkProvider(ctx, d.prov, "")
+	if len(d.exclude) == 0 {
+		files, err := storage.WalkProvider(ctx, d.prov, "")
+		if err != nil {
+			return nil, fmt.Errorf("storagemigrate: list %s: %w", d.id, err)
+		}
+		out := make([]ObjectRef, 0, len(files))
+		for _, f := range files {
+			out = append(out, ObjectRef{Key: f.Key, Size: f.Size})
+		}
+		return out, nil
+	}
+	// The top level by hand, so an excluded directory is never descended into:
+	// a round's probe directory can vanish mid-walk.
+	top, err := d.prov.ListFiles(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("storagemigrate: list %s: %w", d.id, err)
 	}
-	out := make([]ObjectRef, 0, len(files))
-	for _, f := range files {
-		out = append(out, ObjectRef{Key: f.Key, Size: f.Size})
+	out := []ObjectRef{}
+	for _, e := range top {
+		if d.exclude[e.Name] {
+			continue
+		}
+		if !e.IsDir {
+			out = append(out, ObjectRef{Key: e.Name, Size: e.Size})
+			continue
+		}
+		files, err := storage.WalkProvider(ctx, d.prov, e.Name)
+		if err != nil {
+			return nil, fmt.Errorf("storagemigrate: list %s: %w", d.id, err)
+		}
+		for _, f := range files {
+			out = append(out, ObjectRef{Key: e.Name + "/" + f.Key, Size: f.Size})
+		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out, nil
 }
 
@@ -241,6 +283,11 @@ type modpackDataSet struct {
 	label string
 	prov  modpack.ModpackStorageProvider
 	keys  ModpackKeySource
+
+	// The hint table is read once per data set: ChecksumHint runs per
+	// object, and the lookup is a scan of the whole modversions table.
+	hintsOnce sync.Once
+	hints     map[string]string
 }
 
 // NewModpackDataSet adapts the modpack provider plus its DB key source.
@@ -326,11 +373,12 @@ func (d *modpackDataSet) Delete(ctx context.Context, key string) error {
 // ChecksumHinter. A lookup failure is reported as "no hint" rather than
 // failing the capture, because this signal is never load-bearing.
 func (d *modpackDataSet) ChecksumHint(key string) (string, string, bool) {
-	hints, err := d.keys.ListModversionSHA512ByStorageKey()
-	if err != nil || hints == nil {
-		return "", "", false
-	}
-	sum, ok := hints[key]
+	d.hintsOnce.Do(func() {
+		if hints, err := d.keys.ListModversionSHA512ByStorageKey(); err == nil {
+			d.hints = hints
+		}
+	})
+	sum, ok := d.hints[key]
 	if !ok || sum == "" {
 		return "", "", false
 	}

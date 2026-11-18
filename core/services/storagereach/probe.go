@@ -19,6 +19,11 @@ import (
 // operator looks at the bucket or the mount.
 const probeDir = ".dylaris-reachability"
 
+// MachineOwnedDirs are the top-level directories this package writes at the
+// Core storage root. They are not Core data: a migration of that root skips
+// them, because the fleet beacons are rewritten under it every few minutes.
+func MachineOwnedDirs() []string { return []string{FleetDir, probeDir} }
+
 // ackSuffix names a participant's ack directory. Peers write a marker into it
 // to prove they may write into that participant's namespace, which is the only
 // way to catch an NFS uid-squash that leaves reads working.

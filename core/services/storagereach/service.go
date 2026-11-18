@@ -192,11 +192,17 @@ func (s *Service) run(ctx context.Context) {
 		roundInFlight     bool
 		roundBudgetExpiry time.Time
 		roundIDInFlight   string
+		// lastRoundID is the round this Core already answered. The current-
+		// round key stays up until the coordinator returns, so without it a
+		// finished participant re-probes every tick and can write probe files
+		// after the coordinator's cleanup, which nothing then removes.
+		lastRoundID string
 	)
 	startRound := func(roundID string) {
 		roundInFlight = true
 		roundBudgetExpiry = time.Now().Add(s.roundBudget)
 		roundIDInFlight = roundID
+		lastRoundID = roundID
 		go func() {
 			err := RunParticipant(ctx, s.deps.Redis, s.deps.CoreID, roundID, s.deps.NewProvider)
 			roundOutcomes <- roundOutcome{err: err}
@@ -235,6 +241,8 @@ func (s *Service) run(ctx context.Context) {
 			roundBudgetExpiry = time.Time{}
 			if out.err != nil {
 				services.ReportOperatorError("storagereach", "participating in round %s: %v", roundIDInFlight, out.err)
+				// A Redis error left no report; the next tick may try again.
+				lastRoundID = ""
 			}
 			continue
 		case <-ticker.C:
@@ -278,7 +286,7 @@ func (s *Service) run(ctx context.Context) {
 		// while one is still in flight, same as startCheck below, so a wedged
 		// mount does not accumulate one more stuck goroutine every tick.
 		if !roundInFlight {
-			if roundID, err := PendingRoundID(ctx, s.deps.Redis); err == nil && roundID != "" {
+			if roundID, err := PendingRoundID(ctx, s.deps.Redis); err == nil && roundID != "" && roundID != lastRoundID {
 				startRound(roundID)
 			}
 		}
