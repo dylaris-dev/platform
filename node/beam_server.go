@@ -315,6 +315,9 @@ func (s *beamServer) sessionLive(ctx context.Context, addr string) bool {
 	defer cancel()
 	stale, err := beamauth.TicketPredatesAccessChange(rctx, s.rdb, sess.claims)
 	if err != nil && !expired {
+		// Remembered like a good read: a Redis that times out would otherwise
+		// cost every chunk of a transfer its own 3 s wait.
+		sess.checked.Store(now)
 		return true
 	}
 	if stale || expired {
@@ -2019,6 +2022,12 @@ func (s *beamServer) paceDownload(ctx context.Context, serverUUID string, n int)
 // ─── Quota ───────────────────────────────────────────────────────────
 
 func (s *beamServer) GetTransferQuota(ctx context.Context, req *pb.BeamQuotaReq) (*pb.BeamQuotaResp, error) {
+	// This is the client's health ping and its only automatic reconnect, so an
+	// ended session must fail it; a peer that never authenticated still gets an
+	// answer, as before.
+	if p, ok := peer.FromContext(ctx); ok && p != nil && p.Addr != nil && !s.sessionLive(ctx, p.Addr.String()) {
+		return nil, status.Error(codes.Unauthenticated, "session ended - reconnect")
+	}
 	// BwLimit on the wire is a single number, so report the lower of the
 	// two directions (treating 0 as unlimited). Clients only use this for
 	// display hints; the actual enforcement is per-direction now.

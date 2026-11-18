@@ -179,3 +179,52 @@ func TestABeamUploadCannotDeclareANegativeSize(t *testing.T) {
 		t.Fatal("the negative size was counted")
 	}
 }
+
+// The client's only automatic reconnect is its health ping, and the ping
+// answered OK for a session the node had already ended: the app kept a dead
+// connection whose every file call was refused. A peer that never
+// authenticated still gets an answer, so the connect-time ping is unchanged.
+func TestTheBeamHealthPingFailsOnceTheSessionEnded(t *testing.T) {
+	cases := []struct {
+		name    string
+		sess    *beamSession
+		wantErr bool
+	}{
+		{"no session", nil, false},
+		{"live session", &beamSession{claims: &beamauth.BeamClaims{ServerUUID: "s"}, opened: time.Now()}, false},
+		{"session past its maximum age", &beamSession{claims: &beamauth.BeamClaims{ServerUUID: "s"}, opened: time.Now().Add(-beamMaxSession - time.Minute)}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bs := &beamServer{throttle: NewBeamThrottle(context.Background(), nil)}
+			addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 40600}
+			if tc.sess != nil {
+				bs.sessionByPeer.Store(addr.String(), tc.sess)
+			}
+			ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
+			_, err := bs.GetTransferQuota(ctx, &pb.BeamQuotaReq{})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("GetTransferQuota err = %v, want error %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// A failed stamp read was not remembered, so with Redis unreachable every
+// 256 KiB chunk of a transfer waited out its own timed-out read.
+func TestAFailedAccessStampReadIsNotRetriedOnEveryCall(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	mr.SetError("unreachable")
+	bs := &beamServer{rdb: rdb}
+	addr := "127.0.0.1:40700"
+	sess := &beamSession{claims: &beamauth.BeamClaims{ServerUUID: "s", RegisteredClaims: jwt.RegisteredClaims{IssuedAt: jwt.NewNumericDate(time.Now())}}, opened: time.Now()}
+	bs.sessionByPeer.Store(addr, sess)
+	if !bs.sessionLive(context.Background(), addr) {
+		t.Fatal("a Redis fault ended the session; it must fail open")
+	}
+	if sess.checked.Load() == 0 {
+		t.Fatal("the failed read was not remembered, so the next call asks Redis again")
+	}
+}
