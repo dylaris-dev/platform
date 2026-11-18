@@ -1,8 +1,12 @@
 package corestorage
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // Whether modpack storage resolves to a real provider, cached.
@@ -27,13 +31,40 @@ import (
 // can change the answer. The panel refreshes its flags on modpack_settings.changed,
 // so an operator who configures storage sees the modpack page unblock at once
 // rather than at the end of a TTL.
+//
+// The invalidation is in-process, but Core runs more than one replica and the
+// panel's refresh can land on one that did not handle the save. So the writes
+// also bump a generation in Redis, and a cached answer is only reused while
+// that generation is the one it was computed under. Redis unreachable falls
+// back to the TTL alone, which is what a single replica always had.
 const modpackStorageTTL = 60 * time.Second
+
+const (
+	modpackStorageGenKey     = "dylaris:corestorage:modpack_gen"
+	modpackStorageGenTimeout = 500 * time.Millisecond
+)
 
 type modpackStorageState struct {
 	mu         sync.Mutex
 	configured bool
 	at         time.Time
 	valid      bool
+	gen        string
+}
+
+// modpackGen reads the shared generation; ok is false when there is no Redis
+// or it did not answer, in which case the caller keeps its cache.
+func (s *Manager) modpackGen() (string, bool) {
+	if s.Redis == nil {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), modpackStorageGenTimeout)
+	defer cancel()
+	gen, err := s.Redis.Get(ctx, modpackStorageGenKey).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return "", false
+	}
+	return gen, true
 }
 
 // ModpackConfigured reports whether modpack archives have somewhere to
@@ -42,7 +73,9 @@ func (s *Manager) ModpackConfigured() bool {
 	s.modpackStorage.mu.Lock()
 	defer s.modpackStorage.mu.Unlock()
 
-	if s.modpackStorage.valid && time.Since(s.modpackStorage.at) < modpackStorageTTL {
+	gen, genOK := s.modpackGen()
+	if s.modpackStorage.valid && time.Since(s.modpackStorage.at) < modpackStorageTTL &&
+		(!genOK || gen == s.modpackStorage.gen) {
 		return s.modpackStorage.configured
 	}
 
@@ -50,6 +83,7 @@ func (s *Manager) ModpackConfigured() bool {
 	s.modpackStorage.configured = err == nil && prov != nil
 	s.modpackStorage.at = time.Now()
 	s.modpackStorage.valid = true
+	s.modpackStorage.gen = gen
 	return s.modpackStorage.configured
 }
 
@@ -60,4 +94,9 @@ func (s *Manager) InvalidateModpack() {
 	s.modpackStorage.mu.Lock()
 	s.modpackStorage.valid = false
 	s.modpackStorage.mu.Unlock()
+	if s.Redis != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), modpackStorageGenTimeout)
+		defer cancel()
+		_ = s.Redis.Incr(ctx, modpackStorageGenKey).Err() // best effort: other replicas fall back to the TTL
+	}
 }

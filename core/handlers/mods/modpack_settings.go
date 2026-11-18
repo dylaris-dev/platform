@@ -184,6 +184,9 @@ func modpackS3SecretRebound(req modpackSettings, get func(string) string) bool {
 // save also moves where that secret would be used, which modpackS3SecretRebound
 // refuses.
 func (h *ModpackSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
+	if !httpx.CapBody(w, r, httpx.SmallJSONBodyLimit) {
+		return
+	}
 	var req modpackSettings
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -292,6 +295,9 @@ type modpackUserFlagRequest struct {
 // SetUserFlag PATCH /api/admin/users/{id}/modpack-flag - PANEL settings.write
 // (RequireCap at the route).
 func (h *ModpackSettingsHandler) SetUserFlag(w http.ResponseWriter, r *http.Request) {
+	if !httpx.CapBody(w, r, httpx.SmallJSONBodyLimit) {
+		return
+	}
 	userID, ok := httpx.ParseUserID(w, r)
 	if !ok {
 		return

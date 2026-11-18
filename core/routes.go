@@ -1317,7 +1317,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	// row is the realm (userID from context, no path {id}), so there is no
 	// separate owner-filter to keep or remove here.
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.read")(gates.AllowReadOnlyWhenDisabled(modrinthPATHandler.Status)))).Methods("GET")
-	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(modrinthPATHandler.Set))))).Methods("PUT")
+	// Each save makes an outbound Modrinth /v2/user call, which spends Core's
+	// shared per-IP Modrinth budget, so it draws on the credential limiter.
+	api.HandleFunc("/me/modrinth-pat", authLimiter.Limit(10, authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(modrinthPATHandler.Set)))))).Methods("PUT")
 	api.HandleFunc("/me/modrinth-pat", authHandler.AuthMiddleware(appState.Authz.RequireCap("modpack.write")(gates.RequireModpacksEnabled(gates.RequireUserCanCreateModpacks(modrinthPATHandler.Clear))))).Methods("DELETE")
 	// --- Pack builder. Reuses the modpacks feature gates. ---
 	// Phase 4 Task 20: OWNER modpack.read/write/delete, chokepoint-open by

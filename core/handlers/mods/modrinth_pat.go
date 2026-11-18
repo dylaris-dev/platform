@@ -83,6 +83,9 @@ func (h *ModrinthPATHandler) Set(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if !httpx.CapBody(w, r, httpx.SmallJSONBodyLimit) {
+		return
+	}
 	var req setPATRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)

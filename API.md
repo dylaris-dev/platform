@@ -594,7 +594,7 @@ can still show what exists.
 | GET | `/api/me/modrinth-favorites` | session | _no capability_ | - | `PacksHandler.Favorites` | is the authenticated caller's own public Modrinth bookmarks. |
 | PUT | `/api/me/modrinth-favorites` | session | _no capability_ | Limit | `PacksHandler.Favorites` | is the authenticated caller's own public Modrinth bookmarks. |
 | GET | `/api/me/modrinth-pat` | session | `modpack.read` | AllowReadOnlyWhenDisabled | `ModrinthPATHandler.Status` | returns whether the user has a PAT configured + (if so) the username + last_validated timestamp. |
-| PUT | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Set` | accepts the plaintext PAT, validates it against Modrinth /v2/user, encrypts, and stores. |
+| PUT | `/api/me/modrinth-pat` | session | `modpack.write` | Limit, RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Set` | accepts the plaintext PAT, validates it against Modrinth /v2/user, encrypts, and stores. |
 | DELETE | `/api/me/modrinth-pat` | session | `modpack.write` | RequireModpacksEnabled, RequireUserCanCreateModpacks | `ModrinthPATHandler.Clear` | wipes the PAT entirely. |
 | GET | `/api/me/modrinth-watches` | session | _no capability_ | - | `PacksHandler.Watches` | lists or creates a daily, user-owned release availability alert. |
 | POST | `/api/me/modrinth-watches` | session | _no capability_ | Limit | `PacksHandler.Watches` | lists or creates a daily, user-owned release availability alert. |

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"dylaris-core/models"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/storage"
 
@@ -55,6 +56,7 @@ type templateJanitorStore interface {
 	GetSetting(key string) (string, error)
 	TemplateExists(id int) (bool, error)
 	ListTemplateStorageConnectionIDs() ([]int, error)
+	ListStorageConnections() ([]models.StorageConnection, error)
 }
 
 // TemplateJanitorService runs hourly. The storage sweep is leader-gated; the
@@ -126,8 +128,13 @@ func (s *TemplateJanitorService) runOnce(ctx context.Context) {
 	}
 }
 
-// connections is Core storage, the configured template connection and every
-// connection a template row names. A failed list still sweeps the first two.
+// connections is Core storage, the configured template connection, every
+// connection a template row names and every other storage connection. The last
+// set is what reaches a connection the setting moved away from after an
+// account delete took its last row but not its files: nothing else names it
+// any more. Templates sit under their own prefix on a connection, so sweeping
+// one that never held any lists an empty area. A failed list still sweeps the
+// first two.
 func (s *TemplateJanitorService) connections() []int {
 	set := map[int]bool{0: true}
 	if v, _ := s.store.GetSetting(TemplatesStorageConnectionKey); v != "" {
@@ -142,6 +149,15 @@ func (s *TemplateJanitorService) connections() []int {
 	for _, id := range ids {
 		if id > 0 {
 			set[id] = true
+		}
+	}
+	conns, err := s.store.ListStorageConnections()
+	if err != nil {
+		logErrf("template-janitor", "list storage connections: %v", err)
+	}
+	for _, c := range conns {
+		if c.ID > 0 {
+			set[c.ID] = true
 		}
 	}
 	out := make([]int, 0, len(set))

@@ -24,8 +24,10 @@ type janitorFakeStore struct {
 	getErr  error
 	connIDs []int
 	connErr error
-	setting string
-	gets    []int
+	// allConns is every storage_connections row.
+	allConns []int
+	setting  string
+	gets     []int
 	// onGet runs before each GetTemplate answers, so a test can make a row
 	// appear between the first look and the re-read before the delete.
 	onGet func(id int)
@@ -51,6 +53,14 @@ func (f *janitorFakeStore) TemplateExists(id int) (bool, error) {
 
 func (f *janitorFakeStore) ListTemplateStorageConnectionIDs() ([]int, error) {
 	return f.connIDs, f.connErr
+}
+
+func (f *janitorFakeStore) ListStorageConnections() ([]models.StorageConnection, error) {
+	var out []models.StorageConnection
+	for _, id := range f.allConns {
+		out = append(out, models.StorageConnection{ID: id})
+	}
+	return out, f.connErr
 }
 
 type janitorRig struct {
@@ -342,6 +352,27 @@ func TestTemplateJanitorSweepsEveryConnectionOfOurs(t *testing.T) {
 	r.pass(2 * time.Hour)
 	if _, err := os.Stat(filepath.Join(base5, janitorOwner, "9")); !os.IsNotExist(err) {
 		t.Errorf("orphan on connection 5 kept: %v", err)
+	}
+}
+
+// The setting moved away from connection 7 and its last row went with an
+// account delete whose file removal failed: no row and no setting names 7 any
+// more, but it is still one of our connections and still holds the orphan (C63).
+func TestTemplateJanitorSweepsAConnectionNothingNamesAnyMore(t *testing.T) {
+	base7 := t.TempDir()
+	p7 := &storage.LocalProvider{BasePath: base7}
+	st := &janitorFakeStore{setting: "8", allConns: []int{7, 8}}
+	r := newJanitorRig(t, st, map[int]storage.StorageProvider{7: p7})
+	if err := os.MkdirAll(filepath.Join(base7, janitorOwner, "9"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base7, janitorOwner, "9", "a"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.pass(0)
+	r.pass(2 * time.Hour)
+	if _, err := os.Stat(filepath.Join(base7, janitorOwner, "9")); !os.IsNotExist(err) {
+		t.Errorf("orphan on connection 7 kept: %v", err)
 	}
 }
 
