@@ -39,7 +39,9 @@ func TestAHungStoragePathDoesNotStallPathLookups(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			hung, release := make(chan struct{}), make(chan struct{})
+			// hung is buffered: the stat goroutine can reach diskSpaceOf before this
+			// test waits on hung, and an unbuffered non-blocking send is then lost.
+			hung, release := make(chan struct{}, 1), make(chan struct{})
 			prev := diskSpaceOf
 			t.Cleanup(func() { diskSpaceOf = prev })
 			diskSpaceOf = func(string) (uint64, uint64) {

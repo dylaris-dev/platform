@@ -28,7 +28,7 @@ Newest release first. The format is fixed and checked in CI - see the
   setup or restart brings it back on its old software. `node`
 - A storage move, backup or restore no longer races a reinstall or start of the same server: the second job is
   refused with a clear message. `node` `core`
-- Core fixes: BYON pairing survives a Redis hiccup, a broken-off backup download shows as failed, restores
+- Core fixes: a BYON machine pairs even during a short Redis outage, a broken-off backup download shows as failed, restores
   survive a closed tab, ticket inboxes show every matching ticket, and real Modrinth packs import. `core`
 
 ## 2026.11.17.2
