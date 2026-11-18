@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"dylaris-core/handlers/httpx"
 
@@ -85,10 +86,7 @@ func (h *ServerHandler) SetServerEdgeMotd(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONError(w, "Invalid mode (must be auto, custom, or off)", 400)
 		return
 	}
-	text := strings.TrimSpace(req.CustomText)
-	if len(text) > maxEdgeMotdTextLen {
-		text = text[:maxEdgeMotdTextLen]
-	}
+	text := truncateEdgeMotdText(strings.TrimSpace(req.CustomText))
 	if err := h.d.Store.SetServerEdgeMotd(serverID, req.Mode, text); err != nil {
 		httpx.SendJSONError(w, "Failed to update edge MOTD config", 500)
 		return
@@ -99,6 +97,18 @@ func (h *ServerHandler) SetServerEdgeMotd(w http.ResponseWriter, r *http.Request
 		publishEdgeMotd(context.Background(), h.d.Redis, srv.UUID, req.Mode, text)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "mode": req.Mode, "customText": text})
+}
+
+// truncateEdgeMotdText caps text at maxEdgeMotdTextLen characters (runes), not
+// bytes: a byte cut can split a multi-byte rune (umlaut, section-sign colour
+// code), and Postgres then refuses the invalid UTF-8. The panel's maxLength
+// counts UTF-16 units, which is never fewer than runes, so anything the panel
+// accepts is stored whole.
+func truncateEdgeMotdText(text string) string {
+	if utf8.RuneCountInString(text) <= maxEdgeMotdTextLen {
+		return text
+	}
+	return string([]rune(text)[:maxEdgeMotdTextLen])
 }
 
 // publishEdgeMotd SETs the two per-server edge-MOTD keys the gateway edge reads.
