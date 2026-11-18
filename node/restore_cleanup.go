@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -177,7 +178,8 @@ func runRestoreCleanup(sm *StorageManager) {
 				// TTL. Without a stage the target was deleted after the swap, and
 				// the stash keeps its normal TTL rather than bring that back.
 				target := strings.TrimSuffix(path, m)
-				if _, err := os.Lstat(target); errors.Is(err, os.ErrNotExist) && hasStageOf(target) {
+				_, terr := os.Lstat(target)
+				if errors.Is(terr, os.ErrNotExist) && hasStageOf(target) {
 					rel, _ := filepath.Rel(root, target)
 					uuid := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]
 					if !serverDeleted(uuid) {
@@ -194,6 +196,21 @@ func runRestoreCleanup(sm *StorageManager) {
 							keepStash(0, path)
 							return filepath.SkipDir
 						}
+					}
+				} else if terr == nil && depthBelow(root, path) == 1 && !serverDeleted(filepath.Base(target)) {
+					// A node killed after the second rename but before the
+					// node's own root entries were carried across leaves the
+					// restored root in place and the live archives and node
+					// config only here. Carry what the root lacks; whatever
+					// still cannot go is never deleted on the TTL.
+					if !restoreServersInFlight.has(filepath.Base(target)) && !sharedWithAnotherNode(root) {
+						for _, name := range nodeOwnedRootEntries {
+							moveMissing(filepath.Join(path, name), filepath.Join(target, name))
+						}
+					}
+					if age.Before(cutoff) && slices.ContainsFunc(nodeOwnedRootEntries, func(name string) bool { return holdsFile(filepath.Join(path, name)) }) {
+						keepStash(0, path)
+						return filepath.SkipDir
 					}
 				}
 			}
@@ -237,6 +254,47 @@ func depthBelow(root, path string) int {
 		return 0
 	}
 	return strings.Count(filepath.ToSlash(rel), "/") + 1
+}
+
+// moveMissing moves src to dst, or, where both are directories, every entry
+// of src that dst lacks. Nothing dst already has is replaced: it may be newer
+// than the stash, such as a backup taken after the interrupted restore.
+func moveMissing(src, dst string) {
+	st, err := os.Lstat(src)
+	if err != nil {
+		return
+	}
+	dt, err := os.Lstat(dst)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.Rename(src, dst); err == nil {
+			log.Printf("restore-cleanup: carried %s into %s after an interrupted restore", src, dst)
+		}
+		return
+	}
+	if err != nil || !st.IsDir() || !dt.IsDir() {
+		return
+	}
+	entries, _ := os.ReadDir(src)
+	for _, e := range entries {
+		moveMissing(filepath.Join(src, e.Name()), filepath.Join(dst, e.Name()))
+	}
+}
+
+// holdsFile reports whether p is, or holds, anything but directories. An
+// unreadable tree counts as holding something.
+func holdsFile(p string) bool {
+	found := false
+	err := filepath.WalkDir(p, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found || (err != nil && !errors.Is(err, os.ErrNotExist))
 }
 
 // hasStageOf reports whether a restore staging dir of target sits next to it.

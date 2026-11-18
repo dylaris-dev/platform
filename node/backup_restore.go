@@ -308,11 +308,20 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// Judged on the shared counters at every charge: a budget measured once
 	// never saw what another restore, copy or spool wrote after it started.
 	budget := nodeWriteBudget(filepath.Dir(stageDir))
+	// oldFreed is the size of the old copy the swap deleted.
+	var oldFreed int64
 	// Only a swapped-in stage stays on disk; every failure removes it, and
 	// bytes booked as landed count against every other write still running.
 	defer func() {
 		if succeeded {
+			booked := budget.used
 			budget.release()
+			// The old copy was on disk when every running budget measured
+			// the free space; crediting it back, up to what this restore
+			// booked, keeps them from counting the old world as still used.
+			if oldFreed > 0 {
+				budget.disk.landed.Add(-min(oldFreed, booked))
+			}
 		} else {
 			budget.releaseWritten(0)
 		}
@@ -505,8 +514,11 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		// old world counted against the server until the delete finished, and
 		// the limit put back meanwhile had the restored server refused writes
 		// and stopped by the disk guard.
+		freed := dirSize(backupDir)
 		if err := os.RemoveAll(backupDir); err != nil {
 			log.Printf("Restore %d: [warn] remove the old copy %s: %v", cmd.RunID, backupDir, err)
+		} else {
+			oldFreed = freed
 		}
 	} else {
 		keepStash(cmd.RunID, backupDir)

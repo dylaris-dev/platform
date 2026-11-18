@@ -164,3 +164,85 @@ func TestRestoreCleanupPutsBackAStashWhoseTargetIsMissing(t *testing.T) {
 		})
 	}
 }
+
+// Z08: a node killed after the swap's second rename but before the node's own
+// root entries were carried across leaves the restored root in place and the
+// live archives and node config only in the stash, which the sweep deleted a
+// day later. The sweep carries them into the root instead; a name the root
+// already has a different file under stays in the stash, which is then kept
+// out of the TTL's reach rather than deleted.
+func TestRestoreCleanupCarriesNodeStateOutOfAStashWhoseTargetExists(t *testing.T) {
+	stamp := func(at time.Time) string { return at.UTC().Format("20060102-150405") }
+	archive := filepath.Join(backupDirName, "backups", "job-1", "run-1.tar.gz")
+	tests := []struct {
+		name       string
+		stashedAt  time.Time
+		inTarget   map[string]string // already in the restored root
+		running    bool
+		wantCarry  []string // stash files that must end up in the target
+		wantKeptAs bool     // the stash survives as a kept stash
+	}{
+		{"fresh", time.Now(), nil, false, []string{archive, ".node_config.json"}, false},
+		{"past the TTL", time.Now().Add(-48 * time.Hour), nil, false, []string{archive, ".node_config.json"}, false},
+		{"a newer backup beside it", time.Now(), map[string]string{filepath.Join(backupDirName, "backups", "job-1", "run-2.tar.gz"): "newer"}, false, []string{archive, ".node_config.json"}, false},
+		{"a clashing config past the TTL", time.Now().Add(-48 * time.Hour), map[string]string{".node_config.json": "archive copy"}, false, []string{archive}, true},
+		{"a restore of it is running", time.Now(), nil, true, nil, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sm, _ := newPlacementManager(t, 1)
+			root := sm.Paths()[0]
+			const uuid = "srv-z08"
+			target := filepath.Join(root, uuid)
+			stash := target + ".pre-restore-" + stamp(tc.stashedAt)
+			files := map[string]string{
+				filepath.Join(stash, archive):             "archive",
+				filepath.Join(stash, ".node_config.json"): "live config",
+				filepath.Join(stash, "level.dat"):         "old world",
+				filepath.Join(target, "level.dat"):        "restored world",
+			}
+			for name, body := range tc.inTarget {
+				files[filepath.Join(target, name)] = body
+			}
+			for p, body := range files {
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// The sweep ages a stash by the later of its name and its mtime.
+			if err := os.Chtimes(stash, tc.stashedAt, tc.stashedAt); err != nil {
+				t.Fatal(err)
+			}
+			if tc.running {
+				restoreServersInFlight.enter(uuid)
+				defer restoreServersInFlight.leave(uuid)
+			}
+
+			runRestoreCleanup(sm)
+
+			for _, name := range tc.wantCarry {
+				want := files[filepath.Join(stash, name)]
+				if b, err := os.ReadFile(filepath.Join(target, name)); err != nil || string(b) != want {
+					t.Errorf("%s in the target = %q, %v; want %q", name, b, err, want)
+				}
+			}
+			for name, body := range tc.inTarget {
+				if b, err := os.ReadFile(filepath.Join(target, name)); err != nil || string(b) != body {
+					t.Errorf("%s in the target was replaced: %q, %v", name, b, err)
+				}
+			}
+			kept, _ := filepath.Glob(filepath.Join(root, ".restore-kept-*"))
+			if (len(kept) > 0) != tc.wantKeptAs {
+				t.Errorf("kept stashes %v, want kept = %v", kept, tc.wantKeptAs)
+			}
+			if tc.running {
+				if _, err := os.Stat(filepath.Join(stash, archive)); err != nil {
+					t.Errorf("the stash of a running restore was touched: %v", err)
+				}
+			}
+		})
+	}
+}
