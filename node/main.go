@@ -1690,9 +1690,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		// The same guards as reinstall, in the same order before the install
 		// lock: setup wipes and installs into the tree a version move stashes
-		// and a backup archives. Nothing has changed yet, so no status write.
+		// and a backup archives. Nothing has changed yet, but Core already
+		// wrote "installing" (see reportRefusedStatus).
 		if !commandsInFlight.enter(softwareKey(cmd.Config.UUID)) {
 			log.Printf("Setup of %s/%s refused: a version move of this server is running on this node", cmd.Config.UUID, subName)
+			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID)
 			reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, errors.New("a version move of this server was still running"))
 			return
 		}
@@ -1701,6 +1703,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// dead attempt left: the old files are in it, not in place, until the
 		// recovery below runs, and a refusal before it must not say restored.
 		reportSetupRefused := func(cause error) {
+			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID)
 			publishSetupFailure(ctx, rdb, cmd.Config.UUID, subName, cause, !stashStranded(storage.GetServerDir(cmd.Config.UUID), subName))
 		}
 		leaveTree, treeBusy := enterTreeChangeOfServer(cmd.Config.UUID)
@@ -2371,10 +2374,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer commandsInFlight.leave("reinstall:" + cmd.Config.UUID)
-		// Shared with a version move: both stash the jars in the one dir. The
-		// move holds the busy status, so the refusal writes none of its own.
+		// Shared with a version move: both stash the jars in the one dir.
 		if !commandsInFlight.enter(softwareKey(cmd.Config.UUID)) {
 			log.Printf("Reinstall of %s/%s refused: a version move of this server is running on this node", cmd.Config.UUID, subName)
+			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID)
 			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("a version move of this server was still running"))
 			return
 		}
@@ -2382,6 +2385,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		leaveTree, treeBusy := enterTreeChangeOfServer(cmd.Config.UUID)
 		if treeBusy != "" {
 			log.Printf("Reinstall of %s/%s refused: %s", cmd.Config.UUID, subName, treeBusy)
+			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID)
 			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New(treeBusy))
 			return
 		}
@@ -2811,6 +2815,22 @@ func statusAfterFailedStop(dm *DockerManager, uuid string) string {
 		return "online"
 	}
 	return "stopped"
+}
+
+// reportRefusedStatus is the status write of a setup or reinstall refused
+// before it took its busy hold. Core wrote "installing" when it sent the
+// command, and nothing else lands it: a backup holds no busy key, and a
+// stopped server is not tracked by the stats collector. A restore or version
+// move that holds one reports its own status, so this one stays out of it.
+func reportRefusedStatus(ctx context.Context, rdb *redis.Client, dm *DockerManager, uuid string) {
+	if isNodeBusy(ctx, rdb, uuid) {
+		return
+	}
+	status := "stopped"
+	if dm != nil {
+		status = statusAfterFailedStop(dm, uuid)
+	}
+	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), status, 30*time.Second)
 }
 
 // saveAllMinUptime is how long a container must have run before a stop sends
