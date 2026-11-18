@@ -9,6 +9,8 @@ import (
 
 	"dylaris-core/handlers/guard"
 	"dylaris-core/handlers/httpx"
+	"dylaris-core/handlers/reqctx"
+	"dylaris-core/models"
 
 	"github.com/gorilla/mux"
 )
@@ -28,6 +30,14 @@ func stripStorageServerUUIDs(v interface{}) interface{} {
 		}
 	}
 	return entries
+}
+
+// mayChooseStoragePath reports whether the caller decides which disk of node
+// a server lives on: an operator, or the owner of their own node. On a
+// platform node that choice is the operator's, at create and on every move.
+func mayChooseStoragePath(r *http.Request, node *models.Node) bool {
+	callerID := reqctx.ByonCallerID(r)
+	return reqctx.IsAdmin(r) || (node.OwnerID != nil && callerID != "" && *node.OwnerID == callerID)
 }
 
 // GetServerStoragePath returns the current storage path for a server and all available
@@ -62,6 +72,10 @@ func (h *ServerHandler) GetServerStoragePath(w http.ResponseWriter, r *http.Requ
 	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", 404)
+		return
+	}
+	if !mayChooseStoragePath(r, node) {
+		httpx.SendJSONError(w, "Only whoever runs this node chooses its storage paths", http.StatusForbidden)
 		return
 	}
 
@@ -142,6 +156,10 @@ func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Requ
 	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {
 		httpx.SendJSONError(w, "Node not found", 404)
+		return
+	}
+	if !mayChooseStoragePath(r, node) {
+		httpx.SendJSONError(w, "Only whoever runs this node chooses its storage paths", http.StatusForbidden)
 		return
 	}
 

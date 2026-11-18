@@ -634,3 +634,57 @@ func TestAssignGrant_OverwritingAGrantNeedsTheRightToRemove(t *testing.T) {
 		}
 	}
 }
+
+// inheritGrantStore puts server 42 behind proxy 7, where the target holds an
+// inherit=true grant and nothing directly on 42.
+type inheritGrantStore struct{ *grantFakeStore }
+
+func (f *inheritGrantStore) GetServerByID(id int) (*models.Server, error) {
+	if id == 7 {
+		return &models.Server{ID: 7, OwnerID: ownerA, OwnerName: "ownerA"}, nil
+	}
+	return f.grantFakeStore.GetServerByID(id)
+}
+func (f *inheritGrantStore) GetServerGrant(serverID int, userID string) (*store.ServerGrant, error) {
+	if userID == friendC {
+		if serverID == 7 {
+			sid := 7
+			return &store.ServerGrant{ServerID: &sid, UserID: friendC, OwnerUserID: ownerA, Inherit: true,
+				CapOverrides: store.CapOverrides{Grant: []string{"console.write", "files.write"}}}, nil
+		}
+		return nil, sql.ErrNoRows
+	}
+	return f.grantFakeStore.GetServerGrant(serverID, userID)
+}
+
+// C35: a direct grant replaces what someone inherits from the proxy, so a
+// members.write holder could shrink a co-member's access by "granting" them
+// overview.read, without the right to remove members.
+func TestAssignGrant_ShadowingAnInheritedGrantNeedsTheRightToRemove(t *testing.T) {
+	sid := 42
+	proxy := 7
+	for _, tc := range []struct {
+		caps []string
+		want int
+	}{
+		{[]string{"members.write", "overview.read"}, http.StatusForbidden},
+		{[]string{"members.write", "members.delete", "overview.read"}, http.StatusOK},
+	} {
+		child := serverOwnedBy(ownerA)
+		child.ProxyID = &proxy
+		fs := &inheritGrantStore{&grantFakeStore{
+			target: &models.User{ID: friendC, Username: "friend"},
+			server: child,
+			actorGrant: &store.ServerGrant{ServerID: &sid, UserID: actorB,
+				CapOverrides: store.CapOverrides{Grant: tc.caps}},
+		}}
+		h := NewServerRolesHandler(testDeps(Deps{Store: fs, Authz: authz.NewResolver(fs)}))
+		rec := httptest.NewRecorder()
+		h.AssignGrant(rec, grantReq("POST", actorB, false, map[string]interface{}{
+			"username": "friend", "serverId": 42, "grantCaps": []string{"overview.read"},
+		}))
+		if rec.Code != tc.want {
+			t.Errorf("caller caps %v: status %d, want %d: %s", tc.caps, rec.Code, tc.want, rec.Body.String())
+		}
+	}
+}

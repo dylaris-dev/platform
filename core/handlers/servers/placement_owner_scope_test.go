@@ -205,3 +205,52 @@ func TestPickNodeSkipsExternalNodesUnlessTheGatewayRoutes(t *testing.T) {
 		}
 	}
 }
+
+// C36: the wizard's tag and region lists covered every online node, other
+// customers' own machines included, while the pick beside them is scoped.
+// They follow the same scope, so they neither enumerate the fleet nor offer a
+// tag the placement then refuses.
+func TestPlacementTagsAndRegionsFollowThePlacementScope(t *testing.T) {
+	tenant, other := "tenant-a", "tenant-b"
+	mine := ownedNode(1, "mine", &tenant)
+	mine.Tags, mine.Region = "mine-tag", "eu-mine"
+	theirs := ownedNode(2, "theirs", &other)
+	theirs.Tags, theirs.Region = "their-tag", "us-theirs"
+	plat := ownedNode(3, "platform", nil)
+	plat.Tags, plat.Region = "plat-tag", "eu-plat"
+	fs := &placementFakeStore{nodes: []models.Node{mine, theirs, plat}, settings: map[string]string{"feature_byon_enabled": "true"}}
+	h := &PlacementHandler{d: testDeps(Deps{Store: fs, FeatureFlags: services.NewFeatureFlags(fs)})}
+
+	list := func(handler http.HandlerFunc, userID string, admin bool, field string) []string {
+		r := httptest.NewRequest(http.MethodGet, "/api/placement/x", nil)
+		//nolint:staticcheck // SA1029: the codebase's own context-key convention
+		ctx := context.WithValue(r.Context(), "userID", userID)
+		//nolint:staticcheck // SA1029
+		ctx = context.WithValue(ctx, "isAdmin", admin)
+		rw := httptest.NewRecorder()
+		handler(rw, r.WithContext(ctx))
+		var out struct{ Tags, Regions []string }
+		if err := json.Unmarshal(rw.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode %s: %v", rw.Body.String(), err)
+		}
+		if field == "tags" {
+			return out.Tags
+		}
+		return out.Regions
+	}
+	for _, tc := range []struct {
+		who           string
+		admin         bool
+		tags, regions string
+	}{
+		{tenant, false, "mine-tag", "eu-mine"},
+		{"admin-1", true, "plat-tag", "eu-plat"},
+	} {
+		if got := strings.Join(list(h.AvailableTagsHandler, tc.who, tc.admin, "tags"), ","); got != tc.tags {
+			t.Errorf("%s tags = %q, want %q", tc.who, got, tc.tags)
+		}
+		if got := strings.Join(list(h.AvailableRegionsHandler, tc.who, tc.admin, "regions"), ","); got != tc.regions {
+			t.Errorf("%s regions = %q, want %q", tc.who, got, tc.regions)
+		}
+	}
+}

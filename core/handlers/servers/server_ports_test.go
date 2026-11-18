@@ -638,3 +638,40 @@ func TestATCPExtraPortNeverTakesAGamePort(t *testing.T) {
 		t.Fatalf("admin port on a game port: status %d code %q, want 409 port_taken", w.Code, errCode(w))
 	}
 }
+
+func (f *portsFakeStore) MoveServerPort(id, nodeID, hostPort int) error {
+	for _, q := range f.ports {
+		if q.ID != id && q.NodeID == nodeID && q.HostPort == hostPort {
+			return store.ErrPortTaken
+		}
+	}
+	for i := range f.ports {
+		if f.ports[i].ID == id {
+			f.ports[i].NodeID, f.ports[i].HostPort = nodeID, hostPort
+		}
+	}
+	return nil
+}
+
+// C37: a port that came along from another node kept its host port whenever
+// that number was free on the new node, even inside the new node's game port
+// range, where the node then drops every extra port and runs game-only.
+func TestAPortFromAnotherNodeIsOnlyKeptOutsideTheGameRange(t *testing.T) {
+	pc := newPortsCase(t)
+	pc.fs.ports = []store.ServerPort{
+		{ID: 1, ServerID: 1, NodeID: 3, Protocol: "udp", HostPort: 25650, ContainerPort: 9000, Name: "in the game range"},
+		{ID: 2, ServerID: 1, NodeID: 3, Protocol: "tcp", HostPort: 27000, ContainerPort: 8100, Name: "clear of both"},
+	}
+	pc.fs.nextID = 2
+	pc.h.syncPortsToStart(pc.fs.servers[1], "")
+	got := map[string]store.ServerPort{}
+	for _, p := range pc.fs.ports {
+		got[p.Name] = p
+	}
+	if p := got["in the game range"]; p.NodeID != 7 || p.HostPort != 26000 {
+		t.Errorf("port in the game range: %+v, want re-picked on node 7 as 26000", p)
+	}
+	if p := got["clear of both"]; p.NodeID != 7 || p.HostPort != 27000 {
+		t.Errorf("port clear of both: %+v, want kept as 27000 on node 7", p)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"dylaris-core/database"
@@ -55,6 +56,15 @@ type MigrationOrchestrator struct {
 	// storage of provider "connection". Same builder the backup scheduler
 	// gets; without it such a storage cannot carry a cross-LAN transfer.
 	connection func(connectionID int, prefix string) (backupstorage.Storage, error)
+	// portsRehome moves a server's extra ports to the node it now runs on and
+	// republishes them (the servers handler's syncPortsToStart). Atomic: it is
+	// wired once the handlers exist, after Start. nil = not wired, skipped.
+	portsRehome atomic.Pointer[func(srv *models.Server)]
+}
+
+// SetPortsRehome wires the extra-port re-home a cutover runs for the target.
+func (o *MigrationOrchestrator) SetPortsRehome(fn func(srv *models.Server)) {
+	o.portsRehome.Store(&fn)
 }
 
 // SetConnection wires the storage-connection builder. Call once at boot.
@@ -808,6 +818,16 @@ func (o *MigrationOrchestrator) finishCutover(ctx context.Context, srv *models.S
 	// drops that file: without it the target binds its own default.
 	if srv.ContainerPort > 0 {
 		docker["containerPort"] = srv.ContainerPort
+	}
+	// The extra ports follow the server before the target builds its
+	// container: their rows still named the source node and its host ports, so
+	// the target published the source's numbers - outside its range, or one
+	// another server there holds - while its free-port pick, reading those
+	// rows as the source's, could hand the same number out again.
+	if fn := o.portsRehome.Load(); fn != nil {
+		moved := *srv
+		moved.NodeID = targetNode.ID
+		(*fn)(&moved)
 	}
 	confErr := o.queue.SendCommand(postCutover, targetNode.Token, "reconfigure", map[string]interface{}{
 		"uuid":            srv.UUID,

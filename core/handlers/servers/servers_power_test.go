@@ -3,6 +3,7 @@ package servers
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -235,13 +236,25 @@ func TestServerPowerHandler_InvalidJSON(t *testing.T) {
 	}
 }
 
+// C34: a missing id answered 404 before authorization ran, while an existing
+// server a stranger may not touch answered 403 - an existence oracle over
+// sequential ids. A stranger gets the same refusal for both; an admin, who may
+// act on any server, is still told the id does not exist.
 func TestServerPowerHandler_ServerNotFound(t *testing.T) {
-	fs := &serverPowerFakeStore{serverErr: errors.New("no rows")}
+	fs := &serverPowerFakeStore{serverErr: sql.ErrNoRows}
 	h := newServerPowerHandler(fs, handlertest.RedisClient(t))
 	rec := httptest.NewRecorder()
 	h.ServerPowerHandler(rec, serverPowerReq(99, "start", "alice", false, "u1"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("stranger: status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if msg := decodeErrBody(t, rec); msg != "Forbidden" {
+		t.Fatalf("stranger: message = %q, want the refusal an existing server gets", msg)
+	}
+	rec = httptest.NewRecorder()
+	h.ServerPowerHandler(rec, serverPowerReq(99, "start", "admin", true, "u-admin"))
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
+		t.Fatalf("admin: status = %d, want 404: %s", rec.Code, rec.Body.String())
 	}
 }
 

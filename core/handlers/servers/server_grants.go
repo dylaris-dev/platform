@@ -164,8 +164,11 @@ func (h *ServerRolesHandler) AssignGrant(w http.ResponseWriter, r *http.Request)
 	}
 	// Writing over someone's grant can take their access away as surely as
 	// revoking it, and revoking needs members.delete. A member holding only
-	// members.write could empty a co-admin's grant this way.
-	if hadGrant && delegatorRes != nil && !delegatorRes.HasCap("members.delete") {
+	// members.write could empty a co-admin's grant this way. A FIRST direct
+	// grant does the same to what they inherit from the proxy: the resolver
+	// reads a direct row in place of the inherited one.
+	if delegatorRes != nil && !delegatorRes.HasCap("members.delete") &&
+		(hadGrant || access.RevokeUncoversInheritance(h.d.Store, srv, target.ID)) {
 		httpx.SendJSONError(w, "Changing an existing member's access needs the right to remove members", 403)
 		return
 	}

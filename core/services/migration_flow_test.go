@@ -574,3 +574,43 @@ func TestARerunAfterTheCutoverFinishesTheMove(t *testing.T) {
 		t.Errorf("phase %q, want done", st.Phase)
 	}
 }
+
+// C37: a move never re-homed the server's extra ports. Their rows kept the
+// source node and its host ports, the target published the source's numbers,
+// and the source went on reserving them. The ports follow the server to the
+// target before the target is told to build the container.
+func TestAMoveRehomesTheExtraPortsBeforeTheTargetBuilds(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status string
+		onNode int
+		req    MigrationRequest
+	}{
+		{"a move", "stopped", 1, MigrationRequest{ServerID: 5, TargetNodeID: 2, SourceNodeID: 1, Reason: "manual"}},
+		{"a re-run after the cutover", "migrating", 2, MigrationRequest{ServerID: 5, TargetNodeID: 2, SourceNodeID: 1, PreStatus: "stopped", Reason: "manual"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o, fs, sim, _ := newFlow(t, tc.status)
+			fs.srv.NodeID = tc.onNode
+			var mu sync.Mutex
+			var calls []int
+			var reconfiguredFirst bool
+			o.SetPortsRehome(func(srv *models.Server) {
+				mu.Lock()
+				defer mu.Unlock()
+				calls = append(calls, srv.NodeID)
+				reconfiguredFirst = len(sim.commands(flowTargetToken, "reconfigure")) != 0
+			})
+			o.Migrate(context.Background(), tc.req)
+			time.Sleep(100 * time.Millisecond)
+			mu.Lock()
+			defer mu.Unlock()
+			if len(calls) != 1 || calls[0] != 2 {
+				t.Fatalf("ports re-homed for nodes %v, want once for the target", calls)
+			}
+			if reconfiguredFirst {
+				t.Fatal("the target was reconfigured before the ports moved to it")
+			}
+		})
+	}
+}

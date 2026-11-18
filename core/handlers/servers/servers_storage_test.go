@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"dylaris-core/models"
 	"dylaris-core/services"
+	"dylaris-core/store"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gorilla/mux"
@@ -115,3 +117,52 @@ func TestMigrateServerStorage_RefusedWhileInstallingOrMigrating(t *testing.T) {
 		})
 	}
 }
+
+// C31: the storage path of a platform node is the operator's choice. Create
+// passes one on only for an admin or the node's own owner; the later move and
+// the path list let any server.settings.write holder pick any disk.
+func TestStoragePathChoiceIsForWhoeverRunsTheNode(t *testing.T) {
+	tenant := "tenant-1"
+	for _, tc := range []struct {
+		name    string
+		isAdmin bool
+		owner   *string
+		allowed bool
+	}{
+		{"admin on a platform node", true, nil, true},
+		{"tenant on a platform node", false, nil, false},
+		{"tenant on someone else's node", false, strPtr("other"), false},
+		{"tenant on their own node", false, &tenant, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &storagePathStore{resourcesFakeStore{server: resourcesServer("stopped"), node: models.Node{OwnerID: tc.owner}}}
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			h := &ServerHandler{d: testDeps(Deps{Store: fake, Redis: rdb, Queue: services.NewQueueService(rdb)})}
+			req := func(method, route, body string) *http.Request {
+				r := httptest.NewRequest(method, "/api/servers/1/"+route, bytes.NewReader([]byte(body)))
+				r = mux.SetURLVars(r, map[string]string{"id": "1"})
+				ctx := context.WithValue(r.Context(), "isAdmin", tc.isAdmin)
+				ctx = context.WithValue(ctx, "userID", tenant)
+				return r.WithContext(ctx)
+			}
+
+			rec := httptest.NewRecorder()
+			h.MigrateServerStorage(rec, req(http.MethodPost, "migrate-storage", `{"targetPath":"/mnt/b"}`))
+			if (rec.Code == http.StatusOK) != tc.allowed || (!tc.allowed && rec.Code != http.StatusForbidden) {
+				t.Fatalf("migrate: status %d, allowed %v: %s", rec.Code, tc.allowed, rec.Body.String())
+			}
+			rec = httptest.NewRecorder()
+			h.GetServerStoragePath(rec, req(http.MethodGet, "storage-path", ""))
+			if (rec.Code == http.StatusOK) != tc.allowed || (!tc.allowed && rec.Code != http.StatusForbidden) {
+				t.Fatalf("path list: status %d, allowed %v: %s", rec.Code, tc.allowed, rec.Body.String())
+			}
+		})
+	}
+}
+
+type storagePathStore struct{ resourcesFakeStore }
+
+func (f *storagePathStore) GetUserBilling(string) (*store.UserBilling, error) { return nil, nil }
+
+func strPtr(s string) *string { return &s }

@@ -138,3 +138,42 @@ func TestUnknownPermissionKeys(t *testing.T) {
 		t.Errorf("unknown keys = %v, want [aaa zzz] sorted so the message is stable", bad)
 	}
 }
+
+// inviteInheritStore puts server 1 behind proxy 9, where the guest holds an
+// inherit=true grant.
+type inviteInheritStore struct{ inviteInputStore }
+
+func (f *inviteInheritStore) GetServerByID(id int) (*models.Server, error) {
+	if id == 9 {
+		return &models.Server{ID: 9, OwnerID: "owner-1", OwnerName: "owner"}, nil
+	}
+	proxy := 9
+	return &models.Server{ID: id, OwnerID: "owner-1", OwnerName: "owner", ProxyID: &proxy}, nil
+}
+func (f *inviteInheritStore) GetServerGrant(serverID int, userID string) (*store.ServerGrant, error) {
+	if serverID == 9 && userID == "guest-1" {
+		return &store.ServerGrant{ServerID: &serverID, UserID: userID, OwnerUserID: "owner-1", Inherit: true}, nil
+	}
+	return nil, nil
+}
+
+// C35: a direct row replaces what the guest inherits from the proxy, so an
+// invite narrower than that took access away without members.delete.
+func TestInviteOverAnInheritedGrantNeedsTheRightToRemove(t *testing.T) {
+	for _, tc := range []struct {
+		caller string
+		want   bool
+	}{
+		{"member-7", false},
+		{"owner-1", true},
+	} {
+		st := &inviteInheritStore{}
+		req := inviteReq(`{"username":"guest","permissions":{}}`)
+		req = req.WithContext(context.WithValue(req.Context(), "userID", tc.caller))
+		rec := httptest.NewRecorder()
+		NewMemberHandler(testDeps(Deps{Store: st})).InviteMember(rec, req)
+		if st.created != tc.want || (!tc.want && rec.Code != http.StatusForbidden) {
+			t.Errorf("%s: status %d, created %v, want created %v: %s", tc.caller, rec.Code, st.created, tc.want, rec.Body.String())
+		}
+	}
+}

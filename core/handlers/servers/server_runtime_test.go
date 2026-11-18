@@ -161,3 +161,17 @@ func TestUpdateServerRuntimeSucceedsWithoutAQueue(t *testing.T) {
 		t.Fatalf("body = %v, want success", body)
 	}
 }
+
+// C32: the node recreates the container for a runtime change, which pulled it
+// out from under an install or a move between nodes. Resources refuses both.
+func TestUpdateServerRuntimeRefusedWhileInstallingOrMigrating(t *testing.T) {
+	for _, status := range []string{"installing", "migrating"} {
+		srv := onlineServer()
+		srv.Status = status
+		fs := &runtimeFakeStore{srv: srv}
+		rw := runtimeRequest(t, fs, `{"javaImage":"ghcr.io/dylaris-dev/platform-mc-java25:latest","extraJvmFlags":"-Xmx1G"}`)
+		if rw.Code != http.StatusConflict || fs.written {
+			t.Fatalf("%s: status %d, written %v; want 409 and nothing saved", status, rw.Code, fs.written)
+		}
+	}
+}

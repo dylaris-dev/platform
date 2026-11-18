@@ -145,7 +145,7 @@ func extractIDFromPath(r *http.Request, prefix, suffix string) string {
 // to a single region. Populates the deploy wizard's multi-select chip list.
 func (h *PlacementHandler) AvailableTagsHandler(w http.ResponseWriter, r *http.Request) {
 	region := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("region")))
-	nodes, err := h.d.Store.ListNodes()
+	nodes, err := h.scopedNodes(r)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list nodes", http.StatusInternalServerError)
 		return
@@ -180,7 +180,7 @@ func (h *PlacementHandler) AvailableTagsHandler(w http.ResponseWriter, r *http.R
 // region keys currently advertised by online nodes. The wizard hides the
 // region picker when this list is empty.
 func (h *PlacementHandler) AvailableRegionsHandler(w http.ResponseWriter, r *http.Request) {
-	nodes, err := h.d.Store.ListNodes()
+	nodes, err := h.scopedNodes(r)
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to list nodes", http.StatusInternalServerError)
 		return
@@ -201,6 +201,30 @@ func (h *PlacementHandler) AvailableRegionsHandler(w http.ResponseWriter, r *htt
 		"success": true,
 		"regions": regions,
 	})
+}
+
+// scopedNodes lists the nodes an automatic placement for this caller may
+// choose from (applyPlacementScope). The wizard's tag and region lists read
+// it: listing every node told any tenant the whole fleet's topology, other
+// customers' machines included, and offered choices the pick then refused.
+func (h *PlacementHandler) scopedNodes(r *http.Request) ([]models.Node, error) {
+	nodes, err := h.d.Store.ListNodes()
+	if err != nil {
+		return nil, err
+	}
+	var scope placement.PickNodeRequest
+	applyPlacementScope(h.d, r, &scope)
+	var out []models.Node
+	for _, n := range nodes {
+		if scope.OwnerScope != nil && (n.OwnerID == nil || *n.OwnerID != *scope.OwnerScope) {
+			continue
+		}
+		if scope.PlatformOnly && n.OwnerID != nil {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // applyPlacementScope decides how an AUTOMATIC placement is scoped, which is a

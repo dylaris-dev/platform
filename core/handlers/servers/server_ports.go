@@ -596,6 +596,12 @@ func (h *ServerHandler) writeBackVoice(srv *models.Server) {
 	}
 }
 
+// SyncPortsAfterMove is syncPortsToStart for a server a move just put on
+// srv.NodeID, run by the migration orchestrator at the cutover.
+func (h *ServerHandler) SyncPortsAfterMove(srv *models.Server) {
+	h.syncPortsToStart(srv, srv.ActiveSubServer)
+}
+
 // syncPortsToStart runs before a start, restart or sub-server switch: a port
 // taken on another node (the server moved) is re-taken on this one, the voice
 // preset's config is written for subName, and the node's key is rewritten.
@@ -615,24 +621,28 @@ func (h *ServerHandler) syncPortsToStart(srv *models.Server, subName string) {
 		return
 	}
 	var game []int
+	gameRange, gameRead := "", false
 	for _, p := range ports {
 		if p.NodeID == srv.NodeID {
 			continue
 		}
-		if game == nil {
+		if !gameRead {
+			gameRead = true
 			if game, err = h.d.Store.GetUsedHostPortsOnNode(srv.NodeID); err != nil {
 				log.Printf("ports: server %d: game ports: %v", srv.ID, err)
 			}
+			if hb := services.LoadHeartbeat(ctx, h.d.Redis, node.Token); hb != nil {
+				gameRange = hb.PortRange
+			}
 		}
-		// Kept only off the new node's game ports; takePort below skips them.
-		if p.Protocol != "tcp" || !slices.Contains(game, p.HostPort) {
+		// Kept only off the new node's game ports and out of its game range,
+		// the checks takePort makes for a chosen port: a port inside the game
+		// range makes the node drop every extra port and run game-only.
+		inGameRange := gameRange != "" && services.InPortRange(p.HostPort, gameRange)
+		if !inGameRange && (p.Protocol != "tcp" || !slices.Contains(game, p.HostPort)) {
 			if err := h.d.Store.MoveServerPort(p.ID, srv.NodeID, p.HostPort); err == nil {
 				continue
 			}
-		}
-		gameRange := ""
-		if hb := services.LoadHeartbeat(ctx, h.d.Redis, node.Token); hb != nil {
-			gameRange = hb.PortRange
 		}
 		_ = h.d.Store.DeleteServerPort(p.ID)
 		p.NodeID = srv.NodeID

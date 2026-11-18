@@ -989,6 +989,9 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 		RemoteGateway:    appState.RemoteGateway,
 	}
 	serverHandler := servers.NewServerHandler(serversDeps)
+	if appState.Migration != nil {
+		appState.Migration.SetPortsRehome(serverHandler.SyncPortsAfterMove)
+	}
 	portsAdminHandler := servers.NewPortsAdminHandler(serversDeps)
 	domainsHandler := domains.NewDomainsHandler(domains.Deps{
 		Store:         appState.Store,

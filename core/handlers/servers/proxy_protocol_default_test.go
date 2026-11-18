@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/store"
 
@@ -429,4 +430,35 @@ func TestLinkToProxyRefusedWhileOn(t *testing.T) {
 	if rec := link(); rec.Code == http.StatusConflict {
 		t.Fatalf("off: refused: %s", rec.Body.String())
 	}
+}
+
+// C33: the auto-mode switch-off ran inside the gate, before every later
+// refusal, so a setup or reinstall that was then refused still stopped the
+// gateway sending the header the running software expects.
+func TestARefusedInstallInAutoModeLeavesForwardingOn(t *testing.T) {
+	t.Run("reinstall refused by the cooldown", func(t *testing.T) {
+		h, ps, rdb := newProxyOnTest(t)
+		ps.mode = store.ProxyModeAuto
+		ps.server.Status = "stopped"
+		rdb.Set(context.Background(), "dylaris:server:srv-uuid:install-start", "1", time.Minute)
+		rec := reinstall(h, map[string]string{"type": "fabric", "version": "1.21.4"})
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+		if len(ps.ppWrites) != 0 || !ps.server.ProxyProtocol {
+			t.Fatalf("column writes %v; a refused reinstall switched forwarding off", ps.ppWrites)
+		}
+	})
+	t.Run("setup refused when the node cannot be read", func(t *testing.T) {
+		h, ps, _ := newProxyOnTest(t)
+		ps.mode = store.ProxyModeAuto
+		ps.nodeErr = errors.New("db down")
+		rec := setupWith(h, map[string]string{"type": "fabric", "version": "1.21.4"}, true)
+		if rec.Code == http.StatusOK {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+		if len(ps.ppWrites) != 0 || !ps.server.ProxyProtocol {
+			t.Fatalf("column writes %v; a refused setup switched forwarding off", ps.ppWrites)
+		}
+	})
 }

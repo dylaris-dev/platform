@@ -395,7 +395,7 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// The update reinstalls the server like a setup does, so it needs the same
 	// answer setup gets: with Real player IP on, a target the node cannot
 	// configure to expect the header would refuse every player.
-	proxyKeep, refused := proxyProtocolInstallGate(w, h.d, srv, loader, req.Minecraft)
+	proxyKeep, proxyOff, refused := proxyProtocolInstallGate(w, h.d, srv, loader, req.Minecraft)
 	if refused {
 		return
 	}
@@ -512,6 +512,10 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		installerPayload["proxyProtocol"] = true
 	}
 
+	// Past every refusal, as in reinstall.
+	if proxyOff && !applyInstallProxyOff(w, h.d, srv) {
+		return
+	}
 	// Recorded before anything is written, as in reinstall.
 	if proxyKeep && h.d.Redis != nil {
 		if err := services.TrackProxyProtocolInstall(r.Context(), h.d.Redis, srv.UUID, srv.ActiveSubServer, false); err != nil {

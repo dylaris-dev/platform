@@ -329,6 +329,14 @@ func (h *MemberHandler) InviteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A direct row replaces what the target inherits from the proxy, so it can
+	// narrow their access as surely as removing them - members.delete, as on
+	// /api/grants.
+	if access.RevokeUncoversInheritance(h.d.Store, srv, targetUser.ID) && !h.mayReplaceMemberAccess(r, serverID) {
+		httpx.SendJSONError(w, "Changing an existing member's access needs the right to remove members", http.StatusForbidden)
+		return
+	}
+
 	// Cap to what the inviter themselves holds.
 	req.Permissions = h.capPermissions(r, serverID, req.Permissions)
 
