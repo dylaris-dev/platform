@@ -153,3 +153,57 @@ func TestImportModrinthVersionRefusesAVersionOfAnotherProject(t *testing.T) {
 		t.Fatalf("status=%d, want 404 for a version outside the pack's project", w.Code)
 	}
 }
+
+// A published pack whose mod lists only "1.20" for a 1.20.1 pack, or that
+// places a datapack outside mods/, used to fail the add-time fit check and
+// abort the whole import (and stall the sync on that version for good).
+func TestImportModrinthVersionKeepsFilesThatFailTheFitCheck(t *testing.T) {
+	h, base, _ := newPackCleanup(t)
+	base.pack.ModrinthProjectID = "proj"
+	fs := &importStore{packCleanupStore: base, targets: map[string]string{}}
+	h.d.Store = fs
+	h.d.CoreStorage.Store = h.d.Store
+	h.SetPATLoader(&publishBindingPAT{})
+
+	pack := zipOf(t, map[string]string{
+		"modrinth.index.json": `{"name":"P","dependencies":{"minecraft":"1.20.1","forge":"47.4.28"},"files":[
+		 {"path":"mods/loose.jar","hashes":{"sha1":"aa","sha512":"bb"},"env":{"client":"required","server":"required"},"downloads":["https://cdn.modrinth.com/data/loose/versions/v120/loose.jar"]},
+		 {"path":"config/openloader/data/dp.zip","hashes":{"sha1":"cc","sha512":"dd"},"env":{"client":"required","server":"required"},"downloads":["https://cdn.modrinth.com/data/dp/versions/vdp/dp.zip"]}]}`,
+	})
+	sum := sha1.Sum(pack)
+	packSHA1 := hex.EncodeToString(sum[:])
+
+	old := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = old })
+	http.DefaultTransport = modrinthAddTransport(func(r *http.Request) (*http.Response, error) {
+		ok := func(body string) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+		}
+		switch {
+		case r.URL.Host == "api.modrinth.com" && r.URL.Path == "/v2/project/proj/version":
+			return ok(`[{"id":"v1","project_id":"proj","version_number":"1.0.0","version_type":"release","date_published":"2026-01-02T03:04:05Z","game_versions":["1.20.1"],"loaders":["forge"],
+			 "files":[{"filename":"p.mrpack","url":"https://cdn.modrinth.com/data/proj/versions/v1/p.mrpack","primary":true,"hashes":{"sha1":"` + packSHA1 + `"}}]}]`)
+		case r.URL.Host == "cdn.modrinth.com" && strings.HasSuffix(r.URL.Path, "/p.mrpack"):
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(pack))}, nil
+		case r.URL.Host == "api.modrinth.com" && r.URL.Path == "/v2/versions":
+			return ok(`[{"id":"v120","project_id":"loose","version_number":"1","loaders":["forge"],"game_versions":["1.20"],"files":[{"filename":"loose.jar","url":"https://cdn.modrinth.com/data/loose/versions/v120/loose.jar","primary":true,"size":3,"hashes":{"sha1":"aa","sha512":"bb"}}]},
+			 {"id":"vdp","project_id":"dp","version_number":"1","loaders":["datapack"],"game_versions":["1.20.1"],"files":[{"filename":"dp.zip","url":"https://cdn.modrinth.com/data/dp/versions/vdp/dp.zip","primary":true,"size":3,"hashes":{"sha1":"cc","sha512":"dd"}}]}]`)
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.URL)
+		return &http.Response{StatusCode: 404, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+
+	w := httptest.NewRecorder()
+	h.ImportModrinthVersion(w, packReq(http.MethodPost, map[string]string{"id": "1", "versionId": "v1"}, ""))
+	if w.Code != 200 {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	for _, vid := range []string{"v120", "vdp"} {
+		if fs.targets["modrinth:"+vid] != "both" {
+			t.Errorf("%s not linked: content = %v", vid, fs.targets)
+		}
+	}
+	if len(fs.deleted) != 0 || fs.final == nil {
+		t.Fatalf("import was rolled back: deleted=%v", fs.deleted)
+	}
+}

@@ -36,6 +36,27 @@ type packCleanupStore struct {
 	deleted  []string
 	failMod  bool
 	failMV   bool
+	// content per build, the owner's content, and rows still on a key after
+	// the delete.
+	content      map[int][]string
+	ownerContent []string
+	refs         map[string]int
+	// publishBusy: another publish of the build holds the claim.
+	publishBusy bool
+	released    int
+}
+
+func (f *packCleanupStore) ClaimPackBuildPublish(int) (bool, error) { return !f.publishBusy, nil }
+func (f *packCleanupStore) ReleasePackBuildPublish(int) error {
+	f.released++
+	return nil
+}
+
+func (f *packCleanupStore) ListBuildContentStorageKeys(id int) ([]string, error) {
+	return f.content[id], nil
+}
+func (f *packCleanupStore) ListOwnerContentStorageKeys(string) ([]string, error) {
+	return f.ownerContent, nil
 }
 
 func (f *packCleanupStore) CreateModversion(*models.Modversion) (int, error) {
@@ -75,7 +96,9 @@ func (f *packCleanupStore) UpsertMod(*models.Mod) (int, error) {
 	}
 	return 1, nil
 }
-func (f *packCleanupStore) CountModversionsByStorageKey(string) (int, error) { return 0, nil }
+func (f *packCleanupStore) CountModversionsByStorageKey(k string) (int, error) {
+	return f.refs[k], nil
+}
 
 // The pack's creator manages its Modrinth project unless a test says otherwise.
 func (f *packCleanupStore) GetModrinthMembership(user, project string) (*models.ModrinthMembership, error) {
@@ -167,6 +190,50 @@ func TestDeletingAnAccountRemovesItsPackObjects(t *testing.T) {
 	}
 }
 
+// Uploaded content outlived its build, its pack and its account: only the
+// rendered directory was ever cleaned. A key another row still holds stays.
+func TestDeletingFreesTheContentObjects(t *testing.T) {
+	const mine, shared = "packs/" + cleanupOwner + "/mods/a/a-1.zip", "packs/" + cleanupOwner + "/mods/s/s-1.zip"
+	for _, tc := range []struct {
+		name string
+		run  func(h *PacksHandler)
+	}{
+		{"build", func(h *PacksHandler) {
+			h.DeleteBuild(httptest.NewRecorder(), packReq("DELETE", map[string]string{"id": "1", "buildId": "10"}, ""))
+		}},
+		{"pack", func(h *PacksHandler) {
+			h.Delete(httptest.NewRecorder(), packReq("DELETE", map[string]string{"id": "1"}, ""))
+		}},
+		{"account", func(h *PacksHandler) {
+			h.d.CoreStorage.DropPackDirs(h.d.CoreStorage.PackDirsOfUser(cleanupOwner))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fs, root := newPackCleanup(t)
+			if tc.name == "account" {
+				fs.ownerContent = []string{mine, shared}
+			} else {
+				fs.content = map[int][]string{10: {mine, shared}}
+			}
+			fs.refs = map[string]int{shared: 1}
+			for _, k := range []string{mine, shared} {
+				full := filepath.Join(root, filepath.FromSlash(k))
+				os.MkdirAll(filepath.Dir(full), 0o755)
+				if err := os.WriteFile(full, []byte("jar"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tc.run(h)
+			if exists(root, mine) {
+				t.Error("an unreferenced content object survived")
+			}
+			if !exists(root, shared) {
+				t.Error("a content object another row still holds was deleted")
+			}
+		})
+	}
+}
+
 // A rename moves the derived directory, which stranded the old one.
 func TestRenamingABuildRemovesTheOldDirectory(t *testing.T) {
 	h, fs, root := newPackCleanup(t)
@@ -242,6 +309,12 @@ func (f *userDeletePackStore) ListPacksByOwner(o string) ([]models.Pack, error) 
 }
 func (f *userDeletePackStore) ListPackBuilds(id int) ([]models.PackBuild, error) {
 	return f.pc.ListPackBuilds(id)
+}
+func (f *userDeletePackStore) ListBuildContentStorageKeys(id int) ([]string, error) {
+	return f.pc.ListBuildContentStorageKeys(id)
+}
+func (f *userDeletePackStore) ListOwnerContentStorageKeys(o string) ([]string, error) {
+	return f.pc.ListOwnerContentStorageKeys(o)
 }
 
 func (f *userDeletePackStore) DeleteUser(id string) error {

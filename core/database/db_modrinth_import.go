@@ -28,6 +28,9 @@ func applyModrinthImportSchema(db *sql.DB) error {
 		`ALTER TABLE modrinth_memberships ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ`,
 		// One Modrinth project is one pack: team members share it.
 		`CREATE UNIQUE INDEX IF NOT EXISTS packs_modrinth_project_unique ON packs(modrinth_project_id) WHERE modrinth_project_id <> ''`,
+		// A publish in progress (ClaimPackBuildPublish). Not in buildCols, so the
+		// full-row UpdatePackBuild never touches it.
+		`ALTER TABLE pack_builds ADD COLUMN IF NOT EXISTS publish_claimed_at TIMESTAMPTZ`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			return fmt.Errorf("modrinth import schema: %w", err)

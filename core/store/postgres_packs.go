@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"time"
 
 	"dylaris-core/models"
 )
@@ -45,9 +46,28 @@ func (s *PostgresStore) UpdatePack(p *models.Pack) error {
 	return err
 }
 
+// DeletePack and DeletePackBuild first delete the modversions attached ONLY to
+// the builds going away. Only build_modversions cascades with a build, so its
+// content rows outlived it and kept their storage objects referenced for good;
+// nothing else points at a modversion.
 func (s *PostgresStore) DeletePack(id int, ownerID string) error {
-	_, err := s.db.Exec(`DELETE FROM packs WHERE id=$1 AND owner_id=$2`, id, ownerID)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM modversions mv
+		WHERE mv.id IN (SELECT bm.modversion_id FROM build_modversions bm
+			JOIN pack_builds b ON b.id = bm.build_id JOIN packs p ON p.id = b.pack_id
+			WHERE p.id=$1 AND p.owner_id=$2)
+		AND NOT EXISTS (SELECT 1 FROM build_modversions o JOIN pack_builds ob ON ob.id = o.build_id
+			WHERE o.modversion_id = mv.id AND ob.pack_id <> $1)`, id, ownerID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM packs WHERE id=$1 AND owner_id=$2`, id, ownerID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *PostgresStore) GetPack(id int) (*models.Pack, error) {
@@ -142,6 +162,12 @@ func (s *PostgresStore) DeletePackBuild(id, packID int) error {
 		return err
 	}
 	defer tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM modversions mv
+		WHERE mv.id IN (SELECT bm.modversion_id FROM build_modversions bm
+			JOIN pack_builds b ON b.id = bm.build_id WHERE b.id=$1 AND b.pack_id=$2)
+		AND NOT EXISTS (SELECT 1 FROM build_modversions o WHERE o.modversion_id = mv.id AND o.build_id <> $1)`, id, packID); err != nil {
+		return err
+	}
 	if _, err = tx.Exec(`DELETE FROM pack_builds WHERE id=$1 AND pack_id=$2`, id, packID); err != nil {
 		return err
 	}
@@ -150,6 +176,30 @@ func (s *PostgresStore) DeletePackBuild(id, packID int) error {
 	}
 	return tx.Commit()
 }
+
+// ClaimPackBuildPublish marks a publish of the build as running, and answers
+// false when one already is or the build is published. Two publishes of one
+// build each uploaded a Modrinth version, and only the last was recorded. A
+// claim older than packPublishClaimTTL is a Core that died mid-publish.
+func (s *PostgresStore) ClaimPackBuildPublish(buildID int) (bool, error) {
+	res, err := s.db.Exec(`UPDATE pack_builds SET publish_claimed_at=NOW()
+		WHERE id=$1 AND NOT modrinth_published
+		AND (publish_claimed_at IS NULL OR publish_claimed_at < NOW() - $2 * interval '1 second')`,
+		buildID, int(packPublishClaimTTL.Seconds()))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// ReleasePackBuildPublish ends a claim taken by ClaimPackBuildPublish.
+func (s *PostgresStore) ReleasePackBuildPublish(buildID int) error {
+	_, err := s.db.Exec(`UPDATE pack_builds SET publish_claimed_at=NULL WHERE id=$1`, buildID)
+	return err
+}
+
+const packPublishClaimTTL = 15 * time.Minute
 
 func (s *PostgresStore) GetPackBuild(id int) (*models.PackBuild, error) {
 	row := s.db.QueryRow(`SELECT `+buildCols+` FROM pack_builds WHERE id=$1`, id)

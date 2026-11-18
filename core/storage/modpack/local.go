@@ -1,6 +1,7 @@
 package modpack
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -24,46 +25,11 @@ func (p *LocalProvider) ensureConfigured() error {
 	return nil
 }
 
-// Put writes data to every configured path. On partial failure (one or more
-// writes succeeded before a later one failed), the already-written files are
-// removed before the error is returned, so the user never observes a
-// torn write across mirrors.
+// Put writes data to every configured path, through PutStream: each mirror is
+// replaced by rename, never truncated in place, so a node already streaming the
+// previous render keeps reading the whole old file.
 func (p *LocalProvider) Put(ctx context.Context, key string, data []byte) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := p.ensureConfigured(); err != nil {
-		return err
-	}
-
-	written := make([]string, 0, len(p.Paths))
-	for _, base := range p.Paths {
-		// Re-checked per mirror, not just on entry: each configured path can be a
-		// separate mount, so a cancellation that arrives during the fan-out stops
-		// the remaining ones instead of writing them all out regardless.
-		if err := ctx.Err(); err != nil {
-			for _, done := range written {
-				_ = os.Remove(done)
-			}
-			return err
-		}
-		full := filepath.Join(base, filepath.FromSlash(key))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			// Rollback any successful writes.
-			for _, done := range written {
-				_ = os.Remove(done)
-			}
-			return fmt.Errorf("modpack storage: mkdir %s: %w", filepath.Dir(full), err)
-		}
-		if err := os.WriteFile(full, data, 0o644); err != nil {
-			for _, done := range written {
-				_ = os.Remove(done)
-			}
-			return fmt.Errorf("modpack storage: write %s: %w", full, err)
-		}
-		written = append(written, full)
-	}
-	return nil
+	return p.PutStream(ctx, key, bytes.NewReader(data), int64(len(data)))
 }
 
 // PutStream copies size bytes from r to the first configured path, then mirrors
@@ -79,11 +45,25 @@ func (p *LocalProvider) PutStream(ctx context.Context, key string, r io.Reader, 
 		return err
 	}
 
-	written := make([]string, 0, len(p.Paths))
+	// On a later mirror's failure only the copies this call CREATED are
+	// removed. One that replaced an existing object is the only copy left on
+	// that mirror - the old one is gone with the rename - so removing it would
+	// lose the object rather than undo the write.
+	created := make([]string, 0, len(p.Paths))
 	rollback := func() {
-		for _, done := range written {
+		for _, done := range created {
 			_ = os.Remove(done)
 		}
+	}
+	write := func(dst string, src func() error) error {
+		_, statErr := os.Stat(dst)
+		if err := src(); err != nil {
+			return err
+		}
+		if errors.Is(statErr, os.ErrNotExist) {
+			created = append(created, dst)
+		}
+		return nil
 	}
 
 	// First path consumes the stream.
@@ -91,10 +71,9 @@ func (p *LocalProvider) PutStream(ctx context.Context, key string, r io.Reader, 
 	if err := os.MkdirAll(filepath.Dir(first), 0o755); err != nil {
 		return fmt.Errorf("modpack storage: mkdir %s: %w", filepath.Dir(first), err)
 	}
-	if err := writeLocalAtomic(first, r); err != nil {
+	if err := write(first, func() error { return writeLocalAtomic(first, r) }); err != nil {
 		return err
 	}
-	written = append(written, first)
 
 	// Remaining paths are copied from the file just written, so the source
 	// stream is not needed again.
@@ -103,11 +82,11 @@ func (p *LocalProvider) PutStream(ctx context.Context, key string, r io.Reader, 
 			rollback()
 			return err
 		}
-		if err := copyLocalFile(first, filepath.Join(base, filepath.FromSlash(key))); err != nil {
+		dst := filepath.Join(base, filepath.FromSlash(key))
+		if err := write(dst, func() error { return copyLocalFile(first, dst) }); err != nil {
 			rollback()
 			return err
 		}
-		written = append(written, filepath.Join(base, filepath.FromSlash(key)))
 	}
 	return nil
 }

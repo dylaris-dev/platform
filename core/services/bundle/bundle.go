@@ -203,7 +203,9 @@ func (w *Writer) Close() error {
 // Separate from Open so a panel can say what a bundle is - when it was made,
 // which release wrote it - before asking anyone to type a passphrase for it.
 func ReadHeader(r io.Reader) (*Header, *bufio.Reader, error) {
-	br := bufio.NewReader(r)
+	// One byte over the bound, so readLine's ReadSlice stops there instead of
+	// buffering an unterminated line of any length.
+	br := bufio.NewReaderSize(r, maxHeaderLine+1)
 
 	magic, err := readLine(br)
 	if err != nil {
@@ -229,10 +231,14 @@ func ReadHeader(r io.Reader) (*Header, *bufio.Reader, error) {
 }
 
 func readLine(br *bufio.Reader) (string, error) {
-	line, err := br.ReadString('\n')
+	slice, err := br.ReadSlice('\n')
+	if errors.Is(err, bufio.ErrBufferFull) {
+		return "", errors.New("bundle: header line is too long")
+	}
 	if err != nil {
 		return "", err
 	}
+	line := string(slice)
 	if len(line) > maxHeaderLine {
 		return "", errors.New("bundle: header line is too long")
 	}

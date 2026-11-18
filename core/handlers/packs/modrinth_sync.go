@@ -10,6 +10,7 @@ package packs
 import (
 	"context"
 	"log"
+	"net/http"
 	"sort"
 	"time"
 
@@ -118,7 +119,14 @@ func (h *PacksHandler) syncModrinthPacks(ctx context.Context) {
 			res, ierr := h.importVersion(ctx, prov, pack, &todo[j], names)
 			if ierr != nil {
 				log.Printf("modrinth sync: pack %d version %s: %s", pack.ID, todo[j].VersionNumber, ierr.msg)
-				break // the next pass retries; later versions keep their order
+				// 422 is the version itself (no .mrpack, unreadable, an unusable
+				// path) and fails the same way on every pass; stopping there
+				// would hold back every newer version for good. Anything else
+				// may pass next time, so later versions wait to keep their order.
+				if ierr.status == http.StatusUnprocessableEntity {
+					continue
+				}
+				break
 			}
 			names[todo[j].VersionNumber] = true
 			log.Printf("modrinth sync: pack %d imported %s as build %d", pack.ID, todo[j].VersionNumber, res.BuildID)

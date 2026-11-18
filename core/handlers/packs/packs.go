@@ -547,7 +547,7 @@ func (h *PacksHandler) DeleteBuild(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	dirs := h.d.CoreStorage.PackBuildDirs(p, b)
+	dirs := h.d.CoreStorage.PackBuildObjects(p, b)
 	if err := h.d.Store.DeletePackBuild(buildID, packID); err != nil {
 		httpx.SendJSONError(w, "Failed to delete build", http.StatusInternalServerError)
 		return

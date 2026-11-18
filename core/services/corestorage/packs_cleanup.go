@@ -33,7 +33,19 @@ func (s *Manager) PackBuildDirs(pack *models.Pack, build *models.PackBuild) []st
 	return dirs
 }
 
-// PackDirsOfPack collects the directories of every build of a pack. Read BEFORE
+// PackBuildObjects is what deleting a build frees: its directories plus the
+// storage keys of its content (uploads, fork copies). Read BEFORE the rows go.
+// DropPackDirs deletes a content key only once no modversion points at it.
+func (s *Manager) PackBuildObjects(pack *models.Pack, build *models.PackBuild) []string {
+	objs := s.PackBuildDirs(pack, build)
+	keys, err := s.Store.ListBuildContentStorageKeys(build.ID)
+	if err != nil {
+		log.Printf("packs: cannot list content of build %d for storage cleanup: %v", build.ID, err)
+	}
+	return append(objs, keys...)
+}
+
+// PackDirsOfPack collects the objects of every build of a pack. Read BEFORE
 // the rows are deleted; afterwards there is nothing left to derive them from.
 func (s *Manager) PackDirsOfPack(pack *models.Pack) []string {
 	builds, err := s.Store.ListPackBuilds(pack.ID)
@@ -43,7 +55,7 @@ func (s *Manager) PackDirsOfPack(pack *models.Pack) []string {
 	}
 	var dirs []string
 	for i := range builds {
-		dirs = append(dirs, s.PackBuildDirs(pack, &builds[i])...)
+		dirs = append(dirs, s.PackBuildObjects(pack, &builds[i])...)
 	}
 	return dirs
 }
@@ -66,11 +78,17 @@ func (s *Manager) PackDirsOfUser(userID string) []string {
 	for i := range packs {
 		dirs = append(dirs, s.PackDirsOfPack(&packs[i])...)
 	}
-	return dirs
+	// Also content no build holds any more; mods cascade with the account.
+	keys, err := s.Store.ListOwnerContentStorageKeys(userID)
+	if err != nil {
+		log.Printf("packs: cannot list content of %s for storage cleanup: %v", userID, err)
+	}
+	return append(dirs, keys...)
 }
 
-// DropPackDirs removes the objects in the given build directories. Best effort:
-// called after the rows are gone, so a failure costs storage, never a build.
+// DropPackDirs removes the objects in the given build directories, and the
+// given content keys no modversion references any more. Best effort: called
+// after the rows are gone, so a failure costs storage, never a build.
 func (s *Manager) DropPackDirs(dirs []string) {
 	if len(dirs) == 0 {
 		return
@@ -85,7 +103,23 @@ func (s *Manager) DropPackDirs(dirs []string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	seen := map[string]bool{}
 	for _, dir := range dirs {
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		if strings.HasPrefix(dir, "packs/") && !strings.HasSuffix(dir, "/") {
+			// A content object can have more than one row (a migrated build's
+			// copy shares the key); on a count error it stays.
+			if n, err := s.Store.CountModversionsByStorageKey(dir); err != nil || n > 0 {
+				continue
+			}
+			if err := prov.Delete(ctx, dir); err != nil {
+				log.Printf("packs: could not delete %s: %v", dir, err)
+			}
+			continue
+		}
 		if !strings.HasPrefix(dir, "modpacks/") || !strings.HasSuffix(dir, "/") {
 			continue
 		}

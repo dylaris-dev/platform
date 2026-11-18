@@ -104,6 +104,22 @@ func (h *PacksHandler) PublishModrinth(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "This build is already published. Create a new build for changes.", http.StatusConflict)
 		return
 	}
+	// Across replicas: a double click or two teammates would otherwise each
+	// upload a Modrinth version of this build.
+	claimed, err := h.d.Store.ClaimPackBuildPublish(buildID)
+	if err != nil {
+		httpx.SendJSONError(w, "Could not start the publish", http.StatusInternalServerError)
+		return
+	}
+	if !claimed {
+		httpx.SendJSONError(w, "This build is already being published, or was just published.", http.StatusConflict)
+		return
+	}
+	defer func() {
+		if err := h.d.Store.ReleasePackBuildPublish(buildID); err != nil {
+			log.Printf("packs: publish claim of build %d not released (it expires on its own): %v", buildID, err)
+		}
+	}()
 
 	var req publishModrinthRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)

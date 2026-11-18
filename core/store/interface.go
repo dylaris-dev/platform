@@ -1164,6 +1164,8 @@ type Store interface {
 	ClonePackBuild(ctx context.Context, b *models.PackBuild, sourceID int) (int, error)
 	UpdatePackBuild(b *models.PackBuild) error
 	DeletePackBuild(id, packID int) error
+	ClaimPackBuildPublish(buildID int) (bool, error)
+	ReleasePackBuildPublish(buildID int) error
 	GetPackBuild(id int) (*models.PackBuild, error)
 	ListPackBuilds(packID int) ([]models.PackBuild, error)
 	SetPackRecommended(context.Context, int, int) error
@@ -1179,6 +1181,10 @@ type Store interface {
 	// CountModversionsByStorageKey guards a storage delete: an object can have
 	// more than one modversion row pointing at it (see copyUploadedContent).
 	CountModversionsByStorageKey(key string) (int, error)
+	// ListBuildContentStorageKeys / ListOwnerContentStorageKeys name the content
+	// objects a build delete or an account delete frees; read them first.
+	ListBuildContentStorageKeys(buildID int) ([]string, error)
+	ListOwnerContentStorageKeys(ownerID string) ([]string, error)
 	AttachModversionToBuild(buildID, modversionID int, side string) (int, error)
 	DetachFromBuild(buildID, modversionID int) error
 	IsModversionInBuild(buildID, modversionID int) (bool, error)

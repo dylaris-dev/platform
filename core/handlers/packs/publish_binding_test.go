@@ -168,3 +168,37 @@ func TestPublishUsesStoredOrNewProjectAndCallerPAT(t *testing.T) {
 		})
 	}
 }
+
+// Two publishes of one build (a double click, two teammates) each uploaded a
+// Modrinth version, and only the last one was recorded.
+func TestPublishRefusesWhileAnotherPublishOfTheBuildRuns(t *testing.T) {
+	for _, busy := range []bool{true, false} {
+		h, base, _ := newPackCleanup(t)
+		base.pack.ModrinthProjectID = "bound-project"
+		base.publishBusy = busy
+		h.d.Store = &publishBindingStore{packCleanupStore: base}
+		h.d.CoreStorage.Store = h.d.Store
+		h.SetPATLoader(&publishBindingPAT{})
+		old := http.DefaultTransport
+		t.Cleanup(func() { http.DefaultTransport = old })
+		http.DefaultTransport = modrinthAddTransport(func(r *http.Request) (*http.Response, error) {
+			if busy {
+				t.Errorf("a refused publish reached Modrinth: %s %s", r.Method, r.URL)
+			}
+			return nil, fmt.Errorf("no Modrinth in this test")
+		})
+		w := httptest.NewRecorder()
+		r := packReq(http.MethodPost, map[string]string{"id": "1", "buildId": "10"}, `{"channel":"beta"}`)
+		h.PublishModrinth(w, r)
+		if busy && w.Code != http.StatusConflict {
+			t.Fatalf("busy: status=%d, want 409: %s", w.Code, w.Body.String())
+		}
+		// Not busy, the upload fails here; the claim it took is released.
+		if !busy && base.released != 1 {
+			t.Fatalf("claim released %d times, want 1 (status %d)", base.released, w.Code)
+		}
+		if busy && base.released != 0 {
+			t.Fatal("a refused publish released the claim it does not hold")
+		}
+	}
+}

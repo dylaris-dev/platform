@@ -364,7 +364,12 @@ func (h *PacksHandler) importVersion(ctx context.Context, prov modpack.ModpackSt
 	}
 	for _, f := range mrpack.Files {
 		kind := contentTypeForPath(f.Path)
-		if mv := resolved[f.ModrinthVersionID]; mv != nil && (f.SHA1 == "" || strings.EqualFold(mv.PrimaryFile().Hashes["sha1"], f.SHA1)) {
+		// The add-time fit check (exact Minecraft version, loader, kind) is for
+		// content an author picks by hand. The published manifest already names
+		// this file, and launchers install it regardless, so a file that fails
+		// the check falls through to a reference to exactly that file rather
+		// than refusing the whole version.
+		if mv := resolved[f.ModrinthVersionID]; mv != nil && (f.SHA1 == "" || strings.EqualFold(mv.PrimaryFile().Hashes["sha1"], f.SHA1)) && validateModrinthContent(build, mv, kind) == nil {
 			if err := h.addModrinthVersion(pack.OwnerID, build, mv, f.Side, kind); err != nil {
 				return fail(http.StatusInternalServerError, "Could not add "+path.Base(f.Path)+": "+err.Error())
 			}

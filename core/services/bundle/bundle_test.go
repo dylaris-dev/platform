@@ -253,3 +253,34 @@ func TestTwoBundlesDoNotShareAKey(t *testing.T) {
 		t.Error("two bundles share a nonce base")
 	}
 }
+
+// countingReader serves n bytes of one value, never a newline, and counts what
+// was taken.
+type countingReader struct{ left, read int }
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	if c.left == 0 {
+		return 0, io.EOF
+	}
+	n := min(len(p), c.left)
+	for i := range p[:n] {
+		p[i] = 'A'
+	}
+	c.left -= n
+	c.read += n
+	return n, nil
+}
+
+// An upload with no newline in it used to be read whole before the length
+// bound was checked, so the bound held nothing.
+func TestReadHeaderStopsAtTheLineBound(t *testing.T) {
+	for _, size := range []int{maxHeaderLine * 4, 8 << 20} {
+		src := &countingReader{left: size}
+		if _, _, err := ReadHeader(src); !errors.Is(err, ErrNotABundle) {
+			t.Fatalf("size %d: err = %v", size, err)
+		}
+		if src.read > 2*maxHeaderLine {
+			t.Errorf("size %d: read %d bytes for an over-long first line", size, src.read)
+		}
+	}
+}

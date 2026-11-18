@@ -117,6 +117,39 @@ func (s *PostgresStore) CountModversionsByStorageKey(key string) (int, error) {
 	return n, err
 }
 
+// ListBuildContentStorageKeys returns the storage objects of a build's content,
+// read before the build is deleted so the objects can be freed after.
+func (s *PostgresStore) ListBuildContentStorageKeys(buildID int) ([]string, error) {
+	return s.listStorageKeys(`SELECT DISTINCT mv.storage_key FROM modversions mv
+		JOIN build_modversions bm ON bm.modversion_id = mv.id
+		WHERE bm.build_id=$1 AND mv.storage_key <> ''`, buildID)
+}
+
+// ListOwnerContentStorageKeys returns the storage objects of every modversion
+// an account owns, read before the account is deleted (mods cascade with it).
+func (s *PostgresStore) ListOwnerContentStorageKeys(ownerID string) ([]string, error) {
+	return s.listStorageKeys(`SELECT DISTINCT mv.storage_key FROM modversions mv
+		JOIN mods m ON m.id = mv.mod_id
+		WHERE m.owner_id=$1 AND mv.storage_key <> ''`, ownerID)
+}
+
+func (s *PostgresStore) listStorageKeys(query string, arg any) ([]string, error) {
+	rows, err := s.db.Query(query, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
+}
+
 // FindModversionBySHA1 finds an existing artifact by the owner's catalog hash,
 // used to auto-link/dedupe an uploaded jar. Joins through mods for owner scope.
 func (s *PostgresStore) FindModversionBySHA1(ownerID, sha1 string) (*models.Modversion, error) {
