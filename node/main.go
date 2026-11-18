@@ -1766,17 +1766,38 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// left its stash; the next reinstall or move put it back over this
 		// install. Recovered here, as the move itself does.
 		recoverStrandedStash(serverPath, subName)
-		manifest, err := InstallServer(serverPath, subName, installerCfg)
-		if discardIfDeleted(cmd.Config.UUID, serverPath) {
-			return
-		}
-		if err != nil {
-			log.Printf("Installation failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+		// The old software is moved aside, not wiped, as reinstall does: Core
+		// puts the old type and version back on a failure report, and the disk
+		// has to match them (see stashBeforeSetup). nil when there is nothing
+		// to keep.
+		stash, serr := stashBeforeSetup(serverPath, subName, installerCfg)
+		putBack := func(cause error) {
+			if stash != nil {
+				if rerr := stash.restore(); rerr != nil {
+					log.Printf("setup: could not put the previous server software back for %s/%s: %v", cmd.Config.UUID, subName, rerr)
+				}
+			}
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 			// The status alone says "stopped", which is indistinguishable from a
 			// server that installed and is simply not running. The reason has to
 			// travel with it or it reaches nobody.
-			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, err)
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, cause)
+		}
+		if serr != nil {
+			log.Printf("Setup of %s/%s refused: setting the old server software aside failed: %v", cmd.Config.UUID, subName, serr)
+			putBack(fmt.Errorf("the old server software could not be set aside: %w", serr))
+			return
+		}
+		manifest, err := InstallServer(serverPath, subName, installerCfg)
+		if discardIfDeleted(cmd.Config.UUID, serverPath) {
+			if stash != nil {
+				stash.root.Close()
+			}
+			return
+		}
+		if err != nil {
+			log.Printf("Installation failed for %s/%s: %v", cmd.Config.UUID, subName, err)
+			putBack(err)
 			return
 		}
 		// What the archive said it was, when the install was an import of one.
@@ -1800,8 +1821,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			// any other and had even less to show for it: no status was written
 			// either, so the server sat in "installing" until the busy key aged
 			// out.
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, err)
+			putBack(err)
 			return
 		}
 		if err := writeEULA(serverPath, subName); err != nil {
@@ -1816,10 +1836,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		startCmd, err := buildStartCommand(subServerDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
 		if err != nil {
 			log.Printf("buildStartCommand failed for %s/%s: %v", cmd.Config.UUID, subName, err)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 			// The files are there but nothing can start them, which looks
 			// exactly like a successful install from the outside.
-			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, err)
+			putBack(err)
 			return
 		}
 		cmd.Config.Docker.Command = startCmd
@@ -1847,6 +1866,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		recreate := dm.RecreateWithCommand
 		if !startIt {
 			recreate = dm.RecreateStopped
+		}
+		// The new software is in place; a failed recreate below is rebuilt by
+		// the reconciler from the saved config, as after reinstall.
+		if stash != nil {
+			stash.discard()
 		}
 		started := false
 		if err := recreate(cmd.Config); err != nil {

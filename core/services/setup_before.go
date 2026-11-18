@@ -32,6 +32,9 @@ type setupBefore struct {
 	// the columns.
 	InstallKnown bool                     `json:",omitempty"`
 	Install      *models.SubServerInstall `json:",omitempty"`
+	// The run intent before the dispatch flipped it to online (IntendOnline).
+	// Empty in a record from before the field: the intent is then left alone.
+	DesiredState string `json:",omitempty"`
 }
 
 // RememberSetupBefore records srv's setup columns and target's install record
@@ -44,6 +47,7 @@ func RememberSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store,
 	before := setupBefore{
 		Target: target, Image: srv.GameImage, Command: srv.StartCommand, Active: srv.ActiveSubServer,
 		Flags: srv.ExtraJvmFlags, Installer: srv.InstallerType, MCVersion: srv.MinecraftVersion, Build: srv.BuildNumber,
+		DesiredState: srv.DesiredState,
 	}
 	if st != nil {
 		if in, err := st.GetSubServerInstall(srv.ID, target); err == nil {
@@ -58,6 +62,7 @@ func RememberSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store,
 
 // RestoreSetupBefore puts srv's setup columns back to what they were before the
 // setup to target, if that is what was recorded, and reports whether it did.
+// srv is the server as it is now: its desired state is what the dispatch left.
 func RestoreSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store, srv *models.Server, target string) bool {
 	if rdb == nil || srv == nil {
 		return false
@@ -85,6 +90,17 @@ func RestoreSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store, 
 		}
 		if ierr != nil {
 			log.Printf("setup of %s failed, and the install record of %s could not be restored: %v", srv.UUID, target, ierr)
+		}
+	}
+	// A failed or refused install ran nothing, so it must not leave the server
+	// meant to run: the reconciler would start one its owner had stopped. Only
+	// over the online the dispatch wrote, so a stop since is kept; a start the
+	// owner issued meanwhile cannot be told apart from it and is undone too.
+	if b.DesiredState != "" && b.DesiredState != "online" && srv.DesiredState == "online" {
+		if err := st.UpdateServerDesiredState(srv.ID, b.DesiredState); err != nil {
+			log.Printf("setup of %s failed, and its run intent could not be put back: %v", srv.UUID, err)
+		} else {
+			PublishDesiredState(ctx, rdb, srv.UUID, b.DesiredState)
 		}
 	}
 	rdb.Del(ctx, setupBeforeKey(srv.UUID))

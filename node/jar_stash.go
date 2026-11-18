@@ -41,10 +41,12 @@ func softwareKey(uuid string) string { return "software:" + uuid }
 // stashServerJars moves aside what CleanServerJars removes from sub: the root
 // jars and the generated directories, plus the Forge/NeoForge launch dirs a
 // loader install clears (clearLoaderLaunchDirs), which hold the unix_args.txt
-// the old server starts from. A stash a crashed earlier attempt left
+// the old server starts from. wiped names further directories of sub the
+// install is about to wipe (stashBeforeSetup); they are taken first, so a
+// launch dir inside one goes with it. A stash a crashed earlier attempt left
 // behind is cleared first. On an error the stash holds what was taken so
 // far and the caller restores it.
-func stashServerJars(serverPath, sub string) (*jarStash, error) {
+func stashServerJars(serverPath, sub string, wiped ...string) (*jarStash, error) {
 	root, err := os.OpenRoot(serverPath)
 	if err != nil {
 		return nil, err
@@ -56,7 +58,8 @@ func stashServerJars(serverPath, sub string) (*jarStash, error) {
 		root.Close()
 		return nil, err
 	}
-	for _, d := range append([]string{"versions", "cache", ".fabric", ".gradle"}, loaderLaunchDirs...) {
+	dirs := append(append([]string{}, wiped...), "versions", "cache", ".fabric", ".gradle")
+	for _, d := range append(dirs, loaderLaunchDirs...) {
 		if st, err := root.Lstat(path.Join(sub, d)); err == nil && st.IsDir() {
 			if err := s.take(path.Join(sub, d)); err != nil {
 				return s, err
@@ -143,6 +146,33 @@ func recoverStash(root *os.Root, dir string) {
 		root.Rename(p, rel)
 		return nil
 	})
+}
+
+// stashBeforeSetup is the stash for a setup over a sub-server that is already
+// installed, the panel's only way to change a server's software. Core puts the
+// old type and version back when the setup fails, and the wipe and the loader
+// install had left nothing on disk to start them. libraries/ goes into the
+// stash when the setup wipes it, since a Forge/NeoForge server cannot start
+// from its launch dir without the libraries it names.
+//
+// nil for a first install, which has nothing to keep, and for every installer
+// that is not plain server software: an upload, upload-zip or backup installs
+// the files already in the directory, and taking their jars would remove the
+// server being installed.
+func stashBeforeSetup(serverPath, sub string, cfg InstallerConfig) (*jarStash, error) {
+	if !uploadSoftware[cfg.Type] {
+		return nil, nil
+	}
+	if st, err := os.Lstat(filepath.Join(serverPath, sub)); err != nil || !st.IsDir() {
+		return nil, nil
+	}
+	var wiped []string
+	for _, t := range cfg.WipePaths {
+		if strings.TrimSpace(t) == WipeLibraries {
+			wiped = append(wiped, wipeTargets[WipeLibraries]...)
+		}
+	}
+	return stashServerJars(serverPath, sub, wiped...)
 }
 
 // recoverStrandedStash is the recovery stashServerJars opens with, for a path
@@ -247,6 +277,14 @@ func (s *jarStash) restore() error {
 		rel := s.moved[i]
 		// A wipe of libraries/ during the install took a launch dir's parents.
 		s.root.MkdirAll(path.Dir(rel), 0o755)
+		// A directory taken whole (libraries/) may have been written again by
+		// the install, and a rename does not replace a directory that is not
+		// empty. Whatever sits there now came from the failed attempt.
+		if s.complete {
+			if st, err := s.root.Lstat(path.Join(s.dir, rel)); err == nil && st.IsDir() {
+				s.root.RemoveAll(rel)
+			}
+		}
 		if err := s.root.Rename(path.Join(s.dir, rel), rel); err != nil && first == nil {
 			first = err
 		}

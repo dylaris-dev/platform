@@ -11,6 +11,7 @@ import (
 type setupBeforeStore struct {
 	store.Store
 	written []string
+	desired []string
 	install *models.SubServerInstall // the sub-server's install record
 }
 
@@ -87,6 +88,50 @@ func TestAFailedSetupPutsTheInstallRecordBack(t *testing.T) {
 			}
 			if st.install == nil || st.install.ServerID != 3 || st.install.McVersion != "1.21.1" {
 				t.Fatalf("install record = %+v, want the one from before", st.install)
+			}
+		})
+	}
+}
+
+func (s *setupBeforeStore) UpdateServerDesiredState(id int, state string) error {
+	s.desired = append(s.desired, state)
+	return nil
+}
+
+// A setup or reinstall flips the intent to online before it is dispatched. One
+// the node refused or that failed installed nothing, and the reconciler then
+// started a server its owner had stopped. A failure puts a stopped intent back,
+// unless something since has already changed it from the online the dispatch
+// wrote.
+func TestAFailedSetupPutsAStoppedIntentBack(t *testing.T) {
+	for _, c := range []struct {
+		name, before, now string
+		want              []string // desired-state writes
+		wantRedis         string
+	}{
+		{"was stopped", "stopped", "online", []string{"stopped"}, "stopped"},
+		{"was online", "online", "online", nil, ""},
+		{"stopped again since", "stopped", "stopped", nil, ""},
+		{"recorded by an older core", "", "online", nil, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			ctx := context.Background()
+			st := &setupBeforeStore{}
+			srv := &models.Server{ID: 3, UUID: "srv-3", ActiveSubServer: "survival", DesiredState: c.before}
+
+			RememberSetupBefore(ctx, rdb, st, srv, "survival")
+			now := *srv
+			now.DesiredState = c.now
+			if !RestoreSetupBefore(ctx, rdb, st, &now, "survival") {
+				t.Fatal("did not restore the setup it recorded")
+			}
+			if len(st.desired) != len(c.want) || (len(c.want) > 0 && st.desired[0] != c.want[0]) {
+				t.Fatalf("desired-state writes = %v, want %v", st.desired, c.want)
+			}
+			got, _ := rdb.Get(ctx, DesiredStateKey("srv-3")).Result()
+			if got != c.wantRedis {
+				t.Fatalf("published desired_state = %q, want %q", got, c.wantRedis)
 			}
 		})
 	}
