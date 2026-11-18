@@ -949,7 +949,10 @@ type Store interface {
 	ListScheduledTasksByServer(serverID int) ([]models.ScheduledTask, error)
 	GetScheduledTask(id int) (*models.ScheduledTask, error)
 	CreateScheduledTask(t *models.ScheduledTask) (int, error)
-	UpdateScheduledTask(t *models.ScheduledTask) error
+	// UpdateScheduledTask writes next_run only when nextRunChanged: the
+	// executor's claim moves it on, and an edit that read the row before the
+	// claim must not put the old, already-fired value back.
+	UpdateScheduledTask(t *models.ScheduledTask, nextRunChanged bool) error
 	DeleteScheduledTask(id int) error
 	SetScheduledTaskEnabled(id int, enabled bool, nextRun *time.Time) error
 	ListDueScheduledTasks(now time.Time, limit int) ([]models.ScheduledTask, error)
@@ -957,7 +960,9 @@ type Store interface {
 	// still holds dueAt, and reports whether this call won - so two Core
 	// replicas never both fire one task.
 	ClaimScheduledTaskRun(id int, dueAt, next time.Time) (bool, error)
-	RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string, nextRun *time.Time) error
+	// RecordScheduledTaskRun leaves next_run alone: the claim already moved it,
+	// and an edit made while the task ran must win over the executor's copy.
+	RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string) error
 
 	// --- RCON config ---
 	// Lazy accessors so RCON fields don't bloat every server-list scan.

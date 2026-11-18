@@ -35,6 +35,8 @@ type schedTaskFakeStore struct {
 	// claimLost makes ClaimScheduledTaskRun answer "another replica won".
 	claimLost map[int]bool
 	claims    []int
+	// claimedNext is the next_run each won claim moved the row on to.
+	claimedNext map[int]time.Time
 }
 
 type schedDesiredCall struct {
@@ -105,10 +107,23 @@ func (f *schedTaskFakeStore) SetScheduledTaskEnabled(id int, enabled bool, nextR
 
 func (f *schedTaskFakeStore) ClaimScheduledTaskRun(id int, dueAt, next time.Time) (bool, error) {
 	f.claims = append(f.claims, id)
-	return !f.claimLost[id], nil
+	if f.claimLost[id] {
+		return false, nil
+	}
+	if f.claimedNext == nil {
+		f.claimedNext = map[int]time.Time{}
+	}
+	f.claimedNext[id] = next
+	return true, nil
 }
 
-func (f *schedTaskFakeStore) RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string, nextRun *time.Time) error {
+// The record no longer writes next_run; the claim moved it on. nextRun is that
+// claimed value, so the "keeps advancing" assertions still read the schedule.
+func (f *schedTaskFakeStore) RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string) error {
+	var nextRun *time.Time
+	if n, ok := f.claimedNext[id]; ok {
+		nextRun = &n
+	}
 	f.runRecords = append(f.runRecords, schedRunRecord{id, status, errMsg, nextRun})
 	return nil
 }

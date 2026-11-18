@@ -132,18 +132,30 @@ func (s movingServerStore) GetServerByUUID(uuid string) (*models.Server, error) 
 }
 
 // A move archives the directory and deletes it on the source after cutover; a
-// file written in between was lost without a word. Writes now wait.
+// file written in between was lost without a word. Writes now wait. A delete
+// is the same in reverse: it hit the source only, the target came up from the
+// archive taken before it, and the file was back. SFTP and Beam refused it.
 func TestFileWritesWaitForAMove(t *testing.T) {
 	rdb, _ := handlertest.Redis(t)
 	st := movingServerStore{quotaHTTPFakeStore{handlertest.NewSettingsStore()}}
 	h := &FileHandler{d: Deps{Redis: rdb, Store: st, Authz: authz.NewResolver(st)}}
-	req := httptest.NewRequest(http.MethodPost, "/api/files/x?server_uuid=s1", strings.NewReader(`{"path":"a.txt","content":"x"}`))
-	ctx := context.WithValue(req.Context(), "username", "u")
-	ctx = context.WithValue(ctx, "isAdmin", true)
-	ctx = reqctx.WithAPIKey(ctx, &models.APIKey{ID: 1}, false)
-	rw := httptest.NewRecorder()
-	h.SaveFileHandler(rw, req.WithContext(ctx))
-	if rw.Code != http.StatusConflict || !strings.Contains(rw.Body.String(), "being moved") {
-		t.Fatalf("status %d (%s), want the move refusal", rw.Code, rw.Body)
+	for name, tc := range map[string]struct {
+		call func(http.ResponseWriter, *http.Request)
+		body string
+	}{
+		"save":   {h.SaveFileHandler, `{"path":"a.txt","content":"x"}`},
+		"delete": {h.DeleteFileHandler, `{"path":"a.txt"}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/files/x?server_uuid=s1", strings.NewReader(tc.body))
+			ctx := context.WithValue(req.Context(), "username", "u")
+			ctx = context.WithValue(ctx, "isAdmin", true)
+			ctx = reqctx.WithAPIKey(ctx, &models.APIKey{ID: 1}, false)
+			rw := httptest.NewRecorder()
+			tc.call(rw, req.WithContext(ctx))
+			if rw.Code != http.StatusConflict || !strings.Contains(rw.Body.String(), "being moved") {
+				t.Fatalf("status %d (%s), want the move refusal", rw.Code, rw.Body)
+			}
+		})
 	}
 }

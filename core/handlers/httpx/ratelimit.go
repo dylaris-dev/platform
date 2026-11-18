@@ -34,6 +34,12 @@ func NewIPRateLimiter() *IPRateLimiter {
 // still far below anything that can hurt.
 const CredentialBodyLimit = 64 << 10
 
+// SmallJSONBodyLimit bounds the body of an authenticated handler whose JSON is a
+// handful of short fields (a cron string, a tab, a player action).
+// json.Decoder buffers a whole string value before it returns, so an unbounded
+// body let one caller fill Core's memory with a single field.
+const SmallJSONBodyLimit = 64 << 10
+
 // LimitBody caps how many bytes a handler can read from the request body.
 //
 // The IP rate limiter above bounds how MANY requests an anonymous caller may

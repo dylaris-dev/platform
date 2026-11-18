@@ -166,6 +166,7 @@ func (h *ScheduledTasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, httpx.SmallJSONBodyLimit)
 	var req scheduledTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -252,6 +253,7 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Task not found", http.StatusNotFound)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, httpx.SmallJSONBodyLimit)
 	var req scheduledTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -290,9 +292,14 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !onlyDisabling && h.refuseWithoutTaskCap(w, r, serverID, existing.TaskType) {
 		return
 	}
+	wasEnabled := existing.Enabled
 	if req.Enabled != nil {
 		existing.Enabled = *req.Enabled
 	}
+	// next_run is written only when this PATCH changes when the task runs. The
+	// executor claims a due run by moving next_run on; writing back the value
+	// read above would undo that claim and fire the task a second time.
+	nextRunChanged := false
 	tz := strings.TrimSpace(req.Timezone)
 	if tz != "" && !services.ValidTimezone(tz) {
 		httpx.SendJSONError(w, "Unknown time zone", http.StatusBadRequest)
@@ -311,18 +318,22 @@ func (h *ScheduledTasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		existing.NextRun = &next
+		nextRunChanged = true
 	}
-	// If we're (re-)enabling a task that lost its next_run, compute one.
-	if existing.Enabled && existing.NextRun == nil {
+	// Re-enabling always computes afresh: a row disabled by an older Core can
+	// still hold a past next_run and would fire the moment it was switched on.
+	if existing.Enabled && !nextRunChanged && (!wasEnabled || existing.NextRun == nil) {
 		next, err := services.ComputeNextRunIn(existing.ScheduleCron, existing.Timezone, time.Now().UTC())
 		if err == nil {
 			existing.NextRun = &next
+			nextRunChanged = true
 		}
 	}
 	if !existing.Enabled {
 		existing.NextRun = nil
+		nextRunChanged = true
 	}
-	if err := h.d.Store.UpdateScheduledTask(existing); err != nil {
+	if err := h.d.Store.UpdateScheduledTask(existing, nextRunChanged); err != nil {
 		httpx.SendJSONError(w, "Failed to save task", http.StatusInternalServerError)
 		return
 	}
@@ -365,6 +376,7 @@ func (h *ScheduledTasksHandler) ValidateCron(w http.ResponseWriter, r *http.Requ
 		ScheduleCron string `json:"scheduleCron"`
 		Timezone     string `json:"timezone"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, httpx.SmallJSONBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
 		return

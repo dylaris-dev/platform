@@ -187,7 +187,7 @@ func (s *ScheduledTaskService) runDue(ctx context.Context) {
 			if derr := s.store.SetScheduledTaskEnabled(t.ID, false, nil); derr != nil {
 				logErrf("scheduled-tasks", "task #%d has an unparseable schedule but could not be disabled; it will keep failing every tick: %v", t.ID, derr)
 			}
-			if recErr := s.store.RecordScheduledTaskRun(t.ID, now, "error", parseErr.Error(), nil); recErr != nil {
+			if recErr := s.store.RecordScheduledTaskRun(t.ID, now, "error", parseErr.Error()); recErr != nil {
 				logErrf("scheduled-tasks", "record run for #%d failed: %v", t.ID, recErr)
 			}
 			continue
@@ -221,7 +221,7 @@ func (s *ScheduledTaskService) runDue(ctx context.Context) {
 		case err != nil:
 			status, errMsg = "error", err.Error()
 		}
-		if recErr := s.store.RecordScheduledTaskRun(t.ID, now, status, errMsg, &next); recErr != nil {
+		if recErr := s.store.RecordScheduledTaskRun(t.ID, now, status, errMsg); recErr != nil {
 			logErrf("scheduled-tasks", "record run for #%d failed: %v", t.ID, recErr)
 		}
 		if t.TaskType == "restart" && status == "ok" {

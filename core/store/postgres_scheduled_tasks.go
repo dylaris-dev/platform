@@ -101,16 +101,17 @@ func (s *PostgresStore) CreateScheduledTask(t *models.ScheduledTask) (int, error
 	return id, err
 }
 
-func (s *PostgresStore) UpdateScheduledTask(t *models.ScheduledTask) error {
+func (s *PostgresStore) UpdateScheduledTask(t *models.ScheduledTask, nextRunChanged bool) error {
 	var nextRun interface{}
 	if t.NextRun != nil {
 		nextRun = *t.NextRun
 	}
 	res, err := s.db.Exec(`UPDATE scheduled_tasks SET
-		name=$2, task_type=$3, schedule_cron=$4, payload=$5, enabled=$6, next_run=$7,
+		name=$2, task_type=$3, schedule_cron=$4, payload=$5, enabled=$6,
+		next_run=CASE WHEN $9 THEN $7::timestamptz ELSE next_run END,
 		timezone=$8, updated_at=NOW()
 		WHERE id=$1`,
-		t.ID, t.Name, t.TaskType, t.ScheduleCron, t.Payload, t.Enabled, nextRun, taskZone(t.Timezone),
+		t.ID, t.Name, t.TaskType, t.ScheduleCron, t.Payload, t.Enabled, nextRun, taskZone(t.Timezone), nextRunChanged,
 	)
 	if err != nil {
 		return err
@@ -195,13 +196,9 @@ func (s *PostgresStore) ClaimScheduledTaskRun(id int, dueAt, next time.Time) (bo
 	return n == 1, nil
 }
 
-func (s *PostgresStore) RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string, nextRun *time.Time) error {
-	var nr interface{}
-	if nextRun != nil {
-		nr = *nextRun
-	}
+func (s *PostgresStore) RecordScheduledTaskRun(id int, ranAt time.Time, status, errMsg string) error {
 	_, err := s.db.Exec(`UPDATE scheduled_tasks SET
-		last_run=$2, last_status=$3, last_error=$4, next_run=$5, updated_at=NOW()
-		WHERE id=$1`, id, ranAt, status, errMsg, nr)
+		last_run=$2, last_status=$3, last_error=$4, updated_at=NOW()
+		WHERE id=$1`, id, ranAt, status, errMsg)
 	return err
 }

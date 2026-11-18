@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 
@@ -45,6 +46,10 @@ type schedCapStore struct {
 	// GetSetting (a missing key answers "", as the real store does).
 	existing int
 	settings map[string]string
+
+	// updated and nextRunChanged are what the last UpdateScheduledTask wrote.
+	updated        *models.ScheduledTask
+	nextRunChanged bool
 }
 
 func (f *schedCapStore) GetSetting(key string) (string, error) { return f.settings[key], nil }
@@ -80,7 +85,11 @@ func (f *schedCapStore) CreateScheduledTask(*models.ScheduledTask) (int, error) 
 	return 7, nil
 }
 func (f *schedCapStore) GetScheduledTask(int) (*models.ScheduledTask, error) { return f.task, nil }
-func (f *schedCapStore) UpdateScheduledTask(*models.ScheduledTask) error     { return nil }
+func (f *schedCapStore) UpdateScheduledTask(t *models.ScheduledTask, nextRunChanged bool) error {
+	c := *t
+	f.updated, f.nextRunChanged = &c, nextRunChanged
+	return nil
+}
 
 func schedCapHandler(fs *schedCapStore) *ScheduledTasksHandler {
 	return NewScheduledTasksHandler(Deps{
@@ -278,6 +287,56 @@ func TestScheduledTaskCreateHonoursTheServerLimit(t *testing.T) {
 			}
 			if wantCreate := map[bool]int{true: 1, false: 0}[c.wantStatus == http.StatusOK]; fs.createCalls != wantCreate {
 				t.Errorf("CreateScheduledTask called %d time(s), want %d", fs.createCalls, wantCreate)
+			}
+		})
+	}
+}
+
+// The executor moves next_run on when it claims a firing. A PATCH read the
+// task before that and wrote its stale next_run back, so a rename landing
+// beside a due restart made the task fire again on the next tick. next_run is
+// written only when the PATCH itself changes when the task runs.
+func TestScheduledTaskUpdateWritesNextRunOnlyWhenItChanges(t *testing.T) {
+	past := time.Now().UTC().Add(-time.Hour)
+	off, on := false, true
+	cases := []struct {
+		name        string
+		enabled     bool
+		req         scheduledTaskRequest
+		wantChanged bool
+		wantNext    string // "nil", "future" or "" (not written)
+	}{
+		{"a rename leaves next_run to the executor", true, scheduledTaskRequest{Name: "renamed"}, false, ""},
+		{"a new payload leaves it too", true, scheduledTaskRequest{Payload: "x"}, false, ""},
+		{"a new schedule recomputes it", true, scheduledTaskRequest{ScheduleCron: "0 5 * * *"}, true, "future"},
+		{"a new time zone recomputes it", true, scheduledTaskRequest{Timezone: "Europe/Berlin"}, true, "future"},
+		{"disabling clears it", true, scheduledTaskRequest{Enabled: &off}, true, "nil"},
+		// A row disabled before this fix can still hold a past next_run; it
+		// must not fire the moment it is switched back on.
+		{"re-enabling computes a fresh one", false, scheduledTaskRequest{Enabled: &on}, true, "future"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stale := past
+			fs := &schedCapStore{task: &models.ScheduledTask{ID: 7, ServerID: 1, Name: "t", TaskType: "restart",
+				ScheduleCron: "0 4 * * *", Timezone: "UTC", Enabled: c.enabled, NextRun: &stale}}
+			rec := httptest.NewRecorder()
+			schedCapHandler(fs).Update(rec, schedCapReq(http.MethodPatch, "/api/servers/1/scheduled-tasks/7", "owner-1", c.req))
+			if rec.Code != http.StatusOK || fs.updated == nil {
+				t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+			}
+			if fs.nextRunChanged != c.wantChanged {
+				t.Fatalf("nextRunChanged = %v, want %v", fs.nextRunChanged, c.wantChanged)
+			}
+			switch c.wantNext {
+			case "nil":
+				if fs.updated.NextRun != nil {
+					t.Errorf("next_run = %v, want NULL", fs.updated.NextRun)
+				}
+			case "future":
+				if fs.updated.NextRun == nil || !fs.updated.NextRun.After(time.Now()) {
+					t.Errorf("next_run = %v, want a future time", fs.updated.NextRun)
+				}
 			}
 		})
 	}

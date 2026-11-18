@@ -807,6 +807,14 @@ func (h *FileHandler) DeleteFileHandler(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
+	// The move guard alone, not refuseSuspendedWrite: deletes stay open to a
+	// suspended tenant. During a move a delete hits only the source, and the
+	// target comes up from the archive taken before it, so the file is back.
+	if h.d.Store != nil {
+		if srv, err := h.d.Store.GetServerByUUID(serverUUID); err == nil && srv != nil && guard.RefuseIfMoving(w, r, srv) {
+			return
+		}
+	}
 	resp, err := h.sendGRPCMsg(nodeID, &pb.NodeMessage{
 		RequestId:  uuid.NewString(),
 		ServerUuid: serverUUID,

@@ -46,6 +46,7 @@ type sparkProfileRequest struct {
 // reference, never the profile data.
 func (h *SparkHandler) Record(w http.ResponseWriter, r *http.Request) {
 	serverID, _ := strconv.Atoi(mux.Vars(r)["id"])
+	r.Body = http.MaxBytesReader(w, r.Body, httpx.SmallJSONBodyLimit)
 	var req sparkProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)

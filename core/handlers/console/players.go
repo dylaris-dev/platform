@@ -281,6 +281,7 @@ func (h *PlayersHandler) Action(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, httpx.SmallJSONBodyLimit)
 	var req playerActionRequest
 	if derr := json.NewDecoder(r.Body).Decode(&req); derr != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -289,6 +290,10 @@ func (h *PlayersHandler) Action(w http.ResponseWriter, r *http.Request) {
 	cmd, cerr := buildPlayerCommand(req.Action, req.Player, req.Reason, req.Message)
 	if cerr != nil {
 		httpx.SendJSONError(w, cerr.Error(), http.StatusBadRequest)
+		return
+	}
+	if need := playerActionExtraCap[strings.TrimSpace(strings.ToLower(req.Action))]; need != "" && !h.callerHolds(r, srv.ID, need) {
+		httpx.SendJSONError(w, "Giving or taking operator rights needs the RCON permission on this server", http.StatusForbidden)
 		return
 	}
 	resp := nodeops.ExecRcon(r.Context(), h.d.Store, h.d.GRPCRegistry, srv.ID, srv.UUID, srv.NodeID, nodeops.RconRequest{Command: cmd})
@@ -404,6 +409,25 @@ var playerActionVerbs = map[string]string{
 	// in server.properties; enforce-whitelist has no RCON command at all.
 	"whitelist_on":  "whitelist on",
 	"whitelist_off": "whitelist off",
+}
+
+// playerActionExtraCap names the actions players.manage alone does not cover.
+// An operator runs /stop, /op and /execute from inside the game, so op and deop
+// are RCON in all but name: without this a moderator refused rcon.exec and
+// every power action got all of it back by opping themselves.
+var playerActionExtraCap = map[string]string{
+	"op":   "rcon.exec",
+	"deop": "rcon.exec",
+}
+
+// callerHolds reports whether the caller holds capability on the server.
+// Fails closed: no resolver or a resolve error is a no.
+func (h *PlayersHandler) callerHolds(r *http.Request, serverID int, capability string) bool {
+	if h.d.Authz == nil {
+		return false
+	}
+	res, err := h.d.Authz.Resolve(authz.IdentityFromContext(r.Context()), serverID)
+	return err == nil && res.HasCap(capability)
 }
 
 // maxPlayerFreeText caps a ban reason or a whispered message. MC truncates

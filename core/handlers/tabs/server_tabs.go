@@ -188,6 +188,7 @@ func (h *ServerTabsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Server not found", http.StatusNotFound)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, httpx.SmallJSONBodyLimit)
 	var req serverTabRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
@@ -358,6 +359,7 @@ func (h *ServerTabsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tabID, _ := strconv.Atoi(mux.Vars(r)["tabId"])
+	r.Body = http.MaxBytesReader(w, r.Body, httpx.SmallJSONBodyLimit)
 	var req serverTabRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpx.SendJSONError(w, "Invalid JSON", http.StatusBadRequest)
