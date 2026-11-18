@@ -196,3 +196,58 @@ func TestUnmountedStorageReportsTheRefusal(t *testing.T) {
 		})
 	}
 }
+
+// B10: the node's identity (.node_id, .node_secret, .node_key) lives on the
+// first storage path, and it is read before the StorageManager runs. A first
+// disk that did not mount has to be noticed there, or the node enrols afresh
+// on the bare mountpoint.
+func TestIdentityDirUnmounted(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, disk1, disk2 string)
+		want    bool
+	}{
+		{"both mounted", func(*testing.T, string, string) {}, false},
+		{"first disk not mounted", func(t *testing.T, disk1, _ string) {
+			if err := os.RemoveAll(disk1); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(disk1, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+		{"second disk not mounted", func(t *testing.T, _, disk2 string) {
+			if err := os.RemoveAll(disk2); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(disk2, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		{"operator emptied the marker on a new first disk", func(t *testing.T, disk1, _ string) {
+			if err := os.RemoveAll(disk1); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(disk1, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(disk1, storageMarkerName), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			disk1, disk2 := t.TempDir(), t.TempDir()
+			csv := disk1 + "," + disk2
+			NewStorageManager(csv, nil)
+			tc.prepare(t, disk1, disk2)
+			if got := identityDirUnmounted(csv); got != tc.want {
+				t.Fatalf("identityDirUnmounted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if identityDirUnmounted(t.TempDir()) {
+		t.Fatal("a single path has nothing to vouch against and must read as mounted")
+	}
+}

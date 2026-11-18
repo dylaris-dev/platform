@@ -702,6 +702,14 @@ func parseConfig() {
 	// Cache the per-node secret on the first persisted storage path so it
 	// survives restarts (resolved the same way StorageManager picks paths[0]).
 	nodeSecretDir = firstPersistedStoragePath(storagePaths)
+	// Refused rather than skipped like any other unmounted path: booting on the
+	// bare mountpoint finds no identity, and a node holding CLUSTER_SECRET then
+	// enrols as a brand-new node, orphaning every server on the old one.
+	if identityDirUnmounted(storagePaths) {
+		log.Fatalf("FATAL: the first storage path %s holds this node's identity and reads as a disk that is not mounted (it is empty and lacks a current %s marker that another storage path expects). "+
+			"Mount the disk and restart the node. If it is a new empty disk, replace %s with an empty file.",
+			nodeSecretDir, storageMarkerName, filepath.Join(nodeSecretDir, storageMarkerName))
+	}
 	log.Printf("Redis ACL: node uses scoped credentials (secret dir: %s)", nodeSecretDir)
 	if coreGRPCAddr == "" {
 		log.Println("WARNING: CORE_GRPC_ADDR is empty. A first-boot node cannot bootstrap its per-node secret without a reachable Core gRPC endpoint; a node with a cached secret can still run.")

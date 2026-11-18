@@ -191,21 +191,16 @@ const storageMarkerGen = "#gen "
 // before the disk was last taken, so it still does not match.
 const storageMarkerKept = "#kept "
 
-// dropUnmountedPaths leaves out a path another marker lists, that has no
-// marker of its own and holds nothing: a disk that did not mount, whose empty
-// mountpoint passed every check above. Servers keyed there ran on an empty
-// tree on the root disk, and new servers filled the OS disk. Every path kept is
-// marked, and given the full list.
-//
-// ponytail: a single path, or a boot where every path is unmounted at once,
-// has no other marker to vouch for it and is taken as before.
-func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
-	known := map[string]bool{}
-	marked := map[string]bool{}
+// readStorageMarkers reads the markers on paths: every path any of them
+// lists, which paths carry a current marker of their own, the last gen that
+// took each path, and the highest gen seen. A path is unmounted when it is
+// known, not marked, and holds nothing.
+func readStorageMarkers(paths []string) (known, marked map[string]bool, lastKept map[string]uint64, maxGen uint64) {
+	known = map[string]bool{}
+	marked = map[string]bool{}
 	listed := map[string]bool{}
 	gens := map[string]uint64{}
-	lastKept := map[string]uint64{}
-	var maxGen uint64
+	lastKept = map[string]uint64{}
 	for _, p := range paths {
 		b, err := os.ReadFile(filepath.Join(p, storageMarkerName))
 		if err != nil {
@@ -235,7 +230,7 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 		}
 	}
 	// A marker without a number is taken as current only while no marker
-	// carries one, or when it is empty (the override the warning below tells
+	// carries one, or when it is empty (the override the warning in dropUnmountedPaths tells
 	// an operator to make). One listing paths beside numbered ones is the
 	// copy release 2026.11.17.2 wrote onto a bare mountpoint (Y11).
 	for p, g := range gens {
@@ -250,6 +245,43 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 			}
 		}
 	}
+	return known, marked, lastKept, maxGen
+}
+
+// identityDirUnmounted reports whether the first storage path, which holds the
+// node's identity (.node_id, .node_secret, .node_key), reads as a disk that did
+// not mount, by dropUnmountedPaths' rule. It runs before anything reads or
+// writes the identity: a node booting on the bare mountpoint finds no identity
+// and enrols as a new node.
+func identityDirUnmounted(pathsCSV string) bool {
+	var paths []string
+	for _, p := range strings.Split(pathsCSV, ",") {
+		if p = strings.TrimSpace(p); p == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		paths = append(paths, p)
+	}
+	if len(paths) == 0 {
+		return false
+	}
+	known, marked, _, _ := readStorageMarkers(paths)
+	p := paths[0]
+	return !marked[p] && known[p] && dirHoldsNothing(p)
+}
+
+// dropUnmountedPaths leaves out a path another marker lists, that has no
+// marker of its own and holds nothing: a disk that did not mount, whose empty
+// mountpoint passed every check above. Servers keyed there ran on an empty
+// tree on the root disk, and new servers filled the OS disk. Every path kept is
+// marked, and given the full list.
+//
+// ponytail: a single path, or a boot where every path is unmounted at once,
+// has no other marker to vouch for it and is taken as before.
+func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
+	known, marked, lastKept, maxGen := readStorageMarkers(paths)
 	var kept []string
 	for _, p := range paths {
 		if !marked[p] && known[p] && dirHoldsNothing(p) {
