@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -81,5 +83,47 @@ func TestTheTabProxyDialsTheContainerDirectly(t *testing.T) {
 	tr, ok := proxyHTTPClient.Transport.(*http.Transport)
 	if !ok || tr.Proxy != nil {
 		t.Fatal("the tab proxy transport routes container requests through the environment's proxy")
+	}
+}
+
+// B01: ResponseHeaderTimeout only starts once the body is written, so a
+// container that never reads a request body held the node's slot forever.
+func TestTheTabProxyBoundsTheBodyWriteBeforeTheHead(t *testing.T) {
+	prev := proxyHeadTimeout
+	t.Cleanup(func() { proxyHeadTimeout = prev })
+	proxyHeadTimeout = 300 * time.Millisecond
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close() // accept, never read
+		}
+	}()
+
+	body := io.LimitReader(zeroReader{}, 256<<20)
+	hreq, _ := http.NewRequest(http.MethodPost, "http://"+ln.Addr().String()+"/", body)
+	done := make(chan error, 1)
+	go func() {
+		resp, err := doProxyRequest(hreq)
+		if resp != nil {
+			resp.Body.Close()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a request whose body was never read succeeded")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a body write the container never reads is not bounded")
 	}
 }

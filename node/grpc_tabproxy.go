@@ -191,10 +191,21 @@ func acquireProxySlot(serverUUID string) (func(), bool) {
 // reader is flow control's to end (flowCreditWait), not this.
 var proxyIdleTimeout = 2 * time.Minute
 
+// proxyHeadTimeout bounds everything before the response head, the request
+// body write included: ResponseHeaderTimeout only starts once the body is
+// written, so a container that never reads it held the slot forever (B01).
+var proxyHeadTimeout = 60 * time.Second
+
 // doProxyRequest runs hreq with its body bounded by proxyIdleTimeout per read.
 func doProxyRequest(hreq *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithCancel(hreq.Context())
+	head := time.AfterFunc(proxyHeadTimeout, cancel)
 	resp, err := proxyHTTPClient.Do(hreq.WithContext(ctx))
+	if !head.Stop() && err == nil {
+		// The bound fired as the head arrived: the body is already cancelled.
+		resp.Body.Close()
+		return nil, context.DeadlineExceeded
+	}
 	if err != nil {
 		cancel()
 		return nil, err
