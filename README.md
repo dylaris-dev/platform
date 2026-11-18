@@ -799,7 +799,7 @@ secrets:
 | `UPDATES_URL_HOSTED` | *(this repo's raw hosted.md)* | No | The same for the customer-facing notes, which is what a BYON or route-only account sees. |
 | `RELEASE_ENFORCE_MIN_VERSION` | `true` | No | When a release declares a mandatory update, Core warns affected nodes at connect and REFUSES them once the deadline passes. `false` keeps the warnings and drops the refusal - the break-glass for a wrong deadline or a mis-stamped image. |
 | `BEAM_MANIFEST_URL` | *(GitHub Releases feed)* | No | **Is** the compiled-in fallback for the Beam desktop-client update manifest, read once at startup — the `beam.release_manifest` admin setting takes precedence when it is non-empty. Set this so a fork points at its OWN releases repo without a rebuild. |
-| `CLAMAV_ADDR` | *(empty, scanning off)* | No | `host:port` of a `clamd` instance. When set, every ticket attachment is streamed through ClamAV (INSTREAM) and rejected on a hit before it is ever stored. Empty means uploads are accepted unscanned. |
+| `CLAMAV_ADDR` | *(empty, scanning off)* | No | `host:port` of a `clamd` instance. When set, every ticket attachment is streamed through ClamAV (INSTREAM) and rejected on a hit, or when clamd cannot scan it (an error, an empty reply, a file over its stream limit), before it is ever stored. Empty means uploads are accepted unscanned. |
 
 #### Who writes DNS records
 

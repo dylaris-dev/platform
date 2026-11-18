@@ -11,6 +11,26 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.18
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- The deploy wizard no longer shows other customers' machines in its tag and region lists. Fixed on our side,
+  nothing to update.
+
+### Fixes
+- BYON: a server set up quickly or after a node restart starts with its real start command, and a failed
+  reinstall or restart brings it back on its old software. `node`
+- BYON: a storage move, backup or restore no longer races a reinstall or start of the same server; the second
+  job is refused with a clear message. `node`
+- Fixed on our side, nothing to update: pairing a machine survives a short outage, a broken-off backup download
+  shows as failed, and a route-only domain cannot be taken by another route after a restart.
+
 ## 2026.11.17.2
 
 ### Features

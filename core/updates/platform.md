@@ -8,6 +8,29 @@ Newest release first. The format is fixed and checked in CI - see the
 
 <!-- Everything in this file is English, including text dictated in German. -->
 
+## 2026.11.18
+
+### Features
+- Nothing.
+
+### Breaking
+- Nothing.
+
+### Security
+- Members without admin rights can no longer list a platform node's storage paths or move a server onto one,
+  and the deploy wizard no longer lists other customers' BYON machines. `core`
+- An upload ClamAV could not scan is rejected instead of stored as clean, and an account anonymized by
+  retention loses its SFTP keys. `core`
+- Op and de-op need the RCON permission, and password guesses on re-authentication are limited per account. `core`
+
+### Fixes
+- A server set up quickly or after a node restart starts with its real start command, and a failed reinstall,
+  setup or restart brings it back on its old software. `node`
+- A storage move, backup or restore no longer races a reinstall or start of the same server: the second job is
+  refused with a clear message. `node` `core`
+- Core fixes: BYON pairing survives a Redis hiccup, a broken-off backup download shows as failed, restores
+  survive a closed tab, ticket inboxes show every matching ticket, and real Modrinth packs import. `core`
+
 ## 2026.11.17.2
 
 ### Features
