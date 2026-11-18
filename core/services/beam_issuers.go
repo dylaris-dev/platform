@@ -257,7 +257,23 @@ func (r *BeamIssuerReconciler) RunOnce(ctx context.Context) {
 }
 
 // sweepOrphans deletes beam:issuer:<kid> records with no row behind them.
+//
+// The records are collected BEFORE the rows are read. A registration commits
+// its row before it publishes, so a record the scan saw has its row in the
+// later read; reading the rows first would take a key registered meanwhile
+// for an orphan.
 func (r *BeamIssuerReconciler) sweepOrphans(ctx context.Context) {
+	sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	var keys []string
+	iter := r.redis.Scan(sctx, 0, BeamIssuerKeyPrefix+"*", 200).Iterator()
+	for iter.Next(sctx) {
+		keys = append(keys, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
+		logErrf("beam-issuers", "scan: %v", err)
+		return
+	}
 	kids, err := r.store.ListBeamIssuerKids()
 	if err != nil {
 		logErrf("beam-issuers", "list kids: %v", err)
@@ -267,19 +283,12 @@ func (r *BeamIssuerReconciler) sweepOrphans(ctx context.Context) {
 	for _, k := range kids {
 		known[k] = true
 	}
-	sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	iter := r.redis.Scan(sctx, 0, BeamIssuerKeyPrefix+"*", 200).Iterator()
-	for iter.Next(sctx) {
-		key := iter.Val()
+	for _, key := range keys {
 		if known[strings.TrimPrefix(key, BeamIssuerKeyPrefix)] {
 			continue
 		}
 		if err := r.redis.Del(sctx, key).Err(); err != nil {
 			logErrf("beam-issuers", "delete orphan %s: %v", key, err)
 		}
-	}
-	if err := iter.Err(); err != nil {
-		logErrf("beam-issuers", "scan: %v", err)
 	}
 }

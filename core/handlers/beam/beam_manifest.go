@@ -203,8 +203,9 @@ func httpGetBeamManifestBytes(ctx context.Context, u string) ([]byte, error) {
 // hand-typed value could only ever disagree with the binary actually being
 // shipped - in the direction that locks clients out.
 //
-// A fetch or verify failure yields "" (gate off), so a transient GitHub error
-// can never lock every client out either.
+// A fetch or verify failure keeps the last verified floor, "" (gate off) when
+// none was ever verified, so a transient GitHub error can never lock every
+// client out either.
 func (h *BeamHandler) effectiveMinVersion(ctx context.Context) string {
 	return h.cachedAutoMinVersion(ctx, func(key string) string {
 		v, _ := h.d.Store.GetSetting(key)
@@ -213,10 +214,11 @@ func (h *BeamHandler) effectiveMinVersion(ctx context.Context) string {
 }
 
 // cachedAutoMinVersion returns the verified-manifest floor, refreshing at most
-// once per beamMinAutoTTL. The outcome is cached either way (min="" on error) so
-// a failing fetch does not re-hit GitHub on every connect; the floor simply stays
-// off until the next TTL window resolves a verifiable manifest. Guarded so
-// concurrent connects don't stampede the fetch.
+// once per beamMinAutoTTL. The outcome is cached either way so a failing fetch
+// does not re-hit GitHub on every connect; on an error the last verified floor
+// stays ("" until one was ever verified), since a floor that was enforced a
+// minute ago locks out no one new. Guarded so concurrent connects don't
+// stampede the fetch.
 func (h *BeamHandler) cachedAutoMinVersion(ctx context.Context, getSetting func(string) string) string {
 	h.minCacheMu.Lock()
 	defer h.minCacheMu.Unlock()
@@ -227,9 +229,11 @@ func (h *BeamHandler) cachedAutoMinVersion(ctx context.Context, getSetting func(
 	if url == "" {
 		url = defaultBeamManifestURL
 	}
-	min, err := fetchVerifiedBeamMinVersion(ctx, url, beamUpdatePublicKeyB64)
+	// Not the caller's context: whichever connect found the cache expired does
+	// the refresh for everyone, and its hang-up must not count as a failure.
+	min, err := fetchVerifiedBeamMinVersion(context.WithoutCancel(ctx), url, beamUpdatePublicKeyB64)
 	if err != nil {
-		min = ""
+		min = h.minCacheVal
 	}
 	h.minCacheVal = min
 	h.minCacheAt = time.Now()

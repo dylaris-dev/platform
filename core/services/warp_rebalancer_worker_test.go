@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"slices"
 	"testing"
 
@@ -18,14 +19,21 @@ import (
 type fakeRebalancerStore struct {
 	store.Store
 	assignedCalls []struct{ pubkey, leader string }
+	home          string // the row's assigned_leader
+	goneAfter     int    // >0: reads after this many answer sql.ErrNoRows (a racing revoke)
+	reads         int
 }
 
 func newFakeRebalancerStore() *fakeRebalancerStore {
-	return &fakeRebalancerStore{}
+	return &fakeRebalancerStore{home: "L-a"}
 }
 
 func (f *fakeRebalancerStore) GetWarpPeerByPubkey(pubkey string) (*store.WarpPeer, error) {
-	return &store.WarpPeer{Pubkey: pubkey, WGIP: "10.0.99.7"}, nil
+	f.reads++
+	if f.goneAfter > 0 && f.reads > f.goneAfter {
+		return nil, sql.ErrNoRows
+	}
+	return &store.WarpPeer{Pubkey: pubkey, WGIP: "10.0.99.7", AssignedLeader: f.home}, nil
 }
 
 func (f *fakeRebalancerStore) SetWarpPeerAssignedLeader(pubkey, leaderID string) error {
@@ -79,6 +87,33 @@ func TestWarpRebalancerApply(t *testing.T) {
 		}
 		if got := queued(t, mr, "L-a"); !slices.Equal(got, []string{"remove_peer:p1"}) {
 			t.Fatalf("old home queue = %v", got)
+		}
+	})
+
+	t.Run("stale telemetry: a peer whose home is no longer From is not moved", func(t *testing.T) {
+		mr.FlushAll()
+		fs := newFakeRebalancerStore()
+		fs.home = "L-x" // reconcileHomes rehomed it; L-a's mirror still lists it
+		w := NewWarpRebalancer(fs, rc, nil)
+		w.apply(ctx, "armed", 10, moves)
+		if len(fs.assignedCalls) != 0 {
+			t.Fatalf("a stale move must not pin, got %v", fs.assignedCalls)
+		}
+		for _, l := range []string{"L-a", "L-b", "L-x"} {
+			if got := queued(t, mr, l); len(got) != 0 {
+				t.Fatalf("%s queue = %v, want nothing", l, got)
+			}
+		}
+	})
+
+	t.Run("a revoke racing the handover still removes the peer from the new home", func(t *testing.T) {
+		mr.FlushAll()
+		fs := newFakeRebalancerStore()
+		fs.goneAfter = 1 // the handover read sees the row, the revoke deletes it right after
+		w := NewWarpRebalancer(fs, rc, nil)
+		w.apply(ctx, "armed", 10, moves)
+		if got := queued(t, mr, "L-b"); !slices.Equal(got, []string{"add_peer:p1", "remove_peer:p1"}) {
+			t.Fatalf("new home queue = %v, want the add followed by a remove", got)
 		}
 	})
 }

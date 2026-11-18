@@ -107,4 +107,49 @@ func TestSelectWarpMoves(t *testing.T) {
 			t.Fatalf("got %+v, want exactly [p1] (headroom exhausted after first)", got)
 		}
 	})
+
+	t.Run("idle peers are never moved", func(t *testing.T) {
+		in := warpMoveInput{
+			saturated: []saturatedLeader{{
+				leaderID: "L-a", region: "eu-1", shedBps: 200,
+				peers: []protocol.PeerBandwidth{peer("big", 500), peer("idle1", 0), peer("idle2", 0)},
+			}},
+			targets:  []moveTarget{{leaderID: "L-b", region: "eu-1", headroomBps: 0}},
+			maxMoves: 10,
+		}
+		if got := selectWarpMoves(in); len(got) != 0 {
+			t.Fatalf("got %+v, want none (moving a 0 bps peer relieves nothing)", got)
+		}
+	})
+
+	t.Run("a target on the source's own host relieves nothing", func(t *testing.T) {
+		in := warpMoveInput{
+			saturated: []saturatedLeader{{
+				leaderID: "L-a", host: "h1", region: "eu-1", shedBps: 100,
+				peers: []protocol.PeerBandwidth{peer("p1", 100)},
+			}},
+			targets:  []moveTarget{{leaderID: "L-a2", host: "h1", region: "eu-1", headroomBps: 1000}},
+			maxMoves: 10,
+		}
+		if got := selectWarpMoves(in); len(got) != 0 {
+			t.Fatalf("got %+v, want none (same host)", got)
+		}
+	})
+
+	t.Run("leaders on one target host share that host's headroom", func(t *testing.T) {
+		in := warpMoveInput{
+			saturated: []saturatedLeader{{
+				leaderID: "L-a", host: "h1", region: "eu-1", shedBps: 400,
+				peers: []protocol.PeerBandwidth{peer("p1", 150), peer("p2", 150)},
+			}},
+			targets: []moveTarget{
+				{leaderID: "L-b", host: "h2", region: "eu-1", headroomBps: 200},
+				{leaderID: "L-c", host: "h2", region: "eu-1", headroomBps: 200},
+			},
+			maxMoves: 10,
+		}
+		if got := selectWarpMoves(in); len(got) != 1 {
+			t.Fatalf("got %+v, want one move (h2 has room for one 150 peer)", got)
+		}
+	})
 }

@@ -69,6 +69,17 @@ type serverVoiceEntry struct {
 // PublishVoice writes the three keys of one voice port. No TTL: the relay keeps
 // serving the last map it loaded, and the reconcile is what removes them.
 func PublishVoice(ctx context.Context, rdb *redis.Client, p store.VoicePort) error {
+	pipe := rdb.TxPipeline()
+	if err := queueVoicePublish(ctx, pipe, p); err != nil {
+		return err
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("publish voice port %s:%d: %w", p.Region, p.Port, err)
+	}
+	return nil
+}
+
+func queueVoicePublish(ctx context.Context, pipe redis.Pipeliner, p store.VoicePort) error {
 	key := hex.EncodeToString(p.UplinkKey)
 	portJSON, err := json.Marshal(voicePortEntry{V: 1, ServerUUID: p.ServerUUID, Key: key})
 	if err != nil {
@@ -78,11 +89,32 @@ func PublishVoice(ctx context.Context, rdb *redis.Client, p store.VoicePort) err
 	if err != nil {
 		return err
 	}
-	pipe := rdb.TxPipeline()
 	pipe.Set(ctx, VoicePortKey(p.Region, p.Port), portJSON, 0)
 	pipe.SAdd(ctx, VoiceIndexKey(p.Region), strconv.Itoa(p.Port))
 	pipe.Set(ctx, ServerVoiceKey(p.ServerUUID), serverJSON, 0)
-	if _, err := pipe.Exec(ctx); err != nil {
+	return nil
+}
+
+// publishVoiceIfUnchanged is PublishVoice for a writer that read the row while
+// others may publish too: it writes only while the port key still holds prev,
+// what it held before the row was read. Anything else means a newer publish
+// (RotateVoiceKey, a move) landed in between, and that one wins.
+func publishVoiceIfUnchanged(ctx context.Context, rdb *redis.Client, p store.VoicePort, prev string) error {
+	portKey := VoicePortKey(p.Region, p.Port)
+	err := rdb.Watch(ctx, func(tx *redis.Tx) error {
+		got, err := tx.Get(ctx, portKey).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return err
+		}
+		if got != prev {
+			return nil
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			return queueVoicePublish(ctx, pipe, p)
+		})
+		return err
+	}, portKey)
+	if err != nil && !errors.Is(err, redis.TxFailedErr) {
 		return fmt.Errorf("publish voice port %s:%d: %w", p.Region, p.Port, err)
 	}
 	return nil
@@ -394,6 +426,12 @@ func (v *VoiceService) Reconcile(ctx context.Context) error {
 			// below takes whatever a failed unpublish left.
 			continue
 		}
+		// What the port key holds before the re-read: the publish below only
+		// writes if nothing else published since (see publishVoiceIfUnchanged).
+		prev, err := v.redis.Get(ctx, VoicePortKey(p.Region, p.Port)).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return fmt.Errorf("read %s: %w", VoicePortKey(p.Region, p.Port), err)
+		}
 		// The row is read again right before the write: the revocations above
 		// can take a while, and a row the API deleted or moved meanwhile must
 		// not be republished from the stale list.
@@ -415,7 +453,7 @@ func (v *VoiceService) Reconcile(ctx context.Context) error {
 		}
 		// cur, not p: same port, but whatever else the API changed since the
 		// list was read (host, uplink key) is what the relay must get.
-		if err := PublishVoice(ctx, v.redis, *cur); err != nil {
+		if err := publishVoiceIfUnchanged(ctx, v.redis, *cur, prev); err != nil {
 			return err
 		}
 	}

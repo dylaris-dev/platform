@@ -343,3 +343,41 @@ func TestReconcilePublishesTheReReadRow(t *testing.T) {
 }
 
 func (f *voiceFakeStore) ListLinkRouteVoice() ([]store.LinkRouteVoice, error) { return nil, nil }
+
+// rotateDuringReread is RotateVoiceKey landing between the reconcile's re-read
+// and its publish: the row it hands back still holds the old key, and the
+// rotation has already published the new one.
+type rotateDuringReread struct {
+	*voiceFakeStore
+	rdb *redis.Client
+	t   *testing.T
+}
+
+func (f rotateDuringReread) GetVoicePort(serverID int) (*store.VoicePort, error) {
+	old, err := f.voiceFakeStore.GetVoicePort(serverID)
+	rotated := *old
+	rotated.UplinkKey = bytes.Repeat([]byte{0xcd}, 32)
+	if err := PublishVoice(context.Background(), f.rdb, rotated); err != nil {
+		f.t.Fatal(err)
+	}
+	return old, err
+}
+
+func TestReconcileDoesNotRepublishAKeyRotatedMeanwhile(t *testing.T) {
+	mr, rdb := newVoiceRedis(t)
+	ctx := context.Background()
+	p := testVoicePort()
+	if err := PublishVoice(ctx, rdb, p); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewVoiceService(rotateDuringReread{&voiceFakeStore{rows: []store.VoicePort{p}}, rdb, t}, rdb)
+	if err := svc.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	newKey := strings.Repeat("cd", 32)
+	for _, k := range []string{"voice:port:eu:26000", "dylaris:server:" + p.ServerUUID + ":voice"} {
+		if got, _ := mr.Get(k); !strings.Contains(got, newKey) {
+			t.Fatalf("%s = %s, want the rotated key", k, got)
+		}
+	}
+}

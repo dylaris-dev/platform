@@ -25,6 +25,7 @@ type warpMove struct {
 
 type saturatedLeader struct {
 	leaderID string
+	host     string
 	region   string
 	shedBps  int64
 	peers    []protocol.PeerBandwidth
@@ -32,6 +33,7 @@ type saturatedLeader struct {
 
 type moveTarget struct {
 	leaderID    string
+	host        string
 	region      string
 	headroomBps int64
 }
@@ -52,13 +54,23 @@ type warpMoveInput struct {
 // recentlyMoved are skipped (anti-flap) and the total is capped at maxMoves.
 // Pure: same input always yields the same output, no clock, no Redis.
 func selectWarpMoves(in warpMoveInput) []warpMove {
-	// Working copy of target headroom, keyed by leaderID.
+	// Working copy of target headroom, keyed by host: the budget is the host's,
+	// so leaders sharing a host draw from one pool. A target without a known
+	// host stands alone.
+	budgetKey := func(host, leaderID string) string {
+		if host == "" {
+			return "leader:" + leaderID
+		}
+		return host
+	}
 	headroom := make(map[string]int64, len(in.targets))
 	targetRegion := make(map[string]string, len(in.targets))
+	targetHost := make(map[string]string, len(in.targets))
 	targetIDs := make([]string, 0, len(in.targets))
 	for _, t := range in.targets {
-		headroom[t.leaderID] = t.headroomBps
+		headroom[budgetKey(t.host, t.leaderID)] = t.headroomBps
 		targetRegion[t.leaderID] = t.region
+		targetHost[t.leaderID] = t.host
 		targetIDs = append(targetIDs, t.leaderID)
 	}
 
@@ -83,7 +95,9 @@ func selectWarpMoves(in warpMoveInput) []warpMove {
 			if in.maxMoves > 0 && len(moves) >= in.maxMoves {
 				break
 			}
-			if in.recentlyMoved[p.Pubkey] {
+			// An idle peer (the collector reports every peer, 0 bps included)
+			// sheds nothing, and moving it cuts its tunnel for nothing.
+			if p.TxBps == 0 || in.recentlyMoved[p.Pubkey] {
 				continue
 			}
 			// Best same-region target: most remaining headroom that still fits.
@@ -93,7 +107,11 @@ func selectWarpMoves(in warpMoveInput) []warpMove {
 				if tid == sl.leaderID || targetRegion[tid] != sl.region {
 					continue
 				}
-				h := headroom[tid]
+				// A sibling on the same host carries the same load.
+				if sl.host != "" && targetHost[tid] == sl.host {
+					continue
+				}
+				h := headroom[budgetKey(targetHost[tid], tid)]
 				if h >= int64(p.TxBps) && h > bestHeadroom {
 					best = tid
 					bestHeadroom = h
@@ -102,7 +120,7 @@ func selectWarpMoves(in warpMoveInput) []warpMove {
 			if best == "" {
 				continue // no target can absorb this peer; leave it
 			}
-			headroom[best] -= int64(p.TxBps)
+			headroom[budgetKey(targetHost[best], best)] -= int64(p.TxBps)
 			remaining -= int64(p.TxBps)
 			moves = append(moves, warpMove{Pubkey: p.Pubkey, From: sl.leaderID, To: best, TxBps: p.TxBps})
 		}
@@ -265,7 +283,7 @@ func (w *WarpRebalancer) tick(ctx context.Context, now time.Time) {
 		if headroom < 0 {
 			headroom = 0
 		}
-		targets = append(targets, moveTarget{leaderID: lid, region: leaderRegion[lid], headroomBps: headroom})
+		targets = append(targets, moveTarget{leaderID: lid, host: host, region: leaderRegion[lid], headroomBps: headroom})
 		if hot[host] {
 			// Shedding is measured in TRANSMIT, because that is the direction
 			// the per-peer telemetry can attribute. A host that is hot inbound
@@ -279,7 +297,7 @@ func (w *WarpRebalancer) tick(ctx context.Context, now time.Time) {
 				continue
 			}
 			saturated = append(saturated, saturatedLeader{
-				leaderID: lid, region: leaderRegion[lid], shedBps: shed,
+				leaderID: lid, host: host, region: leaderRegion[lid], shedBps: shed,
 				peers: w.loadPeerBandwidth(ctx, lid),
 			})
 		}
@@ -307,6 +325,18 @@ func (w *WarpRebalancer) apply(ctx context.Context, mode string, sustainMin int,
 	applied := mode == "armed"
 	if applied {
 		for _, m := range moves {
+			p, err := w.store.GetWarpPeerByPubkey(m.Pubkey)
+			if err != nil || p == nil {
+				logErrf("warp-rebalancer", "handover %s: %v", m.Pubkey, err)
+				continue
+			}
+			// From comes from the old leader's telemetry mirror, which lags the
+			// row: a peer reconcileHomes already rehomed still shows there, and
+			// a handover from it would leave the real home holding the peer.
+			if p.AssignedLeader != m.From {
+				log.Printf("warp-rebalance: skip %s: home is %q, telemetry says %s", m.Pubkey, p.AssignedLeader, m.From)
+				continue
+			}
 			if err := w.store.SetWarpPeerAssignedLeader(m.Pubkey, m.To); err != nil {
 				logErrf("warp-rebalancer", "pin %s -> %s: %v", m.Pubkey, m.To, err)
 				continue
@@ -314,12 +344,8 @@ func (w *WarpRebalancer) apply(ctx context.Context, mode string, sustainMin int,
 			// A peer lives on its home leader only (see WarpService.Enroll), so
 			// the move is also a handover: the new home gets it, the old one
 			// drops it. The client follows on its next assignment poll.
-			if p, err := w.store.GetWarpPeerByPubkey(m.Pubkey); err == nil && p != nil {
-				w.push(ctx, m.To, addPeerCmd(p.Pubkey, p.WGIP))
-				w.push(ctx, m.From, removePeerCmd(p.Pubkey))
-			} else {
-				logErrf("warp-rebalancer", "handover %s: %v", m.Pubkey, err)
-			}
+			pushAddPeerChecked(func(cmd map[string]interface{}) { w.push(ctx, m.To, cmd) }, w.store.GetWarpPeerByPubkey, p.Pubkey, p.WGIP)
+			w.push(ctx, m.From, removePeerCmd(p.Pubkey))
 			w.redis.Set(ctx, warpRebalanceLastMovePfx+m.Pubkey, "1", time.Duration(sustainMin)*time.Minute)
 			log.Printf("warp-rebalance: moved %s from %s to %s (%d bps)", m.Pubkey, m.From, m.To, m.TxBps)
 		}

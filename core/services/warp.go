@@ -319,10 +319,16 @@ func (s *WarpService) pushToLeader(ctx context.Context, leaderID string, cmd map
 // leave a revoked machine on the leader, with no row left to ever remove it. If
 // the row went in the meantime, the remove is queued again, after the add.
 func (s *WarpService) pushAddPeer(ctx context.Context, leaderID, pubkey, wgIP string) {
-	s.pushToLeader(ctx, leaderID, addPeerCmd(pubkey, wgIP))
+	pushAddPeerChecked(func(cmd map[string]interface{}) { s.pushToLeader(ctx, leaderID, cmd) }, s.warp.GetWarpPeerByPubkey, pubkey, wgIP)
+}
+
+// pushAddPeerChecked is pushAddPeer for any caller that queues leader commands,
+// so every add_peer (enroll, rehome, rebalancer handover) takes the revoke re-check.
+func pushAddPeerChecked(push func(map[string]interface{}), get func(string) (*store.WarpPeer, error), pubkey, wgIP string) {
+	push(addPeerCmd(pubkey, wgIP))
 	// Only a definite miss: a read error must not cut a live tunnel.
-	if _, err := s.warp.GetWarpPeerByPubkey(pubkey); errors.Is(err, sql.ErrNoRows) {
-		s.pushToLeader(ctx, leaderID, removePeerCmd(pubkey))
+	if _, err := get(pubkey); errors.Is(err, sql.ErrNoRows) {
+		push(removePeerCmd(pubkey))
 	}
 }
 

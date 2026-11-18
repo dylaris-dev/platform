@@ -14,7 +14,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"dylaris-core/store"
 )
@@ -280,4 +282,47 @@ func countBeamTempFiles(t *testing.T) int {
 		}
 	}
 	return n
+}
+
+// The refresh runs on whichever connect finds the cache expired. That caller
+// hanging up must not fail the fetch, and a failed refresh must not switch a
+// floor that was already verified off for a whole TTL.
+func TestCachedAutoMinVersionRefresh(t *testing.T) {
+	allowLoopbackBeamDial(t)
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(srv.Close)
+	setting := func(string) string { return srv.URL + "/latest.json" }
+
+	cases := []struct {
+		name     string
+		cancel   bool
+		cached   string
+		want     string
+		wantHits bool
+	}{
+		{"a caller that hung up still refreshes", true, "", "", true},
+		{"a failed refresh keeps the last verified floor", false, "1.2.3", "1.2.3", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			hits.Store(0)
+			h := &BeamHandler{minCacheVal: c.cached, minCacheAt: time.Now().Add(-beamMinAutoTTL - time.Second)}
+			ctx, cancel := context.WithCancel(context.Background())
+			if c.cancel {
+				cancel()
+			} else {
+				defer cancel()
+			}
+			if got := h.cachedAutoMinVersion(ctx, setting); got != c.want {
+				t.Fatalf("floor = %q, want %q", got, c.want)
+			}
+			if (hits.Load() > 0) != c.wantHits {
+				t.Fatalf("upstream hits = %d", hits.Load())
+			}
+		})
+	}
 }

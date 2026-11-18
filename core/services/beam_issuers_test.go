@@ -301,3 +301,30 @@ func TestValidBeamKid(t *testing.T) {
 		}
 	}
 }
+
+// registerDuringSweep is a new issuer key registered (row, then record) right
+// after the sweep listed the known kids.
+type registerDuringSweep struct {
+	*beamIssuerFakeStore
+	rdb *redis.Client
+	kid string
+}
+
+func (f registerDuringSweep) ListBeamIssuerKids() ([]string, error) {
+	kids, err := f.beamIssuerFakeStore.ListBeamIssuerKids()
+	f.keys = append(f.keys, models.BeamIssuerKey{ID: f.kid, OwnerID: "owner-a"})
+	f.rdb.Set(context.Background(), BeamIssuerKeyPrefix+f.kid, "just registered", 0)
+	return kids, err
+}
+
+// A key registered while the sweep runs has a row; the sweep must not take its
+// record for an orphan, or the relay refuses its tickets until the next pass.
+func TestBeamIssuerSweepSparesAKeyRegisteredMeanwhile(t *testing.T) {
+	fs, rdb := beamIssuerFixture(t)
+	ctx := context.Background()
+	kid := "dddddddddddddddddddddddddddddddd"
+	(&BeamIssuerReconciler{store: registerDuringSweep{fs, rdb, kid}, redis: rdb}).sweepOrphans(ctx)
+	if n, _ := rdb.Exists(ctx, BeamIssuerKeyPrefix+kid).Result(); n != 1 {
+		t.Fatal("the just-registered key's record was swept")
+	}
+}
