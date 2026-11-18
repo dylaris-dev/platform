@@ -1054,6 +1054,9 @@ func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadRe
 	if !utf8.Valid(data) {
 		return &pb.BeamFileContentResp{Success: false, Message: "this file is not UTF-8 text and cannot be edited here; download it instead"}, nil
 	}
+	if err := s.paceDownload(ctx, serverUUID, len(data)); err != nil {
+		return nil, err
+	}
 
 	return &pb.BeamFileContentResp{Success: true, Content: string(data)}, nil
 }
@@ -1063,6 +1066,14 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
+	// Paced like an upload's chunks, and before the writer hold, so a
+	// throttled save does not hold a storage move off while it waits.
+	if err := s.throttle.WaitN(ctx, DirectionUp, len(req.Content)); err != nil {
+		return nil, status.Errorf(codes.Canceled, "throttle: %v", err)
+	}
+	if err := s.dataThrottle.WaitN(ctx, serverUUID, len(req.Content)); err != nil {
+		return nil, status.Errorf(codes.Canceled, "throttle: %v", err)
+	}
 	defer s.storageMgr.holdWriter(serverUUID)()
 	root, name, err := s.jailBeam(req.Path, serverUUID, "write")
 	if err != nil {

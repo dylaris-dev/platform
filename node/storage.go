@@ -404,6 +404,13 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 		}
 	}
 	if found != "" {
+		// Only the key can say which of two copies is live; the first one
+		// scanned was the leftover a move left whenever it sat on an earlier
+		// path, and every lookup during a Redis blip used it (A08).
+		if keyed && copies > 1 {
+			log.Printf("storage: %s has %d copies and no readable storage key, not resolving", serverUUID, copies)
+			return ""
+		}
 		// Written back only when it cannot be a guess: a key naming a path
 		// that is merely not mounted yet, or a second copy a move left, made
 		// the first match the server's storage for good - and the next move

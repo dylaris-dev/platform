@@ -69,6 +69,9 @@ func NewBeamThrottle(ctx context.Context, rdb *redis.Client) *BeamThrottle {
 // 1 Gbit/s down, 100 Mbit/s up) only enforces correctly when each call
 // site selects the right one.
 func (bt *BeamThrottle) WaitN(ctx context.Context, dir Direction, n int) error {
+	if bt == nil {
+		return nil // no throttle wired, as ServerDataThrottle.WaitN
+	}
 	bt.mu.RLock()
 	var lim *rate.Limiter
 	switch dir {
