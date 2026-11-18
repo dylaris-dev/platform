@@ -497,12 +497,11 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	// covers every exit, including the panic paths.
 	saves := pauseSaves(ctx, rdb, dm, cmd.ServerUUID, cmd.SubServer)
 	defer saves.resume()
+	// A stopped server is spooled too: it has no save-off window, but it can be
+	// started mid-run, and an unspooled walk runs at the paced upload speed for
+	// hours, holding the server's interlock and reading a world being written.
 	if saves.send != nil {
 		pacer.savesPaused(time.Now())
-	} else {
-		// A stopped server has no save-off window to shorten.
-		spoolPath = ""
-		releaseSpool(0)
 	}
 	logBackupPace(cmd.RunID, pacer)
 

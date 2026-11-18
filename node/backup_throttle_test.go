@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -665,5 +666,41 @@ func TestRunBackupSpoolReleasesTheServerDuringUpload(t *testing.T) {
 				t.Error("storage-writer hold still in place after the run ended")
 			}
 		})
+	}
+}
+
+// A stopped server has no save-off window, but its tree walk still has to
+// finish at disk speed: unspooled it ran at the paced upload speed for hours,
+// holding the server's interlock, and a start meanwhile archived a world being
+// written with no save-off. Spooled, the interlock is gone before any part.
+func TestRunBackupOfAStoppedServerSpoolsToo(t *testing.T) {
+	spool := t.TempDir()
+	prevDir, prevPause, prevPolicy := globalSpoolDir, pauseSaves, backupPolicyNow.Load()
+	t.Cleanup(func() {
+		globalSpoolDir, pauseSaves = prevDir, prevPause
+		backupPolicyNow.Store(prevPolicy)
+	})
+	globalSpoolDir = spool
+	backupPolicyNow.Store(&backupPolicy{HeadroomPct: i64(30), SpoolEnabled: true, SpoolMaxGB: 1})
+	pauseSaves = func(_ context.Context, _ *redis.Client, _ *DockerManager, uuid, _ string) *worldSaveGuard {
+		return &worldSaveGuard{uuid: uuid} // stopped: nothing to send save-off to
+	}
+
+	core := newFakeCore(t, 1024)
+	var heldDuringUpload atomic.Bool
+	core.bucket.fail = func(int32, string) int {
+		if backupsInFlight.has("server:srv-f3-0001") {
+			heldDuringUpload.Store(true)
+		}
+		return 0
+	}
+	if report := runBackupWithFakeCore(t, core, nil); report["status"] != "success" {
+		t.Fatalf("report = %v, want success", report)
+	}
+	if heldDuringUpload.Load() {
+		t.Fatal("the server interlock was held while parts uploaded: the stopped server's archive was not spooled")
+	}
+	if entries, _ := os.ReadDir(spool); len(entries) != 0 {
+		t.Fatalf("spool left %v behind", entries)
 	}
 }
