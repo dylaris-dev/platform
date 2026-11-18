@@ -628,7 +628,7 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	} else if gErr := h.customDomainGate(r, account, finalDomain, isCustomDomain); gErr != nil {
-		http.Error(w, gErr.Error(), http.StatusForbidden)
+		writeGateRefusal(w, gErr)
 		return
 	}
 
@@ -1104,11 +1104,13 @@ func (h *GatewayHandler) proxyProtocolNoLink(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if !found {
-		httpx.SendJSONErrorCode(w, "This server has no gateway route yet. Add a route first.", "no_routes", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, proxyProtocolNoRoutesText, "no_routes", http.StatusConflict)
 		return true
 	}
 	return false
 }
+
+const proxyProtocolNoRoutesText = "This server has no gateway route yet. Add a route first."
 
 // proxyProtocolNoKit is proxyProtocolNoLink on the managed gateway: every route
 // of the server must sit on a node kit that is online and announced
@@ -1122,7 +1124,7 @@ func (h *GatewayHandler) proxyProtocolNoKit(w http.ResponseWriter, r *http.Reque
 		log.Printf("proxy-protocol: link check: %v", err)
 		httpx.SendJSONErrorCode(w, "Could not check the links of this server's routes. Try again.", "link_check_failed", http.StatusConflict)
 	case routes == 0:
-		httpx.SendJSONErrorCode(w, "This server has no gateway route yet. Add a route first.", "no_routes", http.StatusConflict)
+		httpx.SendJSONErrorCode(w, proxyProtocolNoRoutesText, "no_routes", http.StatusConflict)
 	case gap != "":
 		httpx.SendJSONErrorCode(w, fmt.Sprintf("The link of route %s has not reported that it can pass the player IP. Update the link, then try again.", gap), "link_without_client_addr", http.StatusConflict)
 	default:
@@ -1201,6 +1203,12 @@ func (h *GatewayHandler) SetServerProxyProtocol(w http.ResponseWriter, r *http.R
 		// refusal leaves the switch as it was instead of showing it on while
 		// the outbox retries in vain. Asked once: the write below skips it.
 		if err := rg.SetServerProxyProtocol(srv.UUID, true); err != nil {
+			// The shared mapping reads no_routes as voice chat's refusal.
+			var ae *remotegw.APIError
+			if errors.As(err, &ae) && ae.Code == "no_routes" {
+				gate.WriteGatewayError(w, http.StatusConflict, "no_routes", proxyProtocolNoRoutesText)
+				return
+			}
 			if !gate.GatewayProviderError(w, err) {
 				log.Printf("proxy-protocol: server %d: %v", srv.ID, err)
 				httpx.SendJSONError(w, "Failed to save the setting", http.StatusInternalServerError)

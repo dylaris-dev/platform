@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,7 @@ import (
 type revokeFakeStore struct {
 	warpFakeStore
 	keysByNodeID    map[string]*store.WarpAPIKey
+	keyErr          error // a lookup fault, as a pgbouncer blip gives
 	peersByKey      map[int][]store.WarpPeer
 	revoked         []string
 	deletedRegions  []string
@@ -55,9 +57,12 @@ func (f *revokeFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
 }
 
 func (f *revokeFakeStore) GetWarpAPIKeyByNodeID(nodeID string) (*store.WarpAPIKey, error) {
+	if f.keyErr != nil {
+		return nil, f.keyErr
+	}
 	k, ok := f.keysByNodeID[nodeID]
 	if !ok {
-		return nil, warpErr("not found")
+		return nil, sql.ErrNoRows
 	}
 	return k, nil
 }
@@ -369,6 +374,39 @@ func TestRevokeLinkKitDisconnectsThePeer(t *testing.T) {
 	}
 	if len(fs.revoked) != 1 {
 		t.Errorf("the durable revoke did not run: %v", fs.revoked)
+	}
+}
+
+// Only a key that does not exist is 404. A customer Core reads 404 as "already
+// revoked" and forgets the kit, so a lookup fault must be a retryable 500.
+func TestWarpKeyLookupFaultIsNotNotFound(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"missing", nil, http.StatusNotFound},
+		{"fault", warpErr("conn reset"), http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fs := newRevokeTestHandler(t)
+			fs.settings["feature_byon_enabled"] = "true"
+			fs.keyErr = tc.err
+			rec := httptest.NewRecorder()
+			h.RevokeLinkKit(rec, revokeReq(t, "/api/warp/link-kits/link-gone", "linkID", "link-gone", "owner-1", false))
+			if rec.Code != tc.want {
+				t.Fatalf("revoke: status %d, want %d: %s", rec.Code, tc.want, rec.Body.String())
+			}
+			rec = httptest.NewRecorder()
+			h.RevokeNodeWarpKey(rec, revokeReq(t, "/api/warp/node-keys/node-gone", "nodeID", "node-gone", "owner-1", false))
+			if rec.Code != tc.want {
+				t.Fatalf("node revoke: status %d, want %d: %s", rec.Code, tc.want, rec.Body.String())
+			}
+			if len(fs.revoked) != 0 {
+				t.Errorf("revoked %v", fs.revoked)
+			}
+		})
 	}
 }
 

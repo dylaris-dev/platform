@@ -457,6 +457,26 @@ func TestSetLinkRouteProxyProtocol_RefusedWithoutLinkCap(t *testing.T) {
 	}
 }
 
+// A suspended route has no Redis entry; the switch must say suspended, not
+// "add a route first".
+func TestSetLinkRouteProxyProtocol_SuspendedSaysSo(t *testing.T) {
+	h, fs, rdb := newProxyProtoHandler(t, true)
+	if err := h.d.Gateway.CreateRouteViaLink("owner-1", "play.example.com", "tunnel-1", "127.0.0.1", 25565); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	row := fs.routes["play.example.com"]
+	row.SuspendedAt = &now
+	fs.routes["play.example.com"] = row
+	if err := rdb.Del(context.Background(), "route:play.example.com").Err(); err != nil {
+		t.Fatal(err)
+	}
+	rec := patchLinkRouteProxyProtocol(h, "owner-1", false, "play.example.com", `{"enabled":true}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "route_suspended") {
+		t.Fatalf("status %d body %s, want 409 route_suspended", rec.Code, rec.Body.String())
+	}
+}
+
 // Auto never refuses and makes the applied state safe at once: forwarding the
 // server has not shown it expects is switched off on the spot.
 func TestSetServerProxyProtocol_AutoSwitchesOffWhatTheServerDidNotConfirm(t *testing.T) {

@@ -358,6 +358,20 @@ func TestCreateLinkRoute_NonOwnedLinkRejected(t *testing.T) {
 	}
 }
 
+// A failed read of the caller's links is our fault: a 400 made a retrying
+// client file it as a refusal of its input.
+func TestCreateLinkRoute_LinkReadFaultIsRetryable(t *testing.T) {
+	fs := baseLinkRouteStore()
+	fs.warpKeysErr = errors.New("conn reset")
+	gw := &linkRouteFakeGateway{}
+	h := newLinkRouteHandler(fs, gw, newLinkRouteRedis(t))
+	rec := httptest.NewRecorder()
+	h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, baseLinkRouteBody()))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestCreateLinkRoute_EmptyLinkIDRejected(t *testing.T) {
 	fs := baseLinkRouteStore()
 	gw := &linkRouteFakeGateway{}

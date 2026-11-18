@@ -516,6 +516,27 @@ func roundUpMinutes(d time.Duration) string {
 // per-account custom domain allowance the docs state.
 const maxClaimsPerUser = 50
 
+// claimBoundFor is how many claims userID may hold, or unbounded. A scoped cap
+// above maxClaimsPerUser would otherwise be unreachable (the claim must exist
+// before a route on it can), and an account set to no cap is not bounded by
+// the constant either.
+func claimBoundFor(st store.Store, userID string) (limit int64, unbounded bool, err error) {
+	limit = maxClaimsPerUser
+	scopedCap, scoped, err := customDomainCapFor(st, userID)
+	if err != nil {
+		return 0, false, err
+	}
+	if scoped {
+		if scopedCap == nil {
+			return 0, true, nil
+		}
+		if *scopedCap > limit {
+			limit = *scopedCap
+		}
+	}
+	return limit, false, nil
+}
+
 // Add POST /api/gateway/custom-domains - body {"domain": "play.example.com"}.
 //
 // The first step for a domain of the customer's own: it records the claim
@@ -597,22 +618,10 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 	for _, c := range claims {
 		known = known || c.Domain == domain
 	}
-	// A scoped cap above the claim bound would otherwise be unreachable (the
-	// claim must exist before a route on it can), and an account set to no cap
-	// is not bounded by the constant either.
-	claimCap := int64(maxClaimsPerUser)
-	unboundedClaims := false
-	scopedCap, scoped, err := customDomainCapFor(h.d.Store, userID)
+	claimCap, unboundedClaims, err := claimBoundFor(h.d.Store, userID)
 	if err != nil {
 		httpx.SendJSONError(w, "Could not check your allowance", http.StatusInternalServerError)
 		return
-	}
-	if scoped {
-		if scopedCap == nil {
-			unboundedClaims = true
-		} else if *scopedCap > claimCap {
-			claimCap = *scopedCap
-		}
 	}
 	if !known && !unboundedClaims && int64(len(claims)) >= claimCap {
 		httpx.SendJSONErrorCode(w, fmt.Sprintf("You can add up to %d domains.", claimCap), "too_many_domains", http.StatusConflict)

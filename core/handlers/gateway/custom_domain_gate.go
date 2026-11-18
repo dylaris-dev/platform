@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dylaris-core/handlers/gate"
+	"dylaris-core/handlers/httpx"
 	"dylaris-core/handlers/reqctx"
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -52,7 +53,7 @@ func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string
 	if err != nil && err != store.ErrNoClaim {
 		// Fail CLOSED. Not knowing whether this user is blocked is not a reason
 		// to assume they are not.
-		return fmt.Errorf("could not check the ownership status of %s", domain)
+		return gateFault(fmt.Sprintf("Could not check the ownership status of %s. Try again.", domain))
 	}
 	if claim != nil && claim.State == store.ClaimPermablocked {
 		return fmt.Errorf("%s is blocked for your account after %d failed ownership checks. "+
@@ -63,9 +64,28 @@ func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string
 		return nil
 	}
 
+	if claim == nil {
+		// A refused create leaves this claim behind, and the verifier checks
+		// every pending one each pass: without Add's bound, a new name per
+		// request piled up claims without end.
+		limit, unbounded, err := claimBoundFor(h.d.Store, userID)
+		if err != nil {
+			return gateFault("Could not check your allowance. Try again.")
+		}
+		if !unbounded {
+			claims, err := h.d.Store.ListCustomDomainClaimsByUser(userID)
+			if err != nil {
+				return gateFault("Could not load your custom domains. Try again.")
+			}
+			if int64(len(claims)) >= limit {
+				return &gateError{status: http.StatusConflict, code: "too_many_domains",
+					msg: fmt.Sprintf("You can add up to %d domains.", limit)}
+			}
+		}
+	}
 	claim, err = h.d.Store.RequestCustomDomainClaim(userID, domain)
 	if err != nil || claim == nil {
-		return fmt.Errorf("could not start the ownership check for %s", domain)
+		return gateFault(fmt.Sprintf("Could not start the ownership check for %s. Try again.", domain))
 	}
 	if claim.TXTToken == "" {
 		token, terr := services.NewTXTToken()
@@ -74,7 +94,7 @@ func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string
 		}
 		if terr != nil {
 			log.Printf("custom-domain: could not mint the token for %s (user %s): %v", domain, userID, terr)
-			return fmt.Errorf("could not start the ownership check for %s", domain)
+			return gateFault(fmt.Sprintf("Could not start the ownership check for %s. Try again.", domain))
 		}
 		claim.TXTToken = token
 	}
@@ -86,11 +106,39 @@ func (h *GatewayHandler) customDomainGate(r *http.Request, userID, domain string
 	defer cancel()
 	if services.CheckTXTToken(ctx, res, domain, claim.TXTToken) {
 		if err := h.d.Store.MarkCustomDomainVerified(claim.ID); err != nil {
-			return fmt.Errorf("could not record the ownership of %s", domain)
+			return gateFault(fmt.Sprintf("Could not record the ownership of %s. Try again.", domain))
 		}
 		return nil
 	}
 	return errors.New(customDomainProveFirst(services.TXTVerifyPrefix+domain, claim.TXTToken))
+}
+
+// gateError is a customDomainGate answer that is not a plain 403 refusal.
+type gateError struct {
+	status int
+	code   string
+	msg    string
+}
+
+func (e *gateError) Error() string { return e.msg }
+
+// gateFault is our store failing: a 500, so a client retries it with backoff
+// instead of filing a few seconds of database trouble as a refusal.
+func gateFault(msg string) error {
+	return &gateError{status: http.StatusInternalServerError, msg: msg}
+}
+
+// writeGateRefusal answers a customDomainGate error.
+func writeGateRefusal(w http.ResponseWriter, err error) {
+	var ge *gateError
+	switch {
+	case !errors.As(err, &ge):
+		http.Error(w, err.Error(), http.StatusForbidden)
+	case ge.code != "":
+		httpx.SendJSONErrorCode(w, ge.msg, ge.code, ge.status)
+	default:
+		http.Error(w, ge.msg, ge.status)
+	}
 }
 
 // remoteOwnDomainGate is customDomainGate on the managed gateway, for a route

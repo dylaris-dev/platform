@@ -140,7 +140,7 @@ func (f *extStore) GetWarpAPIKeyByNodeID(nodeID string) (*store.WarpAPIKey, erro
 			return &k, nil
 		}
 	}
-	return nil, errors.New("not found")
+	return nil, sql.ErrNoRows
 }
 
 func (f *extStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) { return f.routes, nil }

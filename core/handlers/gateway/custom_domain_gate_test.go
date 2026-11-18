@@ -2,12 +2,15 @@ package gateway
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/store"
 )
@@ -67,6 +70,16 @@ type claimFakeStore struct {
 	tokens    []string
 	requested []string
 	verified  int
+	held      int   // claims the account already holds on other domains
+	getErr    error // GetCustomDomainClaim fault
+}
+
+func (f *claimFakeStore) GetGatewayCustomDomainLimit(string) (*models.GatewayCustomDomainLimit, error) {
+	return nil, sql.ErrNoRows
+}
+
+func (f *claimFakeStore) ListCustomDomainClaimsByUser(string) ([]store.CustomDomainClaim, error) {
+	return make([]store.CustomDomainClaim, f.held), nil
 }
 
 func (f *claimFakeStore) SetCustomDomainTXTToken(_ int, token string) error {
@@ -77,6 +90,9 @@ func (f *claimFakeStore) SetCustomDomainTXTToken(_ int, token string) error {
 func (f *claimFakeStore) GetSetting(key string) (string, error) { return f.settings[key], nil }
 
 func (f *claimFakeStore) GetCustomDomainClaim(_, _ string) (*store.CustomDomainClaim, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
 	if f.claim == nil {
 		return nil, store.ErrNoClaim
 	}
@@ -210,3 +226,43 @@ func TestCustomDomainGateDoesNotArmTheClaim(t *testing.T) {
 type noTXT struct{ services.DomainResolver }
 
 func (noTXT) LookupTXT(context.Context, string) ([]string, error) { return nil, nil }
+
+// Route create started a claim for every refused request, past the bound Add
+// keeps, and a store fault was answered as a 403 refusal a client does not
+// retry.
+func TestCustomDomainGateBoundsClaimsAndRetriesFaults(t *testing.T) {
+	cases := []struct {
+		name       string
+		fs         *claimFakeStore
+		wantStatus int
+		wantCode   string
+		wantClaim  bool
+	}{
+		{"a new domain at the claim bound is refused", &claimFakeStore{held: maxClaimsPerUser}, http.StatusConflict, "too_many_domains", false},
+		{"a new domain under the bound gets its claim", &claimFakeStore{held: maxClaimsPerUser - 1}, http.StatusForbidden, "", true},
+		{"a domain already claimed is not counted again", &claimFakeStore{held: maxClaimsPerUser,
+			claim: &store.CustomDomainClaim{ID: 7, Domain: "mc.example.com", State: store.ClaimPending, TXTToken: "t"}}, http.StatusForbidden, "", false},
+		{"a store fault is ours, not a refusal", &claimFakeStore{getErr: errors.New("conn reset")}, http.StatusInternalServerError, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := claimHandler(tc.fs)
+			h.txtResolver = noTXT{}
+			err := h.customDomainGate(userRequest(), "u1", "mc.example.com", true)
+			if err == nil {
+				t.Fatal("an unproven domain was let through")
+			}
+			w := httptest.NewRecorder()
+			writeGateRefusal(w, err)
+			if w.Code != tc.wantStatus {
+				t.Errorf("status %d, want %d (%s)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if tc.wantCode != "" && !strings.Contains(w.Body.String(), tc.wantCode) {
+				t.Errorf("body %q lacks code %s", w.Body.String(), tc.wantCode)
+			}
+			if got := len(tc.fs.requested) == 1; got != tc.wantClaim {
+				t.Errorf("claim started = %v, want %v", got, tc.wantClaim)
+			}
+		})
+	}
+}

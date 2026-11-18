@@ -397,6 +397,13 @@ func TestRemoteProxyProtocolRefusalReachesTheOwner(t *testing.T) {
 		t.Fatalf("refusal left state: flag %v, mode %q, outbox %v, row %+v", fs.servers[7].ProxyProtocol, fs.modes[7], fs.outbox, fs.routes["a.example.com"])
 	}
 
+	// The provider's no_routes here is about the route, not voice chat.
+	fake.FailNext(1, http.StatusConflict, "no_routes", 0)
+	rec = serveVars(h.SetServerProxyProtocol, http.MethodPatch, "/", `{"mode":"on"}`, map[string]string{"id": "7"})
+	if rec.Code != http.StatusConflict || decodeCode(t, rec) != "no_routes" || strings.Contains(rec.Body.String(), "Voice") {
+		t.Fatalf("no_routes: %d %s", rec.Code, rec.Body)
+	}
+
 	// Accepted: applied at once, stored, nothing queued, the provider asked once.
 	before := countCalls(fake.Calls(), "PATCH ")
 	rec = serveVars(h.SetServerProxyProtocol, http.MethodPatch, "/", `{"mode":"on"}`, map[string]string{"id": "7"})

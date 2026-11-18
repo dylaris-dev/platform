@@ -1056,9 +1056,8 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Invalid link id", http.StatusBadRequest)
 		return
 	}
-	key, err := h.d.Store.GetWarpAPIKeyByNodeID(linkID)
-	if err != nil {
-		httpx.SendJSONError(w, "Link not found", http.StatusNotFound)
+	key, ok := h.warpKeyOrFail(w, linkID, "Link not found")
+	if !ok {
 		return
 	}
 	if key.OwnerID != userID && (!isAdmin || access.KitOwnedByOther(h.d.FeatureFlags, key.OwnerID, userID)) {
@@ -1072,6 +1071,23 @@ func (h *WarpHandler) RevokeLinkKit(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+}
+
+// warpKeyOrFail loads the key behind id, answering 404 only for a key that
+// does not exist. Any other error is a 500: a customer Core reads 404 as
+// "already revoked" and forgets a kit that stays live here.
+func (h *WarpHandler) warpKeyOrFail(w http.ResponseWriter, id, notFound string) (*store.WarpAPIKey, bool) {
+	key, err := h.d.Store.GetWarpAPIKeyByNodeID(id)
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.SendJSONError(w, notFound, http.StatusNotFound)
+		return nil, false
+	}
+	if err != nil {
+		log.Printf("warp key %s: lookup: %v", id, err)
+		httpx.SendJSONError(w, "Could not load the key. Try again.", http.StatusInternalServerError)
+		return nil, false
+	}
+	return key, true
 }
 
 // RevokeRetiredKit is the owner's kit revoke for the retirement tick
@@ -1145,9 +1161,8 @@ func (h *WarpHandler) rollWarpKeySecret(w http.ResponseWriter, r *http.Request, 
 		httpx.SendJSONError(w, "Invalid id", http.StatusBadRequest)
 		return "", false
 	}
-	key, err := h.d.Store.GetWarpAPIKeyByNodeID(id)
-	if err != nil {
-		httpx.SendJSONError(w, notFound, http.StatusNotFound)
+	key, ok := h.warpKeyOrFail(w, id, notFound)
+	if !ok {
 		return "", false
 	}
 	// Same message for "not yours" as for "does not exist", so a reply cannot
@@ -1704,9 +1719,8 @@ func (h *WarpHandler) RevokeNodeWarpKey(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Invalid node key id", http.StatusBadRequest)
 		return
 	}
-	key, err := h.d.Store.GetWarpAPIKeyByNodeID(nodeID)
-	if err != nil {
-		httpx.SendJSONError(w, "Node key not found", http.StatusNotFound)
+	key, ok := h.warpKeyOrFail(w, nodeID, "Node key not found")
+	if !ok {
 		return
 	}
 	// Same message for "not yours" as for "does not exist": a different one would

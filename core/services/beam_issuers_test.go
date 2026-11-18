@@ -165,6 +165,33 @@ func TestPublishBeamIssuersListsOnlyOwnKits(t *testing.T) {
 	}
 }
 
+// revokeDuringPublish revokes A1 (row and record, as RevokeBeamKey does) while
+// the publish reads billing, after it has listed the keys.
+type revokeDuringPublish struct {
+	*beamIssuerFakeStore
+	rdb *redis.Client
+}
+
+func (f revokeDuringPublish) GetUserBilling(owner string) (*store.UserBilling, error) {
+	now := time.Now()
+	f.keys[0].RevokedAt = &now
+	f.rdb.Del(context.Background(), BeamIssuerKeyPrefix+f.keys[0].ID)
+	return f.beamIssuerFakeStore.GetUserBilling(owner)
+}
+
+// A publish that listed the keys before a revoke committed must not write the
+// revoked key's record back: the relay would admit its tickets until the next
+// reconcile.
+func TestPublishBeamIssuersDoesNotUndoARacingRevoke(t *testing.T) {
+	fs, rdb := beamIssuerFixture(t)
+	if err := PublishBeamIssuers(context.Background(), revokeDuringPublish{fs, rdb}, rdb, time.Hour, "owner-a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := readIssuer(t, rdb, beamKidA1); ok {
+		t.Fatal("the revoked key's record was written back")
+	}
+}
+
 // Every way an owner stops being admitted deletes the records; inside the
 // payment grace they stay, as routeOnlyKey keeps the link up.
 func TestPublishDeletesOnSuspendAndNoManagedProduct(t *testing.T) {

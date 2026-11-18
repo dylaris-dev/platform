@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -66,7 +67,7 @@ func (f *nodeLinkFakeStore) GetWarpAPIKeyByNodeID(id string) (*store.WarpAPIKey,
 		cp := *k
 		return &cp, nil
 	}
-	return nil, warpErr("not found")
+	return nil, sql.ErrNoRows
 }
 func (f *nodeLinkFakeStore) ListWarpAPIKeysByOwner(owner string) ([]store.WarpAPIKey, error) {
 	var out []store.WarpAPIKey

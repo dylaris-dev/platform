@@ -140,6 +140,7 @@ func PublishBeamIssuers(ctx context.Context, st store.Store, rdb *redis.Client, 
 	}
 
 	pipe := rdb.TxPipeline()
+	var written []string
 	for _, k := range keys {
 		if !ValidBeamKid(k.ID) {
 			continue // never minted by us; nothing of ours to write or delete
@@ -154,9 +155,35 @@ func PublishBeamIssuers(ctx context.Context, st store.Store, rdb *redis.Client, 
 			return fmt.Errorf("marshal issuer %s: %w", k.ID, err)
 		}
 		pipe.Set(ctx, rkey, data, 0)
+		written = append(written, k.ID)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("write beam issuer records: %w", err)
+	}
+	// A revoke that committed after the list above has already deleted its
+	// record, and the SET may have put it back. Re-read after the write, as
+	// LinkHeartbeat does: a revoke after this read deletes after our SET.
+	if len(written) == 0 {
+		return nil
+	}
+	fresh, err := st.ListBeamIssuerKeysByOwner(ownerID)
+	if err != nil {
+		return fmt.Errorf("re-check beam issuer keys: %w", err)
+	}
+	live := make(map[string]bool, len(fresh))
+	for _, k := range fresh {
+		live[k.ID] = k.RevokedAt == nil
+	}
+	var stale []string
+	for _, id := range written {
+		if !live[id] {
+			stale = append(stale, BeamIssuerKeyPrefix+id)
+		}
+	}
+	if len(stale) > 0 {
+		if err := rdb.Del(ctx, stale...).Err(); err != nil {
+			return fmt.Errorf("delete revoked beam issuer records: %w", err)
+		}
 	}
 	return nil
 }

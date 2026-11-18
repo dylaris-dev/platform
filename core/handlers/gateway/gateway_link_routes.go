@@ -201,7 +201,7 @@ func (h *GatewayHandler) resolveOwnedLinkToken(userID, linkID string) (string, e
 	}
 	kits, err := h.d.Store.ListWarpAPIKeysByOwner(userID)
 	if err != nil {
-		return "", fmt.Errorf("failed to load your links")
+		return "", errLinksUnreadable
 	}
 	for _, k := range kits {
 		if k.NodeID == linkID {
@@ -220,6 +220,10 @@ func (h *GatewayHandler) resolveOwnedLinkToken(userID, linkID string) (string, e
 const kitRetiringMessage = "This link is retiring: it accepts no new routes or features and is revoked at its retire time. Use another link."
 
 var errKitRetiring = errors.New(kitRetiringMessage)
+
+// errLinksUnreadable is a store fault, answered 500 so a client retries it
+// rather than reading it as a refusal of its input.
+var errLinksUnreadable = errors.New("failed to load your links")
 
 // linkTokenRetiring reports whether token belongs to one of owner's retiring
 // kits. A failed read answers false: the worst that lets through is a feature
@@ -281,6 +285,10 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	linkToken, err := h.resolveOwnedLinkToken(userID, req.LinkID)
 	if errors.Is(err, errKitRetiring) {
 		httpx.SendJSONErrorCode(w, kitRetiringMessage, "kit_retiring", http.StatusConflict)
+		return
+	}
+	if errors.Is(err, errLinksUnreadable) {
+		http.Error(w, "Failed to load your links. Try again.", http.StatusInternalServerError)
 		return
 	}
 	if err != nil {
@@ -347,7 +355,7 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 
 	// Ownership proof for a domain the tenant brought themselves. Admins skip it.
 	if gErr := h.customDomainGate(r, userID, finalDomain, isCustomDomain); gErr != nil {
-		http.Error(w, gErr.Error(), http.StatusForbidden)
+		writeGateRefusal(w, gErr)
 		return
 	}
 	if strings.HasPrefix(finalDomain, "*.") {
@@ -615,6 +623,19 @@ func (h *GatewayHandler) SetLinkRouteProxyProtocol(w http.ResponseWriter, r *htt
 	}
 	if h.proxyProtocolOff(w, r, enabled) {
 		return
+	}
+	if enabled {
+		// A suspended route has no Redis entry, which the link check below
+		// would answer as "add a route first".
+		row, err := h.coreRoute(domain)
+		if err != nil {
+			routeLookupFailed(w, domain, err)
+			return
+		}
+		if row != nil && row.SuspendedAt != nil {
+			httpx.SendJSONErrorCode(w, services.ErrRouteSuspended.Error(), "route_suspended", http.StatusConflict)
+			return
+		}
 	}
 	if enabled && h.proxyProtocolNoLink(w, r, func(rt services.GatewayRoute) bool { return rt.Domain == domain }) {
 		return
