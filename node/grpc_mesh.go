@@ -54,7 +54,20 @@ type coreConnection struct {
 // send serializes all writes to this Core stream. gRPC streams are not safe
 // for concurrent Send; the WS bridge introduced the first background sender.
 func (cc *coreConnection) send(msg *pb.NodeMessage) error {
-	msg = boundForCore(msg)
+	bounded := boundForCore(msg)
+	if err := cc.sendBounded(bounded); err != nil || bounded == msg {
+		return err
+	}
+	// Core ended the request on the substituted error; a streaming sender
+	// that went on would push its body into a request nobody reads.
+	return errReplyReplaced
+}
+
+// errReplyReplaced: the message was over Core's limit and an error for its
+// request went out instead.
+var errReplyReplaced = errors.New("the reply was over Core's message limit and replaced by an error")
+
+func (cc *coreConnection) sendBounded(msg *pb.NodeMessage) error {
 	// Before the lock: a transfer waiting for its reader must not hold up
 	// anyone else's messages.
 	if err := cc.awaitCredit(msg); err != nil {
@@ -130,7 +143,11 @@ func (pw *pendingWrite) release(written int64) {
 // and this runs on the read loop for every file of a folder upload.
 func uploadBudget(rdb *redis.Client, dir, uuid string, size int64) (*writeBudget, bool) {
 	b := nodeWriteBudget(dir)
-	if total, limit := serverDiskGauge(context.Background(), rdb, uuid); limit > 0 {
+	// Bounded like noteDiskWrite: on the read loop, a hung Redis would hold
+	// every flow credit and WsFrame from this Core for the client's retries.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if total, limit := serverDiskGauge(ctx, rdb, uuid); limit > 0 {
 		// gauged: release would remeasure the server by walking it, and
 		// commitUpload's noteDiskWrite already moved the gauge.
 		b.gauged = true
