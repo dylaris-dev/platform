@@ -26,3 +26,33 @@ func TestBeamListingAMissingFolder(t *testing.T) {
 		t.Fatalf("existing folder: %v", err)
 	}
 }
+
+// Beam's listing hides exactly what isProtectedFile hides. It kept its own
+// hand-written list, which missed the Technic staging directories: Beam listed
+// them and then answered "not found" when one was opened.
+func TestBeamListingHidesProtectedEntries(t *testing.T) {
+	bs, uuid, ctx := newTestBeamServer(t)
+	root := bs.storageMgr.GetServerDir(uuid)
+	for _, name := range []string{".technic-stage-1", ".technic-dl-1", ".pending-delete-1", renameStagePrefix + "1", ".dylaris-backups", "world"} {
+		if err := os.MkdirAll(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{".dylaris.json", ".active_server", ".node_config.json", netGateFile, "server.properties"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp, err := bs.ListFiles(ctx, &pb.BeamFileListReq{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range resp.GetFiles() {
+		if isProtectedFile(f.GetName()) {
+			t.Errorf("listed protected entry %q", f.GetName())
+		}
+	}
+	if n := len(resp.GetFiles()); n != 2 {
+		t.Errorf("listed %d entries, want world and server.properties", n)
+	}
+}

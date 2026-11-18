@@ -1014,14 +1014,8 @@ func (s *beamServer) ListFiles(ctx context.Context, req *pb.BeamFileListReq) (*p
 
 	var files []*pb.BeamFileInfo
 	for _, e := range entries {
-		// Hidden platform-managed entries - keep them out of the file
-		// browser entirely. .dylaris-backups is the node-local backup
-		// store; .dylaris.json holds platform metadata; .pending-delete-*
-		// are rename tombstones from sub-server cleanup.
-		if e.Name() == ".active_server" || e.Name() == ".dylaris-backups" || e.Name() == ".dylaris.json" || e.Name() == ".node_config.json" || e.Name() == netGateFile {
-			continue
-		}
-		if strings.HasPrefix(e.Name(), ".pending-delete-") || strings.HasPrefix(e.Name(), renameStagePrefix) {
+		// Platform-managed entries, by the same rule the panel and SFTP use.
+		if isProtectedFile(e.Name()) {
 			continue
 		}
 		info, err := e.Info()

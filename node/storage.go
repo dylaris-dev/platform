@@ -272,13 +272,22 @@ func identityDirUnmounted(pathsCSV string) bool {
 	// to stop a fresh enrolment. Markers written by 2026.11.17.2 and 2026.11.18
 	// (gen-less, or gens without #kept lines) leave a healthy first path reading
 	// as stale, and a node that ran fine on them must not crash-loop on upgrade.
-	for _, f := range []string{".node_id", ".node_secret", nodeKeyFileName, redisAddrFileName} {
-		if _, err := os.Lstat(filepath.Join(p, f)); err == nil {
-			return false
-		}
+	if holdsNodeIdentity(p) {
+		return false
 	}
 	known, marked, _, _ := readStorageMarkers(paths)
 	return !marked[p] && known[p] && dirHoldsNothing(p)
+}
+
+// holdsNodeIdentity reports whether dir carries any of the node's identity
+// files, which proves the disk is the one this node runs from.
+func holdsNodeIdentity(dir string) bool {
+	for _, f := range []string{".node_id", ".node_secret", nodeKeyFileName, redisAddrFileName} {
+		if _, err := os.Lstat(filepath.Join(dir, f)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // dropUnmountedPaths leaves out a path another marker lists, that has no
@@ -293,7 +302,9 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 	known, marked, lastKept, maxGen := readStorageMarkers(paths)
 	var kept []string
 	for _, p := range paths {
-		if !marked[p] && known[p] && dirHoldsNothing(p) {
+		// The identity exception matches identityDirUnmounted: a path the node
+		// booted from is kept, and keeping it rewrites its stale marker.
+		if !marked[p] && known[p] && dirHoldsNothing(p) && !holdsNodeIdentity(p) {
 			log.Printf("storage: [warn] %s was a storage path of this node and is now empty without a current %s marker, so its disk is most likely not mounted; skipping. If it is a new empty disk, replace %s with an empty file to use it", p, storageMarkerName, filepath.Join(p, storageMarkerName))
 			sm.skipPath(p)
 			continue

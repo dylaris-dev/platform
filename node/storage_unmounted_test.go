@@ -323,6 +323,14 @@ func TestIdentityDirUnmountedBootsAnExistingIdentity(t *testing.T) {
 				if got := identityDirUnmounted(disk1 + "," + disk2); got != want {
 					t.Fatalf("identityDirUnmounted = %v, want %v", got, want)
 				}
+				// The StorageManager must answer as the boot did, and heal the
+				// marker so the next boot no longer reads the path as stale.
+				for boot := 1; boot <= 2; boot++ {
+					sm := NewStorageManager(disk1+","+disk2, nil)
+					if kept := len(sm.Paths()) == 2; kept == want {
+						t.Fatalf("boot %d: kept %v, want first path kept=%v (paths %v)", boot, sm.Paths(), !want, sm.Paths())
+					}
+				}
 			})
 		}
 	}
