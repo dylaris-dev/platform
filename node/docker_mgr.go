@@ -1310,6 +1310,7 @@ func (dm *DockerManager) PowerAction(uuid string, action string) error {
 		if dm.floodgateRDB != nil {
 			provisionFloodgateKey(dm.ctx, dm.floodgateRDB, dm.resolveLocalServerPath(uuid), uuid, activeSub)
 		}
+		startingDuringBackup(uuid, activeSub)
 		dm.closeNetGate(uuid)
 		err := dm.cli.ContainerStart(dm.ctx, ref, container.StartOptions{})
 		if err != nil && strings.Contains(err.Error(), "already exists") {
@@ -1565,6 +1566,7 @@ func (dm *DockerManager) startMinecraftContainer(config ServerConfig, netID, net
 		if dm.floodgateRDB != nil {
 			provisionFloodgateKey(dm.ctx, dm.floodgateRDB, localServerPath, config.UUID, config.ActiveSubServer)
 		}
+		startingDuringBackup(config.UUID, config.ActiveSubServer)
 		dm.closeNetGate(config.UUID)
 		err := dm.cli.ContainerStart(dm.ctx, resp.ID, container.StartOptions{})
 		if err != nil && gameOnly != nil {

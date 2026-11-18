@@ -204,8 +204,24 @@ func runRestoreCleanup(sm *StorageManager) {
 					// config only here. Carry what the root lacks; whatever
 					// still cannot go is never deleted on the TTL.
 					if !restoreServersInFlight.has(filepath.Base(target)) && !sharedWithAnotherNode(root) {
+						// The stash is named at the swap. A node file in the root
+						// written before it is the archive's, which the tenant may
+						// have written, and gives way to the live one, as
+						// carryArchivesAcrossSwap does; one written after it is the
+						// node's own and stays. A name that does not parse replaces
+						// nothing.
+						swapAt, perr := time.Parse("20060102-150405", strings.TrimPrefix(m, ".pre-restore-"))
 						for _, name := range nodeOwnedRootEntries {
-							moveMissing(filepath.Join(path, name), filepath.Join(target, name))
+							src, dst := filepath.Join(path, name), filepath.Join(target, name)
+							st, serr := os.Lstat(src)
+							dt, derr := os.Lstat(dst)
+							if perr == nil && serr == nil && derr == nil && st.Mode().IsRegular() && dt.Mode().IsRegular() && dt.ModTime().Before(swapAt.Add(time.Second)) {
+								if err := os.Rename(src, dst); err == nil {
+									log.Printf("restore-cleanup: put the live %s back over the archive's after an interrupted restore", dst)
+								}
+								continue
+							}
+							moveMissing(src, dst)
 						}
 					}
 					if age.Before(cutoff) && slices.ContainsFunc(nodeOwnedRootEntries, func(name string) bool { return holdsFile(filepath.Join(path, name)) }) {

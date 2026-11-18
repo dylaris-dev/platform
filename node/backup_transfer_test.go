@@ -115,6 +115,8 @@ type fakeTransferCore struct {
 
 	// sm is the storage manager runBackupWithFakeCore hands RunBackup.
 	sm *StorageManager
+	// rdb is the Redis it hands RunBackup.
+	rdb *redis.Client
 }
 
 func (c *fakeTransferCore) api() multipartAPI {
@@ -372,6 +374,7 @@ func runBackupWithFakeCore(t *testing.T, core *fakeTransferCore, include []strin
 	}
 
 	core.sm = &StorageManager{paths: []string{root}}
+	core.rdb = rdb
 	RunBackup(context.Background(), rdb, core.sm, nil, BackupRunCommand{
 		RunID: 77, JobID: 1, ServerUUID: uuid, IncludePatterns: include,
 		StorageKey: "backups/srv-f3/job-1/x.tar.gz",
