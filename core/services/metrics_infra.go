@@ -318,10 +318,8 @@ func (c *MetricsCollector) samplePresence(ctx context.Context, now time.Time) {
 	}
 	c.obs("platform.concurrent_users", "", "", float64(users), now)
 
-	// Streams and replicas. More streams than users is normal (tabs); fewer
-	// replicas than expected is the interesting one, because it means a Core is
-	// not serving.
-	streams, replicas := 0.0, 0
+	// Streams. More streams than users is normal (tabs).
+	streams, streamKeys := 0.0, 0
 	cursor = 0
 	for {
 		batch, next, err := c.redis.Scan(ctx, cursor, "dylaris:presence:streams:*", 200).Result()
@@ -329,7 +327,7 @@ func (c *MetricsCollector) samplePresence(ctx context.Context, now time.Time) {
 			break
 		}
 		for _, k := range batch {
-			replicas++
+			streamKeys++
 			if v, err := c.redis.Get(ctx, k).Float64(); err == nil {
 				streams += v
 			}
@@ -339,8 +337,24 @@ func (c *MetricsCollector) samplePresence(ctx context.Context, now time.Time) {
 		}
 		cursor = next
 	}
-	if replicas > 0 {
+	if streamKeys > 0 {
 		c.obs("platform.panel_streams", "", "", streams, now)
+	}
+
+	// Replicas: fewer than expected means a Core is not serving. Counted from
+	// the heartbeat every Core writes, not from the stream keys, which exist
+	// only on a replica that currently holds a panel stream.
+	replicas := 0
+	ids, err := c.redis.SMembers(ctx, CoreIndexKey).Result()
+	if err != nil {
+		return
+	}
+	for _, id := range ids {
+		if n, err := c.redis.Exists(ctx, "dylaris:core:"+id).Result(); err == nil && n > 0 {
+			replicas++
+		}
+	}
+	if replicas > 0 {
 		c.obs("platform.core_replicas", "", "", float64(replicas), now)
 	}
 }

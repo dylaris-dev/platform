@@ -3,7 +3,9 @@ package services
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -120,8 +122,19 @@ func (t MetricsDBTarget) DSN() string {
 // this, and nothing is recorded. That is the same shape as every other unset
 // setting here.
 func LoadMetricsDBTarget(st store.Store) MetricsDBTarget {
+	t, _ := loadMetricsDBTarget(st)
+	return t
+}
+
+// loadMetricsDBTarget is LoadMetricsDBTarget that also says when a read FAILED,
+// as opposed to finding nothing stored.
+func loadMetricsDBTarget(st store.Store) (MetricsDBTarget, error) {
+	var firstErr error
 	get := func(k string) string {
-		v, _ := st.GetSetting(k)
+		v, err := st.GetSetting(k)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrSettingNull) && firstErr == nil {
+			firstErr = fmt.Errorf("read %s: %w", k, err)
+		}
 		return v
 	}
 	return MetricsDBTarget{
@@ -131,7 +144,51 @@ func LoadMetricsDBTarget(st store.Store) MetricsDBTarget {
 		User:     get(MetricsDBUserSetting),
 		Password: get(MetricsDBPasswordSetting),
 		SSLMode:  get(MetricsDBSSLModeSetting),
-	}.Normalize()
+	}.Normalize(), firstErr
+}
+
+// metricsDBFollowInterval is how long a replica may keep recording into a
+// target an admin has since replaced.
+const metricsDBFollowInterval = 15 * time.Second
+
+// FollowMetricsDBTarget keeps this replica's metrics manager on the stored
+// target until ctx ends.
+//
+// The settings screen applies a change only on the replica that served the
+// request, and sampling is leader-gated: a save that landed on a follower left
+// the leader recording into the old database until it restarted. Each replica
+// re-reads the row instead; apply is a no-op while the target is unchanged.
+func FollowMetricsDBTarget(ctx context.Context, st store.Store, apply func(dsn string) error) {
+	t := time.NewTicker(metricsDBFollowInterval)
+	defer t.Stop()
+	lastErr := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			msg := ""
+			if err := syncMetricsDBTarget(st, apply); err != nil {
+				msg = err.Error()
+			}
+			// One line when it starts failing or the reason changes, not one
+			// per tick.
+			if msg != "" && msg != lastErr {
+				log.Printf("metrics: could not follow the stored statistics database: %s", msg)
+			}
+			lastErr = msg
+		}
+	}
+}
+
+// syncMetricsDBTarget applies the stored target once. A failed settings read
+// applies nothing: read as "not configured" it would switch recording off.
+func syncMetricsDBTarget(st store.Store, apply func(dsn string) error) error {
+	t, err := loadMetricsDBTarget(st)
+	if err != nil {
+		return err
+	}
+	return apply(t.DSN())
 }
 
 // SaveMetricsDBTarget persists it. The password is written like any other field

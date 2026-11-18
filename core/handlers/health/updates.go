@@ -473,7 +473,9 @@ func (h *UpdatesHandler) notes(ctx context.Context, feed string) []release.Relea
 	}
 	h.cacheMu.Unlock()
 
-	rs, err := fetchNotes(ctx, url)
+	// Detached from the request: the result is cached for every caller, so one
+	// aborted request must not cache the embedded fallback for notesTTL.
+	rs, err := fetchNotes(context.WithoutCancel(ctx), url)
 	if err != nil {
 		log.Printf("updates: %s notes unreachable, using the embedded copy: %v", feed, err)
 		rs = embedded

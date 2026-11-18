@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"dylaris-core/metrics"
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -646,5 +647,60 @@ func TestNodeLoadComesFromTheHeartbeatNotTheRow(t *testing.T) {
 	}
 	if !sawUp {
 		t.Error("a node with no heartbeat lost its availability series too")
+	}
+}
+
+// A replica that loses the lease and regains it later, or a recording switched
+// off and on again, must not record the whole gap as one window: its baselines
+// are from before the gap.
+func TestCounterBaselinesAreDroppedWhileAGateIsClosed(t *testing.T) {
+	cases := []struct {
+		name         string
+		on, isLeader bool
+	}{
+		{"not leader", true, false},
+		{"recording off", false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := newCollectorForTest(t, &metricsFakeStore{}, tc.on, tc.isLeader)
+			c.pgCounters.delta("postgres.commits", 100)
+			c.redisCounters.delta("redis.commands", 100)
+
+			c.sampleOnce(context.Background())
+
+			if _, ok := c.pgCounters.delta("postgres.commits", 1_000_000); ok {
+				t.Error("postgres baseline survived a closed gate")
+			}
+			if _, ok := c.redisCounters.delta("redis.commands", 1_000_000); ok {
+				t.Error("redis baseline survived a closed gate")
+			}
+		})
+	}
+}
+
+// A Core serving no panel stream is still serving. Replicas are counted from
+// the heartbeat every Core writes, not from who happens to hold a stream: with
+// streams on one replica only, the old count read as half the install down.
+func TestCoreReplicasCountsHeartbeatsNotStreams(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	c, capt := newInfraCollector(t)
+	c.redis = rdb
+	ctx := context.Background()
+
+	for _, id := range []string{"core-a", "core-b", "core-dead"} {
+		rdb.SAdd(ctx, CoreIndexKey, id)
+	}
+	rdb.Set(ctx, "dylaris:core:core-a", "{}", 30*time.Second)
+	rdb.Set(ctx, "dylaris:core:core-b", "{}", 30*time.Second)
+	rdb.Set(ctx, "dylaris:presence:streams:core-a", 3, 90*time.Second)
+
+	c.samplePresence(ctx, time.Now())
+	if err := c.recorders.Recorder().Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := capt.one(t, "platform.core_replicas").Bucket.Sum; got != 2 {
+		t.Fatalf("core_replicas = %v, want 2", got)
 	}
 }

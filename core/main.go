@@ -605,6 +605,7 @@ func main() {
 		// keeps trying - see the note on Manager.want.
 		log.Printf("metrics: not recording yet, will keep trying (%v)", mErr)
 	}
+	go services.FollowMetricsDBTarget(bgCtx, pgStore, metricsManager.Apply)
 	// Started regardless of whether that target opened. The collector records
 	// through the manager rather than holding a recorder, so an admin who fixes
 	// the database in the panel gets recording without a restart - which is the

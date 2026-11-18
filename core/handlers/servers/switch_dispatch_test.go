@@ -1,6 +1,7 @@
 package servers
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"testing"
@@ -48,7 +49,7 @@ func TestSwitchSubServerUndoesWhenTheDispatchFails(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, fs, _ := newInstallTest(t)
+			h, fs, rdb := newInstallTest(t)
 			fs.server.Status = "stopped"
 			fs.server.DesiredState = "stopped"
 			fs.nodeErr = tc.nodeErr
@@ -67,9 +68,40 @@ func TestSwitchSubServerUndoesWhenTheDispatchFails(t *testing.T) {
 			if n := len(fs.updateDesiredStateCalls); n != 0 && fs.updateDesiredStateCalls[n-1].state != "stopped" {
 				t.Fatalf("desired state writes %v, want it left stopped", fs.updateDesiredStateCalls)
 			}
+			if got, _ := rdb.Get(context.Background(), services.DesiredStateKey("srv-uuid")).Result(); got == "online" {
+				t.Fatal("published desired state left online for a switch that never happened")
+			}
 			if len(fs.setRconNeedsRestartCalls) != 0 {
 				t.Fatalf("rcon needs-restart written %v for a switch that never happened", fs.setRconNeedsRestartCalls)
 			}
 		})
+	}
+}
+
+// C102: a switch after a crash loop left reconcile_failed and stopped_by_server
+// in place. The status watcher, running before the node cleared them, read them
+// as unlanded and set the intent back to stopped under the running switch.
+func TestSwitchSubServerClearsTheNodeHolds(t *testing.T) {
+	h, fs, rdb := newInstallTest(t)
+	fs.server.Status = "offline"
+	fs.server.DesiredState = "stopped"
+	ss := &switchDispatchStore{installFakeStore: fs}
+	h.d.Store = ss
+	ctx := context.Background()
+	holds := []string{"dylaris:server:srv-uuid:reconcile_failed", "dylaris:server:srv-uuid:stopped_by_server"}
+	for _, k := range holds {
+		rdb.Set(ctx, k, "1", 0)
+	}
+
+	if rec := switchTo(h, "lobby"); rec.Code >= 300 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	for _, k := range holds {
+		if n, _ := rdb.Exists(ctx, k).Result(); n != 0 {
+			t.Errorf("%s survived the switch", k)
+		}
+	}
+	if got, _ := rdb.Get(ctx, services.DesiredStateKey("srv-uuid")).Result(); got != "online" {
+		t.Errorf("published desired state = %q, want online", got)
 	}
 }

@@ -908,8 +908,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		// the command: the node asks it when the install is done, and a short
 		// install finished ahead of the scan that would have published it, read
 		// the old "stopped" and left a fresh server down.
-		h.d.Store.UpdateServerDesiredState(srv.ID, "online")
-		services.PublishDesiredState(r.Context(), h.d.Redis, srv.UUID, "online")
+		services.IntendOnline(r.Context(), h.d.Redis, h.d.Store, srv.ID, srv.UUID)
 		if err := h.d.Queue.SendCommand(context.Background(), node.Token, "setup", configPayload, installerPayload); err != nil {
 			log.Printf("Redis Queue Failed: %v", err)
 			h.d.Store.UpdateServerDesiredState(srv.ID, srv.DesiredState)
@@ -1216,8 +1215,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		// before the command for the same reason as there; the node now asks
 		// the intent before it starts, so a suspension landing during the
 		// install keeps the server down.
-		h.d.Store.UpdateServerDesiredState(srv.ID, "online")
-		services.PublishDesiredState(r.Context(), h.d.Redis, srv.UUID, "online")
+		services.IntendOnline(r.Context(), h.d.Redis, h.d.Store, srv.ID, srv.UUID)
 		if err := h.d.Queue.SendCommand(context.Background(), node.Token, "reinstall", configPayload, installerPayload); err != nil {
 			log.Printf("Redis Queue Failed: %v", err)
 			h.d.Store.UpdateServerDesiredState(srv.ID, srv.DesiredState)
@@ -1478,7 +1476,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		// A switch starts the server, so the platform means to run it now.
 		// After a crash loop the intent read "stopped" while the switched
 		// server ran, and the reconciler would not bring it back if it fell.
-		if err := h.d.Store.UpdateServerDesiredState(serverID, "online"); err != nil {
+		if err := services.IntendOnline(r.Context(), h.d.Redis, h.d.Store, serverID, srv.UUID); err != nil {
 			log.Printf("SwitchSubServer: desired state for server %d: %v", serverID, err)
 		}
 		if err := h.d.Queue.SendCommand(context.Background(), node.Token, "switch_server", switchPayload, nil); err != nil {
@@ -1490,6 +1488,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 				log.Printf("SwitchSubServer: restoring active sub-server for server %d: %v", serverID, uerr)
 			}
 			h.d.Store.UpdateServerDesiredState(serverID, srv.DesiredState)
+			services.PublishDesiredState(r.Context(), h.d.Redis, srv.UUID, srv.DesiredState)
 			httpx.SendJSONError(w, "Could not reach the node to switch the sub-server. The switch did not happen; try again.", http.StatusServiceUnavailable)
 			return
 		}
@@ -1830,14 +1829,7 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 			// panel step back: starting -> restarting -> starting -> online.
 			newStatus = "restarting"
 		}
-		// The node clears these when it runs the command, which can be a while
-		// behind a busy queue; until then the status watcher read them as
-		// unlanded and set the intent back to stopped under the start.
-		h.d.Redis.Del(r.Context(),
-			fmt.Sprintf("dylaris:server:%s:reconcile_failed", srv.UUID),
-			fmt.Sprintf("dylaris:server:%s:stopped_by_server", srv.UUID))
-		h.d.Store.UpdateServerDesiredState(srv.ID, "online")
-		services.PublishDesiredState(r.Context(), h.d.Redis, srv.UUID, "online")
+		services.IntendOnline(r.Context(), h.d.Redis, h.d.Store, srv.ID, srv.UUID)
 		// A server that was stopped starts with nothing waiting on its stdin.
 		// The node's graceful stop pushes "stop" there and the console could
 		// queue more; whatever was left would run the moment it came up.

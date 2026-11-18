@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -28,6 +29,9 @@ type statusWatcherFakeStore struct {
 
 	statusCalls []schedStatusCall // {id, status}
 	portCalls   []portCall
+
+	getErr    error // returned by GetServerByUUID for every uuid when set
+	updateErr error // returned by UpdateServerStatus when set
 }
 
 // Every fixture server lives on node 7, whose token is "5" - the token the
@@ -45,15 +49,18 @@ type portCall struct {
 }
 
 func (f *statusWatcherFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
 	if s, ok := f.serversByUUID[uuid]; ok {
 		return &s, nil
 	}
-	return nil, errors.New("server not found")
+	return nil, sql.ErrNoRows
 }
 
 func (f *statusWatcherFakeStore) UpdateServerStatus(id int, status string) error {
 	f.statusCalls = append(f.statusCalls, schedStatusCall{id, status})
-	return nil
+	return f.updateErr
 }
 
 func (f *statusWatcherFakeStore) UpdateServerPorts(id, hostPort, containerPort int) error {
@@ -359,5 +366,61 @@ func TestScan_DoesNotOverwriteMigrating(t *testing.T) {
 	svc.scan()
 	if len(fs.statusCalls) != 0 {
 		t.Fatalf("a node report overwrote migrating: %+v", fs.statusCalls)
+	}
+}
+
+// The node writes a final "stopped" once. A database error after the GetDel
+// must put it back so the next tick retries; a server that is simply gone, or
+// a value the node wrote in the meantime, must not be resurrected or replaced.
+func TestScan_DatabaseErrorPutsTheStatusBack(t *testing.T) {
+	cases := []struct {
+		name      string
+		getErr    error
+		updateErr error
+		newer     string // written by "the node" after the scan read the key
+		want      string // value of the key after the scan, "" = absent
+	}{
+		{"lookup fails", errors.New("pgbouncer blip"), nil, "", "stopped"},
+		{"write fails", nil, errors.New("timeout"), "", "stopped"},
+		{"server gone", sql.ErrNoRows, nil, "", ""},
+		{"write ok", nil, nil, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &statusWatcherFakeStore{
+				serversByUUID: map[string]models.Server{"srv-1": {ID: 1, UUID: "srv-1", Status: "stopping"}},
+				getErr:        c.getErr,
+				updateErr:     c.updateErr,
+			}
+			svc := newStatusWatcherTest(t, fs)
+			ctx := context.Background()
+			key := "dylaris:server:srv-1:status"
+			if err := svc.redis.Set(ctx, key, "stopped", 30*time.Second).Err(); err != nil {
+				t.Fatal(err)
+			}
+			svc.scan()
+			got, _ := svc.redis.Get(ctx, key).Result()
+			if got != c.want {
+				t.Fatalf("status key = %q, want %q", got, c.want)
+			}
+			if c.want != "" {
+				if ttl := svc.redis.TTL(ctx, key).Val(); ttl <= 0 {
+					t.Fatalf("put-back key has no TTL (%v)", ttl)
+				}
+			}
+		})
+	}
+}
+
+func TestScan_PutBackDoesNotOverwriteANewerStatus(t *testing.T) {
+	fs := &statusWatcherFakeStore{getErr: errors.New("pgbouncer blip")}
+	svc := newStatusWatcherTest(t, fs)
+	ctx := context.Background()
+	key := "dylaris:server:srv-1:status"
+	svc.requeueStatus(ctx, key, "stopped") // nothing there: put back
+	svc.redis.Set(ctx, key, "online", 30*time.Second)
+	svc.requeueStatus(ctx, key, "stopped") // the node wrote since: keep it
+	if got, _ := svc.redis.Get(ctx, key).Result(); got != "online" {
+		t.Fatalf("status key = %q, want the newer online", got)
 	}
 }

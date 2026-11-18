@@ -205,10 +205,15 @@ func (c *MetricsCollector) sampleOnce(ctx context.Context) {
 	// not turn into a backlog that the day it is switched on reports as a single
 	// enormous spike.
 	batches := c.drainGatewayCounters()
+	// The Postgres and Redis totals are the same idea from the other side: a
+	// baseline kept while not recording would turn the whole gap into one window
+	// the first time this replica records again, so it is dropped instead.
 	if c.leader != nil && !c.leader.IsLeader() {
+		c.resetCounterBaselines()
 		return
 	}
 	if c.flags != nil && !c.flags.Get(ctx, MetricsEnabledSetting, false) {
+		c.resetCounterBaselines()
 		return
 	}
 	now := time.Now()
@@ -220,6 +225,11 @@ func (c *MetricsCollector) sampleOnce(ctx context.Context) {
 	c.samplePostgres(ctx, c.db, now)
 	c.sampleRedis(ctx, now)
 	c.samplePresence(ctx, now)
+}
+
+func (c *MetricsCollector) resetCounterBaselines() {
+	c.pgCounters = newCounterSource()
+	c.redisCounters = newCounterSource()
 }
 
 // drainGatewayCounters takes the counted events waiting in the consumer, or

@@ -68,7 +68,7 @@ func TestFailedDispatchesLeaveNothingBehind(t *testing.T) {
 		{"../servers/servers_lifecycle.go", "ReinstallServer", "undo()", "a reinstall that was never sent stayed 'installing'"},
 		{"../servers/servers_lifecycle.go", "CreateServer", `configPayload["storagePath"] = sp`, "the wizard's storage path was dropped"},
 		{"../guard/sub_server_limit.go", "RefuseIfSubServerLimitReached", "if subServerDirExists(entries, target) {", "the cap counted the sub-server being re-installed"},
-		{"../servers/servers_lifecycle.go", "ReinstallServer", `h.d.Store.UpdateServerDesiredState(srv.ID, "online")`, "a reinstall of a stopped server would stay down now that the node asks the intent"},
+		{"../servers/servers_lifecycle.go", "ReinstallServer", `services.IntendOnline(r.Context(), h.d.Redis, h.d.Store, srv.ID, srv.UUID)`, "a reinstall of a stopped server would stay down now that the node asks the intent"},
 	} {
 		if !strings.Contains(handlertest.FuncBody(t, c.file, c.fn), c.want) {
 			t.Errorf("%s: %s", c.fn, c.why)
@@ -87,11 +87,13 @@ func TestABeamTicketIsReadOnlyWhileTheServerMoves(t *testing.T) {
 
 // The node asks the intent when an install finishes; a short install used to
 // finish ahead of the scan that published "online" and left the server down.
-// Setup and reinstall publish it before they send the command.
+// Setup and reinstall publish it before they send the command, through
+// IntendOnline, which also clears the node holds the status watcher would
+// otherwise land under the start.
 func TestInstallsPublishTheIntentBeforeTheCommand(t *testing.T) {
 	for fn, action := range map[string]string{"SetupServer": `"setup"`, "ReinstallServer": `"reinstall"`} {
 		body := handlertest.FuncBody(t, "../servers/servers_lifecycle.go", fn)
-		pub := strings.Index(body, `services.PublishDesiredState(r.Context(), h.d.Redis, srv.UUID, "online")`)
+		pub := strings.Index(body, `services.IntendOnline(r.Context(), h.d.Redis, h.d.Store, srv.ID, srv.UUID)`)
 		send := strings.Index(body, "SendCommand(context.Background(), node.Token, "+action)
 		if pub < 0 || send < 0 || pub > send {
 			t.Errorf("%s publishes the intent after the command, or not at all", fn)

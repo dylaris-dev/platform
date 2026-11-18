@@ -2,9 +2,11 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"dylaris-core/pkg/leader"
 	"dylaris-core/store"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -88,6 +90,9 @@ func (s *StatusWatcherService) scan() {
 
 			srv, err := s.store.GetServerByUUID(uuid)
 			if err != nil {
+				if !errors.Is(err, sql.ErrNoRows) {
+					s.requeueStatus(ctx, key, newStatus)
+				}
 				continue
 			}
 
@@ -101,7 +106,11 @@ func (s *StatusWatcherService) scan() {
 			}
 			if srv.Status != newStatus {
 				log.Printf("Status update for %s: %s -> %s", uuid, srv.Status, newStatus)
-				s.store.UpdateServerStatus(srv.ID, newStatus)
+				if err := s.store.UpdateServerStatus(srv.ID, newStatus); err != nil {
+					log.Printf("status-watcher: write status for %s: %v", uuid, err)
+					s.requeueStatus(ctx, key, newStatus)
+					continue
+				}
 				dirty = true
 			}
 		}
@@ -149,6 +158,16 @@ func (s *StatusWatcherService) scan() {
 
 	if dirty {
 		s.publishServersChanged(ctx)
+	}
+}
+
+// requeueStatus puts a status the scan already took back for the next tick,
+// after a database error. The node writes a final "stopped" only once, so
+// dropping it here left the server in "stopping" for good. NX so a value the
+// node wrote since is kept; the TTL matches the node's own write.
+func (s *StatusWatcherService) requeueStatus(ctx context.Context, key, status string) {
+	if err := s.redis.SetNX(ctx, key, status, 30*time.Second).Err(); err != nil {
+		log.Printf("status-watcher: put back %s: %v", key, err)
 	}
 }
 
@@ -341,6 +360,26 @@ func PublishDesiredState(ctx context.Context, rdb *redis.Client, uuid, state str
 	if err := rdb.Set(ctx, DesiredStateKey(uuid), state, desiredStateTTL).Err(); err != nil {
 		log.Printf("publish desired_state for %s: %v (the next scan tick publishes it)", uuid, err)
 	}
+}
+
+// IntendOnline records that the platform means to run a server now. Every
+// deliberate start goes through it: a power start or restart, a sub-server
+// switch, setup and reinstall.
+//
+// The node-hold keys are cleared first. The node clears them itself when it
+// runs the command, which can be a while behind a busy queue; until then the
+// status watcher read them as unlanded and set the intent back to stopped
+// under the start. A path that wrote "online" without this was how a switched
+// server came to run with desired_state stopped.
+func IntendOnline(ctx context.Context, rdb *redis.Client, st store.Store, id int, uuid string) error {
+	if rdb != nil {
+		rdb.Del(ctx,
+			fmt.Sprintf("dylaris:server:%s:reconcile_failed", uuid),
+			fmt.Sprintf("dylaris:server:%s:stopped_by_server", uuid))
+	}
+	err := st.UpdateServerDesiredState(id, "online")
+	PublishDesiredState(ctx, rdb, uuid, "online")
+	return err
 }
 
 func (s *StatusWatcherService) publishServerStateKeys(ctx context.Context) {

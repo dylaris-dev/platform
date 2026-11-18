@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,5 +181,41 @@ func TestSaveThenLoadRoundTrips(t *testing.T) {
 	got := LoadMetricsDBTarget(st)
 	if got != want {
 		t.Fatalf("round trip changed the target:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+// erroringSettingsStore fails every read, like a settings table that cannot be
+// reached.
+type erroringSettingsStore struct{ store.Store }
+
+func (erroringSettingsStore) GetSetting(string) (string, error) { return "", errors.New("db down") }
+
+// C103: a target saved through the panel was applied only on the replica that
+// served the request, while the leader kept recording into the old database.
+// Every replica follows the stored row instead - and a failed read must not be
+// mistaken for "nothing configured", which would switch recording off.
+func TestSyncMetricsDBTargetFollowsTheStoredRow(t *testing.T) {
+	configured := &metricsSettingsStore{vals: map[string]string{}}
+	if err := SaveMetricsDBTarget(configured, MetricsDBTarget{Host: "stats.internal", DBName: "metrics", User: "rec", Password: "pw"}); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name     string
+		st       store.Store
+		wantCall bool
+		wantDSN  string
+	}{
+		{"configured", configured, true, LoadMetricsDBTarget(configured).DSN()},
+		{"nothing configured", &metricsSettingsStore{vals: map[string]string{}}, true, ""},
+		{"settings unreadable", erroringSettingsStore{}, false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			called, got := false, ""
+			syncMetricsDBTarget(tc.st, func(dsn string) error { called, got = true, dsn; return nil })
+			if called != tc.wantCall || got != tc.wantDSN {
+				t.Fatalf("apply called=%v dsn=%q, want called=%v dsn=%q", called, got, tc.wantCall, tc.wantDSN)
+			}
+		})
 	}
 }
