@@ -49,3 +49,43 @@ func TestSetupKeepsTheDirsItPutsBackTheContainers(t *testing.T) {
 		t.Errorf("cache/ mode = %o, want 0770 kept", fi.Mode().Perm())
 	}
 }
+
+// The node restarts mid-setup and the redelivery recovers the stash. Recovery
+// remade cache/ and versions/ through MkdirAll as root, the next stash took
+// those root-owned dirs whole and the successful setup put them back as they
+// were: Paper crash-looped again after a node restart. Recovery now puts back
+// through the same code as restore.
+func TestRecoveredStashKeepsTheContainersDirs(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("chown needs root; asserted in CI's container and by the live test")
+	}
+	t.Setenv("MC_RUN_AS", "1000")
+	for _, legacy := range []bool{false, true} {
+		serverPath := t.TempDir()
+		sub := filepath.Join(serverPath, "server")
+		writeTestFile(t, filepath.Join(sub, "server.jar"), "old jar")
+		writeTestFile(t, filepath.Join(sub, "cache", "mojang_1.21.1.jar"), "cache")
+		writeTestFile(t, filepath.Join(sub, "versions", "1.21.1", "paper.jar"), "old version")
+		handInstalledTree(sub)
+
+		dead, err := stashBeforeSetup(serverPath, "server", InstallerConfig{Type: "paper"})
+		if err != nil || dead == nil {
+			t.Fatalf("stashBeforeSetup = %v, %v; want a stash", dead, err)
+		}
+		dead.root.Close()
+		if legacy {
+			os.Remove(filepath.Join(serverPath, ".server.oldjars", stashMovedList))
+		}
+		recoverStrandedStash(serverPath, "server")
+
+		for _, rel := range []string{"cache", "versions", "versions/1.21.1", "versions/1.21.1/paper.jar"} {
+			fi, err := os.Lstat(filepath.Join(sub, filepath.FromSlash(rel)))
+			if err != nil {
+				t.Fatalf("legacy=%v %s: %v", legacy, rel, err)
+			}
+			if !ownedBy(fi, 1000) {
+				t.Errorf("legacy=%v: %s is not the container's after the recovery", legacy, rel)
+			}
+		}
+	}
+}

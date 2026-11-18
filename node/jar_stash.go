@@ -97,6 +97,11 @@ const stashCompleteMark = "complete"
 // place (add), so an attempt that dies before restore can still be undone.
 const stashAddedList = "added.list"
 
+// stashMovedList is the file in the stash that lists what take moved into it,
+// in order, so recoverStash can put back a directory taken whole as one unit
+// rather than file by file into what the dead attempt wrote at its name.
+const stashMovedList = "moved.list"
+
 // recoverStash undoes an attempt that never finished (a node restart
 // mid-install, or a restore that failed): what it put in place goes, and what
 // its stash holds goes back. The stash held the only copy of the old software,
@@ -112,44 +117,57 @@ func recoverStash(root *os.Root, dir string) {
 	if st, err := root.Lstat(dir); err != nil || !st.IsDir() {
 		return
 	}
+	s := &jarStash{root: root, dir: dir, sub: strings.TrimSuffix(strings.TrimPrefix(dir, "."), ".oldjars")}
 	// A complete stash may have had an install run over it, whose launch dir
-	// and root jars sit beside the names the stash took back: cleared first,
-	// as restore does, or resolveLaunch could start the half-installed loader.
+	// and root jars sit beside the names the stash took: putBack clears them.
 	// A partial one ran no install; what is in place is the old server.
-	if _, err := root.Lstat(path.Join(dir, stashCompleteMark)); err == nil {
-		sub := strings.TrimSuffix(strings.TrimPrefix(dir, "."), ".oldjars")
-		CleanServerJars(filepath.Join(root.Name(), filepath.FromSlash(sub)))
-		for _, d := range loaderLaunchDirs {
-			root.RemoveAll(path.Join(sub, d))
-		}
-		// Once only: from here files leave the stash, and a second clear would
-		// delete what was already put back.
-		root.Remove(path.Join(dir, stashCompleteMark))
-	}
-	if b, err := root.ReadFile(path.Join(dir, stashAddedList)); err == nil {
-		for _, rel := range strings.Split(string(b), "\n") {
-			if rel = strings.TrimSpace(rel); rel != "" {
-				root.Remove(rel)
+	_, err := root.Lstat(path.Join(dir, stashCompleteMark))
+	s.complete = err == nil
+	s.added = readStashList(root, path.Join(dir, stashAddedList), s.sub)
+	s.moved = readStashList(root, path.Join(dir, stashMovedList), s.sub)
+	if _, err := root.Lstat(path.Join(dir, stashMovedList)); err != nil {
+		// A stash from a node before moved.list: every file it holds, which
+		// still goes back through putBack's ownership-keeping parents.
+		fs.WalkDir(root.FS(), dir, func(p string, d fs.DirEntry, err error) error {
+			// Everything taken sits under the sub-server's name; a file at
+			// the top of the stash is the stash's own (stashAddedList).
+			if rel := strings.TrimPrefix(p, dir+"/"); err == nil && !d.IsDir() && strings.Contains(rel, "/") {
+				s.moved = append(s.moved, rel)
 			}
+			return nil
+		})
+	}
+	if err := s.putBack(); err != nil {
+		log.Printf("setup: could not put all of %s back: %v", dir, err)
+	}
+}
+
+// readStashList reads one of the stash's own lists, one name per line. Only
+// names under sub count: every name a stash records is, and a line naming
+// anything else (the node's own files beside the sub-servers) is not one.
+func readStashList(root *os.Root, name, sub string) []string {
+	b, err := root.ReadFile(name)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, rel := range strings.Split(string(b), "\n") {
+		if rel = path.Clean(strings.TrimSpace(rel)); strings.HasPrefix(rel, sub+"/") {
+			out = append(out, rel)
 		}
 	}
-	fs.WalkDir(root.FS(), dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		rel := strings.TrimPrefix(p, dir+"/")
-		// Everything taken sits under the sub-server's name; a file at the
-		// top of the stash is the stash's own (stashAddedList).
-		if !strings.Contains(rel, "/") {
-			return nil
-		}
-		if _, err := root.Lstat(rel); !errors.Is(err, fs.ErrNotExist) {
-			root.Remove(rel)
-		}
-		root.MkdirAll(path.Dir(rel), 0o755)
-		root.Rename(p, rel)
-		return nil
-	})
+	return out
+}
+
+// stashStranded says a stash a dead attempt left still holds the sub-server's
+// old files, so a setup refused before recovering it has not left the disk as
+// it was.
+func stashStranded(serverPath, sub string) bool {
+	if serverPath == "" {
+		return false
+	}
+	st, err := os.Lstat(filepath.Join(serverPath, "."+sub+".oldjars"))
+	return err == nil && st.IsDir()
 }
 
 // stashBeforeSetup is the stash for a setup over a sub-server that is already
@@ -259,6 +277,7 @@ func (s *jarStash) take(rel string) error {
 		return err
 	}
 	s.moved = append(s.moved, rel)
+	s.record(stashMovedList, rel)
 	return nil
 }
 
@@ -277,6 +296,7 @@ func (s *jarStash) takeFile(src, rel string) error {
 		return err
 	}
 	s.moved = append(s.moved, rel)
+	s.record(stashMovedList, rel)
 	return nil
 }
 
@@ -285,7 +305,12 @@ func (s *jarStash) takeFile(src, rel string) error {
 // this attempt dies first. Call it BEFORE putting rel in place.
 func (s *jarStash) add(rel string) {
 	s.added = append(s.added, rel)
-	if f, err := s.root.OpenFile(path.Join(s.dir, stashAddedList), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600); err == nil {
+	s.record(stashAddedList, rel)
+}
+
+// record appends rel to one of the stash's own lists.
+func (s *jarStash) record(list, rel string) {
+	if f, err := s.root.OpenFile(path.Join(s.dir, list), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600); err == nil {
 		f.WriteString(rel + "\n")
 		f.Close()
 	}
@@ -296,6 +321,12 @@ func (s *jarStash) add(rel string) {
 // moved back, so nothing that was there is lost.
 func (s *jarStash) restore() error {
 	defer s.root.Close()
+	return s.putBack()
+}
+
+// putBack is restore without closing the root, shared with recoverStash so a
+// crashed attempt is undone exactly as a failed one is.
+func (s *jarStash) putBack() error {
 	for _, rel := range s.added {
 		s.root.Remove(rel)
 	}

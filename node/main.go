@@ -1689,16 +1689,22 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer commandsInFlight.leave(softwareKey(cmd.Config.UUID))
+		// From here no other command holds the stash, so one on disk is what a
+		// dead attempt left: the old files are in it, not in place, until the
+		// recovery below runs, and a refusal before it must not say restored.
+		reportSetupRefused := func(cause error) {
+			publishSetupFailure(ctx, rdb, cmd.Config.UUID, subName, cause, !stashStranded(storage.GetServerDir(cmd.Config.UUID), subName))
+		}
 		leaveTree, treeBusy := enterTreeChangeOfServer(cmd.Config.UUID)
 		if treeBusy != "" {
 			log.Printf("Setup of %s/%s refused: %s", cmd.Config.UUID, subName, treeBusy)
-			reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, errors.New(treeBusy))
+			reportSetupRefused(errors.New(treeBusy))
 			return
 		}
 		defer leaveTree()
 		if !awaitServerSlot(storage, cmd.Config.UUID) {
 			log.Printf("Setup of %s/%s refused: the create of the server has not run on this node", cmd.Config.UUID, subName)
-			reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, errors.New("the server has not been created on this node yet; try again in a moment"))
+			reportSetupRefused(errors.New("the server has not been created on this node yet; try again in a moment"))
 			return
 		}
 		defer lockServerInstall(cmd.Config.UUID)()
@@ -1758,7 +1764,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			if err := gracefulStop(rdb, cmd.Config.UUID, dm); err != nil {
 				log.Printf("Setup of %s/%s refused: the server could not be stopped: %v", cmd.Config.UUID, subName, err)
 				rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
-				reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, fmt.Errorf("the server could not be stopped: %w", err))
+				reportSetupRefused(fmt.Errorf("the server could not be stopped: %w", err))
 				return
 			}
 		}
