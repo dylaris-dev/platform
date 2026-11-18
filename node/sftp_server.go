@@ -23,6 +23,7 @@ import (
 	"dylaris-pkg/beam/quota"
 	"dylaris-pkg/fileperms"
 	"dylaris-pkg/queue"
+	"dylaris-pkg/validate"
 
 	"github.com/pkg/sftp"
 	"github.com/redis/go-redis/v9"
@@ -281,8 +282,18 @@ func (s *SFTPServer) authUser(username, password, addr string) (*ssh.Permissions
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	failKey := sftpFailUserAddrKey(s.nodeID, username, addr)
 	addrKey := sftpFailAddrKey(s.nodeID, addr)
+	// The SSH user name is the client's, bounded only by the 256 KiB packet, and
+	// the two counters below put it in their key names: a stranger chose key
+	// names and sizes in the Redis the whole platform shares. A name no account
+	// can have (validate.Username, enforced on every account Core creates) only
+	// counts against its address.
+	if !validate.IsUsername(username) {
+		s.recordAuthFail(ctx, addrKey)
+		time.Sleep(500 * time.Millisecond)
+		return nil, fmt.Errorf("invalid credentials")
+	}
+	failKey := sftpFailUserAddrKey(s.nodeID, username, addr)
 	userKey := sftpFailKey(s.nodeID, username)
 	n, _ := s.rdb.Get(ctx, failKey).Int()
 	na, _ := s.rdb.Get(ctx, addrKey).Int()
@@ -338,6 +349,9 @@ func (s *SFTPServer) sftpAccountKeys(ctx context.Context, username string) ([]st
 func (s *SFTPServer) authKey(username string, key ssh.PublicKey) (*ssh.Permissions, error) {
 	if !sftpEnabled() {
 		return nil, fmt.Errorf("SFTP is disabled on this platform")
+	}
+	if !validate.IsUsername(username) { // see authUser
+		return nil, fmt.Errorf("invalid credentials")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

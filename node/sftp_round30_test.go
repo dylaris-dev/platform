@@ -363,3 +363,30 @@ func TestSFTPANameSpellingAnAddressDoesNotLockThatAccountOut(t *testing.T) {
 		t.Errorf("alice from her own address was locked out by a name spelling it: %v", err)
 	}
 }
+
+// X09: the SSH user name is the client's, up to a 256 KiB packet, and it went
+// straight into two Redis key names on every failed try - a stranger chose key
+// names and sizes in the shared Redis. A name no account can have must leave
+// only the per-address counter behind, and must not reach Redis on a key
+// sign-in either.
+func TestSFTPANameNoAccountCanHaveWritesNoKeyOfItsOwn(t *testing.T) {
+	pub, _, _ := ed25519.GenerateKey(rand.Reader)
+	key, _ := ssh.NewPublicKey(pub)
+	for _, name := range []string{"", "a", strings.Repeat("a", 4096), "alice:x", "alice@203.0.113.5", "al ice", "*"} {
+		s, mr := sftpTestServer(t)
+		if _, err := s.authUser(name, "x", "198.51.100.9"); err == nil {
+			t.Errorf("%.20q: signed in", name)
+		}
+		before := mr.CommandCount()
+		if _, err := s.authKey(name, key); err == nil {
+			t.Errorf("%.20q: key sign-in accepted", name)
+		}
+		if mr.CommandCount() != before {
+			t.Errorf("%.20q: key sign-in asked Redis", name)
+		}
+		keys := mr.Keys()
+		if len(keys) != 1 || keys[0] != sftpFailAddrKey("node-1", "198.51.100.9") {
+			t.Errorf("%.20q: keys written %.200q, want only the per-address counter", name, keys)
+		}
+	}
+}
