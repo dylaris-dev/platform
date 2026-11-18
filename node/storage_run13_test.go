@@ -125,3 +125,47 @@ func TestAKeyNamingAnUnmountedPathResolvesToNothing(t *testing.T) {
 		})
 	}
 }
+
+// X10: a key naming a CONFIGURED path that was skipped at boot (its disk did
+// not mount) still resolved to a leftover copy on another path, so the server
+// ran on a half-deleted tree while its real data waited on the missing disk.
+// A key naming a path no longer configured at all still scans: that copy is
+// the one an operator who retired the path moved by hand.
+func TestAKeyNamingASkippedPathIgnoresALeftoverCopy(t *testing.T) {
+	const uuid = "acacacac-1111-2222-3333-444444444444"
+	for _, tc := range []struct {
+		name       string
+		keySkipped bool // the key names a configured path that was skipped
+		wantCopy   bool
+	}{
+		{"key names a configured, unmounted path", true, false},
+		{"key names a path no longer configured", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			t.Cleanup(func() { _ = rdb.Close() })
+			live := t.TempDir()
+			missing := filepath.Join(t.TempDir(), "unmounted")
+			csv := live
+			if tc.keySkipped {
+				csv += "," + missing
+			}
+			sm := NewStorageManager(csv, rdb)
+			if paths := sm.Paths(); len(paths) != 1 || paths[0] != live {
+				t.Fatalf("paths = %v, want only %s", paths, live)
+			}
+			if err := os.MkdirAll(filepath.Join(live, uuid), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			mr.Set("node:"+nodeID+":server:"+uuid+":storage", missing)
+			want := ""
+			if tc.wantCopy {
+				want = live
+			}
+			if got := sm.GetServerPath(uuid); got != want {
+				t.Fatalf("GetServerPath = %q, want %q", got, want)
+			}
+		})
+	}
+}

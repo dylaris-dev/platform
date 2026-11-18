@@ -1124,7 +1124,8 @@ func scanSubServerSizes(serverDir string) map[string]int64 {
 	return sizes
 }
 
-// dirSize returns the total size of a directory in bytes.
+// dirSize returns the total size of a directory in bytes, or -1 when its
+// root cannot be read.
 func dirSize(path string) int64 {
 	// du exits non-zero when a file vanished mid-walk or one was unreadable,
 	// and still prints the total of what it read; walking the whole tree a
@@ -1136,14 +1137,23 @@ func dirSize(path string) int64 {
 		}
 	}
 
-	// Fallback: manual walk
+	// Fallback: manual walk. A root that exists but cannot be read (an NFS
+	// ESTALE or EIO) is -1, not 0: a 0 released the disk_full hold of a server
+	// still over its limit. A missing root holds nothing and stays 0.
 	var size int64
-	filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
+	unreadable := false
+	filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
+		if err != nil && p == path && !os.IsNotExist(err) {
+			unreadable = true
+		}
 		if err == nil && !info.IsDir() {
 			size += info.Size()
 		}
 		return nil
 	})
+	if unreadable {
+		return -1
+	}
 	return size
 }
 

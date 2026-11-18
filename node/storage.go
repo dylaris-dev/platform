@@ -27,8 +27,11 @@ type StorageManager struct {
 	// skipped counts configured paths left out of paths (missing, unmounted,
 	// read-only): servers on them exist but cannot be seen.
 	skipped int
-	rdb     *redis.Client
-	mu      sync.RWMutex
+	// skippedPaths are the configured paths among them: a key naming one is a
+	// server whose storage is not available right now, not a retired path.
+	skippedPaths map[string]bool
+	rdb          *redis.Client
+	mu           sync.RWMutex
 
 	// Placement policy for NEW servers, published per node by Core. Zero value
 	// (empty mode) behaves as auto, so a node that never receives the key keeps
@@ -113,7 +116,7 @@ func NewStorageManager(pathsCSV string, rdb *redis.Client) *StorageManager {
 		// Check if path exists and is writable
 		if err := validateStoragePath(abs); err != nil {
 			log.Printf("storage: [warn] %s — skipping", err)
-			sm.skipped++
+			sm.skipPath(abs)
 			continue
 		}
 
@@ -134,6 +137,15 @@ func NewStorageManager(pathsCSV string, rdb *redis.Client) *StorageManager {
 	}
 
 	return sm
+}
+
+// skipPath records a configured path left out of sm.paths.
+func (sm *StorageManager) skipPath(p string) {
+	sm.skipped++
+	if sm.skippedPaths == nil {
+		sm.skippedPaths = map[string]bool{}
+	}
+	sm.skippedPaths[p] = true
 }
 
 // validateStoragePath checks that a path exists, is a directory, and is writable.
@@ -215,7 +227,7 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 	for _, p := range paths {
 		if !marked[p] && known[p] && dirHoldsNothing(p) {
 			log.Printf("storage: [warn] %s was a storage path of this node and is now empty without a current %s marker, so its disk is most likely not mounted; skipping. If it is a new empty disk, replace %s with an empty file to use it", p, storageMarkerName, filepath.Join(p, storageMarkerName))
-			sm.skipped++
+			sm.skipPath(p)
 			continue
 		}
 		kept = append(kept, p)
@@ -302,6 +314,12 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 				}
 			}
 			keyed = true
+			// A copy elsewhere is then a leftover (a move killed in its source
+			// delete), not the live tree, which waits on the unmounted disk.
+			if sm.skippedPaths[val] {
+				log.Printf("storage: Redis path %q for %s is configured but not available, not resolving", val, serverUUID)
+				return ""
+			}
 			log.Printf("storage: Redis path %q for %s not in active paths, scanning...", val, serverUUID)
 		}
 	}
@@ -716,7 +734,7 @@ func (sm *StorageManager) CheckMigration(serverUUID, targetPath string) error {
 	}
 	// The move clears a leftover copy at the target before its own check.
 	dstDir := filepath.Join(targetPath, serverUUID)
-	_, err = checkMigrationSpace(filepath.Join(currentPath, serverUUID), targetPath, uint64(dirSize(dstDir)))
+	_, err = checkMigrationSpace(filepath.Join(currentPath, serverUUID), targetPath, uint64(max(dirSize(dstDir), 0)))
 	return err
 }
 
