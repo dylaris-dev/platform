@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -56,7 +57,12 @@ func stashServerJars(serverPath, sub string, wiped ...string) (*jarStash, error)
 		return nil, err
 	}
 	s := &jarStash{root: root, dir: "." + sub + ".oldjars", sub: sub}
-	recoverStash(root, s.dir)
+	// A stash that could not be put back holds the only copy of the old
+	// server: it is kept, and this attempt refused, rather than dropped.
+	if err := recoverStash(root, s.dir); err != nil {
+		root.Close()
+		return nil, fmt.Errorf("a previous attempt's stash could not be put back: %w", err)
+	}
 	dropStash(root, s.dir)
 	if err := root.Mkdir(s.dir, 0o700); err != nil {
 		root.Close()
@@ -91,7 +97,14 @@ func stashServerJars(serverPath, sub string, wiped ...string) (*jarStash, error)
 }
 
 // stashCompleteMark is the file in the stash that says everything was taken.
-const stashCompleteMark = "complete"
+// The dot keeps it apart from the stash's tree for the sub-server, which sits
+// beside it under the sub-server's name: a sub-server name has no dot, and
+// one named "complete" made every stash of it read as complete.
+const stashCompleteMark = ".complete"
+
+// stashLegacyCompleteMark is the mark older nodes wrote, still honoured in a
+// stash they left behind when it is a regular file.
+const stashLegacyCompleteMark = "complete"
 
 // stashAddedList is the file in the stash that lists what the attempt put in
 // place (add), so an attempt that dies before restore can still be undone.
@@ -113,16 +126,19 @@ const stashMovedList = "moved.list"
 // one rename), so anything at a name it took was written by that attempt: the
 // new server jar, or a new mod that the redelivery cannot tell from one that
 // was already there. In-place-wins kept those and deleted the old copies.
-func recoverStash(root *os.Root, dir string) {
+func recoverStash(root *os.Root, dir string) error {
 	if st, err := root.Lstat(dir); err != nil || !st.IsDir() {
-		return
+		return nil
 	}
 	s := &jarStash{root: root, dir: dir, sub: strings.TrimSuffix(strings.TrimPrefix(dir, "."), ".oldjars")}
 	// A complete stash may have had an install run over it, whose launch dir
 	// and root jars sit beside the names the stash took: putBack clears them.
 	// A partial one ran no install; what is in place is the old server.
-	_, err := root.Lstat(path.Join(dir, stashCompleteMark))
-	s.complete = err == nil
+	for _, mark := range []string{stashCompleteMark, stashLegacyCompleteMark} {
+		if st, err := root.Lstat(path.Join(dir, mark)); err == nil && st.Mode().IsRegular() {
+			s.complete = true
+		}
+	}
 	s.added = readStashList(root, path.Join(dir, stashAddedList), s.sub)
 	s.moved = readStashList(root, path.Join(dir, stashMovedList), s.sub)
 	if _, err := root.Lstat(path.Join(dir, stashMovedList)); err != nil {
@@ -139,7 +155,9 @@ func recoverStash(root *os.Root, dir string) {
 	}
 	if err := s.putBack(); err != nil {
 		log.Printf("setup: could not put all of %s back: %v", dir, err)
+		return err
 	}
+	return nil
 }
 
 // readStashList reads one of the stash's own lists, one name per line. Only
@@ -246,8 +264,10 @@ func recoverStrandedStash(serverPath, sub string) {
 	}
 	defer root.Close()
 	dir := "." + sub + ".oldjars"
-	recoverStash(root, dir)
-	dropStash(root, dir)
+	// Kept when it could not be put back: stashServerJars refuses over it.
+	if recoverStash(root, dir) == nil {
+		dropStash(root, dir)
+	}
 }
 
 // dropStash removes a stash. It is renamed away first, so a removal that fails
@@ -344,6 +364,7 @@ func (s *jarStash) putBack() error {
 		// A stash kept after a failed rename below must not be cleared again
 		// by recoverStash: what was already put back has no copy in it.
 		s.root.Remove(path.Join(s.dir, stashCompleteMark))
+		s.root.Remove(path.Join(s.dir, stashLegacyCompleteMark))
 	}
 	var first error
 	for i := len(s.moved) - 1; i >= 0; i-- {
@@ -352,11 +373,12 @@ func (s *jarStash) putBack() error {
 		mkdirAllForMC(s.root, path.Dir(rel))
 		// A directory taken whole (libraries/) may have been written again by
 		// the install, and a rename does not replace a directory that is not
-		// empty. Whatever sits there now came from the failed attempt.
-		if s.complete {
-			if st, err := s.root.Lstat(path.Join(s.dir, rel)); err == nil && st.IsDir() {
-				s.root.RemoveAll(rel)
-			}
+		// empty. Whatever sits there now came from the failed attempt: take
+		// vacated the name. Not only for a complete stash: one whose restore
+		// died after dropping the mark reads as partial, and its copy of the
+		// dir is still the only one.
+		if st, err := s.root.Lstat(path.Join(s.dir, rel)); err == nil && st.IsDir() {
+			s.root.RemoveAll(rel)
 		}
 		if err := s.root.Rename(path.Join(s.dir, rel), rel); err != nil && first == nil {
 			first = err

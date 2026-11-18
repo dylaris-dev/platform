@@ -1789,7 +1789,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		putBack := func(cause error) {
 			// Without a stash the disk is untouched only when the stash could
 			// not even be started; an install without one wiped with no copy.
-			undone := stash == nil && serr != nil
+			// A dead attempt's stash that could not be put back refuses the
+			// stash too, and the disk is that attempt's, not as it was.
+			undone := stash == nil && serr != nil && !stashStranded(serverPath, subName)
 			if stash != nil {
 				if rerr := stash.restore(); rerr != nil {
 					log.Printf("setup: could not put the previous server software back for %s/%s: %v", cmd.Config.UUID, subName, rerr)
