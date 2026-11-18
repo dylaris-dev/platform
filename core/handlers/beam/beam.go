@@ -397,7 +397,8 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	probe := models.Server{ID: server.ID, NodeID: server.NodeID, NodeAddress: nodePublicIP}
 	access.RedactNodeAddressOne(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, access.SFTPAccess(h.d.Authz, authz.Identity{UserID: userID, IsAdmin: isAdmin}), &probe, isAdmin, userID)
 	nodePublicIP = probe.NodeAddress
-	directHints := buildBeamDirectHints(relayAddr, nodePrivateIPs, nodePublicIP, beamLANPort, directFingerprint)
+	hb, hbOK := services.LoadNodeHeartbeat(r.Context(), h.d.Redis, nodeDiscoveryID)
+	directHints := buildBeamDirectHints(relayAddr, nodePrivateIPs, nodePublicIP, reportedBeamLANPort(hb, hbOK), directFingerprint)
 
 	// Sign ticket via shared auth package — same format used by gateway
 	// beam-relay validators and node-side BeamNodeService.Authenticate.
@@ -492,6 +493,16 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 // app probes the node's private IPs on this port, dials TLS, and pins the
 // fingerprint above. Distinct from the plain overlay port (25521) used by the relay.
 const beamLANPort = "25523"
+
+// reportedBeamLANPort is the LAN port the node's heartbeat reports, else the
+// default: an older node reports none, and a value that is not a plain port
+// 1-65535 is not put on a ticket.
+func reportedBeamLANPort(hb services.NodeHeartbeat, ok bool) string {
+	if p, err := strconv.Atoi(hb.BeamLANPort); ok && err == nil && p >= 1 && p <= 65535 && strconv.Itoa(p) == hb.BeamLANPort {
+		return hb.BeamLANPort
+	}
+	return beamLANPort
+}
 
 // beamDirectHints is the direct-connect payload on a beam ticket (serialized as the
 // JSON field "lanHints"). It carries the node's LAN IPs and, when no relay is present,

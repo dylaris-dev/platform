@@ -127,7 +127,9 @@ func serverNetworkFacts(dm *DockerManager) (name, beamTarget string) {
 
 // addServerNetworkFacts puts the two facts into a heartbeat, each only when
 // known: an absent key is "unknown" to Core, an empty string would not be.
+// The LAN fast-path port is always known; a Core without it advertises 25523.
 func addServerNetworkFacts(data map[string]interface{}, name, beamTarget string) {
+	data["beamLanPort"] = beamLANPort()
 	if name != "" {
 		data["serverNetwork"] = name
 	}

@@ -16,10 +16,11 @@ import (
 // gaugeWriteHook records the server's in-flight reservation at the moment the
 // gauge key is written.
 type gaugeWriteHook struct {
-	key  string
-	uuid string
-	seen atomic.Int64
-	hits atomic.Int64
+	key   string
+	uuid  string
+	seen  atomic.Int64
+	noted atomic.Int64
+	hits  atomic.Int64
 }
 
 func (h *gaugeWriteHook) DialHook(next redis.DialHook) redis.DialHook { return next }
@@ -30,6 +31,7 @@ func (h *gaugeWriteHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		if args := cmd.Args(); len(args) > 1 && strings.EqualFold(cmd.Name(), "set") && args[1] == h.key {
 			h.seen.Store(serverInflightOf(h.uuid).Load())
+			h.noted.Store(notedFor(h.uuid).Load())
 			h.hits.Add(1)
 		}
 		return next(ctx, cmd)
@@ -62,7 +64,7 @@ func TestAFinishedCopyHoldsItsReservationUntilTheGaugeHasIt(t *testing.T) {
 	hook := &gaugeWriteHook{key: diskGaugeKey(uuid), uuid: uuid}
 	rdb.AddHook(hook)
 
-	base := serverInflightOf(uuid).Load()
+	base, noted0 := serverInflightOf(uuid).Load(), notedFor(uuid).Load()
 	b := nodeWriteBudget(dir)
 	b.boundServer(uuid, 1<<30)
 	if !b.spend(4096) {
@@ -76,8 +78,16 @@ func TestAFinishedCopyHoldsItsReservationUntilTheGaugeHasIt(t *testing.T) {
 	if got := hook.seen.Load() - base; got != 4096 {
 		t.Errorf("reserved while the gauge was written = %d, want the copy's 4096 still held", got)
 	}
+	// Z10: an open SFTP handle and a running copy read the in-flight AND the
+	// noted count, so during the walk the copy must be in only one of them.
+	if got := hook.noted.Load() - noted0; got != 0 {
+		t.Errorf("noted while the gauge was written = %d, want 0 (the copy already counts as in flight)", got)
+	}
 	if got := serverInflightOf(uuid).Load() - base; got != 0 {
 		t.Errorf("reserved after release = %d, want 0", got)
+	}
+	if got := notedFor(uuid).Load() - noted0; got != 4096 {
+		t.Errorf("noted after release = %d, want the copy's 4096", got)
 	}
 }
 

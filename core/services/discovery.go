@@ -105,6 +105,10 @@ type NodeHeartbeat struct {
 	// so a node that stops reporting them is unknown within 15 s.
 	ServerNetwork string `json:"serverNetwork,omitempty"`
 	BeamTarget    string `json:"beamTarget,omitempty"`
+	// BeamLANPort is the port the node's pinned-TLS LAN listener binds
+	// (BEAM_LAN_PORT). Absent from an older node, which means the default
+	// 25523. Raw node input like the two above.
+	BeamLANPort string `json:"beamLanPort,omitempty"`
 	// Timestamp (unix seconds) + Sig replace the raw-secret compare on the
 	// hardened path: Sig = HMAC(perNodeSecret, heartbeat-domain|token|ts).
 	Timestamp int64  `json:"timestamp"`

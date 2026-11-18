@@ -102,6 +102,7 @@ func TestBeamTargetFor(t *testing.T) {
 // "unknown" to Core, "" would not be), a known one adds exactly its key, and
 // nothing the heartbeat already carried changes.
 func TestHeartbeatNetworkKeysAreAdditive(t *testing.T) {
+	t.Setenv("BEAM_LAN_PORT", "")
 	// Every key sendHeartbeat can write before this change.
 	golden := []string{"id", "name", "ip", "tags", "region", "timestamp", "ips", "hostname", "sig",
 		"cpuUsage", "ramFree", "ramTotal", "totalCpu", "linkCount", "storage", "sharedStorage",
@@ -118,9 +119,9 @@ func TestHeartbeatNetworkKeysAreAdditive(t *testing.T) {
 		name, net, target string
 		added             map[string]string
 	}{
-		{"unknown", "", "", map[string]string{}},
-		{"known", "x_dylaris_net", "10.0.5.17:25521", map[string]string{"serverNetwork": "x_dylaris_net", "beamTarget": "10.0.5.17:25521"}},
-		{"network without target", "x_dylaris_net", "", map[string]string{"serverNetwork": "x_dylaris_net"}},
+		{"unknown", "", "", map[string]string{"beamLanPort": "25523"}},
+		{"known", "x_dylaris_net", "10.0.5.17:25521", map[string]string{"serverNetwork": "x_dylaris_net", "beamTarget": "10.0.5.17:25521", "beamLanPort": "25523"}},
+		{"network without target", "x_dylaris_net", "", map[string]string{"serverNetwork": "x_dylaris_net", "beamLanPort": "25523"}},
 	} {
 		data := base()
 		addServerNetworkFacts(data, c.net, c.target)

@@ -393,6 +393,15 @@ func beamGRPCPort() string {
 	return "25521"
 }
 
+// beamLANPort is the port the LAN fast-path listener binds, also reported in
+// the heartbeat's beamLanPort: Core puts it on the ticket the app dials.
+func beamLANPort() string {
+	if p := os.Getenv("BEAM_LAN_PORT"); p != "" {
+		return p
+	}
+	return "25523"
+}
+
 // StartBeamServer starts the BeamNodeService gRPC server on BEAM_GRPC_PORT
 // (default :25521).
 //
@@ -480,10 +489,7 @@ func StartBeamServer(ctx context.Context, rdb *redis.Client, storageMgr *Storage
 // port using the deterministic pinned certificate. Failures are non-fatal — the
 // relay path keeps working regardless.
 func startBeamLANListener(ctx context.Context, bs *beamServer, nodeID string) {
-	lanPort := os.Getenv("BEAM_LAN_PORT")
-	if lanPort == "" {
-		lanPort = "25523"
-	}
+	lanPort := beamLANPort()
 	// The per-node secret arrives over the authenticated gRPC bootstrap, which
 	// can lag this goroutine on a cold start. Wait for it rather than deriving
 	// from an empty secret and disabling the listener for the process' lifetime.

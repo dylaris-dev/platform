@@ -772,9 +772,12 @@ func (b *writeBudget) release() {
 		// Out of the in-flight count only after the remeasure published the
 		// gauge: the Beam checks read the gauge and the in-flight count, and
 		// during the walk the copy was in neither.
+		// Noted only after the walk: SFTP handles and running budgets read
+		// in-flight plus noted, so noted during the walk counted the copy
+		// twice for its whole length and refused writes that fit.
 		if !b.gauged && b.used > 0 {
-			notedFor(b.uuid).Add(b.used)
 			remeasureServer(b.uuid)
+			notedFor(b.uuid).Add(b.used)
 		}
 		b.srv.Add(-b.used)
 	}
