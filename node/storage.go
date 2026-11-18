@@ -600,32 +600,47 @@ func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (strin
 // It is also what a move killed after its key flip reads like on redelivery.
 var errAlreadyOnPath = errors.New("is already on path")
 
-// errStorageKeyUnsure is a move whose key write failed after the copy: the key
-// may name either copy, so the server must not be started on the source.
+// errStorageKeyUnsure is a move whose key write failed after the copy and
+// could not be read back: the key may name either copy. Both are whole, and a
+// start goes to the one the key names (see boundToMovedCopy).
 var errStorageKeyUnsure = errors.New("record the new storage path")
+
+// keyedPath is the storage path the server's storage key names, when that is
+// one of this node's paths, else "". Unlike GetServerPath it never guesses by
+// scanning: only the key can vouch for which of two copies is live.
+func (sm *StorageManager) keyedPath(serverUUID string) string {
+	if sm == nil || sm.rdb == nil || !validate.IsServerUUID(serverUUID) {
+		return ""
+	}
+	if ch := sm.moveInProgress(serverUUID); ch != nil {
+		<-ch
+	}
+	live, err := sm.rdb.Get(context.Background(), fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)).Result()
+	if err != nil || live == "" {
+		return ""
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	for _, p := range sm.paths {
+		if p == live {
+			return live
+		}
+	}
+	return ""
+}
 
 // dropStaleCopies removes the server's directories on every storage path but
 // the one its storage key names: a move killed during the delete of its
 // source left that copy behind. Only the key can vouch for which copy is live,
 // so without one nothing is removed.
 func (sm *StorageManager) dropStaleCopies(serverUUID string) {
-	if sm.rdb == nil || !validate.IsServerUUID(serverUUID) {
-		return
-	}
-	live, err := sm.rdb.Get(context.Background(), fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)).Result()
-	if err != nil || live == "" {
+	live := sm.keyedPath(serverUUID)
+	if live == "" {
 		return
 	}
 	sm.mu.RLock()
 	paths := append([]string(nil), sm.paths...)
 	sm.mu.RUnlock()
-	known := false
-	for _, p := range paths {
-		known = known || p == live
-	}
-	if !known {
-		return
-	}
 	for _, p := range paths {
 		dir := filepath.Join(p, serverUUID)
 		if p == live {
@@ -884,7 +899,12 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 	// half-deleted tree. Both copies are whole here, so on a failed write
 	// neither is touched, whichever one the key ended up naming.
 	if err := sm.setRedisPath(serverUUID, targetPath); err != nil {
-		return fmt.Errorf("%w: %w", errStorageKeyUnsure, err)
+		// A reply that timed out after Redis applied the write. Only a read
+		// naming the target settles it: one naming the source may still be
+		// overtaken by the write in flight.
+		if v, gerr := sm.rdb.Get(context.Background(), fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)).Result(); gerr != nil || v != targetPath {
+			return fmt.Errorf("%w: %w", errStorageKeyUnsure, err)
+		}
 	}
 
 	// Remove old directory (data is safe at target)

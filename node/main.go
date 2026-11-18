@@ -1012,6 +1012,16 @@ func saveNodeConfig(serverDir string, config ServerConfig) {
 // under the target filesystem's quota. Every step is a no-op when already
 // done. The limit is applied even when the container could not be removed.
 func finishStorageMove(ctx context.Context, rdb *redis.Client, dm *DockerManager, quota *QuotaSet, storage *StorageManager, uuid string, limitMB int64) error {
+	// A server still running on the old bind (started there before a start
+	// knew better, see boundToMovedCopy) is stopped with a save first: the
+	// remove is forced, and the copies are dropped only once it is down.
+	if info, err := dm.cli.ContainerInspect(ctx, "mc_"+uuid); err == nil && info.State != nil && info.State.Running && info.HostConfig != nil {
+		if hp := dm.resolveHostServerPath(uuid); hp != "" && dataBindStale(info.HostConfig.Binds, hp) {
+			if err := gracefulStop(rdb, uuid, dm); err != nil {
+				return fmt.Errorf("stop the server still running on the old path: %w", err)
+			}
+		}
+	}
 	rmErr := dm.removeStaleServerContainer(ctx, uuid)
 	storage.dropStaleCopies(uuid)
 	applyDiskLimit(ctx, rdb, quota, uuid, limitMB)

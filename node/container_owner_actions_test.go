@@ -32,6 +32,7 @@ type sharedDaemon struct {
 	// extraPorts is mc_<uuid>'s extraPortsLabel; startErr, when set, is what
 	// a start of it answers (500), as a host port taken by something else.
 	extraPorts, startErr string
+	binds                []string // HostConfig.Binds of mc_<uuid>
 }
 
 func (d *sharedDaemon) changed() []string {
@@ -69,6 +70,7 @@ func newSharedDaemon(t *testing.T, owner string, running bool, onPull func()) (*
 			}
 			d.mu.Lock()
 			env, _ := json.Marshal(d.env)
+			binds, _ := json.Marshal(d.binds)
 			lbl := labels
 			if d.extraPorts != "" {
 				l := map[string]string{extraPortsLabel: d.extraPorts}
@@ -79,7 +81,7 @@ func newSharedDaemon(t *testing.T, owner string, running bool, onPull func()) (*
 				lbl = string(b)
 			}
 			d.mu.Unlock()
-			w.Write([]byte(`{"Id":"c-id","State":{"Running":` + run + `},"Config":{"Image":"img:1","WorkingDir":"/data/main","Env":` + string(env) + `,"Labels":` + lbl + `},"HostConfig":{},"NetworkSettings":{"Networks":{}}}`))
+			w.Write([]byte(`{"Id":"c-id","State":{"Running":` + run + `},"Config":{"Image":"img:1","WorkingDir":"/data/main","Env":` + string(env) + `,"Labels":` + lbl + `},"HostConfig":{"Binds":` + string(binds) + `},"NetworkSettings":{"Networks":{}}}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(p, "/containers/new-id-0123456789ab/json"):
 			w.Write([]byte(`{"Id":"new-id-0123456789ab","State":{"Running":true},"Config":{"Labels":{}},"NetworkSettings":{"Networks":{"dylaris_net":{}}}}`))
 		case strings.HasSuffix(p, "/images/create"):
@@ -408,6 +410,41 @@ func TestCrashRestartRecreatesAStaleRedisEnv(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dm, d := newSharedDaemon(t, "node-a", false, nil)
 			d.env = tc.env
+			dm.PowerAction(sharedDaemonUUID, "start")
+			if got := slices.Contains(d.changed(), "create"); got != tc.recreate {
+				t.Fatalf("recreated = %v (%v), want %v", got, d.changed(), tc.recreate)
+			}
+		})
+	}
+}
+
+// W12: a storage move killed after its key flip (or whose key write erred
+// after Redis applied it) left the container bound to the source. The crash
+// restart just started it there, on the copy the move's finish deletes, while
+// the key, SFTP and backups named the target. Bound to a copy the key does not
+// name, it is recreated where the key says; bound where the key says, started.
+func TestCrashRestartOfAMovedServerRecreatesWhereTheKeySays(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		bindAt   int
+		recreate bool
+	}{
+		{"bound to the copy the key moved off", 0, true},
+		{"bound where the key says", 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dm, d := newSharedDaemon(t, "node-a", false, nil)
+			sm, roots := newPlacementManager(t, 2)
+			sm.rdb = newMiniRedis(t)
+			for _, r := range roots {
+				if err := os.MkdirAll(filepath.Join(r, sharedDaemonUUID, "main"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sm.setRedisPath(sharedDaemonUUID, roots[1])
+			dm.storageMgr = sm
+			dm.hostPathCache = map[string]string{roots[0]: roots[0], roots[1]: roots[1]}
+			d.binds = []string{filepath.Join(roots[tc.bindAt], sharedDaemonUUID) + ":/data"}
 			dm.PowerAction(sharedDaemonUUID, "start")
 			if got := slices.Contains(d.changed(), "create"); got != tc.recreate {
 				t.Fatalf("recreated = %v (%v), want %v", got, d.changed(), tc.recreate)

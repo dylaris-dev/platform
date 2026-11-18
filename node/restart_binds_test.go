@@ -19,11 +19,16 @@ func TestRestartBindsDropAnOldBindTheMoveDeleted(t *testing.T) {
 		name     string
 		bindAt   int  // the root the container's /data bind names
 		oldThere bool // the tree still exists under that root
+		noKey    bool // no storage key: the copy is a scan's guess
 		want     func(old []string) []string
 	}{
-		{"bound where the server lives", 1, true, func(old []string) []string { return old }},
-		{"moved away and the old tree deleted", 0, false, func([]string) []string { return nil }},
-		{"two copies and the old one still there", 0, true, func(old []string) []string { return old }},
+		{"bound where the server lives", 1, true, false, func(old []string) []string { return old }},
+		{"moved away and the old tree deleted", 0, false, false, func([]string) []string { return nil }},
+		// W12: the key names the target, so the source is the copy the
+		// move's finish deletes, however whole it still is.
+		{"two copies and the key names the other", 0, true, false, func([]string) []string { return nil }},
+		{"two copies and no key to say which", 0, true, true, func(old []string) []string { return old }},
+		{"bound outside every storage path", -1, true, false, func(old []string) []string { return old }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -31,17 +36,23 @@ func TestRestartBindsDropAnOldBindTheMoveDeleted(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(roots[1], uuid), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if tc.oldThere {
+			if tc.oldThere && tc.bindAt >= 0 {
 				if err := os.MkdirAll(filepath.Join(roots[tc.bindAt], uuid), 0o755); err != nil {
 					t.Fatal(err)
 				}
 			}
 			mr := newMiniRedis(t)
 			sm.rdb = mr
-			sm.setRedisPath(uuid, roots[1])
+			if !tc.noKey {
+				sm.setRedisPath(uuid, roots[1])
+			}
 			dm := &DockerManager{storageMgr: sm, hostPathCache: map[string]string{roots[0]: roots[0], roots[1]: roots[1]}, hostDataPath: t.TempDir()}
 
-			old := []string{filepath.Join(roots[tc.bindAt], uuid) + ":/data"}
+			bindRoot := t.TempDir()
+			if tc.bindAt >= 0 {
+				bindRoot = roots[tc.bindAt]
+			}
+			old := []string{filepath.Join(bindRoot, uuid) + ":/data"}
 			info := container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{HostConfig: &container.HostConfig{Binds: old}}}
 			if got, want := dm.restartBinds(info, uuid), tc.want(old); !reflect.DeepEqual(got, want) {
 				t.Fatalf("restartBinds = %v, want %v", got, want)

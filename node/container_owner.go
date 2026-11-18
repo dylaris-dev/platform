@@ -193,9 +193,13 @@ func ownBinds(info container.InspectResponse) []string {
 // the deleted directory again, empty: the server ran a fresh world there for
 // good. Only a bind whose directory is gone is dropped (the default bind then
 // names where the server lives); one that still exists is kept, so a path
-// resolution that drifted cannot move a live server.
+// resolution that drifted cannot move a live server. Unless the storage key
+// names another copy (boundToMovedCopy): the key's copy is the live server.
 func (dm *DockerManager) restartBinds(info container.InspectResponse, uuid string) []string {
 	binds := ownBinds(info)
+	if dm.boundToMovedCopy(binds, uuid) {
+		return nil
+	}
 	hostDir := dm.resolveHostServerPath(uuid)
 	if hostDir == "" || !dataBindStale(binds, hostDir) {
 		return binds
@@ -210,4 +214,27 @@ func (dm *DockerManager) restartBinds(info container.InspectResponse, uuid strin
 		break
 	}
 	return binds
+}
+
+// boundToMovedCopy reports whether a /data bind names this server's tree on
+// another of this node's storage paths than the one its storage key names: a
+// move killed after its key flip, or whose key write erred after Redis applied
+// it. Started on that bind, the server ran on a copy the move's finish
+// deletes, while SFTP, the panel and backups used the key's. A bind no storage
+// path accounts for, or a server with no key, is not one.
+func (dm *DockerManager) boundToMovedCopy(binds []string, uuid string) bool {
+	if dm.storageMgr == nil {
+		return false
+	}
+	live := dm.storageMgr.keyedPath(uuid)
+	host, ok := dm.hostPathCache[live]
+	if live == "" || !ok || !dataBindStale(binds, filepath.Join(host, uuid)) {
+		return false
+	}
+	for local, h := range dm.hostPathCache {
+		if local != live && !dataBindStale(binds, filepath.Join(h, uuid)) {
+			return true
+		}
+	}
+	return false
 }

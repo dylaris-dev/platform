@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -168,6 +169,59 @@ func TestMigrateServerPathKeepsTheSourceWhenTheKeyCannotMove(t *testing.T) {
 	}
 	if _, err := os.Stat(srcDir); !os.IsNotExist(err) {
 		t.Errorf("source still present after the move (stat err = %v)", err)
+	}
+}
+
+// setAppliedButErred makes every SET reach Redis and then report an error,
+// as a reply that timed out after Valkey applied the write.
+type setAppliedButErred struct{}
+
+func (setAppliedButErred) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (setAppliedButErred) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (setAppliedButErred) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if cmd.Name() == "set" && err == nil {
+			err = errors.New("i/o timeout")
+			cmd.SetErr(err)
+		}
+		return err
+	}
+}
+
+// W12: a key SET that Redis applied but whose reply erred was reported as
+// errStorageKeyUnsure, leaving both copies and the server down. Read back, the
+// key names the target, so the move is finished: source gone, no error.
+func TestMigrateServerPathFinishesWhenTheFailedKeyWriteLanded(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	sm, _ := newPlacementManager(t, 2)
+	sm.rdb = rdb
+	paths := sm.Paths()
+	const uuid = "b083ff0c-fc16-47c5-9700-7b16486583e7"
+	srcDir := filepath.Join(paths[0], uuid)
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "level.dat"), []byte("world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sm.setRedisPath(uuid, paths[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	rdb.AddHook(setAppliedButErred{})
+	if err := sm.MigrateServerPath(uuid, paths[1]); err != nil {
+		t.Fatalf("MigrateServerPath = %v, want nil: the key names the target", err)
+	}
+	if _, err := os.Stat(srcDir); !os.IsNotExist(err) {
+		t.Errorf("source still present after the move (stat err = %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(paths[1], uuid, "level.dat")); err != nil {
+		t.Errorf("the target copy is missing: %v", err)
 	}
 }
 

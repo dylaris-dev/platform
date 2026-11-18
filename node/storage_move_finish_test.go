@@ -4,8 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // M20: a storage move killed after the key flip left the source half deleted
@@ -67,5 +69,40 @@ func TestDataBindStale(t *testing.T) {
 				t.Fatalf("dataBindStale(%v) = %v, want %v", tc.binds, got, tc.want)
 			}
 		})
+	}
+}
+
+// W12: a repeat of a move that died after its key flip went straight to the
+// finish, whose forced remove killed a server running on the old copy
+// without a save. It is stopped (save-all, stop) before the remove now.
+func TestFinishingAMoveStopsAServerStillRunningOnTheOldCopy(t *testing.T) {
+	prevWait := gracefulStopWait
+	gracefulStopWait = 300 * time.Millisecond
+	t.Cleanup(func() { gracefulStopWait = prevWait })
+
+	dm, d := newSharedDaemon(t, "node-a", true, nil)
+	rdb := newMiniRedis(t)
+	sm, roots := newPlacementManager(t, 2)
+	sm.rdb = rdb
+	for _, r := range roots {
+		if err := os.MkdirAll(filepath.Join(r, sharedDaemonUUID), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sm.setRedisPath(sharedDaemonUUID, roots[1])
+	dm.storageMgr = sm
+	dm.hostPathCache = map[string]string{roots[0]: roots[0], roots[1]: roots[1]}
+	d.binds = []string{filepath.Join(roots[0], sharedDaemonUUID) + ":/data"}
+
+	if err := finishStorageMove(t.Context(), rdb, dm, nil, sm, sharedDaemonUUID, 0); err != nil {
+		t.Fatalf("finishStorageMove: %v", err)
+	}
+	got := d.changed()
+	stop, remove := slices.Index(got, "stop c-id"), slices.Index(got, "remove c-id")
+	if stop < 0 || remove < 0 || stop > remove {
+		t.Fatalf("docker calls = %v, want a stop before the remove", got)
+	}
+	if n, _ := rdb.LLen(t.Context(), "dylaris:server:"+sharedDaemonUUID+":input").Result(); n == 0 {
+		t.Fatalf("no console save/stop was sent before the remove")
 	}
 }
