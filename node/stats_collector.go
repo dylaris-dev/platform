@@ -954,6 +954,7 @@ func getDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, quota *Qu
 	if enforceable {
 		usage = quota.GetDiskUsage(uuid)
 		if usage != nil {
+			repairLostDiskLimit(ctx, rdb, quota, uuid, usage)
 			withGraceLimit(ctx, rdb, uuid, usage)
 		}
 	}

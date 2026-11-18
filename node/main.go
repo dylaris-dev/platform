@@ -1219,6 +1219,11 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 			infos[i].QuotaEnforceable = enforceable[infos[i].Path]
 		}
 		data["storage"] = infos
+		// Only when some are: an old node sends no key, and Core reads an
+		// absent one as "every path listed", as before.
+		if skipped := globalStorageMgr.SkippedPaths(); len(skipped) > 0 {
+			data["storageUnavailable"] = skipped
+		}
 	}
 
 	// A storage path shared with another node. Reported every beat rather than

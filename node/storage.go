@@ -109,7 +109,7 @@ func NewStorageManager(pathsCSV string, rdb *redis.Client) *StorageManager {
 		abs, err := filepath.Abs(p)
 		if err != nil {
 			log.Printf("storage: [warn] cannot resolve path %q: %v — skipping", p, err)
-			sm.skipped++
+			sm.skipPath(p)
 			continue
 		}
 
@@ -194,6 +194,7 @@ const storageMarkerGen = "#gen "
 func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 	known := map[string]bool{}
 	marked := map[string]bool{}
+	listed := map[string]bool{}
 	gens := map[string]uint64{}
 	var maxGen uint64
 	for _, p := range paths {
@@ -213,14 +214,24 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 			}
 			if line != "" {
 				known[line] = true
+				listed[p] = true
 			}
 		}
 	}
-	// A marker without a number (an old node's, or one an operator made) is
-	// taken as current.
+	// A marker without a number is taken as current only while no marker
+	// carries one, or when it is empty (the override the warning below tells
+	// an operator to make). One listing paths beside numbered ones is the
+	// copy release 2026.11.17.2 wrote onto a bare mountpoint (Y11).
 	for p, g := range gens {
 		if g < maxGen {
 			marked[p] = false
+		}
+	}
+	if len(gens) > 0 {
+		for p := range listed {
+			if _, ok := gens[p]; !ok {
+				marked[p] = false
+			}
 		}
 	}
 	var kept []string
@@ -266,6 +277,29 @@ func dirHoldsNothing(dir string) bool {
 	return true
 }
 
+// SkippedPaths are the configured paths left out at boot, sorted. Servers
+// on them exist but cannot be seen, so the heartbeat reports them: Core must
+// not take a server missing from the listed paths for a dead row (Y10).
+func (sm *StorageManager) SkippedPaths() []string {
+	out := make([]string, 0, len(sm.skippedPaths))
+	for p := range sm.skippedPaths {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// readStorageKey returns the path the server's storage key names, "" for no
+// key. An error is a Redis that could not answer, which is not "no key": the
+// lookup then scanned and wrote its guess back as the key for good (Y09).
+func (sm *StorageManager) readStorageKey(serverUUID string) (string, error) {
+	val, err := sm.rdb.Get(context.Background(), fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	return val, err
+}
+
 // Paths returns the list of available storage paths.
 func (sm *StorageManager) Paths() []string {
 	sm.mu.RLock()
@@ -305,8 +339,15 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 	// 1. Redis lookup
 	keyed := false
 	if sm.rdb != nil {
-		key := fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)
-		if val, err := sm.rdb.Get(context.Background(), key).Result(); err == nil && val != "" {
+		if val, err := sm.readStorageKey(serverUUID); err != nil {
+			// Unanswered is not unkeyed: the scan below is never written back,
+			// and with a path skipped any copy it finds may be the leftover.
+			log.Printf("storage: cannot read the storage key of %s: %v", serverUUID, err)
+			keyed = true
+			if sm.skipped > 0 {
+				return ""
+			}
+		} else if val != "" {
 			// Verify the path is still in our list
 			for _, p := range sm.paths {
 				if p == val {
@@ -569,13 +610,19 @@ func (sm *StorageManager) resolveMigration(serverUUID, targetPath string) (strin
 	// Find current path: Redis lookup first, then filesystem scan
 	currentPath := ""
 	if sm.rdb != nil {
-		key := fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)
-		if val, err := sm.rdb.Get(context.Background(), key).Result(); err == nil && val != "" {
-			for _, p := range sm.paths {
-				if p == val {
-					currentPath = val
-					break
-				}
+		val, err := sm.readStorageKey(serverUUID)
+		if err != nil {
+			return "", fmt.Errorf("read the storage key of %s: %w", serverUUID, err)
+		}
+		// As in GetServerPath: the live tree waits on the unmounted disk, and
+		// the scan below took the leftover a killed move left elsewhere.
+		if sm.skippedPaths[val] {
+			return "", fmt.Errorf("server %s lives on %q, which is configured but not mounted; refusing the move", serverUUID, val)
+		}
+		for _, p := range sm.paths {
+			if p == val {
+				currentPath = val
+				break
 			}
 		}
 	}

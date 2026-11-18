@@ -473,6 +473,36 @@ func repairDiskStateLostWithRedis(ctx context.Context, rdb *redis.Client, q quot
 	}
 }
 
+// repairLostDiskLimit is repairDiskStateLostWithRedis for a Valkey restart
+// while the node runs: the cache and the grace are gone, and the project's
+// ceiling read as the server's limit until the next boot (Y12). Only the saved
+// config can name the limit then; the project holds the ceiling.
+func repairLostDiskLimit(ctx context.Context, rdb *redis.Client, q diskLimiter, uuid string, usage *DiskUsagePayload) {
+	if rdb == nil || q == nil || usage == nil || globalStorageMgr == nil || diskLiftHeld(uuid) {
+		return
+	}
+	if err := rdb.Get(ctx, diskLimitKey(uuid)).Err(); !errors.Is(err, redis.Nil) {
+		return
+	}
+	dir := globalStorageMgr.GetServerDir(uuid)
+	if dir == "" {
+		return
+	}
+	limitMB := savedDiskLimitIn(dir)
+	if limitMB <= 0 {
+		return
+	}
+	recordDiskLimit(ctx, rdb, uuid, limitMB)
+	restoreLostDiskGrace(ctx, rdb, uuid, limitMB<<20, usage)
+	if _, ok := loadDiskGrace(ctx, rdb, uuid); !ok && usage.Limit > limitMB<<20 {
+		if err := q.SetLimit(uuid, limitMB); err != nil {
+			log.Printf("quota: put the limit of %s back after Redis lost it: %v", uuid, err)
+			return
+		}
+		usage.Limit = limitMB << 20
+	}
+}
+
 // knownDiskLimitMB is the limit Core last pushed, else the one on the project
 // (a server limited before the cache existed). For paths Core sends no limit on.
 //

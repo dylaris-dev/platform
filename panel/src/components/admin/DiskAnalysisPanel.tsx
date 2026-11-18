@@ -47,6 +47,7 @@ export function DiskAnalysisPanel({
                 matched: res.matched ?? [],
                 orphaned: res.orphaned ?? [],
                 missing: res.missing ?? [],
+                storageUnavailable: res.storageUnavailable ?? [],
             });
             setExpanded(true);
         }
@@ -170,6 +171,15 @@ export function DiskAnalysisPanel({
                         </div>
                     )}
 
+                    {data.nodeOnline !== false && (data.storageUnavailable?.length ?? 0) > 0 && (
+                        <div className="alert alert-warning text-(--warning) text-xs">
+                            <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                            <span>
+                                Storage not mounted on the node: {data.storageUnavailable?.join(', ')}. Servers on it cannot be seen, so DB orphans are not listed until it is back.
+                            </span>
+                        </div>
+                    )}
+
                     {data.nodeOnline !== false && data.missing.length > 0 && (
                         <div>
                             <p className="mono-label mb-2">
@@ -196,7 +206,7 @@ export function DiskAnalysisPanel({
                         </div>
                     )}
 
-                    {data.nodeOnline !== false && data.orphaned.length === 0 && data.missing.length === 0 && (
+                    {data.nodeOnline !== false && !data.storageUnavailable?.length && data.orphaned.length === 0 && data.missing.length === 0 && (
                         <p className="text-xs text-(--success-light) flex items-center gap-1.5">
                             <Check size={13} />
                             All {data.matched.length} server folders match DB records

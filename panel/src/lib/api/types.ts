@@ -1753,6 +1753,9 @@ export interface DiskAnalysis {
     matched: { uuid: string; serverName: string; ownerName: string; status: string }[];
     orphaned: { uuid: string }[];
     missing: { id: number; uuid: string; serverName: string }[];
+    // Configured storage paths the node could not mount. While any is listed,
+    // Core withholds the missing list: those servers are not dead rows.
+    storageUnavailable?: string[];
 }
 export const getAdminServers = (params?: { search?: string; orphaned?: boolean }) => {
     const q = new URLSearchParams();

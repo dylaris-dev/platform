@@ -925,14 +925,19 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 
 	diskUUIDs := make(map[string]bool)
 	nodeOnline := false
+	// Configured storage paths the node could not take (a disk that did not
+	// mount). Their servers are on no listed path and are not dead rows.
+	unavailable := []string{}
 	if h.d.Redis != nil {
 		key := "dylaris:discovery:" + node.Token
 		if val, redisErr := h.d.Redis.Get(r.Context(), key).Result(); redisErr == nil {
 			nodeOnline = true
 			var hb struct {
-				Storage []storageHeartbeatEntry `json:"storage"`
+				Storage            []storageHeartbeatEntry `json:"storage"`
+				StorageUnavailable []string                `json:"storageUnavailable"`
 			}
 			if json.Unmarshal([]byte(val), &hb) == nil {
+				unavailable = append(unavailable, hb.StorageUnavailable...)
 				for _, entry := range hb.Storage {
 					for _, u := range entry.ServerUUIDs {
 						diskUUIDs[u] = true
@@ -969,8 +974,9 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Only compute the missing list against an online node — an offline node has no
-	// fresh disk view and would mislabel every server as missing.
-	if nodeOnline {
+	// fresh disk view and would mislabel every server as missing. Nor with a
+	// storage path unavailable: "Remove from DB" deleted live servers on it.
+	if nodeOnline && len(unavailable) == 0 {
 		for u, srv := range dbByUUID {
 			if !diskUUIDs[u] {
 				missing = append(missing, missingEntry{ID: srv.ID, UUID: u, Name: srv.Name})
@@ -984,6 +990,8 @@ func (h *NodeHandler) GetDiskAnalysis(w http.ResponseWriter, r *http.Request) {
 		"matched":    matched,
 		"orphaned":   orphaned,
 		"missing":    missing,
+		// An old node sends none: empty, and missing is computed as before.
+		"storageUnavailable": unavailable,
 	})
 }
 

@@ -150,7 +150,10 @@ func TestMigrateServerPathKeepsTheSourceWhenTheKeyCannotMove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mr.SetError("READONLY")
+	// Only the SET fails: a GET that cannot be answered refuses the move
+	// before the copy (Y09), which is not the case this covers.
+	refuse := &setRefused{on: true}
+	rdb.AddHook(refuse)
 	if err := sm.MigrateServerPath(uuid, paths[1]); !errors.Is(err, errStorageKeyUnsure) {
 		// The handler starts a server again after a failed move only when
 		// this is not the error: the key may name the target already.
@@ -160,7 +163,7 @@ func TestMigrateServerPathKeepsTheSourceWhenTheKeyCannotMove(t *testing.T) {
 		t.Fatalf("the source was deleted although the key still names it: %v", err)
 	}
 
-	mr.SetError("")
+	refuse.on = false
 	if err := sm.MigrateServerPath(uuid, paths[1]); err != nil {
 		t.Fatalf("MigrateServerPath: %v", err)
 	}
@@ -169,6 +172,25 @@ func TestMigrateServerPathKeepsTheSourceWhenTheKeyCannotMove(t *testing.T) {
 	}
 	if _, err := os.Stat(srcDir); !os.IsNotExist(err) {
 		t.Errorf("source still present after the move (stat err = %v)", err)
+	}
+}
+
+// setRefused fails every SET without applying it while on, as a READONLY
+// replica does; every other command still answers.
+type setRefused struct{ on bool }
+
+func (*setRefused) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (*setRefused) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (h *setRefused) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if h.on && cmd.Name() == "set" {
+			err := errors.New("READONLY You can't write against a read only replica.")
+			cmd.SetErr(err)
+			return err
+		}
+		return next(ctx, cmd)
 	}
 }
 
