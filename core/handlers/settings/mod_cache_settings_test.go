@@ -2,6 +2,10 @@ package settings
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"dylaris-core/handlers/handlertest"
@@ -66,5 +70,77 @@ func TestApplyCacheSettingsAdoptsTheStoredEndpoint(t *testing.T) {
 	}
 	if s := cache.Status(context.Background()); !s.Dedicated || s.Addr != dedicated.Addr() || !s.Healthy {
 		t.Fatalf("status %+v, want the stored endpoint %s", s, dedicated.Addr())
+	}
+}
+
+// cacheStoreStub fails GetSetting / SetSetting on demand.
+type cacheStoreStub struct {
+	*handlertest.SettingsStore
+	getErr error
+	setErr error
+}
+
+func (s *cacheStoreStub) GetSetting(k string) (string, error) {
+	if s.getErr != nil {
+		return "", s.getErr
+	}
+	return s.SettingsStore.GetSetting(k)
+}
+
+func (s *cacheStoreStub) SetSetting(k, v string) error {
+	if s.setErr != nil {
+		return s.setErr
+	}
+	return s.SettingsStore.SetSetting(k, v)
+}
+
+// Core runs two replicas and a save reconfigures only the one that served it.
+// Every replica re-adopts the stored endpoint on its own tick, and a settings
+// read that fails must not be taken for "no endpoint" (back onto the bus).
+func TestSyncCacheSettingsFollowsTheStoredEndpoint(t *testing.T) {
+	bus, _ := handlertest.Redis(t)
+	_, dedicated := handlertest.Redis(t)
+	ctx := context.Background()
+	st := &cacheStoreStub{SettingsStore: handlertest.NewSettingsStore()}
+	cache := services.NewCache(bus)
+
+	st.KV[settingModCacheAddr] = dedicated.Addr() // saved on the other replica
+	syncCacheSettings(ctx, cache, st)
+	if s := cache.Status(ctx); !s.Dedicated || s.Addr != dedicated.Addr() {
+		t.Fatalf("after a save elsewhere: status %+v, want %s", s, dedicated.Addr())
+	}
+
+	st.getErr = errors.New("db down")
+	syncCacheSettings(ctx, cache, st)
+	if s := cache.Status(ctx); !s.Dedicated {
+		t.Fatalf("a failed read moved the cache back onto the bus: %+v", s)
+	}
+
+	st.getErr = nil
+	st.KV[settingModCacheAddr] = "" // cleared on the other replica
+	syncCacheSettings(ctx, cache, st)
+	if s := cache.Status(ctx); s.Dedicated {
+		t.Fatalf("after a clear elsewhere: status %+v, want the bus", s)
+	}
+}
+
+// A save whose settings write fails must say so and leave this replica where
+// it was, not answer success on an endpoint the next restart drops.
+func TestSetModCacheFailedWriteRevertsAndErrors(t *testing.T) {
+	bus, _ := handlertest.Redis(t)
+	_, dedicated := handlertest.Redis(t)
+	st := &cacheStoreStub{SettingsStore: handlertest.NewSettingsStore(), setErr: errors.New("db down")}
+	cache := services.NewCache(bus)
+	h := NewModCacheSettingsHandler(Deps{Store: st, Cache: cache})
+
+	body := strings.NewReader(`{"addr":"` + dedicated.Addr() + `"}`)
+	rec := httptest.NewRecorder()
+	h.Set(rec, httptest.NewRequest(http.MethodPut, "/api/admin/settings/mod-cache", body))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status %d, want 500", rec.Code)
+	}
+	if s := cache.Status(context.Background()); s.Dedicated {
+		t.Errorf("cache kept the unsaved endpoint: %+v", s)
 	}
 }

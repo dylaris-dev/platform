@@ -147,6 +147,13 @@ func (c *Cache) point(ctx context.Context, cfg CacheConfig, keepUnreachable bool
 	return pingErr
 }
 
+// Config is the endpoint the cache currently points at.
+func (c *Cache) Config() CacheConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.cfg
+}
+
 // client returns the endpoint to use, or nil when there is none.
 //
 // A configured-but-unreachable dedicated endpoint deliberately does NOT fall

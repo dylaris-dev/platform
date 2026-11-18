@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"log"
 	"strconv"
 	"time"
@@ -79,17 +81,24 @@ func (p *NodeModePublisher) Publish(ctx context.Context) {
 	// Written every time, defaults included: a stale value left in Redis by a
 	// previous install must not survive. That is why the original startup write
 	// wrote the defaults too, and it still holds.
-	mode, _ := p.store.GetSetting("routing_mode")
-	if mode == "" {
-		mode = "ip_port"
-	}
-	fileMode, _ := p.store.GetSetting("file_access_mode")
-	if fileMode == "" {
-		fileMode = "sftp"
-	}
-	values := map[string]string{
-		"dylaris:routing_mode":     mode,
-		"dylaris:file_access_mode": fileMode,
+	//
+	// But only for "never saved": a failed read (database or pgbouncer down)
+	// skips the key for this tick. Writing the defaults then flipped a
+	// gateway+beam fleet to ip_port + sftp for the whole outage.
+	values := map[string]string{}
+	for setting, def := range map[string]string{
+		"routing_mode":     "ip_port",
+		"file_access_mode": "sftp",
+	} {
+		v, err := p.store.GetSetting(setting)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrSettingNull) {
+			log.Printf("node mode publisher: read %s: %v (keeping the published value)", setting, err)
+			continue
+		}
+		if v == "" {
+			v = def
+		}
+		values["dylaris:"+setting] = v
 	}
 
 	// These only exist once an admin has saved them. An absent setting means

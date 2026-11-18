@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,6 +31,7 @@ import (
 type settingsStub struct {
 	store.Store
 	values map[string]string
+	errs   map[string]error // GetSetting fails with this for the key
 	nodes  []models.Node
 }
 
@@ -44,6 +46,9 @@ func (s *settingsStub) SetSetting(key, value string) error {
 }
 
 func (s *settingsStub) GetSetting(key string) (string, error) {
+	if err := s.errs[key]; err != nil {
+		return "", err
+	}
 	v, ok := s.values[key]
 	if !ok {
 		return "", sql.ErrNoRows // what the real store answers for a missing row
@@ -103,6 +108,37 @@ func TestNodeModePublisherWritesModeDefaultsOverStaleValues(t *testing.T) {
 	}
 	if v, _ := rdb.Get(ctx, "dylaris:file_access_mode").Result(); v != "sftp" {
 		t.Errorf("file_access_mode: got %q, want sftp", v)
+	}
+}
+
+// A settings read that fails (database or pgbouncer down) is not "never
+// saved": publishing the defaults then would flip a gateway+beam fleet to
+// ip_port + sftp for the length of the outage. The last good value must stand.
+func TestNodeModePublisherKeepsModesOnReadError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want map[string]string
+	}{
+		{"read error keeps last value", errors.New("pgbouncer: connection refused"),
+			map[string]string{"dylaris:routing_mode": "gateway", "dylaris:file_access_mode": "beam"}},
+		{"NULL row is never saved", store.ErrSettingNull,
+			map[string]string{"dylaris:routing_mode": "ip_port", "dylaris:file_access_mode": "sftp"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			ctx := context.Background()
+			rdb.Set(ctx, "dylaris:routing_mode", "gateway", 0)
+			rdb.Set(ctx, "dylaris:file_access_mode", "beam", 0)
+			st := &settingsStub{errs: map[string]error{"routing_mode": tc.err, "file_access_mode": tc.err}}
+			NewNodeModePublisher(st, rdb).Publish(ctx)
+			for key, exp := range tc.want {
+				if got, _ := rdb.Get(ctx, key).Result(); got != exp {
+					t.Errorf("%s: got %q, want %q", key, got, exp)
+				}
+			}
+		})
 	}
 }
 

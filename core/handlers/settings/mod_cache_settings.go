@@ -2,11 +2,15 @@ package settings
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"dylaris-core/handlers/httpx"
 	"dylaris-core/services"
@@ -64,8 +68,19 @@ type modCacheSettings struct {
 // CacheConfigFromSettings reads the stored cache endpoint. Returns a zero config
 // when none is set, which the cache reads as "use the Redis Core already has".
 func CacheConfigFromSettings(st store.Store) services.CacheConfig {
+	cfg, _ := readCacheConfig(st)
+	return cfg
+}
+
+// readCacheConfig is CacheConfigFromSettings that also reports a failed read,
+// as opposed to a key that was never saved.
+func readCacheConfig(st store.Store) (services.CacheConfig, error) {
+	var readErr error
 	get := func(k string) string {
-		v, _ := st.GetSetting(k)
+		v, err := st.GetSetting(k)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrSettingNull) && readErr == nil {
+			readErr = fmt.Errorf("read %s: %w", k, err)
+		}
 		return v
 	}
 	db, _ := strconv.Atoi(get(settingModCacheDB))
@@ -75,7 +90,7 @@ func CacheConfigFromSettings(st store.Store) services.CacheConfig {
 		Password: get(settingModCachePassword),
 		DB:       db,
 		TLS:      get(settingModCacheTLS) == "true",
-	}
+	}, readErr
 }
 
 // ApplyCacheSettings points the cache at whatever the settings say, at BOOT.
@@ -90,6 +105,47 @@ func ApplyCacheSettings(ctx context.Context, cache *services.Cache, st store.Sto
 		return nil
 	}
 	return cache.Adopt(ctx, CacheConfigFromSettings(st))
+}
+
+// cacheSettingsSyncInterval bounds how long a replica that did not serve a save
+// keeps caching into the old endpoint.
+const cacheSettingsSyncInterval = 30 * time.Second
+
+// WatchCacheSettings re-adopts the stored endpoint on this replica whenever it
+// differs from the one in use. A save reconfigures only the replica that served
+// it; Core runs two, and nothing else re-reads the setting after boot.
+func WatchCacheSettings(ctx context.Context, cache *services.Cache, st store.Store) {
+	if cache == nil {
+		return
+	}
+	go func() {
+		t := time.NewTicker(cacheSettingsSyncInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				syncCacheSettings(ctx, cache, st)
+			}
+		}
+	}()
+}
+
+func syncCacheSettings(ctx context.Context, cache *services.Cache, st store.Store) {
+	cfg, err := readCacheConfig(st)
+	if err != nil {
+		// Not "no endpoint": that would put the cache back on the control-plane
+		// Redis for the length of a database outage.
+		log.Printf("mod cache settings: %v (keeping the current endpoint)", err)
+		return
+	}
+	if cfg == cache.Config() {
+		return
+	}
+	if err := cache.Adopt(ctx, cfg); err != nil {
+		log.Printf("mod cache settings: adopted the stored endpoint, not answering yet: %v", err)
+	}
 }
 
 // Get GET /api/admin/settings/mod-cache
@@ -183,23 +239,35 @@ func (h *ModCacheSettingsHandler) Set(w http.ResponseWriter, r *http.Request) {
 	// cache pointed at something unreachable, and because a cache failure is a
 	// silent miss rather than an error, the only symptom would be a panel that
 	// got slower.
+	var previous services.CacheConfig
 	if h.d.Cache != nil {
+		previous = h.d.Cache.Config()
 		if err := h.d.Cache.Reconfigure(r.Context(), candidate); err != nil {
 			httpx.SendJSONError(w, "Could not reach that Redis: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 	}
 
-	set := func(k, v string) {
-		if err := h.d.Store.SetSetting(k, v); err != nil {
-			log.Printf("mod cache settings: failed to save %s: %v", k, err)
+	for _, kv := range [][2]string{
+		{settingModCacheAddr, req.Addr},
+		{settingModCacheUsername, req.Username},
+		{settingModCachePassword, password},
+		{settingModCacheDB, strconv.Itoa(req.DB)},
+		{settingModCacheTLS, strconv.FormatBool(req.TLS)},
+	} {
+		if err := h.d.Store.SetSetting(kv[0], kv[1]); err != nil {
+			log.Printf("mod cache settings: failed to save %s: %v", kv[0], err)
+			// Back to where this replica was: an endpoint that is not stored
+			// would be dropped at the next restart and never reach the other
+			// replica. Earlier keys of this save may be stored; the operator
+			// is told to save again.
+			if h.d.Cache != nil {
+				_ = h.d.Cache.Adopt(r.Context(), previous)
+			}
+			httpx.SendJSONError(w, "Failed to save the cache settings, please save again", http.StatusInternalServerError)
+			return
 		}
 	}
-	set(settingModCacheAddr, req.Addr)
-	set(settingModCacheUsername, req.Username)
-	set(settingModCachePassword, password)
-	set(settingModCacheDB, strconv.Itoa(req.DB))
-	set(settingModCacheTLS, strconv.FormatBool(req.TLS))
 
 	h.d.Events.Publish(r.Context(), "settings.changed", map[string]interface{}{"section": "mod-cache"})
 	json.NewEncoder(w).Encode(map[string]interface{}{
