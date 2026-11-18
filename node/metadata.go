@@ -30,6 +30,10 @@ type ServerMetadata struct {
 	UpdatedAt       string              `json:"updated_at"`
 }
 
+// metadataTempName is what writeServerMetadata renames over .dylaris.json, so
+// isProtectedFile keeps it out of the tenant's reach like the file itself.
+const metadataTempName = ".dylaris.json.tmp"
+
 func metadataPath(serverDir string) string {
 	return filepath.Join(serverDir, ".dylaris.json")
 }
@@ -53,7 +57,7 @@ func writeServerMetadata(serverDir string, m ServerMetadata) error {
 		return err
 	}
 	defer root.Close()
-	const tmp = ".dylaris.json.tmp"
+	const tmp = metadataTempName
 	if err := root.Remove(tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}

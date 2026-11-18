@@ -2179,6 +2179,13 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer leaveTree()
+		// "" means the storage path is not mounted here, and joining the name
+		// onto it works relative to the node's own working directory.
+		serverPath := storage.GetServerDir(cmd.Config.UUID)
+		if serverPath == "" {
+			log.Printf("delete_sub_server %s/%s refused: no storage path resolved, it is not mounted on this node", cmd.Config.UUID, subName)
+			return
+		}
 		log.Printf("Deleting sub-server %s/%s ...", cmd.Config.UUID, subName)
 
 		// Tear down the container before touching the sub-server it runs in.
@@ -2248,7 +2255,6 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			log.Printf("delete_sub_server %s/%s: log stream delete: %v", cmd.Config.UUID, subName, delErr)
 		}
 
-		serverPath := storage.GetServerDir(cmd.Config.UUID)
 		subServerPath := filepath.Join(serverPath, subName)
 
 		// Two-phase delete to survive busy filesystems.

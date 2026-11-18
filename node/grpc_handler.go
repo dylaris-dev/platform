@@ -1293,7 +1293,7 @@ func isProtectedFile(path string) bool {
 		return true
 	}
 	name := filepath.Base(clean)
-	if name == ".active_server" || name == ".node_config.json" || name == ".dylaris-backups" || name == ".dylaris.json" || name == netGateFile {
+	if name == ".active_server" || name == ".node_config.json" || name == ".dylaris-backups" || name == ".dylaris.json" || name == metadataTempName || name == netGateFile {
 		return true
 	}
 	// .pending-delete-* are short-lived rename targets used by the

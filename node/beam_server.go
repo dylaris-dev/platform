@@ -1088,6 +1088,11 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	if err := s.dataThrottle.WaitN(ctx, serverUUID, len(req.Content)); err != nil {
 		return nil, status.Errorf(codes.Canceled, "throttle: %v", err)
 	}
+	// Again after the wait, as UploadFile does per chunk: at a low cap the wait
+	// outlasts an access change, and the check above was taken before it.
+	if err := s.requireFilePerm(ctx, canWrite, "write"); err != nil {
+		return nil, err
+	}
 	defer s.storageMgr.holdWriter(serverUUID)()
 	root, name, err := s.jailBeam(req.Path, serverUUID, "write")
 	if err != nil {
