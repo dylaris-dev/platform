@@ -507,6 +507,51 @@ func TestReleaseResolvedDiskHolds(t *testing.T) {
 	}
 }
 
+// W14: the release posted "stopped" once into a 30 s mailbox and dropped the
+// marker, so a Core leader gap longer than that left the row at disk_full
+// (Start refused) with nothing ever posting again. Both release paths.
+func TestReleasedDiskHoldOutlivesACoreGap(t *testing.T) {
+	prevNodeID, prevMgr := nodeID, globalStorageMgr
+	t.Cleanup(func() { nodeID, globalStorageMgr = prevNodeID, prevMgr })
+	nodeID = "node-1"
+	ctx := context.Background()
+	const held = "dddddddd-1111-2222-3333-444444444444"
+	statusKey := fmt.Sprintf("dylaris:server:%s:status", held)
+
+	for _, tc := range []struct {
+		name    string
+		release func(rdb *redis.Client)
+	}{
+		{"stopped-server sweep", func(rdb *redis.Client) {
+			releaseResolvedDiskHolds(ctx, rdb, NewQuotaSet(nil), map[string]bool{})
+		}},
+		{"collector, container stopped", func(rdb *redis.Client) {
+			releaseDiskHold(ctx, rdb, held, "live", &DiskUsagePayload{}, false)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			root := t.TempDir()
+			globalStorageMgr = NewStorageManager(root, nil)
+			if err := os.MkdirAll(filepath.Join(root, held), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			recordDiskLimit(ctx, rdb, held, 1)
+			mr.Set(diskFullKey(held), "1")
+
+			tc.release(rdb)
+			if mr.Exists(diskFullKey(held)) {
+				t.Fatal("hold not released")
+			}
+			mr.FastForward(2 * time.Minute) // no Core leader drained it meanwhile
+			if got, _ := mr.Get(statusKey); got != "stopped" {
+				t.Fatalf("status after a 2 min Core gap = %q, want stopped", got)
+			}
+		})
+	}
+}
+
 // G37: a lookup of the server being moved resolved to the source during the
 // copy, so a write made then landed in the tree the move deletes. It has to
 // wait for the move, as it did under the old manager-wide lock, while the

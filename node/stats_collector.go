@@ -74,6 +74,11 @@ const (
 	// server down - the guard re-evaluates within one cycle when it comes back,
 	// so a stale marker can never strand a server whose space was freed.
 	diskFullMarkerTTL = 1 * time.Hour
+	// diskReleasedTTL is how long a released hold's "stopped" waits in the
+	// status mailbox. Nothing posts it again, so the usual 30 s lost it to a
+	// Core leader gap and left the row at disk_full, refusing every start.
+	// Core's GETDEL consumes it once; a start overwrites it with a live status.
+	diskReleasedTTL = 3 * diskFallbackInterval
 	// statsBufferTTL is how long a server's stats buffer outlives its last
 	// sample: the hour the default MAXLEN holds at one sample per 2 s.
 	statsBufferTTL       = 1 * time.Hour
@@ -908,10 +913,15 @@ func holdForDiskFull(_ context.Context, rdb *redis.Client, uuid, liveKey string,
 // collector's next status write, now that the marker no longer holds it.
 func releaseDiskHold(ctx context.Context, rdb *redis.Client, uuid, liveKey string, usage *DiskUsagePayload, running bool) {
 	log.Printf("Disk quota resolved for %s — releasing the hold", uuid)
-	rdb.Del(ctx, diskFullKey(uuid))
 	if !running {
-		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
+		// Keep the marker when the post failed: the stopped-server sweep then
+		// releases it again, where dropping it left Core at disk_full for good.
+		if !postDiskReleased(ctx, rdb, uuid) {
+			return
+		}
+		rdb.Del(ctx, diskFullKey(uuid))
 	} else {
+		rdb.Del(ctx, diskFullKey(uuid))
 		// The guard's stop did not take: a later stop of this run is the owner's.
 		nodeStops.Delete(uuid)
 	}
@@ -1288,9 +1298,20 @@ func releaseResolvedDiskHolds(ctx context.Context, rdb *redis.Client, quota *Quo
 			continue
 		}
 		log.Printf("Disk quota resolved for %s while stopped — releasing the hold", uuid)
-		rdb.Del(ctx, diskFullKey(uuid))
-		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", 30*time.Second)
+		if postDiskReleased(ctx, rdb, uuid) {
+			rdb.Del(ctx, diskFullKey(uuid))
+		}
 	}
+}
+
+// postDiskReleased reports a released hold on a stopped server. False when the
+// write failed, so the caller keeps the hold for the sweep to release again.
+func postDiskReleased(ctx context.Context, rdb *redis.Client, uuid string) bool {
+	if err := rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), "stopped", diskReleasedTTL).Err(); err != nil {
+		log.Printf("Disk guard could not report %s stopped, retrying on the next sweep: %v", uuid, err)
+		return false
+	}
+	return true
 }
 
 // localServerUUIDs are the servers whose directory lives on this node, where

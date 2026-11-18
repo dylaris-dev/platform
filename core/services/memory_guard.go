@@ -4,7 +4,9 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -122,8 +124,12 @@ func (m *MemoryGuardService) scan(ctx context.Context) bool {
 				continue
 			}
 			for _, ev := range m.drain(ctx, key) {
-				if m.handle(ctx, parts[2], ev) {
+				acted, retry := m.handle(ctx, parts[2], ev)
+				if acted {
 					changed = true
+				}
+				if retry {
+					m.requeue(ctx, key, ev)
 				}
 			}
 		}
@@ -153,21 +159,39 @@ func (m *MemoryGuardService) drain(ctx context.Context, key string) []memoryEven
 	return out
 }
 
-// handle acts on one event. Returns true when the server row changed.
-func (m *MemoryGuardService) handle(ctx context.Context, uuid string, ev memoryEvent) bool {
+// requeue puts an event back after a database error. drain already deleted
+// it, and the node fires memory_critical once per climb (re-armed only below
+// 93%), so dropping it lost the configured stop for that whole run.
+func (m *MemoryGuardService) requeue(ctx context.Context, key string, ev memoryEvent) {
+	data, _ := json.Marshal(ev)
+	pipe := m.redis.TxPipeline()
+	pipe.RPush(ctx, key, string(data))
+	pipe.Expire(ctx, key, memoryEventMaxAge)
+	if _, err := pipe.Exec(ctx); err != nil {
+		log.Printf("memory guard: put back %s for %s: %v", ev.Event, key, err)
+	}
+}
+
+// handle acts on one event. acted is true when the server row changed; retry
+// is true when a database error kept the event from landing.
+func (m *MemoryGuardService) handle(ctx context.Context, uuid string, ev memoryEvent) (acted, retry bool) {
 	srv, err := m.store.GetServerByUUID(uuid)
 	if err != nil || srv == nil {
-		return false
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("memory guard: load server %s for %s: %v", uuid, ev.Event, err)
+			return false, true
+		}
+		return false, false
 	}
 	switch ev.Event {
 	case MemoryEventWarning:
 		if !m.once(ctx, uuid, "memory_warning_notified", memoryWarnNotifyEvery) {
-			return false
+			return false, false
 		}
 		m.notify(srv, "Server "+srv.Name+" is close to its memory limit",
 			fmt.Sprintf("Memory reached %s of its limit, so the world was saved as a precaution. "+
 				"If this keeps happening, give it more RAM or RAM headroom.", memPct(ev)))
-		return false
+		return false, false
 
 	case MemoryEventCritical:
 		action := srv.MemoryGuardAction
@@ -195,7 +219,7 @@ func (m *MemoryGuardService) handle(ctx context.Context, uuid string, ev memoryE
 		// The action runs every time; the owner hears about it once per window,
 		// or a server that hits the wall after every restart floods the inbox.
 		if !m.once(ctx, uuid, "memory_critical_notified", memoryCriticalNotifyEvery) {
-			return acted
+			return acted, false
 		}
 		switch taken {
 		case models.MemoryGuardStop:
@@ -211,7 +235,7 @@ func (m *MemoryGuardService) handle(ctx context.Context, uuid string, ev memoryE
 				fmt.Sprintf("Server %s has been at %s of its memory limit for 30 seconds and may be killed "+
 					"without saving. Give it more RAM or headroom.", srv.Name, memPct(ev)))
 		}
-		return acted
+		return acted, false
 
 	case MemoryEventOOM:
 		// ev.At is the node host's clock, unchecked on BYON hardware. Core
@@ -225,7 +249,7 @@ func (m *MemoryGuardService) handle(ctx context.Context, uuid string, ev memoryE
 		}
 		if err := m.store.SetServerLastCrash(srv.ID, models.CrashReasonOOMKilled, at); err != nil {
 			log.Printf("memory guard: record OOM kill of %s: %v", uuid, err)
-			return false
+			return false, true
 		}
 		log.Printf("memory guard: server %s was OOM-killed", uuid)
 		m.audit(srv.ID, ev, nil)
@@ -233,9 +257,9 @@ func (m *MemoryGuardService) handle(ctx context.Context, uuid string, ev memoryE
 			m.notify(srv, "Server "+srv.Name+" was killed: out of memory",
 				fmt.Sprintf("Server %s was killed: out of memory. It needs more RAM or RAM headroom.", srv.Name))
 		}
-		return true
+		return true, false
 	}
-	return false
+	return false, false
 }
 
 // power stops or restarts the server the way the panel's power buttons do.

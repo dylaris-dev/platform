@@ -144,3 +144,45 @@ func TestATransientHeartbeatReadKeepsTheConnection(t *testing.T) {
 		t.Fatal("a live Core was disconnected on a failed heartbeat read")
 	}
 }
+
+// W04: right after a Redis restart every heartbeat (30 s TTL) is gone while the
+// index survives, and one scan that found none cut every live Core stream. A
+// Core is dropped only once it is missing on two scans in a row.
+func TestAMissingHeartbeatDropsTheCoreOnlyOnTheSecondScan(t *testing.T) {
+	cases := []struct {
+		name     string
+		backAt   int // scan (1-based) before which the heartbeat is rewritten; 0 = never
+		scans    int
+		wantKept bool
+	}{
+		{"one miss: kept", 0, 1, true},
+		{"heartbeat back before the second scan: kept", 2, 3, true},
+		{"missing twice: dropped", 0, 2, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			mr.SAdd(coreIndexKey, "c1")
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			conn, err := grpc.NewClient("passthrough:///unused", grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			m := NewMeshManager("", rdb, nil)
+			m.connections["c1"] = &coreConnection{conn: conn, cancel: func() {}}
+			for i := 1; i <= tc.scans; i++ {
+				if i == tc.backAt {
+					mr.Set("dylaris:core:c1", `{"id":"c1","grpc_addr":"127.0.0.1:1"}`)
+				}
+				m.scanCores(context.Background())
+				if i == tc.backAt {
+					mr.Del("dylaris:core:c1") // and lost again: the count starts over
+				}
+			}
+			if _, ok := m.connections["c1"]; ok != tc.wantKept {
+				t.Fatalf("connection kept = %v, want %v", ok, tc.wantKept)
+			}
+		})
+	}
+}

@@ -149,6 +149,7 @@ type MeshManager struct {
 
 	connections   map[string]*coreConnection // coreID → connection
 	connecting    map[string]bool            // coreID → a connect attempt is running
+	missedScans   map[string]int             // coreID → scans in a row its heartbeat was missing
 	mu            sync.Mutex
 	pendingWrites map[string]*pendingWrite // requestID → write buffer
 	writeMu       sync.Mutex
@@ -163,6 +164,7 @@ func NewMeshManager(nodeToken string, rdb *redis.Client, handler *StreamHandler)
 		handler:       handler,
 		connections:   make(map[string]*coreConnection),
 		connecting:    make(map[string]bool),
+		missedScans:   make(map[string]int),
 		pendingWrites: make(map[string]*pendingWrite),
 		wsBridges:     make(map[string]*wsBridge),
 	}
@@ -226,6 +228,10 @@ func (m *MeshManager) dropPendingWrites(drop func(*pendingWrite) bool) {
 
 // coreIndexKey is Core's set of heartbeating Core ids (services.CoreIndexKey).
 const coreIndexKey = "dylaris:core:index"
+
+// coreMissedScansToDrop is how many scans in a row a Core's heartbeat must be
+// missing before its connection is closed (see scanCores).
+const coreMissedScansToDrop = 2
 
 // coreHeartbeatKeys finds the Cores' heartbeat keys from Core's index, plus a
 // keyspace walk for as long as the node may still walk.
@@ -308,15 +314,25 @@ func (m *MeshManager) scanCores(ctx context.Context) {
 		return
 	}
 
-	// Remove connections to Cores that are no longer active
+	// Remove connections to Cores that are no longer active. Not on the first
+	// miss: Redis back from a restart keeps the index but not one heartbeat
+	// (30 s TTL), and dropping on that scan cut every live stream on every
+	// node before any Core had rewritten its key.
 	m.mu.Lock()
 	for coreID, conn := range m.connections {
-		if !activeCores[coreID] {
-			log.Printf("gRPC Mesh: Core %s disappeared, disconnecting", coreID)
-			conn.cancel()
-			conn.conn.Close()
-			delete(m.connections, coreID)
+		if activeCores[coreID] {
+			delete(m.missedScans, coreID)
+			continue
 		}
+		m.missedScans[coreID]++
+		if m.missedScans[coreID] < coreMissedScansToDrop {
+			continue
+		}
+		log.Printf("gRPC Mesh: Core %s disappeared, disconnecting", coreID)
+		conn.cancel()
+		conn.conn.Close()
+		delete(m.connections, coreID)
+		delete(m.missedScans, coreID)
 	}
 	m.mu.Unlock()
 }
@@ -502,6 +518,7 @@ func (m *MeshManager) connectToCore(parentCtx context.Context, info CoreInfo) {
 	cc := &coreConnection{conn: conn, stream: stream, cancel: cancel, handler: m.handler, pending: make(map[string]chan *pb.NodeMessage)}
 	m.mu.Lock()
 	m.connections[info.ID] = cc
+	delete(m.missedScans, info.ID) // a count from a previous connection is not this one's
 	m.mu.Unlock()
 
 	// Step 3: Read loop — handle incoming requests from Core

@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -23,9 +25,14 @@ type memGuardFakeStore struct {
 	audits    []models.ServerAuditEvent
 	auditOn   bool
 	nodeToken string
+	getErr    error
+	crashErr  error
 }
 
 func (f *memGuardFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
 	s := f.srv
 	return &s, nil
 }
@@ -41,6 +48,9 @@ func (f *memGuardFakeStore) UpdateServerDesiredState(_ int, s string) error {
 	return nil
 }
 func (f *memGuardFakeStore) SetServerLastCrash(_ int, reason string, at time.Time) error {
+	if f.crashErr != nil {
+		return f.crashErr
+	}
 	f.crash, f.crashAt = reason, at
 	return nil
 }
@@ -209,5 +219,53 @@ func TestMemoryGuardWarningIsRateLimited(t *testing.T) {
 	}
 	if len(q.actions) != 0 || len(st.desired) != 0 {
 		t.Error("a warning took a power action")
+	}
+}
+
+// W13: the drain deletes the list before handle runs, and the node fires
+// memory_critical once per climb. A transient DB error put nothing back, so the
+// configured stop never happened; a server that is gone has nothing to retry.
+func TestMemoryGuardDBErrorKeepsTheEvent(t *testing.T) {
+	key := "dylaris:server:" + memGuardUUID + ":memory_events"
+	cases := []struct {
+		name             string
+		event            string
+		getErr, crashErr error
+		wantKept         bool
+	}{
+		{"critical, server lookup fails", MemoryEventCritical, errors.New("pgbouncer: connection reset"), nil, true},
+		{"oom, crash write fails", MemoryEventOOM, nil, errors.New("pgbouncer: connection reset"), true},
+		{"server deleted: dropped", MemoryEventCritical, sql.ErrNoRows, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, st, q, rdb := newMemGuardTest(t, "stop", "online")
+			st.getErr, st.crashErr = tc.getErr, tc.crashErr
+			pushMemEvent(t, rdb, memoryEvent{Event: tc.event, At: time.Now().Unix(), UsedMB: 4400, LimitMB: 4500})
+			m.scan(context.Background())
+
+			n, _ := rdb.LLen(context.Background(), key).Result()
+			if (n == 1) != tc.wantKept {
+				t.Fatalf("events left after a failed handle = %d, want kept=%v", n, tc.wantKept)
+			}
+			if !tc.wantKept {
+				return
+			}
+			if ttl, _ := rdb.TTL(context.Background(), key).Result(); ttl <= 0 {
+				t.Errorf("requeued list TTL = %v, want one (the node's lists expire)", ttl)
+			}
+			// The DB is back: the next tick acts on it.
+			st.getErr, st.crashErr = nil, nil
+			m.scan(context.Background())
+			if tc.event == MemoryEventCritical && strings.Join(q.actions, ",") != "stop" {
+				t.Errorf("commands after recovery = %v, want stop", q.actions)
+			}
+			if tc.event == MemoryEventOOM && st.crash != models.CrashReasonOOMKilled {
+				t.Errorf("crash after recovery = %q, want oom_killed", st.crash)
+			}
+			if n, _ := rdb.Exists(context.Background(), key).Result(); n != 0 {
+				t.Error("the event was not drained once handled")
+			}
+		})
 	}
 }
