@@ -105,9 +105,8 @@ func runCopySubServer(ctx context.Context, rdb *redis.Client, storage *StorageMa
 		return
 	}
 
-	statusKey := fmt.Sprintf("dylaris:server:%s:status", pl.UUID)
 	releaseBusy := holdBusyStatus(rdb, pl.UUID, "installing", busyStatusTTL)
-	defer releaseBusy()
+	defer releaseBusy("")
 
 	// A partial copy left behind by a failure is worse than no copy: it would
 	// present as a usable sub-server. Build under a temporary name and rename
@@ -130,20 +129,20 @@ func runCopySubServer(ctx context.Context, rdb *redis.Client, storage *StorageMa
 		os.RemoveAll(staging)
 		log.Printf("copy_sub_server: copy %s -> %s failed: %v", pl.SourceSubServer, pl.TargetSubServer, err)
 		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, copyFailureReason(err))
-		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
+		releaseBusy("stopped")
 		return
 	}
 	if err := os.Rename(staging, dst); err != nil {
 		os.RemoveAll(staging)
 		log.Printf("copy_sub_server: rename into place failed: %v", err)
 		reportCopyFailed(ctx, rdb, pl.UUID, pl.TargetSubServer, "the copy could not be put in place")
-		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
+		releaseBusy("stopped")
 		return
 	}
 	if discardIfDeleted(pl.UUID, serverPath) {
 		return
 	}
-	rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
+	releaseBusy("stopped")
 	log.Printf("copy_sub_server: %s/%s copied to %s", pl.UUID, pl.SourceSubServer, pl.TargetSubServer)
 }
 

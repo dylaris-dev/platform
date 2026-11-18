@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -1694,7 +1695,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// wrote "installing" (see reportRefusedStatus).
 		if !commandsInFlight.enter(softwareKey(cmd.Config.UUID)) {
 			log.Printf("Setup of %s/%s refused: a version move of this server is running on this node", cmd.Config.UUID, subName)
-			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID)
+			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID, setupIdleStatus(storage.GetServerDir(cmd.Config.UUID)))
 			reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, errors.New("a version move of this server was still running"))
 			return
 		}
@@ -1703,7 +1704,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// dead attempt left: the old files are in it, not in place, until the
 		// recovery below runs, and a refusal before it must not say restored.
 		reportSetupRefused := func(cause error) {
-			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID)
+			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID, setupIdleStatus(storage.GetServerDir(cmd.Config.UUID)))
 			publishSetupFailure(ctx, rdb, cmd.Config.UUID, subName, cause, !stashStranded(storage.GetServerDir(cmd.Config.UUID), subName))
 		}
 		leaveTree, treeBusy := enterTreeChangeOfServer(cmd.Config.UUID)
@@ -1730,7 +1731,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// reconciler can start a half-installed server or recreate one it
 		// thinks was deleted by hand, straight into the installer's directory.
 		releaseSetupBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
-		defer releaseSetupBusy()
+		defer releaseSetupBusy("")
 		// An install ends by starting the server, so it is a deliberate retry and
 		// clears the give-up marker like start/restart do. Without this the marker
 		// outlives the install and Core keeps forcing the freshly installed server
@@ -1740,7 +1741,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
 		if serverPath == "" {
 			log.Printf("Setup of %s/%s refused: no storage path resolved, it is not mounted on this node", cmd.Config.UUID, subName)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			releaseSetupBusy("stopped")
 			reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, errors.New("the server's storage path is not mounted on this node"))
 			return
 		}
@@ -1774,7 +1775,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if dm != nil {
 			if err := gracefulStop(rdb, cmd.Config.UUID, dm); err != nil {
 				log.Printf("Setup of %s/%s refused: the server could not be stopped: %v", cmd.Config.UUID, subName, err)
-				rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+				releaseSetupBusy(statusAfterFailedStop(dm, cmd.Config.UUID))
 				reportSetupRefused(fmt.Errorf("the server could not be stopped: %w", err))
 				return
 			}
@@ -1802,7 +1803,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 					undone = true
 				}
 			}
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			releaseSetupBusy(setupIdleStatus(serverPath))
 			// The status alone says "stopped", which is indistinguishable from a
 			// server that installed and is simply not running. The reason has to
 			// travel with it or it reaches nobody.
@@ -1926,7 +1927,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if started {
 			finalStatus = "starting"
 		}
-		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), finalStatus, 30*time.Second)
+		releaseSetupBusy(finalStatus)
 
 	case "reconfigure":
 		// Change the Java image or the JVM flags WITHOUT reinstalling.
@@ -2386,7 +2387,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Shared with a version move: both stash the jars in the one dir.
 		if !commandsInFlight.enter(softwareKey(cmd.Config.UUID)) {
 			log.Printf("Reinstall of %s/%s refused: a version move of this server is running on this node", cmd.Config.UUID, subName)
-			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID)
+			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID, "stopped")
 			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("a version move of this server was still running"))
 			return
 		}
@@ -2394,7 +2395,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		leaveTree, treeBusy := enterTreeChangeOfServer(cmd.Config.UUID)
 		if treeBusy != "" {
 			log.Printf("Reinstall of %s/%s refused: %s", cmd.Config.UUID, subName, treeBusy)
-			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID)
+			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID, "stopped")
 			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New(treeBusy))
 			return
 		}
@@ -2403,14 +2404,14 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Hold the reconciler off for the whole reinstall: we are about to stop a
 		// container whose desired_state is still "online" and then delete its JARs.
 		releaseBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
-		defer releaseBusy()
+		defer releaseBusy("")
 		// Same as the setup path: a reinstall ends by starting the server.
 		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
 		if serverPath == "" {
 			log.Printf("Reinstall of %s/%s refused: no storage path resolved, it is not mounted on this node", cmd.Config.UUID, subName)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			releaseBusy("stopped")
 			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("the server's storage path is not mounted on this node"))
 			return
 		}
@@ -2420,7 +2421,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if err := gracefulStop(rdb, cmd.Config.UUID, dm); err != nil {
 			log.Printf("Reinstall of %s/%s refused: the server could not be stopped: %v", cmd.Config.UUID, subName, err)
 			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, fmt.Errorf("the server could not be stopped: %w", err))
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+			releaseBusy(statusAfterFailedStop(dm, cmd.Config.UUID))
 			return
 		}
 		time.Sleep(3 * time.Second)
@@ -2441,7 +2442,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 				}
 			}
 			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, cause)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			releaseBusy("stopped")
 		}
 		if serr != nil {
 			log.Printf("Reinstall of %s/%s refused: setting the old server software aside failed: %v", cmd.Config.UUID, subName, serr)
@@ -2503,17 +2504,17 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if err := reinstallRecreate(cmd.Config); err != nil {
 			log.Printf("Failed to restart server pod %s: %v", cmd.Config.UUID, err)
 			stash.discard()
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			reinstallStatus = "stopped"
 		} else {
 			stash.discard()
 			log.Printf("Server %s/%s reinstalled (status %s)", cmd.Config.UUID, subName, reinstallStatus)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), reinstallStatus, 30*time.Second)
 		}
 		// Best-effort metadata refresh regardless of RecreateWithCommand result
 		// (reinstall succeeded; the sub-server directory has new software).
 		// The config too: the reconciler rebuilds a missing container from it.
 		saveNodeConfig(serverPath, cmd.Config)
 		refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
+		releaseBusy(reinstallStatus)
 
 	case "migrate_storage":
 		targetPath := cmd.TargetPath
@@ -2552,7 +2553,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		releaseMigrateBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)
-		defer releaseMigrateBusy()
+		defer releaseMigrateBusy("")
 		if checkErr != nil {
 			// The key already names the target: either a repeat of a move
 			// that finished, or one killed after its key flip (a Watchtower
@@ -2561,11 +2562,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			// no-op for the first and the rest of the move for the second.
 			if ferr := finishStorageMove(ctx, rdb, dm, quota, storage, cmd.Config.UUID, knownDiskLimitMB(ctx, rdb, quota, cmd.Config.UUID)); ferr != nil {
 				log.Printf("Storage migration of %s to %s could not be finished: %v - repeating the move finishes it", cmd.Config.UUID, targetPath, ferr)
-				rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+				releaseMigrateBusy("stopped")
 				return
 			}
 			log.Printf("Storage migration of %s: already on %s, finished what an earlier move left", cmd.Config.UUID, targetPath)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+			releaseMigrateBusy(statusAfterFailedStop(dm, cmd.Config.UUID))
 			return
 		}
 
@@ -2574,7 +2575,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		wasRunning := containerRunning(dm, cmd.Config.UUID)
 		if err := gracefulStop(rdb, cmd.Config.UUID, dm); err != nil {
 			log.Printf("Storage migration of %s refused: the server could not be stopped: %v", cmd.Config.UUID, err)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+			releaseMigrateBusy(statusAfterFailedStop(dm, cmd.Config.UUID))
 			return
 		}
 
@@ -2594,7 +2595,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 					log.Printf("Storage migration of %s: could not start the server again: %v", cmd.Config.UUID, rerr)
 				}
 			}
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
+			releaseMigrateBusy(statusAfterFailedStop(dm, cmd.Config.UUID))
 			return
 		}
 
@@ -2613,11 +2614,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// is the one this node already enforced.
 		if err := finishStorageMove(ctx, rdb, dm, quota, storage, cmd.Config.UUID, limitMB); err != nil {
 			log.Printf("Storage migration of %s to %s is on disk but not finished: %v - repeating the move finishes it", cmd.Config.UUID, targetPath, err)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			releaseMigrateBusy("stopped")
 			return
 		}
 
-		rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+		releaseMigrateBusy("stopped")
 		log.Printf("Migration complete for server %s → %s", cmd.Config.UUID, targetPath)
 
 	case "migrate_out":
@@ -2771,7 +2772,7 @@ func discardIfDeleted(uuid, serverPath string) bool {
 	return true
 }
 
-func holdBusyStatus(rdb *redis.Client, uuid, status string, ttl time.Duration) func() {
+func holdBusyStatus(rdb *redis.Client, uuid, status string, ttl time.Duration) func(final string) {
 	statusKey := fmt.Sprintf("dylaris:server:%s:status", uuid)
 	busyKey := nodeBusyKey(uuid)
 	ctx := context.Background()
@@ -2794,15 +2795,25 @@ func holdBusyStatus(rdb *redis.Client, uuid, status string, ttl time.Duration) f
 			}
 		}
 	}()
-	return func() {
-		close(done)
-		// A refresh already past the select would otherwise land after the Del
-		// and leave node_busy up for a TTL with nothing behind it.
-		<-stopped
-		// The interlock is dropped immediately so the reconciler can resume
-		// looking after this server. The status key is left for the caller, which
-		// writes the real terminal status right after.
-		rdb.Del(ctx, busyKey)
+	// final is the command's terminal status ("" writes none). It is written
+	// here, after the refresher has stopped: a caller that wrote it before the
+	// release had it overwritten by a refresh landing in between, and a server
+	// left stopped then stayed "installing" for good. Once only, so the
+	// deferred release("") after an explicit one is a no-op.
+	var once sync.Once
+	return func(final string) {
+		once.Do(func() {
+			close(done)
+			// A refresh already past the select would otherwise land after the Del
+			// and leave node_busy up for a TTL with nothing behind it.
+			<-stopped
+			if final != "" {
+				rdb.Set(ctx, statusKey, final, 30*time.Second)
+			}
+			// The interlock is dropped immediately so the reconciler can resume
+			// looking after this server.
+			rdb.Del(ctx, busyKey)
+		})
 	}
 }
 
@@ -2832,15 +2843,33 @@ func statusAfterFailedStop(dm *DockerManager, uuid string) string {
 // command, and nothing else lands it: a backup holds no busy key, and a
 // stopped server is not tracked by the stats collector. A restore or version
 // move that holds one reports its own status, so this one stays out of it.
-func reportRefusedStatus(ctx context.Context, rdb *redis.Client, dm *DockerManager, uuid string) {
+//
+// idle is the status of a server that is not running: "stopped", or for a
+// setup setupIdleStatus.
+func reportRefusedStatus(ctx context.Context, rdb *redis.Client, dm *DockerManager, uuid, idle string) {
 	if isNodeBusy(ctx, rdb, uuid) {
 		return
 	}
-	status := "stopped"
-	if dm != nil {
-		status = statusAfterFailedStop(dm, uuid)
+	status := idle
+	if dm != nil && containerRunning(dm, uuid) {
+		status = "online"
 	}
 	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), status, 30*time.Second)
+}
+
+// setupIdleStatus is the status a setup leaves on a server it did not start.
+// "pending_setup" while no setup ever completed on it (no .active_server, or
+// the create has not even made its directory): "stopped" there made the panel
+// offer Start on a server with no software, and Core treated the retry as a
+// change to an existing server rather than its first setup.
+func setupIdleStatus(serverDir string) string {
+	if serverDir == "" {
+		return "stopped"
+	}
+	if _, err := readServerRootFile(serverDir, ".active_server"); errors.Is(err, fs.ErrNotExist) {
+		return "pending_setup"
+	}
+	return "stopped"
 }
 
 // saveAllMinUptime is how long a container must have run before a stop sends

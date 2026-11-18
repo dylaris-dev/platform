@@ -30,7 +30,7 @@ func TestHoldBusySurvivesTheStatusWatcherDrain(t *testing.T) {
 	rdb, _ := newBusyRedis(t)
 	ctx := context.Background()
 	release := holdBusyStatus(rdb, "srv-uuid", "installing", busyStatusTTL)
-	defer release()
+	defer release("")
 
 	// Simulate the watcher: drain the status key the way scan() does.
 	rdb.Del(ctx, "dylaris:server:srv-uuid:status")
@@ -49,7 +49,7 @@ func TestIsNodeBusyFalseWhenNothingIsRunning(t *testing.T) {
 		t.Fatal("isNodeBusy is true for a server no operation ever ran on")
 	}
 	release := holdBusyStatus(rdb, "srv-uuid", "installing", busyStatusTTL)
-	release()
+	release("")
 	if isNodeBusy(ctx, rdb, "srv-uuid") {
 		t.Fatal("isNodeBusy is still true after release; the reconciler would never look after this server again")
 	}
@@ -61,7 +61,7 @@ func TestIsNodeBusyFalseWhenNothingIsRunning(t *testing.T) {
 func TestHoldBusyReportsAProtectedStatusToo(t *testing.T) {
 	rdb, _ := newBusyRedis(t)
 	release := holdBusyStatus(rdb, "srv-uuid", "installing", busyStatusTTL)
-	defer release()
+	defer release("")
 
 	got, err := rdb.Get(context.Background(), "dylaris:server:srv-uuid:status").Result()
 	if err != nil {
@@ -84,7 +84,7 @@ func TestHoldBusyOutlivesItsTTL(t *testing.T) {
 	// driven separately: jump most of a TTL, then give the ticker real time.
 	const ttl = 300 * time.Millisecond
 	release := holdBusyStatus(rdb, "srv-uuid", "installing", ttl)
-	defer release()
+	defer release("")
 
 	for range 5 {
 		mr.FastForward(ttl * 2 / 3)
@@ -123,9 +123,35 @@ func TestHoldBusyReleaseWaitsForAnInFlightRefresh(t *testing.T) {
 	for i := range 300 {
 		release := holdBusyStatus(rdb, "srv-uuid", "installing", 3*time.Millisecond)
 		time.Sleep(time.Duration(i%7) * 300 * time.Microsecond)
-		release()
+		release("")
 		if isNodeBusy(ctx, rdb, "srv-uuid") {
 			t.Fatalf("round %d: node_busy still set after release", i)
+		}
+	}
+}
+
+// R25-03: every caller wrote its terminal status and only then released the
+// hold, so a refresh landing between the two put "installing" back over it,
+// and nothing wrote the status of a server left stopped again: it stayed
+// "installing" in Core for good. The terminal status now goes through the
+// release, after the refresher has stopped.
+func TestHoldBusyTerminalStatusIsNotOverwrittenByARefresh(t *testing.T) {
+	rdb, _ := newBusyRedis(t)
+	ctx := context.Background()
+	const ttl = 30 * time.Millisecond
+	statusKey := "dylaris:server:srv-uuid:status"
+	for _, final := range []string{"stopped", "starting", "online"} {
+		release := holdBusyStatus(rdb, "srv-uuid", "installing", ttl)
+		rdb.Del(ctx, statusKey) // Core's watcher drained the hold's own report
+		time.Sleep(ttl)         // refreshes run while the work does
+		release(final)
+		release("") // the deferred release is a no-op after the explicit one
+		time.Sleep(ttl)
+		if got := rdb.Get(ctx, statusKey).Val(); got != final {
+			t.Errorf("status after release(%q) = %q, a refresh overwrote it", final, got)
+		}
+		if isNodeBusy(ctx, rdb, "srv-uuid") {
+			t.Errorf("node_busy still set after release(%q)", final)
 		}
 	}
 }

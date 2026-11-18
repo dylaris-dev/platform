@@ -61,7 +61,7 @@ func TestBusyInterlockIsTheKeyTheReconcilerReads(t *testing.T) {
 	if !isNodeBusy(ctx, rdb, "srv-1") {
 		t.Fatal("interlock held but isNodeBusy says otherwise")
 	}
-	release()
+	release("")
 	if isNodeBusy(ctx, rdb, "srv-1") {
 		t.Fatal("interlock still reported after release")
 	}
@@ -82,7 +82,7 @@ func TestAStopInsideABusyHoldKeepsTheHoldsStatus(t *testing.T) {
 	}
 
 	release := holdBusyStatus(rdb, "srv-1", "restarting", busyStatusTTL)
-	defer release()
+	defer release("")
 	announceStopping(ctx, rdb, "srv-1")
 	if got := rdb.Get(ctx, statusKey).Val(); got != "restarting" {
 		t.Fatalf("a stop inside a restore announced %q, want the hold's restarting", got)

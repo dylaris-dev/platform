@@ -147,7 +147,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// running restore's node_busy on its way out.
 	releaseBusy := holdBusyStatus(rdb, cmd.ServerUUID, "restarting", busyStatusTTL)
 	defer func() {
-		releaseBusy()
+		releaseBusy("")
 		// The hold reported "restarting" throughout, and nothing else reports a
 		// container that is not running: a restore of a stopped server (or one
 		// whose restart failed) left that status for good, and Core refuses every

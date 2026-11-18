@@ -167,7 +167,7 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	// Hold the reconciler off for the whole move, exactly like reinstall: the
 	// container is about to be stopped while its desired_state is still online.
 	releaseBusy := holdBusyStatus(rdb, pl.UUID, "installing", busyStatusTTL)
-	defer releaseBusy()
+	defer releaseBusy("")
 	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", pl.UUID), "1", 30*time.Second)
 	// Before any abort below, which all report "left exactly as it was".
 	recoverStrandedStash(serverPath, subName)
@@ -274,7 +274,7 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		// The disk is back on the old version, so Core's optimistic writes are
 		// now the wrong ones - and the reason reaches the owner from there.
 		abandonVersionUpdate(ctx, rdb, pl.UUID, fmt.Sprintf("%s failed: %v", what, cause))
-		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
+		releaseBusy("stopped")
 	}
 	if err != nil {
 		fail("setting the old server software aside", err)
@@ -340,10 +340,10 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	refreshServerMetadata(serverPath, pl.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
 	if err := recreate(cmd.Config); err != nil {
 		log.Printf("update_server_version: failed to restart %s: %v", pl.UUID, err)
-		rdb.Set(ctx, statusKey, "stopped", 30*time.Second)
+		releaseBusy("stopped")
 		return
 	}
-	rdb.Set(ctx, statusKey, status, 30*time.Second)
+	releaseBusy(status)
 	log.Printf("update_server_version: %s/%s moved (status %s)", pl.UUID, subName, status)
 }
 
