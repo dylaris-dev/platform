@@ -214,7 +214,7 @@ can still show what exists.
 | GET | `/api/admin/dns` | session | `settings.read` | - | `DomainsHandler.AdminGet` | Answers while the flag is off too (enabled false), so the screen that turns it on can render. |
 | POST | `/api/admin/dns/accounts` | session | `settings.write` | AdminGate | `DomainsHandler.CreateAccount` | {name, provider, credentials}. |
 | PUT | `/api/admin/dns/accounts/{id:[0-9]+}` | session | `settings.write` | AdminGate | `DomainsHandler.UpdateAccount` | A blank credential field keeps the stored one. |
-| DELETE | `/api/admin/dns/accounts/{id:[0-9]+}` | session | `settings.write` | AdminGate | `DomainsHandler.DeleteAccount` | Core's records go first, through the provider; what it cannot reach is named in orphanedNames (and in the audit event, the only place it outlives the response) for the admin to remove by hand. |
+| DELETE | `/api/admin/dns/accounts/{id:[0-9]+}` | session | `settings.write` | AdminGate | `DomainsHandler.DeleteAccount` | The managed domains in the account's zones go first, each with its own server audit event: left behind they would point at no zone, do nothing, and still count against their owner's limit. |
 | POST | `/api/admin/dns/accounts/{id:[0-9]+}/test` | session | `settings.write` | AdminGate | `DomainsHandler.TestAccount` | lists the zones, or where the provider cannot, reads the first zone's records. |
 | POST | `/api/admin/dns/accounts/{id:[0-9]+}/zones` | session | `settings.write` | AdminGate | `DomainsHandler.AddZone` | {name}. |
 | POST | `/api/admin/dns/accounts/{id:[0-9]+}/zones/refresh` | session | `settings.write` | AdminGate | `DomainsHandler.RefreshZones` | the zones the provider lists replace the listed ones; zones added by hand stay. |

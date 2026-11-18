@@ -94,7 +94,7 @@
       "path": "/api/admin/dns/accounts/{id:[0-9]+}",
       "auth": "session",
       "authorization": "settings.write",
-      "description": "Core's records go first, through the provider; what it cannot reach is named in orphanedNames (and in the audit event, the only place it outlives the response) for the admin to remove by hand.",
+      "description": "The managed domains in the account's zones go first, each with its own server audit event: left behind they would point at no zone, do nothing, and still count against their owner's limit.",
       "handler": "DomainsHandler.DeleteAccount",
       "group": "admin",
       "external": false

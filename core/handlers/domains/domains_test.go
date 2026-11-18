@@ -653,3 +653,37 @@ func TestUnlistedZoneTakesNoNewDomain(t *testing.T) {
 		t.Fatalf("admin view does not say the zone is unlisted: %s", rec.Body)
 	}
 }
+
+// probeProvider reports what the store holds when Core reads the zone.
+type probeProvider struct {
+	fakeProvider
+	onRead func()
+}
+
+func (p *probeProvider) GetRecords(ctx context.Context, zone string) ([]dnsprov.Record, error) {
+	p.onRead()
+	return p.fakeProvider.GetRecords(ctx, zone)
+}
+
+// C145/C146: the managed domains go BEFORE Core's records are removed. In the
+// other order a reconciler pass on the leader still saw the domains, wrote the
+// just-deleted records again, and those were left at the provider unnamed.
+func TestDeleteAccountRemovesDomainsBeforeRecords(t *testing.T) {
+	st := newFakeStore()
+	enc, _ := services.EncryptDNSCredentials(testSecret, map[string]string{"api_token": testToken})
+	st.accounts[1] = &store.DNSAccount{ID: 1, Name: "cf", Provider: "cloudflare", EncCredentials: enc}
+	st.owned = []store.DNSOwnedRecord{{ID: 1, AccountID: 1, Zone: "example.com", Name: "play", Type: "A"}}
+	five := 5
+	st.domains = []store.ServerDomain{{ID: 1, ServerID: 1, FQDN: "play.example.com", Mode: store.DomainModeManaged, ZoneID: &five, Label: "play"}}
+	read, domainsAtRead := false, 0
+	prov := &probeProvider{onRead: func() { read, domainsAtRead = true, len(st.domains) }}
+	h := NewDomainsHandler(Deps{Store: st, FeatureFlags: services.NewFeatureFlags(st), ClusterSecret: testSecret})
+	h.newProvider = func(string, map[string]string) (dnsprov.Provider, error) { return prov, nil }
+	rec := call(h.AdminGate(h.DeleteAccount), "DELETE", "/x", "", admin, map[string]string{"id": "1"})
+	if rec.Code != 200 {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body)
+	}
+	if !read || domainsAtRead != 0 {
+		t.Errorf("records read=%v with %d managed domains still stored, want 0", read, domainsAtRead)
+	}
+}

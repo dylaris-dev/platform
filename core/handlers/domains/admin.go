@@ -416,16 +416,24 @@ func (h *DomainsHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "account": accountOf(*acc)})
 }
 
-// DeleteAccount DELETE /api/admin/dns/accounts/{id}. Core's records go first,
-// through the provider; what it cannot reach is named in orphanedNames (and in
-// the audit event, the only place it outlives the response) for the admin to
-// remove by hand. Then the managed domains in the account's zones go, each
-// with its own server audit event: left behind they would point at no zone,
-// do nothing, and still count against their owner's limit. The account goes
-// either way.
+// DeleteAccount DELETE /api/admin/dns/accounts/{id}. The managed domains in
+// the account's zones go first, each with its own server audit event: left
+// behind they would point at no zone, do nothing, and still count against
+// their owner's limit. They must go BEFORE the records, because the leader's
+// reconciler (on any replica, under no lock this handler holds) re-creates the
+// records of every domain it still sees, and those would be left at the
+// provider unnamed. Then Core's records go, through the provider, from the
+// ledger; what it cannot reach is named in orphanedNames (and in the audit
+// event, the only place it outlives the response) for the admin to remove by
+// hand. The account goes either way.
 func (h *DomainsHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	acc := h.account(w, r)
 	if acc == nil {
+		return
+	}
+	if err := h.deleteAccountDomains(r, acc.ID); err != nil {
+		log.Printf("dns admin: delete account %d: domains: %v", acc.ID, err)
+		httpx.SendJSONError(w, "Failed to remove the account's domains; the account is kept", http.StatusInternalServerError)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*providerTimeout)
@@ -433,12 +441,7 @@ func (h *DomainsHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	orphaned, err := services.DeleteDNSAccountRecords(ctx, h.d.Store, h.d.ClusterSecret, *acc, h.newProvider)
 	if err != nil {
 		log.Printf("dns admin: delete account %d: %v", acc.ID, err)
-		httpx.SendJSONError(w, "Failed to read the account's records; nothing was deleted", http.StatusInternalServerError)
-		return
-	}
-	if err := h.deleteAccountDomains(r, acc.ID); err != nil {
-		log.Printf("dns admin: delete account %d: domains: %v", acc.ID, err)
-		httpx.SendJSONError(w, "Failed to remove the account's domains; the account is kept", http.StatusInternalServerError)
+		httpx.SendJSONError(w, "Failed to read the account's records; its domains were removed, the account and its records are kept - delete it again", http.StatusInternalServerError)
 		return
 	}
 	if err := h.d.Store.DeleteDNSAccount(acc.ID); err != nil {
