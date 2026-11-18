@@ -179,8 +179,7 @@ func newTicketBackupHandler(t *testing.T, fs *ticketBackupFakeStore) (*TicketMig
 	fs.settings[keyCoreStoragePath] = dir
 	fs.settings[keyCoreStoragePathConfirm] = "true"
 	h := &TicketMigrationHandler{
-		d:      Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}},
-		tokens: make(map[string]*restoreToken),
+		d: Deps{Store: fs, Redis: handlertest.RedisClient(t), CoreStorage: &corestorage.Manager{Store: fs}},
 	}
 	return h, filepath.Join(dir, corestorage.PrefixBackups)
 }
@@ -287,11 +286,7 @@ func TestTicketBackups_CreateListDownloadRestore_RoundTrip(t *testing.T) {
 	// it is a UX safety net unrelated to what this task changed. Everything
 	// else - token/2FA/phrase checks and the eventual provider read - still
 	// runs for real below.
-	h.tokensMu.Lock()
-	if tok, ok := h.tokens[initResp.Token]; ok {
-		tok.MinExecuteAfter = time.Now().Add(-time.Second)
-	}
-	h.tokensMu.Unlock()
+	h.setCooldown(t, initResp.Token, time.Now().Add(-time.Second))
 
 	code, err := totp.GenerateCode(secret, time.Now())
 	if err != nil {
@@ -410,7 +405,7 @@ func newTicketBackupS3FailFastHandler(t *testing.T) *TicketMigrationHandler {
 		keyCoreStorageS3AccessKey: "key1",
 		keyCoreStorageS3SecretKey: "secret1",
 	}}
-	return &TicketMigrationHandler{d: Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}}, tokens: make(map[string]*restoreToken)}
+	return &TicketMigrationHandler{d: Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}}}
 }
 
 // TestListBackups_ProviderErrorSurfaces pins that a provider failure comes
@@ -451,7 +446,7 @@ func TestDownloadBackup_RedirectsWhenProviderSignsURL(t *testing.T) {
 		keyCoreStorageS3AccessKey: "AKIAEXAMPLE",
 		keyCoreStorageS3SecretKey: "s3cr3t",
 	}}
-	h := &TicketMigrationHandler{d: Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}}, tokens: make(map[string]*restoreToken)}
+	h := &TicketMigrationHandler{d: Deps{Store: fs, CoreStorage: &corestorage.Manager{Store: fs}}}
 
 	req := adminReq(httptest.NewRequest(http.MethodGet, "/api/admin/tickets/backups/tickets-x.json/download", nil))
 	req = mux.SetURLVars(req, map[string]string{"name": "tickets-x.json"})
@@ -595,8 +590,8 @@ func TestInitRestore_NotFoundWhenProviderMisses(t *testing.T) {
 	if rw.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (%s)", rw.Code, rw.Body.String())
 	}
-	if len(h.tokens) != 0 {
-		t.Fatalf("a restore token was issued for a nonexistent backup: %d tokens", len(h.tokens))
+	if keys, _ := h.d.Redis.Keys(context.Background(), restoreTokenKey("*")).Result(); len(keys) != 0 {
+		t.Fatalf("a restore token was issued for a nonexistent backup: %d tokens", len(keys))
 	}
 }
 

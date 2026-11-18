@@ -20,6 +20,7 @@ type inboxScopeStore struct {
 	tickets   []models.Ticket
 	gotFilter store.TicketFilter
 	user      *models.User
+	settings  map[string]string
 }
 
 func (f *inboxScopeStore) ListTickets(filter store.TicketFilter) ([]models.Ticket, error) {
@@ -27,7 +28,7 @@ func (f *inboxScopeStore) ListTickets(filter store.TicketFilter) ([]models.Ticke
 	return f.tickets, nil
 }
 func (f *inboxScopeStore) GetUserByID(string) (*models.User, error) { return f.user, nil }
-func (f *inboxScopeStore) GetSetting(string) (string, error)        { return "", nil }
+func (f *inboxScopeStore) GetSetting(k string) (string, error)      { return f.settings[k], nil }
 
 const inboxAdmin = "aaaaaaaa-1111-4111-8111-111111111111"
 
@@ -89,4 +90,34 @@ func TestTheOtherInboxScopesStillFilterInTheStore(t *testing.T) {
 	if fs.gotFilter.AssignedTeam != "billing" {
 		t.Errorf("scope=team filtered on %q, want the caller's team", fs.gotFilter.AssignedTeam)
 	}
+}
+
+// Both inbox narrowings must reach the QUERY. Applied only after a LIMIT 50
+// page, they dropped every unassigned (or own-team) ticket older than the 50
+// newest tickets platform-wide, and the panel never pages.
+func TestInboxNarrowingsReachTheQuery(t *testing.T) {
+	t.Run("unassigned scope", func(t *testing.T) {
+		fs := &inboxScopeStore{user: &models.User{ID: inboxAdmin, IsAdmin: true}}
+		inboxRequest(t, fs, "unassigned")
+		if !fs.gotFilter.Unassigned {
+			t.Error("scope=unassigned did not ask the store for unassigned tickets")
+		}
+	})
+	t.Run("team-limited supporter", func(t *testing.T) {
+		fs := &inboxScopeStore{
+			user:     &models.User{ID: inboxAdmin, Role: "support", SupportTeam: "billing"},
+			settings: map[string]string{"tickets.cross_team_visibility": "false"},
+		}
+		inboxRequest(t, fs, "all")
+		if fs.gotFilter.SupportViewer == nil || *fs.gotFilter.SupportViewer != inboxAdmin || fs.gotFilter.SupportTeam != "billing" {
+			t.Errorf("visibility not in the query: viewer=%v team=%q", fs.gotFilter.SupportViewer, fs.gotFilter.SupportTeam)
+		}
+	})
+	t.Run("cross-team on leaves the query open", func(t *testing.T) {
+		fs := &inboxScopeStore{user: &models.User{ID: inboxAdmin, Role: "support"}}
+		inboxRequest(t, fs, "all")
+		if fs.gotFilter.SupportViewer != nil {
+			t.Error("cross-team visibility on, yet the query was narrowed")
+		}
+	})
 }

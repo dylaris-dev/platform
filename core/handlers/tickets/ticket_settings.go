@@ -62,6 +62,14 @@ var defaultTicketSettings = TicketSettings{
 	DeletionEnabled:            false,
 }
 
+// The highest quota LoadTicketSettings honours; SaveSettings refuses more, so
+// a stored value is never one the reader drops in favour of the default.
+const (
+	maxFileSizeMBCap   = 1024
+	maxTicketSizeMBCap = 10240
+	maxUserSizeMBCap   = 102400
+)
+
 func LoadTicketSettings(d Deps) TicketSettings {
 	s := defaultTicketSettings
 	if v, _ := d.Store.GetSetting("tickets.cross_team_visibility"); v != "" {
@@ -80,17 +88,17 @@ func LoadTicketSettings(d Deps) TicketSettings {
 		}
 	}
 	if v, err := d.Store.GetSetting("tickets.max_file_size_mb"); err == nil {
-		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxFileSizeMB); q == nil || *q <= 1024 {
+		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxFileSizeMB); q == nil || *q <= maxFileSizeMBCap {
 			s.MaxFileSizeMB = q
 		}
 	}
 	if v, err := d.Store.GetSetting("tickets.max_ticket_size_mb"); err == nil {
-		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxTicketSizeMB); q == nil || *q <= 10240 {
+		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxTicketSizeMB); q == nil || *q <= maxTicketSizeMBCap {
 			s.MaxTicketSizeMB = q
 		}
 	}
 	if v, err := d.Store.GetSetting("tickets.max_user_size_mb"); err == nil {
-		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxUserSizeMB); q == nil || *q <= 102400 {
+		if q := services.ParseLimitSetting(v, defaultTicketSettings.MaxUserSizeMB); q == nil || *q <= maxUserSizeMBCap {
 			s.MaxUserSizeMB = q
 		}
 	}
@@ -153,6 +161,20 @@ func (h *TicketSettingsHandler) SaveSettings(w http.ResponseWriter, r *http.Requ
 	for _, q := range []**int64{&s.MaxFileSizeMB, &s.MaxTicketSizeMB, &s.MaxUserSizeMB} {
 		if *q != nil && **q < 0 {
 			*q = services.LimitPtr(0)
+		}
+	}
+	for _, q := range []struct {
+		v    *int64
+		max  int64
+		name string
+	}{
+		{s.MaxFileSizeMB, maxFileSizeMBCap, "per-file"},
+		{s.MaxTicketSizeMB, maxTicketSizeMBCap, "per-ticket"},
+		{s.MaxUserSizeMB, maxUserSizeMBCap, "per-user"},
+	} {
+		if q.v != nil && *q.v > q.max {
+			httpx.SendJSONError(w, fmt.Sprintf("The %s attachment quota can be at most %d MB", q.name, q.max), http.StatusBadRequest)
+			return
 		}
 	}
 	if s.AutoCloseDaysAfterResolved < 1 {

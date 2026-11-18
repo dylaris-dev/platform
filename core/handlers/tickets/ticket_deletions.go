@@ -160,6 +160,12 @@ func (h *TicketDeletionsHandler) DeleteTicket(w http.ResponseWriter, r *http.Req
 
 // ListDeletions GET /api/admin/tickets/deletion-log - RequireCap("tickets.read") at the route.
 func (h *TicketDeletionsHandler) ListDeletions(w http.ResponseWriter, r *http.Request) {
+	// Admin-only like DeleteTicket: the log spans every team and carries the
+	// deleting admin's IP and user agent, past canSeeTicket's team scoping.
+	if !reqctx.IsAdmin(r) {
+		httpx.SendJSONError(w, "Admin only", http.StatusForbidden)
+		return
+	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 {

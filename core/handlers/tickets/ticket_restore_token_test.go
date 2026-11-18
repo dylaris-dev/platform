@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/handlers/handlertest"
 	"dylaris-core/models"
 	"dylaris-core/services/corestorage"
 	"dylaris-core/store"
@@ -51,15 +52,17 @@ func newRestoreTest(t *testing.T) (*TicketMigrationHandler, string, string) {
 	st := &restoreFakeStore{user: &models.User{
 		ID: restoreTestUser, Is2FAEnabled: true, TOTPSecret: secret,
 	}}
-	h := NewTicketMigrationHandler(Deps{Store: st, CoreStorage: &corestorage.Manager{Store: st}})
+	h := NewTicketMigrationHandler(Deps{Store: st, Redis: handlertest.RedisClient(t), CoreStorage: &corestorage.Manager{Store: st}})
 	const token = "0123456789abcdef0123456789abcdef0123456789abcdef"
 	now := time.Now()
-	h.tokens[token] = &restoreToken{
+	if err := h.putRestoreToken(context.Background(), token, &restoreToken{
 		BackupName:         "tickets-2026-08-28.json",
 		UserID:             restoreTestUser,
 		IssuedAt:           now,
 		MinExecuteAfter:    now.Add(-time.Second), // cooldown already elapsed
 		ConfirmationPhrase: "restore tickets from tickets-2026-08-28.json",
+	}); err != nil {
+		t.Fatalf("put token: %v", err)
 	}
 	return h, token, secret
 }
@@ -76,10 +79,28 @@ func executeRestore(t *testing.T, h *TicketMigrationHandler, token, phrase, code
 }
 
 func (h *TicketMigrationHandler) hasToken(token string) bool {
-	h.tokensMu.Lock()
-	defer h.tokensMu.Unlock()
-	_, ok := h.tokens[token]
+	_, ok := h.getRestoreToken(context.Background(), token)
 	return ok
+}
+
+func (h *TicketMigrationHandler) mustToken(t *testing.T, token string) *restoreToken {
+	t.Helper()
+	tok, ok := h.getRestoreToken(context.Background(), token)
+	if !ok {
+		t.Fatal("token missing")
+	}
+	return tok
+}
+
+// setCooldown moves the token's earliest execute time (white-box: the 15s
+// human cooldown is not what these tests are about).
+func (h *TicketMigrationHandler) setCooldown(t *testing.T, token string, at time.Time) {
+	t.Helper()
+	tok := h.mustToken(t, token)
+	tok.MinExecuteAfter = at
+	if err := h.putRestoreToken(context.Background(), token, tok); err != nil {
+		t.Fatalf("put token: %v", err)
+	}
 }
 
 // One token must buy exactly one TOTP attempt.
@@ -91,7 +112,7 @@ func (h *TicketMigrationHandler) hasToken(token string) bool {
 // wipe-every-ticket-table action exists to stop.
 func TestAWrongTOTPCodeSpendsTheRestoreToken(t *testing.T) {
 	h, token, _ := newRestoreTest(t)
-	phrase := h.tokens[token].ConfirmationPhrase
+	phrase := h.mustToken(t, token).ConfirmationPhrase
 
 	w := executeRestore(t, h, token, phrase, "000000")
 	if w.Code != http.StatusUnauthorized {
@@ -120,8 +141,8 @@ func TestATypoBeforeTheCodeDoesNotSpendTheToken(t *testing.T) {
 	}
 
 	// The cooldown is the same kind of check.
-	h.tokens[token].MinExecuteAfter = time.Now().Add(time.Minute)
-	phrase := h.tokens[token].ConfirmationPhrase
+	h.setCooldown(t, token, time.Now().Add(time.Minute))
+	phrase := h.mustToken(t, token).ConfirmationPhrase
 	if w := executeRestore(t, h, token, phrase, "000000"); w.Code != http.StatusTooEarly {
 		t.Fatalf("cooldown status = %d, want 425", w.Code)
 	}
@@ -132,7 +153,7 @@ func TestATypoBeforeTheCodeDoesNotSpendTheToken(t *testing.T) {
 	// With the cooldown elapsed and the right code, the token is spent and the
 	// handler moves on past the gate (it fails later on storage, which this test
 	// deliberately does not provide - reaching that far is the assertion).
-	h.tokens[token].MinExecuteAfter = time.Now().Add(-time.Second)
+	h.setCooldown(t, token, time.Now().Add(-time.Second))
 	code, err := totp.GenerateCode(secret, time.Now())
 	if err != nil {
 		t.Fatalf("generate code: %v", err)
@@ -146,5 +167,23 @@ func TestATypoBeforeTheCodeDoesNotSpendTheToken(t *testing.T) {
 	}
 	if h.hasToken(token) {
 		t.Error("the token survived a completed attempt")
+	}
+}
+
+// Init and execute may land on different Core replicas. A token kept in one
+// replica's memory answered "Invalid or expired token" on the other.
+func TestARestoreTokenWorksOnAnotherReplica(t *testing.T) {
+	a, token, secret := newRestoreTest(t)
+	b := NewTicketMigrationHandler(a.d) // a second Core: same Redis, no shared memory
+	code, err := totp.GenerateCode(secret, time.Now())
+	if err != nil {
+		t.Fatalf("generate code: %v", err)
+	}
+	w := executeRestore(t, b, token, a.mustToken(t, token).ConfirmationPhrase, code)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (past the token gate on the other replica): %s", w.Code, w.Body.String())
+	}
+	if a.hasToken(token) {
+		t.Error("the token survived its use on the other replica")
 	}
 }

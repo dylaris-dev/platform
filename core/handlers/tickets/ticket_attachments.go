@@ -1,6 +1,7 @@
 package tickets
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -255,13 +256,20 @@ func (c *clamdScanner) Scan(r io.Reader) error {
 	if _, err := conn.Write([]byte{0, 0, 0, 0}); err != nil { // zero-length ends stream
 		return fmt.Errorf("clamav end stream: %w", err)
 	}
-	resp := make([]byte, 512)
-	n, _ := conn.Read(resp)
-	out := string(resp[:n])
-	if strings.Contains(out, "FOUND") {
-		return fmt.Errorf("%w: %s", errScanHit, strings.TrimSpace(out))
+	// The z-prefixed reply is NUL-terminated. Only an explicit OK is clean:
+	// an ERROR (e.g. StreamMaxLength exceeded) or no reply means unscanned.
+	raw, rerr := bufio.NewReader(io.LimitReader(conn, 512)).ReadString(0)
+	out := strings.TrimSpace(strings.TrimRight(raw, "\x00"))
+	switch {
+	case strings.HasSuffix(out, "FOUND"):
+		return fmt.Errorf("%w: %s", errScanHit, out)
+	case strings.HasSuffix(out, ": OK"):
+		return nil
+	case rerr != nil:
+		return fmt.Errorf("clamav read reply: %w", rerr)
+	default:
+		return fmt.Errorf("clamav unexpected reply: %q", out)
 	}
-	return nil
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────

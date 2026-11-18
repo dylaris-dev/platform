@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -13,7 +14,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"dylaris-core/handlers/audit"
@@ -42,10 +42,6 @@ import (
 //   - A 15-second cooldown between "initiate" and "execute" so a misclick can be cancelled
 type TicketMigrationHandler struct {
 	d Deps
-
-	// Outstanding restore tokens. Cleared when consumed or when expired.
-	tokensMu sync.Mutex
-	tokens   map[string]*restoreToken
 }
 
 type restoreToken struct {
@@ -62,10 +58,39 @@ const (
 )
 
 func NewTicketMigrationHandler(d Deps) *TicketMigrationHandler {
-	return &TicketMigrationHandler{
-		d:      d,
-		tokens: make(map[string]*restoreToken),
+	return &TicketMigrationHandler{d: d}
+}
+
+// Restore tokens live in Redis, not in one Core's memory: with several Core
+// replicas behind the load balancer, init and execute land on different ones.
+func restoreTokenKey(token string) string { return "dylaris:core:ticket_restore:" + token }
+
+func (h *TicketMigrationHandler) putRestoreToken(ctx context.Context, token string, t *restoreToken) error {
+	if h.d.Redis == nil {
+		return fmt.Errorf("restore tokens need Redis")
 	}
+	b, err := json.Marshal(t)
+	if err != nil {
+		return err
+	}
+	return h.d.Redis.Set(ctx, restoreTokenKey(token), b, restoreTTL).Err()
+}
+
+// getRestoreToken reports a missing, expired or unreadable token alike as
+// not found.
+func (h *TicketMigrationHandler) getRestoreToken(ctx context.Context, token string) (*restoreToken, bool) {
+	if h.d.Redis == nil || token == "" {
+		return nil, false
+	}
+	b, err := h.d.Redis.Get(ctx, restoreTokenKey(token)).Bytes()
+	if err != nil {
+		return nil, false
+	}
+	var t restoreToken
+	if json.Unmarshal(b, &t) != nil {
+		return nil, false
+	}
+	return &t, true
 }
 
 // requireAdmin is the boundary this file's own doc comment has always claimed
@@ -512,16 +537,10 @@ func (h *TicketMigrationHandler) InitRestore(w http.ResponseWriter, r *http.Requ
 		MinExecuteAfter:    now.Add(restoreCooldown),
 		ConfirmationPhrase: "restore tickets from " + name,
 	}
-	h.tokensMu.Lock()
-	h.tokens[token] = t
-	// Garbage-collect expired tokens opportunistically — keeps the map
-	// from growing forever in long-running processes.
-	for k, v := range h.tokens {
-		if now.Sub(v.IssuedAt) > restoreTTL {
-			delete(h.tokens, k)
-		}
+	if err := h.putRestoreToken(r.Context(), token, t); err != nil {
+		httpx.SendJSONError(w, "Failed to start the restore", http.StatusInternalServerError)
+		return
 	}
-	h.tokensMu.Unlock()
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":            true,
@@ -556,13 +575,7 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	h.tokensMu.Lock()
-	t, ok := h.tokens[req.Token]
-	if ok && (time.Since(t.IssuedAt) > restoreTTL) {
-		delete(h.tokens, req.Token)
-		ok = false
-	}
-	h.tokensMu.Unlock()
+	t, ok := h.getRestoreToken(r.Context(), req.Token)
 	if !ok {
 		httpx.SendJSONError(w, "Invalid or expired token — start the restore flow again", http.StatusUnauthorized)
 		return
@@ -605,7 +618,12 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 	// Deliberately NOT here for the cooldown and phrase checks above: those are
 	// typos, not credential guesses, and burning the token on them would only
 	// train people to click through the confirmation faster.
-	h.consumeRestoreToken(req.Token)
+	// Only the request whose DEL removed the token goes on, so two concurrent
+	// executes cannot both spend one token on two guesses.
+	if !h.consumeRestoreToken(r.Context(), req.Token) {
+		httpx.SendJSONError(w, "Invalid or expired token — start the restore flow again", http.StatusUnauthorized)
+		return
+	}
 	if _, ok := reauth.MatchTOTPStep(strings.TrimSpace(req.TOTPCode), user.TOTPSecret, time.Now()); !ok {
 		httpx.SendJSONError(w, "Invalid 2FA code", http.StatusUnauthorized)
 		return
@@ -656,12 +674,14 @@ func (h *TicketMigrationHandler) ExecuteRestore(w http.ResponseWriter, r *http.R
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-// consumeRestoreToken spends a restore token. Idempotent, so calling it on a
-// path that later fails is safe.
-func (h *TicketMigrationHandler) consumeRestoreToken(token string) {
-	h.tokensMu.Lock()
-	delete(h.tokens, token)
-	h.tokensMu.Unlock()
+// consumeRestoreToken spends a restore token and reports whether this call
+// was the one that removed it.
+func (h *TicketMigrationHandler) consumeRestoreToken(ctx context.Context, token string) bool {
+	if h.d.Redis == nil {
+		return false
+	}
+	n, err := h.d.Redis.Del(ctx, restoreTokenKey(token)).Result()
+	return err == nil && n == 1
 }
 
 // safeBackupName whitelists timestamped JSON names so DELETE/DOWNLOAD can't
@@ -679,15 +699,21 @@ func safeBackupName(in string) string {
 
 // applyTicketSchema creates the ticket tables on an arbitrary *sql.DB so
 // migration/restore against a fresh DB works. Mirrors what database.createTicketTables
-// runs against the main DB at boot time. Kept compact since the tables are
-// small and the SQL is identical to db.go's set.
+// runs against the main DB at boot time, minus the FKs.
 func applyTicketSchema(db *sql.DB) error {
-	// Use the same DDL list as database.createTicketTables — duplication is
-	// intentional: changes to the main schema get mirrored here when we
-	// remember, which is exactly when migration matters. A future polish
-	// can extract the DDL to a shared constant.
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS ticket_categories (
+	for _, q := range ticketSchemaStmts {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ticketSchemaStmts is database.createTicketTables without the FKs (the
+// external DB has no users table). TestApplyTicketSchemaMatchesTheLiveColumns
+// fails when a live column is missing here or NOT NULL here only.
+var ticketSchemaStmts = []string{
+	`CREATE TABLE IF NOT EXISTS ticket_categories (
 			id SERIAL PRIMARY KEY,
 			name VARCHAR(128) NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
@@ -700,10 +726,11 @@ func applyTicketSchema(db *sql.DB) error {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(name)
 		)`,
-		`CREATE TABLE IF NOT EXISTS tickets (
+	`CREATE TABLE IF NOT EXISTS tickets (
 			id SERIAL PRIMARY KEY,
 			region VARCHAR(32) NOT NULL DEFAULT 'default',
-			category_id INTEGER NOT NULL,
+			category_id INTEGER,
+			category_name TEXT NOT NULL DEFAULT '',
 			user_id UUID NOT NULL,
 			server_uuid VARCHAR(64),
 			server_region VARCHAR(32),
@@ -714,17 +741,19 @@ func applyTicketSchema(db *sql.DB) error {
 			assigned_team VARCHAR(64),
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-			closed_at TIMESTAMPTZ
+			closed_at TIMESTAMPTZ,
+			subject_kind VARCHAR(16) NOT NULL DEFAULT '',
+			subject_ref VARCHAR(128) NOT NULL DEFAULT ''
 		)`,
-		`CREATE TABLE IF NOT EXISTS ticket_messages (
+	`CREATE TABLE IF NOT EXISTS ticket_messages (
 			id SERIAL PRIMARY KEY,
 			ticket_id INTEGER NOT NULL,
-			user_id UUID NOT NULL,
+			user_id UUID,
 			body TEXT NOT NULL,
 			is_internal BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
-		`CREATE TABLE IF NOT EXISTS ticket_watchers (
+	`CREATE TABLE IF NOT EXISTS ticket_watchers (
 			ticket_id INTEGER NOT NULL,
 			user_id UUID NOT NULL,
 			can_reply BOOLEAN NOT NULL DEFAULT FALSE,
@@ -732,7 +761,7 @@ func applyTicketSchema(db *sql.DB) error {
 			added_by UUID,
 			PRIMARY KEY (ticket_id, user_id)
 		)`,
-		`CREATE TABLE IF NOT EXISTS ticket_audit_events (
+	`CREATE TABLE IF NOT EXISTS ticket_audit_events (
 			id BIGSERIAL PRIMARY KEY,
 			ticket_id INTEGER NOT NULL,
 			event_type VARCHAR(64) NOT NULL,
@@ -740,7 +769,7 @@ func applyTicketSchema(db *sql.DB) error {
 			metadata JSONB,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
-		`CREATE TABLE IF NOT EXISTS ticket_attachments (
+	`CREATE TABLE IF NOT EXISTS ticket_attachments (
 			id SERIAL PRIMARY KEY,
 			ticket_id INTEGER NOT NULL,
 			message_id INTEGER,
@@ -751,7 +780,7 @@ func applyTicketSchema(db *sql.DB) error {
 			uploaded_by UUID,
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
-		`CREATE TABLE IF NOT EXISTS ticket_canned_responses (
+	`CREATE TABLE IF NOT EXISTS ticket_canned_responses (
 			id SERIAL PRIMARY KEY,
 			name VARCHAR(128) NOT NULL,
 			body TEXT NOT NULL,
@@ -761,13 +790,13 @@ func applyTicketSchema(db *sql.DB) error {
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE(name)
 		)`,
-	}
-	for _, q := range stmts {
-		if _, err := db.Exec(q); err != nil {
-			return err
-		}
-	}
-	return nil
+	// Brings an external DB created by an older Core (or a failed first run)
+	// up to the shape above. Idempotent.
+	`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS category_name TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS subject_kind VARCHAR(16) NOT NULL DEFAULT ''`,
+	`ALTER TABLE tickets ADD COLUMN IF NOT EXISTS subject_ref VARCHAR(128) NOT NULL DEFAULT ''`,
+	`ALTER TABLE tickets ALTER COLUMN category_id DROP NOT NULL`,
+	`ALTER TABLE ticket_messages ALTER COLUMN user_id DROP NOT NULL`,
 }
 
 // safeColumnName matches a plain SQL identifier — used to reject crafted
@@ -829,6 +858,53 @@ func bulkInsertRows(db *sql.DB, table string, rows []map[string]interface{}) (in
 	return inserted, skipped, nil
 }
 
+// ticketUserRefs lists, per ticket table, the columns referencing users(id)
+// and whether that FK is ON DELETE CASCADE (else SET NULL), as in
+// database.createTicketTables.
+var ticketUserRefs = map[string][]struct {
+	col     string
+	cascade bool
+}{
+	"tickets":                 {{"user_id", true}, {"assigned_user_id", false}},
+	"ticket_messages":         {{"user_id", false}},
+	"ticket_watchers":         {{"user_id", true}, {"added_by", false}},
+	"ticket_audit_events":     {{"actor_user_id", false}},
+	"ticket_attachments":      {{"uploaded_by", false}},
+	"ticket_canned_responses": {{"created_by", false}},
+}
+
+// restoreKnownUsers returns which of the user ids the backup references still
+// exist. Asked only when the backup references any.
+func restoreKnownUsers(tx *sql.Tx, tables map[string][]map[string]interface{}) (map[string]bool, error) {
+	known := map[string]bool{}
+	referenced := false
+	for t, refs := range ticketUserRefs {
+		for _, row := range tables[t] {
+			for _, ref := range refs {
+				if _, ok := row[ref.col].(string); ok {
+					referenced = true
+				}
+			}
+		}
+	}
+	if !referenced {
+		return known, nil
+	}
+	rows, err := tx.Query(`SELECT id::text FROM users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		known[id] = true
+	}
+	return known, rows.Err()
+}
+
 // wipeAndReload truncates every ticket table on the main DB and reloads
 // the supplied payload. Wrapped in a single transaction-equivalent via the
 // store's own DB handle if available; here we run statements sequentially
@@ -863,18 +939,50 @@ func wipeAndReload(s store.Store, tables map[string][]map[string]interface{}) er
 			return err
 		}
 	}
+	known, err := restoreKnownUsers(tx, tables)
+	if err != nil {
+		return err
+	}
+	// A backup older than an account deletion still names that account. The
+	// live FKs say what the deletion would have done, so the restore does the
+	// same: drop the row (CASCADE) or clear the reference (SET NULL). Children
+	// of a dropped ticket go with it, as the cascade on ticket_id would.
+	droppedTickets := map[string]bool{}
 	// Reload in normal order.
 	for _, t := range store.TicketTablesInOrder() {
-		rows := tables[t]
-		for _, row := range rows {
+		inserted := 0
+	rows:
+		for _, row := range tables[t] {
 			if len(row) == 0 {
 				continue
+			}
+			if tid, ok := row["ticket_id"]; ok && droppedTickets[fmt.Sprint(tid)] {
+				continue
+			}
+			for _, ref := range ticketUserRefs[t] {
+				v, ok := row[ref.col].(string)
+				if !ok || known[v] {
+					continue
+				}
+				if ref.cascade {
+					if t == "tickets" {
+						droppedTickets[fmt.Sprint(row["id"])] = true
+					}
+					continue rows
+				}
+				row[ref.col] = nil
 			}
 			cols := make([]string, 0, len(row))
 			for k := range row {
 				cols = append(cols, k)
 			}
 			sort.Strings(cols)
+			// Interpolated into the INSERT, like in bulkInsertRows.
+			for _, c := range cols {
+				if !safeColumnName.MatchString(c) {
+					return fmt.Errorf("restore: unsafe column name %q for table %s", c, t)
+				}
+			}
 			placeholders := make([]string, len(cols))
 			args := make([]interface{}, len(cols))
 			for i, c := range cols {
@@ -884,6 +992,15 @@ func wipeAndReload(s store.Store, tables map[string][]map[string]interface{}) er
 			q := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING`,
 				t, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 			if _, err := tx.Exec(q, args...); err != nil {
+				return err
+			}
+			inserted++
+		}
+		// The rows carry explicit ids; without this a fresh database's
+		// sequence still starts at 1 and the next ticket collides.
+		if inserted > 0 && t != "ticket_watchers" {
+			if _, err := tx.Exec(fmt.Sprintf(
+				`SELECT setval(pg_get_serial_sequence('%s', 'id'), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL) FROM %s`, t, t)); err != nil {
 				return err
 			}
 		}

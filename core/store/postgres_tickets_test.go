@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql/driver"
 	"errors"
 	"regexp"
 	"testing"
@@ -167,5 +168,51 @@ func TestListTickets_QueryError(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet sqlmock expectations: %v", err)
+	}
+}
+
+// The inbox's unassigned and team-visibility narrowings are SQL conditions, so
+// LIMIT/OFFSET page the narrowed set rather than the newest tickets overall.
+func TestListTickets_UnassignedAndSupportViewer(t *testing.T) {
+	me := "support-1"
+	cases := []struct {
+		name  string
+		f     TicketFilter
+		where string
+		args  []driver.Value
+	}{
+		{"unassigned", TicketFilter{Unassigned: true},
+			` WHERE 1=1 AND t.assigned_user_id IS NULL AND COALESCE(t.assigned_team, '') = ''`, nil},
+		{"viewer without team", TicketFilter{SupportViewer: &me},
+			` WHERE 1=1 AND (t.user_id = $1 OR t.assigned_user_id = $1 OR COALESCE(t.assigned_team, '') = '')`,
+			[]driver.Value{me}},
+		{"viewer with team", TicketFilter{SupportViewer: &me, SupportTeam: "billing"},
+			` WHERE 1=1 AND (t.user_id = $1 OR t.assigned_user_id = $1 OR COALESCE(t.assigned_team, '') = '' OR t.assigned_team = $2)`,
+			[]driver.Value{me, "billing"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			if err != nil {
+				t.Fatalf("sqlmock: %v", err)
+			}
+			defer db.Close()
+			s := NewPostgresStore(db)
+			wantQuery := `SELECT ` + ticketSelectCols + ` ` + ticketBaseFrom + c.where +
+				` ORDER BY t.updated_at DESC LIMIT 50 OFFSET 0`
+			e := mock.ExpectQuery(regexp.QuoteMeta(wantQuery))
+			if c.args != nil {
+				e = e.WithArgs(c.args...)
+			} else {
+				e = e.WithoutArgs()
+			}
+			e.WillReturnRows(sqlmock.NewRows(ticketRowCols))
+			if _, err := s.ListTickets(c.f); err != nil {
+				t.Fatalf("ListTickets: %v", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("unmet sqlmock expectations: %v", err)
+			}
+		})
 	}
 }

@@ -220,6 +220,19 @@ func (s *PostgresStore) ListTickets(f TicketFilter) ([]models.Ticket, error) {
 	if f.WatcherUserID != nil {
 		add("EXISTS (SELECT 1 FROM ticket_watchers w WHERE w.ticket_id = t.id AND w.user_id = $%d)", *f.WatcherUserID)
 	}
+	if f.Unassigned {
+		conds = append(conds, "t.assigned_user_id IS NULL AND COALESCE(t.assigned_team, '') = ''")
+	}
+	if f.SupportViewer != nil {
+		args = append(args, *f.SupportViewer)
+		n := len(args)
+		cond := fmt.Sprintf("t.user_id = $%d OR t.assigned_user_id = $%d OR COALESCE(t.assigned_team, '') = ''", n, n)
+		if f.SupportTeam != "" {
+			args = append(args, f.SupportTeam)
+			cond += fmt.Sprintf(" OR t.assigned_team = $%d", len(args))
+		}
+		conds = append(conds, "("+cond+")")
+	}
 	if len(f.Status) > 0 {
 		args = append(args, statusArrayArg(f.Status))
 		conds = append(conds, fmt.Sprintf("t.status = ANY($%d)", len(args)))

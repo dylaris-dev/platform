@@ -512,25 +512,30 @@ func (h *UserHandler) SetUserRouteLimit(w http.ResponseWriter, r *http.Request) 
 	}
 
 	zero := 0
+	var err error
 	switch req.Mode {
 	case "default":
 		// No row: defer to user_default, then global.
-		h.d.Store.DeleteGatewayRouteLimit(scope)
+		err = h.d.Store.DeleteGatewayRouteLimit(scope)
 	case "unlimited":
 		// A row with a NULL cap. Deliberately NOT the same as "default": this
 		// says "no cap, for this user", and keeps saying it if an operator later
 		// tightens the platform default.
-		h.d.Store.SetGatewayRouteLimit(scope, nil)
+		err = h.d.Store.SetGatewayRouteLimit(scope, nil)
 	case "custom":
 		if req.MaxRoutes < 1 {
 			httpx.SendJSONError(w, "Custom limit must be at least 1 (use mode \"disabled\" for none)", 400)
 			return
 		}
-		h.d.Store.SetGatewayRouteLimit(scope, &req.MaxRoutes)
+		err = h.d.Store.SetGatewayRouteLimit(scope, &req.MaxRoutes)
 	case "disabled":
-		h.d.Store.SetGatewayRouteLimit(scope, &zero)
+		err = h.d.Store.SetGatewayRouteLimit(scope, &zero)
 	default:
 		httpx.SendJSONError(w, "Invalid mode (use: default, unlimited, custom, disabled)", 400)
+		return
+	}
+	if err != nil {
+		httpx.SendJSONError(w, "Failed to update route limit", http.StatusInternalServerError)
 		return
 	}
 

@@ -708,6 +708,7 @@ func buildAPIRouter(appState *handlers.AppState, authHandler *auth.AuthHandler, 
 	}
 	ticketsDeps := tickets.Deps{
 		Store:               appState.Store,
+		Redis:               appState.Redis,
 		Authz:               appState.Authz,
 		Events:              appState.Events,
 		CoreStorage:         appState.CoreStorage,

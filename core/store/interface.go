@@ -1251,6 +1251,13 @@ type TicketFilter struct {
 	AssignedUserID *string // tickets assigned to a supporter
 	AssignedTeam   string  // tickets owned by a team (cross-team visibility scope)
 	WatcherUserID  *string // tickets the user is CC'd on
+	// Unassigned keeps only tickets with neither a user nor a team.
+	Unassigned bool
+	// SupportViewer, when set, keeps only what a team-limited supporter may
+	// see (canSeeTicket with cross-team off): their own, assigned to them,
+	// teamless, or SupportTeam's. In SQL so LIMIT/OFFSET page the visible set.
+	SupportViewer *string
+	SupportTeam   string
 
 	// Refinements layered on top of the scope.
 	Status     []string // include only these statuses

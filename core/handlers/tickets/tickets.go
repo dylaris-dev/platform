@@ -415,6 +415,16 @@ func (h *TicketsHandler) ListInboxTickets(w http.ResponseWriter, r *http.Request
 		// returned - so the unassigned scope came back empty for everyone,
 		// admins included, and the triage queue a supporter picks work up from
 		// simply had nothing in it.
+		filter.Unassigned = true
+	}
+	// Narrow in the query, not only after it: post-filtering one LIMIT page
+	// dropped every visible ticket older than the newest page platform-wide.
+	// The post-filters below stay as a cross-check of the same rule.
+	if !perms.IsAdmin && !settings.CrossTeamVisibility && scope != "mine" {
+		filter.SupportViewer = &userID
+		if me, _ := h.d.Store.GetUserByID(userID); me != nil {
+			filter.SupportTeam = me.SupportTeam
+		}
 	}
 
 	tickets, err := h.d.Store.ListTickets(filter)
@@ -931,7 +941,10 @@ func (h *TicketsHandler) UpdateAssignment(w http.ResponseWriter, r *http.Request
 			httpx.SendJSONError(w, "Assignee not found", http.StatusBadRequest)
 			return
 		}
-		if !(target.IsAdmin || target.Role == "admin" || target.Role == "support") {
+		// Judged like every other ticket gate: users.role alone refused an
+		// account made support through the PANEL role the panel hands out.
+		tp := access.LoadEffectivePermissions(h.d.Store, h.d.Authz, target.ID)
+		if !(tp.IsAdmin || tp.IsSupport) {
 			httpx.SendJSONError(w, "Assignee must be support or admin", http.StatusBadRequest)
 			return
 		}
@@ -1091,6 +1104,12 @@ func (h *TicketsHandler) RemoveWatcher(w http.ResponseWriter, r *http.Request) {
 	}
 	t, err := h.d.Store.GetTicket(id)
 	if err != nil || t == nil {
+		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
+		return
+	}
+	// Visibility like every other ticket mutation; removing yourself is exempt
+	// because it can only ever reach the caller's own watcher row.
+	if targetID != userID && !callerSeesTicket(h.d, t, perms, userID) {
 		httpx.SendJSONError(w, "Not found", http.StatusNotFound)
 		return
 	}
