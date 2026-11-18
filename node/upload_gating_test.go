@@ -56,6 +56,7 @@ func TestSaveFileContent_EnforcesUploadLimits(t *testing.T) {
 	addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 41000}
 	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
 	bs.serverUUIDByPeer.Store(addr.String(), uuid)
+	bindTestSession(bs, addr.String())
 	bs.usernameByPeer.Store(addr.String(), "u")
 	full := fileperms.Full()
 	bs.permsByPeer.Store(addr.String(), &full)

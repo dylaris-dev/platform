@@ -110,6 +110,7 @@ func TestBeamEnforcesTheFileVerbs(t *testing.T) {
 		addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}
 		ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
 		bs.serverUUIDByPeer.Store(addr.String(), uuid)
+		bindTestSession(bs, addr.String())
 		bs.permsByPeer.Store(addr.String(), perms)
 		dir := filepath.Join(sm.GetServerDir(uuid), "survival")
 		if err := os.MkdirAll(dir, 0o755); err != nil {

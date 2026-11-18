@@ -30,6 +30,7 @@ func fifthPassBeam(t *testing.T, sm *StorageManager, rdb *redis.Client, uuid str
 	addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: port}
 	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
 	bs.serverUUIDByPeer.Store(addr.String(), uuid)
+	bindTestSession(bs, addr.String())
 	full := fileperms.Full()
 	bs.permsByPeer.Store(addr.String(), &full)
 	bs.usernameByPeer.Store(addr.String(), "beam-"+uuid)

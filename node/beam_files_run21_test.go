@@ -103,3 +103,80 @@ func TestAnAuthenticateThatOutlivesItsConnectionLeavesNoBinding(t *testing.T) {
 		})
 	}
 }
+
+// cleanerRaceCtx reports the connection ended and, at that moment, removes the
+// session entry the way the ConnEnd cleaner does when it runs between
+// Authenticate's LoadOrStore and its later stores.
+type cleanerRaceCtx struct {
+	context.Context
+	bs   *beamServer
+	addr string
+}
+
+func (c cleanerRaceCtx) Err() error {
+	c.bs.sessionByPeer.Delete(c.addr)
+	return context.Canceled
+}
+
+// The cleaner removed the session before Authenticate stored the other three
+// bindings, so CompareAndDelete found nothing and they were left behind for the
+// next connection on that address.
+func TestAnAuthenticateRacingTheCleanerLeavesNoBinding(t *testing.T) {
+	const secret = "test-beam-secret"
+	full := fileperms.Full()
+	tok, err := beamauth.SignBeamTicket(secret, beamauth.BeamClaims{ServerUUID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", Username: "carol", Perms: &full})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bs := &beamServer{jwtSecret: secret}
+	addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 40710}
+	ctx := cleanerRaceCtx{Context: peer.NewContext(context.Background(), &peer.Peer{Addr: addr}), bs: bs, addr: addr.String()}
+	resp, err := bs.Authenticate(ctx, &pb.BeamAuthReq{Ticket: tok})
+	if err != nil || resp.Ok {
+		t.Fatalf("Authenticate = %v, %v; want Ok=false", resp, err)
+	}
+	for name, m := range map[string]*sync.Map{"session": &bs.sessionByPeer, "server": &bs.serverUUIDByPeer, "user": &bs.usernameByPeer, "perms": &bs.permsByPeer} {
+		if _, bound := m.Load(addr.String()); bound {
+			t.Errorf("%s binding survived", name)
+		}
+	}
+}
+
+// A binding with no session behind it authorizes nothing: only Authenticate
+// creates a session, so whatever left the binding, it is not one.
+func TestABindingWithoutASessionAuthorizesNothing(t *testing.T) {
+	cases := []struct {
+		name    string
+		session bool
+		wantOK  bool
+	}{
+		{"a session and its bindings act", true, true},
+		{"bindings without a session do not", false, false},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			bs := &beamServer{}
+			addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 40720 + i}
+			ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
+			full := fileperms.Full()
+			bs.serverUUIDByPeer.Store(addr.String(), "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+			bs.permsByPeer.Store(addr.String(), &full)
+			if c.session {
+				bindTestSession(bs, addr.String())
+			}
+			permErr := bs.requireFilePerm(ctx, func(p fileperms.Perms) bool { return true }, "read")
+			if (permErr == nil) != c.wantOK {
+				t.Errorf("requireFilePerm = %v, want allowed %v", permErr, c.wantOK)
+			}
+			if got := bs.extractServerUUID(ctx); (got != "") != c.wantOK {
+				t.Errorf("extractServerUUID = %q, want bound %v", got, c.wantOK)
+			}
+		})
+	}
+	// A peer that never authenticated still gets a quota answer.
+	bs := &beamServer{throttle: NewBeamThrottle(context.Background(), nil)}
+	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 40729}})
+	if _, err := bs.GetTransferQuota(ctx, &pb.BeamQuotaReq{}); err != nil {
+		t.Errorf("GetTransferQuota for an unauthenticated peer: %v", err)
+	}
+}

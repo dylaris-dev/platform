@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	beamauth "dylaris-pkg/beam/auth"
 	"dylaris-pkg/fileperms"
@@ -64,6 +65,7 @@ func newTestBeamServer(t *testing.T) (*beamServer, string, context.Context) {
 	addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 40000}
 	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
 	bs.serverUUIDByPeer.Store(addr.String(), serverUUID)
+	bindTestSession(bs, addr.String())
 	// A real session gets its permissions from the ticket. These tests are about
 	// what the file operations DO, so they bind an account that may do
 	// everything; the ones about who may do what bind narrower ones.
@@ -248,4 +250,12 @@ func TestBeamUploadExceedsDisk(t *testing.T) {
 			}
 		})
 	}
+}
+
+// bindTestSession gives addr the session Authenticate would have created. The
+// claims carry no server, so sessionLive never reads Redis for it.
+func bindTestSession(bs *beamServer, addr string) {
+	sess := &beamSession{claims: &beamauth.BeamClaims{}, opened: time.Now()}
+	sess.checked.Store(time.Now().UnixNano())
+	bs.sessionByPeer.Store(addr, sess)
 }

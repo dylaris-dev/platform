@@ -148,6 +148,7 @@ func TestBeamAndSFTPShareTheServerHeadroom(t *testing.T) {
 	addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 41105}
 	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
 	bs.serverUUIDByPeer.Store(addr.String(), uuid)
+	bindTestSession(bs, addr.String())
 	full := fileperms.Full()
 	bs.permsByPeer.Store(addr.String(), &full)
 	if err := os.MkdirAll(sm.GetServerDir(uuid), 0o755); err != nil {

@@ -309,10 +309,13 @@ var beamMaxSession = 24 * time.Hour
 // changed, an account suspended - ends it: the bindings are dropped and every
 // later call is refused until the client reconnects with a new ticket. Fails
 // open on a Redis fault, like the check at Authenticate.
+//
+// No session is no authority: only Authenticate creates one, so a server or
+// permission binding found without it is a leftover and must not be acted on.
 func (s *beamServer) sessionLive(ctx context.Context, addr string) bool {
 	v, ok := s.sessionByPeer.Load(addr)
 	if !ok {
-		return true
+		return false
 	}
 	sess := v.(*beamSession)
 	if sess.ended.Load() {
@@ -915,6 +918,8 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 		// ticket never shares a daily-quota bucket with another user.
 		if claims.Username != "" {
 			s.usernameByPeer.Store(p.Addr.String(), claims.Username)
+		} else {
+			s.usernameByPeer.Delete(p.Addr.String())
 		}
 		// Stored even when nil, so extractFilePerms can tell "this session was
 		// never authenticated" from "authenticated by a Core that sends no
@@ -923,10 +928,12 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 		// grpc emits ConnEnd without waiting for running handlers, so the
 		// cleaner may already have run for this address. Closing the transport
 		// cancels its streams before ConnEnd, so either the cleaner deletes
-		// after the stores above or this check sees the cancel. Only our own
-		// session is removed: a later connection may hold the address by now.
+		// after the stores above or this check sees the cancel. A later
+		// connection's session is left alone; when the cleaner already removed
+		// ours, the stores above came after it and are ours to undo.
 		if ctx.Err() != nil {
-			if s.sessionByPeer.CompareAndDelete(p.Addr.String(), sess) {
+			if cur, held := s.sessionByPeer.Load(p.Addr.String()); !held || cur == sess {
+				s.sessionByPeer.CompareAndDelete(p.Addr.String(), sess)
 				s.serverUUIDByPeer.Delete(p.Addr.String())
 				s.usernameByPeer.Delete(p.Addr.String())
 				s.permsByPeer.Delete(p.Addr.String())
@@ -2102,8 +2109,10 @@ func (s *beamServer) GetTransferQuota(ctx context.Context, req *pb.BeamQuotaReq)
 	// This is the client's health ping and its only automatic reconnect, so an
 	// ended session must fail it; a peer that never authenticated still gets an
 	// answer, as before.
-	if p, ok := peer.FromContext(ctx); ok && p != nil && p.Addr != nil && !s.sessionLive(ctx, p.Addr.String()) {
-		return nil, status.Error(codes.Unauthenticated, "session ended - reconnect")
+	if p, ok := peer.FromContext(ctx); ok && p != nil && p.Addr != nil {
+		if _, authed := s.sessionByPeer.Load(p.Addr.String()); authed && !s.sessionLive(ctx, p.Addr.String()) {
+			return nil, status.Error(codes.Unauthenticated, "session ended - reconnect")
+		}
 	}
 	// BwLimit on the wire is a single number, so report the lower of the
 	// two directions (treating 0 as unlimited). Clients only use this for

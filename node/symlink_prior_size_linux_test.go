@@ -32,6 +32,7 @@ func TestAnOverwriteThroughASymlinkCreditsTheTargetsSize(t *testing.T) {
 			addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 42007}
 			ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
 			bs.serverUUIDByPeer.Store(addr.String(), uuid)
+			bindTestSession(bs, addr.String())
 			full := fileperms.Full()
 			bs.permsByPeer.Store(addr.String(), &full)
 			resp, err := bs.SaveFileContent(ctx, &pb.BeamFileSaveReq{Path: "plugins/cfg.yml", Content: "small"})
