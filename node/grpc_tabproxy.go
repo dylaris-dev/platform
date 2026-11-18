@@ -281,5 +281,9 @@ func proxyTransport() *http.Transport {
 	// An unresponsive container still surfaces fast; the dial is bounded by the
 	// default transport's dialer.
 	t.ResponseHeaderTimeout = 30 * time.Second
+	// The target is always the server's own container on the Docker bridge,
+	// which no HTTP(S)_PROXY can reach, and the address guards checked that
+	// container, not a proxy (Y02). The WS dialer already dials directly.
+	t.Proxy = nil
 	return t
 }

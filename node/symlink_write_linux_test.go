@@ -71,10 +71,10 @@ func TestPanelWritesDoNotFollowATenantLink(t *testing.T) {
 
 	h.handleCreate("r1", uuid, &nodepb.CreateFileReq{Path: "survival/x"})
 	h.handleCreate("r2", uuid, &nodepb.CreateFileReq{Path: "survival/d/planted"})
-	if f, tmp, err := h.createUploadTemp(uuid, "survival/d/planted.tar.gz"); err == nil {
+	if f, tmp, err := h.createUploadTemp(h.serverDir(uuid), "survival/d/planted.tar.gz"); err == nil {
 		f.Write([]byte("x"))
 		f.Close()
-		h.commitUpload(uuid, "survival/d/planted.tar.gz", tmp)
+		h.commitUpload(h.serverDir(uuid), "survival/d/planted.tar.gz", tmp)
 	}
 	assertUntouched(t, dir, cfg)
 }

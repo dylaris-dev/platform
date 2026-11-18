@@ -902,6 +902,10 @@ func (h *StreamHandler) handleWrite(reqID, serverUUID string, req *pb.WriteFileR
 		return errorMsg(reqID, 500, fmt.Sprintf("mkdir: %v", err))
 	}
 
+	return readyForChunks(reqID)
+}
+
+func readyForChunks(reqID string) *pb.NodeMessage {
 	return &pb.NodeMessage{
 		RequestId: reqID,
 		Payload:   &pb.NodeMessage_Result{Result: &pb.OpResult{Message: "ready for chunks"}},
@@ -922,11 +926,17 @@ func (h *StreamHandler) handleWrite(reqID, serverUUID string, req *pb.WriteFileR
 // after this: an upload to the server root itself resolved to the root, whose
 // parent is the STORAGE directory, and the staging file was created there -
 // outside every server - before the refusal arrived.
-func (h *StreamHandler) createUploadTemp(serverUUID, reqPath string) (*os.File, string, error) {
+//
+// It and commitUpload / removeUploadTemp take the server directory the mesh
+// resolved once at WriteReq: each lookup is a Redis GET on the read loop.
+func (h *StreamHandler) createUploadTemp(dir, reqPath string) (*os.File, string, error) {
 	if isProtectedFile(reqPath) {
 		return nil, "", fmt.Errorf("cannot modify protected file")
 	}
-	root, name, err := h.jailForWrite(serverUUID, reqPath)
+	if dir == "" {
+		return nil, "", fmt.Errorf("server_uuid required")
+	}
+	root, name, err := openJailedForWrite(dir, reqPath)
 	if err != nil {
 		return nil, "", err
 	}
@@ -952,11 +962,14 @@ func (h *StreamHandler) createUploadTemp(serverUUID, reqPath string) (*os.File, 
 // commitUpload moves a finished staging file onto the requested path.
 // commitUpload returns what the server grew by: the upload less the file it
 // replaced.
-func (h *StreamHandler) commitUpload(serverUUID, reqPath, tempName string) (int64, error) {
+func (h *StreamHandler) commitUpload(dir, reqPath, tempName string) (int64, error) {
 	if isProtectedFile(reqPath) {
 		return 0, fmt.Errorf("cannot modify protected file")
 	}
-	root, name, err := h.jailForWrite(serverUUID, reqPath)
+	if dir == "" {
+		return 0, fmt.Errorf("server_uuid required")
+	}
+	root, name, err := openJailedForWrite(dir, reqPath)
 	if err != nil {
 		return 0, err
 	}
@@ -976,15 +989,18 @@ func (h *StreamHandler) commitUpload(serverUUID, reqPath, tempName string) (int6
 	}
 	// Here and not on the WriteReq alone: a listing while Core streamed the
 	// upload cached the folder with the partial staging file in it.
-	dirSizes.forget(h.serverDir(serverUUID))
+	dirSizes.forget(dir)
 	return grown, nil
 }
 
 // removeUploadTemp discards a staging file that will not be committed. The
 // staging name is relative to the directory the upload targets (see
 // createUploadTemp), so it is reached the same way.
-func (h *StreamHandler) removeUploadTemp(serverUUID, reqPath, tempName string) {
-	root, _, err := h.jailWrite(serverUUID, reqPath)
+func (h *StreamHandler) removeUploadTemp(dir, reqPath, tempName string) {
+	if dir == "" {
+		return
+	}
+	root, _, err := openWriteScope(dir, reqPath, false)
 	if err != nil {
 		return
 	}

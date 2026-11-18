@@ -148,7 +148,7 @@ func TestAnUploadCommitDropsTheFolderSizes(t *testing.T) {
 		return 0
 	}
 
-	f, tmp, err := h.createUploadTemp(uuid, "survival/world.zip")
+	f, tmp, err := h.createUploadTemp(h.serverDir(uuid), "survival/world.zip")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestAnUploadCommitDropsTheFolderSizes(t *testing.T) {
 	survivalSize()
 	f.Write(make([]byte, 60))
 	f.Close()
-	if _, err := h.commitUpload(uuid, "survival/world.zip", tmp); err != nil {
+	if _, err := h.commitUpload(h.serverDir(uuid), "survival/world.zip", tmp); err != nil {
 		t.Fatal(err)
 	}
 	if got := survivalSize(); got != 110 {

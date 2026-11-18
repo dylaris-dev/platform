@@ -73,3 +73,13 @@ func TestTheTabProxyIdleBoundIsPerRead(t *testing.T) {
 		})
 	}
 }
+
+// Y02: the transport kept the default ProxyFromEnvironment, so on a node with
+// HTTP(S)_PROXY set every tab request to the container's bridge address went
+// to that proxy instead, which cannot reach it.
+func TestTheTabProxyDialsTheContainerDirectly(t *testing.T) {
+	tr, ok := proxyHTTPClient.Transport.(*http.Transport)
+	if !ok || tr.Proxy != nil {
+		t.Fatal("the tab proxy transport routes container requests through the environment's proxy")
+	}
+}

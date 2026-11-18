@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"dylaris-pkg/storageplacement"
 
@@ -293,7 +294,12 @@ func (sm *StorageManager) SkippedPaths() []string {
 // key. An error is a Redis that could not answer, which is not "no key": the
 // lookup then scanned and wrote its guess back as the key for good (Y09).
 func (sm *StorageManager) readStorageKey(serverUUID string) (string, error) {
-	val, err := sm.rdb.Get(context.Background(), fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)).Result()
+	// Bounded: every server path lookup runs this, several of them on the
+	// mesh read loop, and a hung Redis held each for go-redis's ~12s of
+	// retries. The deadline stops the retries (Y01).
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	val, err := sm.rdb.Get(ctx, fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", nil
 	}

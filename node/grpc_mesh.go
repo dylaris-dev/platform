@@ -119,6 +119,7 @@ type pendingWrite struct {
 	path       string
 	tempFile   *os.File
 	tempName   string // relative to the server directory's Root
+	dir        string // the server directory, resolved once at WriteReq
 	lastActive time.Time
 	budget     *writeBudget
 	reserved   int64 // bytes the budget holds: the declared size, or the furthest chunk end past it
@@ -236,7 +237,7 @@ func (m *MeshManager) dropPendingWrites(drop func(*pendingWrite) bool) {
 		if drop(pw) {
 			log.Printf("gRPC Mesh: Cleaning up abandoned upload (request_id=%s, path=%s)", reqID, pw.path)
 			pw.tempFile.Close()
-			m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
+			m.handler.removeUploadTemp(pw.dir, pw.path, pw.tempName)
 			pw.release(0)
 			delete(m.pendingWrites, reqID)
 		}
@@ -608,7 +609,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				pw.reserved = end
 				if !pw.budget.spend(more) {
 					pw.tempFile.Close()
-					m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
+					m.handler.removeUploadTemp(pw.dir, pw.path, pw.tempName)
 					pw.release(0)
 					delete(m.pendingWrites, msg.RequestId)
 					m.writeMu.Unlock()
@@ -622,7 +623,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				// instead of falling through, which would let a later
 				// TransferDone report success on a partial/corrupt file.
 				pw.tempFile.Close()
-				m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
+				m.handler.removeUploadTemp(pw.dir, pw.path, pw.tempName)
 				pw.release(0)
 				delete(m.pendingWrites, msg.RequestId)
 				m.writeMu.Unlock()
@@ -657,9 +658,9 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 				size = st.Size()
 			}
 			pw.tempFile.Close()
-			if grown, err := m.handler.commitUpload(pw.serverUUID, pw.path, pw.tempName); err != nil {
+			if grown, err := m.handler.commitUpload(pw.dir, pw.path, pw.tempName); err != nil {
 				log.Printf("gRPC Mesh: Move file failed (request_id=%s): %v", msg.RequestId, err)
-				m.handler.removeUploadTemp(pw.serverUUID, pw.path, pw.tempName)
+				m.handler.removeUploadTemp(pw.dir, pw.path, pw.tempName)
 				if errors.Is(err, syscall.EDQUOT) {
 					cc.send(errorMsg(msg.RequestId, 413, "Storage limit reached"))
 				} else {
@@ -685,7 +686,10 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{errorMsg(msg.RequestId, 409, "The server's storage is being moved; try again when the move finishes")})
 			return
 		}
-		tempFile, tempName, err := m.handler.createUploadTemp(msg.ServerUuid, writeReq.Path)
+		// Resolved once, under the hold, so no move can change it: each lookup
+		// is a Redis GET on this loop, and an upload made six of them (Y01).
+		dir := m.handler.serverDir(msg.ServerUuid)
+		tempFile, tempName, err := m.handler.createUploadTemp(dir, writeReq.Path)
 		if err != nil {
 			log.Printf("gRPC Mesh: Failed to create temp file (request_id=%s): %v", msg.RequestId, err)
 			// handleWrite maps the checks it shares with createUploadTemp; past
@@ -701,10 +705,10 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{reply})
 			return
 		}
-		budget, ok := uploadBudget(m.rdb, m.handler.serverDir(msg.ServerUuid), msg.ServerUuid, writeReq.TotalSize)
+		budget, ok := uploadBudget(m.rdb, dir, msg.ServerUuid, writeReq.TotalSize)
 		if !ok {
 			tempFile.Close()
-			m.handler.removeUploadTemp(msg.ServerUuid, writeReq.Path, tempName)
+			m.handler.removeUploadTemp(dir, writeReq.Path, tempName)
 			budget.releaseWritten(0)
 			unhold()
 			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{errorMsg(msg.RequestId, 413, budget.err.Error())})
@@ -716,6 +720,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 			path:       writeReq.Path,
 			tempFile:   tempFile,
 			tempName:   tempName,
+			dir:        dir,
 			lastActive: time.Now(),
 			budget:     budget,
 			reserved:   writeReq.TotalSize,
@@ -723,6 +728,13 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 			unhold:     unhold,
 		}
 		m.writeMu.Unlock()
+		// Answered here, on the loop, so the chunks that follow under its
+		// request_id find the pending write registered above, in order. Not
+		// through Handle: createUploadTemp already ran handleWrite's checks,
+		// and Handle would look the server path up twice more.
+		dirSizes.forget(dir)
+		m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{readyForChunks(msg.RequestId)})
+		return
 	}
 
 	// HttpProxyReq (WS5): stream the container HTTP response back over the mesh.
@@ -767,13 +779,6 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 			defer func() { <-slots }()
 			m.handler.HandleStreaming(msg, cc.send)
 		}()
-		return
-	}
-
-	// A WriteReq stays on the loop: the chunks that follow it under its
-	// request_id must find the pending write registered above, in order.
-	if msg.GetWriteReq() != nil {
-		m.sendResponses(cc, msg.RequestId, m.handler.Handle(msg))
 		return
 	}
 
