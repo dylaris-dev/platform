@@ -390,3 +390,22 @@ func TestGuardedCommandsCarryThePrivateAllowList(t *testing.T) {
 		})
 	}
 }
+
+// R23-04: a backup started by hand while the server moves wrote an archive the
+// move's cleanup deleted. Refused with 409 like a restore, nothing queued.
+func TestTriggerJob_RefusedWhileTheServerMoves(t *testing.T) {
+	h, fs, rdb, _ := presignedOnlyHandler(t, currentNodeVersion, models.BackupRun{})
+	fs.serverStatus = "migrating"
+	rw := httptest.NewRecorder()
+	h.TriggerJob(rw, backupJobRequest(http.MethodPost, "/api/backup-jobs/10/trigger", "", map[string]string{"jobId": "10"}))
+
+	if rw.Code != http.StatusConflict || !strings.Contains(rw.Body.String(), "moved") {
+		t.Fatalf("status = %d (body %s), want 409 naming the move", rw.Code, rw.Body.String())
+	}
+	if cmds := queuedCommands(t, rdb); len(cmds) != 0 {
+		t.Fatalf("a backup reached the node: %v", cmds)
+	}
+	if fs.ranByHand != 0 {
+		t.Errorf("a refused run was recorded %d times", fs.ranByHand)
+	}
+}

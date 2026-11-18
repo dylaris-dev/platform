@@ -155,6 +155,9 @@ func TestTreeChangingCommandsTakeTheTreeInterlock(t *testing.T) {
 		body := s[i : i+1+j]
 		k := strings.Index(body, "enterTreeChangeOfServer(cmd.Config.UUID)")
 		if k < 0 {
+			k = strings.Index(body, "waitTreeChangeOfServer(ctx, cmd.Config.UUID)")
+		}
+		if k < 0 {
 			t.Errorf("case %q rewrites the server tree without the tree-change interlock", c.action)
 			continue
 		}

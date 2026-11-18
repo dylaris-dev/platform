@@ -61,6 +61,9 @@ var errBackupQuotaReached = errors.New("backup quota reached")
 // progress.
 var errBackupAlreadyRunning = errors.New("a backup of this server is already running")
 
+// errServerMoving refuses a trigger while the server is being moved; also 409.
+var errServerMoving = errors.New("the server is being moved; back it up once the move has finished")
+
 // backupQuotaRefusal renders one of the two quota refusals.
 //
 // A cap of ZERO is a different situation from a quota that filled up, and the
@@ -714,7 +717,7 @@ func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 		// A quota refusal is the system working, not failing. Answering 500 put
 		// a policy decision in the same bucket as a broken queue, which is what
 		// an operator's alerting and any API client both key off.
-		if errors.Is(err, errBackupQuotaReached) || errors.Is(err, services.ErrNodeUpdateRequired) || errors.Is(err, errBackupAlreadyRunning) {
+		if errors.Is(err, errBackupQuotaReached) || errors.Is(err, services.ErrNodeUpdateRequired) || errors.Is(err, errBackupAlreadyRunning) || errors.Is(err, errServerMoving) {
 			httpx.SendJSONError(w, err.Error(), http.StatusConflict)
 			return
 		}
@@ -1224,6 +1227,11 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	srv, err := h.d.Store.GetServerByID(job.ServerID)
 	if err != nil {
 		return 0, fmt.Errorf("server not found: %w", err)
+	}
+	// Refused like a restore: the move's cleanup deletes the tree a node-local
+	// archive lands in, and the run would stay recorded as a success.
+	if srv.Status == "migrating" {
+		return 0, errServerMoving
 	}
 	// One chain, the same one the scheduler walks: the job's storage, else the
 	// owner's own default, else the platform's. This used to hand-roll two of

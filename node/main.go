@@ -2167,11 +2167,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		// A backup walking the tree while the slot was renamed away archived the
-		// rest and reported success. Refused, the slot stays on disk and the
-		// delete can be repeated once the backup has finished.
-		leaveTree, treeBusy := enterTreeChangeOfServer(cmd.Config.UUID)
+		// rest and reported success. Waited for rather than refused: Core has
+		// already dropped the sub-server, so a refused delete left the slot on
+		// disk with nothing to repeat it.
+		leaveTree, treeBusy := waitTreeChangeOfServer(ctx, cmd.Config.UUID)
 		if treeBusy != "" {
-			log.Printf("delete_sub_server %s/%s refused: %s", cmd.Config.UUID, subName, treeBusy)
+			log.Printf("delete_sub_server %s/%s gave up waiting: %s", cmd.Config.UUID, subName, treeBusy)
 			return
 		}
 		defer leaveTree()

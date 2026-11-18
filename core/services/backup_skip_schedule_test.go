@@ -59,3 +59,24 @@ func TestNextScheduledRunFollowsThePlan(t *testing.T) {
 		t.Errorf("manual schedule = %v, want nil", got)
 	}
 }
+
+// R23-04: a scheduled backup of a server that is moving reached the source
+// node, whose move cleanup then deleted the archive the run row still pointed
+// at. The slot is skipped with the reason instead.
+func TestAMovingServerSkipsItsScheduledBackup(t *testing.T) {
+	st := newTransferFakeStore()
+	st.servers[100].Status = "migrating"
+	rdb := heartbeatRedis(t, map[string]string{"node-hosting": presignedMultipartSince})
+	b := transferScheduler(st, &fakeMultipartStorage{}, rdb)
+
+	planned := time.Now().Add(-time.Minute)
+	if err := b.dispatch(context.Background(), models.BackupJob{ID: 10, ServerID: 100, Schedule: "every 1h", NextRunAt: &planned}); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if cmds := dispatchedCommands(t, rdb, "node-hosting"); len(cmds) != 0 {
+		t.Fatalf("a backup reached the node of a moving server: %v", cmds)
+	}
+	if st.skipped != 1 || !strings.Contains(st.skipReason, "moved") {
+		t.Fatalf("skipped %d, reason %q; want one skip naming the move", st.skipped, st.skipReason)
+	}
+}

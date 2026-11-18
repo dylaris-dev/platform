@@ -1,6 +1,10 @@
 package main
 
-import "sync"
+import (
+	"context"
+	"sync"
+	"time"
+)
 
 // The command queue is Redis Streams consumer groups, which is at-least-once by
 // construction: pkg/queue reclaims stale pending entries with XAUTOCLAIM and
@@ -74,6 +78,33 @@ func enterTreeChangeOfServer(uuid string) (leave func(), reason string) {
 		}
 	}, ""
 }
+
+// waitTreeChangeOfServer is enterTreeChangeOfServer for a command Core has
+// already treated as done (a sub-server delete drops its rows on send): refused,
+// it would be lost, so it waits for the backup or restore, up to
+// treeChangeWaitMax. Call it holding no other lock.
+func waitTreeChangeOfServer(ctx context.Context, uuid string) (leave func(), reason string) {
+	// ponytail: a node restart while waiting loses the command, as a refusal did.
+	deadline := time.Now().Add(treeChangeWaitMax)
+	for {
+		leave, reason = enterTreeChangeOfServer(uuid)
+		if reason == "" || time.Now().After(deadline) {
+			return leave, reason
+		}
+		select {
+		case <-ctx.Done():
+			return nil, reason
+		case <-time.After(treeChangePoll):
+		}
+	}
+}
+
+// treeChangePoll is how often a waiting tree change looks again, and
+// treeChangeWaitMax how long it waits at most; variables for tests.
+var (
+	treeChangePoll    = 2 * time.Second
+	treeChangeWaitMax = 2 * time.Hour
+)
 
 // enterBackupOfServer marks a backup of the server as running, or returns why
 // it must not start. On "" the caller leaves backupsInFlight "server:<uuid>".

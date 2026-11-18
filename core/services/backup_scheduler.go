@@ -811,6 +811,12 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	if err != nil {
 		return fmt.Errorf("server lookup: %w", err)
 	}
+	// The source node still holds the server until cutover, and the move's
+	// cleanup there deletes the tree a node-local archive lands in.
+	if srv.Status == "migrating" {
+		b.skipRun(job, "The server was being moved to another node.")
+		return nil
+	}
 	node, err := b.store.GetNodeByID(srv.NodeID)
 	if err != nil {
 		return fmt.Errorf("node lookup: %w", err)

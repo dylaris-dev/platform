@@ -391,6 +391,16 @@ func (g *worldSaveGuard) resume() {
 }
 
 func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *DockerManager, cmd BackupRunCommand) {
+	// Not while the server moves off this node: the move's cleanup deletes the
+	// tree a node-local archive lands in, and the writer hold below fails a
+	// staging move. Checked before that hold so a refusal counts as no write.
+	// An older Core still dispatches during a move.
+	_, staging := migrateOutLatest.Load(cmd.ServerUUID)
+	if staging || (sm != nil && migrationInFlight(sm, cmd.ServerUUID)) {
+		log.Printf("backup_run: run %d refused for server %s: it is being moved to another node", cmd.RunID, cmd.ServerUUID)
+		reportBackup(ctx, rdb, cmd.RunID, "failed", "the server is being moved to another node; back it up once the move has finished", 0)
+		return
+	}
 	// The storage-writer hold, taken here rather than by the dispatcher so it
 	// can be dropped with the server interlock once the archive is spooled: a
 	// move refuses while it is held, and the paced upload reads only the spool.
