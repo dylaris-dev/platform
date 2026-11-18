@@ -37,9 +37,11 @@ type CustomDomainCapReader interface {
 // for this account). When no scope has a row the platform setting answers.
 // scoped reports that a row did, which the claim cap needs. One resolver for
 // the create paths and the over-limit sweep, so they cannot disagree.
-func CustomDomainCapFor(st CustomDomainCapReader, userID string) (limit *int64, scoped bool) {
-	limit, scoped, _ = customDomainCap(st, userID, false)
-	return limit, scoped
+//
+// Strict like the sweep: a failed read is returned, not taken for "no row",
+// which on a create path walked on to the default or to no cap at all.
+func CustomDomainCapFor(st CustomDomainCapReader, userID string) (limit *int64, scoped bool, err error) {
+	return customDomainCap(st, userID, true)
 }
 
 // CustomDomainCapForSweep is CustomDomainCapFor for the over-limit sweep, which

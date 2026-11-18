@@ -72,11 +72,23 @@ func TestIntegrationProxyProtocolColumns(t *testing.T) {
 	if !readRoute().ProxyProtocol {
 		t.Fatal("route row lost the switch")
 	}
+	// A target edit writes the row from its own earlier read; it must not put
+	// back a switch changed in between. Only the switch's own write moves it.
 	row.ProxyProtocol = false
+	row.TargetPort = 25570
 	if err := st.UpsertCoreLinkRoute(row); err != nil {
 		t.Fatal(err)
 	}
-	if readRoute().ProxyProtocol {
-		t.Fatal("upsert did not switch the route off")
+	if got := readRoute(); !got.ProxyProtocol || got.TargetPort != 25570 {
+		t.Fatalf("upsert of an existing row = proxy %v port %d, want true/25570", got.ProxyProtocol, got.TargetPort)
+	}
+	if found, err := st.SetCoreLinkRouteProxyProtocol(domain, false); err != nil || !found {
+		t.Fatalf("SetCoreLinkRouteProxyProtocol = %v, %v", found, err)
+	}
+	if got := readRoute(); got.ProxyProtocol || got.TargetPort != 25570 {
+		t.Fatalf("switch off = proxy %v port %d, want false/25570", got.ProxyProtocol, got.TargetPort)
+	}
+	if found, err := st.SetCoreLinkRouteProxyProtocol(domain+".missing", true); err != nil || found {
+		t.Fatalf("unknown domain = %v, %v, want not found", found, err)
 	}
 }

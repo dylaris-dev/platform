@@ -341,13 +341,13 @@ func TestDescribeNamesOwnDomainRoutes(t *testing.T) {
 	}
 }
 
-// The doors keep reading a failed lookup as "no row" and the default; only the
-// sweep's variant reports it.
+// A failed lookup is never "no row" and the default, for the sweep and the
+// create paths alike: on a create path it let a capped tenant past the cap.
 func TestCustomDomainCapForSweepReportsReadErrors(t *testing.T) {
 	boom := errors.New("db down")
 	fs := &customSweepStore{overLimitStore: &overLimitStore{}, domainErr: boom, settings: map[string]string{}}
-	if l, _ := CustomDomainCapFor(fs, "u1"); l == nil || *l != 50 {
-		t.Fatalf("door cap = %v, want the default 50 as before", l)
+	if _, _, err := CustomDomainCapFor(fs, "u1"); !errors.Is(err, boom) {
+		t.Fatalf("door cap err = %v, want the read error", err)
 	}
 	if _, err := CustomDomainCapForSweep(fs, "u1"); !errors.Is(err, boom) {
 		t.Fatalf("sweep cap err = %v, want the read error", err)

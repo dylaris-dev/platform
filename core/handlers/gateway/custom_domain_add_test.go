@@ -25,6 +25,9 @@ type addFakeStore struct {
 	claims   map[string]*store.CustomDomainClaim
 }
 
+func (f *addFakeStore) ListCoreLinkRoutesByOwner(string) ([]store.CoreLinkRoute, error) {
+	return nil, nil
+}
 func (f *addFakeStore) GetSetting(k string) (string, error) { return f.settings[k], nil }
 func (f *addFakeStore) GetGatewayCustomDomainLimit(string) (*models.GatewayCustomDomainLimit, error) {
 	return nil, sql.ErrNoRows

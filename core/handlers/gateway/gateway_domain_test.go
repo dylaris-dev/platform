@@ -1,8 +1,8 @@
 package gateway
 
 import (
+	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -30,13 +30,13 @@ func (f *gatewayDomainFakeStore) GetSetting(key string) (string, error) {
 }
 
 func (f *gatewayDomainFakeStore) GetGatewayCustomDomainLimit(string) (*models.GatewayCustomDomainLimit, error) {
-	return nil, errors.New("not found")
+	return nil, sql.ErrNoRows
 }
 
 func (f *gatewayDomainFakeStore) GetGatewayRouteLimit(scope string) (*models.GatewayRouteLimit, error) {
 	l, ok := f.routeLimits[scope]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, sql.ErrNoRows
 	}
 	return l, nil
 }
@@ -244,7 +244,10 @@ func TestEffectiveRouteLimit(t *testing.T) {
 	const uid = "user-1"
 	n := func(v int) *int { return &v }
 	got := func(h *GatewayHandler) string {
-		l := h.effectiveRouteLimit(uid)
+		l, err := h.effectiveRouteLimit(uid)
+		if err != nil {
+			return "error: " + err.Error()
+		}
 		if l == nil {
 			return "no cap"
 		}

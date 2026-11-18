@@ -36,6 +36,7 @@ type customDomainRouteRemover struct {
 	redis         *redis.Client
 	gw            RouteDeleter
 	servers       ServerOwnerLister
+	rows          CoreLinkRouteLister
 	remote        RemoteRouteReader
 	claims        ProviderClaimReleaser
 	gatewayRemote func() (remote, known bool)
@@ -46,11 +47,34 @@ type ServerOwnerLister interface {
 	ListServersByOwner(ownerID string) ([]models.Server, error)
 }
 
+// CoreLinkRouteLister is the store slice that lists an account's route-only
+// rows.
+type CoreLinkRouteLister interface {
+	ListCoreLinkRoutesByOwner(ownerID string) ([]store.CoreLinkRoute, error)
+}
+
+// StoredRoutesOn is userID's route-only rows on exactly domain, suspended ones
+// included. Redis alone does not answer this: a suspended route has no key, and
+// UnsuspendCoreOwnedRoute publishes the row again without asking for a claim.
+func StoredRoutesOn(st CoreLinkRouteLister, userID, domain string) ([]store.CoreLinkRoute, error) {
+	rows, err := st.ListCoreLinkRoutesByOwner(userID)
+	if err != nil {
+		return nil, fmt.Errorf("list routes of %s: %w", userID, err)
+	}
+	var out []store.CoreLinkRoute
+	for _, r := range rows {
+		if strings.EqualFold(r.Domain, domain) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 // NewCustomDomainRouteRemover wires the verifier's route teardown. A nil
 // gatewayRemote is local mode.
-func NewCustomDomainRouteRemover(rdb *redis.Client, gw RouteDeleter, servers ServerOwnerLister,
+func NewCustomDomainRouteRemover(rdb *redis.Client, gw RouteDeleter, servers ServerOwnerLister, rows CoreLinkRouteLister,
 	remote RemoteRouteReader, claims ProviderClaimReleaser, gatewayRemote func() (remote, known bool)) RouteRemover {
-	return &customDomainRouteRemover{redis: rdb, gw: gw, servers: servers, remote: remote, claims: claims, gatewayRemote: gatewayRemote}
+	return &customDomainRouteRemover{redis: rdb, gw: gw, servers: servers, rows: rows, remote: remote, claims: claims, gatewayRemote: gatewayRemote}
 }
 
 // OwnedServerUUIDs is the set of servers an account owns, the key that ties a
@@ -128,12 +152,23 @@ func (r *customDomainRouteRemover) DeleteRoutesForDomain(ctx context.Context, us
 	if err := r.redis.SCard(ctx, "sys:index:routes").Err(); err != nil {
 		return fmt.Errorf("read routes: %w", err)
 	}
+	stored, err := StoredRoutesOn(r.rows, userID, domain)
+	if err != nil {
+		return err
+	}
 	var firstErr error
+	deleted := map[string]bool{}
+	for _, row := range stored {
+		deleted[row.Domain] = true
+		if derr := r.gw.DeleteRoute(row.Domain); derr != nil && firstErr == nil {
+			firstErr = derr
+		}
+	}
 	for _, rt := range GetRoutesFromRedis(ctx, r.redis) {
 		if !RouteHeldBy(rt, userID, owned) {
 			continue
 		}
-		if !strings.EqualFold(rt.Domain, domain) {
+		if !strings.EqualFold(rt.Domain, domain) || deleted[rt.Domain] {
 			continue
 		}
 		if derr := r.gw.DeleteRoute(rt.Domain); derr != nil && firstErr == nil {

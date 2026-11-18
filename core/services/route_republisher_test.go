@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -12,6 +13,36 @@ import (
 type republishFakeStore struct {
 	rows []store.CoreLinkRoute
 	err  error
+	// gone is a row deleted after ListCoreLinkRoutes listed it.
+	gone     map[string]bool
+	settings map[string]string
+}
+
+func (f *republishFakeStore) GetCoreLinkRoute(domain string) (*store.CoreLinkRoute, error) {
+	if f.gone[domain] {
+		return nil, nil
+	}
+	for i := range f.rows {
+		if f.rows[i].Domain == domain {
+			return &f.rows[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func (f *republishFakeStore) GetSetting(key string) (string, error) {
+	if v, ok := f.settings[key]; ok {
+		return v, nil
+	}
+	return "", sql.ErrNoRows
+}
+
+func (f *republishFakeStore) SetSetting(key, value string) error {
+	if f.settings == nil {
+		f.settings = map[string]string{}
+	}
+	f.settings[key] = value
+	return nil
 }
 
 func (f *republishFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
@@ -290,5 +321,55 @@ func TestAdoptExisting_ListFails_RecordsNothing(t *testing.T) {
 
 	if len(fs.rows) != 0 {
 		t.Errorf("rows = %+v, want none written from a failed listing", fs.rows)
+	}
+}
+
+// Adoption runs once per cluster, not once per process: a route deleted while
+// its key survived must not come back on the next restart or failover.
+func TestAdoptRunsOncePerCluster(t *testing.T) {
+	ctx := context.Background()
+	stale := `{"tunnel_id":"tok","target_ip":"10.0.0.1","target_port":25565,"core_owned":true,"owner_id":"owner-1"}`
+	cases := []struct {
+		name      string
+		settings  map[string]string
+		wantAdopt bool
+	}{
+		{"first run adopts", nil, true},
+		{"marker set", map[string]string{routesAdoptedSetting: "true"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			rdb.Set(ctx, "route:play.example.com", stale, 0)
+			rdb.SAdd(ctx, "sys:index:routes", "play.example.com")
+			fs := &republishFakeStore{settings: tc.settings}
+			NewRouteRepublisher(fs, rdb).adoptOnce(ctx)
+			if got := len(fs.rows) == 1; got != tc.wantAdopt {
+				t.Fatalf("adopted = %v, want %v (rows %v)", got, tc.wantAdopt, fs.rows)
+			}
+			if fs.settings[routesAdoptedSetting] != "true" {
+				t.Fatal("marker not recorded")
+			}
+			// A restart after the route was deleted again.
+			fs.rows = nil
+			NewRouteRepublisher(fs, rdb).adoptOnce(ctx)
+			if len(fs.rows) != 0 {
+				t.Fatalf("a second process adopted the deleted route again: %v", fs.rows)
+			}
+		})
+	}
+}
+
+// A row deleted between the listing and the SETNX must not leave a key behind:
+// nothing removes a key that has no row.
+func TestRepublishDoesNotRestoreARowDeletedMidPass(t *testing.T) {
+	rdb := newQueueTestRedis(t)
+	fs := &republishFakeStore{
+		rows: []store.CoreLinkRoute{{Domain: "play.example.com", OwnerID: "owner-1", LinkToken: "tok", TargetHost: "10.0.0.1", TargetPort: 25565}},
+		gone: map[string]bool{"play.example.com": true},
+	}
+	NewRouteRepublisher(fs, rdb).RunOnce(context.Background())
+	if n, _ := rdb.Exists(context.Background(), "route:play.example.com").Result(); n != 0 {
+		t.Fatal("a deleted route was published again")
 	}
 }

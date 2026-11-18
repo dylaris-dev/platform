@@ -935,7 +935,7 @@ func main() {
 		customDomainVerifier := services.NewCustomDomainVerifier(
 			pgStore,
 			services.NewNetResolver(),
-			services.NewCustomDomainRouteRemover(redisClient, appState.Gateway, pgStore,
+			services.NewCustomDomainRouteRemover(redisClient, appState.Gateway, pgStore, pgStore,
 				pgStore, appState.RemoteGateway, gatewayRemote),
 		)
 		// Gated per pass, not once at boot: coreLeader.Start above only launches

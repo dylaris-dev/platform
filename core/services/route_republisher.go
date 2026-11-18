@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"time"
 
@@ -23,8 +25,17 @@ const republishInterval = 60 * time.Second
 
 type routeRepublishStore interface {
 	ListCoreLinkRoutes() ([]store.CoreLinkRoute, error)
+	GetCoreLinkRoute(domain string) (*store.CoreLinkRoute, error)
 	UpsertCoreLinkRoute(r store.CoreLinkRoute) error
+	GetSetting(key string) (string, error)
+	SetSetting(key, value string) error
 }
+
+// routesAdoptedSetting records that adoption has run, cluster-wide. Without it
+// every restart and every leader change adopted again, and a route deleted
+// while its Redis key survived (a failed DEL, or a republish that listed the
+// row just before the delete) was written back into the table for good.
+const routesAdoptedSetting = "core_link_routes_adopted"
 
 // RouteRepublisher writes the stored route-only entries back into Redis.
 //
@@ -101,7 +112,24 @@ func (s *RouteRepublisher) adoptOnce(ctx context.Context) {
 	if s.leader != nil && !s.leader.IsLeader() {
 		return
 	}
-	s.adoptExisting(ctx)
+	if s.redis == nil || s.store == nil {
+		return
+	}
+	switch v, err := s.store.GetSetting(routesAdoptedSetting); {
+	case err == nil && v == "true":
+		s.adopted = true
+		return
+	case err != nil && !errors.Is(err, sql.ErrNoRows):
+		// Not knowing is not "never adopted": try again next tick.
+		logErrf("route-republisher", "adopt: read marker: %v", err)
+		return
+	}
+	if !s.adoptExisting(ctx) {
+		return
+	}
+	if err := s.store.SetSetting(routesAdoptedSetting, "true"); err != nil {
+		logErrf("route-republisher", "adopt: write marker: %v", err)
+	}
 	s.adopted = true
 }
 
@@ -216,6 +244,14 @@ func (s *RouteRepublisher) republish(ctx context.Context, r store.CoreLinkRoute)
 		return republishSkipped
 	}
 	if claimed {
+		// The row was listed before this SETNX. A delete in between removed the
+		// row and then a key that did not exist yet, so the key written here
+		// would route a deleted domain forever: nothing removes a key with no
+		// row behind it.
+		if again, err := s.store.GetCoreLinkRoute(r.Domain); err == nil && again == nil {
+			s.redis.Del(ctx, "route:"+r.Domain)
+			return republishSkipped
+		}
 		if err := s.redis.SAdd(ctx, "sys:index:routes", r.Domain).Err(); err != nil {
 			logErrf("route-republisher", "republish %s: index: %v", r.Domain, err)
 		}
@@ -265,18 +301,18 @@ func (s *RouteRepublisher) republish(ctx context.Context, r store.CoreLinkRoute)
 // authority here exactly once; making it a standing rule would undo the point
 // of the table, and would resurrect a route deleted in the window between its
 // row and its key going away.
-func (s *RouteRepublisher) adoptExisting(ctx context.Context) {
+func (s *RouteRepublisher) adoptExisting(ctx context.Context) bool {
 	if s.leader != nil && !s.leader.IsLeader() {
-		return
+		return false
 	}
 	if s.redis == nil || s.store == nil {
-		return
+		return false
 	}
 	rows, err := s.store.ListCoreLinkRoutes()
 	if err != nil {
 		// Every domain would look unrecorded, and this writes rows.
 		logErrf("route-republisher", "adopt: list stored routes: %v", err)
-		return
+		return false
 	}
 	stored := make(map[string]bool, len(rows))
 	for _, r := range rows {
@@ -285,7 +321,7 @@ func (s *RouteRepublisher) adoptExisting(ctx context.Context) {
 	domains, err := s.redis.SMembers(ctx, "sys:index:routes").Result()
 	if err != nil {
 		logErrf("route-republisher", "adopt: %v", err)
-		return
+		return false
 	}
 	adopted := 0
 	for _, domain := range domains {
@@ -324,4 +360,5 @@ func (s *RouteRepublisher) adoptExisting(ctx context.Context) {
 	if adopted > 0 {
 		log.Printf("[routes] recorded %d route-only entries that existed before there was anywhere to record them", adopted)
 	}
+	return true
 }

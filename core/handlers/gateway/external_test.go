@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -88,11 +89,11 @@ func (f *extStore) GetUserBilling(userID string) (*store.UserBilling, error) {
 }
 
 func (f *extStore) GetGatewayCustomDomainLimit(string) (*models.GatewayCustomDomainLimit, error) {
-	return nil, errors.New("not found")
+	return nil, sql.ErrNoRows
 }
 
 func (f *extStore) GetGatewayRouteLimit(string) (*models.GatewayRouteLimit, error) {
-	return nil, errors.New("not found")
+	return nil, sql.ErrNoRows
 }
 
 func (f *extStore) ListServersByOwner(string) ([]models.Server, error) { return nil, nil }
@@ -700,7 +701,8 @@ func TestExternalGatewayPublicCodesAreFrozen(t *testing.T) {
 	})
 	t.Run("custom domain cap, real message", func(t *testing.T) {
 		h := &GatewayHandler{d: Deps{Store: &capFakeStore{domains: map[string]*models.GatewayCustomDomainLimit{"user:u1": domRow(i64(1))}}}}
-		if got := externalErrorCode(403, h.customDomainCapError("u1", 1)); got != "custom_domain_limit" {
+		msg, _ := h.customDomainCapError("u1", 1)
+		if got := externalErrorCode(403, msg); got != "custom_domain_limit" {
 			t.Fatalf("code = %q", got)
 		}
 	})

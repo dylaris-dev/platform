@@ -69,7 +69,16 @@ func (h *ExternalGatewayHandler) GetAccount(w http.ResponseWriter, r *http.Reque
 		fail("limits", err)
 		return
 	}
-	customCap, _ := customDomainCapFor(d.Store, owner)
+	customCap, _, err := customDomainCapFor(d.Store, owner)
+	if err != nil {
+		fail("custom-domain limit", err)
+		return
+	}
+	maxRoutes, err := h.gw.effectiveRouteLimit(owner)
+	if err != nil {
+		fail("route limit", err)
+		return
+	}
 	scopes := []string{}
 	if k := reqctx.APIKeyFromContext(r); k != nil {
 		scopes = append(scopes, k.Scope.Permissions...)
@@ -82,7 +91,7 @@ func (h *ExternalGatewayHandler) GetAccount(w http.ResponseWriter, r *http.Reque
 		EntitlementSource: ent.Source,
 		Suspended:         ent.Source == services.EntitlementSourceSuspended || guard.OwnerRefusal(d.Store, d.SuspendGrace, r, owner) != "",
 		Scopes:            scopes,
-		Limits:            externalLimits{MaxLinks: lim.MaxLinks, MaxRoutes: h.gw.effectiveRouteLimit(owner), MaxCustomDomains: customCap},
+		Limits:            externalLimits{MaxLinks: lim.MaxLinks, MaxRoutes: maxRoutes, MaxCustomDomains: customCap},
 	}})
 }
 

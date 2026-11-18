@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,8 @@ type linkRouteFakeStore struct {
 	warpKeysErr error
 
 	routeLimits map[string]*models.GatewayRouteLimit
+	// routeLimitErr fails the read of one scope, as a dropped connection does.
+	routeLimitErr map[string]error
 
 	settings map[string]string
 
@@ -70,13 +73,16 @@ func (f *linkRouteFakeStore) ListWarpAPIKeysByOwner(ownerID string) ([]store.War
 }
 
 func (f *linkRouteFakeStore) GetGatewayCustomDomainLimit(string) (*models.GatewayCustomDomainLimit, error) {
-	return nil, errors.New("not found")
+	return nil, sql.ErrNoRows
 }
 
 func (f *linkRouteFakeStore) GetGatewayRouteLimit(scope string) (*models.GatewayRouteLimit, error) {
+	if err := f.routeLimitErr[scope]; err != nil {
+		return nil, err
+	}
 	l, ok := f.routeLimits[scope]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, sql.ErrNoRows
 	}
 	return l, nil
 }
@@ -372,6 +378,26 @@ func TestCreateLinkRoute_EmptyLinkIDRejected(t *testing.T) {
 func routeCap(v int) *int { return &v }
 
 func TestCreateLinkRoute_RouteCap(t *testing.T) {
+	// A failed read of the scope that disables the tenant is not "no row":
+	// walking on ended in "no cap".
+	t.Run("an unreadable allowance refuses instead of allowing", func(t *testing.T) {
+		for _, scope := range []string{"admin:" + linkRouteUserID, "global"} {
+			fs := baseLinkRouteStore()
+			fs.routeLimits = map[string]*models.GatewayRouteLimit{"admin:" + linkRouteUserID: {MaxRoutes: routeCap(0)}}
+			fs.routeLimitErr = map[string]error{scope: errors.New("connection reset")}
+			if scope == "global" {
+				fs.routeLimits = nil
+			}
+			gw := &linkRouteFakeGateway{}
+			h := newLinkRouteHandler(fs, gw, newLinkRouteRedis(t))
+			rec := httptest.NewRecorder()
+			h.CreateLinkRoute(rec, linkRouteReq(linkRouteUserID, baseLinkRouteBody()))
+			if rec.Code != http.StatusInternalServerError || len(gw.createRouteViaLinkCalls) != 0 {
+				t.Fatalf("%s unreadable: status = %d, creates %d: %s", scope, rec.Code, len(gw.createRouteViaLinkCalls), rec.Body.String())
+			}
+		}
+	})
+
 	t.Run("explicit zero override disables route creation entirely", func(t *testing.T) {
 		fs := baseLinkRouteStore()
 		fs.routeLimits = map[string]*models.GatewayRouteLimit{"user:" + linkRouteUserID: {MaxRoutes: routeCap(0)}}

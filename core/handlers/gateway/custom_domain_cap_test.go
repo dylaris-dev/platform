@@ -64,7 +64,10 @@ func TestCustomDomainCapScopes(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, scoped := customDomainCapFor(&capFakeStore{settings: c.settings, domains: c.rows}, "u1")
+			got, scoped, err := customDomainCapFor(&capFakeStore{settings: c.settings, domains: c.rows}, "u1")
+			if err != nil {
+				t.Fatal(err)
+			}
 			if scoped != c.wantScoped {
 				t.Fatalf("scoped = %v, want %v", scoped, c.wantScoped)
 			}
@@ -86,10 +89,10 @@ func TestCustomDomainCapDoesNotTouchRouteLimit(t *testing.T) {
 		domains: map[string]*models.GatewayCustomDomainLimit{"user:u1": domRow(i64(5))},
 	}
 	h := &GatewayHandler{d: Deps{Store: fs}}
-	if got := h.effectiveRouteLimit("u1"); got != nil {
+	if got, err := h.effectiveRouteLimit("u1"); err != nil || got != nil {
 		t.Fatalf("route limit = %d, want unlimited (nil)", *got)
 	}
-	if got, _ := customDomainCapFor(fs, "u1"); got == nil || *got != 5 {
+	if got, _, _ := customDomainCapFor(fs, "u1"); got == nil || *got != 5 {
 		t.Fatalf("custom-domain cap = %v, want 5", got)
 	}
 }
@@ -97,10 +100,10 @@ func TestCustomDomainCapDoesNotTouchRouteLimit(t *testing.T) {
 // The external API derives its stable error codes from these refusal strings.
 func TestCustomDomainCapErrorMapsToItsExternalCode(t *testing.T) {
 	h := &GatewayHandler{d: Deps{Store: &capFakeStore{domains: map[string]*models.GatewayCustomDomainLimit{"user:u1": domRow(i64(2))}}}}
-	if msg := h.customDomainCapError("u1", 1); msg != "" {
+	if msg, _ := h.customDomainCapError("u1", 1); msg != "" {
 		t.Fatalf("under the cap refused: %q", msg)
 	}
-	msg := h.customDomainCapError("u1", 2)
+	msg, _ := h.customDomainCapError("u1", 2)
 	if msg == "" {
 		t.Fatal("at the cap was allowed")
 	}

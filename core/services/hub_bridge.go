@@ -507,20 +507,27 @@ func (g *RedisGateway) suspendableRow(domain string) (*store.CoreLinkRoute, erro
 	return nil, ErrRouteNotStored
 }
 
-// SetCoreOwnedRouteProxyProtocol rewrites the stored row with the new switch
-// and then publishes it the way the republisher does, so the next tick finds
+// SetCoreOwnedRouteProxyProtocol writes the new switch into the stored row and
+// then publishes it the way the republisher does, so the next tick finds
 // nothing to correct and cannot flip it back.
+//
+// Only that column is written, and what is published is read afterwards: a
+// read-modify-write of the whole row put back a target the owner changed in
+// between.
 func (g *RedisGateway) SetCoreOwnedRouteProxyProtocol(domain string, enabled bool) error {
+	found, err := g.store.SetCoreLinkRouteProxyProtocol(domain, enabled)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrRouteNotStored
+	}
 	row, err := g.storedRoute(domain)
 	if err != nil {
 		return err
 	}
 	if row == nil {
 		return ErrRouteNotStored
-	}
-	row.ProxyProtocol = enabled
-	if err := g.store.UpsertCoreLinkRoute(*row); err != nil {
-		return err
 	}
 	if row.SuspendedAt != nil {
 		// Saved; it goes out with the route when an admin lifts the suspension.

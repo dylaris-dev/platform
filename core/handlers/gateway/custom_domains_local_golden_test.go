@@ -7,10 +7,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/services"
 	"dylaris-core/services/remotegw"
 	"dylaris-core/services/remotegw/remotegwtest"
+	"dylaris-core/store"
 )
 
 // minted TXT tokens are random; the golden bodies carry a placeholder.
@@ -139,5 +141,19 @@ func TestCustomDomainHandlersLocalModeUnchanged(t *testing.T) {
 	}
 	if c := fake.Calls(); len(c) != 0 {
 		t.Fatalf("local mode asked the provider: %v", c)
+	}
+}
+
+// A suspended route-only route has no Redis key but still holds the domain:
+// removing the claim under it would let an unsuspend publish it unproven.
+func TestCustomDomainDeleteRefusedWhileASuspendedRouteHoldsIt(t *testing.T) {
+	f := newExtFixture(t)
+	now := time.Now()
+	f.st.routes = append(f.st.routes, store.CoreLinkRoute{Domain: "b-own.net", OwnerID: extTenantB,
+		LinkToken: "derived-token-link-b", TargetHost: "192.168.1.20", TargetPort: 25565, SuspendedAt: &now})
+	h := NewCustomDomainHandler(Deps{Store: f.st, Redis: f.rdb, GatewayRemote: func() (bool, bool) { return false, true }}, noTXT{})
+	rec := sessionCall(h.Delete, "DELETE", extTenantB, dom("b-own.net"), nil)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "domain_in_use") {
+		t.Fatalf("got %d %s, want 409 domain_in_use", rec.Code, rec.Body.String())
 	}
 }

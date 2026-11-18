@@ -112,3 +112,30 @@ func TestSetCoreOwnedRouteProxyProtocol_DoesNotTakeAForeignEntry(t *testing.T) {
 		t.Fatalf("foreign entry rewritten: %s", v)
 	}
 }
+
+// A target edit landing while the switch is being flipped is kept: the switch
+// writes its own column only, so the row keeps both, and the republisher's next
+// pass publishes the row.
+func TestSetCoreOwnedRouteProxyProtocol_KeepsAConcurrentTargetEdit(t *testing.T) {
+	g, rdb, fs := newHubBridgeTestGateway(t)
+	if err := g.CreateRouteViaLink("owner-1", "play.example.com", "tunnel-1", "127.0.0.1", 25565); err != nil {
+		t.Fatalf("CreateRouteViaLink: %v", err)
+	}
+	fs.afterList = func() {
+		if err := g.CreateRouteViaLink("owner-1", "play.example.com", "tunnel-1", "10.0.0.9", 25570); err != nil {
+			t.Fatalf("concurrent edit: %v", err)
+		}
+	}
+	if err := g.SetCoreOwnedRouteProxyProtocol("play.example.com", true); err != nil {
+		t.Fatalf("SetCoreOwnedRouteProxyProtocol: %v", err)
+	}
+	row := fs.routes["play.example.com"]
+	if row.TargetHost != "10.0.0.9" || row.TargetPort != 25570 || !row.ProxyProtocol {
+		t.Fatalf("row = %+v, want the edited target with the switch on", row)
+	}
+	NewRouteRepublisher(fs, rdb).RunOnce(context.Background())
+	live, err := rdb.Get(context.Background(), "route:play.example.com").Result()
+	if err != nil || !strings.Contains(live, `"10.0.0.9"`) || !strings.Contains(live, `"proxy_protocol":true`) {
+		t.Fatalf("live = %s (%v), want the edited target with the switch on", live, err)
+	}
+}

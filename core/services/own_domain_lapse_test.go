@@ -394,7 +394,7 @@ func TestVerifierRemovesRemoteRouteOnLocalLapse(t *testing.T) {
 				st.claims = append(st.claims, verifiedOwnClaim(ownerB, "mc.example.com"))
 			}
 			fs := &verifierFakeStore{pending: []store.CustomDomainClaim{lapsing}}
-			v := NewCustomDomainVerifier(fs, &fakeResolver{}, NewCustomDomainRouteRemover(nil, g, st, st, g, remote))
+			v := NewCustomDomainVerifier(fs, &fakeResolver{}, NewCustomDomainRouteRemover(nil, g, st, noRows{}, st, g, remote))
 			v.SetGatewayRemote(remote)
 			v.RunOnce(context.Background())
 
@@ -448,7 +448,7 @@ func TestVerifierLocalModeUsesRedisPath(t *testing.T) {
 	})
 	del := &recordingDeleter{}
 	reader, releaser := &countingRouteReader{}, &countingReleaser{}
-	rm := NewCustomDomainRouteRemover(rdb, del, ownerServers{"u1": {{UUID: "srv-u1"}}}, reader, releaser, local)
+	rm := NewCustomDomainRouteRemover(rdb, del, ownerServers{"u1": {{UUID: "srv-u1"}}}, noRows{}, reader, releaser, local)
 
 	fs := &verifierFakeStore{pending: []store.CustomDomainClaim{claim(1, "mc.example.com", time.Now().Add(-time.Minute))}}
 	v := NewCustomDomainVerifier(fs, &fakeResolver{}, rm)
@@ -478,7 +478,7 @@ func TestVerifierIdleWhenModeUnknown(t *testing.T) {
 	// claim is never settled on a removal that did not happen.
 	del := &recordingDeleter{}
 	reader, releaser := &countingRouteReader{}, &countingReleaser{}
-	err := NewCustomDomainRouteRemover(nil, del, ownerServers{}, reader, releaser, unknown).DeleteRoutesForDomain(context.Background(), "u1", "mc.example.com")
+	err := NewCustomDomainRouteRemover(nil, del, ownerServers{}, noRows{}, reader, releaser, unknown).DeleteRoutesForDomain(context.Background(), "u1", "mc.example.com")
 	if err == nil || len(del.deleted) != 0 || reader.calls != 0 || releaser.calls != 0 {
 		t.Fatalf("err %v, deleted %v, reads %d, releases %d", err, del.deleted, reader.calls, releaser.calls)
 	}

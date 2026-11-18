@@ -34,6 +34,9 @@ type hubBridgeFakeStore struct {
 	// afterUpsert runs once the create path has written its row: the window an
 	// admin suspend can land in.
 	afterUpsert func(domain string)
+	// afterList runs once, after the next listing was taken: a concurrent
+	// writer landing between a read and the write that follows it.
+	afterList func()
 }
 
 func (f *hubBridgeFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error) {
@@ -43,6 +46,10 @@ func (f *hubBridgeFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error)
 	out := make([]store.CoreLinkRoute, 0, len(f.routes))
 	for _, r := range f.routes {
 		out = append(out, r)
+	}
+	if fn := f.afterList; fn != nil {
+		f.afterList = nil
+		fn()
 	}
 	return out, nil
 }
@@ -60,6 +67,26 @@ func (f *hubBridgeFakeStore) UpsertCoreLinkRoute(r store.CoreLinkRoute) error {
 		f.afterUpsert(r.Domain)
 	}
 	return nil
+}
+
+func (f *hubBridgeFakeStore) GetCoreLinkRoute(domain string) (*store.CoreLinkRoute, error) {
+	if f.routeErr != nil {
+		return nil, f.routeErr
+	}
+	if r, ok := f.routes[domain]; ok {
+		return &r, nil
+	}
+	return nil, nil
+}
+
+func (f *hubBridgeFakeStore) SetCoreLinkRouteProxyProtocol(domain string, enabled bool) (bool, error) {
+	r, ok := f.routes[domain]
+	if !ok {
+		return false, nil
+	}
+	r.ProxyProtocol = enabled
+	f.routes[domain] = r
+	return true, nil
 }
 
 func (f *hubBridgeFakeStore) DeleteCoreLinkRoute(domain string) error {

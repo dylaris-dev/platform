@@ -692,6 +692,7 @@ type Store interface {
 	ListCoreLinkRoutesByOwner(ownerID string) ([]CoreLinkRoute, error)
 	DeleteCoreLinkRoute(domain string) error
 	SetCoreLinkRouteSuspended(domain string, at *time.Time, reason string) (bool, error)
+	SetCoreLinkRouteProxyProtocol(domain string, enabled bool) (bool, error)
 	// Daily peak of concurrent players per route-only account (provider side).
 	RaisePlayerPeak(ownerID string, day time.Time, java, bedrock, total int) error
 	ListPlayerPeaks(ownerID string, since time.Time) ([]PlayerPeak, error)

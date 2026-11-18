@@ -561,7 +561,12 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 		}
 		// No route on an own domain is possible at a cap of none, so its claims
 		// would only take slots of the platform's provider bound.
-		if limit, _ := customDomainCapFor(h.d.Store, userID); limit != nil && *limit == 0 && !reqctx.IsAdmin(r) {
+		limit, _, err := customDomainCapFor(h.d.Store, userID)
+		if err != nil {
+			httpx.SendJSONError(w, "Could not check your allowance", http.StatusInternalServerError)
+			return
+		}
+		if limit != nil && *limit == 0 && !reqctx.IsAdmin(r) {
 			httpx.SendJSONErrorCode(w, "Your account cannot use own domains.", "custom_domain_cap", http.StatusForbidden)
 			return
 		}
@@ -597,7 +602,12 @@ func (h *CustomDomainHandler) Add(w http.ResponseWriter, r *http.Request) {
 	// is not bounded by the constant either.
 	claimCap := int64(maxClaimsPerUser)
 	unboundedClaims := false
-	if scopedCap, scoped := customDomainCapFor(h.d.Store, userID); scoped {
+	scopedCap, scoped, err := customDomainCapFor(h.d.Store, userID)
+	if err != nil {
+		httpx.SendJSONError(w, "Could not check your allowance", http.StatusInternalServerError)
+		return
+	}
+	if scoped {
 		if scopedCap == nil {
 			unboundedClaims = true
 		} else if *scopedCap > claimCap {
@@ -738,6 +748,16 @@ func (h *CustomDomainHandler) Delete(w http.ResponseWriter, r *http.Request) {
 				httpx.SendJSONErrorCode(w, "Delete the routes on "+domain+" first.", "domain_in_use", http.StatusConflict)
 				return
 			}
+		}
+		// A suspended route-only route is only in its row.
+		stored, err := services.StoredRoutesOn(h.d.Store, userID, domain)
+		if err != nil {
+			httpx.SendJSONError(w, "Could not check your routes", http.StatusInternalServerError)
+			return
+		}
+		if len(stored) > 0 {
+			httpx.SendJSONErrorCode(w, "Delete the routes on "+domain+" first.", "domain_in_use", http.StatusConflict)
+			return
 		}
 	}
 	found, err := h.d.Store.DeleteCustomDomainClaim(userID, domain)

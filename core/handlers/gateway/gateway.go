@@ -670,7 +670,11 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 	// On the managed gateway the count comes from the local route rows (this
 	// Redis holds none), split by the provider's hoster domains.
 	if !reqctx.IsAdmin(r) && rg != nil {
-		limit := h.effectiveRouteLimit(account)
+		limit, lerr := h.effectiveRouteLimit(account)
+		if lerr != nil {
+			gate.WriteGatewayError(w, http.StatusInternalServerError, "internal", "Could not check your allowance")
+			return
+		}
 		if limit != nil && *limit == 0 {
 			gate.WriteGatewayError(w, http.StatusForbidden, "route_limit", "Route creation is disabled for your account")
 			return
@@ -688,14 +692,23 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if isCustomDomain {
-			if msg := h.customDomainCapError(account, int(custom)); msg != "" {
+			msg, merr := h.customDomainCapError(account, int(custom))
+			if merr != nil {
+				gate.WriteGatewayError(w, http.StatusInternalServerError, "internal", "Could not check your allowance")
+				return
+			}
+			if msg != "" {
 				gate.WriteGatewayError(w, http.StatusForbidden, "custom_domain_cap", msg)
 				return
 			}
 		}
 	}
 	if !reqctx.IsAdmin(r) && rg == nil {
-		limit := h.effectiveRouteLimit(account)
+		limit, lerr := h.effectiveRouteLimit(account)
+		if lerr != nil {
+			http.Error(w, "Could not check your allowance", http.StatusInternalServerError)
+			return
+		}
 		if limit != nil && *limit == 0 {
 			http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
 			return
@@ -710,7 +723,12 @@ func (h *GatewayHandler) CreateServerRoute(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if isCustomDomain {
-			if msg := h.customDomainCapError(account, stats.custom); msg != "" {
+			msg, merr := h.customDomainCapError(account, stats.custom)
+			if merr != nil {
+				http.Error(w, "Could not check your allowance", http.StatusInternalServerError)
+				return
+			}
+			if msg != "" {
 				http.Error(w, msg, http.StatusForbidden)
 				return
 			}

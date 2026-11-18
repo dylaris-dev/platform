@@ -33,6 +33,10 @@ type CoreLinkRoute struct {
 // UpsertCoreLinkRoute records a route-only entry, or rewrites the one already
 // stored for that domain. The domain is the key for the same reason it is the
 // key in Redis: one address routes to one place.
+//
+// proxy_protocol is written on insert only; SetCoreLinkRouteProxyProtocol owns
+// it afterwards. A target edit that rewrote it from its own earlier read undid
+// a switch made in between, and the other way round.
 func (s *PostgresStore) UpsertCoreLinkRoute(r CoreLinkRoute) error {
 	_, err := s.db.Exec(`
 		INSERT INTO core_link_routes (domain, owner_id, link_token, target_host, target_port, proxy_protocol)
@@ -41,10 +45,20 @@ func (s *PostgresStore) UpsertCoreLinkRoute(r CoreLinkRoute) error {
 			owner_id = EXCLUDED.owner_id,
 			link_token = EXCLUDED.link_token,
 			target_host = EXCLUDED.target_host,
-			target_port = EXCLUDED.target_port,
-			proxy_protocol = EXCLUDED.proxy_protocol`,
+			target_port = EXCLUDED.target_port`,
 		r.Domain, r.OwnerID, r.LinkToken, r.TargetHost, r.TargetPort, r.ProxyProtocol)
 	return err
+}
+
+// SetCoreLinkRouteProxyProtocol flips one route's real-IP switch and reports
+// whether the domain has a row.
+func (s *PostgresStore) SetCoreLinkRouteProxyProtocol(domain string, enabled bool) (bool, error) {
+	res, err := s.db.Exec(`UPDATE core_link_routes SET proxy_protocol = $2 WHERE domain = $1`, domain, enabled)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func (s *PostgresStore) ListCoreLinkRoutes() ([]CoreLinkRoute, error) {

@@ -70,6 +70,21 @@ func (f *proxyProtoFakeStore) ListCoreLinkRoutes() ([]store.CoreLinkRoute, error
 	}
 	return out, nil
 }
+func (f *proxyProtoFakeStore) GetCoreLinkRoute(domain string) (*store.CoreLinkRoute, error) {
+	if r, ok := f.routes[domain]; ok {
+		return &r, nil
+	}
+	return nil, nil
+}
+func (f *proxyProtoFakeStore) SetCoreLinkRouteProxyProtocol(domain string, enabled bool) (bool, error) {
+	r, ok := f.routes[domain]
+	if !ok {
+		return false, nil
+	}
+	r.ProxyProtocol = enabled
+	f.routes[domain] = r
+	return true, nil
+}
 func (f *proxyProtoFakeStore) UpsertCoreLinkRoute(r store.CoreLinkRoute) error {
 	f.routes[r.Domain] = r
 	return nil

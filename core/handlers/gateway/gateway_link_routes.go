@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,19 +73,26 @@ func validateLocalTarget(host string) error {
 // a computed zero from the store was silently rewritten into "no override" and
 // fell through to a scope nobody had set - which is unlimited. Now zero means
 // none wherever it is, and absence is spelled by the row not existing.
-func (h *GatewayHandler) effectiveRouteLimit(userID string) *int64 {
+//
+// Only sql.ErrNoRows is "no row". Any other read failure is returned: read as
+// "no row", it walked on to "no cap" and let a capped or disabled tenant create
+// routes while the database was failing.
+func (h *GatewayHandler) effectiveRouteLimit(userID string) (*int64, error) {
 	for _, scope := range []string{storeclient.AdminRouteScope(userID), storeclient.UserRouteScope(userID), "user_default", "global"} {
 		l, err := h.d.Store.GetGatewayRouteLimit(scope)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("route limit %s: %w", scope, err)
+		}
 		if err != nil || l == nil {
 			continue // no row here: ask the next scope
 		}
 		if l.MaxRoutes == nil {
-			return nil // set, and explicitly no cap
+			return nil, nil // set, and explicitly no cap
 		}
 		n := int64(*l.MaxRoutes)
-		return &n
+		return &n, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // routeStats is what an account holds: addresses on our domains, routes on
@@ -152,7 +160,7 @@ func (h *GatewayHandler) ownerRouteStats(userID, domain string) (routeStats, err
 
 // customDomainCapFor is services.CustomDomainCapFor, which the over-limit sweep
 // shares.
-func customDomainCapFor(st store.Store, userID string) (limit *int64, scoped bool) {
+func customDomainCapFor(st store.Store, userID string) (limit *int64, scoped bool, err error) {
 	return services.CustomDomainCapFor(st, userID)
 }
 
@@ -165,12 +173,15 @@ func ourDomainsCapMessage(limit int64) string {
 }
 
 // customDomainCapError is the refusal for an account at its cap, or "".
-func (h *GatewayHandler) customDomainCapError(userID string, held int) string {
-	limit, _ := customDomainCapFor(h.d.Store, userID)
-	if !services.AtOrOver(limit, int64(held)) {
-		return ""
+func (h *GatewayHandler) customDomainCapError(userID string, held int) (string, error) {
+	limit, _, err := customDomainCapFor(h.d.Store, userID)
+	if err != nil {
+		return "", err
 	}
-	return fmt.Sprintf("You have reached the limit of %d routes on your own domains.", *limit)
+	if !services.AtOrOver(limit, int64(held)) {
+		return "", nil
+	}
+	return fmt.Sprintf("You have reached the limit of %d routes on your own domains.", *limit), nil
 }
 
 // ourBaseDomains is the hoster list the route cap is measured against.
@@ -280,7 +291,11 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 	// Route creation switched off for this account is an operator decision about
 	// the tenant, not about a domain, so it is answered before anything else -
 	// and before any input validation can turn it into a confusing 400.
-	limit := h.effectiveRouteLimit(userID)
+	limit, err := h.effectiveRouteLimit(userID)
+	if err != nil {
+		http.Error(w, "Could not check your allowance", http.StatusInternalServerError)
+		return
+	}
 	if limit != nil && *limit == 0 {
 		http.Error(w, "Route creation is disabled for your account", http.StatusForbidden)
 		return
@@ -319,7 +334,12 @@ func (h *GatewayHandler) CreateLinkRoute(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if !stats.ownsDomain && isCustomDomain && !reqctx.IsAdmin(r) {
-		if msg := h.customDomainCapError(userID, stats.custom); msg != "" {
+		msg, err := h.customDomainCapError(userID, stats.custom)
+		if err != nil {
+			http.Error(w, "Could not check your allowance", http.StatusInternalServerError)
+			return
+		}
+		if msg != "" {
 			http.Error(w, msg, http.StatusForbidden)
 			return
 		}

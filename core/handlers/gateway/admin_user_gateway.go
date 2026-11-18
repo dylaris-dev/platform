@@ -283,10 +283,19 @@ func (h *GatewayHandler) AdminUserGateway(w http.ResponseWriter, r *http.Request
 			fail("limits", err)
 			return
 		}
-		customCap, _ := customDomainCapFor(st, userID)
+		customCap, _, err := customDomainCapFor(st, userID)
+		if err != nil {
+			fail("custom-domain limit", err)
+			return
+		}
+		maxRoutes, err := h.effectiveRouteLimit(userID)
+		if err != nil {
+			fail("route limit", err)
+			return
+		}
 		out["product"] = product
 		out["billingStatus"] = b.Status
-		out["limits"] = externalLimits{MaxLinks: lim.MaxLinks, MaxRoutes: h.effectiveRouteLimit(userID), MaxCustomDomains: customCap}
+		out["limits"] = externalLimits{MaxLinks: lim.MaxLinks, MaxRoutes: maxRoutes, MaxCustomDomains: customCap}
 		if b.OverLimitSince != nil {
 			out["overLimitSince"] = b.OverLimitSince.UTC().Format(time.RFC3339)
 		}
