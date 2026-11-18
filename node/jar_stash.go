@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"io/fs"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -30,6 +31,9 @@ type jarStash struct {
 	// complete: everything was taken, so an install may have run and what
 	// now sits in the loader launch dirs is its output, not the old server's.
 	complete bool
+	// keep is what discard puts back (stashBeforeSetup): taken only for the
+	// rollback, not something the install was asked to clear.
+	keep []string
 }
 
 // softwareKey is the commandsInFlight key every command that stashes a
@@ -155,25 +159,62 @@ func recoverStash(root *os.Root, dir string) {
 // stash when the setup wipes it, since a Forge/NeoForge server cannot start
 // from its launch dir without the libraries it names.
 //
-// nil for a first install, which has nothing to keep, and for every installer
-// that is not plain server software: an upload, upload-zip or backup installs
-// the files already in the directory, and taking their jars would remove the
-// server being installed.
+// The stash is the rollback, not a wipe: what the owner did not tick to clear
+// goes back on success (discard), unless the install wrote the same name. Only
+// the loader launch dirs are dropped either way: a Forge/NeoForge install
+// clears them itself, and an args file left beside other software outranks its
+// jar (resolveLaunch).
+//
+// nil for a first install, which has nothing to keep, and for an installer
+// that installs files already in the directory (upload, upload-zip, backup)
+// or from a library or URL import: taking their jars would remove the server
+// being installed.
 func stashBeforeSetup(serverPath, sub string, cfg InstallerConfig) (*jarStash, error) {
-	if !uploadSoftware[cfg.Type] {
+	if !setupSoftware[cfg.Type] {
 		return nil, nil
 	}
 	if st, err := os.Lstat(filepath.Join(serverPath, sub)); err != nil || !st.IsDir() {
 		return nil, nil
 	}
+	clears := map[string]bool{}
+	for _, d := range loaderLaunchDirs {
+		clears[path.Join(sub, d)] = true
+	}
 	var wiped []string
-	for _, t := range cfg.WipePaths {
-		if strings.TrimSpace(t) == WipeLibraries {
+	jars := false
+	for _, raw := range cfg.WipePaths {
+		t := strings.TrimSpace(raw)
+		if t == WipeLibraries {
 			wiped = append(wiped, wipeTargets[WipeLibraries]...)
 		}
+		jars = jars || t == WipeJars
+		for _, d := range wipeTargets[t] {
+			clears[path.Join(sub, d)] = true
+		}
 	}
-	return stashServerJars(serverPath, sub, wiped...)
+	s, err := stashServerJars(serverPath, sub, wiped...)
+	if err != nil {
+		return s, err
+	}
+	for _, rel := range s.moved {
+		rootJar := path.Dir(rel) == sub && strings.HasSuffix(strings.ToLower(rel), ".jar")
+		if !clears[rel] && !(jars && rootJar) {
+			s.keep = append(s.keep, rel)
+		}
+	}
+	return s, nil
 }
+
+// setupSoftware is every setup installer that puts new server software over
+// what is there: the plain installers and the packs, which download the pack
+// and install its loader after the wipe.
+var setupSoftware = func() map[string]bool {
+	m := map[string]bool{"modpack": true, "technic": true}
+	for t := range uploadSoftware {
+		m[t] = true
+	}
+	return m
+}()
 
 // recoverStrandedStash is the recovery stashServerJars opens with, for a path
 // that can fail before it gets there: a move redelivered after the node died
@@ -295,8 +336,39 @@ func (s *jarStash) restore() error {
 	return first
 }
 
-// discard drops the stash once the new software is in place.
+// discard drops the stash once the new software is in place, after putting
+// back what it holds only for the rollback (keep).
 func (s *jarStash) discard() {
+	if len(s.keep) > 0 {
+		// Renamed away first: from here a node that dies must not have
+		// recoverStash roll the finished install back.
+		trash := s.dir + ".drop"
+		s.root.RemoveAll(trash)
+		if s.root.Rename(s.dir, trash) == nil {
+			for _, rel := range s.keep {
+				s.putBackMissing(path.Join(trash, rel), rel)
+			}
+		}
+	}
 	dropStash(s.root, s.dir)
 	s.root.Close()
+}
+
+// putBackMissing moves src back to rel file by file, wherever the install
+// wrote nothing under the same name: the new software wins a clash.
+func (s *jarStash) putBackMissing(src, rel string) {
+	fs.WalkDir(s.root.FS(), src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		dst := rel + strings.TrimPrefix(p, src)
+		if _, err := s.root.Lstat(dst); !errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		s.root.MkdirAll(path.Dir(dst), 0o755)
+		if err := s.root.Rename(p, dst); err != nil {
+			log.Printf("setup: could not keep %s: %v", dst, err)
+		}
+		return nil
+	})
 }

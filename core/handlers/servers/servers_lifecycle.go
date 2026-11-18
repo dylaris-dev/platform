@@ -809,6 +809,10 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Before the install record below is written, as reinstall does: the
+		// record a failure restores has to be the one from before this setup.
+		services.RememberSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)
+
 		// Record HOW this sub-server is being installed, now that the pack
 		// branch above has resolved a pack into its concrete versions.
 		//
@@ -888,7 +892,6 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Could not prepare the install; try again in a moment", http.StatusServiceUnavailable)
 			return
 		}
-		services.RememberSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)
 		if !recordSetup() {
 			return
 		}

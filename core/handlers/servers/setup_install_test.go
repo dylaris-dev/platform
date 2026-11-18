@@ -43,6 +43,8 @@ func (f *installFakeStore) GetSubServerInstall(int, string) (*models.SubServerIn
 }
 func (f *installFakeStore) UpsertSubServerInstall(r models.SubServerInstall) error {
 	f.installRow = r
+	// Read back by GetSubServerInstall, as a real store would.
+	f.storedInstall = &r
 	return nil
 }
 func (f *installFakeStore) DeleteSubServerInstall(int, string) error {
