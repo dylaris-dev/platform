@@ -22,7 +22,11 @@ type accountPolicy struct {
 
 // Get GET /api/admin/settings/users - PANEL settings.read (RequireCap at the route).
 func (h *AccountPolicyHandler) Get(w http.ResponseWriter, r *http.Request) {
-	allow, days, _ := h.d.Store.GetUserAccountPolicy()
+	allow, days, err := h.d.Store.GetUserAccountPolicy()
+	if err != nil {
+		httpx.SendJSONError(w, "Could not read the username policy", http.StatusInternalServerError)
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"policy":  accountPolicy{AllowNameChange: allow, NameChangeCooldownDays: days},

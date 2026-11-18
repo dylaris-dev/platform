@@ -153,6 +153,25 @@ func (f *transferFakeStore) UpdateBackupRunStatus(id int, status, message string
 	return nil
 }
 
+// FailAbandonedBackupRun carries the SQL's condition.
+func (f *transferFakeStore) FailAbandonedBackupRun(id int, message string, size int64, _ time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.runs[id]
+	if !ok {
+		return false, nil
+	}
+	if f.beforeUpdate != nil {
+		f.beforeUpdate(r)
+	}
+	if r.Status != "running" || r.UploadedBytes != nil {
+		return false, nil
+	}
+	f.updates = append(f.updates, reapUpdate{id: id, status: "failed", message: message, size: size, key: r.StorageKey})
+	r.Status = "failed"
+	return true, nil
+}
+
 // SetBackupRunUploaded and TouchBackupRunTransfer carry the SQL's condition.
 func (f *transferFakeStore) SetBackupRunUploaded(runID int, size int64) (bool, error) {
 	f.mu.Lock()

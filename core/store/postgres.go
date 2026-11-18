@@ -1440,10 +1440,16 @@ func (s *PostgresStore) ListServers(filterByUser string) ([]models.Server, error
 		// owner_id likewise: the publisher's same-owner check on a proxy link
 		// compared two empty strings, so it never refused a stranger's proxy,
 		// and separating servers by owner needs it outright.
+		//
+		// A scan error or a cut stream is an error, not a shorter fleet: the
+		// network-policy publisher builds every node's policy from this list.
 		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.Name, &srv.NodeID, &srv.NodeName, &srv.OwnerID, &srv.OwnerName, &srv.Port, &srv.Status, &srv.DesiredState, &srv.GameImage, &srv.IsFixed, &srv.ActiveSubServer, &srv.CreatedAt, &srv.ServerType, &srv.ProxyID); err != nil {
-			continue
+			return nil, err
 		}
 		servers = append(servers, srv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return servers, nil
 }
@@ -2133,7 +2139,7 @@ func (s *PostgresStore) ListServersForUser(userID string, isAdmin bool) ([]model
 		scanServer(&srv, nil, role, permsJSON)
 		servers = append(servers, srv)
 	}
-	return servers, nil
+	return servers, rows.Err()
 }
 
 // ==========================================
@@ -3172,14 +3178,18 @@ func (s *PostgresStore) AnonymizeUser(userID string) error {
 	tag := fmt.Sprintf("<deleted_user_%s>", userID)
 	// The account's API keys go in the same statement: they authenticate by
 	// their own hash, so an anonymized account kept automation access to every
-	// server it had been invited to.
+	// server it had been invited to. Its SFTP keys likewise: the row and its
+	// invites stay, so they kept signing in under the new username.
 	_, err := s.db.Exec(`
 		WITH keys AS (
 			UPDATE api_keys SET revoked_at = NOW() WHERE user_id = $2 AND revoked_at IS NULL
+		), ssh AS (
+			DELETE FROM user_ssh_keys WHERE user_id = $2
 		)
 		UPDATE users
 		   SET username = $1,
 		       email = NULL,
+		       pending_email = NULL,
 		       password = '!disabled!' || md5(random()::text),
 		       minecraft_username = NULL,
 		       totp_secret = '',

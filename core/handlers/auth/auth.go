@@ -937,7 +937,11 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			httpx.SendJSONError(w, "Invalid username: 3-32 characters, must start with a letter or digit, then letters, digits, '.', '_' or '-'", http.StatusBadRequest)
 			return
 		}
-		allow, cooldownDays, _ := h.d.Store.GetUserAccountPolicy()
+		allow, cooldownDays, err := h.d.Store.GetUserAccountPolicy()
+		if err != nil {
+			httpx.SendJSONError(w, "Could not read the username policy; try again", http.StatusInternalServerError)
+			return
+		}
 		if !allow && !isAdmin {
 			httpx.SendJSONError(w, "Username changes are disabled by the admin", http.StatusForbidden)
 			return

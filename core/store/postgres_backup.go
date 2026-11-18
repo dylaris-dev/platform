@@ -764,36 +764,37 @@ func (s *PostgresStore) PruneOldBackupRuns(jobID, keep int) ([]models.BackupRun,
 	if keep < 0 {
 		keep = 0
 	}
+	// One statement that selects, re-checks the guard on the row it deletes and
+	// returns only what it removed. The caller deletes the archive behind every
+	// returned run, so a row whose DELETE failed, or that a restore claimed after
+	// the selection, must not be in the answer.
 	rows, err := s.db.Query(
-		`SELECT `+backupRunCols+` FROM backup_runs
-		 WHERE job_id = $1 AND status = 'success'
-		   AND NOT `+backupRunRestoring+`
-		 ORDER BY started_at DESC
-		 OFFSET $2`,
+		`DELETE FROM backup_runs WHERE id IN (
+		   SELECT id FROM backup_runs
+		   WHERE job_id = $1 AND status = 'success'
+		     AND NOT `+backupRunRestoring+`
+		   ORDER BY started_at DESC
+		   OFFSET $2)
+		 AND status = 'success' AND NOT `+backupRunRestoring+`
+		 RETURNING `+backupRunCols,
 		jobID, keep,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var toPrune []models.BackupRun
+	var pruned []models.BackupRun
 	for rows.Next() {
 		r, err := s.scanRun(rows)
 		if err != nil {
-			continue
+			return nil, err
 		}
-		toPrune = append(toPrune, *r)
+		pruned = append(pruned, *r)
 	}
-	// Under-pruning is the harmless direction, but the caller also deletes the
-	// archives behind these rows, so it should hear about a short read rather
-	// than treat a partial list as the complete answer.
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for _, r := range toPrune {
-		s.db.Exec(`DELETE FROM backup_runs WHERE id = $1`, r.ID)
-	}
-	return toPrune, nil
+	return pruned, nil
 }
 
 // ───────────── Restores ─────────────
@@ -988,4 +989,25 @@ func nullableCap(v *int64) interface{} {
 		return nil
 	}
 	return *v
+}
+
+// FailAbandonedBackupRun closes a run the reaper found abandoned, but only
+// while it is still running and Core has not completed its upload, and reports
+// whether it did. The reaper works through a batch with storage calls in
+// between, so the node can finish a listed run meanwhile; closing it then
+// would mark a good backup failed and let the reaper delete its archive.
+func (s *PostgresStore) FailAbandonedBackupRun(id int, errorMsg string, sizeBytes int64, completed time.Time) (bool, error) {
+	res, err := s.db.Exec(
+		`UPDATE backup_runs SET status = 'failed', error_message = $1, size_bytes = $2, completed_at = $3
+		 WHERE id = $4 AND status = 'running' AND uploaded_bytes IS NULL`,
+		errorMsg, sizeBytes, completed, id,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
 }

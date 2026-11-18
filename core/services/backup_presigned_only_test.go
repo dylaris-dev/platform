@@ -283,6 +283,39 @@ func TestReapAbandonedRuns_NoUploadNoAbort(t *testing.T) {
 	}
 }
 
+// The reaper lists a batch and works through it with storage calls in between.
+// A listed run whose upload Core completes (or whose node reports success) in
+// that window was closed as failed anyway, and its finished archive deleted.
+func TestReapAbandonedRuns_LeavesARunThatFinishedMeanwhile(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		finish func(r *models.BackupRun)
+	}{
+		{"core completed the upload", func(r *models.BackupRun) { n := int64(42); r.UploadedBytes = &n }},
+		{"the node reported success", func(r *models.BackupRun) { r.Status = "success" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newTransferFakeStore()
+			st.runs[1].StartedAt = time.Now().Add(-8 * time.Hour)
+			st.runs[1].UploadID, st.runs[1].PartSize = "upload-late", backupPartSize
+			st.beforeUpdate = tc.finish
+			prov := &fakeMultipartStorage{}
+
+			transferScheduler(st, prov, nil).reapAbandonedRuns(context.Background(), time.Now())
+
+			if st.runs[1].Status == "failed" {
+				t.Fatalf("a run that finished meanwhile was closed as failed")
+			}
+			if got := prov.deletes(); len(got) != 0 {
+				t.Fatalf("deleted = %v, the finished archive is gone", got)
+			}
+			if got := st.aborts(prov); len(got) != 0 {
+				t.Fatalf("aborted = %v for a finished upload", got)
+			}
+		})
+	}
+}
+
 // A run whose upload Core completed and measured, and whose node report was
 // lost (a Core rolling deploy drops Pub/Sub messages), is a good backup. The
 // reaper closes it as a success with Core's size and deletes nothing.

@@ -67,6 +67,17 @@ func (f *reaperFakeStore) UpdateBackupRunStatus(id int, status, message string, 
 	return f.updateErr
 }
 
+func (f *reaperFakeStore) FailAbandonedBackupRun(id int, message string, size int64, now time.Time) (bool, error) {
+	key := ""
+	for _, r := range f.abandoned {
+		if r.ID == id {
+			key = r.StorageKey
+		}
+	}
+	err := f.UpdateBackupRunStatus(id, "failed", message, size, key, now)
+	return err == nil, err
+}
+
 func (f *reaperFakeStore) GetBackupJob(int) (*models.BackupJob, error) { return f.job, f.jobErr }
 
 // The reaper resolves a run's storage through the owner chain now, so it asks

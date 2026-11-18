@@ -77,16 +77,23 @@ func (s *PostgresStore) ListUsernameHistory(userID string) ([]models.UsernameHis
 	return out, rows.Err()
 }
 
+// GetUserAccountPolicy falls back to the defaults only for a key never saved
+// or unparsable: a saved cooldown of 0 is the operator's choice, and a failed
+// read is an error with renames refused rather than a switch read as on.
 func (s *PostgresStore) GetUserAccountPolicy() (bool, int, error) {
-	var allow, cooldown string
-	_ = s.db.QueryRow(`SELECT value FROM settings WHERE key='users.allow_name_change'`).Scan(&allow)
-	_ = s.db.QueryRow(`SELECT value FROM settings WHERE key='users.name_change_cooldown_days'`).Scan(&cooldown)
-	allowB := allow != "false"
-	cd, _ := strconv.Atoi(cooldown)
-	if cd <= 0 {
+	allow, err := s.GetSetting("users.allow_name_change")
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrSettingNull) {
+		return false, 30, err
+	}
+	cooldown, err := s.GetSetting("users.name_change_cooldown_days")
+	if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, ErrSettingNull) {
+		return false, 30, err
+	}
+	cd, err := strconv.Atoi(cooldown)
+	if err != nil || cd < 0 {
 		cd = 30
 	}
-	return allowB, cd, nil
+	return allow != "false", cd, nil
 }
 
 func (s *PostgresStore) SetUserAccountPolicy(allowChange bool, cooldownDays int) error {

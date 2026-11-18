@@ -636,8 +636,15 @@ func (b *BackupScheduler) reapAbandonedRuns(ctx context.Context, now time.Time) 
 		}
 		age := now.Sub(run.StartedAt).Round(time.Minute)
 		message := fmt.Sprintf("No result was received from the node within %s. %s", age, detail)
-		if err := b.store.UpdateBackupRunStatus(run.ID, "failed", message, size, run.StorageKey, now); err != nil {
+		closed, err := b.store.FailAbandonedBackupRun(run.ID, message, size, now)
+		if err != nil {
 			logErrf("backup-scheduler", "could not close abandoned run %d: %v", run.ID, err)
+			continue
+		}
+		if !closed {
+			// The node finished it, or Core completed its upload, while this
+			// batch was being worked through. Its archive is not ours to delete;
+			// a completed upload is closed by the next sweep.
 			continue
 		}
 		log.Printf("backup-scheduler: closed abandoned run %d (job %d, started %s ago): %s", run.ID, run.JobID, age, detail)

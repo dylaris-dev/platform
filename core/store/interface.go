@@ -511,6 +511,9 @@ type Store interface {
 	BackupRunRestoring(runID int) (bool, error)
 	BackupJobRestoring(jobID int) (bool, error)
 	ListAbandonedBackupRuns(quietSince time.Time, limit int) ([]models.BackupRun, error)
+	// FailAbandonedBackupRun closes a run as failed only while it is still
+	// running with no upload Core completed, and reports whether it did.
+	FailAbandonedBackupRun(id int, errorMsg string, sizeBytes int64, completed time.Time) (bool, error)
 	// SetBackupRunUpload stores a run's multipart upload id and part size only
 	// where none is stored yet and the run is still running, and reports whether
 	// this call's values were the ones stored.
