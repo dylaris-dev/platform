@@ -1,20 +1,25 @@
 package services
 
 import (
+	"context"
 	"dylaris-core/pkg/leader"
+	"dylaris-core/services/redisacl"
 	"dylaris-core/store"
 	"log"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type NodeCleanupService struct {
 	store  store.Store
+	redis  *redis.Client
 	ttl    time.Duration
 	leader leader.Election
 }
 
-func NewNodeCleanupService(s store.Store, ttl time.Duration) *NodeCleanupService {
-	return &NodeCleanupService{store: s, ttl: ttl}
+func NewNodeCleanupService(s store.Store, rdb *redis.Client, ttl time.Duration) *NodeCleanupService {
+	return &NodeCleanupService{store: s, redis: rdb, ttl: ttl}
 }
 
 // SetLeader wires the leader-election gate so only one Core deletes per tick.
@@ -28,15 +33,23 @@ func (s *NodeCleanupService) Start() {
 			if s.leader != nil && !s.leader.IsLeader() {
 				continue
 			}
-			cutoff := time.Now().Add(-s.ttl)
-			count, err := s.store.DeleteStaleOfflineNodes(cutoff)
-			if err != nil {
-				log.Printf("Node cleanup error: %v", err)
-				continue
-			}
-			if count > 0 {
-				log.Printf("Cleaned up %d stale offline node(s)", count)
-			}
+			s.sweep(context.Background())
 		}
 	}()
+}
+
+// sweep deletes the stale rows and then the Redis state each one owned, the
+// same teardown every other node delete runs: none of those keys expire.
+func (s *NodeCleanupService) sweep(ctx context.Context) {
+	tokens, err := s.store.DeleteStaleOfflineNodes(time.Now().Add(-s.ttl))
+	if err != nil {
+		log.Printf("Node cleanup error: %v", err)
+		return
+	}
+	for _, t := range tokens {
+		RemoveNodeRedisState(ctx, s.redis, redisacl.NewProvisioner(s.redis), t)
+	}
+	if len(tokens) > 0 {
+		log.Printf("Cleaned up %d stale offline node(s)", len(tokens))
+	}
 }

@@ -89,3 +89,18 @@ func TestEnrollPlatform_MintsADistinctIdentityEachTime(t *testing.T) {
 		t.Errorf("both enrollments got assigned id %q, want distinct identities", first)
 	}
 }
+
+// A cluster-proof node retries every ~30s when its enrolment is refused, and
+// each retry creates a new row. An ACL error after the row exists must not
+// refuse it (miniredis has no ACL support, so provisioning fails here).
+func TestEnrollPlatform_ACLErrorStillEnrols(t *testing.T) {
+	store := newFakeHandshakeStore()
+	store.createNodeID = 7
+	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
+
+	_, _, secretHex, err := h.EnrollPlatform(context.Background(), "host", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("EnrollPlatform = %v, want the identity despite the ACL error", err)
+	}
+	assertSecretStored(t, store, 7, secretHex)
+}

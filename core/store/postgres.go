@@ -1097,8 +1097,11 @@ func (s *PostgresStore) SetNodeLinkToken(id int, token string) error {
 // .node_secret on the machine by hand. A node that cannot re-pair by itself
 // must never be swept, and rows from before the marker existed are spared too,
 // since nothing can tell an old cluster-minted row from an admin-created one.
-func (s *PostgresStore) DeleteStaleOfflineNodes(offlineSince time.Time) (int, error) {
-	result, err := s.db.Exec(`
+//
+// It returns the deleted rows' tokens so the caller can tear down their Redis
+// state, which nothing else removes.
+func (s *PostgresStore) DeleteStaleOfflineNodes(offlineSince time.Time) ([]string, error) {
+	rows, err := s.db.Query(`
 		DELETE FROM nodes
 		WHERE status = 'offline'
 			AND owner_id IS NULL
@@ -1106,12 +1109,21 @@ func (s *PostgresStore) DeleteStaleOfflineNodes(offlineSince time.Time) (int, er
 			AND last_seen_at IS NOT NULL
 			AND last_seen_at < $1
 			AND id NOT IN (SELECT DISTINCT node_id FROM servers)
+		RETURNING token
 	`, offlineSince, NodeEnrolledViaClusterProof)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	count, _ := result.RowsAffected()
-	return int(count), nil
+	defer rows.Close()
+	var tokens []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return tokens, err
+		}
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
 }
 
 // ==========================================

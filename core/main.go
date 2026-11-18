@@ -493,7 +493,7 @@ func main() {
 	discovery.SetLeader(coreLeader)
 	discovery.Start()
 
-	nodeCleanup := services.NewNodeCleanupService(pgStore, 24*time.Hour)
+	nodeCleanup := services.NewNodeCleanupService(pgStore, redisClient, 24*time.Hour)
 	nodeCleanup.SetLeader(coreLeader)
 	nodeCleanup.Start()
 

@@ -174,19 +174,39 @@ func TestEnsureForToken_KnownToken_ReachesProvisioningAndPropagatesError(t *test
 	store := newFakeHandshakeStore()
 	store.nodeIDByTokenID = 5
 	store.nodeIDByTokenFound = true
+	if _, err := LoadOrCreateNodeSecret(store, "cluster-secret", 5); err != nil {
+		t.Fatal(err)
+	}
+	stored := store.secretEnc[5]
 	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
 
-	// Known token: EnsureForToken must attempt full provisioning (mint/load
-	// secret, then apply the ACL). Since miniredis rejects ACL SETUSER, the
-	// error must surface here (this method does not swallow it - only the
-	// caller in services.QueueService.SendCommand does, at a higher layer).
+	// Known, paired node: EnsureForToken must attempt provisioning. Since
+	// miniredis rejects ACL SETUSER, the error must surface here (this method
+	// does not swallow it - only the caller in services.QueueService.SendCommand
+	// does, at a higher layer).
 	err := h.EnsureForToken(context.Background(), "tok-known")
 	if err == nil {
 		t.Fatal("expected the ACL provisioning error to propagate (miniredis has no ACL support)")
 	}
-	// The secret must still have been minted before the ACL step failed.
-	if _, ok := store.secretEnc[5]; !ok {
-		t.Error("expected a secret to be minted for the known node before ACL provisioning was attempted")
+	if store.secretEnc[5] != stored {
+		t.Error("EnsureForToken replaced the stored secret")
+	}
+}
+
+// A node whose secret an operator cleared (Reset pairing, Roll key) must not
+// get a new one from a pre-placement re-apply: nobody holds it, and its next
+// connect would then demand a secret challenge it can only fail.
+func TestEnsureForToken_ClearedSecretIsNotMinted(t *testing.T) {
+	store := newFakeHandshakeStore()
+	store.nodeIDByTokenID = 5
+	store.nodeIDByTokenFound = true
+	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
+
+	if err := h.EnsureForToken(context.Background(), "tok-known"); err != nil {
+		t.Fatalf("EnsureForToken on a node with no secret = %v, want a no-op", err)
+	}
+	if enc, ok := store.secretEnc[5]; ok || enc != "" {
+		t.Errorf("a secret was minted for a node whose secret was cleared: %q", enc)
 	}
 }
 
@@ -327,7 +347,7 @@ func TestEnroll_HappyPath_UsesConsumedOwnerAndReachesProvisioning(t *testing.T) 
 	store.createNodeID = 42
 	h := NewHandshake(store, newTestProvisioner(t), "cluster-secret")
 
-	assignedID, nodeID, _, owned, err := h.Enroll(context.Background(), "my-hostname", "enroll-tok", "1.2.3.4")
+	assignedID, nodeID, secretHex, owned, err := h.Enroll(context.Background(), "my-hostname", "enroll-tok", "1.2.3.4")
 
 	if store.byonCreateCalls != 1 || store.platformTokenCreateCalls != 0 {
 		t.Fatalf("CreateBYONNode calls = %d, CreatePlatformTokenNode calls = %d, want 1 and 0", store.byonCreateCalls, store.platformTokenCreateCalls)
@@ -356,12 +376,26 @@ func TestEnroll_HappyPath_UsesConsumedOwnerAndReachesProvisioning(t *testing.T) 
 	if nodeID != 42 {
 		t.Errorf("returned nodeID = %d, want 42", nodeID)
 	}
-	// Provisioning is attempted (and fails against miniredis's missing ACL
-	// support): this proves Enroll reaches the ensure() step on the happy path,
-	// and that its error is NOT swallowed - the caller must be able to detect a
-	// failed enrollment despite the node row having already been created.
-	if err == nil {
-		t.Fatal("expected the ACL provisioning error to propagate on the happy path (miniredis has no ACL support)")
+	// Provisioning is attempted and fails against miniredis's missing ACL
+	// support. The enrolment must still succeed with the stored secret: the row
+	// exists and the token is spent, so refusing strands both and the node never
+	// learns its id. The reconciler provisions the ACL from that secret.
+	if err != nil {
+		t.Fatalf("an ACL provisioning error failed the enrolment after the token was spent: %v", err)
+	}
+	assertSecretStored(t, store, 42, secretHex)
+}
+
+// assertSecretStored checks the enrolment handed the node the secret Core
+// actually stored for it.
+func assertSecretStored(t *testing.T, store *fakeHandshakeStore, nodeID int, secretHex string) {
+	t.Helper()
+	secret, ok, err := LoadNodeSecret(store, "cluster-secret", nodeID)
+	if err != nil || !ok {
+		t.Fatalf("no secret stored for node %d (ok=%v err=%v)", nodeID, ok, err)
+	}
+	if secretHex != hex.EncodeToString(secret) {
+		t.Errorf("returned secret %q is not the stored one", secretHex)
 	}
 }
 

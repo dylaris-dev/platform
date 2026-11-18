@@ -254,3 +254,29 @@ func TestLinkCanPinEverythingItDials(t *testing.T) {
 		}
 	}
 }
+
+// Every SETUSER must leave exactly the one current password. ">pw" APPENDS to
+// a user's password list, so a writer that read a node's secret just before an
+// operator's Reset pairing re-created the user with the revoked password, and
+// no later SETUSER with the new secret ever removed it. "resetpass" first, in
+// the same command, makes the newest write the only password.
+func TestACLRulesReplaceThePassword(t *testing.T) {
+	for name, rules := range map[string][]interface{}{
+		"node":    BuildNodeACLRules("n1", "pw", []string{"uuid-a"}),
+		"shipper": BuildShipperACLRules("pw", "uuid-a"),
+		"link":    BuildLinkACLRules("pw", "n1", "tun"),
+	} {
+		reset, add := -1, -1
+		for i, r := range rules {
+			switch r {
+			case "resetpass":
+				reset = i
+			case ">pw":
+				add = i
+			}
+		}
+		if reset < 0 || add < 0 || reset > add {
+			t.Errorf("%s rules: resetpass at %d, >pw at %d; want resetpass before the password: %v", name, reset, add, rules)
+		}
+	}
+}

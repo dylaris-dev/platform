@@ -202,7 +202,8 @@ type Store interface {
 	// mode and cpuset only.
 	ListServerPinningByNode(nodeID int) ([]models.Server, error)
 	DeleteServersByNode(nodeID int) error
-	DeleteStaleOfflineNodes(offlineSince time.Time) (int, error)
+	// DeleteStaleOfflineNodes returns the tokens of the rows it deleted.
+	DeleteStaleOfflineNodes(offlineSince time.Time) ([]string, error)
 
 	// --- Servers ---
 	CreateServer(srv *models.Server) (int64, error)

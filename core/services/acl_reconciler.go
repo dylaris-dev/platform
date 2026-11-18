@@ -127,7 +127,7 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 		applied++
 	}
 
-	r.pruneOrphanNodeACLs(ctx, nodes)
+	r.pruneOrphanNodeACLs(ctx)
 
 	// One persist for the whole sweep (best-effort, loud + throttled on failure).
 	r.prov.SaveACL(ctx)
@@ -147,7 +147,23 @@ func (r *ACLReconciler) reconcileOnce(ctx context.Context) {
 //
 // This is the node-side counterpart of the link-kit teardown sweep above, which
 // has existed for exactly the same reason.
-func (r *ACLReconciler) pruneOrphanNodeACLs(ctx context.Context, nodes []models.Node) {
+//
+// ACL USERS is read FIRST and the node and server lists after it. The other way
+// round, a node that enrolled (or a server created) on any replica in between
+// had users the older list did not know, and its fresh credentials were deleted
+// right after pairing. Read in this order, every user in the snapshot was
+// created by a row the later lists can already see.
+func (r *ACLReconciler) pruneOrphanNodeACLs(ctx context.Context) {
+	res, err := r.redis.Do(ctx, "ACL", "USERS").StringSlice()
+	if err != nil {
+		log.Printf("acl reconciler: list ACL users for prune: %v", err)
+		return
+	}
+	nodes, err := r.store.ListNodes()
+	if err != nil {
+		log.Printf("acl reconciler: list nodes for prune: %v", err)
+		return
+	}
 	// Safety rail. An empty node list is a legitimate state (nobody has paired
 	// yet), and in that state every node-* user IS an orphan - but it is also
 	// what an unexpected result looks like, and the cost of being wrong is
@@ -155,12 +171,6 @@ func (r *ACLReconciler) pruneOrphanNodeACLs(ctx context.Context, nodes []models.
 	// tick: the next node to pair makes the list non-empty and the orphans go
 	// then.
 	if len(nodes) == 0 {
-		return
-	}
-
-	res, err := r.redis.Do(ctx, "ACL", "USERS").StringSlice()
-	if err != nil {
-		log.Printf("acl reconciler: list ACL users for prune: %v", err)
 		return
 	}
 	// The server list per node, because there is one shipper ACL user per server.

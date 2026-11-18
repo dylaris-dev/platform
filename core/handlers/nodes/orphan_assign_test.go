@@ -10,8 +10,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"google.golang.org/grpc"
+
+	nodegrpc "dylaris-core/grpc"
 	"dylaris-core/models"
 	"dylaris-core/store"
+
+	pb "dylaris-proto/node"
 )
 
 // orphanAssignFakeStore embeds store.Store (nil) so it satisfies the interface
@@ -145,5 +150,63 @@ func TestAssignOrphanRejectsInvalidUsername(t *testing.T) {
 		if rw.Code != http.StatusBadRequest {
 			t.Errorf("username %q: status = %d, want 400 (%s)", name, rw.Code, rw.Body.String())
 		}
+	}
+}
+
+// inspectNode answers the adopt's InspectOrphanReq with an empty folder report.
+type inspectNode struct {
+	grpc.ServerStream
+	conn *nodegrpc.NodeConnection
+}
+
+func (s *inspectNode) Context() context.Context { return context.Background() }
+func (s *inspectNode) Recv() (*pb.NodeMessage, error) {
+	select {}
+}
+func (s *inspectNode) Send(m *pb.NodeMessage) error {
+	if m.GetInspectOrphanReq() != nil {
+		go s.conn.RouteResponse(&pb.NodeMessage{RequestId: m.RequestId,
+			Payload: &pb.NodeMessage_InspectOrphanResp{InspectOrphanResp: &pb.InspectOrphanResp{}}})
+	}
+	return nil
+}
+
+type orphanCreateStore struct {
+	orphanAssignFakeStore
+	created *models.Server
+}
+
+func (f *orphanCreateStore) CreateServer(srv *models.Server) (int64, error) {
+	c := *srv
+	f.created = &c
+	return 9, nil
+}
+func (f *orphanCreateStore) UpdateServerSetup(int, string, string, string, string, string, string, string) error {
+	return nil
+}
+
+// An adopted server was stored with an empty region, which CreateServer writes
+// as 'default'. servers.region is what the beam relay pick and the rebalancer's
+// region fence read, so it must be the node's region like every created server.
+func TestAssignOrphanUsesTheNodesRegion(t *testing.T) {
+	st := &orphanCreateStore{orphanAssignFakeStore: orphanAssignFakeStore{
+		err:  sql.ErrNoRows,
+		node: &models.Node{ID: 2, Status: "online", Region: "eu"},
+		user: &models.User{ID: "b083ff0c-fc16-47c5-9700-7b16486583e7"},
+	}}
+	reg := nodegrpc.NewRegistry()
+	node := &inspectNode{}
+	node.conn = reg.Register(2, "tok", node)
+	h := &NodeHandler{d: testDeps(Deps{Store: st, GRPCRegistry: reg})}
+
+	rw := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/disk/orphans/assign", bytes.NewReader(orphanAssignBody()))
+	h.AssignOrphan(rw, req.WithContext(context.WithValue(req.Context(), "isAdmin", true)))
+
+	if rw.Code != http.StatusOK || st.created == nil {
+		t.Fatalf("status = %d, created = %v (%s)", rw.Code, st.created, rw.Body.String())
+	}
+	if st.created.Region != "eu" {
+		t.Errorf("adopted server region = %q, want the node's region eu", st.created.Region)
 	}
 }

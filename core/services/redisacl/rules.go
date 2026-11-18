@@ -193,7 +193,10 @@ func migrationKeys(token string) []string {
 // for the node agent user: own node-scoped keys + assigned server keys + global
 // reads + pub/sub channels + command categories.
 func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface{} {
-	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
+	// "resetpass" because ">pw" appends: a writer still holding a secret an
+	// operator just revoked would otherwise leave that password live for good.
+	// Same in the shipper and link builders.
+	rules := []interface{}{"on", "resetpass", ">" + password, "resetkeys", "resetchannels"}
 	rules = append(rules, "~dylaris:node:"+token+":*", "~dylaris:discovery:"+token, "~beam:node-endpoint:"+token)
 	// The node's own error stream, read by the panel via
 	// services.ErrorStreamServices. Scoped to this node's token exactly like the
@@ -279,7 +282,7 @@ func BuildNodeACLRules(token, password string, serverUUIDs []string) []interface
 // one user holding ~dylaris:server:<u>:* for every server on the machine, where
 // dylaris:server:<u>:input is a stdin bridge into a neighbouring tenant's JVM.
 func BuildShipperACLRules(password, serverUUID string) []interface{} {
-	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
+	rules := []interface{}{"on", "resetpass", ">" + password, "resetkeys", "resetchannels"}
 	// The six keys the shipper touches, enumerated rather than wildcarded.
 	//
 	// This credential lives in the MC container's ENVIRONMENT, and that container
@@ -328,7 +331,7 @@ func BuildShipperACLRules(password, serverUUID string) []interface{} {
 // server keys. tunnelToken = DeriveLinkToken(nodeToken, clusterSecret) (the Link's
 // AgentSecret, the exact value it writes link:<tunnelToken> under).
 func BuildLinkACLRules(password, nodeToken, tunnelToken string) []interface{} {
-	rules := []interface{}{"on", ">" + password, "resetkeys", "resetchannels"}
+	rules := []interface{}{"on", "resetpass", ">" + password, "resetkeys", "resetchannels"}
 	rules = append(rules,
 		"~link:"+tunnelToken,
 		"~online_link:"+tunnelToken,

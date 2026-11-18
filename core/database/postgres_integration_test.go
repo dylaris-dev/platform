@@ -436,8 +436,17 @@ func TestIntegrationStaleNodeSweepSparesNodesThatCannotRePair(t *testing.T) {
 		t.Errorf("GetNodeEnrolledVia on an unmarked row = (%q, %v), want empty", via, err)
 	}
 
-	if _, err := st.DeleteStaleOfflineNodes(time.Now().Add(-24 * time.Hour)); err != nil {
+	swept, err := st.DeleteStaleOfflineNodes(time.Now().Add(-24 * time.Hour))
+	if err != nil {
 		t.Fatalf("DeleteStaleOfflineNodes: %v", err)
+	}
+	// The tokens are what the caller tears the Redis state down by.
+	found := false
+	for _, tok := range swept {
+		found = found || tok == clusterMinted.Token
+	}
+	if !found {
+		t.Errorf("swept tokens %v do not name the deleted cluster-proof node %q", swept, clusterMinted.Token)
 	}
 
 	if got, err := st.GetNodeByID(byon.ID); err != nil || got == nil {

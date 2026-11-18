@@ -76,13 +76,36 @@ func (h *Handshake) ensure(ctx context.Context, nodeID int, token string) (strin
 	if err != nil {
 		return "", err
 	}
+	if err := h.apply(ctx, nodeID, token, secret); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(secret), nil
+}
+
+// apply provisions the node's ACL users from the assigned servers.
+func (h *Handshake) apply(ctx context.Context, nodeID int, token string, secret []byte) error {
 	uuids, err := h.store.ServerUUIDsByNode(nodeID)
+	if err != nil {
+		return err
+	}
+	return h.prov.EnsureNodeACL(ctx, token, LinkTunnelToken(token, h.clusterSecret), secret, uuids)
+}
+
+// enrolled mints the secret of a node row an enrolment just created and
+// provisions its ACL best-effort.
+//
+// Only the mint can fail the enrolment. Once the row exists (and a BYON token is
+// spent), refusing over an ACL error stranded a row whose id the node never
+// learned: a tenant's token was gone for good, and a cluster-proof node minted a
+// fresh row on every retry. The ACL reconciler re-applies it from the stored
+// secret within a minute, and so does the node's next connect.
+func (h *Handshake) enrolled(ctx context.Context, nodeID int, token string) (string, error) {
+	secret, err := LoadOrCreateNodeSecret(h.store, h.clusterSecret, nodeID)
 	if err != nil {
 		return "", err
 	}
-	tunnelToken := LinkTunnelToken(token, h.clusterSecret)
-	if err := h.prov.EnsureNodeACL(ctx, token, tunnelToken, secret, uuids); err != nil {
-		return "", err
+	if err := h.apply(ctx, nodeID, token, secret); err != nil {
+		log.Printf("redisacl: node %d enrolled, but its ACL was not provisioned yet (the reconciler retries): %v", nodeID, err)
 	}
 	return hex.EncodeToString(secret), nil
 }
@@ -94,14 +117,23 @@ func (h *Handshake) EnsureExisting(ctx context.Context, nodeID int, token string
 }
 
 // EnsureForToken re-applies the ACL for the node identified by its token. A no-op
-// (nil) for an unknown token — nothing to provision yet.
+// (nil) for an unknown token or a node with no stored secret — nothing to
+// provision yet.
+//
+// It never mints. A secret an operator just cleared (Reset pairing, Roll key)
+// minted here was a secret nobody held, and it sent the node's next connect into
+// the secret challenge it could only fail, instead of the re-pair path. Only the
+// handshake mints.
 func (h *Handshake) EnsureForToken(ctx context.Context, token string) error {
 	id, ok, err := h.store.NodeIDByToken(token)
 	if err != nil || !ok {
 		return err
 	}
-	_, err = h.ensure(ctx, id, token)
-	return err
+	secret, ok, err := LoadNodeSecret(h.store, h.clusterSecret, id)
+	if err != nil || !ok {
+		return err
+	}
+	return h.apply(ctx, id, token, secret)
 }
 
 // Enroll creates the node row an enroll token was minted for, with a
@@ -175,7 +207,7 @@ func (h *Handshake) Enroll(ctx context.Context, token, enrollToken, address stri
 	} else if bound {
 		log.Printf("redisacl: node %d enrolled; its overlay key is bound for a kit-run Link", id)
 	}
-	secretHex, err := h.ensure(ctx, id, assignedID)
+	secretHex, err := h.enrolled(ctx, id, assignedID)
 	return assignedID, id, secretHex, !platform, err
 }
 
@@ -193,7 +225,7 @@ func (h *Handshake) EnrollPlatform(ctx context.Context, token, address string) (
 	if err != nil {
 		return "", 0, "", err
 	}
-	secretHex, err := h.ensure(ctx, id, assignedID)
+	secretHex, err := h.enrolled(ctx, id, assignedID)
 	return assignedID, id, secretHex, err
 }
 

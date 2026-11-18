@@ -1317,6 +1317,13 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
 		return
 	}
+	// For its region: servers.region is what the beam relay pick and the
+	// rebalancer's region fence read, and an empty one is stored as 'default'.
+	node, err := h.d.Store.GetNodeByID(req.NodeID)
+	if err != nil || node == nil {
+		httpx.SendJSONError(w, "Node not found", http.StatusNotFound)
+		return
+	}
 	// Exactly one owner source must be provided.
 	if req.OwnerUserID == nil && req.NewUser == nil {
 		httpx.SendJSONError(w, "exactly one of owner_user_id or new_user must be set", 400)
@@ -1437,6 +1444,7 @@ func (h *NodeHandler) AssignOrphan(w http.ResponseWriter, r *http.Request) {
 		Status:          "stopped",
 		ActiveSubServer: activeSubServer,
 		ServerType:      "game",
+		Region:          node.Region,
 	}
 
 	newID, err := h.d.Store.CreateServer(srv)
