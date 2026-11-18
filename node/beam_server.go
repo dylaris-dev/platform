@@ -119,6 +119,10 @@ type uploadClaim struct {
 	charged int64  // how much of the temp was charged to the quota and gauge
 	refs    int
 	left    time.Time // when the last stream let go of a temp it left charged
+	// handoff charges what the owner wrote, up to size, and releases its
+	// reservations. Set while a live owner holds them; a resume taking over
+	// runs it, or its need counted next to the owner's whole reservation.
+	handoff func(ctx context.Context, size int64)
 }
 
 var uploadStreamSeq atomic.Uint64
@@ -135,7 +139,10 @@ const keptClaimFor = time.Hour
 //
 // ponytail: in memory, so a node restart forgets it and a resume across the
 // restart is charged again for what it had; a Redis record if that matters.
-func (s *beamServer) claimUploadTemp(root *os.Root, key, name string, me uint64) (*uploadClaim, int64) {
+//
+// A live owner's handoff is returned for the caller to run before it reserves;
+// the temp's size then counts as charged.
+func (s *beamServer) claimUploadTemp(root *os.Root, key, name string, me uint64) (*uploadClaim, int64, func(context.Context)) {
 	s.tempsMu.Lock()
 	defer s.tempsMu.Unlock()
 	var size int64
@@ -157,7 +164,13 @@ func (s *beamServer) claimUploadTemp(root *os.Root, key, name string, me uint64)
 	}
 	c.refs++
 	c.owner = me
-	return c, min(c.charged, size)
+	var take func(context.Context)
+	if h := c.handoff; h != nil {
+		c.handoff = nil
+		c.charged = size
+		take = func(ctx context.Context) { h(ctx, size) }
+	}
+	return c, min(c.charged, size), take
 }
 
 // uploadTempHeld reports whether a stream holds the temp under key.
@@ -179,6 +192,7 @@ func (s *beamServer) releaseUploadTemp(key string, c *uploadClaim, me uint64) {
 	defer s.tempsMu.Unlock()
 	if c.owner == me {
 		c.owner = 0
+		c.handoff = nil
 	}
 	if c.refs--; c.refs == 0 {
 		if c.charged == 0 {
@@ -1502,6 +1516,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			if info, err := tmpFile.Stat(); err == nil && claim.owner == me {
 				add = info.Size() - resumedAt
 				claim.charged = info.Size()
+				claim.handoff = nil // charged here; a takeover must not charge it again
 			}
 			s.tempsMu.Unlock()
 			if add > 0 {
@@ -1585,9 +1600,13 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			if uploadID != "" {
 				tmpName = path.Join(path.Dir(destName), ".beam-upload-"+uploadID)
 				key := tempKey(tmpName)
-				claim, resumedAt = s.claimUploadTemp(upRoot, key, tmpName, me)
+				var take func(context.Context)
+				claim, resumedAt, take = s.claimUploadTemp(upRoot, key, tmpName, me)
 				c := claim
 				releaseTemp = func() { s.releaseUploadTemp(key, c, me) }
+				if take != nil {
+					take(context.WithoutCancel(ctx))
+				}
 			}
 			need := max(p.Start.TotalSize-resumedAt, 0)
 
@@ -1606,12 +1625,14 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// in progress have claimed: the server's limit alone does not stop
 			// a node from filling for every tenant on it.
 			budget := nodeWriteBudget(s.storageMgr.GetServerDir(serverUUID))
+			var budgetOnce sync.Once
+			releaseLanded := func(landed int64) { budgetOnce.Do(func() { budget.releaseWritten(landed) }) }
 			releaseBudget = func() {
 				landed := max(have-resumedAt, 0)
 				if tempGone {
 					landed = 0
 				}
-				budget.releaseWritten(landed)
+				releaseLanded(landed)
 			}
 			if !budget.spend(need) {
 				return status.Errorf(codes.ResourceExhausted, "not enough free space on the node for an upload of %d bytes", need)
@@ -1670,10 +1691,28 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				tmpName = name
 				// Claimed too: an upload id may spell this random name.
 				key := tempKey(tmpName)
-				claim, _ = s.claimUploadTemp(upRoot, key, tmpName, me)
+				claim, _, _ = s.claimUploadTemp(upRoot, key, tmpName, me)
 				c := claim
 				releaseTemp = func() { s.releaseUploadTemp(key, c, me) }
 			}
+
+			// From here this stream holds its reservations; a resume on another
+			// connection takes them over instead of reserving beside them.
+			relServer, relUser, from := releaseServer, releaseUser, resumedAt
+			s.tempsMu.Lock()
+			if claim.owner == me {
+				claim.handoff = func(ctx context.Context, size int64) {
+					add := max(size-from, 0)
+					if add > 0 {
+						s.recordBeamDailyUsage(ctx, username, add)
+						noteDiskWrite(ctx, s.rdb, serverUUID, add)
+					}
+					relServer()
+					relUser()
+					releaseLanded(add)
+				}
+			}
+			s.tempsMu.Unlock()
 
 		case *pb.BeamUploadMsg_Chunk:
 			if tmpFile == nil {
@@ -1743,6 +1782,7 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		err := upRoot.Rename(tmpName, destName)
 		if err == nil {
 			claim.charged = 0 // the temp is gone; nothing is left to resume
+			claim.handoff = nil
 		}
 		s.tempsMu.Unlock()
 		if err != nil {

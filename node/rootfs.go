@@ -769,13 +769,14 @@ func (b *writeBudget) release() {
 		// Into the noted count before out of the in-flight one, as an SFTP or
 		// Beam close does: an open SFTP handle reads both, and a finished copy
 		// in neither let it write the copy's size again past the limit.
+		// Out of the in-flight count only after the remeasure published the
+		// gauge: the Beam checks read the gauge and the in-flight count, and
+		// during the walk the copy was in neither.
 		if !b.gauged && b.used > 0 {
 			notedFor(b.uuid).Add(b.used)
-		}
-		b.srv.Add(-b.used)
-		if !b.gauged && b.used > 0 {
 			remeasureServer(b.uuid)
 		}
+		b.srv.Add(-b.used)
 	}
 	b.used = 0
 }
