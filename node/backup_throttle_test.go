@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -590,5 +591,65 @@ func TestARemovedSpoolGivesItsLandedBytesBack(t *testing.T) {
 	b.releaseWritten(0)
 	if gi, li := writesOn("").inflight.Load(), writesOn("").landed.Load(); gi != g || li != l {
 		t.Fatalf("inflight %d landed %d, want %d %d", gi, li, g, l)
+	}
+}
+
+// A spooled archive is uploaded from the spool file, outside the server tree,
+// with saving already back on: holding the server-wide interlock through that
+// paced upload refused restores, reinstalls, storage moves and the memory
+// guard's save-all for hours. Without the spool the tree is read while it
+// uploads, so the interlock must hold to the end.
+func TestRunBackupSpoolReleasesTheServerDuringUpload(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		spool      bool
+		wantServer bool
+	}{
+		{"spooled", true, false},
+		{"direct", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spool := t.TempDir()
+			prevDir, prevPause, prevPolicy := globalSpoolDir, pauseSaves, backupPolicyNow.Load()
+			t.Cleanup(func() {
+				globalSpoolDir, pauseSaves = prevDir, prevPause
+				backupPolicyNow.Store(prevPolicy)
+			})
+			globalSpoolDir = spool
+			backupPolicyNow.Store(&backupPolicy{HeadroomPct: i64(30), SpoolEnabled: tc.spool, SpoolMaxGB: 1})
+			pauseSaves = func(_ context.Context, _ *redis.Client, _ *DockerManager, uuid, _ string) *worldSaveGuard {
+				return &worldSaveGuard{uuid: uuid, send: func(string) error { return nil }}
+			}
+
+			core := newFakeCore(t, 1024)
+			var mu sync.Mutex
+			seen := false
+			serverHeld, runHeld := false, false
+			core.bucket.fail = func(int32, string) int {
+				mu.Lock()
+				defer mu.Unlock()
+				if !seen {
+					seen = true
+					serverHeld = backupsInFlight.has("server:srv-f3-0001")
+					runHeld = backupsInFlight.has("77")
+				}
+				return 0
+			}
+			if report := runBackupWithFakeCore(t, core, nil); report["status"] != "success" {
+				t.Fatalf("report = %v, want success", report)
+			}
+			if !seen {
+				t.Fatal("no part was uploaded")
+			}
+			if serverHeld != tc.wantServer {
+				t.Errorf("server interlock held during upload = %v, want %v", serverHeld, tc.wantServer)
+			}
+			if !runHeld {
+				t.Error("the run's own key was released during upload; a redelivery would run it twice")
+			}
+			if backupsInFlight.has("server:srv-f3-0001") || backupsInFlight.has("77") {
+				t.Error("a key is still held after the run ended")
+			}
+		})
 	}
 }

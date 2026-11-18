@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -409,7 +410,11 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		reportBackup(ctx, rdb, cmd.RunID, "failed", reason, 0)
 		return
 	}
-	defer backupsInFlight.leave(serverKey)
+	// Once, so the early release after spooling cannot drop the key of a later
+	// backup of this server that entered after it.
+	var leaveServer sync.Once
+	releaseServer := func() { leaveServer.Do(func() { backupsInFlight.leave(serverKey) }) }
+	defer releaseServer()
 
 	started := time.Now()
 	storage := storageInfo{}
@@ -539,6 +544,12 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 			// upload takes as long as the players need it to.
 			saves.resume()
 			pacer.savesResumed()
+			// The tree walk and the save-off window are what the server-wide
+			// interlock guards, and both are over: the upload reads only the spool
+			// file, outside the server tree. Holding it for the paced upload
+			// refused restores, tree changes and the memory guard's save-all for
+			// hours. The run's own key stays held against a redelivery.
+			releaseServer()
 			log.Printf("backup %d: archive spooled (%.2f MB), saving resumed, uploading", cmd.RunID, float64(counter.Total())/1024/1024)
 			src = f
 		}

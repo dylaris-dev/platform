@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -167,6 +168,35 @@ func runRestoreCleanup(sm *StorageManager) {
 					age = at
 				}
 			}
+			if m := preRestoreStash.FindString(base); m != "" {
+				// A node killed between the swap's two renames leaves the stash
+				// (the original world and, for a whole server, its node-local
+				// archives) next to the restore's stage, with nothing at the
+				// target's name. Put the stash back, so the redelivered restore
+				// finds the server and its archive again; never delete it on the
+				// TTL. Without a stage the target was deleted after the swap, and
+				// the stash keeps its normal TTL rather than bring that back.
+				target := strings.TrimSuffix(path, m)
+				if _, err := os.Lstat(target); errors.Is(err, os.ErrNotExist) && hasStageOf(target) {
+					rel, _ := filepath.Rel(root, target)
+					uuid := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]
+					if !serverDeleted(uuid) {
+						// Not while a restore of the server runs here (it may be
+						// inside that window right now), nor on storage another
+						// node uses.
+						if !restoreServersInFlight.has(uuid) && !sharedWithAnotherNode(root) {
+							if err := os.Rename(path, target); err == nil {
+								log.Printf("restore-cleanup: %s was missing after an interrupted restore, moved its pre-restore stash back", target)
+								return filepath.SkipDir
+							}
+						}
+						if age.Before(cutoff) {
+							keepStash(0, path)
+							return filepath.SkipDir
+						}
+					}
+				}
+			}
 			if age.Before(cutoff) {
 				log.Printf("restore-cleanup: removing %s %s (age %v)", label, path, now.Sub(age).Round(time.Minute))
 				if err := os.RemoveAll(path); err == nil {
@@ -207,6 +237,21 @@ func depthBelow(root, path string) int {
 		return 0
 	}
 	return strings.Count(filepath.ToSlash(rel), "/") + 1
+}
+
+// hasStageOf reports whether a restore staging dir of target sits next to it.
+func hasStageOf(target string) bool {
+	entries, err := os.ReadDir(filepath.Dir(target))
+	if err != nil {
+		return false
+	}
+	prefix := filepath.Base(target) + stageDirInfix
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), prefix) && restoreStage.MatchString(e.Name()) {
+			return true
+		}
+	}
+	return false
 }
 
 // releaseStageDir ends dir's place in ownStages, once the restore that made it

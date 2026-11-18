@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -97,6 +98,68 @@ func TestAPreRestoreStashAgesFromItsName(t *testing.T) {
 			_, err := os.Stat(dir)
 			if kept := err == nil; kept != tt.wantKept {
 				t.Fatalf("kept=%v, want %v (stat err %v)", kept, tt.wantKept, err)
+			}
+		})
+	}
+}
+
+// A node killed between the swap's two renames leaves "<target>.pre-restore-*"
+// (the original world) and a dead stage, with nothing at <target>. The sweep
+// removed the stage on sight and the stash a day later: both copies gone. The
+// stash must be put back instead, whatever its age, unless a restore of that
+// server is running here and may be inside that window right now. Without a
+// stage the target was deleted after a finished swap and must not come back.
+func TestRestoreCleanupPutsBackAStashWhoseTargetIsMissing(t *testing.T) {
+	stamp := func(at time.Time) string { return at.UTC().Format("20060102-150405") }
+	tests := []struct {
+		name      string
+		target    string // relative to the root
+		stashedAt time.Time
+		noStage   bool // the target was deleted after a finished swap
+		running   bool
+		wantBack  bool
+	}{
+		{"whole server fresh", "srv-a", time.Now(), false, false, true},
+		{"sub-server fresh", filepath.Join("srv-b", "survival"), time.Now(), false, false, true},
+		{"whole server past the TTL", "srv-c", time.Now().Add(-48 * time.Hour), false, false, true},
+		{"a restore of it is running", "srv-d", time.Now(), false, true, false},
+		{"no stage deleted after the swap", filepath.Join("srv-e", "survival"), time.Now(), true, false, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sm, _ := newPlacementManager(t, 1)
+			root := sm.Paths()[0]
+			target := filepath.Join(root, tc.target)
+			stash := target + ".pre-restore-" + stamp(tc.stashedAt)
+			stage := target + stageDirInfix + "42" + stageDirSuffix
+			dirs := []string{stash, stage}
+			if tc.noStage {
+				dirs = dirs[:1]
+			}
+			for _, d := range dirs {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(stash, "level.dat"), []byte("original"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			uuid := strings.SplitN(filepath.ToSlash(tc.target), "/", 2)[0]
+			if tc.running {
+				restoreServersInFlight.enter(uuid)
+				defer restoreServersInFlight.leave(uuid)
+			}
+
+			runRestoreCleanup(sm)
+
+			b, err := os.ReadFile(filepath.Join(target, "level.dat"))
+			if back := err == nil && string(b) == "original"; back != tc.wantBack {
+				t.Fatalf("original world back at its name = %v, want %v (err %v)", back, tc.wantBack, err)
+			}
+			if !tc.wantBack {
+				if _, err := os.Stat(stash); err != nil {
+					t.Fatalf("stash of a running restore was touched: %v", err)
+				}
 			}
 		})
 	}
