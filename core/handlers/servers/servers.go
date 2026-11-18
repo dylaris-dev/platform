@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"dylaris-core/authz"
 	"dylaris-core/handlers/access"
 	"dylaris-core/handlers/gate"
 	"dylaris-core/handlers/httpx"
@@ -334,7 +335,7 @@ func (h *ServerHandler) GetServers(w http.ResponseWriter, r *http.Request) {
 	// never resolves. Costs nothing when no server is installing.
 	nodeops.AnnotateStalledInstallsFor(r.Context(), h.d.Redis, h.d.GRPCRegistry, servers)
 
-	access.RedactNodeAddress(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, servers, isAdmin, userID)
+	access.RedactNodeAddress(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, access.SFTPAccess(h.d.Authz, authz.Identity{UserID: userID, Username: username}), servers, isAdmin, userID)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,

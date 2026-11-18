@@ -1,6 +1,7 @@
 package access
 
 import (
+	"dylaris-core/authz"
 	"dylaris-core/models"
 	"dylaris-core/store"
 )
@@ -24,7 +25,9 @@ import (
 // Kept where it is genuinely needed:
 //   - an admin, who administers the machines anyway;
 //   - routing that is not the gateway, where the address IS how players connect;
-//   - SFTP file access, where it is the host the customer types;
+//   - SFTP file access, where it is the host the customer types - per server,
+//     for a caller holding sftp.access there (mayUseSFTP, nil = nobody), and
+//     never on an external node;
 //   - a node the caller owns, which is their own machine.
 //
 // hostPort is deliberately left alone: without an address it names nothing, and
@@ -33,20 +36,23 @@ import (
 // gatewayEnabled is the platform's routing-mode check, passed in rather than
 // read here so the one definition (services.GatewayRoutingEnabled) stays the only
 // one; it is asked only after the cheap early returns, as before.
-func RedactNodeAddress(st store.Store, gatewayEnabled func() bool, servers []models.Server, isAdmin bool, userID string) {
+func RedactNodeAddress(st store.Store, gatewayEnabled func() bool, mayUseSFTP func(serverID int) bool, servers []models.Server, isAdmin bool, userID string) {
 	if st == nil || len(servers) == 0 || isAdmin {
 		return
 	}
 	if !gatewayEnabled() {
 		return
 	}
-	if mode, _ := st.GetSetting("file_access_mode"); mode == "sftp" || mode == "both" {
-		return
-	}
+	// The file mode is platform-wide, so it alone said nothing about THIS
+	// caller: a console-only guest or a demo viewer got the address too. It is
+	// kept per row for the caller who may use SFTP there, on a node SFTP serves.
+	mode, _ := st.GetSetting("file_access_mode")
+	sftpMode := (mode == "sftp" || mode == "both") && mayUseSFTP != nil
 	// A list row carries its node's owner from the list query
 	// (NodeOwnerLoaded); any other row costs one lookup per node rather than
 	// per server, since a list is usually several servers on one machine.
 	ownNode := map[int]bool{}
+	sftpNode := map[int]bool{}
 	for i := range servers {
 		id := servers[i].NodeID
 		own, seen := ownNode[id]
@@ -59,21 +65,56 @@ func RedactNodeAddress(st store.Store, gatewayEnabled func() bool, servers []mod
 			own = err == nil && node != nil && node.OwnerID != nil && *node.OwnerID == userID && userID != ""
 			ownNode[id] = own
 		}
-		if !own {
-			servers[i].NodeAddress = ""
+		if own {
+			continue
 		}
+		if sftpMode && mayUseSFTP(servers[i].ID) {
+			// External nodes never serve SFTP, the same rule GetSftpCredentials
+			// applies; an unreadable node is withheld.
+			serves, known := sftpNode[id]
+			if !known {
+				node, err := st.GetNodeByID(id)
+				serves = err == nil && node != nil && !node.IsExternal()
+				sftpNode[id] = serves
+			}
+			if serves {
+				continue
+			}
+		}
+		servers[i].NodeAddress = ""
 	}
 }
 
 // RedactNodeAddressOne is RedactNodeAddress for a single server.
-func RedactNodeAddressOne(st store.Store, gatewayEnabled func() bool, srv *models.Server, isAdmin bool, userID string) {
+func RedactNodeAddressOne(st store.Store, gatewayEnabled func() bool, mayUseSFTP func(serverID int) bool, srv *models.Server, isAdmin bool, userID string) {
 	if srv == nil {
 		return
 	}
 	one := []models.Server{*srv}
-	RedactNodeAddress(st, gatewayEnabled, one, isAdmin, userID)
+	RedactNodeAddress(st, gatewayEnabled, mayUseSFTP, one, isAdmin, userID)
 	srv.NodeAddress = one[0].NodeAddress
 }
+
+// SFTPAccess is RedactNodeAddress's mayUseSFTP from the resolver: whether the
+// caller holds sftp.access on a server, resolved once per server. nil without a
+// resolver, which keeps the address from nobody but admins and node owners.
+func SFTPAccess(az *authz.Resolver, id authz.Identity) func(serverID int) bool {
+	if az == nil {
+		return nil
+	}
+	seen := map[int]bool{}
+	return func(serverID int) bool {
+		ok, done := seen[serverID]
+		if !done {
+			res, err := az.Resolve(id, serverID)
+			ok = err == nil && res != nil && res.HasCap(sftpAccessCap)
+			seen[serverID] = ok
+		}
+		return ok
+	}
+}
+
+const sftpAccessCap = "sftp.access"
 
 // SettingsFieldsCap governs the server fields only the Setup view needs.
 const SettingsFieldsCap = "server.settings.write"

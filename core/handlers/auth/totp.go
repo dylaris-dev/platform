@@ -82,6 +82,13 @@ const (
 
 func wrongCodeKey(userID string) string { return "auth:2fa_wrong:" + userID }
 
+// Re-authentication's password check is limited per account the same way. It
+// guards the actions that make a borrowed session durable, and the session it
+// is asked over is exactly what such an attacker already holds.
+const wrongPasswordReauthLimit = 10
+
+func wrongPasswordReauthKey(userID string) string { return "auth:reauth_pw_wrong:" + userID }
+
 // codeCheckFailed answers a code check that could not be made.
 func codeCheckFailed(w http.ResponseWriter, err error) {
 	if errors.Is(err, reauth.ErrTooManyCodes) {
@@ -534,8 +541,18 @@ func verifyTOTPOrBackupFor(d Deps, user *models.User, code string) (bool, error)
 // backup-code store and the identity audit, none of which belong to the
 // reauth package.
 func ReauthCodeVerifier(d Deps) reauth.CodeVerifier {
-	return func(user *models.User, code string) (bool, error) {
-		return verifyTOTPOrBackupWith(d, user, code, false)
+	return reauth.CodeVerifier{
+		Code: func(user *models.User, code string) (bool, error) {
+			return verifyTOTPOrBackupWith(d, user, code, false)
+		},
+		ReservePassword: func(userID string) bool {
+			return reserveAttempt(context.Background(), d, wrongPasswordReauthKey(userID), wrongPasswordReauthLimit, wrongCodeWindow)
+		},
+		ClearPassword: func(userID string) {
+			if d.Redis != nil {
+				d.Redis.Del(context.Background(), wrongPasswordReauthKey(userID))
+			}
+		},
 	}
 }
 

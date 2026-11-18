@@ -65,14 +65,14 @@ func TestRedactNodeAddressAsksTheRoutingModeLast(t *testing.T) {
 	st := &handlertest.SettingsStore{KV: map[string]string{}}
 	servers := []models.Server{{NodeID: 1, NodeAddress: "203.0.113.5"}}
 
-	RedactNodeAddress(nil, gw, servers, false, "u1")
-	RedactNodeAddress(st, gw, nil, false, "u1")
-	RedactNodeAddress(st, gw, servers, true, "u1")
+	RedactNodeAddress(nil, gw, nil, servers, false, "u1")
+	RedactNodeAddress(st, gw, nil, nil, false, "u1")
+	RedactNodeAddress(st, gw, nil, servers, true, "u1")
 	if asked != 0 || servers[0].NodeAddress == "" {
 		t.Fatalf("asked %d times, address %q", asked, servers[0].NodeAddress)
 	}
 	ownStore := &nodeStore{SettingsStore: st}
-	RedactNodeAddress(ownStore, gw, servers, false, "u1")
+	RedactNodeAddress(ownStore, gw, nil, servers, false, "u1")
 	if asked != 1 || servers[0].NodeAddress != "" {
 		t.Fatalf("asked %d times, address %q", asked, servers[0].NodeAddress)
 	}

@@ -48,10 +48,23 @@ type ReauthError struct {
 
 func (e *ReauthError) Error() string { return e.message }
 
-// CodeVerifier checks a second-factor code (TOTP or backup code) for user.
-// The check itself, with its replay and wrong-code limits and the backup-code
-// audit, lives with the login; ErrTooManyCodes is its over-the-limit answer.
-type CodeVerifier func(user *models.User, code string) (bool, error)
+// CodeVerifier holds the credential checks that live with the login.
+//
+// Code checks a second-factor code (TOTP or backup code) for user, with its
+// replay and wrong-code limits and the backup-code audit; ErrTooManyCodes is
+// its over-the-limit answer.
+//
+// ReservePassword counts a password check against userID BEFORE it runs and
+// reports whether it is within the per-account limit; ClearPassword resets the
+// count after a right password. They are here rather than at the call sites
+// so no route behind RequireReauth can forget them: without them a borrowed
+// admin session could guess the admin's password over and over. nil means no
+// limit.
+type CodeVerifier struct {
+	Code            func(user *models.User, code string) (bool, error)
+	ReservePassword func(userID string) bool
+	ClearPassword   func(userID string)
+}
 
 // ErrTooManyCodes is a CodeVerifier refusing to check a code because the
 // account is over the wrong-code limit.
@@ -77,8 +90,14 @@ func RequireReauth(st store.Store, verify CodeVerifier, userID, password, code s
 	if err != nil || user == nil {
 		return &ReauthError{http.StatusUnauthorized, "Unauthorized"}
 	}
+	if verify.ReservePassword != nil && !verify.ReservePassword(user.ID) {
+		return &ReauthError{http.StatusTooManyRequests, "Too many wrong passwords. Try again in 15 minutes."}
+	}
 	if bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)) != nil {
 		return &ReauthError{http.StatusUnauthorized, "Your password is not correct"}
+	}
+	if verify.ClearPassword != nil {
+		verify.ClearPassword(user.ID)
 	}
 	if !user.Is2FAEnabled {
 		return nil
@@ -86,7 +105,7 @@ func RequireReauth(st store.Store, verify CodeVerifier, userID, password, code s
 	// Without spending the step - see verifyTOTPOrBackupWith. A save that makes
 	// two writes asks once, and the replay this protects against is the one at
 	// the login endpoint, which nobody reaches with a session they already have.
-	ok, verr := verify(user, code)
+	ok, verr := verify.Code(user, code)
 	if errors.Is(verr, ErrTooManyCodes) {
 		return &ReauthError{http.StatusTooManyRequests, "Too many wrong codes. Try again in 15 minutes."}
 	}

@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -154,7 +156,7 @@ func TestReauthFailsClosedWhenTheUserCannotBeLoaded(t *testing.T) {
 	if err := reauth.RequireReauth(state.Store, ReauthCodeVerifier(state), "u1", "anything", ""); err == nil {
 		t.Fatal("a failed user lookup was treated as a successful re-authentication")
 	}
-	if err := reauth.RequireReauth(nil, nil, "u1", "anything", ""); err == nil {
+	if err := reauth.RequireReauth(nil, reauth.CodeVerifier{}, "u1", "anything", ""); err == nil {
 		t.Fatal("a nil state was treated as a successful re-authentication")
 	}
 }
@@ -184,5 +186,43 @@ func TestOneReauthCodeCoversTwoWritesButNotTwoLogins(t *testing.T) {
 	}
 	if ok, _ := verifyTOTPOrBackupFor(state, u, code); ok {
 		t.Fatal("the login accepted the same code twice")
+	}
+}
+
+// A borrowed admin session must not be able to guess the admin's password
+// through re-authentication: every route behind RequireAdminReauth (and the
+// self-service RequireReauth) checks it, and nothing counted the misses. The
+// limit is per ACCOUNT in Redis, so moving between addresses or replicas does
+// not reset it; a right password clears it, so an admin saving often is never
+// refused.
+func TestReauthPasswordGuessesAreLimitedPerAccount(t *testing.T) {
+	u := &models.User{ID: "u1", Password: hashFor(t, "correct horse")}
+	state, _ := reauthState(t, u)
+	state.Redis, _ = handlertest.Redis(t)
+	try := func(pw string) int {
+		r := httptest.NewRequest(http.MethodPut, "/", nil)
+		r = r.WithContext(context.WithValue(r.Context(), "userID", "u1"))
+		rec := httptest.NewRecorder()
+		body := reauth.AdminReauthRequest{Reauth: reauth.ReauthFields{Password: pw}}
+		if reauth.RequireAdminReauth(rec, r, state.Store, ReauthCodeVerifier(state), body) {
+			return 0
+		}
+		return rec.Code
+	}
+
+	for i := range 3 * wrongPasswordReauthLimit {
+		if got := try("correct horse"); got != 0 {
+			t.Fatalf("right password %d refused with %d", i+1, got)
+		}
+	}
+	for i := range wrongPasswordReauthLimit {
+		if got := try("guess"); got != http.StatusUnauthorized {
+			t.Fatalf("wrong password %d answered %d, want 401", i+1, got)
+		}
+	}
+	for _, pw := range []string{"guess", "correct horse"} {
+		if got := try(pw); got != http.StatusTooManyRequests {
+			t.Fatalf("past the limit %q answered %d, want 429", pw, got)
+		}
 	}
 }

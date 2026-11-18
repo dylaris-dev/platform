@@ -394,8 +394,8 @@ func (h *BeamHandler) GetBeamTicket(w http.ResponseWriter, r *http.Request) {
 	// a member asking during a relay deploy got the node's public address, the
 	// one the server list hides from them. The same rule decides here, so an
 	// admin or the node's own owner keeps the direct path.
-	probe := models.Server{NodeID: server.NodeID, NodeAddress: nodePublicIP}
-	access.RedactNodeAddressOne(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, &probe, isAdmin, userID)
+	probe := models.Server{ID: server.ID, NodeID: server.NodeID, NodeAddress: nodePublicIP}
+	access.RedactNodeAddressOne(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, access.SFTPAccess(h.d.Authz, authz.Identity{UserID: userID, IsAdmin: isAdmin}), &probe, isAdmin, userID)
 	nodePublicIP = probe.NodeAddress
 	directHints := buildBeamDirectHints(relayAddr, nodePrivateIPs, nodePublicIP, beamLANPort, directFingerprint)
 

@@ -39,7 +39,7 @@ func TestTheAdminReauthAnswersAsBeforeTheMove(t *testing.T) {
 	twoFA := &models.User{ID: "a1", Password: string(hash), Is2FAEnabled: true}
 	called := 0
 	verify := func(ok bool, err error) CodeVerifier {
-		return func(*models.User, string) (bool, error) { called++; return ok, err }
+		return CodeVerifier{Code: func(*models.User, string) (bool, error) { called++; return ok, err }}
 	}
 	req := func(actor string) *http.Request {
 		r := httptest.NewRequest(http.MethodPut, "/", nil)
@@ -63,6 +63,7 @@ func TestTheAdminReauthAnswersAsBeforeTheMove(t *testing.T) {
 		{"no store", "a1", nil, verify(true, nil), "pw", http.StatusServiceUnavailable, true, 0},
 		{"unknown actor", "a1", userStore{}, verify(true, nil), "pw", http.StatusUnauthorized, true, 0},
 		{"wrong password", "a1", userStore{user: plain}, verify(true, nil), "nope", http.StatusUnauthorized, true, 0},
+		{"over the password limit, even the right one", "a1", userStore{user: plain}, CodeVerifier{ReservePassword: func(string) bool { return false }}, "pw", http.StatusTooManyRequests, true, 0},
 		{"no 2FA: the password is the credential", "a1", userStore{user: plain}, verify(false, nil), "pw", 0, false, 0},
 		{"2FA, right code", "a1", userStore{user: twoFA}, verify(true, nil), "pw", 0, false, 1},
 		{"2FA, wrong code", "a1", userStore{user: twoFA}, verify(false, nil), "pw", http.StatusUnauthorized, true, 1},

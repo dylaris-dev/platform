@@ -254,7 +254,7 @@ func (h *APIKeysHandler) ListExternalServers(w http.ResponseWriter, r *http.Requ
 			out = append(out, s)
 		}
 	}
-	access.RedactNodeAddress(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, out, owner.IsAdmin, ownerID)
+	access.RedactNodeAddress(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, access.SFTPAccess(h.d.Authz, authz.Identity{UserID: ownerID, Username: owner.Username}), out, owner.IsAdmin, ownerID)
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "servers": out})
 }
 
@@ -270,7 +270,7 @@ func (h *APIKeysHandler) GetExternalServer(w http.ResponseWriter, r *http.Reques
 	ownerID := APIKeyCallerID(r)
 	owner, oerr := h.d.Store.GetUserByID(ownerID)
 	isAdmin := oerr == nil && owner != nil && owner.IsAdmin
-	access.RedactNodeAddressOne(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, srv, isAdmin, ownerID)
+	access.RedactNodeAddressOne(h.d.Store, func() bool { return services.GatewayRoutingEnabled(h.d.Store) }, access.SFTPAccess(h.d.Authz, authz.Identity{UserID: ownerID, IsAdmin: isAdmin}), srv, isAdmin, ownerID)
 	// Not short-cut on isAdmin: on a customer's machine the resolver treats an
 	// admin as a guest with whatever the owner granted.
 	if srv.OwnerID != ownerID {
