@@ -251,3 +251,88 @@ func TestIdentityDirUnmounted(t *testing.T) {
 		t.Fatal("a single path has nothing to vouch against and must read as mounted")
 	}
 }
+
+// R22-06/07: markers written by earlier releases (gen-less 2026.11.17.2,
+// numbered without #kept lines from 2026.11.18) leave a healthy first path
+// reading as stale. The refusal guards a node that would enrol afresh, so a
+// first path that already holds the identity files must always boot.
+func TestIdentityDirUnmountedBootsAnExistingIdentity(t *testing.T) {
+	layouts := []struct {
+		name string
+		// markers returns the marker bodies for disk1 and disk2; nil means no file.
+		markers   func(a, b string) (ma, mb *string)
+		unmounted bool // what the marker rule alone says for a first path without identity
+	}{
+		{"2026.11.18 gens without kept lines, stale first", func(a, b string) (*string, *string) {
+			return ptr(a + "\n" + b + "\n#gen 1\n"), ptr(a + "\n" + b + "\n#gen 2\n")
+		}, true},
+		{"2026.11.17.2 gen-less first beside a numbered one", func(a, b string) (*string, *string) {
+			return ptr(a + "\n" + b + "\n"), ptr(a + "\n" + b + "\n#gen 1\n")
+		}, true},
+		{"stale gen with a kept line for another gen", func(a, b string) (*string, *string) {
+			return ptr(a + "\n" + b + "\n#kept 1 " + a + "\n#gen 1\n"), ptr(a + "\n" + b + "\n#kept 3 " + a + "\n#kept 3 " + b + "\n#gen 3\n")
+		}, true},
+		{"no marker of its own, listed by the second", func(a, b string) (*string, *string) {
+			return nil, ptr(a + "\n" + b + "\n#gen 4\n")
+		}, true},
+		{"gen-less markers on both", func(a, b string) (*string, *string) {
+			return ptr(a + "\n" + b + "\n"), ptr(a + "\n" + b + "\n")
+		}, false},
+		{"current gens with kept lines", func(a, b string) (*string, *string) {
+			body := a + "\n" + b + "\n#kept 2 " + a + "\n#kept 2 " + b + "\n#gen 2\n"
+			return ptr(body), ptr(body)
+		}, false},
+		{"operator override: empty marker on the first", func(a, b string) (*string, *string) {
+			return ptr(""), ptr(a + "\n" + b + "\n#gen 5\n")
+		}, false},
+	}
+	identities := []string{"", ".node_id", ".node_secret", ".node_key", ".redis_addr"}
+	for _, l := range layouts {
+		for _, id := range identities {
+			name := l.name + "/identity " + id
+			if id == "" {
+				name = l.name + "/no identity"
+			}
+			t.Run(name, func(t *testing.T) {
+				disk1, disk2 := t.TempDir(), t.TempDir()
+				ma, mb := l.markers(disk1, disk2)
+				for _, m := range []struct {
+					dir  string
+					body *string
+				}{{disk1, ma}, {disk2, mb}} {
+					if m.body != nil {
+						if err := os.WriteFile(filepath.Join(m.dir, storageMarkerName), []byte(*m.body), 0o644); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				// What a live first path carries beside the identity.
+				if err := os.WriteFile(filepath.Join(disk1, "sftp_host_key"), []byte("k"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(filepath.Join(disk2, "srv"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				want := l.unmounted
+				if id != "" {
+					if err := os.WriteFile(filepath.Join(disk1, id), []byte("x"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					want = false
+				}
+				if got := identityDirUnmounted(disk1 + "," + disk2); got != want {
+					t.Fatalf("identityDirUnmounted = %v, want %v", got, want)
+				}
+			})
+		}
+	}
+	single := t.TempDir()
+	if err := os.WriteFile(filepath.Join(single, storageMarkerName), []byte(single+"\n#gen 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if identityDirUnmounted(single) {
+		t.Fatal("a single path has nothing to vouch against and must read as mounted")
+	}
+}
+
+func ptr(s string) *string { return &s }

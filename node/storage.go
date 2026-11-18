@@ -267,8 +267,17 @@ func identityDirUnmounted(pathsCSV string) bool {
 	if len(paths) == 0 {
 		return false
 	}
-	known, marked, _, _ := readStorageMarkers(paths)
 	p := paths[0]
+	// An identity on disk proves the disk is there, and the refusal only exists
+	// to stop a fresh enrolment. Markers written by 2026.11.17.2 and 2026.11.18
+	// (gen-less, or gens without #kept lines) leave a healthy first path reading
+	// as stale, and a node that ran fine on them must not crash-loop on upgrade.
+	for _, f := range []string{".node_id", ".node_secret", nodeKeyFileName, redisAddrFileName} {
+		if _, err := os.Lstat(filepath.Join(p, f)); err == nil {
+			return false
+		}
+	}
+	known, marked, _, _ := readStorageMarkers(paths)
 	return !marked[p] && known[p] && dirHoldsNothing(p)
 }
 
