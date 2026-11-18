@@ -383,7 +383,7 @@ func TestMeshAndBeamUploadsShareTheServerHeadroom(t *testing.T) {
 
 	rdb.Set(ctx, diskGaugeKey(uuid), `{"total":0,"limit":100}`, 10*time.Minute)
 	t.Run("mesh first", func(t *testing.T) {
-		b, ok := uploadBudget(rdb, dir, uuid, 70)
+		b, ok := uploadBudget(rdb, dir, uuid, 70, 0)
 		defer b.release()
 		if !ok {
 			t.Fatal("the mesh upload alone was refused")
@@ -401,7 +401,7 @@ func TestMeshAndBeamUploadsShareTheServerHeadroom(t *testing.T) {
 			before: func(i int) {
 				if i == 1 {
 					var b *writeBudget
-					b, meshOK = uploadBudget(rdb, dir, uuid, 60)
+					b, meshOK = uploadBudget(rdb, dir, uuid, 60, 0)
 					b.release()
 				}
 			},

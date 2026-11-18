@@ -62,7 +62,7 @@ func TestTheMeshUploadBudgetDoesNotWaitOutAHungRedis(t *testing.T) {
 	defer rdb.Close()
 
 	start := time.Now()
-	b, ok := uploadBudget(rdb, t.TempDir(), "srv-hung", 1)
+	b, ok := uploadBudget(rdb, t.TempDir(), "srv-hung", 1, 0)
 	b.release()
 	if took := time.Since(start); took > 6*time.Second {
 		t.Fatalf("uploadBudget took %v against a hung Redis", took)

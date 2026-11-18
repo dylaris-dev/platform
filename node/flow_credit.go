@@ -72,6 +72,18 @@ func requestSlotsFor(serverUUID string) chan struct{} {
 	return requestSlots.of(serverUUID, requestsPerServer)
 }
 
+// takeSlot takes one of slots, waiting at most requestSlotWait.
+func takeSlot(slots chan struct{}) bool {
+	wait := time.NewTimer(requestSlotWait)
+	defer wait.Stop()
+	select {
+	case slots <- struct{}{}:
+		return true
+	case <-wait.C:
+		return false
+	}
+}
+
 var errFlowStalled = errors.New("the reader took nothing for too long")
 
 type flowCredit struct {

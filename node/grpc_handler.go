@@ -964,6 +964,23 @@ func (h *StreamHandler) createUploadTemp(dir, reqPath string) (*os.File, string,
 	return f, tempName, nil
 }
 
+// replacedSize is the size of the regular file an upload to reqPath would
+// replace, reached the way commitUpload reaches it; 0 when there is none.
+func (h *StreamHandler) replacedSize(dir, reqPath string) int64 {
+	if dir == "" {
+		return 0
+	}
+	root, name, err := openWriteScope(dir, reqPath, false)
+	if err != nil {
+		return 0
+	}
+	defer root.Close()
+	if st, err := root.Lstat(name); err == nil && st.Mode().IsRegular() {
+		return st.Size()
+	}
+	return 0
+}
+
 // commitUpload moves a finished staging file onto the requested path.
 // commitUpload returns what the server grew by: the upload less the file it
 // replaced.

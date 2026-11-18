@@ -142,7 +142,13 @@ func (pw *pendingWrite) release(written int64) {
 // and the node wrote them all. The limit is the gauge plus what is in flight,
 // as the beam upload reads it: serverDiskHeadroom walks the server directory,
 // and this runs on the read loop for every file of a folder upload.
-func uploadBudget(rdb *redis.Client, dir, uuid string, size int64) (*writeBudget, bool) {
+//
+// replaces is the size of the file the upload will overwrite: the commit
+// frees it, so only the growth counts against the server's limit. Charged in
+// full, a server at its limit could not save even a shorter server.properties,
+// and Core's own rewrites of it failed. The node's free space is still charged
+// the whole size, as the temp and the old file coexist until the rename.
+func uploadBudget(rdb *redis.Client, dir, uuid string, size, replaces int64) (*writeBudget, bool) {
 	b := nodeWriteBudget(dir)
 	// Bounded like noteDiskWrite: on the read loop, a hung Redis would hold
 	// every flow credit and WsFrame from this Core for the client's retries.
@@ -153,7 +159,7 @@ func uploadBudget(rdb *redis.Client, dir, uuid string, size int64) (*writeBudget
 		// commitUpload's noteDiskWrite already moved the gauge.
 		b.gauged = true
 		// Open SFTP handles are not in the gauge either.
-		b.boundServer(uuid, limit-total-uploadServerInflight(uuid).Load())
+		b.boundServer(uuid, limit-total-uploadServerInflight(uuid).Load()+replaces)
 	}
 	return b, b.spend(size)
 }
@@ -705,7 +711,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{reply})
 			return
 		}
-		budget, ok := uploadBudget(m.rdb, dir, msg.ServerUuid, writeReq.TotalSize)
+		budget, ok := uploadBudget(m.rdb, dir, msg.ServerUuid, writeReq.TotalSize, m.handler.replacedSize(dir, writeReq.Path))
 		if !ok {
 			tempFile.Close()
 			m.handler.removeUploadTemp(dir, writeReq.Path, tempName)
@@ -775,7 +781,13 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		cc.openFlow(reqID, msg.FlowWindow)
 		go func() {
 			defer cc.closeFlow(reqID)
-			slots <- struct{}{}
+			// Bounded like the requests below: a small read (the Players tab,
+			// server.properties) behind four long transfers waited for hours,
+			// and Core waits on a read with no deadline of its own.
+			if !takeSlot(slots) {
+				m.sendResponses(cc, reqID, []*pb.NodeMessage{errorMsg(reqID, 503, "the node is busy with other downloads on this server, try again")})
+				return
+			}
 			defer func() { <-slots }()
 			m.handler.HandleStreaming(msg, cc.send)
 		}()
@@ -805,11 +817,7 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 		// Bounded: Core gives up on a request after its own timeout, and one
 		// that ran anyway once a slot freed would be a delete or a copy the
 		// user saw fail, retried, and then got twice.
-		wait := time.NewTimer(requestSlotWait)
-		defer wait.Stop()
-		select {
-		case slots <- struct{}{}:
-		case <-wait.C:
+		if !takeSlot(slots) {
 			m.sendResponses(cc, msg.RequestId, []*pb.NodeMessage{errorMsg(msg.RequestId, 503, "the node is busy with other file operations on this server, try again")})
 			return
 		}
