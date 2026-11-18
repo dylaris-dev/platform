@@ -48,10 +48,10 @@ func (s *inflightSet) enter(id string) bool {
 var serverWorkMu sync.Mutex
 
 // treeChangesRunning counts, per server, the commands that rewrite its tree
-// (setup, reinstall, version update, storage move, sub-server copy), under
-// serverWorkMu. A backup walking the tree while one of them moved the jars
-// aside or emptied the source left those parts out and still reported
-// success, and retention then deleted an older intact archive.
+// (setup, reinstall, version update, storage move, sub-server copy and
+// delete), under serverWorkMu. A backup walking the tree while one of them
+// moved the jars aside or emptied the source left those parts out and still
+// reported success, and retention then deleted an older intact archive.
 var treeChangesRunning = map[string]int{}
 
 // enterTreeChangeOfServer marks a tree-changing command of the server as
@@ -84,7 +84,7 @@ func enterBackupOfServer(uuid string) string {
 		return "a restore of this server was running on the node"
 	}
 	if treeChangesRunning[uuid] > 0 {
-		return "a setup, reinstall, version update, storage move or copy of this server was running on the node"
+		return "a setup, reinstall, version update, storage move, copy or sub-server delete of this server was running on the node"
 	}
 	if !backupsInFlight.enter("server:" + uuid) {
 		return "another backup of this server was still running on the node"
@@ -101,7 +101,7 @@ func enterRestoreOfServer(uuid string) string {
 		return "a backup of this server is running on its node; restore once it has finished"
 	}
 	if treeChangesRunning[uuid] > 0 {
-		return "a setup, reinstall, version update, storage move or copy of this server is running on its node; restore once it has finished"
+		return "a setup, reinstall, version update, storage move, copy or sub-server delete of this server is running on its node; restore once it has finished"
 	}
 	if !restoreServersInFlight.enter(uuid) {
 		return "another restore of this server is still running on its node"

@@ -2164,6 +2164,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			log.Printf("delete_sub_server for %s: sub-server name is empty, aborting", cmd.Config.UUID)
 			return
 		}
+		// A backup walking the tree while the slot was renamed away archived the
+		// rest and reported success. Refused, the slot stays on disk and the
+		// delete can be repeated once the backup has finished.
+		leaveTree, treeBusy := enterTreeChangeOfServer(cmd.Config.UUID)
+		if treeBusy != "" {
+			log.Printf("delete_sub_server %s/%s refused: %s", cmd.Config.UUID, subName, treeBusy)
+			return
+		}
+		defer leaveTree()
 		log.Printf("Deleting sub-server %s/%s ...", cmd.Config.UUID, subName)
 
 		// Tear down the container before touching the sub-server it runs in.

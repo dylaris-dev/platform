@@ -125,3 +125,43 @@ func TestDeletingTheActiveSubServerReportsNothingSetUp(t *testing.T) {
 		t.Error("deleting the active sub-server no longer reports pending_setup")
 	}
 }
+
+// A backup walking the server tree while a sub-server delete renamed one
+// slot away archived the rest and still reported success. Every command that
+// rewrites the tree takes the tree-change interlock, and the delete takes it
+// before it kills the container or renames anything.
+func TestTreeChangingCommandsTakeTheTreeInterlock(t *testing.T) {
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.ReplaceAll(string(b), "\r\n", "\n")
+	for _, c := range []struct {
+		action, before string
+	}{
+		{"setup", ""},
+		{"reinstall", ""},
+		{"migrate_storage", ""},
+		{"delete_sub_server", "teardown := func() {"},
+	} {
+		i := strings.Index(s, "\tcase \""+c.action+"\":")
+		if i < 0 {
+			t.Fatalf("case %q not found in the command switch", c.action)
+		}
+		j := strings.Index(s[i+1:], "\n\tcase \"")
+		if j < 0 {
+			t.Fatalf("end of case %q not found", c.action)
+		}
+		body := s[i : i+1+j]
+		k := strings.Index(body, "enterTreeChangeOfServer(cmd.Config.UUID)")
+		if k < 0 {
+			t.Errorf("case %q rewrites the server tree without the tree-change interlock", c.action)
+			continue
+		}
+		if c.before != "" {
+			if m := strings.Index(body, c.before); m >= 0 && m < k {
+				t.Errorf("case %q takes the interlock only after %q", c.action, c.before)
+			}
+		}
+	}
+}
