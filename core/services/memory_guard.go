@@ -48,12 +48,19 @@ const (
 	memoryEventMaxAge = time.Hour
 )
 
+// errPowerNotLanded marks a power() failure before desired_state was written:
+// nothing changed, so the event is worth retrying.
+var errPowerNotLanded = errors.New("power action not landed")
+
 // memoryEvent mirrors the node's struct.
 type memoryEvent struct {
 	Event   string `json:"event"`
 	At      int64  `json:"at"`
 	UsedMB  int64  `json:"usedMB"`
 	LimitMB int64  `json:"limitMB"`
+	// QueuedAt is Core's own clock at the first requeue; the node never sets
+	// it. A requeue resets the list TTL, so this is what bounds the event's age.
+	QueuedAt int64 `json:"queuedAt,omitempty"`
 }
 
 // memoryGuardStore is the slice of store.Store this needs.
@@ -163,6 +170,9 @@ func (m *MemoryGuardService) drain(ctx context.Context, key string) []memoryEven
 // it, and the node fires memory_critical once per climb (re-armed only below
 // 93%), so dropping it lost the configured stop for that whole run.
 func (m *MemoryGuardService) requeue(ctx context.Context, key string, ev memoryEvent) {
+	if ev.QueuedAt == 0 {
+		ev.QueuedAt = time.Now().Unix()
+	}
 	data, _ := json.Marshal(ev)
 	pipe := m.redis.TxPipeline()
 	pipe.RPush(ctx, key, string(data))
@@ -175,6 +185,13 @@ func (m *MemoryGuardService) requeue(ctx context.Context, key string, ev memoryE
 // handle acts on one event. acted is true when the server row changed; retry
 // is true when a database error kept the event from landing.
 func (m *MemoryGuardService) handle(ctx context.Context, uuid string, ev memoryEvent) (acted, retry bool) {
+	// Checked before any DB call so a stale event is dropped even while the
+	// database is still down; acting on it would stop or restart a server
+	// that has long since recovered.
+	if ev.QueuedAt > 0 && time.Since(time.Unix(ev.QueuedAt, 0)) > memoryEventMaxAge {
+		log.Printf("memory guard: dropping %s for %s, held back since %s", ev.Event, uuid, time.Unix(ev.QueuedAt, 0).UTC().Format(time.RFC3339))
+		return false, false
+	}
 	srv, err := m.store.GetServerByUUID(uuid)
 	if err != nil || srv == nil {
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -210,6 +227,9 @@ func (m *MemoryGuardService) handle(ctx context.Context, uuid string, ev memoryE
 		if taken == models.MemoryGuardStop || taken == models.MemoryGuardRestart {
 			if err := m.power(ctx, srv, taken); err != nil {
 				log.Printf("memory guard: %s on server %s failed: %v", taken, uuid, err)
+				if errors.Is(err, errPowerNotLanded) {
+					return false, true
+				}
 				taken = "failed"
 			}
 		}
@@ -267,7 +287,10 @@ func (m *MemoryGuardService) handle(ctx context.Context, uuid string, ev memoryE
 // not know about is undone by a restart.
 func (m *MemoryGuardService) power(ctx context.Context, srv *models.Server, action string) error {
 	node, err := m.store.GetNodeByID(srv.NodeID)
-	if err != nil || node == nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("node %d: %w: %w", srv.NodeID, errPowerNotLanded, err)
+	}
+	if node == nil {
 		return fmt.Errorf("node %d: %v", srv.NodeID, err)
 	}
 	desired, status := "stopped", "stopping"
@@ -275,7 +298,7 @@ func (m *MemoryGuardService) power(ctx context.Context, srv *models.Server, acti
 		desired, status = "online", "restarting"
 	}
 	if err := m.store.UpdateServerDesiredState(srv.ID, desired); err != nil {
-		return fmt.Errorf("desired_state: %w", err)
+		return fmt.Errorf("desired_state: %w: %w", errPowerNotLanded, err)
 	}
 	PublishDesiredState(ctx, m.redis, srv.UUID, desired)
 	if err := m.store.UpdateServerStatus(srv.ID, status); err != nil {

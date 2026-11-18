@@ -16,17 +16,19 @@ import (
 )
 
 type memGuardFakeStore struct {
-	srv       models.Server
-	desired   []string
-	statuses  []string
-	crash     string
-	crashAt   time.Time
-	notes     []models.Notification
-	audits    []models.ServerAuditEvent
-	auditOn   bool
-	nodeToken string
-	getErr    error
-	crashErr  error
+	srv        models.Server
+	desired    []string
+	statuses   []string
+	crash      string
+	crashAt    time.Time
+	notes      []models.Notification
+	audits     []models.ServerAuditEvent
+	auditOn    bool
+	nodeToken  string
+	getErr     error
+	crashErr   error
+	nodeErr    error
+	desiredErr error
 }
 
 func (f *memGuardFakeStore) GetServerByUUID(uuid string) (*models.Server, error) {
@@ -37,6 +39,9 @@ func (f *memGuardFakeStore) GetServerByUUID(uuid string) (*models.Server, error)
 	return &s, nil
 }
 func (f *memGuardFakeStore) GetNodeByID(int) (*models.Node, error) {
+	if f.nodeErr != nil {
+		return nil, f.nodeErr
+	}
 	return &models.Node{Token: f.nodeToken}, nil
 }
 func (f *memGuardFakeStore) UpdateServerStatus(_ int, s string) error {
@@ -44,6 +49,9 @@ func (f *memGuardFakeStore) UpdateServerStatus(_ int, s string) error {
 	return nil
 }
 func (f *memGuardFakeStore) UpdateServerDesiredState(_ int, s string) error {
+	if f.desiredErr != nil {
+		return f.desiredErr
+	}
 	f.desired = append(f.desired, s)
 	return nil
 }
@@ -66,9 +74,15 @@ func (f *memGuardFakeStore) InsertServerAudit(ev *models.ServerAuditEvent) error
 	return nil
 }
 
-type memGuardFakeQueue struct{ actions []string }
+type memGuardFakeQueue struct {
+	actions []string
+	sendErr error
+}
 
 func (q *memGuardFakeQueue) SendCommand(_ context.Context, _ string, action string, _ interface{}, _ interface{}) error {
+	if q.sendErr != nil {
+		return q.sendErr
+	}
 	q.actions = append(q.actions, action)
 	return nil
 }
@@ -267,5 +281,85 @@ func TestMemoryGuardDBErrorKeepsTheEvent(t *testing.T) {
 				t.Error("the event was not drained once handled")
 			}
 		})
+	}
+}
+
+// X12: power() failing on the database (node lookup, desired_state write) lost
+// the event exactly like the server lookup did before W13. A send that fails
+// after desired_state landed is not retried: the reconciler acts on that row.
+func TestMemoryGuardPowerDBErrorKeepsTheEvent(t *testing.T) {
+	key := "dylaris:server:" + memGuardUUID + ":memory_events"
+	dbErr := errors.New("pgbouncer: connection reset")
+	cases := []struct {
+		name                       string
+		nodeErr, desiredErr, sendE error
+		wantKept                   bool
+	}{
+		{"node lookup fails", dbErr, nil, nil, true},
+		{"desired_state write fails", nil, dbErr, nil, true},
+		{"node gone: dropped", sql.ErrNoRows, nil, nil, false},
+		{"send fails after desired_state landed: dropped", nil, nil, errors.New("queue down"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, st, q, rdb := newMemGuardTest(t, "stop", "online")
+			st.nodeErr, st.desiredErr, q.sendErr = tc.nodeErr, tc.desiredErr, tc.sendE
+			pushMemEvent(t, rdb, memoryEvent{Event: MemoryEventCritical, At: time.Now().Unix(), UsedMB: 4400, LimitMB: 4500})
+			m.scan(context.Background())
+
+			n, _ := rdb.LLen(context.Background(), key).Result()
+			if (n == 1) != tc.wantKept {
+				t.Fatalf("events left after a failed power action = %d, want kept=%v", n, tc.wantKept)
+			}
+			if !tc.wantKept {
+				return
+			}
+			st.nodeErr, st.desiredErr = nil, nil
+			m.scan(context.Background())
+			if got := strings.Join(q.actions, ","); got != "stop" {
+				t.Errorf("commands after recovery = %q, want stop", got)
+			}
+			if len(st.audits) != 1 {
+				t.Errorf("audits = %d, want one row for the action that landed, not one per attempt", len(st.audits))
+			}
+		})
+	}
+}
+
+// X13: every requeue reset the list's one-hour TTL, so an event held back by a
+// long DB outage stopped or restarted a server that had long recovered. Core
+// stamps the first requeue and drops an event that has waited past the bound.
+func TestMemoryGuardStaleRequeuedEventIsDropped(t *testing.T) {
+	key := "dylaris:server:" + memGuardUUID + ":memory_events"
+	m, st, q, rdb := newMemGuardTest(t, "restart", "online")
+	st.getErr = errors.New("pgbouncer: connection reset")
+	pushMemEvent(t, rdb, memoryEvent{Event: MemoryEventCritical, At: time.Now().Unix(), UsedMB: 4400, LimitMB: 4500})
+	m.scan(context.Background())
+	m.scan(context.Background())
+
+	raw, err := rdb.LRange(context.Background(), key, 0, -1).Result()
+	if err != nil || len(raw) != 1 {
+		t.Fatalf("requeued events = %v (%v), want one", raw, err)
+	}
+	var ev memoryEvent
+	if err := json.Unmarshal([]byte(raw[0]), &ev); err != nil {
+		t.Fatal(err)
+	}
+	if ev.QueuedAt <= 0 || time.Since(time.Unix(ev.QueuedAt, 0)) > time.Minute {
+		t.Fatalf("queuedAt = %d, want Core's first-requeue time", ev.QueuedAt)
+	}
+
+	// The outage outlasted the bound: the same event, first held back 2 h ago.
+	rdb.Del(context.Background(), key)
+	ev.QueuedAt = time.Now().Add(-2 * time.Hour).Unix()
+	pushMemEvent(t, rdb, ev)
+	m.scan(context.Background())
+	if n, _ := rdb.Exists(context.Background(), key).Result(); n != 0 {
+		t.Error("a stale event was put back again")
+	}
+	st.getErr = nil
+	m.scan(context.Background())
+	if len(q.actions) != 0 || len(st.desired) != 0 {
+		t.Errorf("a 2 h old memory_critical still acted: commands %v, desired %v", q.actions, st.desired)
 	}
 }
