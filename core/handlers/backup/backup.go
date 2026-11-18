@@ -209,22 +209,8 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req = merged
-	// Where the archives live may not move under the runs that name it, the
-	// rule a delete already follows. A changed prefix or bucket made every
-	// recorded backup unfindable: downloads and restores failed, and retention
-	// "deleted" keys that were not there (a missing key deletes as success)
-	// while the real objects stayed under the old location, billed, with
-	// nothing left that names them.
-	if backupStorageLocation(req) != backupStorageLocation(*existing) {
-		inUse, ierr := h.d.Store.BackupStorageInUse(id)
-		if ierr != nil {
-			httpx.SendJSONError(w, "Could not check what uses this storage", 500)
-			return
-		}
-		if inUse {
-			httpx.SendJSONError(w, "Backups or schedules still use this storage, so where it stores them cannot change. Add a new storage for the new location and point the schedules at it.", http.StatusConflict)
-			return
-		}
+	if h.refuseInUseLocationMove(w, req, existing) {
+		return
 	}
 	// A platform row stays one: the body's ownerId would otherwise move it, and
 	// a nil one is what clearOtherDefaults reads as "the platform's default".
@@ -241,6 +227,29 @@ func (h *BackupHandler) UpdateStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// refuseInUseLocationMove answers 409 when next moves where existing keeps its
+// archives while runs or jobs still name it, the rule a delete already follows.
+// A changed prefix or bucket made every recorded backup unfindable: downloads
+// and restores failed, and retention "deleted" keys that were not there (a
+// missing key deletes as success) while the real objects stayed under the old
+// location, billed, with nothing left that names them. Admin and tenant edits
+// both go through here.
+func (h *BackupHandler) refuseInUseLocationMove(w http.ResponseWriter, next models.BackupStorage, existing *models.BackupStorage) bool {
+	if backupStorageLocation(next) == backupStorageLocation(*existing) {
+		return false
+	}
+	inUse, err := h.d.Store.BackupStorageInUse(existing.ID)
+	if err != nil {
+		httpx.SendJSONError(w, "Could not check what uses this storage", 500)
+		return true
+	}
+	if inUse {
+		httpx.SendJSONError(w, "Backups or schedules still use this storage, so where it stores them cannot change. Add a new storage for the new location and point the schedules at it.", http.StatusConflict)
+		return true
+	}
+	return false
 }
 
 // backupStorageLocation is what decides where a storage's archives are: the
@@ -785,7 +794,13 @@ func (h *BackupHandler) DownloadRun(w http.ResponseWriter, r *http.Request) {
 	defer reader.Close()
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="backup-%d.tar.gz"`, run.ID))
-	io.Copy(w, reader)
+	// A stream cut off mid-way (the node restarting under it) must not end the
+	// chunked body cleanly: the browser would report a complete download of a
+	// truncated archive. Aborting the connection makes it a failed one.
+	if _, err := io.Copy(w, reader); err != nil {
+		log.Printf("backup run %d: download stream failed: %v", run.ID, err)
+		panic(http.ErrAbortHandler)
+	}
 }
 
 // RestoreRun POST /api/backup-runs/{runId}/restore

@@ -166,12 +166,17 @@ func (h *PlatformBackupHandler) RestoreRun(w http.ResponseWriter, r *http.Reques
 		httpx.SendJSONError(w, "The storage this run wrote to is not available", http.StatusConflict)
 		return
 	}
-	st, err := backupstorage.Open(r.Context(), bs, NewBackupHandler(h.d).backupDeps())
+	// The bundle is read on the restore's detached context too: an S3 body (or a
+	// node-local stream) opened on r.Context() is cut off when the tab closes,
+	// and pg_restore then rolls back on the truncated input.
+	restoreCtx, cancelRestore := context.WithTimeout(context.WithoutCancel(r.Context()), platformRunBudget)
+	defer cancelRestore()
+	st, err := backupstorage.Open(restoreCtx, bs, NewBackupHandler(h.d).backupDeps())
 	if err != nil {
 		httpx.SendJSONError(w, "Could not open the storage", 500)
 		return
 	}
-	rc, err := st.Get(r.Context(), run.StorageKey)
+	rc, err := st.Get(restoreCtx, run.StorageKey)
 	if err != nil {
 		httpx.SendJSONError(w, "The archive could not be read", 500)
 		return

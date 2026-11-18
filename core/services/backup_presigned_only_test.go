@@ -374,3 +374,35 @@ func TestPrivateAllowFor(t *testing.T) {
 		}
 	}
 }
+
+// A job whose storage no longer resolves is skipped with the reason, so
+// next_run_at moves on and the panel says why. Returning the error left the job
+// due on every tick forever, with nothing but a log line.
+func TestDispatch_AStorageThatNoLongerResolvesSkipsTheRun(t *testing.T) {
+	bob := "bob"
+	for _, tc := range []struct {
+		name    string
+		storage *models.BackupStorage
+		want    string
+	}{
+		{"another account's storage", &models.BackupStorage{ID: 3, Name: "theirs", Provider: "s3", OwnerID: &bob}, "another account"},
+		{"storage gone", nil, "no longer exists"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newTransferFakeStore()
+			st.storage = tc.storage
+			rdb := heartbeatRedis(t, map[string]string{"node-hosting": presignedMultipartSince})
+			b := transferScheduler(st, &fakeMultipartStorage{}, rdb)
+			sid := 3
+			if err := b.dispatch(context.Background(), models.BackupJob{ID: 10, ServerID: 100, Schedule: "every 1d", StorageID: &sid}); err != nil {
+				t.Fatalf("dispatch: %v", err)
+			}
+			if st.skipped != 1 || !strings.Contains(st.skipReason, tc.want) {
+				t.Fatalf("skipped = %d, reason %q, want one skip naming %q", st.skipped, st.skipReason, tc.want)
+			}
+			if cmds := dispatchedCommands(t, rdb, "node-hosting"); len(cmds) != 0 {
+				t.Fatalf("a command reached the node: %v", cmds)
+			}
+		})
+	}
+}

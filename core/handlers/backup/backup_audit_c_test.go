@@ -31,6 +31,8 @@ func TestBackupAuditCWiring(t *testing.T) {
 		{"platform_restore.go", "runRestore", "context.WithoutCancel(r.Context())", "a closed tab cancels a platform restore"},
 		{"backup.go", "UpdateJob", "if next.Schedule != job.Schedule || next.Timezone != job.Timezone || (next.Enabled && !job.Enabled) || job.NextRunAt == nil {", "every edit restarts the schedule"},
 		{"backup.go", "DownloadRun", "backupDownloadURLTTL", "a backup download link lives an hour"},
+		{"platform_restore.go", "RestoreRun", "st.Get(restoreCtx, run.StorageKey)", "a closed tab cuts the stored bundle off under pg_restore"},
+		{"backup.go", "DownloadRun", "panic(http.ErrAbortHandler)", "a download cut off mid-stream ends like a complete one"},
 	} {
 		if !strings.Contains(handlertest.FuncBody(t, c.file, c.fn), c.want) {
 			t.Errorf("%s: %s", c.fn, c.why)

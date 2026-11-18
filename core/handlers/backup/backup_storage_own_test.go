@@ -30,6 +30,8 @@ type ownStorageFakeStore struct {
 	prefBackups, prefTemplates     *int
 	backupsWrites, templatesWrites int
 	failPrefWrite                  bool
+	// inUse is what BackupStorageInUse answers for every id.
+	inUse bool
 }
 
 func (f *ownStorageFakeStore) GetUserStoragePrefs(string) (*int, *int, error) {
@@ -370,7 +372,7 @@ func TestATenantTestDoesNotNameTheInternalAddress(t *testing.T) {
 	}
 }
 
-func (f *ownStorageFakeStore) BackupStorageInUse(int) (bool, error) { return false, nil }
+func (f *ownStorageFakeStore) BackupStorageInUse(int) (bool, error) { return f.inUse, nil }
 
 // Until the account page has its own selectors, its "default" flag is how a
 // tenant picks the backups target, so the preference follows it: set chooses
@@ -477,5 +479,42 @@ func TestOwnStoragePrefSyncFailureIsGeneric(t *testing.T) {
 	}
 	if st.templatesWrites != 0 {
 		t.Fatalf("templates pref written %d times, want 0", st.templatesWrites)
+	}
+}
+
+// Where the archives live may not move under the runs that name it, the rule
+// the admin path already follows: a new prefix, bucket or endpoint made every
+// recorded backup unfindable. A rename or a new key moves nothing.
+func TestUpdateOwnStorageRefusesMovingAnInUseLocation(t *testing.T) {
+	me := "u1"
+	const stored = `{"endpoint":"https://s3.example.com","bucket":"b","prefix":"a","accessKeyId":"AK","secretAccessKey":"sk"}`
+	for _, tc := range []struct {
+		name   string
+		config string
+		inUse  bool
+		want   int
+	}{
+		{"prefix moved, in use", `{"endpoint":"https://s3.example.com","bucket":"b","prefix":"b","accessKeyId":"AK"}`, true, http.StatusConflict},
+		{"bucket moved with a new secret, in use", `{"endpoint":"https://s3.example.com","bucket":"c","prefix":"a","accessKeyId":"AK","secretAccessKey":"new"}`, true, http.StatusConflict},
+		{"prefix moved, unused", `{"endpoint":"https://s3.example.com","bucket":"b","prefix":"b","accessKeyId":"AK"}`, false, http.StatusOK},
+		{"same location, in use", `{"endpoint":"https://s3.example.com","bucket":"b","prefix":"/a/","accessKeyId":"AK"}`, true, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &ownStorageFakeStore{inUse: tc.inUse, byID: map[int]*models.BackupStorage{
+				4: {ID: 4, Name: "mine", Provider: "s3", OwnerID: &me, Config: json.RawMessage(stored)},
+			}}
+			h := &BackupHandler{d: testDeps(Deps{Store: st})}
+			body, _ := json.Marshal(map[string]any{"name": "mine", "provider": "s3", "config": json.RawMessage(tc.config)})
+			rec := httptest.NewRecorder()
+			req := mux.SetURLVars(asUser(httptest.NewRequest(http.MethodPatch, "/x", bytes.NewReader(body)), me),
+				map[string]string{"id": "4"})
+			h.UpdateOwnStorage(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("update returned %d, want %d: %s", rec.Code, tc.want, rec.Body.String())
+			}
+			if wrote := len(st.updated) == 1; wrote != (tc.want == http.StatusOK) {
+				t.Fatalf("rows written = %d", len(st.updated))
+			}
+		})
 	}
 }

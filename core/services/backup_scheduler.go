@@ -817,7 +817,20 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	// the bill or the restore.
 	storage, err := ResolveNewRunStorage(b.store, job.StorageID, srv.OwnerID,
 		OwnStorageAllowedFor(ctx, b.flags, b.store, srv.OwnerID))
-	if err != nil {
+	// These two do not heal by themselves (the server changed owner, the storage
+	// was deleted): returning the error kept next_run_at in the past, so the job
+	// was retried every tick forever with no run and no reason in the panel.
+	// Anything else (a DB blip) is still retried on the next tick.
+	switch {
+	case errors.Is(err, ErrForeignBackupStorage):
+		log.Printf("backup-scheduler: job %d skipped: %v", job.ID, err)
+		b.skipRun(job, "The backup storage this job uses belongs to another account. Choose another storage for this job.")
+		return nil
+	case errors.Is(err, ErrNoBackupStorage):
+		log.Printf("backup-scheduler: job %d skipped: %v", job.ID, err)
+		b.skipRun(job, "No backup storage is available: the one this job uses no longer exists, or none is configured. Choose another storage for this job.")
+		return nil
+	case err != nil:
 		return fmt.Errorf("resolve storage: %w", err)
 	}
 

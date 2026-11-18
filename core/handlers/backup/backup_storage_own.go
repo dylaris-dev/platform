@@ -224,6 +224,9 @@ func (h *BackupHandler) UpdateOwnStorage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	merged.ID, merged.OwnerID = existing.ID, existing.OwnerID
+	if h.refuseInUseLocationMove(w, merged, existing) {
+		return
+	}
 	if err := h.d.Store.UpdateBackupStorage(&merged); err != nil {
 		switch {
 		case errors.Is(err, store.ErrNameTaken):
