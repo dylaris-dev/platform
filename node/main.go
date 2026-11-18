@@ -1690,6 +1690,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer leaveTree()
+		if !awaitServerSlot(storage, cmd.Config.UUID) {
+			log.Printf("Setup of %s/%s refused: the create of the server has not run on this node", cmd.Config.UUID, subName)
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("the server has not been created on this node yet; try again in a moment"))
+			return
+		}
 		defer lockServerInstall(cmd.Config.UUID)()
 		log.Printf("Setting up server %s (sub-server: %s)...", cmd.Config.UUID, subName)
 
@@ -1752,6 +1757,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			}
 		}
 
+		// A version move that died mid-install and was refused on redelivery
+		// left its stash; the next reinstall or move put it back over this
+		// install. Recovered here, as the move itself does.
+		recoverStrandedStash(serverPath, subName)
 		manifest, err := InstallServer(serverPath, subName, installerCfg)
 		if discardIfDeleted(cmd.Config.UUID, serverPath) {
 			return

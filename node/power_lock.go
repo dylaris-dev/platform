@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"sync"
 	"time"
 
@@ -245,4 +248,32 @@ func lockServerInstall(uuid string) func() {
 	mu := m.(*sync.Mutex)
 	mu.Lock()
 	return mu.Unlock
+}
+
+// serverSlotWait is how long a setup waits for the create of its server to
+// have made the server's directory; a variable so a test need not sit it out.
+var serverSlotWait = 2 * time.Minute
+
+// awaitServerSlot reports whether the create of uuid has made its directory,
+// waiting up to serverSlotWait for it. A create and setup queued together run
+// in parallel, and a setup that took the install lock first installed into
+// the first storage path, not the one the create was asked for, and the
+// create then skipped placement and the quota. Its directory is made under
+// the create's lock, so once it exists the setup's lock waits for the rest.
+// An unresolved path and a deleted server are left to the setup's own guards.
+func awaitServerSlot(storage *StorageManager, uuid string) bool {
+	deadline := time.Now().Add(serverSlotWait)
+	for {
+		dir := storage.GetServerDir(uuid)
+		if dir == "" || serverDeleted(uuid) {
+			return true
+		}
+		if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }

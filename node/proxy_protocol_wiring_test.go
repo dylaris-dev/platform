@@ -97,6 +97,8 @@ func TestSetupAnswersNoOnEveryEarlyReturn(t *testing.T) {
 			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 			storage := NewStorageManager(t.TempDir(), rdb)
 			uuid := uuids[name]
+			// The create's directory, which setup waits for (awaitServerSlot).
+			os.MkdirAll(storage.GetServerDir(uuid), 0o755)
 			if c.prepare != nil {
 				c.prepare(t, filepath.Join(storage.GetServerDir(uuid), "main"))
 			}
@@ -116,6 +118,7 @@ func TestSetupAnswersNoOnEveryEarlyReturn(t *testing.T) {
 		mr := miniredis.RunT(t)
 		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 		storage := NewStorageManager(t.TempDir(), rdb)
+		os.MkdirAll(storage.GetServerDir("6f1c2b3a-0000-4000-8000-000000000005"), 0o755)
 		cmd := NodeCommand{Action: "setup", Installer: InstallerConfig{Type: "not-an-installer"}}
 		cmd.Config.UUID = "6f1c2b3a-0000-4000-8000-000000000005"
 		cmd.Config.ActiveSubServer = "main"

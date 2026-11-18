@@ -152,7 +152,14 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	leaveTree, treeBusy := enterTreeChangeOfServer(pl.UUID)
 	if treeBusy != "" {
 		log.Printf("update_server_version: %s refused: %s", pl.UUID, treeBusy)
-		abandonVersionUpdate(ctx, rdb, pl.UUID, treeBusy)
+		// A restore reports its own status through its busy hold; a backup
+		// holds none, and without one Core landed the move's "installing" as
+		// "stopped" for a server that went on running.
+		if isNodeBusy(ctx, rdb, pl.UUID) {
+			abandonVersionUpdate(ctx, rdb, pl.UUID, treeBusy)
+		} else {
+			abort(treeBusy)
+		}
 		return
 	}
 	defer leaveTree()
