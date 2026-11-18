@@ -712,31 +712,7 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 	// the store's files are known by identity and never archived under any name.
 	// Links INSIDE the store are not followed: one there onto level.dat would
 	// otherwise take the world out of every backup.
-	stored := map[fileIdentity]bool{}
-	_ = fs.WalkDir(root.FS(), backupDirName, func(_ string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
-			return nil
-		}
-		if info, ierr := d.Info(); ierr == nil && info.Mode().IsRegular() {
-			if id, ok := identityOf(info); ok {
-				stored[id] = true
-			}
-		}
-		return nil
-	})
-	// The node's own files in the server root are hidden from the tenant (mode
-	// 0600, isProtectedFile): the start command and JVM flags among them are
-	// redacted for members without server.settings.write, and the archive was
-	// the one way to read them. Kept out by name at the root and by identity
-	// under any other name. A restore keeps the live copies (and drops what an
-	// older archive carried), so the archive never needed them.
-	for _, n := range archiveHiddenRootFiles {
-		if info, err := root.Lstat(n); err == nil && info.Mode().IsRegular() {
-			if id, ok := identityOf(info); ok {
-				stored[id] = true
-			}
-		}
-	}
+	stored := storedIdentities(root)
 	walkErr := walkRoot(root, startName, func(name string, info fs.FileInfo) error {
 		rel := relTo(startName, name)
 		if rel == "." {
@@ -774,7 +750,17 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 			var err error
 			f, err = openArchiveEntry(root, name, stored)
 			if errors.Is(err, fs.ErrNotExist) {
-				return nil
+				// Denied, or gone. stored was taken before the walk, and an
+				// archive retention deleted since freed its inode for the
+				// next new file: judged by the old set, that file was left
+				// out. Asked again against the store as it is now.
+				if _, serr := root.Stat(name); serr != nil {
+					return nil
+				}
+				stored = storedIdentities(root)
+				if f, err = openArchiveEntry(root, name, stored); errors.Is(err, fs.ErrNotExist) {
+					return nil
+				}
 			}
 			if err != nil {
 				return err
@@ -792,15 +778,21 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 		id, hasID := identityOf(info)
 		hasID = hasID && !info.IsDir()
 		if hasID {
-			if first, dup := seen[id]; dup {
-				hdr.Typeflag, hdr.Linkname, hdr.Size = tar.TypeLink, first, 0
+			// An inode number names this file only while something keeps it
+			// allocated, and the first name's file was closed when it was
+			// archived: renamed over or deleted since, its number can come
+			// back as an unrelated file, which a link would restore holding
+			// the first name's bytes. Linked only while the first name still
+			// is this file.
+			if first, dup := seen[id]; dup && sameFileAs(root, first, id) {
+				hdr.Typeflag, hdr.Linkname, hdr.Size = tar.TypeLink, relTo(startName, first), 0
 				if err := tw.WriteHeader(hdr); err != nil {
 					return err
 				}
 				addedAny = true
 				return nil
 			}
-			seen[id] = rel
+			seen[id] = name
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
@@ -828,6 +820,49 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 		return addedAny, gzErr
 	}
 	return addedAny, nil
+}
+
+// storedIdentities is the identity of every file a backup must not archive
+// under any name: the archives in the store and the node's own root files.
+func storedIdentities(root *os.Root) map[fileIdentity]bool {
+	stored := map[fileIdentity]bool{}
+	_ = fs.WalkDir(root.FS(), backupDirName, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		if info, ierr := d.Info(); ierr == nil && info.Mode().IsRegular() {
+			if id, ok := identityOf(info); ok {
+				stored[id] = true
+			}
+		}
+		return nil
+	})
+	// The node's own files in the server root are hidden from the tenant (mode
+	// 0600, isProtectedFile): the start command and JVM flags among them are
+	// redacted for members without server.settings.write, and the archive was
+	// the one way to read them. Kept out by name at the root and by identity
+	// under any other name. A restore keeps the live copies (and drops what an
+	// older archive carried), so the archive never needed them.
+	for _, n := range archiveHiddenRootFiles {
+		if info, err := root.Lstat(n); err == nil && info.Mode().IsRegular() {
+			if id, ok := identityOf(info); ok {
+				stored[id] = true
+			}
+		}
+	}
+	return stored
+}
+
+// sameFileAs reports whether name in root still is the file with identity id.
+// Followed like the walk follows it, so a first name that is a link inside the
+// server onto the file still matches.
+func sameFileAs(root *os.Root, name string, id fileIdentity) bool {
+	info, err := root.Stat(name)
+	if err != nil {
+		return false
+	}
+	got, ok := identityOf(info)
+	return ok && got == id
 }
 
 // openArchiveEntry opens a listed file for the archive. A var so a test can
