@@ -304,15 +304,29 @@ func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string, deny
 		}
 		r = budget.reader(in)
 	}
-	out, err := createIn(dst, dstName, 0o644)
+	// Into a temp renamed over dstName once complete: a copy refused for space
+	// or failing mid-read left a truncated file under the name, counted against
+	// the server, and an overwrite had already emptied the original.
+	if err := mkdirParentIn(dst, dstName); err != nil {
+		return err
+	}
+	out, tmp, err := createTempIn(dst, path.Dir(dstName), ".copy-", ".tmp")
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, r); err != nil {
-		out.Close()
-		return err
+	_, err = io.Copy(out, r)
+	if cerr := out.Close(); err == nil {
+		err = cerr
 	}
-	return out.Close()
+	if err == nil {
+		err = dst.Rename(tmp, dstName)
+	}
+	if err != nil {
+		if rerr := dst.Remove(tmp); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			log.Printf("copy: cannot remove %s: %v", tmp, rerr)
+		}
+	}
+	return err
 }
 
 // nodeOwnedFileMode and nodeOwnedDirMode keep the node's own files in a server
@@ -450,6 +464,12 @@ func openTenantReadIn(root *os.Root, name string, deny map[fileIdentity]bool) (*
 // "x" into "survival" overwrite the node's config for this server. With the
 // root at the destination, a link inside it can only reach the destination.
 func copyDirForTenant(src *os.Root, srcName, rootDir, dstName string) error {
+	top, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return err
+	}
+	defer top.Close()
+	_, statErr := top.Lstat(dstName)
 	pinned, release, err := pinDir(rootDir, dstName, true)
 	if err != nil {
 		return err
@@ -462,7 +482,24 @@ func copyDirForTenant(src *os.Root, srcName, rootDir, dstName string) error {
 	defer dst.Close()
 	// The budget is judged on rootDir: dst is named /proc/self/fd/N, which
 	// belongs to no server, so its disk limit never applied.
-	return copyWalkIn(src, srcName, dst, ".", true, rootDir)
+	err = copyWalkIn(src, srcName, dst, ".", true, rootDir)
+	if err != nil && errors.Is(statErr, fs.ErrNotExist) {
+		// A folder this copy made goes again on failure, through the pinned
+		// root so a link planted inside it reaches nothing outside.
+		if es, rerr := fs.ReadDir(dst.FS(), "."); rerr == nil {
+			for _, e := range es {
+				if rerr := dst.RemoveAll(e.Name()); rerr != nil {
+					log.Printf("copy: cannot remove %s/%s: %v", dstName, e.Name(), rerr)
+				}
+			}
+		}
+		dst.Close()
+		release()
+		if rerr := top.Remove(dstName); rerr != nil {
+			log.Printf("copy: cannot remove %s: %v", dstName, rerr)
+		}
+	}
+	return err
 }
 
 // copyWalkIn copies the tree at srcName in src to dstName in dst. With
@@ -652,6 +689,7 @@ type writeBudget struct {
 	// private left saw nothing a sibling started at the same time wrote, so
 	// two copies started together each had the whole free space.
 	nodeCap, inflight0, landed0 int64
+	onDisk                      int64
 	disk                        *diskWrites
 	srvCap, srv0, sftp0, noted0 int64
 }
@@ -665,12 +703,15 @@ var errServerDiskLimit = errors.New("this writes more than the server's disk lim
 // free space on its own, so four copies of a world started together each saw
 // the whole of it and together went past the reserve. landed is what released
 // budgets wrote, and only grows: those bytes left inflight but are on the
-// disk, which a running budget measured before they were there.
+// disk, which a running budget measured before they were there. onDisk is
+// the part of inflight already written, by a copy or an SFTP handle that
+// spends as it writes: the free space a new budget measures has those bytes
+// out already, so only the rest, reserved ahead of the write, is taken off.
 //
 // Per filesystem because the free space is measured per directory: one
 // node-wide count made a spool or restore held on one disk refuse a write to
 // another, untouched disk as out of space.
-type diskWrites struct{ inflight, landed atomic.Int64 }
+type diskWrites struct{ inflight, landed, onDisk atomic.Int64 }
 
 var diskWritesByFS sync.Map // fsID -> *diskWrites
 
@@ -746,8 +787,11 @@ func newWriteBudget(dir string) *writeBudget {
 // and what other writes in progress hold.
 func nodeWriteBudget(dir string) *writeBudget {
 	disk := writesOn(dir)
+	// onDisk before inflight: a write between the two loads is then taken
+	// off as a reservation, never left out.
+	w0 := disk.onDisk.Load()
 	g0, l0 := disk.inflight.Load(), disk.landed.Load()
-	c := restoreDiskBudget(dir) - g0
+	c := restoreDiskBudget(dir) - (g0 - w0)
 	return &writeBudget{left: c, nodeCap: c, inflight0: g0, landed0: l0, disk: disk, dirs: map[string]bool{}, err: errUnpackBudget}
 }
 
@@ -763,6 +807,8 @@ func (b *writeBudget) boundServer(uuid string, headroom int64) {
 }
 
 func (b *writeBudget) release() {
+	b.disk.onDisk.Add(-b.onDisk)
+	b.onDisk = 0
 	b.disk.inflight.Add(-b.used)
 	b.disk.landed.Add(b.used)
 	if b.srv != nil {
@@ -809,7 +855,15 @@ func (b *writeBudget) spend(n int64) bool {
 			b.left, b.err = l, errServerDiskLimit
 		}
 	}
-	return b.left >= 0
+	// A write adding nothing cannot fill the disk: a save that shrinks a file
+	// was refused while the node sat at its reserve.
+	return n <= 0 || b.left >= 0
+}
+
+// written marks n of what spend charged as on the disk now.
+func (b *writeBudget) written(n int64) {
+	b.onDisk += n
+	b.disk.onDisk.Add(n)
 }
 
 // unspend gives back n of what spend charged and the write did not use.
@@ -864,8 +918,12 @@ func (w *writeBudgetReader) Read(p []byte) (int, error) {
 		// looks at the error. The rest is not written, so it is not charged.
 		fit := min(max(n+int(w.b.left), 0), n)
 		w.b.unspend(int64(n - fit))
+		w.b.written(int64(fit))
 		return fit, w.b.err
 	}
+	// ponytail: marked before the caller writes it, so a budget made in
+	// between misses one read's bytes; exact needs a hook after the write.
+	w.b.written(int64(n))
 	return n, err
 }
 

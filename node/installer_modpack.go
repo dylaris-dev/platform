@@ -273,6 +273,7 @@ func installModpack(destDir string, cfg InstallerConfig) error {
 		if !budget.spend(n) {
 			return fmt.Errorf("file %s: %w", f.Path, budget.err)
 		}
+		budget.written(n)
 	}
 
 	return installMrpackLoader(destDir, idx.Dependencies, cfg)

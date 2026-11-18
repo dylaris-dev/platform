@@ -1092,6 +1092,9 @@ func (m *meteredSFTPWriter) WriteAt(p []byte, off int64) (int, error) {
 		m.maxEnd = e
 	}
 	refund(d - (m.added() - before))
+	if m.budget != nil {
+		m.budget.written(m.added() - before)
+	}
 	return n, err
 }
 
