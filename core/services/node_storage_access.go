@@ -43,7 +43,7 @@ func presignTTL(st store.Store, isBYON bool) time.Duration {
 	return time.Duration(mins) * time.Minute
 }
 
-// nodeResolvesProvider reports whether the NODE handles a backup provider by
+// NodeResolvesProvider reports whether the NODE handles a backup provider by
 // itself. The list mirrors the filesystem cases of the switch in
 // platform/node/backup_worker.go (uploadBackup) and backup_restore.go
 // (downloadBackup).
@@ -54,7 +54,7 @@ func presignTTL(st store.Store, isBYON bool) time.Duration {
 // the node could never resolve at all. For all of them Core now drives the
 // transfer and the node only ever sees presigned URLs, asked for when the
 // transfer starts (see backup_transfer.go).
-func nodeResolvesProvider(provider string) bool {
+func NodeResolvesProvider(provider string) bool {
 	switch provider {
 	case "local", "shared", "node-local":
 		return true
@@ -154,7 +154,7 @@ func nodeAtLeast(ctx context.Context, rdb *redis.Client, nodeToken, since string
 // only surfaced on the node would take the server down for nothing.
 func PrepareNodeStorage(ctx context.Context, rdb *redis.Client, storage *models.BackupStorage, node *models.Node, deps backupstorage.Deps) (storageJSON []byte, objectStorage bool, err error) {
 	full, _ := json.Marshal(storage)
-	if storage == nil || nodeResolvesProvider(storage.Provider) {
+	if storage == nil || NodeResolvesProvider(storage.Provider) {
 		return full, false, nil
 	}
 

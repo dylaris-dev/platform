@@ -152,6 +152,26 @@ func (h *ServerHandler) MigrateServerStorage(w http.ResponseWriter, r *http.Requ
 	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
 		return
 	}
+	// A backup sets neither. The node refuses a move while one reads the tree
+	// and tells no one, so the panel said "Migration queued" for a move that
+	// never happened. Only one run per server runs at a time, so a running one
+	// is the newest of its job.
+	jobs, err := h.d.Store.ListBackupJobs(srv.ID)
+	if err != nil {
+		httpx.SendJSONError(w, "Database error", 500)
+		return
+	}
+	for _, j := range jobs {
+		latest, err := h.d.Store.ListBackupRuns(j.ID, 1)
+		if err != nil {
+			httpx.SendJSONError(w, "Database error", 500)
+			return
+		}
+		if len(latest) == 1 && latest[0].Status == "running" {
+			httpx.SendJSONError(w, "A backup of this server is running. Move its storage when the backup has finished.", http.StatusConflict)
+			return
+		}
+	}
 
 	node, err := h.d.Store.GetNodeByID(srv.NodeID)
 	if err != nil || node == nil {

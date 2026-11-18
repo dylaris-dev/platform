@@ -664,7 +664,7 @@ func (h *BackupHandler) UpdateJob(w http.ResponseWriter, r *http.Request) {
 // DeleteJob DELETE /api/backup-jobs/{jobId} - removes a schedule, gated on
 // backups.delete for the job's server.
 func (h *BackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
-	jobID, _, ok := h.resolveJobWithAccess(w, r, "backups.delete")
+	jobID, job, ok := h.resolveJobWithAccess(w, r, "backups.delete")
 	if !ok {
 		return
 	}
@@ -672,6 +672,16 @@ func (h *BackupHandler) DeleteJob(w http.ResponseWriter, r *http.Request) {
 	// usually stopped the server already, and the download would fail.
 	if busy, err := h.d.Store.BackupJobRestoring(jobID); err != nil || busy {
 		httpx.SendJSONError(w, "A backup of this schedule is being restored. Delete it once the restore has finished.", http.StatusConflict)
+		return
+	}
+	// Only one run per server runs at a time, so a running one is the newest.
+	latest, err := h.d.Store.ListBackupRuns(jobID, 1)
+	if err != nil {
+		httpx.SendJSONError(w, "Database error", 500)
+		return
+	}
+	if len(latest) == 1 && h.nodeStillWriting(&latest[0], job) {
+		httpx.SendJSONError(w, errNodeStillWriting, http.StatusConflict)
 		return
 	}
 	// The runs cascade with the job and take their storage keys with them, so
@@ -1011,6 +1021,10 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "This backup is being restored. Delete it once the restore has finished.", http.StatusConflict)
 		return
 	}
+	if h.nodeStillWriting(run, job) {
+		httpx.SendJSONError(w, errNodeStillWriting, http.StatusConflict)
+		return
+	}
 	// Best-effort object delete first; even if the storage is unreachable we
 	// still remove the DB row so the UI doesn't keep a phantom entry.
 	//
@@ -1042,6 +1056,22 @@ func (h *BackupHandler) DeleteRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+const errNodeStillWriting = "This backup is still running. Delete it once it has finished."
+
+// nodeStillWriting reports whether the node is still writing run to a disk of
+// its own. Deleted then, the archive existed only under a temporary name, so
+// the node removed nothing, the row went, and the finished archive stayed on
+// disk for good, counted against the quota and named by nothing. On object
+// storage Core aborts the upload instead. A run that is stuck is closed by the
+// reaper and can be deleted after that.
+func (h *BackupHandler) nodeStillWriting(run *models.BackupRun, job *models.BackupJob) bool {
+	if run.Status != "running" {
+		return false
+	}
+	bs, err := services.ResolveRunStorage(h.d.Store, run, job.StorageID, services.BackupJobOwner(h.d.Store, job.ServerID))
+	return err == nil && services.NodeResolvesProvider(bs.Provider)
 }
 
 // BackupUsage GET /api/servers/{id}/backup-usage

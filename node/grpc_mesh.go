@@ -746,7 +746,11 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 	// RCON is network I/O bounded by its own TimeoutMs, not disk work. In the
 	// file slots it waited up to requestSlotWait while Core gave up after
 	// TimeoutMs+1s, so a command reported as failed still ran, twice on a retry.
-	if msg.GetRconExecReq() != nil {
+	// A backup delete is one unlink, and during a storage move Handle waits the
+	// move out instead of refusing (see Handle). In a slot that wait held it for
+	// the whole move, and four of them left every other request for the server
+	// answered "busy" instead of its immediate 409.
+	if msg.GetRconExecReq() != nil || msg.GetBackupDeleteReq() != nil {
 		go func() { m.sendResponses(cc, msg.RequestId, m.handler.Handle(msg)) }()
 		return
 	}

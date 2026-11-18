@@ -236,13 +236,13 @@ func connectionStorage() *models.BackupStorage {
 // answers with "unknown provider <x>" - which is how "connection" shipped broken.
 func TestNodeResolvesProviderMatchesTheNodeSwitch(t *testing.T) {
 	for _, p := range []string{"local", "shared", "node-local"} {
-		if !nodeResolvesProvider(p) {
-			t.Errorf("nodeResolvesProvider(%q) = false, want true - the node implements it", p)
+		if !NodeResolvesProvider(p) {
+			t.Errorf("NodeResolvesProvider(%q) = false, want true - the node implements it", p)
 		}
 	}
 	for _, p := range []string{"s3", "connection", "core-storage", "", "ftp"} {
-		if nodeResolvesProvider(p) {
-			t.Errorf("nodeResolvesProvider(%q) = true, want false - Core drives the transfer", p)
+		if NodeResolvesProvider(p) {
+			t.Errorf("NodeResolvesProvider(%q) = true, want false - Core drives the transfer", p)
 		}
 	}
 }

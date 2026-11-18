@@ -84,19 +84,24 @@ func TestStripStorageServerUUIDsPassesThroughUnexpectedShapes(t *testing.T) {
 //
 // V11: a restore runs under status "restarting" and holds node_busy; the move
 // went through and, refused on the node, dropped the restore's interlock.
+//
+// W09: a running backup sets neither. The node refused the move and told no
+// one, while the panel said "Migration queued".
 func TestMigrateServerStorage_RefusedWhileInstallingOrMigrating(t *testing.T) {
 	for _, tc := range []struct {
-		status   string
-		nodeBusy string
-		refused  bool
+		status    string
+		nodeBusy  string
+		backingUp bool
+		refused   bool
 	}{
-		{"installing", "", true},
-		{"migrating", "", true},
-		{"stopped", "", false},
-		{"restarting", "restarting", true},
+		{"installing", "", false, true},
+		{"migrating", "", false, true},
+		{"stopped", "", false, false},
+		{"restarting", "restarting", false, true},
+		{"online", "", true, true},
 	} {
 		t.Run(tc.status, func(t *testing.T) {
-			fake := &resourcesFakeStore{server: resourcesServer(tc.status)}
+			fake := &backupRunningStore{resourcesFakeStore: resourcesFakeStore{server: resourcesServer(tc.status)}, running: tc.backingUp}
 			mr := miniredis.RunT(t)
 			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 			if tc.nodeBusy != "" {
@@ -162,6 +167,23 @@ func TestStoragePathChoiceIsForWhoeverRunsTheNode(t *testing.T) {
 }
 
 type storagePathStore struct{ resourcesFakeStore }
+
+func (f *resourcesFakeStore) ListBackupJobs(int) ([]models.BackupJob, error) { return nil, nil }
+
+type backupRunningStore struct {
+	resourcesFakeStore
+	running bool
+}
+
+func (f *backupRunningStore) ListBackupJobs(serverID int) ([]models.BackupJob, error) {
+	return []models.BackupJob{{ID: 7, ServerID: serverID}, {ID: 8, ServerID: serverID}}, nil
+}
+func (f *backupRunningStore) ListBackupRuns(jobID, _ int) ([]models.BackupRun, error) {
+	if f.running && jobID == 8 {
+		return []models.BackupRun{{ID: 1, JobID: jobID, Status: "running"}}, nil
+	}
+	return []models.BackupRun{{ID: 2, JobID: jobID, Status: "success"}}, nil
+}
 
 func (f *storagePathStore) GetUserBilling(string) (*store.UserBilling, error) { return nil, nil }
 

@@ -371,7 +371,7 @@ func (b *BackupScheduler) runOnObjectStorage(run *models.BackupRun, job *models.
 	if err != nil {
 		return false, err
 	}
-	return !nodeResolvesProvider(bs.Provider), nil
+	return !NodeResolvesProvider(bs.Provider), nil
 }
 
 // settleObjectStorageReport decides what a node's terminal report writes to a

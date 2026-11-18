@@ -202,6 +202,13 @@ func (h *StreamHandler) handleBackupDelete(reqID, serverUUID string, req *pb.Bac
 	root, err := openBackupRoot(filepath.Dir(path), false)
 	if err == nil {
 		err = root.Remove(filepath.Base(path))
+		// A run still being written has only its .partial. Removing it makes
+		// the writer's rename fail, so the run fails instead of publishing an
+		// archive whose row Core drops on this answer.
+		perr := root.Remove(filepath.Base(path) + partialBackupSuffix)
+		if os.IsNotExist(err) && (perr == nil || !os.IsNotExist(perr)) {
+			err = perr
+		}
 		root.Close()
 	}
 	if err != nil {
