@@ -369,6 +369,13 @@ func (s *jarStash) putBack() error {
 	var first error
 	for i := len(s.moved) - 1; i >= 0; i-- {
 		rel := s.moved[i]
+		st, err := s.root.Lstat(path.Join(s.dir, rel))
+		// No longer in the stash: an earlier put-back that failed later on
+		// already moved it back. Counting it as an error kept the stash and
+		// refused every later setup on the same ENOENT.
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
 		// A wipe of libraries/ during the install took a launch dir's parents.
 		mkdirAllForMC(s.root, path.Dir(rel))
 		// A directory taken whole (libraries/) may have been written again by
@@ -377,7 +384,7 @@ func (s *jarStash) putBack() error {
 		// vacated the name. Not only for a complete stash: one whose restore
 		// died after dropping the mark reads as partial, and its copy of the
 		// dir is still the only one.
-		if st, err := s.root.Lstat(path.Join(s.dir, rel)); err == nil && st.IsDir() {
+		if err == nil && st.IsDir() {
 			s.root.RemoveAll(rel)
 		}
 		if err := s.root.Rename(path.Join(s.dir, rel), rel); err != nil && first == nil {
@@ -458,4 +465,16 @@ func mkdirAllForMC(root *os.Root, dir string) error {
 	}
 	chownForMCIn(root, dir)
 	return nil
+}
+
+// dropSubServerStash removes the stash of a sub-server that was deleted, so a
+// later sub-server of the same name never has the deleted one's software put
+// back into it.
+func dropSubServerStash(serverPath, sub string) {
+	root, err := os.OpenRoot(serverPath)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	dropStash(root, "."+sub+".oldjars")
 }

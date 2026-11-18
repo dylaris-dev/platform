@@ -2301,6 +2301,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 				return
 			}
 		}
+		// Its jar stash goes with it: the next setup of a sub-server with the
+		// same name recovers whatever stash sits under that name.
+		dropSubServerStash(serverPath, subName)
 
 		// Check if this was the active sub-server
 		activeFile := filepath.Join(serverPath, ".active_server")

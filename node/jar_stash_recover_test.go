@@ -231,3 +231,86 @@ func TestRecoverStashCompleteMark(t *testing.T) {
 		})
 	}
 }
+
+// R23-01: a restore that put part of the stash back and then failed left
+// moved.list naming entries no longer in the stash. Every later recovery
+// failed on the first of them (ENOENT), kept the stash, and refused setup,
+// reinstall and version moves for good. An entry the stash no longer holds is
+// already back, so recovery converges however often it runs.
+func TestRecoverStashIsIdempotent(t *testing.T) {
+	for _, runs := range []int{1, 2, 3} {
+		t.Run(string(rune('0'+runs))+" runs", func(t *testing.T) {
+			serverPath := t.TempDir()
+			sub := filepath.Join(serverPath, "main")
+			stashDir := filepath.Join(serverPath, ".main.oldjars")
+			writeTestFile(t, filepath.Join(sub, "libraries", "old.jar"), "old lib")
+			writeTestFile(t, filepath.Join(sub, "versions", "x.jar"), "old version")
+			writeTestFile(t, filepath.Join(sub, "forge.jar"), "old jar")
+			writeTestFile(t, filepath.Join(sub, "world", "level.dat"), "world")
+			dead, err := stashServerJars(serverPath, "main", "libraries")
+			if err != nil {
+				t.Fatal(err)
+			}
+			dead.root.Close()
+			// The restore that died part-way: the mark gone, forge.jar and
+			// libraries/ already back, versions/ still in the stash.
+			os.Remove(filepath.Join(stashDir, stashCompleteMark))
+			for _, rel := range []string{"forge.jar", "libraries"} {
+				if err := os.Rename(filepath.Join(stashDir, "main", rel), filepath.Join(sub, rel)); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			for i := 0; i < runs; i++ {
+				recoverStrandedStash(serverPath, "main")
+			}
+			if stashStranded(serverPath, "main") {
+				t.Error("the stash is still there after recovery")
+			}
+			for rel, want := range map[string]string{
+				"libraries/old.jar": "old lib",
+				"versions/x.jar":    "old version",
+				"forge.jar":         "old jar",
+				"world/level.dat":   "world",
+			} {
+				if got := readTestFile(filepath.Join(sub, filepath.FromSlash(rel))); got != want {
+					t.Errorf("%s = %q, want %q", rel, got, want)
+				}
+			}
+			// A setup after it is no longer refused.
+			s, err := stashServerJars(serverPath, "main")
+			if err != nil {
+				t.Fatalf("stashServerJars after recovery: %v", err)
+			}
+			s.root.Close()
+		})
+	}
+}
+
+// R23-02: delete_sub_server left the sub-server's stash, and a later
+// sub-server of the same name had the deleted one's jars put into it.
+func TestDropSubServerStash(t *testing.T) {
+	serverPath := t.TempDir()
+	writeTestFile(t, filepath.Join(serverPath, "main", "forge.jar"), "old jar")
+	dead, err := stashServerJars(serverPath, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead.root.Close()
+	if err := os.RemoveAll(filepath.Join(serverPath, "main")); err != nil {
+		t.Fatal(err)
+	}
+
+	dropSubServerStash(serverPath, "main")
+	if stashStranded(serverPath, "main") {
+		t.Fatal("the deleted sub-server's stash is still there")
+	}
+	// The new sub-server of the same name gets nothing of the old one.
+	if err := os.MkdirAll(filepath.Join(serverPath, "main"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recoverStrandedStash(serverPath, "main")
+	if got := readTestFile(filepath.Join(serverPath, "main", "forge.jar")); got != "<missing>" {
+		t.Errorf("forge.jar = %q, want <missing>", got)
+	}
+}
