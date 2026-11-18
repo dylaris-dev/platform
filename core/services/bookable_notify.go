@@ -109,20 +109,24 @@ func NotifyTrafficPurchaseChanged(st bookableNotifier, scope, region, kind strin
 		} else {
 			// The tenant default only reaches tenants the resolver would ask it
 			// about. One with their own row is unaffected, and telling them
-			// their ceiling moved when it did not is worse than silence.
-			own, err := st.GetTrafficLimit("user:"+b.UserID, region, kind)
+			// their ceiling moved when it did not is worse than silence. Asked
+			// of the resolver, because a user's "*" row answers every region.
+			lim, err := ResolveTrafficLimit(st, b.UserID, region, kind)
 			if err != nil {
 				log.Printf("bookable: could not check %s's own %s/%s row: %v", b.UserID, region, kind, err)
 				continue
 			}
-			if own != nil {
+			if strings.HasPrefix(lim.Scope, "user:") {
 				continue
 			}
 		}
-		units := backupUnits(b, time.Now())
-		if units == 0 {
+		// Traffic is granted per unit held, route-only links included - not
+		// the backup units, which count nodes only.
+		u := TrafficUnits(b, time.Now())
+		if u == nil || *u == 0 {
 			continue
 		}
+		units := *u
 		body := fmt.Sprintf(
 			"You have metered traffic on. The most you can book on top of your %s allowance "+
 				"changed from %s to %s. Traffic stops there rather than being billed further.",

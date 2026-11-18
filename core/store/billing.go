@@ -268,7 +268,15 @@ func (s *PostgresStore) SetUserBillingStatusIf(userID, status string, graceUntil
 		ON CONFLICT (user_id) DO UPDATE SET
 			status       = CASE WHEN user_billing.admin_hold THEN user_billing.status ELSE EXCLUDED.status END,
 			grace_until  = CASE WHEN user_billing.admin_hold THEN user_billing.grace_until ELSE EXCLUDED.grace_until END,
-			suspended_at = CASE WHEN user_billing.admin_hold THEN user_billing.suspended_at ELSE EXCLUDED.suspended_at END,
+			suspended_at = CASE WHEN NOT user_billing.admin_hold THEN EXCLUDED.suspended_at
+			                    -- A payment suspension arriving under a hold placed over a
+			                    -- non-suspended account brings its own date: the hold's
+			                    -- date would start the cutoff and backup clocks days early
+			                    -- once the hold is lifted.
+			                    WHEN EXCLUDED.status = 'suspended' AND EXCLUDED.suspended_at IS NOT NULL
+			                         AND COALESCE(user_billing.held_status, user_billing.status) <> 'suspended'
+			                    THEN EXCLUDED.suspended_at
+			                    ELSE user_billing.suspended_at END,
 			held_status  = CASE WHEN user_billing.admin_hold THEN EXCLUDED.status ELSE user_billing.held_status END,
 			updated_at   = NOW()
 		WHERE $5::text[] IS NULL OR
@@ -471,10 +479,10 @@ func (s *PostgresStore) SetUserManualEntitlementKind(userID, kind string, expire
 }
 
 // ListServersByOwner returns the servers a tenant owns (id, uuid, status,
-// node_id), used by the billing lifecycle to stop a suspended tenant's servers
+// node_id, desired_state), used by the billing lifecycle to stop a suspended tenant's servers
 // without pulling the full server columns.
 func (s *PostgresStore) ListServersByOwner(ownerID string) ([]models.Server, error) {
-	rows, err := s.db.Query(`SELECT id, uuid, status, node_id FROM servers WHERE owner_id = $1`, ownerID)
+	rows, err := s.db.Query(`SELECT id, uuid, status, node_id, COALESCE(desired_state, 'stopped') FROM servers WHERE owner_id = $1`, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +490,7 @@ func (s *PostgresStore) ListServersByOwner(ownerID string) ([]models.Server, err
 	var out []models.Server
 	for rows.Next() {
 		var srv models.Server
-		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.Status, &srv.NodeID); err != nil {
+		if err := rows.Scan(&srv.ID, &srv.UUID, &srv.Status, &srv.NodeID, &srv.DesiredState); err != nil {
 			return nil, err
 		}
 		out = append(out, srv)

@@ -53,3 +53,49 @@ func TestIntegrationTheAdminHoldRoundTrips(t *testing.T) {
 		t.Fatalf("with the hold cleared the operator could not reactivate: %q", b.Status)
 	}
 }
+
+// A payment suspension that arrives DURING an operator's hold carries its own
+// date out of the hold. It used to keep the hold's suspended_at, so lifting a
+// hold placed days earlier cut the tenant off at once and deleted their
+// backups on the next pass, for a suspension one day old. A hold placed over
+// an existing suspension keeps that suspension's date.
+func TestIntegrationASuspensionUnderTheHoldKeepsItsOwnDate(t *testing.T) {
+	_, st := integrationDB(t)
+	day0 := time.Now().Add(-10 * 24 * time.Hour).UTC().Truncate(time.Second)
+	day9 := day0.Add(9 * 24 * time.Hour)
+	cases := []struct {
+		name       string
+		before     string     // payment status before the hold
+		beforeAt   *time.Time // its suspended_at
+		wantAtLift time.Time
+	}{
+		{"held while active, suspended during the hold", "active", nil, day9},
+		{"held while already suspended", "suspended", &day0, day0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, st)
+			user := f.server.OwnerID
+			if err := st.SetUserBillingStatus(user, tc.before, nil, tc.beforeAt); err != nil {
+				t.Fatalf("status: %v", err)
+			}
+			if err := st.PlaceAdminHold(user, day0); err != nil {
+				t.Fatalf("hold: %v", err)
+			}
+			if _, err := st.SetUserBillingStatusIf(user, "suspended", nil, &day9, nil); err != nil {
+				t.Fatalf("suspend under hold: %v", err)
+			}
+			prior, err := st.LiftAdminHold(user)
+			if err != nil || prior != "suspended" {
+				t.Fatalf("lift: prior %q, %v", prior, err)
+			}
+			b, err := st.GetUserBilling(user)
+			if err != nil || b.SuspendedAt == nil {
+				t.Fatalf("after lift: %+v, %v", b, err)
+			}
+			if !b.SuspendedAt.Equal(tc.wantAtLift) {
+				t.Errorf("suspended_at after lift = %s, want %s", b.SuspendedAt.UTC(), tc.wantAtLift)
+			}
+		})
+	}
+}

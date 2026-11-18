@@ -483,6 +483,10 @@ func (s *BillingLifecycleService) HoldLifted(userID, prior string) error {
 			return err
 		}
 		s.setTenantNodeLinks(userID, true)
+	case "suspended":
+		// The hold's email said the backups are kept, and a suspension that
+		// arrived during the hold sent none: from here the retention clock runs.
+		s.sendSuspendedEmail(userID, false)
 	}
 	return nil
 }

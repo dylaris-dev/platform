@@ -334,10 +334,16 @@ func (s *PostgresStore) CountNodesByOwner(ownerID string) (int, error) {
 // node agent pairing: the key is redeemed and the nodes row does not exist yet.
 // That direction is deliberate. Being briefly generous costs a tenant nothing;
 // being briefly wrong the other way cuts off a customer who is paid up.
+//
+// A key BOUND to a node is redeemed too, peer or not: the cutoff deletes the
+// peer rows, and the nodes row already counts that machine. Counting it again
+// kept a tenant who got back within their plan over it, with warp unable to
+// re-enroll while they were cut off. Deleting the node revokes its keys.
 func (s *PostgresStore) CountNodeWarpKeysByOwner(ownerID string) (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM warp_api_keys k
 		WHERE k.owner_id = $1::uuid AND k.revoked_at IS NULL AND k.node_id LIKE 'node-%'
+		  AND k.bound_node_id IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM warp_peers p WHERE p.api_key_id = k.id)`, ownerID).Scan(&n)
 	return n, err
 }

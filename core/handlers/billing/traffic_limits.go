@@ -201,10 +201,7 @@ func (h *TrafficLimitHandler) SetTrafficLimit(w http.ResponseWriter, r *http.Req
 	// after it the old ceiling is gone and there is nothing left to compare.
 	// A missing row deliberately reads as nil, "no purchase cap", which is what
 	// the resolver would have answered.
-	var before *int64
-	if row, err := h.d.Store.GetTrafficLimit(req.Scope, req.Region, req.Kind); err == nil && row != nil {
-		before = row.MaxPurchaseGB
-	}
+	before := h.purchaseCap(req.Scope, req.Region, req.Kind)
 
 	if req.IncludedMode == "default" && req.PurchaseMode == "default" {
 		if err := h.d.Store.DeleteTrafficLimit(req.Scope, req.Region, req.Kind); err != nil {
@@ -236,14 +233,29 @@ func (h *TrafficLimitHandler) SetTrafficLimit(w http.ResponseWriter, r *http.Req
 // notification that did not go out is a tenant who was not told rather than a
 // change that did not happen.
 func (h *TrafficLimitHandler) notifyPurchaseChange(scope, region, kind string, before *int64) {
-	var after *int64
-	if row, err := h.d.Store.GetTrafficLimit(scope, region, kind); err == nil && row != nil {
-		after = row.MaxPurchaseGB
-	}
+	after := h.purchaseCap(scope, region, kind)
 	if n := services.NotifyTrafficPurchaseChanged(h.d.Store, scope, region, kind, before, after); n > 0 {
 		log.Printf("traffic-limits: %s/%s/%s purchase cap changed, notified %d tenant(s) with metered traffic on",
 			scope, region, kind, n)
 	}
+}
+
+// purchaseCap is the purchase cap the tenants this scope reaches are held to.
+// For a user's own row that is what resolves for them, not the row: a cleared
+// or first override falls back to, or replaces, the tenant default. The default
+// scope only reaches tenants it answers for, so its row is their cap.
+func (h *TrafficLimitHandler) purchaseCap(scope, region, kind string) *int64 {
+	if userID, ok := strings.CutPrefix(scope, "user:"); ok {
+		lim, err := services.ResolveTrafficLimit(h.d.Store, userID, region, kind)
+		if err != nil {
+			return nil
+		}
+		return lim.MaxPurchaseGB
+	}
+	if row, err := h.d.Store.GetTrafficLimit(scope, region, kind); err == nil && row != nil {
+		return row.MaxPurchaseGB
+	}
+	return nil
 }
 
 // limitFromMode turns the three operator-facing modes into the stored value.

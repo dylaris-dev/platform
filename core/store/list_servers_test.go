@@ -67,3 +67,38 @@ func TestListServersCarriesTheNodeID(t *testing.T) {
 		t.Errorf("proxy_id did not survive: %v", servers[1].ProxyID)
 	}
 }
+
+// The billing cutoff stops every server MEANT to run, which it can only tell
+// from desired_state. ListServersByOwner did not select it, so a server that
+// was starting, restarting or installing read "" and was skipped.
+func TestListServersByOwnerCarriesTheDesiredState(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer db.Close()
+	s := NewPostgresStore(db)
+
+	mock.ExpectQuery(regexp.QuoteMeta("FROM servers WHERE owner_id")).
+		WithArgs("owner-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "uuid", "status", "node_id", "desired_state"}).
+			AddRow(7, "uuid-a", "starting", 325, "online").
+			AddRow(8, "uuid-b", "stopped", 327, "stopped"))
+
+	servers, err := s.ListServersByOwner("owner-1")
+	if err != nil {
+		t.Fatalf("ListServersByOwner: %v", err)
+	}
+	if len(servers) != 2 {
+		t.Fatalf("got %d servers, want 2", len(servers))
+	}
+	for i, want := range []struct {
+		uuid, status, desired string
+		node                  int
+	}{{"uuid-a", "starting", "online", 325}, {"uuid-b", "stopped", "stopped", 327}} {
+		got := servers[i]
+		if got.UUID != want.uuid || got.Status != want.status || got.DesiredState != want.desired || got.NodeID != want.node {
+			t.Errorf("row %d = %+v; want uuid %s status %s desired %s node %d", i, got, want.uuid, want.status, want.desired, want.node)
+		}
+	}
+}

@@ -178,3 +178,40 @@ func TestTrafficPoolLabel(t *testing.T) {
 		}
 	}
 }
+
+// Traffic is granted per unit HELD, nodes and route-only links alike
+// (TrafficUnits), and a user's own "*" row answers every region for them. The
+// notice counted nodes only and checked only an exact row.
+func TestTrafficPurchaseNoticeCountsEveryUnit(t *testing.T) {
+	two, one := int64(2), int64(1)
+	cases := []struct {
+		name   string
+		b      store.UserBilling
+		own    map[string]*models.TrafficLimit
+		want   bool
+		wantIn []string
+	}{
+		{"route-only tenant", store.UserBilling{UserID: "u", MaxLinks: &two, TrafficBillingEnabled: true}, nil, true,
+			[]string{"1000 GB", "200 GB"}},
+		{"node plus two links", store.UserBilling{UserID: "u", MaxNodes: &one, MaxLinks: &two, TrafficBillingEnabled: true}, nil, true,
+			[]string{"1500 GB", "300 GB"}},
+		{"managed tenant answered by their own * row", store.UserBilling{UserID: "u", MaxLinks: &two, TrafficBillingEnabled: true},
+			map[string]*models.TrafficLimit{"user:u|*|" + TrafficKindEdge: {MaxPurchaseGB: unit(5000)}}, false, nil},
+		{"holds nothing", store.UserBilling{UserID: "u", TrafficBillingEnabled: true}, nil, false, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &notifyFakeStore{billing: []store.UserBilling{tc.b}, own: tc.own}
+			NotifyTrafficPurchaseChanged(st, TrafficScopeDefault, "eu-central", TrafficKindEdge, unit(500), unit(100))
+			got := st.to("u")
+			if (got != nil) != tc.want {
+				t.Fatalf("notified = %v, want %v", got != nil, tc.want)
+			}
+			for _, s := range tc.wantIn {
+				if !strings.Contains(got.Body, s) {
+					t.Errorf("body %q does not contain %q", got.Body, s)
+				}
+			}
+		})
+	}
+}

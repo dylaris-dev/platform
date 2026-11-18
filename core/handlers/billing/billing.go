@@ -174,19 +174,42 @@ func (h *BillingHandler) trafficStatusFor(userID string, b *store.UserBilling) *
 		return nil
 	}
 	units := services.TrafficUnits(b, now)
+	// The user "*" edge row is a managed-gateway tenant's ONE account-wide pool
+	// (see services.JudgeManagedPool): every edge byte plus their own-ticket
+	// relay bytes, against the row as it stands. Resolved per region and
+	// multiplied by units, it showed the pool once per region at units times
+	// its size, so the warnings came far too late.
+	managed, err := h.d.Store.GetTrafficLimit("user:"+userID, services.TrafficRegionAny, store.TrafficKindEdge)
+	if err != nil {
+		return nil
+	}
+	folded := withIdleAllowances(foldTrafficCells(poolCells(cells, managed != nil)))
+	if managed != nil && !hasEdgeCell(folded) {
+		folded = append(folded, trafficCell{region: services.TrafficRegionAny, kind: store.TrafficKindEdge, byProduct: map[string]int64{}})
+	}
 
 	out := &myTrafficStatus{BillingEnabled: b.TrafficBillingEnabled}
 	limited := false
-	for _, c := range withIdleAllowances(foldTrafficCells(cells)) {
+	for _, c := range folded {
 		lim, err := services.ResolveTrafficLimit(h.d.Store, userID, c.region, c.kind)
 		if err != nil {
 			return nil
 		}
 		usedGB := c.bytes / trafficGB
+		poolUnits := units
+		if managed != nil && c.kind == store.TrafficKindEdge {
+			u, err := h.d.Store.GetTrafficUsage(userID, period)
+			if err != nil {
+				return nil
+			}
+			usedGB = services.ManagedPoolBytes(u) / trafficGB
+			one := int64(1)
+			lim, poolUnits = services.ResolvedTrafficLimit{IncludedGB: managed.IncludedGB}, &one
+		}
 		p := trafficPool{Kind: c.kind, Region: c.region, UsedGB: usedGB, ByProductBytes: c.byProduct, VoiceBytes: c.voice, BedrockBytes: c.bedrock}
-		if lim.IncludedGB != nil && units != nil {
+		if lim.IncludedGB != nil && poolUnits != nil {
 			limited = true
-			total := *lim.IncludedGB * *units
+			total := *lim.IncludedGB * *poolUnits
 			p.IncludedGB = &total
 			if total > 0 {
 				p.Pct = int(usedGB * 100 / total)
@@ -556,6 +579,37 @@ func foldTrafficCells(cells []store.RegionUsage) []trafficCell {
 		out[i].byProduct[c.Product] += c.Bytes
 	}
 	return out
+}
+
+// poolCells assigns the stored rows to the pools they are judged in. Relay rows
+// of product "route" are a managed tenant's own-ticket beam bytes: in the
+// managed pool, never in the BYON data allowance (DataTrafficUsedBytes and the
+// store's usage leave them out too). For a managed tenant every edge row joins
+// that one pool as well.
+func poolCells(cells []store.RegionUsage, managed bool) []store.RegionUsage {
+	out := make([]store.RegionUsage, 0, len(cells))
+	for _, c := range cells {
+		if c.Kind == store.TrafficKindRelay && c.Product == store.TrafficProductRoute {
+			if !managed {
+				continue
+			}
+			c.Kind = store.TrafficKindEdge
+		}
+		if managed && c.Kind == store.TrafficKindEdge {
+			c.Region = services.TrafficRegionAny
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func hasEdgeCell(cells []trafficCell) bool {
+	for _, c := range cells {
+		if c.kind == store.TrafficKindEdge {
+			return true
+		}
+	}
+	return false
 }
 
 // withIdleAllowances adds the pools a tenant holds but has not moved bytes in.

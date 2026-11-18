@@ -146,3 +146,44 @@ func TestClearingATrafficLimitNotifies(t *testing.T) {
 		t.Errorf("a cleared cap should read as no limit: %q", st.notified[0].Body)
 	}
 }
+
+// A user's own row is compared by what RESOLVES for them, before and after: a
+// cleared override falls back to the tenant default, and a first override
+// replaces it. Comparing the edited row alone announced "no limit" for both.
+func TestUserOverrideNoticeStatesTheResolvedCap(t *testing.T) {
+	def := &models.TrafficLimit{IncludedGB: services.LimitPtr(1000), MaxPurchaseGB: services.LimitPtr(500)}
+	cases := []struct {
+		name     string
+		own      *models.TrafficLimit // the user's row before the write
+		body     map[string]any
+		from, to string
+	}{
+		{"clearing the override", &models.TrafficLimit{IncludedGB: services.LimitPtr(1000), MaxPurchaseGB: services.LimitPtr(100)},
+			map[string]any{"includedMode": "default", "purchaseMode": "default"}, "100 GB", "500 GB"},
+		{"a first override", nil,
+			map[string]any{"includedMode": "custom", "includedGb": 1000, "purchaseMode": "custom", "purchaseGb": 100}, "500 GB", "100 GB"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &trafficNotifyFakeStore{
+				rows:    map[string]*models.TrafficLimit{"user_default|eu-central|edge": def},
+				tenants: []store.UserBilling{consenting("u1", 1)},
+			}
+			if tc.own != nil {
+				st.rows["user:u1|eu-central|edge"] = tc.own
+			}
+			body := map[string]any{"scope": "user:u1", "region": "eu-central", "kind": "edge"}
+			for k, v := range tc.body {
+				body[k] = v
+			}
+			trafficLimitPut(t, &TrafficLimitHandler{d: Deps{Store: st}}, body)
+			if len(st.notified) != 1 {
+				t.Fatalf("wrote %d notifications, want 1", len(st.notified))
+			}
+			want := "from " + tc.from + " to " + tc.to
+			if got := st.notified[0].Body; !strings.Contains(got, want) {
+				t.Errorf("body %q does not say %q", got, want)
+			}
+		})
+	}
+}

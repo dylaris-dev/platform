@@ -1081,13 +1081,28 @@ func TestIntegrationBYONMachineCountsOnceAgainstTheNodeCap(t *testing.T) {
 
 	// The machine joins the overlay: the key is now redeemed. Together with the
 	// nodes row it is ONE machine, not two.
+	pubkey := uniqueName("pk_")
 	if _, err := st.InsertWarpPeer(store.WarpPeer{
-		APIKeyID: keyID, Pubkey: uniqueName("pk_"), WGIP: uniqueName("10.44.0."), Region: "leader-01",
+		APIKeyID: keyID, Pubkey: pubkey, WGIP: uniqueName("10.44.0."), Region: "leader-01",
 	}); err != nil {
 		t.Fatalf("InsertWarpPeer: %v", err)
 	}
 	if got := count(); got != 1 {
 		t.Fatalf("one connected BYON machine counted as %d, want 1 - the sweep cuts off a tenant who is within their plan", got)
+	}
+
+	// The cutoff drops the peer rows of every key. A key bound to its machine is
+	// still redeemed - the nodes row already counts it - or a tenant who got
+	// back within their plan reads as over it and stays cut off, since warp
+	// cannot re-enroll to recreate the peer while they are.
+	if ok, err := st.BindWarpAPIKey(keyID, f.node.ID); err != nil || !ok {
+		t.Fatalf("BindWarpAPIKey: %v, %v", ok, err)
+	}
+	if err := st.DeleteWarpPeerByPubkey(pubkey); err != nil {
+		t.Fatalf("DeleteWarpPeerByPubkey: %v", err)
+	}
+	if got := count(); got != 1 {
+		t.Fatalf("one bound machine without its peer row counted as %d, want 1", got)
 	}
 
 	// A second machine mid-setup is counted again, which is the behaviour the
