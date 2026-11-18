@@ -93,7 +93,8 @@ func TestQueuedWritersHoldOffAStorageMove(t *testing.T) {
 		refused bool
 	}{
 		{"backup_restore", true},
-		{"backup_run", true},
+		// RunBackup holds it itself (TestRunBackupSpoolReleasesTheServerDuringUpload).
+		{"backup_run", false},
 		{"install_mod", true},
 		{"remove_mod", true},
 		{"update_server_version", true},

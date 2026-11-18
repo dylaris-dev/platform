@@ -1492,10 +1492,11 @@ func commandRefusal(cmd NodeCommand) string {
 // as long as they run. A storage move that started meanwhile copied the tree
 // without what they wrote after and deleted the source under them, and a
 // restore or install reported done on a path that no longer existed.
+// backup_run takes its hold inside RunBackup, which releases it once spooled.
 var storageWriterActions = map[string]bool{
 	"create": true, "setup": true, "reconfigure": true, "switch_server": true,
 	"update_resources": true, "delete": true, "delete_sub_server": true, "reinstall": true,
-	"backup_run": true, "backup_restore": true, "install_mod": true, "remove_mod": true,
+	"backup_restore": true, "install_mod": true, "remove_mod": true,
 	"update_server_version": true, "copy_sub_server": true,
 }
 

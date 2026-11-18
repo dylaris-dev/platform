@@ -112,6 +112,9 @@ type fakeTransferCore struct {
 	mu        sync.Mutex
 	requests  [][]int32
 	completes int
+
+	// sm is the storage manager runBackupWithFakeCore hands RunBackup.
+	sm *StorageManager
 }
 
 func (c *fakeTransferCore) api() multipartAPI {
@@ -368,7 +371,8 @@ func runBackupWithFakeCore(t *testing.T, core *fakeTransferCore, include []strin
 		t.Fatal(err)
 	}
 
-	RunBackup(context.Background(), rdb, &StorageManager{paths: []string{root}}, nil, BackupRunCommand{
+	core.sm = &StorageManager{paths: []string{root}}
+	RunBackup(context.Background(), rdb, core.sm, nil, BackupRunCommand{
 		RunID: 77, JobID: 1, ServerUUID: uuid, IncludePatterns: include,
 		StorageKey: "backups/srv-f3/job-1/x.tar.gz",
 		Storage:    json.RawMessage(`{"id":3,"provider":"connection","config":{}}`),

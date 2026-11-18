@@ -622,9 +622,14 @@ func TestRunBackupSpoolReleasesTheServerDuringUpload(t *testing.T) {
 			}
 
 			core := newFakeCore(t, 1024)
+			writerHeldNow := func() bool {
+				core.sm.movingMu.Lock()
+				defer core.sm.movingMu.Unlock()
+				return core.sm.holdsLocked("srv-f3-0001") != nil
+			}
 			var mu sync.Mutex
 			seen := false
-			serverHeld, runHeld := false, false
+			serverHeld, runHeld, writerHeld := false, false, false
 			core.bucket.fail = func(int32, string) int {
 				mu.Lock()
 				defer mu.Unlock()
@@ -632,6 +637,7 @@ func TestRunBackupSpoolReleasesTheServerDuringUpload(t *testing.T) {
 					seen = true
 					serverHeld = backupsInFlight.has("server:srv-f3-0001")
 					runHeld = backupsInFlight.has("77")
+					writerHeld = writerHeldNow()
 				}
 				return 0
 			}
@@ -644,11 +650,19 @@ func TestRunBackupSpoolReleasesTheServerDuringUpload(t *testing.T) {
 			if serverHeld != tc.wantServer {
 				t.Errorf("server interlock held during upload = %v, want %v", serverHeld, tc.wantServer)
 			}
+			// Y05: the storage-writer hold refused storage moves and moves to
+			// another node for the same hours; it follows the interlock.
+			if writerHeld != tc.wantServer {
+				t.Errorf("storage-writer hold during upload = %v, want %v", writerHeld, tc.wantServer)
+			}
 			if !runHeld {
 				t.Error("the run's own key was released during upload; a redelivery would run it twice")
 			}
 			if backupsInFlight.has("server:srv-f3-0001") || backupsInFlight.has("77") {
 				t.Error("a key is still held after the run ended")
+			}
+			if writerHeldNow() {
+				t.Error("storage-writer hold still in place after the run ended")
 			}
 		})
 	}

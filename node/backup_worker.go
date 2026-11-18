@@ -391,6 +391,11 @@ func (g *worldSaveGuard) resume() {
 }
 
 func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *DockerManager, cmd BackupRunCommand) {
+	// The storage-writer hold, taken here rather than by the dispatcher so it
+	// can be dropped with the server interlock once the archive is spooled: a
+	// move refuses while it is held, and the paced upload reads only the spool.
+	releaseWriter := sm.holdWriter(cmd.ServerUUID)
+	defer releaseWriter()
 	// At-least-once delivery: a redelivery while this run is still going would
 	// archive the same tree twice into the same key. See backup_inflight.go.
 	key := fmt.Sprintf("%d", cmd.RunID)
@@ -550,6 +555,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 			// refused restores, tree changes and the memory guard's save-all for
 			// hours. The run's own key stays held against a redelivery.
 			releaseServer()
+			releaseWriter()
 			log.Printf("backup %d: archive spooled (%.2f MB), saving resumed, uploading", cmd.RunID, float64(counter.Total())/1024/1024)
 			src = f
 		}
