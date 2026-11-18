@@ -78,6 +78,8 @@ func TestBeamThrottleDirectionZeroIsNoCap(t *testing.T) {
 		{"down capped, up explicit 0", map[string]string{"beam:bw_limit": "10485760", "beam:bw_up_internal": "0", "beam:bw_down_internal": "10485760"}, false, true},
 		{"old core: legacy only", map[string]string{"beam:bw_limit": "10485760"}, true, true},
 		{"all explicit 0", map[string]string{"beam:bw_limit": "0", "beam:bw_up_internal": "0", "beam:bw_down_internal": "0"}, false, false},
+		// Core keeps the round-tripped legacy value as bw_limit when both splits are 0.
+		{"both splits 0, legacy cap kept", map[string]string{"beam:bw_limit": "10485760", "beam:bw_up_internal": "0", "beam:bw_down_internal": "0"}, true, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

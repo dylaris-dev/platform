@@ -190,6 +190,11 @@ func (bt *BeamThrottle) reloadFromRedis(ctx context.Context, rdb *redis.Client) 
 	if errors.Is(downErr, redis.Nil) {
 		down = legacy
 	}
+	// Both splits 0 is Core's "use the single field": it then writes bw_limit
+	// as that field's value, or 0 when nothing is capped.
+	if up == 0 && down == 0 {
+		up, down = legacy, legacy
+	}
 	bt.setLimits(up, down)
 }
 

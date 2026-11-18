@@ -920,6 +920,19 @@ func (s *beamServer) Authenticate(ctx context.Context, req *pb.BeamAuthReq) (*pb
 		// never authenticated" from "authenticated by a Core that sends no
 		// permissions".
 		s.permsByPeer.Store(p.Addr.String(), claims.Perms)
+		// grpc emits ConnEnd without waiting for running handlers, so the
+		// cleaner may already have run for this address. Closing the transport
+		// cancels its streams before ConnEnd, so either the cleaner deletes
+		// after the stores above or this check sees the cancel. Only our own
+		// session is removed: a later connection may hold the address by now.
+		if ctx.Err() != nil {
+			if s.sessionByPeer.CompareAndDelete(p.Addr.String(), sess) {
+				s.serverUUIDByPeer.Delete(p.Addr.String())
+				s.usernameByPeer.Delete(p.Addr.String())
+				s.permsByPeer.Delete(p.Addr.String())
+			}
+			return &pb.BeamAuthResp{Ok: false, Message: "the connection ended during authentication"}, nil
+		}
 	}
 	return &pb.BeamAuthResp{
 		Ok:         true,
@@ -1658,7 +1671,14 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// Disk-quota pre-check. The beam tunnel bypasses Core's HTTP body
 			// size cap and its disk precheck, so enforce the same server disk
 			// limit here against the declared upload size before streaming.
-			if err := s.checkBeamUploadDiskHeadroom(ctx, serverUUID, serverTotal); err != nil {
+			// The rename replaces the entry, so the file it replaces leaves the
+			// server's total; the node budget above stays at the full size,
+			// because both sit on disk until the rename.
+			var replaces int64
+			if st, err := upRoot.Lstat(destName); err == nil && st.Mode().IsRegular() {
+				replaces = st.Size()
+			}
+			if err := s.checkBeamUploadDiskHeadroom(ctx, serverUUID, serverTotal-replaces); err != nil {
 				return err
 			}
 
