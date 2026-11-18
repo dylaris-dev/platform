@@ -498,3 +498,80 @@ func TestRebalancePickTargetSkipsRetiringNode(t *testing.T) {
 		t.Fatalf("want node 3 with node 2's link being replaced, got %+v", got)
 	}
 }
+
+// Moves already on their way to a node count against it. SumAllocatedByNode only
+// sees a server on its target after the cutover, so without this two overloaded
+// sources in one tick (or one source over two ticks) both sent a server to the
+// one node that had room for one of them.
+func TestRebalanceCountsMovesInFlightAgainstTheTarget(t *testing.T) {
+	cases := []struct {
+		name string
+		// secondTick runs the second relief in a later tick, with the first move
+		// still queued.
+		secondTick bool
+	}{
+		{"same tick", false},
+		{"next tick, first move still queued", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			ctx := context.Background()
+			pad := 0
+			fs := &rebalanceFakeStore{
+				settings: map[string]string{"routing_mode": "gateway"},
+				allocRAM: map[int]int64{1: 3800, 2: 3800, 3: 0},
+				serversByNode: map[int][]models.Server{
+					1: {{ID: 10}}, 2: {{ID: 20}},
+				},
+				serversByID: map[int]*models.Server{
+					10: {ID: 10, UUID: "srv-a", NodeID: 1, AutoMove: true, Memory: 1500, RAMPaddingMB: &pad},
+					20: {ID: 20, UUID: "srv-b", NodeID: 2, AutoMove: true, Memory: 1500, RAMPaddingMB: &pad},
+				},
+			}
+			w := &RebalanceWorker{store: fs, redis: rdb, orchestrator: NewMigrationOrchestrator(fs, rdb, nil, nil, "")}
+			a := models.Node{ID: 1, Status: "online", TotalRAMMB: 4000, RAMOvercommitRatio: 1.0}
+			b := models.Node{ID: 2, Status: "online", TotalRAMMB: 4000, RAMOvercommitRatio: 1.0}
+			// Room for exactly one 1500 MB server, and that one leaves it at 75%.
+			c := models.Node{ID: 3, Status: "online", TotalRAMMB: 2000, RAMOvercommitRatio: 1.0}
+			nodes := []models.Node{a, b, c}
+			loads := map[int]float64{1: 95, 2: 95, 3: 0}
+
+			w.relieveNode(ctx, &nodes[0], nodes, loads, nil, 85, nil)
+			if tc.secondTick {
+				w.pruneInflight(ctx)
+				loads = w.projectedLoads(nodes)
+			}
+			w.relieveNode(ctx, &nodes[1], nodes, loads, nil, 85, nil)
+
+			n, err := rdb.XLen(ctx, migrationStreamKey).Result()
+			if err != nil {
+				t.Fatalf("XLen: %v", err)
+			}
+			if n != 1 {
+				t.Errorf("enqueued %d moves onto a node with room for one", n)
+			}
+		})
+	}
+}
+
+// A move that would itself push the target over the threshold is refused: that
+// target is the next tick's overloaded source, and its server moves straight
+// back.
+func TestRebalanceRefusesATargetTheMoveWouldOverload(t *testing.T) {
+	pad := 0
+	fs := &rebalanceFakeStore{
+		settings: map[string]string{"routing_mode": "gateway"},
+		allocRAM: map[int]int64{2: 8000},
+	}
+	w := &RebalanceWorker{store: fs}
+	src := &models.Node{ID: 1, Status: "online"}
+	tgt := models.Node{ID: 2, Status: "online", TotalRAMMB: 10000, RAMOvercommitRatio: 1.0}
+	nodes := []models.Node{*src, tgt}
+	srv := &models.Server{ID: 100, UUID: "srv-1", Memory: 1200, RAMPaddingMB: &pad}
+	// 80% now, 92% after the move.
+	loads := map[int]float64{2: 80}
+	if got := w.pickTarget(context.Background(), srv, src, nodes, loads, nil, 85, nil); got != nil {
+		t.Fatalf("picked node %d, which the move leaves at 92%% over a threshold of 85%%", got.ID)
+	}
+}

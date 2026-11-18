@@ -52,28 +52,42 @@ func nodeLoadPercent(allocRAMMB int64, allocCPU float64, totalRAMMB int64, total
 // RAM and CPU request under its overcommit ratios, and enough free disk. Mirrors
 // the Available checks in handlers.scoreNode so a rebalance move never lands on
 // a node the scheduler would have rejected.
-func nodeHasCapacityFor(ctx context.Context, rdb *redis.Client, s store.Store, n *models.Node, hb *NodeHeartbeat, srv *models.Server, placement NodePlacement) bool {
+//
+// reserved is what moves already on their way to n will add, which
+// SumAllocatedByNode cannot see before each one's cutover. maxLoadPct, when
+// positive, refuses a move that would itself leave n above it: a target pushed
+// over the threshold is the next tick's overloaded source.
+func nodeHasCapacityFor(ctx context.Context, rdb *redis.Client, s store.Store, n *models.Node, hb *NodeHeartbeat, srv *models.Server, placement NodePlacement, reserved moveReservation, maxLoadPct float64) bool {
 	allocRAM, allocCPU, err := s.SumAllocatedByNode(n.ID)
 	if err != nil {
 		return false
 	}
+	allocRAM += reserved.ramMB
+	allocCPU += reserved.cpu
 
 	// RAM check. The server's container on THIS node is its RAM plus the
 	// padding it would get here, which the target's allocation already counts
 	// for every server it holds.
+	want := int64(srv.Memory + EffectiveRAMPaddingMB(s, srv.RAMPaddingMB, n.RAMPaddingMB))
 	if n.TotalRAMMB > 0 {
 		cap := float64(n.TotalRAMMB) * n.RAMOvercommitRatio
-		want := int64(srv.Memory + EffectiveRAMPaddingMB(s, srv.RAMPaddingMB, n.RAMPaddingMB))
 		if float64(allocRAM+want) > cap {
 			return false
 		}
 	}
 	// CPU check (only when the server requests a positive limit).
-	if srv.CPULimit > 0 && n.TotalCPU > 0 {
+	wantCPU := 0.0
+	if srv.CPULimit > 0 {
+		wantCPU = srv.CPULimit
+	}
+	if wantCPU > 0 && n.TotalCPU > 0 {
 		cap := n.TotalCPU * n.CPUOvercommitRatio
-		if allocCPU+srv.CPULimit > cap {
+		if allocCPU+wantCPU > cap {
 			return false
 		}
+	}
+	if maxLoadPct > 0 && nodeLoadPercent(allocRAM+want, allocCPU+wantCPU, n.TotalRAMMB, n.TotalCPU, n.RAMOvercommitRatio, n.CPUOvercommitRatio) > maxLoadPct {
+		return false
 	}
 	// Disk floor: measure the path the NODE would actually choose (with a manual
 	// priority order that is not the largest one) and count what the path has

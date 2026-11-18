@@ -629,3 +629,102 @@ func TestRestoreRefusesAMetricsDBTheBundleDoesNotHold(t *testing.T) {
 		t.Errorf("wrote before refusing: db loads = %d, library = %v", rig.dbCalls, rig.lib.written)
 	}
 }
+
+// writeModpacksOnlyBundle is a bundle whose manifest says it set out to cover only
+// the modpacks, the shape a modpacks-only job writes.
+func writeModpacksOnlyBundle(t *testing.T) []byte {
+	t.Helper()
+	var out bytes.Buffer
+	w, err := bundle.NewWriter(&out, restorePass, "2026.09.08")
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.WriteManifest(&bundle.Manifest{
+		Schema: bundle.Schema, Source: "2026.09.08", ClusterSecret: "source-secret",
+		Selection:  models.PlatformBackupSelection{Modpacks: true},
+		Components: []models.PlatformBackupComponent{{Kind: "modpacks", Status: models.PlatformBackupIncluded}},
+	}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	if err := w.AddBytes("modpacks/sky/1.0.mrpack", []byte("PACK")); err != nil {
+		t.Fatalf("AddBytes: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	return out.Bytes()
+}
+
+// Asking for the database from a bundle that holds none must not read as a
+// restore. It used to return success with no database component, and an
+// operator who then pointed Core at that target booted onto an empty database.
+func TestRestoreRefusesADatabaseTheBundleDoesNotHold(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  func(t *testing.T) []byte
+	}{
+		// The manifest says so: refused before anything is written.
+		{"manifest without a database", writeModpacksOnlyBundle},
+		// The manifest promised one and the payload did not carry it.
+		{"payload without a database", func(t *testing.T) []byte {
+			return writeTestBundle(t, "source-secret", map[string]string{"modpacks/sky/1.0.mrpack": "PACK"})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newRig(t, "source-secret")
+			_, err := rig.r.Restore(context.Background(), bytes.NewReader(tc.raw(t)), restorePass,
+				PlatformRestoreSelection{Database: true}, false)
+			if !errors.Is(err, ErrBundleHasNoDatabase) {
+				t.Fatalf("err = %v, want ErrBundleHasNoDatabase", err)
+			}
+			if rig.dbCalls != 0 {
+				t.Errorf("loaded a dump that does not exist")
+			}
+		})
+	}
+}
+
+// A bundle that breaks off AFTER the database landed returns the error with
+// the result, and the deferred reseal does not panic on a nil result.
+func TestRestoreOfATruncatedBundleAfterTheDatabaseReturnsTheResult(t *testing.T) {
+	var out bytes.Buffer
+	w, err := bundle.NewWriter(&out, restorePass, "2026.09.08")
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	if err := w.WriteManifest(&bundle.Manifest{
+		Schema: bundle.Schema, Source: "2026.09.08", ClusterSecret: "source-secret",
+		Selection: models.PlatformBackupSelection{Database: true, Modpacks: true},
+	}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	// The database first, then a member several chunks long that the restore
+	// skips (modpacks are not selected), so the cut surfaces in the tar reader.
+	if err := w.AddBytes("database.dump", []byte("PGDMP...")); err != nil {
+		t.Fatalf("AddBytes: %v", err)
+	}
+	if err := w.AddBytes("modpacks/big.mrpack", bytes.Repeat([]byte("x"), 300*1024)); err != nil {
+		t.Fatalf("AddBytes: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	raw := out.Bytes()
+	rig := newRig(t, "this-instances-secret")
+	cut := raw[:len(raw)-100*1024]
+	res, err := rig.r.Restore(context.Background(), bytes.NewReader(cut), restorePass,
+		PlatformRestoreSelection{Database: true}, false)
+	if err == nil {
+		t.Fatal("a truncated bundle restored without an error")
+	}
+	if rig.dbCalls != 1 {
+		t.Fatalf("db loads = %d; the cut must come after the database member", rig.dbCalls)
+	}
+	if res == nil {
+		t.Fatal("nil result: the operator loses the restored database's warning and components")
+	}
+	if rig.reseal.calls != 1 {
+		t.Errorf("reseals = %d, want the restored database resealed", rig.reseal.calls)
+	}
+}

@@ -37,6 +37,11 @@ type RebalanceWorker struct {
 	leader leader.Election
 	// gatewayRemote is the provider mode; nil = always local.
 	gatewayRemote func() (remote, known bool)
+	// inflight is the moves this worker enqueued that have not finished, by
+	// server ID. Leader-local memory only.
+	// ponytail: a new leader starts empty and manual moves are not in it; read
+	// the migration stream if overbooking after a handover ever shows up.
+	inflight map[int]rebalanceMove
 }
 
 const (
@@ -137,17 +142,11 @@ func (w *RebalanceWorker) tick(ctx context.Context) {
 		return
 	}
 
-	// (c) Compute every online node's load%. Build a candidate-target pool of
-	// nodes that are below threshold so we don't recompute it per overloaded node.
-	loads := make(map[int]float64, len(nodes))
-	for i := range nodes {
-		n := &nodes[i]
-		if n.Status != "online" {
-			continue
-		}
-		allocRAM, allocCPU, _ := w.store.SumAllocatedByNode(n.ID)
-		loads[n.ID] = nodeLoadPercent(allocRAM, allocCPU, n.TotalRAMMB, n.TotalCPU, n.RAMOvercommitRatio, n.CPUOvercommitRatio)
-	}
+	// (c) Compute every online node's load%, as it will be once the moves still
+	// in flight have landed: a source whose server is already leaving is not
+	// relieved twice, and a target is not counted as emptier than it is.
+	w.pruneInflight(ctx)
+	loads := w.projectedLoads(nodes)
 
 	for i := range nodes {
 		src := &nodes[i]
@@ -193,6 +192,18 @@ func (w *RebalanceWorker) relieveNode(ctx context.Context, src *models.Node, nod
 	}
 	log.Printf("rebalance: enqueued server %s (%dMB) node %d (%.0f%%) -> node %d (%.0f%%), threshold %d%% [capped at 1 move/node/tick]",
 		candidate.UUID, candidate.Memory, src.ID, loads[src.ID], target.ID, loads[target.ID], threshold)
+
+	m := rebalanceMove{source: src.ID, target: target.ID}
+	m.ramMB = int64(candidate.Memory + EffectiveRAMPaddingMB(w.store, candidate.RAMPaddingMB, target.RAMPaddingMB))
+	if candidate.CPULimit > 0 {
+		m.cpu = candidate.CPULimit
+	}
+	if w.inflight == nil {
+		w.inflight = map[int]rebalanceMove{}
+	}
+	w.inflight[candidate.ID] = m
+	loads[src.ID] = w.projectedLoad(src)
+	loads[target.ID] = w.projectedLoad(target)
 }
 
 // pickCandidate returns the server on the source node that best relieves it:
@@ -282,7 +293,8 @@ func (w *RebalanceWorker) migrationLocked(ctx context.Context, serverUUID string
 
 // pickTarget selects a capacity-aware destination for the server: online, not
 // the source, honoring the source's region/tag constraints, with room for the
-// server's RAM+CPU under overcommit, and below the overload threshold. Among
+// server's RAM+CPU under overcommit (counting moves already on their way), and
+// still at or below the overload threshold once the server has landed. Among
 // valid targets the lowest-load node wins. Returns nil when none qualify.
 func (w *RebalanceWorker) pickTarget(ctx context.Context, srv *models.Server, src *models.Node, nodes []models.Node, loads map[int]float64, heartbeats map[string]*NodeHeartbeat, threshold int, retiring map[int]bool) *models.Node {
 	gatewayOn := w.gatewayEnabled()
@@ -336,7 +348,7 @@ func (w *RebalanceWorker) pickTarget(ctx context.Context, srv *models.Server, sr
 		if loads[t.ID] > float64(threshold) {
 			continue
 		}
-		if !nodeHasCapacityFor(ctx, w.redis, w.store, t, heartbeats[t.Token], srv, EffectiveNodePlacement(ctx, w.redis, t.Token)) {
+		if !nodeHasCapacityFor(ctx, w.redis, w.store, t, heartbeats[t.Token], srv, EffectiveNodePlacement(ctx, w.redis, t.Token), w.reservedOn(t.ID), float64(threshold)) {
 			continue
 		}
 		if best == nil || loads[t.ID] < bestLoad {
@@ -345,4 +357,64 @@ func (w *RebalanceWorker) pickTarget(ctx context.Context, srv *models.Server, sr
 		}
 	}
 	return best
+}
+
+// moveReservation is RAM and CPU a node is about to gain (positive) or lose
+// (negative) from moves still in flight.
+type moveReservation struct {
+	ramMB int64
+	cpu   float64
+}
+
+// rebalanceMove is one move this worker enqueued and has not yet seen finish.
+type rebalanceMove struct {
+	source, target int
+	moveReservation
+}
+
+// pruneInflight forgets the moves whose queued marker is gone: the
+// orchestrator deletes it when a move ends, whichever way it ended.
+func (w *RebalanceWorker) pruneInflight(ctx context.Context) {
+	for id := range w.inflight {
+		n, err := w.redis.Exists(ctx, migrationQueuedKey(id)).Result()
+		if err == nil && n == 0 {
+			delete(w.inflight, id)
+		}
+	}
+}
+
+// reservedOn sums what the in-flight moves add to (or take from) one node.
+func (w *RebalanceWorker) reservedOn(nodeID int) moveReservation {
+	var r moveReservation
+	for _, m := range w.inflight {
+		switch nodeID {
+		case m.target:
+			r.ramMB += m.ramMB
+			r.cpu += m.cpu
+		case m.source:
+			r.ramMB -= m.ramMB
+			r.cpu -= m.cpu
+		}
+	}
+	return r
+}
+
+// projectedLoads is every online node's load% as it will be once the moves in
+// flight have landed.
+func (w *RebalanceWorker) projectedLoads(nodes []models.Node) map[int]float64 {
+	loads := make(map[int]float64, len(nodes))
+	for i := range nodes {
+		n := &nodes[i]
+		if n.Status != "online" {
+			continue
+		}
+		loads[n.ID] = w.projectedLoad(n)
+	}
+	return loads
+}
+
+func (w *RebalanceWorker) projectedLoad(n *models.Node) float64 {
+	allocRAM, allocCPU, _ := w.store.SumAllocatedByNode(n.ID)
+	r := w.reservedOn(n.ID)
+	return nodeLoadPercent(allocRAM+r.ramMB, allocCPU+r.cpu, n.TotalRAMMB, n.TotalCPU, n.RAMOvercommitRatio, n.CPUOvercommitRatio)
 }

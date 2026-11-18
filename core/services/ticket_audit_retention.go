@@ -35,7 +35,7 @@ type TicketAuditRetentionService struct {
 }
 
 func NewTicketAuditRetentionService(s store.Store) *TicketAuditRetentionService {
-	return &TicketAuditRetentionService{store: s, interval: 24 * time.Hour}
+	return &TicketAuditRetentionService{store: s, interval: leaderSweepInterval}
 }
 
 func (s *TicketAuditRetentionService) SetLeader(l leader.Election) { s.leader = l }

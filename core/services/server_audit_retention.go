@@ -25,7 +25,7 @@ type ServerAuditRetentionService struct {
 }
 
 func NewServerAuditRetentionService(s store.Store) *ServerAuditRetentionService {
-	return &ServerAuditRetentionService{store: s, interval: 24 * time.Hour}
+	return &ServerAuditRetentionService{store: s, interval: leaderSweepInterval}
 }
 
 func (s *ServerAuditRetentionService) SetLeader(l leader.Election) { s.leader = l }

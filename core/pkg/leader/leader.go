@@ -43,6 +43,13 @@ const (
 	// AcquireRetry is how often a follower retries SETNX. Same order as TTL
 	// to keep failover within ~one minute without hammering Redis.
 	AcquireRetry = 5 * time.Second
+
+	// refreshRetry is how soon a failed refresh is tried again.
+	refreshRetry = 2 * time.Second
+	// leaseSafety is how long before the lease could expire a leader that cannot
+	// refresh it steps down. Larger than the 3s refresh timeout, so a refresh
+	// still in flight at the deadline ends before the key can.
+	leaseSafety = 5 * time.Second
 )
 
 // Election is the small surface the rest of Core consumes — keeps tests
@@ -63,6 +70,12 @@ type RedisLeader struct {
 	isLeader atomic.Bool
 	stopCh   chan struct{}
 	doneCh   chan struct{}
+
+	// The timings, fields so a test can shrink them. New sets the constants.
+	ttl, refreshEvery, retryEvery, safety time.Duration
+	// leaseFrom is when the last write that set our TTL was sent. The lease is
+	// ours in Redis until at least leaseFrom+ttl, whatever happens after it.
+	leaseFrom time.Time
 }
 
 // New constructs a leader without starting it. The key should be globally
@@ -76,6 +89,11 @@ func New(rdb *redis.Client, key, instanceID string) *RedisLeader {
 		instanceID: instanceID,
 		stopCh:     make(chan struct{}),
 		doneCh:     make(chan struct{}),
+
+		ttl:          LeaseTTL,
+		refreshEvery: LeaseRefresh,
+		retryEvery:   refreshRetry,
+		safety:       leaseSafety,
 	}
 }
 
@@ -126,7 +144,8 @@ func (l *RedisLeader) run(ctx context.Context) {
 		}
 
 		acquireCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		acquired, err := l.rdb.SetNX(acquireCtx, l.key, l.instanceID, LeaseTTL).Result()
+		sent := time.Now()
+		acquired, err := l.rdb.SetNX(acquireCtx, l.key, l.instanceID, l.ttl).Result()
 		cancel()
 
 		if err != nil {
@@ -135,6 +154,7 @@ func (l *RedisLeader) run(ctx context.Context) {
 			continue
 		}
 		if acquired {
+			l.leaseFrom = sent
 			l.isLeader.Store(true)
 			log.Printf("leader(%s): acquired lease (instance=%s)", l.key, l.instanceID)
 			continue
@@ -144,23 +164,36 @@ func (l *RedisLeader) run(ctx context.Context) {
 }
 
 func (l *RedisLeader) runAsLeader(ctx context.Context) {
-	ticker := time.NewTicker(LeaseRefresh)
-	defer ticker.Stop()
-
+	wait := l.refreshEvery
 	for {
+		timer := time.NewTimer(wait)
 		select {
 		case <-l.stopCh:
+			timer.Stop()
 			return
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 
 		refreshCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		sent := time.Now()
 		ok, err := l.refresh(refreshCtx)
 		cancel()
 
 		if err != nil {
+			// A failed refresh says nothing about the key: it still holds our id
+			// until leaseFrom+ttl. Stepping down now made the platform leaderless
+			// for the rest of that window, because SETNX fails for everyone -
+			// us included - against a key that has not expired. So keep leading
+			// and retry until the lease could be close to running out.
+			left := time.Until(l.leaseFrom.Add(l.ttl - l.safety))
+			if left > 0 {
+				log.Printf("leader(%s): refresh error, retrying while the lease holds (%s left): %v", l.key, left.Round(time.Second), err)
+				wait = min(l.retryEvery, left)
+				continue
+			}
 			log.Printf("leader(%s): refresh error: %v", l.key, err)
 			l.isLeader.Store(false)
 			return
@@ -173,6 +206,8 @@ func (l *RedisLeader) runAsLeader(ctx context.Context) {
 			l.isLeader.Store(false)
 			return
 		}
+		l.leaseFrom = sent
+		wait = l.refreshEvery
 	}
 }
 
@@ -188,7 +223,7 @@ func (l *RedisLeader) refresh(ctx context.Context) (bool, error) {
 			return 0
 		end
 	`
-	res, err := l.rdb.Eval(ctx, script, []string{l.key}, l.instanceID, LeaseTTL.Milliseconds()).Result()
+	res, err := l.rdb.Eval(ctx, script, []string{l.key}, l.instanceID, l.ttl.Milliseconds()).Result()
 	if err != nil {
 		return false, err
 	}

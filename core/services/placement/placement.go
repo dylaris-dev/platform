@@ -221,7 +221,7 @@ func dedupe(in []string) []string {
 // adding the new server would push allocation past physical*overcommit.
 // Score is normalized 0..3 (sum of three 0..1 components), lower is better.
 func ScoreNode(ctx context.Context, st store.Store, rdb *redis.Client, n *models.Node, req PickNodeRequest, hb *services.NodeHeartbeat) NodeCandidate {
-	allocRAM, allocCPU, _ := st.SumAllocatedByNode(n.ID)
+	allocRAM, allocCPU, allocErr := st.SumAllocatedByNode(n.ID)
 	serverCount, _ := st.CountServersByNode(n.ID)
 
 	cand := NodeCandidate{
@@ -235,6 +235,12 @@ func ScoreNode(ctx context.Context, st store.Store, rdb *redis.Client, n *models
 		OvercommitCPU: n.CPUOvercommitRatio,
 		ServerCount:   serverCount,
 		Available:     true,
+	}
+	// Read as zero, a failed read is the emptiest node there is and wins.
+	if allocErr != nil {
+		cand.Available = false
+		cand.Reason = fmt.Sprintf("allocation unreadable: %v", allocErr)
+		return cand
 	}
 
 	// RAM capacity check: the container is RAM + padding, and allocRAM counts

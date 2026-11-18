@@ -91,11 +91,19 @@ type policySnapshot struct {
 	Mode             string // "anonymize" | "hard_delete"
 }
 
+// leaderSweepInterval is how often the "daily" leader-gated sweeps tick. Not
+// 24h: every boot starts a fresh ticker, and a replica that boots while the old
+// leader still holds the lease skips its first pass, so a Core redeployed more
+// often than once a day never ran them at all. Each sweep only acts on rows
+// past a cutoff and moves them out of its own query, so running it hourly does
+// the same work, sooner.
+const leaderSweepInterval = time.Hour
+
 func NewAutoDeleteService(s store.Store, frontendURL string) *AutoDeleteService {
 	return &AutoDeleteService{
 		store:       s,
 		frontendURL: frontendURL,
-		interval:    24 * time.Hour,
+		interval:    leaderSweepInterval,
 	}
 }
 
@@ -198,6 +206,10 @@ func (s *AutoDeleteService) processWarnings(_ context.Context, p policySnapshot)
 			}
 		}
 
+		if s.sparedAsCustomer(c.ID, now, false) {
+			continue
+		}
+
 		scheduledAt := now.Add(time.Duration(p.WarningDays) * 24 * time.Hour)
 		if err := s.store.MarkUserPendingDeletion(c.ID, scheduledAt); err != nil {
 			log.Printf("auto-delete: mark pending for userID=%s: %v", c.ID, err)
@@ -228,6 +240,11 @@ func (s *AutoDeleteService) processExecutions(ctx context.Context, p policySnaps
 		return
 	}
 	for _, userID := range due {
+		// Checked again here: the account may have bought something since the
+		// warning, and a stamp from before this check existed is still pending.
+		if s.sparedAsCustomer(userID, time.Now(), true) {
+			continue
+		}
 		// Both modes, and this is not belt-and-braces: "anonymize" is the
 		// DEFAULT, and it keeps the row. Without this the person is gone from
 		// the panel while their link kit still authenticates against Redis and
@@ -290,6 +307,36 @@ func (s *AutoDeleteService) processExecutions(ctx context.Context, p policySnaps
 			insertAuditEvent(s.store, "user_anonymized", userID, deleted)
 		}
 	}
+}
+
+// sparedAsCustomer reports whether an account is out of this sweep's reach
+// because it pays for something (or holds a live grant). Not logging in is no
+// sign of disuse for them: a route-only customer has no servers, and their link
+// authenticates with its own key, so the sweep used to anonymize them and tear
+// down their link and addresses while the subscription was still running.
+//
+// pending names an account already stamped for deletion. Its stamp is
+// cancelled on the way, so the day they stop paying the clock starts over with
+// a fresh warning instead of executing an old one. An unreadable billing row
+// spares the account for this pass: this sweep deletes.
+func (s *AutoDeleteService) sparedAsCustomer(userID string, now time.Time, pending bool) bool {
+	// storeEnabled=true: on a self-host every account reads as entitled to
+	// everything, which would spare all of them. Only a purchase or a grant
+	// counts here.
+	ent, err := EffectiveEntitlement(s.store, userID, now, true, false)
+	if err != nil {
+		logErrf("auto-delete", "billing for userID=%s unreadable, skipping it this pass: %v", userID, err)
+		return true
+	}
+	if !ent.Byon && !ent.RouteOnly {
+		return false
+	}
+	if pending {
+		if err := s.store.CancelUserDeletion(userID); err != nil {
+			logErrf("auto-delete", "cancel pending deletion for paying userID=%s: %v", userID, err)
+		}
+	}
+	return true
 }
 
 // insertAuditEvent is a tiny wrapper so the service doesn't have to depend

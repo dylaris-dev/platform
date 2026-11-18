@@ -169,6 +169,11 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 	if sel.MetricsDB && !manifestHolds(manifest, MetricsDBComponent) {
 		return nil, ErrBundleHasNoMetricsDB
 	}
+	// The Selection as well as the components: a manifest that lists none
+	// still says what its job set out to cover.
+	if sel.Database && !manifestHolds(manifest, "database") && (manifest == nil || !manifest.Selection.Database) {
+		return nil, ErrBundleHasNoDatabase
+	}
 	if sel.Database {
 		if err := r.checkTargetEmpty(ctx, overwriteTarget); err != nil {
 			return nil, err
@@ -220,7 +225,8 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 		if terr != nil {
 			// A truncated bundle reaches here rather than as a clean end; the
 			// chunked framing refuses to report EOF without its final chunk.
-			return nil, fmt.Errorf("reading the bundle: %w", terr)
+			// res, not nil: the deferred reseal writes into it.
+			return res, fmt.Errorf("reading the bundle: %w", terr)
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue
@@ -319,6 +325,13 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 		res.Warnings = append(res.Warnings, fmt.Sprintf("Skipped %d Library file(s): the Library has been removed and they were not restored.", libraryEntries))
 	}
 
+	if sel.Database && !restoredDB {
+		// The manifest promised it and the payload did not carry it.
+		res.Components = append(res.Components, models.PlatformBackupComponent{
+			Kind: "database", Status: models.PlatformBackupFailed, Message: ErrBundleHasNoDatabase.Error(),
+		})
+		return res, ErrBundleHasNoDatabase
+	}
 	if sel.MetricsDB && !restoredMetrics {
 		// The manifest promised it and the payload did not carry it.
 		res.Components = append(res.Components, models.PlatformBackupComponent{
@@ -328,6 +341,9 @@ func (r *PlatformRestorer) Restore(ctx context.Context, src io.Reader, passphras
 	}
 	return res, nil
 }
+
+// ErrBundleHasNoDatabase is a database restore from a bundle without one.
+var ErrBundleHasNoDatabase = errors.New("this bundle holds no platform database; it was written by a job that did not include it")
 
 // ErrBundleHasNoMetricsDB is a statistics restore from a bundle without one.
 var ErrBundleHasNoMetricsDB = errors.New("this bundle holds no statistics database; bundles written before it was covered, or on an installation without one, do not")

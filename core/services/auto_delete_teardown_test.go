@@ -33,6 +33,9 @@ type autoDeleteFakeStore struct {
 func (f *autoDeleteFakeStore) CountServersByOwner(string) (int, error)        { return 0, nil }
 func (f *autoDeleteFakeStore) ListNodesByOwner(string) ([]models.Node, error) { return nil, nil }
 
+// No billing row: a free account, which the sweep may remove.
+func (f *autoDeleteFakeStore) GetUserBilling(string) (*store.UserBilling, error) { return nil, nil }
+
 func (f *autoDeleteFakeStore) ListUsersDueForDeletion(time.Time) ([]string, error) {
 	return f.due, nil
 }

@@ -24,7 +24,7 @@ type TicketAutoCloseService struct {
 }
 
 func NewTicketAutoCloseService(s store.Store) *TicketAutoCloseService {
-	return &TicketAutoCloseService{store: s, interval: 24 * time.Hour}
+	return &TicketAutoCloseService{store: s, interval: leaderSweepInterval}
 }
 
 func (s *TicketAutoCloseService) SetLeader(l leader.Election) { s.leader = l }
