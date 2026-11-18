@@ -314,3 +314,162 @@ func TestDropSubServerStash(t *testing.T) {
 		t.Errorf("forge.jar = %q, want <missing>", got)
 	}
 }
+
+// treeOf maps every file under dir to its content, for comparing whole trees.
+func treeOf(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel(dir, p)
+			out[filepath.ToSlash(rel)] = readTestFile(p)
+		}
+		return nil
+	})
+	return out
+}
+
+// putBackCrash is the panic a test's putBackStep raises to stop putBack.
+type putBackCrash struct{}
+
+// R24-04 / R24-02: a version move installs a mod under the name it removed,
+// so the name is both in moved and in added. A put-back that renamed the old
+// mod back and then died left added.list naming it, and the next recovery
+// deleted the old mod it had just restored. The node is killed after every
+// single step of the put-back, then recovery runs one to three times: the
+// sub-server must always end up exactly as it was before the move.
+func TestPutBackCrashAfterEveryStepConverges(t *testing.T) {
+	defer func() { putBackStep = func() {} }()
+	for crashAt := 1; ; crashAt++ {
+		crashed := false
+		for runs := 1; runs <= 3; runs++ {
+			serverPath := t.TempDir()
+			sub := filepath.Join(serverPath, "main")
+			writeTestFile(t, filepath.Join(sub, "forge.jar"), "old jar")
+			writeTestFile(t, filepath.Join(sub, "mods", "foo.jar"), "old foo")
+			writeTestFile(t, filepath.Join(sub, "mods", "bar.jar"), "old bar")
+			writeTestFile(t, filepath.Join(sub, "libraries", "old.jar"), "old lib")
+			writeTestFile(t, filepath.Join(sub, "world", "level.dat"), "world")
+			before := treeOf(t, sub)
+
+			s, err := stashServerJars(serverPath, "main", "libraries")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The move: the old mods aside, new ones in place, foo.jar
+			// under the same name.
+			for _, rel := range []string{"main/mods/foo.jar", "main/mods/bar.jar"} {
+				if err := s.take(rel); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, rel := range []string{"main/mods/foo.jar", "main/mods/new.jar"} {
+				s.add(rel)
+				writeTestFile(t, filepath.Join(serverPath, filepath.FromSlash(rel)), "new")
+			}
+			writeTestFile(t, filepath.Join(sub, "forge-new.jar"), "new jar")
+			writeTestFile(t, filepath.Join(sub, "libraries", "new.jar"), "new lib")
+
+			step := 0
+			putBackStep = func() {
+				if step++; step == crashAt {
+					panic(putBackCrash{})
+				}
+			}
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						if _, ok := r.(putBackCrash); !ok {
+							panic(r)
+						}
+						crashed = true
+					}
+				}()
+				s.restore()
+			}()
+			putBackStep = func() {}
+			for i := 0; i < runs; i++ {
+				recoverStrandedStash(serverPath, "main")
+			}
+			if stashStranded(serverPath, "main") {
+				t.Errorf("crash at step %d, %d recoveries: the stash is still there", crashAt, runs)
+			}
+			after := treeOf(t, sub)
+			for rel, want := range before {
+				if after[rel] != want {
+					t.Errorf("crash at step %d, %d recoveries: %s = %q, want %q", crashAt, runs, rel, after[rel], want)
+				}
+			}
+			for rel := range after {
+				if _, ok := before[rel]; !ok {
+					t.Errorf("crash at step %d, %d recoveries: %s is left over", crashAt, runs, rel)
+				}
+			}
+		}
+		if !crashed {
+			if crashAt < 5 {
+				t.Fatalf("putBack finished before step %d: the crash points are not wired", crashAt)
+			}
+			return
+		}
+	}
+}
+
+// R24-06: a stash whose sub-server directory is gone (deleted or renamed
+// through the file API, or by a node before dropSubServerStash) was put into
+// the next sub-server of that name. It is dropped instead.
+func TestRecoverStashOfAMissingSubServerDropsIt(t *testing.T) {
+	serverPath := t.TempDir()
+	writeTestFile(t, filepath.Join(serverPath, "main", "forge.jar"), "old jar")
+	dead, err := stashServerJars(serverPath, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dead.root.Close()
+	if err := os.RemoveAll(filepath.Join(serverPath, "main")); err != nil {
+		t.Fatal(err)
+	}
+
+	recoverStrandedStash(serverPath, "main")
+	if stashStranded(serverPath, "main") {
+		t.Error("the stash of a missing sub-server is still there")
+	}
+	if _, err := os.Lstat(filepath.Join(serverPath, "main")); !os.IsNotExist(err) {
+		t.Errorf("recovery made the missing sub-server directory: %v", err)
+	}
+}
+
+// R24-05: a setup with an installer that takes no stash (upload, backup,
+// library, import) carried on over a stash that could not be put back, and a
+// later recovery put the stale software over the new install. It is refused
+// like a software install over that stash.
+func TestStashBeforeSetupRefusesOverAStrandedStash(t *testing.T) {
+	for _, typ := range []string{"upload", "paper"} {
+		t.Run(typ, func(t *testing.T) {
+			serverPath := t.TempDir()
+			sub := filepath.Join(serverPath, "main")
+			writeTestFile(t, filepath.Join(sub, "libraries", "old.jar"), "old lib")
+			dead, err := stashServerJars(serverPath, "main", "libraries")
+			if err != nil {
+				t.Fatal(err)
+			}
+			dead.root.Close()
+			// A file where the sub-server dir should be: every rename fails.
+			if err := os.RemoveAll(sub); err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, sub, "not a dir")
+
+			s, err := stashBeforeSetup(serverPath, "main", InstallerConfig{Type: typ})
+			if s != nil {
+				s.root.Close()
+			}
+			if err == nil {
+				t.Error("stashBeforeSetup over a stash it could not put back = nil error")
+			}
+			if !stashStranded(serverPath, "main") {
+				t.Error("the stash that could not be put back was dropped")
+			}
+		})
+	}
+}

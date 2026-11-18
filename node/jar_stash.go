@@ -115,6 +115,16 @@ const stashAddedList = "added.list"
 // rather than file by file into what the dead attempt wrote at its name.
 const stashMovedList = "moved.list"
 
+// stashRemovedList and stashRestoredList are putBack's journal: each names
+// what a put-back already removed from added, or renamed back from moved, so
+// a recovery after a put-back that died part-way skips it. A version move
+// installs a mod under the name it removed, so the name is in both lists, and
+// removing it again deleted the old mod the first pass had put back.
+const (
+	stashRemovedList  = "removed.list"
+	stashRestoredList = "restored.list"
+)
+
 // recoverStash undoes an attempt that never finished (a node restart
 // mid-install, or a restore that failed): what it put in place goes, and what
 // its stash holds goes back. The stash held the only copy of the old software,
@@ -131,6 +141,12 @@ func recoverStash(root *os.Root, dir string) error {
 		return nil
 	}
 	s := &jarStash{root: root, dir: dir, sub: strings.TrimSuffix(strings.TrimPrefix(dir, "."), ".oldjars")}
+	// The sub-server is gone (deleted, or renamed through the file API): the
+	// stash belongs to nothing, and putting it back made a new sub-server of
+	// that name start with the old one's software. nil, so callers drop it.
+	if _, err := root.Lstat(s.sub); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
 	// A complete stash may have had an install run over it, whose launch dir
 	// and root jars sit beside the names the stash took: putBack clears them.
 	// A partial one ran no install; what is in place is the old server.
@@ -207,6 +223,13 @@ func stashStranded(serverPath, sub string) bool {
 // or from a library or URL import: taking their jars would remove the server
 // being installed.
 func stashBeforeSetup(serverPath, sub string, cfg InstallerConfig) (*jarStash, error) {
+	// stashServerJars' recover-or-refuse, for every installer: one that takes
+	// no stash went on over a stash that could not be put back, and a later
+	// recovery put that stale software over its install.
+	recoverStrandedStash(serverPath, sub)
+	if stashStranded(serverPath, sub) {
+		return nil, errors.New("a previous attempt's stash could not be put back")
+	}
 	if !setupSoftware[cfg.Type] {
 		return nil, nil
 	}
@@ -347,8 +370,15 @@ func (s *jarStash) restore() error {
 // putBack is restore without closing the root, shared with recoverStash so a
 // crashed attempt is undone exactly as a failed one is.
 func (s *jarStash) putBack() error {
+	removed := s.journal(stashRemovedList)
 	for _, rel := range s.added {
+		if removed[rel] {
+			continue
+		}
 		s.root.Remove(rel)
+		putBackStep()
+		s.record(stashRemovedList, rel)
+		putBackStep()
 	}
 	// Only a complete stash may clear anything: a partial one stopped before
 	// the install ran, and what it did not reach (the server jar among them)
@@ -365,10 +395,15 @@ func (s *jarStash) putBack() error {
 		// by recoverStash: what was already put back has no copy in it.
 		s.root.Remove(path.Join(s.dir, stashCompleteMark))
 		s.root.Remove(path.Join(s.dir, stashLegacyCompleteMark))
+		putBackStep()
 	}
 	var first error
+	restored := s.journal(stashRestoredList)
 	for i := len(s.moved) - 1; i >= 0; i-- {
 		rel := s.moved[i]
+		if restored[rel] {
+			continue
+		}
 		st, err := s.root.Lstat(path.Join(s.dir, rel))
 		// No longer in the stash: an earlier put-back that failed later on
 		// already moved it back. Counting it as an error kept the stash and
@@ -387,15 +422,34 @@ func (s *jarStash) putBack() error {
 		if err == nil && st.IsDir() {
 			s.root.RemoveAll(rel)
 		}
-		if err := s.root.Rename(path.Join(s.dir, rel), rel); err != nil && first == nil {
-			first = err
+		if err := s.root.Rename(path.Join(s.dir, rel), rel); err != nil {
+			if first == nil {
+				first = err
+			}
+			continue
 		}
+		putBackStep()
+		s.record(stashRestoredList, rel)
+		putBackStep()
 	}
 	if first == nil {
 		dropStash(s.root, s.dir)
 	}
 	return first
 }
+
+// journal is the set of names in one of putBack's journal lists.
+func (s *jarStash) journal(list string) map[string]bool {
+	done := map[string]bool{}
+	for _, rel := range readStashList(s.root, path.Join(s.dir, list), s.sub) {
+		done[rel] = true
+	}
+	return done
+}
+
+// putBackStep runs after every step of putBack. A no-op; tests stop the
+// put-back there to play a node killed at that point.
+var putBackStep = func() {}
 
 // discard drops the stash once the new software is in place, after putting
 // back what it holds only for the rollback (keep).

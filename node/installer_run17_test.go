@@ -137,6 +137,10 @@ func TestSetupRecoversAStrandedJarStash(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(stash, "main", "mods"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The sub-server is there: a stash of a missing one is dropped (R24-06).
+	if err := os.MkdirAll(filepath.Join(dir, "main"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	os.WriteFile(filepath.Join(stash, stashCompleteMark), nil, 0o644)
 	os.WriteFile(filepath.Join(stash, "main", "mods", "old.jar"), []byte("old"), 0o644)
 
