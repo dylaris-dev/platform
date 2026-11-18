@@ -829,6 +829,11 @@ func (h *StreamHandler) streamSelectiveZip(reqID, serverUUID string, req *pb.Sel
 			if err != nil {
 				continue
 			}
+			// Deleted or rotated since the panel listed it: walkRoot fails on a
+			// missing start, and that aborted the zip of everything else.
+			if _, err := root.Lstat(selName); errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
 			walkErr = walkRoot(root, selName, func(name string, info fs.FileInfo) error {
 				rel := relTo(baseName, name)
 				if rel == "." {
@@ -1006,6 +1011,9 @@ func (h *StreamHandler) removeUploadTemp(dir, reqPath, tempName string) {
 	}
 	defer root.Close()
 	root.Remove(tempName)
+	// Same reason as commitUpload: a listing during the upload cached the
+	// folder with the staging file in it.
+	dirSizes.forget(dir)
 }
 
 func (h *StreamHandler) handleCreate(reqID, serverUUID string, req *pb.CreateFileReq) *pb.NodeMessage {

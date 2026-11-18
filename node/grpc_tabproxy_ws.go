@@ -318,6 +318,14 @@ func (m *MeshManager) routeWSInbound(reqID string, msg *pb.NodeMessage) {
 	if !ok {
 		return
 	}
+	// Core closed the browser side: tear down here rather than through the
+	// queue, which only pump 2 reads, and pump 2 can be stuck in WriteMessage
+	// to a container that stopped reading. Closing the conn frees both pumps.
+	// Frames still queued are dropped; their browser is already gone.
+	if msg.GetWsClose() != nil {
+		m.closeWSBridge(reqID)
+		return
+	}
 	select {
 	case bridge.inbound <- msg:
 	case <-bridge.done:
