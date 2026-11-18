@@ -27,8 +27,10 @@ type unmeasuredWrite struct {
 }
 
 // unmeasured holds per server the writes no published measurement has seen.
-// One lock for the node: it also orders the gauge's read-modify-write against
-// a new measurement being published.
+// Its lock guards the maps only and is never held across Redis: the gauge's
+// read-modify-write is ordered against a publish by gaugeLock, per server, so
+// a hung Redis on one server's tick does not stall another's write on the mesh
+// read loop (Z12).
 // last is when the published measurement began: one that began earlier and
 // finished later - a long du against a quick remeasure - must not replace it.
 var unmeasured = struct {
@@ -45,6 +47,15 @@ var notedBytes sync.Map
 func notedFor(uuid string) *atomic.Int64 {
 	c, _ := notedBytes.LoadOrStore(uuid, new(atomic.Int64))
 	return c.(*atomic.Int64)
+}
+
+// gaugeLocks orders, per server, the gauge's read-modify-write against a
+// measurement being published (uuid -> *sync.Mutex).
+var gaugeLocks sync.Map
+
+func gaugeLock(uuid string) *sync.Mutex {
+	l, _ := gaugeLocks.LoadOrStore(uuid, new(sync.Mutex))
+	return l.(*sync.Mutex)
 }
 
 // unmeasuredKeep outlives every gauge TTL: past it there is no gauge left to
@@ -79,10 +90,13 @@ func noteDiskWrite(ctx context.Context, rdb *redis.Client, uuid string, n int64)
 	notedFor(uuid).Add(n)
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
+	gl := gaugeLock(uuid)
+	gl.Lock()
+	defer gl.Unlock()
 	unmeasured.Lock()
-	defer unmeasured.Unlock()
 	now := time.Now()
 	unmeasured.m[uuid] = append(sinceWrites(unmeasured.m[uuid], now.Add(-unmeasuredKeep)), unmeasuredWrite{now, n})
+	unmeasured.Unlock()
 
 	raw, err := rdb.Get(ctx, diskGaugeKey(uuid)).Result()
 	if err != nil {
@@ -107,8 +121,10 @@ func noteDiskWrite(ctx context.Context, rdb *redis.Client, uuid string, n int64)
 // writes it cannot have seen. A write during the measurement may be in it as
 // well; it stays counted, the safe side, until the next one.
 func publishDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, usage *DiskUsagePayload, measuredFrom time.Time, ttl time.Duration) {
+	gl := gaugeLock(uuid)
+	gl.Lock()
+	defer gl.Unlock()
 	unmeasured.Lock()
-	defer unmeasured.Unlock()
 	ws := sinceWrites(unmeasured.m[uuid], measuredFrom)
 	if len(ws) == 0 {
 		delete(unmeasured.m, uuid)
@@ -116,14 +132,20 @@ func publishDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, usage
 		unmeasured.m[uuid] = ws
 	}
 	if measuredFrom.Before(unmeasured.last[uuid]) {
+		unmeasured.Unlock()
 		return
 	}
 	unmeasured.last[uuid] = measuredFrom
+	unmeasured.Unlock()
 	pub := *usage
 	for _, w := range ws {
 		pub.Total += w.n
 	}
 	data, _ := json.Marshal(pub)
+	// Bounded like noteDiskWrite: that waits on this server's gaugeLock from
+	// the mesh read loop, and callers pass contexts without a deadline.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	rdb.Set(ctx, diskGaugeKey(uuid), string(data), ttl)
 }
 

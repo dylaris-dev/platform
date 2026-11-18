@@ -184,6 +184,13 @@ const storageMarkerName = ".dylaris-storage"
 // vouch for the path. Old nodes read the line as a path no one configures.
 const storageMarkerGen = "#gen "
 
+// storageMarkerKept prefixes the marker lines "<gen> <path>": the gen of the
+// last boot that took each listed path. A disk missing for one boot keeps the
+// older gen, and without this it read as its bare mountpoint for good once it
+// returned holding no server (Z13). The bare copy carries a gen of a boot
+// before the disk was last taken, so it still does not match.
+const storageMarkerKept = "#kept "
+
 // dropUnmountedPaths leaves out a path another marker lists, that has no
 // marker of its own and holds nothing: a disk that did not mount, whose empty
 // mountpoint passed every check above. Servers keyed there ran on an empty
@@ -197,6 +204,7 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 	marked := map[string]bool{}
 	listed := map[string]bool{}
 	gens := map[string]uint64{}
+	lastKept := map[string]uint64{}
 	var maxGen uint64
 	for _, p := range paths {
 		b, err := os.ReadFile(filepath.Join(p, storageMarkerName))
@@ -213,6 +221,13 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 				}
 				continue
 			}
+			if k, ok := strings.CutPrefix(line, storageMarkerKept); ok {
+				g, kp, _ := strings.Cut(k, " ")
+				if n, err := strconv.ParseUint(g, 10, 64); err == nil && kp != "" {
+					lastKept[kp] = max(lastKept[kp], n)
+				}
+				continue
+			}
 			if line != "" {
 				known[line] = true
 				listed[p] = true
@@ -224,7 +239,7 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 	// an operator to make). One listing paths beside numbered ones is the
 	// copy release 2026.11.17.2 wrote onto a bare mountpoint (Y11).
 	for p, g := range gens {
-		if g < maxGen {
+		if k, ok := lastKept[p]; g < maxGen && !(ok && g == k) {
 			marked[p] = false
 		}
 	}
@@ -244,12 +259,18 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 		}
 		kept = append(kept, p)
 		known[p] = true
+		lastKept[p] = maxGen + 1
 	}
 	list := make([]string, 0, len(known))
 	for p := range known {
 		list = append(list, p)
 	}
 	sort.Strings(list)
+	for _, p := range list {
+		if g, ok := lastKept[p]; ok {
+			list = append(list, storageMarkerKept+strconv.FormatUint(g, 10)+" "+p)
+		}
+	}
 	list = append(list, storageMarkerGen+strconv.FormatUint(maxGen+1, 10))
 	body := []byte(strings.Join(list, "\n") + "\n")
 	for _, p := range kept {
