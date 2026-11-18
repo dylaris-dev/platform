@@ -108,13 +108,16 @@ func clearTombstoneForCreate(uuid string, createIssuedAt int64) bool {
 	if createIssuedAt == 0 || deleteIssuedAt == 0 || createIssuedAt <= deleteIssuedAt {
 		return false
 	}
-	delete(deletedServers.at, uuid)
-	delete(deletedServers.issued, uuid)
+	// The file first: serverDeleted falls back to it on a map miss, so a file
+	// that stays would refuse the server again on the very next check.
 	if nodeSecretDir != "" {
 		if err := os.Remove(tombstonePath(uuid)); err != nil && !os.IsNotExist(err) {
-			log.Printf("create %s: tombstone not removed, a restart refuses the server again: %v", uuid, err)
+			log.Printf("create %s: tombstone not removed, the server stays refused: %v", uuid, err)
+			return false
 		}
 	}
+	delete(deletedServers.at, uuid)
+	delete(deletedServers.issued, uuid)
 	return true
 }
 

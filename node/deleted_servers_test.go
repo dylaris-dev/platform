@@ -238,3 +238,30 @@ func TestAMoveIssuedAfterTheDeleteClearsTheTombstone(t *testing.T) {
 		})
 	}
 }
+
+// W01: a tombstone file that cannot be removed used to lift the tombstone in
+// memory only, so the very next serverDeleted fell through to the file and
+// the create built a server only to discard it, or a move landed that could
+// never start. The clearance and serverDeleted must agree.
+func TestATombstoneThatCannotBeRemovedIsNotCleared(t *testing.T) {
+	uuid := "7d1e0000-0000-4000-8000-0000000007a0"
+	prev := nodeSecretDir
+	nodeSecretDir = t.TempDir()
+	t.Cleanup(func() { nodeSecretDir = prev; forgetTombstoneInMemory(uuid) })
+
+	markServerDeletedIssued(uuid, 1000)
+	// A non-empty directory in the file's place makes os.Remove fail.
+	if err := os.Remove(tombstonePath(uuid)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(tombstonePath(uuid), "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if clearTombstoneForCreate(uuid, 2000) {
+		t.Fatal("cleared although the tombstone file is still there")
+	}
+	if !serverDeleted(uuid) {
+		t.Fatal("serverDeleted = false, the tombstone is still on disk")
+	}
+}
