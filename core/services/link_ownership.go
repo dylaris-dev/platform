@@ -25,7 +25,8 @@ import (
 //
 // The ownership is in the DATABASE, in two places:
 //
-//   - a node's `link_secret`, when that node has an owner_id (a BYON machine)
+//   - the link token of a node that has an owner_id (a BYON machine): the one
+//     the Hub named for it, else the derived one (plus a legacy `link_secret`)
 //   - `core_link_routes.link_token`, which is a route-only kit by construction:
 //     every row there belongs to a tenant
 //
@@ -48,7 +49,7 @@ type LinkOwnership struct {
 //
 // Best-effort by design: a failure yields a set that classifies nothing as a
 // customer's, which is the conservative direction (see `loaded`).
-func LoadLinkOwnership(st store.Store) LinkOwnership {
+func LoadLinkOwnership(st store.Store, clusterSecret string) LinkOwnership {
 	if st == nil {
 		return LinkOwnership{customer: map[string]struct{}{}}
 	}
@@ -56,21 +57,27 @@ func LoadLinkOwnership(st store.Store) LinkOwnership {
 	if err != nil {
 		return LinkOwnership{customer: map[string]struct{}{}}
 	}
-	return LinkOwnershipFrom(st, nodes)
+	return LinkOwnershipFrom(st, nodes, clusterSecret)
 }
 
 // LinkOwnershipFrom is LoadLinkOwnership for a caller that already has the
 // nodes. The metrics collector lists them every sample anyway, and reading the
 // table twice on the same tick to answer one question would be a second query
 // per 30 seconds for no new information.
-func LinkOwnershipFrom(st store.Store, nodes []models.Node) LinkOwnership {
+func LinkOwnershipFrom(st store.Store, nodes []models.Node, clusterSecret string) LinkOwnership {
 	o := LinkOwnership{customer: map[string]struct{}{}}
 	if st == nil {
 		return o
 	}
 	for i := range nodes {
 		n := &nodes[i]
-		if n.Kind() == models.NodeKindBYON && n.LinkSecret != "" {
+		if n.Kind() != models.NodeKindBYON {
+			continue
+		}
+		// The enrol flow never writes link_secret: the link runs under the
+		// token the Hub named for it, else the derived one.
+		o.customer[effectiveLinkToken(n, clusterSecret)] = struct{}{}
+		if n.LinkSecret != "" {
 			o.customer[n.LinkSecret] = struct{}{}
 		}
 	}

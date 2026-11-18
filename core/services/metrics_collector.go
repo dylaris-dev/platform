@@ -58,6 +58,10 @@ type MetricsCollector struct {
 	// makes the splice handover counters interpretable, because a handover with
 	// no restart beside it is a different event from one caused by a deploy.
 	lastUptime map[string]int64
+
+	// clusterSecret derives a BYON node's link token, so its link is
+	// classified as the customer's. See SetClusterSecret.
+	clusterSecret string
 }
 
 // gatewayStatsSource is the live view of every gateway component, satisfied by
@@ -112,6 +116,11 @@ func NewMetricsCollector(s store.Store, r *redis.Client, db *sql.DB, rec recorde
 // without it the gateway counters are simply absent and everything else is
 // recorded as before.
 func (c *MetricsCollector) SetGatewayStats(src gatewayStatsSource) { c.gwStats = src }
+
+// SetClusterSecret wires the secret link tokens are derived from. Call once
+// at boot; without it a BYON link that runs under its derived token counts as
+// ours.
+func (c *MetricsCollector) SetClusterSecret(cs string) { c.clusterSecret = cs }
 
 // SetLeader wires the leader-election gate. Call once at boot.
 func (c *MetricsCollector) SetLeader(l leader.Election) { c.leader = l }
@@ -485,7 +494,7 @@ func (c *MetricsCollector) sampleNode(n *models.Node, hasHeartbeat bool, now tim
 // take, because over-reporting our own fleet can only raise an alarm somebody
 // dismisses while the opposite hides a real outage of ours.
 func (c *MetricsCollector) linkOwnership() LinkOwnership {
-	return LinkOwnershipFrom(c.store, c.lastNodes)
+	return LinkOwnershipFrom(c.store, c.lastNodes, c.clusterSecret)
 }
 
 func (c *MetricsCollector) sampleGateway(ctx context.Context, now time.Time) {

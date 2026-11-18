@@ -59,7 +59,7 @@ func (h *InfrastructureHandler) GetOverview(w http.ResponseWriter, r *http.Reque
 	// route-only link going down is not an outage of this platform, so the
 	// operator's own count must not include it. The customer figures are
 	// reported beside it, as a count and nothing more - see customerSummary.
-	split := services.LoadLinkOwnership(h.d.Store).SplitLinks(links)
+	split := services.LoadLinkOwnership(h.d.Store, h.d.ClusterSecret).SplitLinks(links)
 	onlineLinks := split.OursOnline
 
 	onlineEdges := 0

@@ -30,6 +30,8 @@ type GatewayBandwidthConsumerService struct {
 	latest  map[string]seenStat // keyed by component ID
 	pending map[string]*CounterBatch
 	streams map[string]bool // stream keys already being consumed
+
+	lastGroupSweep time.Time // scanLoop only
 }
 
 // CounterBatch is everything one component COUNTED since the last drain.
@@ -66,6 +68,8 @@ const (
 	gwbwScanInterval    = 30 * time.Second
 	gwbwMirrorTTL       = 90 * time.Second // > persist interval so a stale host still shows briefly
 	gwbwStaleAfter      = 90 * time.Second // a component missing this long is treated as gone
+	gwbwGroupIdleAfter  = 24 * time.Hour   // a per-Core group idle this long belongs to a Core that is gone
+	gwbwGroupSweepEvery = time.Hour
 )
 
 func NewGatewayBandwidthConsumerService(s store.Store, r *redis.Client, coreID string) *GatewayBandwidthConsumerService {
@@ -118,7 +122,14 @@ func (s *GatewayBandwidthConsumerService) scan(ctx context.Context) {
 	if LocalGatewayErr(s.gatewayRemote) != nil {
 		return
 	}
-	for _, k := range s.discoverStreams(ctx) {
+	streams := s.discoverStreams(ctx)
+	if (s.leader == nil || s.leader.IsLeader()) && time.Since(s.lastGroupSweep) > gwbwGroupSweepEvery {
+		s.lastGroupSweep = time.Now()
+		for _, k := range streams {
+			s.dropStaleGroups(ctx, k)
+		}
+	}
+	for _, k := range streams {
 		s.mu.Lock()
 		seen := s.streams[k]
 		if !seen {
@@ -494,4 +505,49 @@ func aggregateByHost(latest map[string]protocol.GatewayStats) map[string]hostAgg
 		out[gs.Host] = a
 	}
 	return out
+}
+
+// dropStaleGroups destroys the per-Core groups of Cores that are gone. A group
+// is named after its Core's CoreID, which is the container hostname when
+// DYLARIS_CORE_ID is unset, so every redeploy leaves one behind on every stream.
+// A live Core's consumer touches its group every read (Block is 5s), so one
+// whose every consumer has been idle for a day is dead. A group with no
+// consumer yet is kept: that is a Core between create and its first read, and
+// destroying a live group makes it re-read the stream and count twice.
+// A group that has read the newest entry is kept too: on a stream nobody wrote
+// to for a day, idle says nothing about whether its Core is still there.
+func (s *GatewayBandwidthConsumerService) dropStaleGroups(ctx context.Context, streamKey string) {
+	groups, err := s.redis.XInfoGroups(ctx, streamKey).Result()
+	if err != nil {
+		return
+	}
+	newest, err := s.redis.XRevRangeN(ctx, streamKey, "+", "-", 1).Result()
+	if err != nil || len(newest) == 0 {
+		return
+	}
+	own := gwbwGroup + "-" + s.coreID
+	for _, g := range groups {
+		if g.Name == own || !strings.HasPrefix(g.Name, gwbwGroup+"-") || g.Consumers == 0 || g.LastDeliveredID == newest[0].ID {
+			continue
+		}
+		consumers, err := s.redis.XInfoConsumers(ctx, streamKey, g.Name).Result()
+		if err != nil || len(consumers) == 0 {
+			continue
+		}
+		dead := true
+		for _, c := range consumers {
+			if c.Idle < gwbwGroupIdleAfter {
+				dead = false
+				break
+			}
+		}
+		if !dead {
+			continue
+		}
+		if err := s.redis.XGroupDestroy(ctx, streamKey, g.Name).Err(); err != nil {
+			log.Printf("gateway bandwidth: destroying stale group %s on %s: %v", g.Name, streamKey, err)
+			continue
+		}
+		log.Printf("gateway bandwidth: destroyed group %s on %s, idle for over %s", g.Name, streamKey, gwbwGroupIdleAfter)
+	}
 }

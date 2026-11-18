@@ -37,7 +37,7 @@ func TestALinkIsCustomerOnlyWhenTheDatabaseSaysSo(t *testing.T) {
 		},
 		routes: []store.CoreLinkRoute{{Domain: "a.example", OwnerID: "u-3", LinkToken: "link-routeonly"}},
 	}
-	o := LoadLinkOwnership(st)
+	o := LoadLinkOwnership(st, "cs")
 
 	for _, tok := range []string{"link-byon", "link-routeonly"} {
 		if !o.IsCustomer(tok) {
@@ -57,7 +57,7 @@ func TestAFailedLookupCountsEverythingAsOurs(t *testing.T) {
 	// The conservative direction. Classifying one of ours as a customer's would
 	// drop a real outage of ours out of the status page silently; the other way
 	// round can only raise an alarm somebody then dismisses.
-	o := LoadLinkOwnership(&ownershipStore{nodeErr: errors.New("db down")})
+	o := LoadLinkOwnership(&ownershipStore{nodeErr: errors.New("db down")}, "cs")
 	if o.IsCustomer("anything") {
 		t.Fatal("a failed lookup classified a link as a customer's")
 	}
@@ -69,7 +69,7 @@ func TestRoutesFailingKeepsWhatTheNodesAlreadySaid(t *testing.T) {
 		nodes:     []models.Node{{Token: "b1", OwnerID: own("u-1"), LinkSecret: "link-byon"}},
 		routesErr: errors.New("db down"),
 	}
-	o := LoadLinkOwnership(st)
+	o := LoadLinkOwnership(st, "cs")
 	if !o.IsCustomer("link-byon") {
 		t.Fatal("a route lookup failure discarded the node classification")
 	}
@@ -80,7 +80,7 @@ func TestSplitLinksCountsEachSideSeparately(t *testing.T) {
 		nodes:  []models.Node{{Token: "b1", OwnerID: own("u-1"), LinkSecret: "cust-a"}},
 		routes: []store.CoreLinkRoute{{LinkToken: "cust-b"}},
 	}
-	s := LoadLinkOwnership(st).SplitLinks([]GatewayLinkStatus{
+	s := LoadLinkOwnership(st, "cs").SplitLinks([]GatewayLinkStatus{
 		{Token: "ours-1", Online: true},
 		{Token: "ours-2", Online: false},
 		{Token: "cust-a", Online: true},
@@ -120,5 +120,28 @@ func TestSplitNodesKeepsExternalOnOurSide(t *testing.T) {
 		if n.OwnerID == nil {
 			t.Error("an unowned node was put on the customer side")
 		}
+	}
+}
+
+func TestABYONLinkIsCustomerByTheTokenItActuallyRunsUnder(t *testing.T) {
+	// CreateBYONNode writes token + owner and no link_secret, so the link of a
+	// normally enrolled BYON machine runs under the derived token, or under the
+	// one the Hub named for it once it has answered.
+	const cs = "cluster-secret"
+	st := &ownershipStore{
+		nodes: []models.Node{
+			{Token: "b1", OwnerID: own("u-1")},
+			{Token: "b2", OwnerID: own("u-2"), LinkToken: "hub-named"},
+			{Token: "p1"},
+		},
+	}
+	o := LoadLinkOwnership(st, cs)
+	for _, tok := range []string{DeriveLinkToken("b1", cs), "hub-named"} {
+		if !o.IsCustomer(tok) {
+			t.Errorf("BYON link %q was counted as ours", tok)
+		}
+	}
+	if o.IsCustomer(DeriveLinkToken("p1", cs)) {
+		t.Error("a platform node's link was counted as a customer's")
 	}
 }

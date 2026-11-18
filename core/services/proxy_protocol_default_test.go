@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -98,7 +99,9 @@ type proxySwitchStore struct {
 	servers map[string]*models.Server
 	nodes   map[int]*models.Node
 	err     error
-	writes  []bool
+	// lookupErr fails GetServerByUUID the way a DB fault does.
+	lookupErr error
+	writes    []bool
 }
 
 func (f *proxySwitchStore) SetServerProxyProtocol(id int, enabled bool) error {
@@ -114,11 +117,14 @@ func (f *proxySwitchStore) SetServerProxyProtocol(id int, enabled bool) error {
 	return nil
 }
 func (f *proxySwitchStore) GetServerByUUID(uuid string) (*models.Server, error) {
+	if f.lookupErr != nil {
+		return nil, f.lookupErr
+	}
 	if s, ok := f.servers[uuid]; ok {
 		c := *s
 		return &c, nil
 	}
-	return nil, errors.New("not found")
+	return nil, sql.ErrNoRows
 }
 func (f *proxySwitchStore) GetNodeByID(id int) (*models.Node, error) {
 	if n, ok := f.nodes[id]; ok {
@@ -333,5 +339,48 @@ func TestProxyProtocolSweep(t *testing.T) {
 	s4.sweepProxyProtocolResults(ctx, now.Add(proxyProtocolNoAnswer+time.Minute))
 	if ok, _ := s4.redis.HExists(ctx, proxyProtocolPendingKey, "srv-7").Result(); ok || len(st4.writes) != 0 {
 		t.Fatalf("an unanswered request on a server already on: pending %v, writes %v", ok, st4.writes)
+	}
+}
+
+// A server lookup that FAILS is not a deleted server. Both sweep branches used
+// to drop the request on any error, so a default-on switch whose install said
+// "no" (or never answered) stayed on for good. They retry on the next sweep.
+func TestProxyProtocolSweepRetriesAFailedServerLookup(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	for _, answered := range []bool{true, false} {
+		s, st := newProxyReportService(t)
+		track(t, s)
+		at := now
+		if answered {
+			s.redis.Set(ctx, ProxyProtocolResultKey("srv-7"), "0", time.Hour)
+		} else {
+			at = now.Add(proxyProtocolNoAnswer + time.Minute)
+		}
+		st.lookupErr = errors.New("db down")
+		s.sweepProxyProtocolResults(ctx, at)
+		if ok, _ := s.redis.HExists(ctx, proxyProtocolPendingKey, "srv-7").Result(); !ok {
+			t.Fatalf("answered=%v: a failed lookup dropped the pending request", answered)
+		}
+		if answered {
+			if n, _ := s.redis.Exists(ctx, ProxyProtocolResultKey("srv-7")).Result(); n != 1 {
+				t.Fatalf("a failed lookup dropped the answer")
+			}
+		}
+		st.lookupErr = nil
+		s.sweepProxyProtocolResults(ctx, at)
+		if len(st.writes) != 1 || st.writes[0] {
+			t.Fatalf("answered=%v: retry did not switch it off: %v", answered, st.writes)
+		}
+	}
+
+	// A server that is really gone still lets the request go.
+	s, st := newProxyReportService(t)
+	track(t, s)
+	s.redis.Set(ctx, ProxyProtocolResultKey("srv-7"), "0", time.Hour)
+	delete(st.servers, "srv-7")
+	s.sweepProxyProtocolResults(ctx, now)
+	if ok, _ := s.redis.HExists(ctx, proxyProtocolPendingKey, "srv-7").Result(); ok {
+		t.Fatal("a deleted server's request is still pending")
 	}
 }

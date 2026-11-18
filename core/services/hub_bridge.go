@@ -349,11 +349,12 @@ func (g *RedisGateway) CreateServerRoute(serverID uint, ownerID string, domain s
 	if _, coreOwned, ok := g.coreOwnedRouteHolder(ctx, domain); ok && coreOwned {
 		return ErrRouteDomainTaken
 	}
-	// A suspended route-only entry has no Redis key, but its domain is still
-	// claimed.
+	// The stored row is the claim: a suspended entry has no Redis key, and a
+	// live one loses its key with a Redis restart until the republisher's
+	// next tick.
 	if stored, err := g.storedRoute(domain); err != nil {
 		return err
-	} else if stored != nil && stored.SuspendedAt != nil {
+	} else if stored != nil {
 		return ErrRouteDomainTaken
 	}
 

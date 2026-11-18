@@ -105,6 +105,29 @@ func TestCreateServerRoute_RefusesATenantsRouteOnlyDomain(t *testing.T) {
 	}
 }
 
+// The stored row is the claim, not the Redis key. When Redis loses the key
+// (restart without persistence) a managed create in the window before the
+// republisher's next tick must still be refused, or the hub's sync takes the
+// domain for good.
+func TestCreateServerRoute_RefusesARouteOnlyDomainWhoseKeyIsGone(t *testing.T) {
+	g, rdb, fs := newHubBridgeTestGateway(t)
+	fs.nodes[1] = models.Node{ID: 1, Token: "node-tok-1"}
+	fs.servers[10] = models.Server{ID: 10, UUID: "srv-uuid-10", NodeID: 1}
+
+	if err := g.CreateRouteViaLink("victim", "play.example.com", "victim-tok", "192.168.1.50", 25565); err != nil {
+		t.Fatalf("victim create: %v", err)
+	}
+	if err := rdb.Del(context.Background(), "route:play.example.com").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.CreateServerRoute(10, "attacker", "play.example.com", 25565); !errors.Is(err, ErrRouteDomainTaken) {
+		t.Fatalf("create = %v, want ErrRouteDomainTaken", err)
+	}
+	if n, _ := rdb.LLen(context.Background(), hubQueueKey).Result(); n != 0 {
+		t.Errorf("%d queue messages pushed; the create should not have reached the hub", n)
+	}
+}
+
 // Managed-vs-managed must NOT be refused here. The hub's unique index already
 // keeps the first route, and a deleted managed route's Redis key outlives the
 // delete (the zombie sweep runs only on the leader, up to five minutes later) -

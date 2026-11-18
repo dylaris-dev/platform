@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
@@ -112,7 +113,12 @@ func (s *SetupResultService) sweepProxyProtocolResults(ctx context.Context, now 
 				// install confirms the config, so no answer counts as "no": off
 				// is the direction that cannot lock players out. One the owner
 				// had on before is theirs, and stays.
-				if srv, serr := s.store.GetServerByUUID(uuid); p.Default && serr == nil && srv != nil {
+				srv, serr := s.store.GetServerByUUID(uuid)
+				if serr != nil && !errors.Is(serr, sql.ErrNoRows) {
+					log.Printf("proxy-protocol sweep: %s: %v; retried next sweep", uuid, serr)
+					continue
+				}
+				if p.Default && serr == nil && srv != nil {
 					log.Printf("proxy-protocol sweep: server %q (%s) never answered the real-IP request it was switched on for; switching it back off", uuid, p.Sub)
 					s.applyProxyProtocolReport(srv, p.Sub, false)
 					continue
@@ -127,6 +133,12 @@ func (s *SetupResultService) sweepProxyProtocolResults(ctx context.Context, now 
 			continue
 		}
 		srv, serr := s.store.GetServerByUUID(uuid)
+		if serr != nil && !errors.Is(serr, sql.ErrNoRows) {
+			// A failed lookup is not a deleted server: dropping the request
+			// here would leave a default-on switch on for good.
+			log.Printf("proxy-protocol sweep: %s: %v; retried next sweep", uuid, serr)
+			continue
+		}
 		if serr != nil || srv == nil {
 			// Deleted meanwhile: nothing left to switch.
 			ForgetProxyProtocolInstall(ctx, s.redis, uuid)

@@ -556,7 +556,7 @@ func (h *HealthHandler) gatewayComponent(ctx context.Context) healthComponent {
 	// Links the OPERATOR runs. A customer's BYON or route-only link is theirs to
 	// keep up, and it used to turn this component amber - "some gateway
 	// components are offline" for a box in somebody's flat.
-	split := services.LoadLinkOwnership(h.d.Store).SplitLinks(
+	split := services.LoadLinkOwnership(h.d.Store, h.d.ClusterSecret).SplitLinks(
 		services.GetLinksFromRedis(cctx, h.d.Redis))
 	links := split.Ours
 	routes := services.CountRoutesFromRedis(cctx, h.d.Redis)

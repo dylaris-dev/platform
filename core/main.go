@@ -611,6 +611,7 @@ func main() {
 	// whole reason the manager exists.
 	metricsCollector := services.NewMetricsCollector(pgStore, redisClient, db, metricsManager, appState.FeatureFlags)
 	metricsCollector.SetLeader(coreLeader)
+	metricsCollector.SetClusterSecret(cfg.ClusterSecret)
 	metricsCollector.SetGatewayRemote(gatewayRemote)
 	// The gateway telemetry this Core already consumes. Reading it through
 	// the existing consumer keeps one set of Redis consumer groups per
