@@ -150,7 +150,7 @@ func (s *DBMigrationService) Start(ctx context.Context, target DBConnParams, sta
 	// avoid, and the lock has to go back or nobody can retry until it expires.
 	prevBlockLevel, err := s.enableMaintenance(startedBy)
 	if err != nil {
-		s.redis.Del(context.Background(), dbMigrationLockKey)
+		releaseJobLock(context.Background(), s.redis, dbMigrationLockKey, jobID)
 		return nil, fmt.Errorf("enable maintenance mode: %w", err)
 	}
 
@@ -206,11 +206,12 @@ func (s *DBMigrationService) GetJob(ctx context.Context) (*DBMigrationJob, bool,
 
 func (s *DBMigrationService) run(target DBConnParams, actorID, prevBlockLevel string) {
 	ctx := context.Background()
+	jobID := s.jobID()
 	defer func() {
 		if rec := recover(); rec != nil {
 			s.fail(fmt.Sprintf("panic during migration: %v", rec), actorID, prevBlockLevel)
 		}
-		s.redis.Del(context.Background(), dbMigrationLockKey)
+		releaseJobLock(context.Background(), s.redis, dbMigrationLockKey, jobID)
 	}()
 
 	stopHeartbeat := s.startHeartbeat()

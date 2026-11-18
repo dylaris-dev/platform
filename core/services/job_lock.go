@@ -47,3 +47,16 @@ func refreshOrReclaimJobLock(ctx context.Context, rdb *redis.Client, key, owner 
 	n, _ := res.(int64)
 	return n == 1, nil
 }
+
+// releaseJobLock deletes key only while it still holds owner, in one Lua step.
+// A job that was superseded after a Redis restart must not drop the lock (or
+// the cancel flag, whose value is also a job id) of the job that replaced it.
+func releaseJobLock(ctx context.Context, rdb *redis.Client, key, owner string) error {
+	const script = `
+		if redis.call('get', KEYS[1]) == ARGV[1] then
+			return redis.call('del', KEYS[1])
+		end
+		return 0
+	`
+	return rdb.Eval(ctx, script, []string{key}, owner).Err()
+}

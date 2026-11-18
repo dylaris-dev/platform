@@ -36,6 +36,12 @@ type connFakeStore struct {
 	// settings table, for templates_storage_connection_id.
 	templatesOn map[int]int
 	settings    map[string]string
+	// backups is the backup_storages table.
+	backups []models.BackupStorage
+}
+
+func (f *connFakeStore) ListBackupStorages() ([]models.BackupStorage, error) {
+	return f.backups, nil
 }
 
 func (f *connFakeStore) CountTemplatesOnStorageConnection(id int) (int, error) {
@@ -214,16 +220,28 @@ func TestDeleteConnection_RefusedWhileTemplatesUseIt(t *testing.T) {
 		name        string
 		templatesOn map[int]int
 		setting     string
+		settings    map[string]string
+		backups     []models.BackupStorage
 		want        int
+		wantBody    string
 	}{
-		{"unused", nil, "", http.StatusOK},
-		{"another connection is used", map[int]int{4: 2}, "4", http.StatusOK},
-		{"a template is stored on it", map[int]int{3: 1}, "", http.StatusConflict},
-		{"new templates go to it", nil, "3", http.StatusConflict},
+		{name: "unused", want: http.StatusOK},
+		{name: "another connection is used", templatesOn: map[int]int{4: 2}, setting: "4", want: http.StatusOK},
+		{name: "a template is stored on it", templatesOn: map[int]int{3: 1}, want: http.StatusConflict, wantBody: "emplate"},
+		{name: "new templates go to it", setting: "3", want: http.StatusConflict, wantBody: "emplate"},
+		{name: "core file storage uses it", settings: map[string]string{corestorage.KeyConnectionID: "3"}, want: http.StatusConflict, wantBody: "Core file storage"},
+		{name: "modpack storage uses it", settings: map[string]string{corestorage.KeyModpackConnectionID: "3"}, want: http.StatusConflict, wantBody: "odpack"},
+		{name: "a backup storage uses it", backups: []models.BackupStorage{{ID: 7, Name: "Offsite", Provider: "connection", Config: []byte(`{"connectionId":3}`)}}, want: http.StatusConflict, wantBody: "Offsite"},
+		{name: "a backup storage uses another connection", backups: []models.BackupStorage{{ID: 7, Name: "Offsite", Provider: "connection", Config: []byte(`{"connectionId":4}`)}}, want: http.StatusOK},
+		{name: "core and modpacks use another connection", settings: map[string]string{corestorage.KeyConnectionID: "4", corestorage.KeyModpackConnectionID: "4"}, want: http.StatusOK},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			fs := &connFakeStore{templatesOn: tc.templatesOn, settings: map[string]string{"templates_storage_connection_id": tc.setting}}
+			settings := map[string]string{"templates_storage_connection_id": tc.setting}
+			for k, v := range tc.settings {
+				settings[k] = v
+			}
+			fs := &connFakeStore{templatesOn: tc.templatesOn, settings: settings, backups: tc.backups}
 			h := NewStorageConnectionsHandler(testDeps(Deps{Store: fs}))
 			rw := httptest.NewRecorder()
 			req := mux.SetURLVars(httptest.NewRequest(http.MethodDelete, "/api/storage-connections/3", nil), map[string]string{"id": "3"})
@@ -234,8 +252,8 @@ func TestDeleteConnection_RefusedWhileTemplatesUseIt(t *testing.T) {
 			if wantDeleted := tc.want == http.StatusOK; (fs.deleted == 1) != wantDeleted {
 				t.Errorf("deleted %d times, want deleted = %v", fs.deleted, wantDeleted)
 			}
-			if tc.want == http.StatusConflict && !bytes.Contains(rw.Body.Bytes(), []byte("emplate")) {
-				t.Errorf("409 body %s does not name templates", rw.Body.String())
+			if tc.want == http.StatusConflict && !bytes.Contains(rw.Body.Bytes(), []byte(tc.wantBody)) {
+				t.Errorf("409 body %s does not name %q", rw.Body.String(), tc.wantBody)
 			}
 		})
 	}

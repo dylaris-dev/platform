@@ -95,6 +95,13 @@ func (s *Manager) EffectiveConfig() (Config, error) {
 	return s.LoadConfig(), nil
 }
 
+// ModpackConnection is the storage connection modpack storage is built from, if
+// one is selected. Same resolution, same errors as BuildModpackProvider, so the
+// storage migration describes the backend the live readers use.
+func (s *Manager) ModpackConnection() (*models.StorageConnection, bool, error) {
+	return s.selectedStorageConnection(KeyModpackConnectionID)
+}
+
 // BuildModpackProvider builds the modpack storage provider, resolving a
 // selected storage connection first. When modpack_storage_connection_id is set,
 // the connection is built as an s3 storage.StorageProvider (which supports

@@ -137,3 +137,65 @@ func TestMigrationHeartbeatsDoNotRefreshLockWithBareExpire(t *testing.T) {
 		})
 	}
 }
+
+// A finishing job must release only what is still its own. After a Redis
+// restart a second job can take the lock (and be issued a cancel) before the
+// first job's heartbeat notices; an unconditional DEL on exit then dropped the
+// second job's lock, letting a third start beside it, and its pending cancel.
+func TestReleaseJobLock_OnlyDeletesItsOwnValue(t *testing.T) {
+	cases := []struct {
+		name     string
+		holder   string
+		wantKept bool
+	}{
+		{"own lock is released", "job-1", false},
+		{"another job's lock is kept", "job-2", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			ctx := context.Background()
+			if err := rdb.Set(ctx, jobLockTestKey, tc.holder, time.Minute).Err(); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			if err := releaseJobLock(ctx, rdb, jobLockTestKey, "job-1"); err != nil {
+				t.Fatalf("releaseJobLock: %v", err)
+			}
+			n, err := rdb.Exists(ctx, jobLockTestKey).Result()
+			if err != nil {
+				t.Fatalf("exists: %v", err)
+			}
+			if (n == 1) != tc.wantKept {
+				t.Fatalf("key exists = %v, want %v", n == 1, tc.wantKept)
+			}
+		})
+	}
+}
+
+// Both run loops must release through the helper, never with a bare DEL.
+func TestMigrationRunsReleaseOnlyTheirOwnLock(t *testing.T) {
+	cases := []struct {
+		file string
+		keys []string
+	}{
+		{"db_migration_job.go", []string{"dbMigrationLockKey"}},
+		{"storage_migration_job.go", []string{"storageMigrationLockKey", "storageMigrationCancelKey"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.file, func(t *testing.T) {
+			src, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatalf("read %s: %v", tc.file, err)
+			}
+			text := string(src)
+			for _, k := range tc.keys {
+				if strings.Contains(text, "Del(context.Background(), "+k+")") {
+					t.Errorf("%s deletes %s unconditionally", tc.file, k)
+				}
+				if !strings.Contains(text, "releaseJobLock(context.Background(), s.redis, "+k) {
+					t.Errorf("%s does not release %s through releaseJobLock", tc.file, k)
+				}
+			}
+		})
+	}
+}

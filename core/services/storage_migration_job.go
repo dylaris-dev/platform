@@ -545,8 +545,8 @@ func (s *StorageMigrationService) run(req StorageMigrationRequest, src, target s
 		if rec := recover(); rec != nil {
 			s.fail(fmt.Sprintf("panic during storage migration: %v", rec))
 		}
-		s.redis.Del(context.Background(), storageMigrationLockKey)
-		s.redis.Del(context.Background(), storageMigrationCancelKey)
+		releaseJobLock(context.Background(), s.redis, storageMigrationLockKey, jobID)
+		releaseJobLock(context.Background(), s.redis, storageMigrationCancelKey, jobID)
 	}()
 
 	stopHeartbeat := s.startHeartbeat()

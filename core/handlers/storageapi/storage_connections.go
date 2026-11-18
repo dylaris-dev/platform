@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"dylaris-core/services/corestorage"
 
@@ -14,6 +15,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/services"
 	"dylaris-core/storage"
+	backupstorage "dylaris-core/storage/backup"
 	"dylaris-core/store"
 
 	"github.com/gorilla/mux"
@@ -241,10 +243,11 @@ func (h *StorageConnectionsHandler) DeleteConnection(w http.ResponseWriter, r *h
 		httpx.SendJSONError(w, "Invalid ID", 400)
 		return
 	}
-	// A template's files live on the connection it was created on, and deleting
-	// a template needs that connection; removing it would strand them for good.
-	if inUse, err := h.templatesUse(id); err != nil {
-		httpx.SendJSONError(w, "Could not check which templates use this connection", 500)
+	// Nothing references a connection by foreign key, so every consumer is
+	// checked here: removing one still in use strands its data behind
+	// credentials that no longer exist.
+	if inUse, err := h.connectionUse(id); err != nil {
+		httpx.SendJSONError(w, "Could not check what uses this connection", 500)
 		return
 	} else if inUse != "" {
 		httpx.SendJSONError(w, inUse, http.StatusConflict)
@@ -258,6 +261,44 @@ func (h *StorageConnectionsHandler) DeleteConnection(w http.ResponseWriter, r *h
 	// storage configured" answer is what the panel gates the create button on.
 	h.d.CoreStorage.InvalidateModpack()
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// connectionUse names what still reads from connection id, or "" when nothing
+// does: templates, Core file storage, modpack storage and backup storages.
+func (h *StorageConnectionsHandler) connectionUse(id int) (string, error) {
+	if inUse, err := h.templatesUse(id); err != nil || inUse != "" {
+		return inUse, err
+	}
+	for _, c := range []struct{ key, what string }{
+		{corestorage.KeyConnectionID, "Core file storage"},
+		{corestorage.KeyModpackConnectionID, "Modpack storage"},
+	} {
+		v, err := h.d.Store.GetSetting(c.key)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", err
+		}
+		if strings.TrimSpace(v) == strconv.Itoa(id) {
+			return c.what + " uses this connection. Point it at another storage first.", nil
+		}
+	}
+	storages, err := h.d.Store.ListBackupStorages()
+	if err != nil {
+		return "", err
+	}
+	for _, bs := range storages {
+		if bs.Provider != "connection" || len(bs.Config) == 0 {
+			continue
+		}
+		var cc backupstorage.ConnectionConfig
+		if err := json.Unmarshal(bs.Config, &cc); err != nil {
+			// Unreadable means it cannot be shown NOT to use this one.
+			return fmt.Sprintf("Backup storage %q has a config that cannot be read, so it may use this connection. Fix or delete it first.", bs.Name), nil
+		}
+		if cc.ConnectionID == id {
+			return fmt.Sprintf("Backup storage %q stores its backups on this connection. Delete it or point it elsewhere first.", bs.Name), nil
+		}
+	}
+	return "", nil
 }
 
 // templatesUse names why templates still need connection id, or "" when none do.
