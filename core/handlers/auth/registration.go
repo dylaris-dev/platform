@@ -270,17 +270,22 @@ func (h *RegistrationHandler) VerifyEmail(w http.ResponseWriter, r *http.Request
 			httpx.SendJSONError(w, "That email address is already in use by another account", http.StatusConflict)
 			return
 		}
-		oldEmail, newEmail, ok, cerr := h.d.Store.ConfirmPendingEmail(user.ID)
+		oldEmail, newEmail, ok, cerr := h.d.Store.ConfirmPendingEmail(user.ID, req.Token)
 		if cerr != nil {
 			httpx.SendJSONError(w, "Failed to verify email", http.StatusInternalServerError)
 			return
 		}
-		if ok {
-			audit.LogIdentity(h.d.Store, r, audit.AuditEventUserEmailChanged, user.ID, user.ID, nil)
-			notifyAddressChanged(h.d.Store, h.d.FrontendURL, oldEmail, newEmail, user.Username)
-			json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": user.Username})
+		if !ok {
+			// The token was replaced since the read: this link was for an
+			// address change, so falling through would verify the CURRENT
+			// address, which it was never sent to.
+			httpx.SendJSONError(w, "Verification link is invalid or already used", http.StatusGone)
 			return
 		}
+		audit.LogIdentity(h.d.Store, r, audit.AuditEventUserEmailChanged, user.ID, user.ID, nil)
+		notifyAddressChanged(h.d.Store, h.d.FrontendURL, oldEmail, newEmail, user.Username)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "username": user.Username})
+		return
 	}
 	if err := h.d.Store.MarkEmailVerified(user.ID); err != nil {
 		httpx.SendJSONError(w, "Failed to verify email", http.StatusInternalServerError)

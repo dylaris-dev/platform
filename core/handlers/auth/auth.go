@@ -610,6 +610,14 @@ func (h *AuthHandler) IsAdminToken(r *http.Request) bool {
 		}
 	}
 	tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+	// The panel sends only the session cookie, so without this no browser
+	// admin passes a maintenance window, not even to switch it off. Same
+	// precedence as AuthMiddleware: a stated credential wins over the cookie.
+	// No CSRF check here: passing this gate grants nothing, AuthMiddleware
+	// still runs its own cookie checks behind it.
+	if tokenString == "" {
+		tokenString = sessionTokenFromCookie(r)
+	}
 	if tokenString == "" {
 		return false
 	}
@@ -1116,6 +1124,17 @@ func (h *AuthHandler) UpdateProfileHandler(w http.ResponseWriter, r *http.Reques
 			setSessionCookie(w, r, fresh, int(sessionTTL.Seconds()))
 		} else {
 			log.Printf("profile: could not re-issue a session after a password change for %s: %v", user.Username, terr)
+		}
+	} else if renaming {
+		// The caller's token names the OLD username, which the next request
+		// resolves to no account. A copy of the same session under the new
+		// name keeps the id, so the cap and a sign-out still reach it.
+		caller, _ := reqctx.SessionClaims(r).(*Claims)
+		if fresh, terr := h.copyOfSession(caller, user.Username, user.IsAdmin, sessionKey(user)); terr == nil {
+			out["token"] = fresh
+			setSessionCookie(w, r, fresh, int(sessionTTL.Seconds()))
+		} else {
+			log.Printf("profile: could not re-issue a session after a rename for %s: %v", user.Username, terr)
 		}
 	}
 	json.NewEncoder(w).Encode(out)

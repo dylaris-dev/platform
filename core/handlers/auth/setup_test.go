@@ -15,6 +15,7 @@ import (
 	"dylaris-core/models"
 	"dylaris-core/store"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -29,6 +30,7 @@ type setupFakeStore struct {
 	countErr   error
 	createErr  error
 	created    []string
+	lastHash   string
 	codesFor   string
 	codesJSON  string
 	settings   map[string]string
@@ -64,6 +66,7 @@ func (f *setupFakeStore) CreateFirstAdmin(username, passwordHash, totpSecret str
 		return nil, f.createErr
 	}
 	f.created = append(f.created, username)
+	f.lastHash = passwordHash
 	f.userCount++
 	f.adminCount++
 	return &models.User{ID: "id-" + username, Username: username, IsAdmin: true, Role: "admin"}, nil
@@ -74,6 +77,7 @@ func (f *setupFakeStore) CreateAdditionalAdmin(username, passwordHash, totpSecre
 		return nil, f.createErr
 	}
 	f.created = append(f.created, username)
+	f.lastHash = passwordHash
 	return &models.User{ID: "id2-" + username, Username: username, IsAdmin: true, Role: "admin"}, nil
 }
 
@@ -367,6 +371,47 @@ func TestCreateAdmin_SignsTheNewAdminIn(t *testing.T) {
 	}
 	if out.Token != "" && out.Token != c.Value {
 		t.Error("the cookie carries a different session than the response body")
+	}
+}
+
+// The store's RETURNING leaves the password out, so the session was bound to
+// an empty fingerprint and AuthMiddleware ended it on the very next request.
+// Both create paths, the fresh install and the break-glass additional admin.
+func TestCreateAdmin_SessionIsBoundToTheStoredPassword(t *testing.T) {
+	cases := []struct {
+		name   string
+		fs     *setupFakeStore
+		secret string
+	}{
+		{"first admin", &setupFakeStore{}, ""},
+		{"break-glass additional admin", &setupFakeStore{userCount: 1, adminCount: 1}, "break-glass-secret-value"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newSetupTestHandlerWithSetup(tc.fs, tc.secret, true)
+			body := map[string]interface{}{"username": "alice", "password": "password123"}
+			if tc.secret != "" {
+				body["adminSecret"] = tc.secret
+			}
+			rec := postCreateAdmin(h, body)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+			}
+			c := cookieByName(rec, sessionCookieName)
+			if c == nil {
+				t.Fatal("no session cookie")
+			}
+			claims := &Claims{}
+			if _, err := jwt.ParseWithClaims(c.Value, claims, func(*jwt.Token) (interface{}, error) {
+				return h.auth.jwtKey, nil
+			}); err != nil {
+				t.Fatalf("cookie token: %v", err)
+			}
+			want := passwordFingerprint(sessionKey(&models.User{Password: tc.fs.lastHash}))
+			if tc.fs.lastHash == "" || claims.PwdFp != want {
+				t.Fatalf("PwdFp = %q, want the fingerprint of the stored hash %q", claims.PwdFp, want)
+			}
+		})
 	}
 }
 

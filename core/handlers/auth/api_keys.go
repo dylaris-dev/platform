@@ -94,6 +94,17 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, fmt.Sprintf("expiresInDays must be between 1 and %d, or 0 for never", maxKeyExpiryDays), http.StatusBadRequest)
 		return
 	}
+	rate := req.RatePerMin
+	if rate <= 0 {
+		rate = 60
+	}
+	// Any positive number used to be taken, so a key could carry a limit of a
+	// million a minute - the per-key limit switched off, leaving only the
+	// per-IP one, which a caller with several addresses does not meet.
+	if rate > maxKeyRatePerMin {
+		httpx.SendJSONError(w, fmt.Sprintf("ratePerMin can be at most %d", maxKeyRatePerMin), http.StatusBadRequest)
+		return
+	}
 
 	for _, p := range req.Permissions {
 		if !authz.ValidKeyCap(p) {
@@ -204,17 +215,6 @@ func (h *APIKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 	plaintext, err := services.GeneratePlaintextKey()
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to mint key", http.StatusInternalServerError)
-		return
-	}
-	rate := req.RatePerMin
-	if rate <= 0 {
-		rate = 60
-	}
-	// Any positive number used to be taken, so a key could carry a limit of a
-	// million a minute - the per-key limit switched off, leaving only the
-	// per-IP one, which a caller with several addresses does not meet.
-	if rate > maxKeyRatePerMin {
-		httpx.SendJSONError(w, fmt.Sprintf("ratePerMin can be at most %d", maxKeyRatePerMin), http.StatusBadRequest)
 		return
 	}
 	k := &models.APIKey{

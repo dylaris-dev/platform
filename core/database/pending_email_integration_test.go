@@ -32,7 +32,11 @@ func TestIntegrationPendingEmailWaitsForTheLink(t *testing.T) {
 		t.Fatalf("while waiting: email %q verified %v pending %q", waiting.Email, waiting.EmailVerifiedAt, waiting.PendingEmail)
 	}
 
-	old, now, ok, err := st.ConfirmPendingEmail(f.user.ID)
+	// A link mailed for an earlier pending address confirms nothing.
+	if _, _, ok, err := st.ConfirmPendingEmail(f.user.ID, uniqueName("stale_")+"0123456789abcdef"); ok || err != nil {
+		t.Fatalf("a stale token confirmed the pending address: %v %v", ok, err)
+	}
+	old, now, ok, err := st.ConfirmPendingEmail(f.user.ID, token)
 	if err != nil || !ok || old != before.Email || now != next {
 		t.Fatalf("confirm = %q, %q, %v, %v", old, now, ok, err)
 	}
@@ -40,7 +44,7 @@ func TestIntegrationPendingEmailWaitsForTheLink(t *testing.T) {
 	if after.Email != next || after.PendingEmail != "" || after.EmailVerifiedAt == nil || after.EmailVerificationToken != "" {
 		t.Fatalf("after: email %q pending %q verified %v token %q", after.Email, after.PendingEmail, after.EmailVerifiedAt, after.EmailVerificationToken)
 	}
-	if _, _, ok, err := st.ConfirmPendingEmail(f.user.ID); ok || err != nil {
+	if _, _, ok, err := st.ConfirmPendingEmail(f.user.ID, token); ok || err != nil {
 		t.Fatalf("a second confirm changed something: %v %v", ok, err)
 	}
 

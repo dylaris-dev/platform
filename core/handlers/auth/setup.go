@@ -257,6 +257,10 @@ func (h *SetupHandler) CreateAdmin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The create's RETURNING leaves the password column out; without the hash
+	// the session carries an empty fingerprint and AuthMiddleware ends it on
+	// the very next request.
+	user.Password = string(hash)
 	token, err := h.auth.IssueToken(user.Username, user.IsAdmin, sessionKey(user))
 	if err != nil {
 		sendSetupError(w, http.StatusInternalServerError, "token_failed", "Admin created but token issuance failed: "+err.Error())

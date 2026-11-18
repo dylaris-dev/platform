@@ -183,6 +183,12 @@ func (h *PasswordResetHandler) ValidateResetToken(w http.ResponseWriter, r *http
 	json.NewEncoder(w).Encode(out)
 }
 
+// resetAnswerLimit is how many security-answer checks one reset link gets
+// before it is burnt.
+const resetAnswerLimit = 5
+
+func resetAnswerKey(userID string) string { return "auth:reset_answer_wrong:" + userID }
+
 type resetPasswordRequest struct {
 	Token           string   `json:"token"`
 	Password        string   `json:"password"`
@@ -224,10 +230,29 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 	if policy.SecurityQuestionsEnabled && policy.SecurityQuestionsRequiredAtReset {
 		stored, _ := h.d.Store.GetUserSecurityQuestionsRaw(user.ID)
 		if stored != "" && stored != "[]" {
+			// Counted per ACCOUNT, reserved before the check: the per-IP
+			// limiter alone let a link holder guess low-entropy answers from
+			// many addresses for the link's whole life. Past the limit the link
+			// is burnt and the counter with it, so a fresh link starts clean.
+			key := resetAnswerKey(user.ID)
+			window := time.Duration(policy.PasswordResetLinkTTLMinutes) * time.Minute
+			if !reserveAttempt(r.Context(), h.d, key, resetAnswerLimit, window) {
+				if err := h.d.Store.ClearPasswordResetToken(user.ID); err != nil {
+					log.Printf("password reset: could not burn the link for %s: %v", user.ID, err)
+				}
+				if h.d.Redis != nil {
+					h.d.Redis.Del(r.Context(), key)
+				}
+				httpx.SendJSONError(w, "Too many wrong answers. Request a new reset link.", http.StatusGone)
+				return
+			}
 			if !verifySecurityAnswersAgainstStored(stored, req.SecurityAnswers) {
 				audit.LogIdentity(h.d.Store, r, audit.AuditEventSecurityAnswersFailedAtReset, "", user.ID, nil)
 				httpx.SendJSONError(w, "Security answers did not match", http.StatusUnauthorized)
 				return
+			}
+			if h.d.Redis != nil {
+				h.d.Redis.Del(r.Context(), key)
 			}
 		}
 	}

@@ -13,10 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"dylaris-core/handlers/reqctx"
 	"dylaris-core/mailer"
 	"dylaris-core/models"
 	"dylaris-core/services"
 
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -193,6 +195,33 @@ func TestAPendingAddressTakenMeanwhileIsRefused(t *testing.T) {
 	}
 }
 
+// A link confirms the address it was sent for and nothing else. VerifyEmail
+// read the row by the clicked token and then promoted whatever was pending, so
+// a profile save between the two (pending address and token replaced by a
+// stranger's) got the stranger's address confirmed by the user's own link.
+func TestALinkConfirmsOnlyTheAddressItWasSentFor(t *testing.T) {
+	st := newProfileStore(t, true)
+	me := *st.users["u-me"]
+	me.PendingEmail = "mine@example.test"
+	st.byToken = &me // the row as VerifyEmail read it, by the clicked token
+	// ...and the save that landed right after the read.
+	if err := st.SetPendingEmail("u-me", "stranger@example.test", "a-newer-token-0123456789"); err != nil {
+		t.Fatal(err)
+	}
+	w := verifyEmail(t, st)
+	if w.Code != http.StatusGone {
+		t.Fatalf("status %d, want 410: %s", w.Code, w.Body.String())
+	}
+	if len(st.confirmed) != 0 || st.users["u-me"].Email != "me@example.test" {
+		t.Fatalf("confirmed %v, address now %q", st.confirmed, st.users["u-me"].Email)
+	}
+	// Nor may the lost race fall through to verifying the CURRENT address,
+	// which this link was never sent to.
+	if len(st.markedFor) != 0 {
+		t.Fatalf("the current address was marked verified: %v", st.markedFor)
+	}
+}
+
 func verifyEmail(t *testing.T, st *profileFakeStore) *httptest.ResponseRecorder {
 	t.Helper()
 	h := NewRegistrationHandler(Deps{Store: st})
@@ -268,5 +297,44 @@ func TestTheProfileSaveIsRateLimited(t *testing.T) {
 	m := regexp.MustCompile(`(?m)^.*HandleFunc\("/auth/profile".*UpdateProfileHandler.*$`).FindString(string(src))
 	if m == "" || !strings.Contains(m, "authLimiter.Limit(") {
 		t.Fatalf("PUT /auth/profile has no rate limiter: %q", m)
+	}
+}
+
+// A rename alone left the caller holding a session for the OLD name, which the
+// next request resolves to no account at all: "Profile updated!" and then
+// signed out. The caller gets a copy of their own session under the new name,
+// same id, so the absolute cap and a sign-out still apply to it.
+func TestARenameKeepsTheCallersSession(t *testing.T) {
+	st := newProfileStore(t, false)
+	h := NewAuthHandler(Deps{Store: st}, "test-secret")
+	caller := newSessionClaims("me", false, st.users["u-me"].Password)
+	raw, _ := json.Marshal(map[string]interface{}{"oldPassword": profilePassword, "newUsername": "renamed"})
+	r := httptest.NewRequest(http.MethodPut, "/api/auth/profile", bytes.NewReader(raw))
+	ctx := context.WithValue(context.WithValue(r.Context(), "username", "me"), "isAdmin", false)
+	r = r.WithContext(reqctx.WithSessionClaims(ctx, caller))
+	w := httptest.NewRecorder()
+	h.UpdateProfileHandler(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var out map[string]string
+	json.Unmarshal(w.Body.Bytes(), &out)
+	got := &Claims{}
+	if _, err := jwt.ParseWithClaims(out["token"], got, func(*jwt.Token) (interface{}, error) {
+		return h.jwtKey, nil
+	}); err != nil {
+		t.Fatalf("no usable token after the rename: %v (%v)", err, out)
+	}
+	if got.Username != "renamed" || got.ID != caller.ID || got.PwdFp != caller.PwdFp {
+		t.Fatalf("re-issued claims %+v, want the caller's session under the new name", got)
+	}
+	cookieSet := false
+	for _, c := range w.Result().Cookies() {
+		if c.Name == sessionCookieName && c.Value == out["token"] {
+			cookieSet = true
+		}
+	}
+	if !cookieSet {
+		t.Fatal("the session cookie was not replaced, so the browser keeps the dead one")
 	}
 }

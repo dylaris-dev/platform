@@ -99,22 +99,27 @@ func codeCheckFailed(w http.ResponseWriter, err error) {
 // Fails open without Redis, like the TOTP replay check: the per-IP limiter
 // still stands, and refusing every login would be worse.
 func reserveCodeAttempt(ctx context.Context, d Deps, userID string) bool {
+	return reserveAttempt(ctx, d, wrongCodeKey(userID), wrongCodeLimit, wrongCodeWindow)
+}
+
+// reserveAttempt is the counter behind reserveCodeAttempt, for any per-account
+// secret check that must not be guessable from many addresses.
+func reserveAttempt(ctx context.Context, d Deps, key string, limit int64, window time.Duration) bool {
 	if d.Redis == nil {
 		return true
 	}
-	key := wrongCodeKey(userID)
 	n, err := d.Redis.Incr(ctx, key).Result()
 	if err != nil {
-		log.Printf("2fa: could not count a code attempt for %s: %v", userID, err)
+		log.Printf("auth: could not count an attempt on %s: %v", key, err)
 		return true
 	}
 	// The window starts at the first attempt and is not extended by later
 	// ones. Checked by TTL rather than n == 1, so a key whose expiry was lost
 	// gets one instead of locking the account for good.
 	if ttl, terr := d.Redis.TTL(ctx, key).Result(); terr == nil && ttl < 0 {
-		d.Redis.Expire(ctx, key, wrongCodeWindow)
+		d.Redis.Expire(ctx, key, window)
 	}
-	return n <= wrongCodeLimit
+	return n <= limit
 }
 
 func clearCodeAttempts(ctx context.Context, d Deps, userID string) {

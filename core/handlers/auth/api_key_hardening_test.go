@@ -44,6 +44,22 @@ func TestAPIKeyRateHasACeiling(t *testing.T) {
 	}
 }
 
+// The rate ceiling is answered before the re-auth, which spends a backup code
+// even when nothing is minted after it. A wrong credential with a bad rate
+// therefore gets the rate error: the credential was never looked at.
+func TestAPIKeyRateIsCheckedBeforeTheReauth(t *testing.T) {
+	fs := &apiKeysAuthFakeStore{}
+	h := newAPIKeysAuthHandler(fs)
+	rec := httptest.NewRecorder()
+	h.Create(rec, createAPIKeyReq("u1", "alice", false, map[string]interface{}{
+		"name": "k", "permissions": []string{"usage.read"}, "ratePerMin": maxKeyRatePerMin + 1,
+		"password": "not-the-password", "code": "0123456789abcdef",
+	}))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ratePerMin") {
+		t.Fatalf("status %d: %s; want the rate refusal before any credential check", rec.Code, rec.Body.String())
+	}
+}
+
 // The operator's list of what a user key may carry was checked at mint only;
 // a capability taken off it kept working on every key already minted.
 func TestAKeyCapabilityRemovedFromTheListStopsWorking(t *testing.T) {

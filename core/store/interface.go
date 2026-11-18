@@ -771,7 +771,9 @@ type Store interface {
 	// SetPendingEmail / ConfirmPendingEmail: a self-service change waits for
 	// its confirmation with the current address left in force.
 	SetPendingEmail(userID, email, token string) error
-	ConfirmPendingEmail(userID string) (oldEmail, newEmail string, ok bool, err error)
+	// ConfirmPendingEmail only confirms while the row still holds token, the
+	// one the pending address was mailed with.
+	ConfirmPendingEmail(userID, token string) (oldEmail, newEmail string, ok bool, err error)
 	UpdateLastLoginAt(userID string) error
 
 	// --- Password reset ---

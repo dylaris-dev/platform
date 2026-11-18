@@ -2883,16 +2883,19 @@ func (s *PostgresStore) SetPendingEmail(userID, email, token string) error {
 
 // ConfirmPendingEmail makes the pending address the account's, verified, in
 // one statement. It reports the address it replaced and the one it set; ok is
-// false when nothing was pending.
-func (s *PostgresStore) ConfirmPendingEmail(userID string) (oldEmail, newEmail string, ok bool, err error) {
+// false when nothing was pending, or when the pending address is no longer the
+// one this token was mailed for: the row is read by the token first, and a
+// profile save in between replaces both, so without the token here a link
+// confirmed an address it was never sent to.
+func (s *PostgresStore) ConfirmPendingEmail(userID, token string) (oldEmail, newEmail string, ok bool, err error) {
 	err = s.db.QueryRow(
 		`UPDATE users u SET email = u.pending_email, pending_email = NULL, email_verified_at = NOW(),
 		   email_verification_token = NULL, email_verification_sent_at = NULL,
 		   password_reset_token = NULL, password_reset_expires_at = NULL
 		 FROM (SELECT id, COALESCE(email, '') AS old FROM users WHERE id = $1 FOR UPDATE) prev
-		 WHERE u.id = prev.id AND u.pending_email IS NOT NULL
+		 WHERE u.id = prev.id AND u.pending_email IS NOT NULL AND u.email_verification_token = $2
 		 RETURNING prev.old, u.email`,
-		userID,
+		userID, hashAuthToken(token),
 	).Scan(&oldEmail, &newEmail)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", false, nil

@@ -217,7 +217,7 @@ func (f *emailFakeStore) SetPendingEmail(id, email, _ string) error {
 	return nil
 }
 
-func (f *emailFakeStore) ConfirmPendingEmail(id string) (string, string, bool, error) {
+func (f *emailFakeStore) ConfirmPendingEmail(id, _ string) (string, string, bool, error) {
 	u, p := f.users[id], f.pending[id]
 	if u == nil || p == "" {
 		return "", "", false, nil

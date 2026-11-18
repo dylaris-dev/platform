@@ -103,6 +103,35 @@ func TestIsAdminToken(t *testing.T) {
 			r.Header.Set("Authorization", "Bearer "+forged)
 			return r
 		}, false},
+		// The panel authenticates with the cookie alone, so the maintenance
+		// bypass has to read it or no browser admin can switch maintenance off.
+		{"admin session cookie, no header", func() *http.Request {
+			r := httptest.NewRequest(http.MethodPut, "/api/admin/maintenance", nil)
+			r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: adminTok})
+			return r
+		}, true},
+		{"admin __Host- cookie over https", func() *http.Request {
+			r := httptest.NewRequest(http.MethodPut, "/api/admin/maintenance", nil)
+			r.Header.Set("X-Forwarded-Proto", "https")
+			r.AddCookie(&http.Cookie{Name: secureSessionCookieName, Value: adminTok})
+			return r
+		}, true},
+		{"non-admin session cookie", func() *http.Request {
+			r := httptest.NewRequest(http.MethodPut, "/api/admin/maintenance", nil)
+			r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: userTok})
+			return r
+		}, false},
+		{"hand-signed admin cookie without a fingerprint", func() *http.Request {
+			r := httptest.NewRequest(http.MethodPut, "/api/admin/maintenance", nil)
+			r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: forged})
+			return r
+		}, false},
+		{"explicit non-admin header wins over an admin cookie", func() *http.Request {
+			r := httptest.NewRequest(http.MethodPut, "/api/admin/maintenance", nil)
+			r.Header.Set("Authorization", "Bearer "+userTok)
+			r.AddCookie(&http.Cookie{Name: sessionCookieName, Value: adminTok})
+			return r
+		}, false},
 		{"no token at all", func() *http.Request {
 			return httptest.NewRequest(http.MethodGet, "/x", nil)
 		}, false},

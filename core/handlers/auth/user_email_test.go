@@ -27,6 +27,8 @@ type emailFakeStore struct {
 	pending       map[string]string
 	byToken       *models.User
 	confirmed     []string
+	pendingTok    map[string]string
+	markedFor     []string
 }
 
 // The mail dispatcher asks for an operator override before rendering. A store
@@ -53,20 +55,32 @@ func (f *emailFakeStore) SetEmailVerificationToken(id, _ string) error {
 	return nil
 }
 func (f *emailFakeStore) InsertAuditIdentity(*models.AuditEventIdentity) error { return nil }
-func (f *emailFakeStore) SetPendingEmail(id, email, _ string) error {
+func (f *emailFakeStore) SetPendingEmail(id, email, token string) error {
 	if f.pending == nil {
 		f.pending = map[string]string{}
 	}
+	if f.pendingTok == nil {
+		f.pendingTok = map[string]string{}
+	}
 	if email == "" {
 		delete(f.pending, id)
+		delete(f.pendingTok, id)
 		return nil
 	}
 	f.pending[id] = email
+	f.pendingTok[id] = token
 	return nil
 }
-func (f *emailFakeStore) ConfirmPendingEmail(id string) (string, string, bool, error) {
+
+// ConfirmPendingEmail mirrors the SQL: only the token the pending address was
+// sent with confirms it. A case that set pending by hand has no token on file
+// and is not about that.
+func (f *emailFakeStore) ConfirmPendingEmail(id, token string) (string, string, bool, error) {
 	u, p := f.users[id], f.pending[id]
 	if u == nil || p == "" {
+		return "", "", false, nil
+	}
+	if t := f.pendingTok[id]; t != "" && t != token {
 		return "", "", false, nil
 	}
 	old := u.Email
@@ -82,7 +96,10 @@ func (f *emailFakeStore) GetUserByEmailVerificationToken(string) (*models.User, 
 	c := *f.byToken
 	return &c, nil
 }
-func (f *emailFakeStore) MarkEmailVerified(string) error { return nil }
+func (f *emailFakeStore) MarkEmailVerified(id string) error {
+	f.markedFor = append(f.markedFor, id)
+	return nil
+}
 
 const emailTestUserID = "11111111-1111-1111-1111-111111111111"
 
