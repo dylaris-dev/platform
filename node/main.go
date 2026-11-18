@@ -1685,20 +1685,20 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// and a backup archives. Nothing has changed yet, so no status write.
 		if !commandsInFlight.enter(softwareKey(cmd.Config.UUID)) {
 			log.Printf("Setup of %s/%s refused: a version move of this server is running on this node", cmd.Config.UUID, subName)
-			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("a version move of this server was still running"))
+			reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, errors.New("a version move of this server was still running"))
 			return
 		}
 		defer commandsInFlight.leave(softwareKey(cmd.Config.UUID))
 		leaveTree, treeBusy := enterTreeChangeOfServer(cmd.Config.UUID)
 		if treeBusy != "" {
 			log.Printf("Setup of %s/%s refused: %s", cmd.Config.UUID, subName, treeBusy)
-			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New(treeBusy))
+			reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, errors.New(treeBusy))
 			return
 		}
 		defer leaveTree()
 		if !awaitServerSlot(storage, cmd.Config.UUID) {
 			log.Printf("Setup of %s/%s refused: the create of the server has not run on this node", cmd.Config.UUID, subName)
-			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("the server has not been created on this node yet; try again in a moment"))
+			reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, errors.New("the server has not been created on this node yet; try again in a moment"))
 			return
 		}
 		defer lockServerInstall(cmd.Config.UUID)()
@@ -1724,7 +1724,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		if serverPath == "" {
 			log.Printf("Setup of %s/%s refused: no storage path resolved, it is not mounted on this node", cmd.Config.UUID, subName)
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
-			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("the server's storage path is not mounted on this node"))
+			reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, errors.New("the server's storage path is not mounted on this node"))
 			return
 		}
 
@@ -1758,7 +1758,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			if err := gracefulStop(rdb, cmd.Config.UUID, dm); err != nil {
 				log.Printf("Setup of %s/%s refused: the server could not be stopped: %v", cmd.Config.UUID, subName, err)
 				rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), statusAfterFailedStop(dm, cmd.Config.UUID), 30*time.Second)
-				reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, fmt.Errorf("the server could not be stopped: %w", err))
+				reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, fmt.Errorf("the server could not be stopped: %w", err))
 				return
 			}
 		}
@@ -1773,16 +1773,25 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// to keep.
 		stash, serr := stashBeforeSetup(serverPath, subName, installerCfg)
 		putBack := func(cause error) {
+			// Without a stash the disk is untouched only when the stash could
+			// not even be started; an install without one wiped with no copy.
+			undone := stash == nil && serr != nil
 			if stash != nil {
 				if rerr := stash.restore(); rerr != nil {
 					log.Printf("setup: could not put the previous server software back for %s/%s: %v", cmd.Config.UUID, subName, rerr)
+				} else {
+					undone = true
 				}
 			}
 			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
 			// The status alone says "stopped", which is indistinguishable from a
 			// server that installed and is simply not running. The reason has to
 			// travel with it or it reaches nobody.
-			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, cause)
+			if undone {
+				reportSetupUndone(ctx, rdb, cmd.Config.UUID, subName, cause)
+			} else {
+				reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, cause)
+			}
 		}
 		if serr != nil {
 			log.Printf("Setup of %s/%s refused: setting the old server software aside failed: %v", cmd.Config.UUID, subName, serr)

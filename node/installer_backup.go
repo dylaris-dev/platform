@@ -175,6 +175,19 @@ func unpackBackupArchive(archivePath, destDir string) ([]byte, error) {
 // times and went offline - with no error anywhere a customer can see, and the
 // only explanation sitting in a log they have no access to.
 func reportSetupFailed(ctx context.Context, rdb *redis.Client, serverUUID, subServer string, cause error) {
+	publishSetupFailure(ctx, rdb, serverUUID, subServer, cause, false)
+}
+
+// reportSetupUndone is reportSetupFailed for a setup that left the sub-server's
+// files as they were: refused before it touched them, or rolled back by its
+// stash. "restored" lets Core put back the mod rows it dropped for the wipe;
+// a Core that does not know the field ignores it, and an older node never
+// sends it, so its wiped mods stay forgotten as before.
+func reportSetupUndone(ctx context.Context, rdb *redis.Client, serverUUID, subServer string, cause error) {
+	publishSetupFailure(ctx, rdb, serverUUID, subServer, cause, true)
+}
+
+func publishSetupFailure(ctx context.Context, rdb *redis.Client, serverUUID, subServer string, cause error, restored bool) {
 	if cause == nil {
 		return
 	}
@@ -183,6 +196,9 @@ func reportSetupFailed(ctx context.Context, rdb *redis.Client, serverUUID, subSe
 		"subServer":  subServer,
 		"error":      cause.Error(),
 		"timestamp":  time.Now().Unix(),
+	}
+	if restored {
+		payload["restored"] = true
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

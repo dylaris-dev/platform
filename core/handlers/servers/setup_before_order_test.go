@@ -54,3 +54,59 @@ func TestSetupRemembersTheInstallRecordFromBeforeTheSetup(t *testing.T) {
 		})
 	}
 }
+
+type modRowsInstallStore struct {
+	*installFakeStore
+	mods []models.ServerMod
+}
+
+func (f *modRowsInstallStore) ListServerMods(int, string) ([]models.ServerMod, error) {
+	return append([]models.ServerMod(nil), f.mods...), nil
+}
+
+func (f *modRowsInstallStore) DeleteServerMod(id, _ int) error {
+	for i := range f.mods {
+		if f.mods[i].ID == id {
+			f.mods = append(f.mods[:i], f.mods[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
+// A setup that wipes mods/ drops the rows, and records them first: a failure
+// that leaves the files as they were (the node says "restored") puts them
+// back. Dropped before the command, so a node that refuses at once cannot
+// report before Core gets to drop them.
+func TestSetupRecordsTheModRowsItDrops(t *testing.T) {
+	h, base, rdb := newInstallTest(t)
+	fs := &modRowsInstallStore{installFakeStore: base, mods: []models.ServerMod{
+		{ID: 5, ServerID: 1, SubServerName: "main", ModrinthProjectID: "sodium", FileName: "sodium.jar", TargetDir: "mods"},
+	}}
+	h.d.Store = fs
+	body := setupBody(nil)
+	body["installer"] = map[string]any{"type": "fabric", "version": "1.21.1", "mcVersion": "1.21.1", "wipePaths": []string{"mods"}}
+
+	rec := httptest.NewRecorder()
+	h.SetupServer(rec, installRequest("setup", body, false))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("setup status %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(fs.mods) != 0 {
+		t.Fatalf("rows %+v left, want the mods row dropped", fs.mods)
+	}
+	before, err := rdb.Get(context.Background(), "dylaris:server:srv-uuid:setup_before").Result()
+	if err != nil {
+		t.Fatalf("no setup_before record: %v", err)
+	}
+	var got struct {
+		ModsKnown bool
+		Mods      []models.ServerMod
+	}
+	if err := json.Unmarshal([]byte(before), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.ModsKnown || len(got.Mods) != 1 || got.Mods[0].ModrinthProjectID != "sodium" {
+		t.Fatalf("recorded %+v, want the sodium row from before the setup", got)
+	}
+}

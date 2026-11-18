@@ -157,7 +157,8 @@ func recoverStash(root *os.Root, dir string) {
 // old type and version back when the setup fails, and the wipe and the loader
 // install had left nothing on disk to start them. libraries/ goes into the
 // stash when the setup wipes it, since a Forge/NeoForge server cannot start
-// from its launch dir without the libraries it names.
+// from its launch dir without the libraries it names, and so do mods/,
+// config/ and versions/ when they are wiped.
 //
 // The stash is the rollback, not a wipe: what the owner did not tick to clear
 // goes back on success (discard), unless the install wrote the same name. Only
@@ -184,9 +185,9 @@ func stashBeforeSetup(serverPath, sub string, cfg InstallerConfig) (*jarStash, e
 	jars := false
 	for _, raw := range cfg.WipePaths {
 		t := strings.TrimSpace(raw)
-		if t == WipeLibraries {
-			wiped = append(wiped, wipeTargets[WipeLibraries]...)
-		}
+		// Every directory the wipe would delete: mods/ and config/ had no
+		// copy, so a failed pack update came back without them.
+		wiped = append(wiped, wipeTargets[t]...)
 		jars = jars || t == WipeJars
 		for _, d := range wipeTargets[t] {
 			clears[path.Join(sub, d)] = true
@@ -317,7 +318,7 @@ func (s *jarStash) restore() error {
 	for i := len(s.moved) - 1; i >= 0; i-- {
 		rel := s.moved[i]
 		// A wipe of libraries/ during the install took a launch dir's parents.
-		s.root.MkdirAll(path.Dir(rel), 0o755)
+		mkdirAllForMC(s.root, path.Dir(rel))
 		// A directory taken whole (libraries/) may have been written again by
 		// the install, and a rename does not replace a directory that is not
 		// empty. Whatever sits there now came from the failed attempt.
@@ -354,21 +355,54 @@ func (s *jarStash) discard() {
 	s.root.Close()
 }
 
-// putBackMissing moves src back to rel file by file, wherever the install
-// wrote nothing under the same name: the new software wins a clash.
+// putBackMissing moves src back to rel wherever the install wrote nothing
+// under the same name: the new software wins a clash. A directory the install
+// did not write goes back whole, with the owner and mode it had: this runs
+// after the install's ownership walk (handInstalledTree), and a directory
+// made here as root left Paper unable to write cache/ or versions/.
 func (s *jarStash) putBackMissing(src, rel string) {
 	fs.WalkDir(s.root.FS(), src, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
 			return nil
 		}
 		dst := rel + strings.TrimPrefix(p, src)
 		if _, err := s.root.Lstat(dst); !errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
-		s.root.MkdirAll(path.Dir(dst), 0o755)
-		if err := s.root.Rename(p, dst); err != nil {
+		err = mkdirAllForMC(s.root, path.Dir(dst))
+		if err == nil {
+			err = s.root.Rename(p, dst)
+		}
+		if err != nil {
 			log.Printf("setup: could not keep %s: %v", dst, err)
+			return nil
+		}
+		if d.IsDir() {
+			return fs.SkipDir
 		}
 		return nil
 	})
+}
+
+// mkdirAllForMC is MkdirAll inside the server directory with every directory
+// it creates handed to the container's uid, which a running server must be
+// able to write into.
+func mkdirAllForMC(root *os.Root, dir string) error {
+	if dir == "." || dir == "/" {
+		return nil
+	}
+	if _, err := root.Lstat(dir); err == nil {
+		return nil
+	}
+	if err := mkdirAllForMC(root, path.Dir(dir)); err != nil {
+		return err
+	}
+	if err := root.Mkdir(dir, 0o755); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return nil
+		}
+		return err
+	}
+	chownForMCIn(root, dir)
+	return nil
 }

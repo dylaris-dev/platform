@@ -35,6 +35,10 @@ type setupBefore struct {
 	// The run intent before the dispatch flipped it to online (IntendOnline).
 	// Empty in a record from before the field: the intent is then left alone.
 	DesiredState string `json:",omitempty"`
+	// The target's mod rows before the setup dropped them (RememberSetupMods).
+	// Absent unless the setup changes them.
+	ModsKnown bool               `json:",omitempty"`
+	Mods      []models.ServerMod `json:",omitempty"`
 }
 
 // RememberSetupBefore records srv's setup columns and target's install record
@@ -60,6 +64,72 @@ func RememberSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store,
 	}
 }
 
+// RememberSetupMods adds target's mod rows to the record RememberSetupBefore
+// wrote, for a setup that is about to drop or rewrite them. A node that puts
+// the files back after a failure says so, and RestoreSetupMods then puts the
+// rows back to match. Reports whether they were recorded.
+func RememberSetupMods(ctx context.Context, rdb *redis.Client, st store.Store, srv *models.Server, target string) bool {
+	if rdb == nil || st == nil || srv == nil {
+		return false
+	}
+	b, ok := readSetupBefore(ctx, rdb, srv, target)
+	if !ok {
+		return false
+	}
+	mods, err := st.ListServerMods(srv.ID, target)
+	if err != nil {
+		log.Printf("setup of %s: could not record the mod rows of %s: %v", srv.UUID, target, err)
+		return false
+	}
+	b.ModsKnown, b.Mods = true, mods
+	raw, err := json.Marshal(b)
+	return err == nil && rdb.Set(ctx, setupBeforeKey(srv.UUID), raw, setupBeforeTTL).Err() == nil
+}
+
+// RestoreSetupMods puts target's mod rows back as RememberSetupMods recorded
+// them, for a failed setup the node reports left the files as they were. It
+// leaves the record for RestoreSetupBefore and reports whether it restored.
+func RestoreSetupMods(ctx context.Context, rdb *redis.Client, st store.Store, srv *models.Server, target string) bool {
+	if rdb == nil || st == nil || srv == nil {
+		return false
+	}
+	b, ok := readSetupBefore(ctx, rdb, srv, target)
+	if !ok || !b.ModsKnown {
+		return false
+	}
+	if err := st.ReplaceServerMods(srv.ID, target, b.Mods); err != nil {
+		log.Printf("setup of %s failed, and the mod rows of %s could not be restored: %v", srv.UUID, target, err)
+		return false
+	}
+	// ReplaceServerMods carries a pin over only from rows still there, and the
+	// setup had dropped them.
+	paused := map[string]bool{}
+	for _, m := range b.Mods {
+		if m.UpdatesPaused {
+			paused[m.ModrinthProjectID] = true
+		}
+	}
+	if len(paused) > 0 {
+		if rows, err := st.ListServerMods(srv.ID, target); err == nil {
+			for _, m := range rows {
+				if paused[m.ModrinthProjectID] && !m.UpdatesPaused {
+					st.SetServerModUpdatesPaused(m.ID, srv.ID, true)
+				}
+			}
+		}
+	}
+	return true
+}
+
+func readSetupBefore(ctx context.Context, rdb *redis.Client, srv *models.Server, target string) (setupBefore, bool) {
+	var b setupBefore
+	raw, err := rdb.Get(ctx, setupBeforeKey(srv.UUID)).Result()
+	if err != nil || json.Unmarshal([]byte(raw), &b) != nil || b.Target != target {
+		return b, false
+	}
+	return b, true
+}
+
 // RestoreSetupBefore puts srv's setup columns back to what they were before the
 // setup to target, if that is what was recorded, and reports whether it did.
 // srv is the server as it is now: its desired state is what the dispatch left.
@@ -67,12 +137,8 @@ func RestoreSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store, 
 	if rdb == nil || srv == nil {
 		return false
 	}
-	raw, err := rdb.Get(ctx, setupBeforeKey(srv.UUID)).Result()
-	if err != nil {
-		return false
-	}
-	var b setupBefore
-	if json.Unmarshal([]byte(raw), &b) != nil || b.Target != target {
+	b, ok := readSetupBefore(ctx, rdb, srv, target)
+	if !ok {
 		return false
 	}
 	if err := st.UpdateServerSetup(srv.ID, b.Image, b.Command, b.Active, b.Flags, b.Installer, b.MCVersion, b.Build); err != nil {

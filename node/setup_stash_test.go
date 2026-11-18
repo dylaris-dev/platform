@@ -228,3 +228,65 @@ func TestSuccessfulSetupKeepsWhatTheWipeDidNotName(t *testing.T) {
 		})
 	}
 }
+
+// A pack update ticks mods and config to clear by default. The wipe deleted
+// them with no copy, so a failed update put the old loader back with no mods
+// and no config, and Core's restored rows pointed at jars that were gone.
+// They are stashed like libraries/: back on a failure, dropped on success.
+func TestFailedSetupPutsTheWipedModsAndConfigBack(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		success bool
+		want    map[string]string
+	}{
+		{"failed install", false, map[string]string{
+			"mods/a.jar":            "old mod",
+			"mods/b.jar":            "<missing>",
+			"config/a.toml":         "old config",
+			"config/pack.toml":      "<missing>",
+			"defaultconfigs/d.toml": "old default",
+			"world/level.dat":       "world",
+		}},
+		{"successful install", true, map[string]string{
+			"mods/a.jar":            "<missing>",
+			"mods/b.jar":            "new mod",
+			"config/a.toml":         "<missing>",
+			"config/pack.toml":      "pack config",
+			"defaultconfigs/d.toml": "<missing>",
+			"world/level.dat":       "world",
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			serverPath := t.TempDir()
+			sub := filepath.Join(serverPath, "server")
+			writeTestFile(t, filepath.Join(sub, "forge.jar"), "old jar")
+			writeTestFile(t, filepath.Join(sub, "mods", "a.jar"), "old mod")
+			writeTestFile(t, filepath.Join(sub, "config", "a.toml"), "old config")
+			writeTestFile(t, filepath.Join(sub, "defaultconfigs", "d.toml"), "old default")
+			writeTestFile(t, filepath.Join(sub, "world", "level.dat"), "world")
+
+			cfg := InstallerConfig{Type: "modpack", WipePaths: []string{WipeMods, WipeConfig, WipeLibraries, WipeJars}}
+			stash, err := stashBeforeSetup(serverPath, "server", cfg)
+			if err != nil || stash == nil {
+				t.Fatalf("stashBeforeSetup = %v, %v; want a stash", stash, err)
+			}
+			if err := WipeBeforeInstall(sub, cfg.WipePaths); err != nil {
+				t.Fatal(err)
+			}
+			// The pack got this far before a download failed.
+			writeTestFile(t, filepath.Join(sub, "mods", "b.jar"), "new mod")
+			writeTestFile(t, filepath.Join(sub, "config", "pack.toml"), "pack config")
+
+			if c.success {
+				stash.discard()
+			} else if err := stash.restore(); err != nil {
+				t.Fatalf("restore: %v", err)
+			}
+			for rel, want := range c.want {
+				if got := readTestFile(filepath.Join(sub, filepath.FromSlash(rel))); got != want {
+					t.Errorf("%s = %q, want %q", rel, got, want)
+				}
+			}
+		})
+	}
+}

@@ -913,6 +913,33 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		if proxyFlag {
 			installerPayload["proxyProtocol"] = true
 		}
+		changeModRows := func() bool {
+			changed := forgetWipedMods(h.d.Store, serverID, subName, srv.InstallerType, req.Installer.WipePaths)
+			// After the wipe above, which would drop them again. Written as
+			// installed at dispatch, like the version update's rows: setup
+			// reports no per-file result, so an "installing" row would never be
+			// cleared. A failed install notifies the owner, and the reinstall
+			// that follows rewrites these rows.
+			for _, row := range services.TemplateModrinthModRows(serverID, subName, actorID, tmplRefs) {
+				if _, err := h.d.Store.UpsertServerMod(&row); err != nil {
+					log.Printf("template install: mod row %s for server %d/%s: %v", row.ModrinthProjectID, serverID, subName, err)
+					continue
+				}
+				changed = true
+			}
+			return changed
+		}
+		// Recorded first, so a failure that leaves the files as they were puts
+		// the rows back (RestoreSetupMods), and changed before the command: a
+		// node that refuses at once can report before Core gets to drop them.
+		// Unrecorded, they change after the command as before, so a command
+		// that never goes out leaves them alone.
+		modsChanged, modsRecorded := false, false
+		if wipesMods(req.Installer.WipePaths) || len(tmplRefs) > 0 {
+			if modsRecorded = services.RememberSetupMods(r.Context(), h.d.Redis, h.d.Store, srv, subName); modsRecorded {
+				modsChanged = changeModRows()
+			}
+		}
 		// Setup installs and starts the server. The intent is published BEFORE
 		// the command: the node asks it when the install is done, and a short
 		// install finished ahead of the scan that would have published it, read
@@ -925,6 +952,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			// Nothing was sent, so nothing will report back: put the row back
 			// as it was rather than leave it "installing" a sub-server that
 			// exists nowhere.
+			services.RestoreSetupMods(r.Context(), h.d.Redis, h.d.Store, srv, subName)
 			services.RestoreSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)
 			h.d.Store.UpdateServerStatus(serverID, srv.Status)
 			if proxyFlag {
@@ -940,18 +968,8 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		// Set install cooldown
 		h.d.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
 
-		modsChanged := forgetWipedMods(h.d.Store, serverID, subName, srv.InstallerType, req.Installer.WipePaths)
-		// After the wipe above, which would drop them again. Written as
-		// installed at dispatch, like the version update's rows: setup reports
-		// no per-file result, so an "installing" row would never be cleared. A
-		// failed install notifies the owner, and the reinstall that follows
-		// rewrites these rows.
-		for _, row := range services.TemplateModrinthModRows(serverID, subName, actorID, tmplRefs) {
-			if _, err := h.d.Store.UpsertServerMod(&row); err != nil {
-				log.Printf("template install: mod row %s for server %d/%s: %v", row.ModrinthProjectID, serverID, subName, err)
-				continue
-			}
-			modsChanged = true
+		if !modsRecorded {
+			modsChanged = changeModRows()
 		}
 		if modsChanged {
 			h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
@@ -988,15 +1006,9 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 // gone. Rows in plugins/ stay: the "mods" token does not touch that directory.
 // installerType is the one the rows were placed under, for rows written before
 // target_dir existed. Reports whether any row was dropped; failures are logged,
-// since the install itself is already on its way.
+// since the install goes out either way.
 func forgetWipedMods(st store.Store, serverID int, subName, installerType string, wipePaths []string) bool {
-	wiped := false
-	for _, t := range wipePaths {
-		if strings.TrimSpace(t) == "mods" {
-			wiped = true
-		}
-	}
-	if !wiped {
+	if !wipesMods(wipePaths) {
 		return false
 	}
 	mods, err := st.ListServerMods(serverID, subName)
@@ -1016,6 +1028,16 @@ func forgetWipedMods(st store.Store, serverID int, subName, installerType string
 		dropped = true
 	}
 	return dropped
+}
+
+// wipesMods reports whether the install was told to wipe mods/.
+func wipesMods(wipePaths []string) bool {
+	for _, t := range wipePaths {
+		if strings.TrimSpace(t) == "mods" {
+			return true
+		}
+	}
+	return false
 }
 
 // reinstallableInstallers are the sources a reinstall may name: the ones the

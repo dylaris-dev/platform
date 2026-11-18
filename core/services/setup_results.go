@@ -64,6 +64,11 @@ type setupReport struct {
 	// other install. The switch was on before the install went out, so false
 	// is the one answer that needs acting on.
 	ProxyProtocol *bool `json:"proxyProtocol,omitempty"`
+	// Restored, beside Error: the node left the sub-server's files as they
+	// were (refused before touching them, or rolled the install back), so
+	// the mod rows the dispatch dropped go back too. An older node never
+	// sends it, and its failed wipe left nothing behind those rows.
+	Restored bool `json:"restored,omitempty"`
 }
 
 func (s *SetupResultService) consume(ctx context.Context) {
@@ -140,6 +145,10 @@ func (s *SetupResultService) apply(channel string, rep setupReport) {
 	}
 
 	if rep.Error != "" {
+		// Before RestoreSetupBefore, which consumes the record.
+		if rep.Restored && RestoreSetupMods(context.Background(), s.redis, s.store, srv, rep.SubServer) {
+			log.Printf("setup result: server %q has its mod rows of %q back", rep.ServerUUID, rep.SubServer)
+		}
 		if RestoreSetupBefore(context.Background(), s.redis, s.store, srv, rep.SubServer) {
 			log.Printf("setup result: server %q is back on its previous sub-server and loader", rep.ServerUUID)
 		}
