@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"dylaris-pkg/queue"
@@ -128,5 +130,42 @@ func TestAStopDuringTheWalkFailsTheFilesystemRun(t *testing.T) {
 				t.Fatalf("report = %v, archive stat = %v; want success with the archive", report, statErr)
 			}
 		})
+	}
+}
+
+// R39-02: an unspooled run whose archive is complete no longer reads the tree,
+// so a stop while its last part uploads is an ordinary stop: the run succeeds,
+// and saving was already back on. One part larger than the archive is only
+// sent once the walk has ended.
+func TestAStopAfterTheUnspooledArchiveIsCompleteKeepsTheRun(t *testing.T) {
+	prevPause, prevPolicy := pauseSaves, backupPolicyNow.Load()
+	t.Cleanup(func() { pauseSaves = prevPause; backupPolicyNow.Store(prevPolicy) })
+	backupPolicyNow.Store(nil)
+	const uuid = "srv-f3-0001"
+	var mu sync.Mutex
+	var sent []string
+	pauseSaves = func(_ context.Context, _ *redis.Client, _ *DockerManager, id, _ string) *worldSaveGuard {
+		return &worldSaveGuard{uuid: id, send: func(c string) error {
+			mu.Lock()
+			sent = append(sent, c)
+			mu.Unlock()
+			return nil
+		}}
+	}
+	core := newFakeCore(t, 1<<20)
+	resumed := false
+	core.bucket.fail = func(int32, string) int {
+		mu.Lock()
+		resumed = slices.Contains(sent, "save-on")
+		mu.Unlock()
+		stoppingDuringBackup(uuid, "")
+		return 0
+	}
+	report := runBackupWithFakeCore(t, core, nil)
+	if report["status"] != "success" {
+		t.Fatalf("report = %v, want success", report)
+	}
+	if !resumed {
+		t.Error("saving was still off while the last part uploaded")
 	}
 }

@@ -604,9 +604,11 @@ func (s *PostgresStore) UpdateBackupRunStatus(id int, status, errorMsg string, s
 	if completed.IsZero() {
 		completedArg = nil
 	}
+	// Progress ("running") is written after a read of the row, and the reaper
+	// or a server move may close the run in between: it must not reopen one.
 	_, err := s.db.Exec(
-		`UPDATE backup_runs SET status = $1, error_message = $2, size_bytes = $3, storage_key = $4, completed_at = $5 WHERE id = $6`,
-		status, errorMsg, sizeBytes, storageKey, completedArg, id,
+		`UPDATE backup_runs SET status = $1, error_message = $2, size_bytes = $3, storage_key = $4, completed_at = $5 WHERE id = $6 AND ($7 OR status = 'running')`,
+		status, errorMsg, sizeBytes, storageKey, completedArg, id, status != "running",
 	)
 	return err
 }

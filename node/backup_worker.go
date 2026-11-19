@@ -836,9 +836,12 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 			src = f
 		}
 	}
+	walkTorn := saves.stoppedDuringWalk
 	if src == nil {
 		pr, pw := io.Pipe()
 		mw := io.MultiWriter(pw, counter)
+		var torn bool
+		walkTorn = func() bool { return torn }
 		go func() {
 			// The goroutine is the source side of the pipe. Any error we hit
 			// has to propagate to the reader by closing the pipe with that
@@ -849,6 +852,14 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 				pw.CloseWithError(err)
 				return
 			}
+			// The tree is read, as on the spooled path: up to two paced parts
+			// and Complete still follow, and a stop or restart in that tail
+			// failed a consistent archive and kept saving off. Written before
+			// pw.Close, so the uploader's EOF orders it before archived().
+			torn = saves.stoppedDuringWalk()
+			stopColdStart()
+			saves.resume()
+			pacer.savesResumed()
 			pw.Close()
 		}()
 		src = pr
@@ -862,7 +873,7 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		if !addedAny {
 			return errNothingArchived
 		}
-		if saves.stoppedDuringWalk() {
+		if walkTorn() {
 			return errStoppedDuringBackup
 		}
 		return nil

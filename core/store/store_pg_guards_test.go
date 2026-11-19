@@ -193,3 +193,32 @@ func TestFailAbandonedBackupRunIsConditional(t *testing.T) {
 		})
 	}
 }
+
+// R39-04: a progress report is written after a read, so the reaper or a
+// server move can close the run in between. Writing "running" must only land
+// on a row that is still running; an outcome is written as before.
+func TestUpdateBackupRunStatusProgressNeedsARunningRow(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status string
+	}{
+		{"progress", "running"},
+		{"an outcome", "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			mock.ExpectExec(`(?s)UPDATE backup_runs SET status = \$1.*WHERE id = \$6 AND \(\$7 OR status = 'running'\)`).
+				WithArgs(tc.status, "", int64(5), "k", nil, 7, tc.status != "running").WillReturnResult(sqlmock.NewResult(0, 0))
+			if err := NewPostgresStore(db).UpdateBackupRunStatus(7, tc.status, "", 5, "k", time.Time{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

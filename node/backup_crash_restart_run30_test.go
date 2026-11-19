@@ -53,10 +53,16 @@ func TestACrashRestartInsideTheContainerDuringABackupPausesSavingAgain(t *testin
 				want = append(want, w...)
 			}
 			core := newFakeCore(t, 1024)
+			// The other parts wait for part 1, so the walk is still running
+			// while the line goes out: an archive that is complete stops
+			// watching (R39-02).
+			part1Done := make(chan struct{})
 			core.bucket.fail = func(part int32, _ string) int {
 				if part != 1 {
+					<-part1Done
 					return 0
 				}
+				defer close(part1Done)
 				ctx := context.Background()
 				if tc.start != "-" {
 					startingDuringBackup(uuid, tc.start)
