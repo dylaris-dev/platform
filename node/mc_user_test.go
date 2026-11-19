@@ -138,7 +138,7 @@ func TestOnlyTheDuplicatingCopyHandsFilesOver(t *testing.T) {
 	}
 	src := string(b)
 
-	body, ok := cutFunc(src, "func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string, deny map[fileIdentity]bool, budget *writeBudget) error {")
+	body, ok := cutFunc(src, "func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string, deny map[fileIdentity]bool, budget *writeBudget) (err error) {")
 	if !ok {
 		t.Fatal("copyFileIn is gone; move this assertion with it")
 	}
@@ -147,7 +147,7 @@ func TestOnlyTheDuplicatingCopyHandsFilesOver(t *testing.T) {
 			".active_server and .dylaris-backups to the tenant's uid")
 	}
 
-	walk, ok := cutFunc(src, "func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forTenant bool, budgetDir string) error {")
+	walk, ok := cutFunc(src, "func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forTenant bool, budget *writeBudget) error {")
 	if !ok {
 		t.Fatal("copyWalkIn is gone")
 	}

@@ -291,7 +291,7 @@ func chownOpenForMC(f *os.File, name string) {
 
 // copyFileIn copies srcName in src to dstName in dst, creating dst's parents.
 // A nil budget copies unbounded: only a whole-server move does that.
-func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string, deny map[fileIdentity]bool, budget *writeBudget) error {
+func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string, deny map[fileIdentity]bool, budget *writeBudget) (err error) {
 	in, err := openTenantReadIn(src, srcName, deny)
 	if err != nil {
 		return err
@@ -299,6 +299,16 @@ func copyFileIn(src *os.Root, srcName string, dst *os.Root, dstName string, deny
 	defer in.Close()
 	var r io.Reader = in
 	if budget != nil {
+		// A failed copy leaves nothing behind, so it gives back what it was
+		// charged: booked as landed, the removed bytes refused every write
+		// still running on the filesystem.
+		used0, onDisk0 := budget.used, budget.onDisk
+		defer func() {
+			if err != nil {
+				budget.unspend(budget.used - used0)
+				budget.written(onDisk0 - budget.onDisk)
+			}
+		}()
 		if err := budget.entry(); err != nil {
 			return err
 		}
@@ -475,6 +485,10 @@ func copyDirForTenant(src *os.Root, srcName, rootDir, dstName string) error {
 		return err
 	}
 	defer release()
+	made, err := os.Stat(pinned)
+	if err != nil {
+		return err
+	}
 	dst, err := os.OpenRoot(pinned)
 	if err != nil {
 		return err
@@ -482,7 +496,9 @@ func copyDirForTenant(src *os.Root, srcName, rootDir, dstName string) error {
 	defer dst.Close()
 	// The budget is judged on rootDir: dst is named /proc/self/fd/N, which
 	// belongs to no server, so its disk limit never applied.
-	err = copyWalkIn(src, srcName, dst, ".", true, rootDir)
+	budget := newWriteBudget(rootDir)
+	defer budget.release()
+	err = copyWalkIn(src, srcName, dst, ".", true, budget)
 	if err != nil && errors.Is(statErr, fs.ErrNotExist) {
 		// A folder this copy made goes again on failure, through the pinned
 		// root so a link planted inside it reaches nothing outside.
@@ -495,27 +511,46 @@ func copyDirForTenant(src *os.Root, srcName, rootDir, dstName string) error {
 		}
 		dst.Close()
 		release()
-		if rerr := top.Remove(dstName); rerr != nil {
-			log.Printf("copy: cannot remove %s: %v", dstName, rerr)
+		removeMadeDir(rootDir, dstName, made)
+		// Removed, so none of it landed: booked as landed and noted it refused
+		// every write running on the filesystem and the server's next uploads.
+		budget.releaseWritten(0)
+		if budget.uuid != "" {
+			remeasureServer(budget.uuid)
 		}
 	}
 	return err
+}
+
+// removeMadeDir removes the directory a failed copy made at dstName, only if
+// it is still the one made: reached without following a link, since by now
+// the tenant may have swapped a parent for one (survival/x -> ../.dylaris-backups)
+// and a Root at rootDir followed it to a node-local backup of the same name.
+func removeMadeDir(rootDir, dstName string, made fs.FileInfo) {
+	parent, leaf, err := writeScope(rootDir, dstName, false)
+	if err != nil {
+		log.Printf("copy: cannot remove %s: %v", dstName, err)
+		return
+	}
+	defer parent.Close()
+	if fi, err := parent.Lstat(leaf); err != nil || !os.SameFile(fi, made) {
+		log.Printf("copy: not removing %s: it is no longer the folder the copy made", dstName)
+		return
+	}
+	if err := parent.Remove(leaf); err != nil {
+		log.Printf("copy: cannot remove %s: %v", dstName, err)
+	}
 }
 
 // copyWalkIn copies the tree at srcName in src to dstName in dst. With
 // forTenant set it is a DUPLICATION for a user: protected entries are skipped
 // and everything written is handed to the container's uid (see copyDir). Without
 // it, it is a verbatim MOVE of a whole server (see copyTree).
-// budgetDir is the directory a tenant copy is charged to.
-func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forTenant bool, budgetDir string) error {
+// budget bounds a tenant copy; the caller releases it.
+func copyWalkIn(src *os.Root, srcName string, dst *os.Root, dstName string, forTenant bool, budget *writeBudget) error {
 	var deny map[fileIdentity]bool
-	var budget *writeBudget
 	if forTenant {
 		deny = nodeOwnedIdentities(src, true)
-		// A copy had no bound at all: a member duplicating a large world
-		// again and again filled the node's disk for every server on it.
-		budget = newWriteBudget(budgetDir)
-		defer budget.release()
 	}
 	return walkRoot(src, srcName, func(name string, info fs.FileInfo) error {
 		rel := "."
@@ -659,7 +694,14 @@ func copyTreeAt(src, dst string, forTenant bool) error {
 		return err
 	}
 	defer dstRoot.Close()
-	return copyWalkIn(srcRoot, srcName, dstRoot, filepath.Base(dst), forTenant, dstRoot.Name())
+	var budget *writeBudget
+	if forTenant {
+		// A copy had no bound at all: a member duplicating a large world
+		// again and again filled the node's disk for every server on it.
+		budget = newWriteBudget(dstRoot.Name())
+		defer budget.release()
+	}
+	return copyWalkIn(srcRoot, srcName, dstRoot, filepath.Base(dst), forTenant, budget)
 }
 
 // errUnpackBudget ends an extraction or copy that would fill the disk.

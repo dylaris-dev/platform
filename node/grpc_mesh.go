@@ -123,6 +123,7 @@ type pendingWrite struct {
 	lastActive time.Time
 	budget     *writeBudget
 	reserved   int64 // bytes the budget holds: the declared size, or the furthest chunk end past it
+	high       int64 // the furthest chunk end written, marked on the disk in budget
 	owner      *coreConnection
 	// unhold lets a storage move of the server run again (holdWriter): the
 	// temp is in the tree the upload resolved at its start.
@@ -639,6 +640,12 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 					cc.send(errorMsg(msg.RequestId, 500, "Failed to write upload to disk"))
 				}
 				return
+			}
+			// Written bytes are out of the free space a new budget measures;
+			// left reserved too, one large upload refused every other write.
+			if end := chunk.Offset + int64(len(chunk.Data)); end > pw.high {
+				pw.budget.written(end - pw.high)
+				pw.high = end
 			}
 		}
 		m.writeMu.Unlock()

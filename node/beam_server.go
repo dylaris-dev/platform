@@ -1516,6 +1516,8 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 	// The stream writes through upRoot, resolved once at Start, until its
 	// rename: a storage move in between would delete the finished file.
 	releaseWriter := func() {}
+	// markWritten marks streamed bytes as on the disk in the Start's budget.
+	markWritten := func(int64) {}
 
 	defer func() {
 		defer func() {
@@ -1673,6 +1675,18 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			if !budget.spend(need) {
 				return status.Errorf(codes.ResourceExhausted, "not enough free space on the node for an upload of %d bytes", need)
 			}
+			// Streamed bytes are out of the free space a new budget measures;
+			// left reserved too, they were counted twice and one large upload
+			// refused every other write on the filesystem. Under the claim
+			// lock: a resume taking the temp over releases this budget from
+			// its own stream.
+			markWritten = func(n int64) {
+				s.tempsMu.Lock()
+				defer s.tempsMu.Unlock()
+				if claim == nil || claim.owner == me {
+					budget.written(n)
+				}
+			}
 
 			// Disk-quota pre-check. The beam tunnel bypasses Core's HTTP body
 			// size cap and its disk precheck, so enforce the same server disk
@@ -1795,7 +1809,10 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			if _, err := tmpFile.WriteAt(p.Chunk.Data, p.Chunk.Offset); err != nil {
 				return status.Errorf(codes.Internal, "write chunk: %v", err)
 			}
-			have = max(have, p.Chunk.Offset+int64(len(p.Chunk.Data)))
+			if end := p.Chunk.Offset + int64(len(p.Chunk.Data)); end > have {
+				markWritten(end - have)
+				have = end
+			}
 		}
 	}
 

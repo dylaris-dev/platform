@@ -351,6 +351,8 @@ func TestAMeshUploadReservesItsSize(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _ := seedNodeOwned(t)
 			withDiskBudget(t, tc.nodeFree, 1000)
+			// The disk reports what the uploads wrote as used (R26-06).
+			restoreDiskBudget = func(string) int64 { return tc.nodeFree - writesOn("").onDisk.Load() }
 			_, rdb := gaugeRedis(t)
 			if tc.limit > 0 {
 				rdb.Set(context.Background(), diskGaugeKey(uuid), fmt.Sprintf(`{"total":0,"limit":%d}`, tc.limit), 10*time.Minute)
