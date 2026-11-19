@@ -53,6 +53,9 @@ type StorageManager struct {
 	// paths holding them, under ambMu. See StorageAmbiguities.
 	ambMu     sync.Mutex
 	ambiguous map[string][]string
+	// unsureMoves are the servers whose move settleUnsureTarget left tied,
+	// with its source and target path, under ambMu. See settleUnsureMove.
+	unsureMoves map[string][2]string
 	// writers counts, per server, writes that outlive one lookup: SFTP handles,
 	// Beam and panel uploads, restores, installs. Under movingMu with moving:
 	// see holdWriter.
@@ -530,6 +533,13 @@ func (sm *StorageManager) Paths() []string {
 // 2. Fallback: scan all paths for the UUID directory
 // 3. If not found, returns the first path (for new servers, use SelectStoragePath instead)
 func (sm *StorageManager) GetServerPath(serverUUID string) string {
+	p, _ := sm.resolveServerPath(serverUUID)
+	return p
+}
+
+// resolveServerPath is GetServerPath, also returning the error of a storage
+// key that could not be read, whatever the lookup then made of it.
+func (sm *StorageManager) resolveServerPath(serverUUID string) (path string, keyErr error) {
 	// An empty UUID is not a server, and resolving it is dangerous rather than
 	// merely wrong: the Redis miss falls through to the filesystem scan below,
 	// where filepath.Join(p, "") is p itself. Every storage path therefore
@@ -544,7 +554,7 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 	// cleans it away and the root IS a directory), ".." to its parent, and the
 	// root holds .node_secret. Anything that is not a server id is no server.
 	if !validate.IsServerUUID(serverUUID) {
-		return ""
+		return "", keyErr
 	}
 	if ch := sm.moveInProgress(serverUUID); ch != nil {
 		<-ch
@@ -561,15 +571,17 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 			// Unanswered is not unkeyed: the scan below is never written back,
 			// and with a path skipped any copy it finds may be the leftover.
 			log.Printf("storage: cannot read the storage key of %s: %v", serverUUID, err)
+			keyErr = err
 			keyed = true
 			if sm.skipped > 0 {
-				return ""
+				return "", keyErr
 			}
 		} else if val != "" {
 			// Verify the path is still in our list
 			for _, p := range sm.paths {
 				if p == val {
-					return val
+					sm.settleUnsureMove(serverUUID, val)
+					return val, keyErr
 				}
 			}
 			keyed = true
@@ -577,7 +589,7 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 			// delete), not the live tree, which waits on the unmounted disk.
 			if sm.skippedPaths[val] {
 				log.Printf("storage: Redis path %q for %s is configured but not available, not resolving", val, serverUUID)
-				return ""
+				return "", keyErr
 			}
 			log.Printf("storage: Redis path %q for %s not in active paths, scanning...", val, serverUUID)
 		}
@@ -603,12 +615,12 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 				if live := markedLiveCopy(serverUUID, holding); live != "" {
 					log.Printf("storage: %s has %d copies and no storage key; the move markers name %s live, recording it (the other copies are left alone)", serverUUID, copies, live)
 					sm.setRedisPath(serverUUID, live)
-					return live
+					return live, keyErr
 				}
 				sm.noteAmbiguity(serverUUID, holding)
 			}
 			log.Printf("storage: %s has %d copies and no readable storage key, not resolving", serverUUID, copies)
-			return ""
+			return "", keyErr
 		}
 		// Written back only when it cannot be a guess: a key naming a path
 		// that is merely not mounted yet, or a second copy a move left, made
@@ -621,14 +633,14 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 		if sm.skipped > 0 {
 			if _, err := readServerRootFile(filepath.Join(found, serverUUID), storageMovedAwayMarker); !errors.Is(err, fs.ErrNotExist) {
 				log.Printf("storage: %s has one copy, at %s, marked moved away (or unreadable) while a storage path is not mounted, not resolving", serverUUID, found)
-				return ""
+				return "", keyErr
 			}
-			return found
+			return found, keyErr
 		}
 		if !keyed && copies == 1 {
 			sm.setRedisPath(serverUUID, found)
 		}
-		return found
+		return found, keyErr
 	}
 
 	// 3. Not found: the default is for a NEW server. One whose key names a
@@ -636,12 +648,37 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 	// migrate_cleanup clear an empty directory, report success and drop the
 	// key and limit while the real tree stayed behind.
 	if keyed {
-		return ""
+		return "", keyErr
 	}
 	if len(sm.paths) > 0 {
-		return sm.paths[0]
+		return sm.paths[0], keyErr
 	}
-	return ""
+	return "", keyErr
+}
+
+// createKeyReads and createKeyReadDelay bound how long a create waits for a
+// storage key Redis did not answer; a var so a test needs no wait.
+const createKeyReads = 3
+
+var createKeyReadDelay = 500 * time.Millisecond
+
+// ServerDirForCreate is GetServerDir for a create. "" with a nil error is a
+// server whose storage cannot be resolved (its key names a path that is not
+// mounted, or copies are ambiguous), which a create must leave alone (R35-13).
+// A key Redis did not answer is read again a few times, then returned as the
+// error: a new server has nothing to protect, but neither can an unread key
+// tell it from one that has, so the create waits for an answer (R36-09).
+func (sm *StorageManager) ServerDirForCreate(serverUUID string) (string, error) {
+	for i := 1; ; i++ {
+		p, err := sm.resolveServerPath(serverUUID)
+		if p != "" {
+			return filepath.Join(p, serverUUID), nil
+		}
+		if err == nil || i == createKeyReads {
+			return "", err
+		}
+		time.Sleep(createKeyReadDelay)
+	}
 }
 
 // GetServerDir returns the full directory path for a server UUID.
@@ -1584,11 +1621,53 @@ func (sm *StorageManager) settleUnsureTarget(serverUUID, currentPath, targetPath
 			return false
 		}
 		log.Printf("storage: the storage key of %s is unreadable after its move; both copies stay candidates until it is", serverUUID)
+		sm.ambMu.Lock()
+		if sm.unsureMoves == nil {
+			sm.unsureMoves = map[string][2]string{}
+		}
+		sm.unsureMoves[serverUUID] = [2]string{currentPath, targetPath}
+		sm.ambMu.Unlock()
 	}
 	if err := clearMovedAway(dstDir); err != nil {
 		log.Printf("storage: [warn] could not clear the moved-away mark of %s: %v", dstDir, err)
 	}
 	return false
+}
+
+// settleUnsureMove breaks the tie settleUnsureTarget left once the key is
+// readable again: the copy of the move it does not name is marked moved away,
+// so a later key loss resolves to the keyed one (R36-08). Nothing is deleted;
+// a later move of the server clears the leftover.
+//
+// ponytail: in memory, so a node restart before Redis answers again keeps the
+// tie (reported as ambiguous after a key loss); persist it if that bites.
+func (sm *StorageManager) settleUnsureMove(serverUUID, keyed string) {
+	sm.ambMu.Lock()
+	move, ok := sm.unsureMoves[serverUUID]
+	sm.ambMu.Unlock()
+	if !ok {
+		return
+	}
+	for _, p := range move {
+		dir := filepath.Join(p, serverUUID)
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		var err error
+		if p == keyed {
+			err = clearMovedAway(dir)
+		} else {
+			err = writeServerRootFile(dir, storageMovedAwayMarker, []byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
+		}
+		if err != nil {
+			log.Printf("storage: [warn] could not settle the unsure move of %s at %s, trying again on the next lookup: %v", serverUUID, dir, err)
+			return
+		}
+	}
+	log.Printf("storage: the storage key of %s names %s after its unsure move; the other copy is marked moved away", serverUUID, keyed)
+	sm.ambMu.Lock()
+	delete(sm.unsureMoves, serverUUID)
+	sm.ambMu.Unlock()
 }
 
 // formatBytes returns a human-readable byte size string.

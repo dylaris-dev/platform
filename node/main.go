@@ -1482,12 +1482,30 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 			log.Printf("Invalid command payload, dropping: %v", err)
 			return nil // ack + drop malformed (same as the old loop's skip)
 		}
+		ctx, redeliver := withRedelivery(ctx)
 		runCommand(ctx, cmd, func(ctx context.Context, cmd NodeCommand) {
 			processCommand(ctx, cmd, string(payloadBytes), rdb, dm, id, quota, storage)
 		})
-		return nil
+		return *redeliver
 	}
 	runCommandConsumer(ctx, func(ctx context.Context) error { return consumer.Run(ctx, handler) })
+}
+
+type redeliveryKey struct{}
+
+// withRedelivery gives processCommand a way to leave its command pending: the
+// error askRedelivery records is returned to the consumer, which then delivers
+// the command again instead of acking it. Only for a command that ran
+// synchronously in the worker (not a sub-server delete, see runCommand).
+func withRedelivery(ctx context.Context) (context.Context, *error) {
+	var err error
+	return context.WithValue(ctx, redeliveryKey{}, &err), &err
+}
+
+func askRedelivery(ctx context.Context, err error) {
+	if p, ok := ctx.Value(redeliveryKey{}).(*error); ok {
+		*p = err
+	}
 }
 
 // runCommand runs a command in the consumer worker that pulled it, except a
@@ -1742,10 +1760,16 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// slot and move its storage key to an empty path. Setup writes
 		// .active_server, so its presence means the slot is long done.
 		// A new server resolves to the default path, so "" is a server whose
-		// storage cannot be resolved (its key names an unmounted disk, the key
-		// is unreadable with a path skipped, or copies are ambiguous). Picking
-		// a path then re-keyed it to an empty slot (R35-13).
-		dir := storage.GetServerDir(cmd.Config.UUID)
+		// storage cannot be resolved (its key names an unmounted disk, or
+		// copies are ambiguous). Picking a path then re-keyed it to an empty
+		// slot (R35-13). A key Redis did not answer is no such answer: the
+		// create is delivered again rather than dropped (R36-09).
+		dir, err := storage.ServerDirForCreate(cmd.Config.UUID)
+		if err != nil {
+			log.Printf("create %s: the storage key cannot be read, nothing was changed; the create will be delivered again: %v", cmd.Config.UUID, err)
+			askRedelivery(ctx, fmt.Errorf("create %s: read the storage key: %w", cmd.Config.UUID, err))
+			return
+		}
 		if dir == "" {
 			log.Printf("create %s: refusing, the server's storage on this node cannot be resolved (see the storage log above); nothing was changed", cmd.Config.UUID)
 			return
@@ -1759,7 +1783,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// free space. A path this node does not have (removed since the panel
 		// listed it) falls back to the node's own choice rather than leaving a
 		// server row with no directory.
-		storagePath, err := storage.SelectStoragePath(cmd.Config.UUID, cmd.Config.StoragePath)
+		// A slot an earlier delivery of this create made is kept: picking again
+		// could choose a second path and leave two copies no marker tells
+		// apart once the key is lost (R36-10).
+		var storagePath string
+		if st, serr := os.Stat(dir); serr == nil && st.IsDir() {
+			storagePath = filepath.Dir(dir)
+		} else {
+			storagePath, err = storage.SelectStoragePath(cmd.Config.UUID, cmd.Config.StoragePath)
+		}
 		if err != nil && cmd.Config.StoragePath != "" {
 			log.Printf("create %s: storage path %q: %v; choosing one instead", cmd.Config.UUID, cmd.Config.StoragePath, err)
 			storagePath, err = storage.SelectStoragePath(cmd.Config.UUID, "")
