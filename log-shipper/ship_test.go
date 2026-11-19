@@ -25,6 +25,8 @@ type fakeRedis struct {
 	hang bool
 	mu   sync.Mutex
 	cmds [][]string
+	// queued is what BLPOP pops, in order; empty answers the timeout (nil).
+	queued []string
 }
 
 func newFakeRedis(t *testing.T, hang bool) *fakeRedis {
@@ -60,11 +62,18 @@ func (f *fakeRedis) serve(c net.Conn) {
 		}
 		f.mu.Lock()
 		f.cmds = append(f.cmds, cmd)
-		f.mu.Unlock()
 		reply := "+OK\r\n"
-		if strings.EqualFold(cmd[0], "hello") {
+		switch {
+		case strings.EqualFold(cmd[0], "hello"):
 			reply = "-ERR unknown command\r\n"
+		case strings.EqualFold(cmd[0], "blpop") && len(f.queued) > 0:
+			v := f.queued[0]
+			f.queued = f.queued[1:]
+			reply = fmt.Sprintf("*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", len(cmd[1]), cmd[1], len(v), v)
+		case strings.EqualFold(cmd[0], "blpop"):
+			reply = "*-1\r\n"
 		}
+		f.mu.Unlock()
 		if _, err := io.WriteString(c, reply); err != nil {
 			return
 		}
@@ -163,6 +172,71 @@ func TestShipLogsDeliversInOrder(t *testing.T) {
 	got := f.shipped()
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("shipped %d lines, want %d in order:\n%v", len(got), len(want), got)
+	}
+}
+
+// A console line popped by an iteration whose JVM already exited goes back to
+// the head of the queue for the next JVM. A blocking BLPOP in flight is not
+// ended by the iteration's cancel, so after a crash it popped the save-off a
+// running backup queued for the restarted JVM, failed on the closed stdin and
+// dropped it; the new JVM then saved region files while tar read them.
+func TestForwardInputPutsBackWhatTheDeadProcessCannotTake(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		stdinOpen bool
+		wantPush  bool
+	}{
+		{"stdin of an exited process", false, true},
+		{"stdin of a running process", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeRedis(t, false)
+			f.queued = []string{"save-off"}
+			rdb := redis.NewClient(&redis.Options{Addr: f.ln.Addr().String()})
+			defer rdb.Close()
+
+			pr, pw, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pr.Close()
+			if !tc.stdinOpen {
+				pw.Close()
+			} else {
+				defer pw.Close()
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() { forwardInput(ctx, rdb, "in", pw); close(done) }()
+			if tc.stdinOpen {
+				line, err := bufio.NewReader(pr).ReadString('\n')
+				if err != nil || line != "save-off\n" {
+					t.Fatalf("stdin got %q, %v", line, err)
+				}
+				cancel()
+			}
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("forwardInput did not return")
+			}
+			cancel()
+
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			pushed := false
+			for _, c := range f.cmds {
+				if strings.EqualFold(c[0], "lpush") {
+					if len(c) != 3 || c[1] != "in" || c[2] != "save-off" {
+						t.Fatalf("pushed back %q, want LPUSH in save-off", c)
+					}
+					pushed = true
+				}
+			}
+			if pushed != tc.wantPush {
+				t.Fatalf("pushed back %v, want %v", pushed, tc.wantPush)
+			}
+		})
 	}
 }
 

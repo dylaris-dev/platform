@@ -782,6 +782,16 @@ func forwardInput(ctx context.Context, rdb *redis.Client, inputKey string, stdin
 			}
 			if _, err := fmt.Fprint(stdin, line+"\n"); err != nil {
 				log.Printf("log-shipper: stdin write error: %v", err)
+				// The process is gone, but the line is meant for the next one:
+				// cancel does not end a BLPOP in flight (go-redis takes only the
+				// ctx deadline), so after a crash this pops what the node queued
+				// for the restarted JVM, such as a backup's save-off. Back to
+				// the head keeps it ahead of anything queued after it.
+				pctx, pcancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if perr := rdb.LPush(pctx, inputKey, result[1]).Err(); perr != nil {
+					log.Printf("log-shipper: console line lost, could not requeue it: %v", perr)
+				}
+				pcancel()
 				return
 			}
 		}
