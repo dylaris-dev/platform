@@ -195,3 +195,37 @@ func TestSetupRefusesAServerStillInstalling(t *testing.T) {
 		})
 	}
 }
+
+// orderFakeStore notes whether the reinstall command was already queued when
+// the install record was written.
+type orderFakeStore struct {
+	*installFakeStore
+	rdb            *redis.Client
+	queuedAtUpsert int64
+}
+
+func (f *orderFakeStore) UpsertSubServerInstall(r models.SubServerInstall) error {
+	f.queuedAtUpsert, _ = f.rdb.XLen(context.Background(), "dylaris:node:node-lib:cmds").Result()
+	return f.installFakeStore.UpsertSubServerInstall(r)
+}
+
+// R27-02: reinstall wrote the install record after the command went out, so a
+// node refusal whose restore ran first was overwritten and the record named a
+// version never installed. Written before the dispatch, as setup does.
+func TestReinstallWritesTheInstallRecordBeforeTheCommand(t *testing.T) {
+	h, fs, rdb := newInstallTest(t)
+	fs.server.Status = "stopped"
+	of := &orderFakeStore{installFakeStore: fs, rdb: rdb, queuedAtUpsert: -1}
+	h.d.Store = of
+	rec := httptest.NewRecorder()
+	h.ReinstallServer(rec, installRequest("reinstall", map[string]any{"javaImage": "ghcr.io/dylaris-dev/platform-mc-java21:latest"}, true))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if of.queuedAtUpsert != 0 {
+		t.Fatalf("install record written with %d command(s) already queued, want it before the dispatch", of.queuedAtUpsert)
+	}
+	if n := len(queuedInstaller(t, rdb)); n != 1 {
+		t.Fatalf("%d reinstall(s) queued, want 1", n)
+	}
+}

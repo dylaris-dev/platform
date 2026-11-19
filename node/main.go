@@ -2180,6 +2180,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer leaveTree()
+		// A setup, reinstall or version move of this server queued ahead of the
+		// delete finishes first: beside it, the delete renamed the slot away under
+		// the install, or the install made the deleted slot again afterwards.
+		unlockInstall, installBusy := waitInstallOfServer(ctx, cmd.Config.UUID)
+		if installBusy != "" {
+			log.Printf("delete_sub_server %s/%s gave up waiting: %s", cmd.Config.UUID, subName, installBusy)
+			return
+		}
+		defer unlockInstall()
 		// "" means the storage path is not mounted here, and joining the name
 		// onto it works relative to the node's own working directory.
 		serverPath := storage.GetServerDir(cmd.Config.UUID)

@@ -1242,31 +1242,13 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 			installerPayload["proxyProtocol"] = true
 		}
 
-		// A reinstall starts the server when it is done, as setup does. Published
-		// before the command for the same reason as there; the node now asks
-		// the intent before it starts, so a suspension landing during the
-		// install keeps the server down.
-		services.IntendOnline(r.Context(), h.d.Redis, h.d.Store, srv.ID, srv.UUID)
-		if err := h.d.Queue.SendCommand(context.Background(), node.Token, "reinstall", configPayload, installerPayload); err != nil {
-			log.Printf("Redis Queue Failed: %v", err)
-			h.d.Store.UpdateServerDesiredState(srv.ID, srv.DesiredState)
-			services.PublishDesiredState(r.Context(), h.d.Redis, srv.UUID, srv.DesiredState)
-			undo()
-			if proxyKeep {
-				services.ForgetProxyProtocolInstall(context.WithoutCancel(r.Context()), h.d.Redis, srv.UUID)
-			}
-			httpx.SendJSONError(w, "Failed to queue reinstall", 500)
-			return
-		}
-
-		// Set install cooldown
-		h.d.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
-
 		// The install record follows the reinstall, as setup's does: the edit
 		// form and the mod checks prefer it over the servers row, and it used to
 		// keep naming the version this reinstall replaced. Written wholesale, so
 		// a reinstall away from a modpack clears the pack reference like setup.
-		// Best-effort for the same reason as there.
+		// Best-effort for the same reason as there. Before the command, as in
+		// setup: a node refusal restores the record from before, and a write
+		// after the dispatch could land over that restore.
 		if err := h.d.Store.UpsertSubServerInstall(models.SubServerInstall{
 			ServerID:      serverID,
 			SubServerName: subName,
@@ -1277,6 +1259,27 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		}); err != nil {
 			log.Printf("sub-server install record failed for server %d/%s: %v", serverID, subName, err)
 		}
+
+		// A reinstall starts the server when it is done, as setup does. Published
+		// before the command for the same reason as there; the node now asks
+		// the intent before it starts, so a suspension landing during the
+		// install keeps the server down.
+		services.IntendOnline(r.Context(), h.d.Redis, h.d.Store, srv.ID, srv.UUID)
+		if err := h.d.Queue.SendCommand(context.Background(), node.Token, "reinstall", configPayload, installerPayload); err != nil {
+			log.Printf("Redis Queue Failed: %v", err)
+			h.d.Store.UpdateServerDesiredState(srv.ID, srv.DesiredState)
+			services.PublishDesiredState(r.Context(), h.d.Redis, srv.UUID, srv.DesiredState)
+			services.RestoreSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)
+			undo()
+			if proxyKeep {
+				services.ForgetProxyProtocolInstall(context.WithoutCancel(r.Context()), h.d.Redis, srv.UUID)
+			}
+			httpx.SendJSONError(w, "Failed to queue reinstall", 500)
+			return
+		}
+
+		// Set install cooldown
+		h.d.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
 
 		// Refresh the modpack cross-check snapshot for the reinstalled
 		// sub-server. Advisory only, never blocks; run in the background so an
@@ -2719,6 +2722,13 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
+		return
+	}
+	// As setup and reinstall: an install queued but not yet started holds no
+	// busy key on the node, and the reset below landed under its "stopped" with
+	// the deleted slot installed again and active on disk.
+	if srv.Status == "installing" {
+		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
 		return
 	}
 

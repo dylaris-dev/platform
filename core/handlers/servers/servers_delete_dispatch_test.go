@@ -137,6 +137,8 @@ type subServerDeleteFakeStore struct {
 	// installCleared is the sub-server whose install record was dropped, "" if
 	// the handler never got there.
 	installCleared string
+	// status is the server's DB status; "" reads as stopped.
+	status string
 }
 
 func (f *subServerDeleteFakeStore) GetUserByID(id string) (*models.User, error) {
@@ -148,7 +150,7 @@ func (f *subServerDeleteFakeStore) GetUserByID(id string) (*models.User, error) 
 }
 
 func (f *subServerDeleteFakeStore) GetServerByID(id int) (*models.Server, error) {
-	return &models.Server{ID: id, UUID: "srv-uuid", OwnerID: "alice", NodeID: 3, ActiveSubServer: "survival"}, nil
+	return &models.Server{ID: id, UUID: "srv-uuid", OwnerID: "alice", NodeID: 3, ActiveSubServer: "survival", Status: f.status}, nil
 }
 
 // Audit is off for this server, which is the common case and keeps these
@@ -235,6 +237,41 @@ func TestDeleteSubServerHonorsTheDeleteCapability(t *testing.T) {
 				// prefills the setup form with a modpack that is no longer on
 				// disk - and a name that can be re-created later inherits it.
 				t.Errorf("install record cleared for %q, want \"survival\"", fs.installCleared)
+			}
+		})
+	}
+}
+
+// R27-01: an install queued but not yet started holds no busy key on the node,
+// so a delete let through beside it reset the row to pending_setup while the
+// node installed the slot again. Refused like setup, reinstall and the others.
+func TestDeleteSubServerRefusesAServerBeingInstalled(t *testing.T) {
+	for _, tt := range []struct {
+		status     string
+		wantStatus int
+	}{
+		{"installing", http.StatusConflict},
+		{"stopped", http.StatusOK},
+	} {
+		t.Run(tt.status, func(t *testing.T) {
+			fs := &subServerDeleteFakeStore{admin: true, status: tt.status}
+			h := &ServerHandler{d: testDeps(Deps{Store: fs, Events: services.NewSystemEventsPublisher(nil)})}
+			req := httptest.NewRequest(http.MethodDelete, "/api/servers/7/sub-servers/survival", nil)
+			ctx := context.WithValue(req.Context(), "userID", "alice")
+			ctx = context.WithValue(ctx, "isAdmin", true)
+			req = mux.SetURLVars(req.WithContext(ctx), map[string]string{"id": "7", "subServerName": "survival"})
+			rw := httptest.NewRecorder()
+			h.DeleteSubServer(rw, req)
+			if rw.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d (body: %s)", rw.Code, tt.wantStatus, rw.Body.String())
+			}
+			if tt.wantStatus == http.StatusConflict {
+				if !strings.Contains(rw.Body.String(), "server_installing") {
+					t.Errorf("body = %q, want the server_installing code its siblings answer", rw.Body.String())
+				}
+				if fs.statusSet != "" || fs.installCleared != "" {
+					t.Error("the refused delete still reset the row or dropped the install record")
+				}
 			}
 		})
 	}

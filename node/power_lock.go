@@ -250,6 +250,27 @@ func lockServerInstall(uuid string) func() {
 	return mu.Unlock
 }
 
+// waitInstallOfServer waits for a version move (softwareKey) of uuid to end,
+// bounded like waitTreeChangeOfServer, then takes the install lock, which a
+// running create, setup or reinstall holds. For a sub-server delete: Core has
+// already dropped the slot, and one run beside an install renamed it away
+// under the install or had it installed again afterwards. Call it holding no
+// other lock but the tree change; on "" the caller calls unlock.
+func waitInstallOfServer(ctx context.Context, uuid string) (unlock func(), reason string) {
+	deadline := time.Now().Add(treeChangeWaitMax)
+	for commandsInFlight.has(softwareKey(uuid)) {
+		if time.Now().After(deadline) {
+			return nil, "a version move of this server is still running"
+		}
+		select {
+		case <-ctx.Done():
+			return nil, "the node is shutting down"
+		case <-time.After(treeChangePoll):
+		}
+	}
+	return lockServerInstall(uuid), ""
+}
+
 // serverSlotWait is how long a setup waits for the create of its server to
 // have made the server's directory; a variable so a test need not sit it out.
 var serverSlotWait = 2 * time.Minute
