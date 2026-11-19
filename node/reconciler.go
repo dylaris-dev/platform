@@ -293,16 +293,6 @@ func restartBlocked(ctx context.Context, rdb *redis.Client, storage *StorageMana
 	if n, err := rdb.Exists(ctx, stoppedByServerKey(uuid)).Result(); err == nil && n > 0 {
 		return true
 	}
-	// A sub-server switch of a server that was not meant to run, not landed yet.
-	if switchPendingOverStop(ctx, rdb, storage, uuid) {
-		return true
-	}
-	// The same for a setup or reinstall: Core publishes "online" when it sends
-	// one too, and until the node holds it "installing" (or after a refusal,
-	// until Core put the intent back) the old sub-server was started.
-	if setupPendingOverStop(ctx, rdb, uuid) {
-		return true
-	}
 	// A server this node staged a move of. Once Core sets it online for its NEW
 	// node, the desired state reads "online" here too, and this restarted the
 	// stopped source container on data the move's cleanup deletes moments
@@ -324,19 +314,11 @@ func setupBeforeKey(uuid string) string {
 	return fmt.Sprintf("dylaris:server:%s:setup_before", uuid)
 }
 
-// pendingIntentHold bounds how long a record Core wrote at dispatch holds a
-// stopped server down. Past it the command is not merely queued, and a record
-// that outlived its command must not keep a running sub-server's crash from
-// being restarted for the record's whole TTL (a day for a switch).
-const pendingIntentHold = 15 * time.Minute
-
-// dispatchRecord is what the reconciler reads of a switch_undo or
-// setup_before record. Go matches the keys case-insensitively, so one struct
-// reads both ("target" there, "Target" here).
+// dispatchRecord is what the node reads of a switch_undo or setup_before
+// record. Go matches the keys case-insensitively, so one struct reads both
+// ("target" there, "Target" here).
 type dispatchRecord struct {
-	Target       string
-	Previous     string
-	DesiredState string
+	Target string
 	// Core's dispatch time, unix nanoseconds; zero from an older Core.
 	At int64
 }
@@ -348,43 +330,6 @@ func readDispatchRecord(ctx context.Context, rdb *redis.Client, key string) (dis
 		return rec, false
 	}
 	return rec, true
-}
-
-// holdsOverStop: the record says the server was not meant to run, and it was
-// written recently. A record from a Core without the fields holds nothing.
-func (rec dispatchRecord) holdsOverStop() bool {
-	if rec.DesiredState == "" || rec.DesiredState == "online" || rec.At <= 0 {
-		return false
-	}
-	return time.Since(time.Unix(0, rec.At)) < pendingIntentHold
-}
-
-// switchPendingOverStop reports a switch Core dispatched for a server that was
-// not meant to run, which has not landed here. Core publishes "online" when it
-// sends a switch, so until then the reconciler saw a stopped server it was
-// meant to run - before the command was pulled, and after a refusal until Core
-// put the intent back - and started the OLD sub-server its owner had stopped.
-// Only while the node is still on the switch's previous sub-server: one that
-// landed, or a setup since, moved it on, and the record is then not about the
-// sub-server that runs.
-func switchPendingOverStop(ctx context.Context, rdb *redis.Client, storage *StorageManager, uuid string) bool {
-	rec, ok := readDispatchRecord(ctx, rdb, switchUndoKey(uuid))
-	if !ok || !rec.holdsOverStop() {
-		return false
-	}
-	active := ""
-	if dir := storage.GetServerDir(uuid); dir != "" {
-		active = readActiveSubServer(dir)
-	}
-	return strings.EqualFold(active, rec.Previous)
-}
-
-// setupPendingOverStop is switchPendingOverStop for a setup or reinstall. The
-// record is deleted when the install lands here (forgetRecordFor) or Core put
-// a failed one back.
-func setupPendingOverStop(ctx context.Context, rdb *redis.Client, uuid string) bool {
-	rec, ok := readDispatchRecord(ctx, rdb, setupBeforeKey(uuid))
-	return ok && rec.holdsOverStop()
 }
 
 // forgetRecordFor deletes Core's dispatch record under key only when it is

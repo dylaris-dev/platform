@@ -10,28 +10,23 @@ import (
 	"time"
 )
 
-// R32-02: Core publishes desired_state "online" when it dispatches a switch,
-// so a stopped server read to the reconciler as one it was meant to run - both
-// before the node pulled the switch and after the node refused it, until Core
-// put the intent back - and it started the OLD sub-server the owner had
-// stopped. Core's undo record says the server was not meant to run; while the
-// switch has not landed, it holds the server down.
-func TestAPendingSwitchOfAStoppedServerHoldsTheOldSubServerDown(t *testing.T) {
-	const uuid = "32323232-0202-0202-0202-323232323232"
-	// R33-01: Core stamps the dispatch time; a record without one holds nothing.
-	at := fmt.Sprint(time.Now().UnixNano())
+// R34-01/03/05/07: the reconciler no longer reads Core's dispatch records.
+// Their age was judged by the node's own clock against Core's stamp, so a
+// drifted node held a stopped server's crash restart off for hours or never,
+// and the bound ran out while a command still queued. Core puts a refused
+// switch's or setup's intent back instead (RestoreSetupBefore,
+// consumeSwitchSubFailures); the window until then is accepted
+// (SwitchSubServer in core). Whatever a record says, it holds nothing.
+func TestADispatchRecordNeverHoldsTheReconcilerOff(t *testing.T) {
+	const uuid = "34343434-0101-0101-0101-343434343434"
+	now := time.Now()
 	for _, tc := range []struct {
-		name, undo, active string
-		want               bool
+		name, key, record string
 	}{
-		{"pending, was stopped", `{"target":"b","previous":"a","desiredState":"stopped","at":` + at + `}`, "a", true},
-		{"pending, none active before", `{"target":"b","previous":"","desiredState":"stopped","at":` + at + `}`, "", true},
-		{"landed", `{"target":"b","previous":"a","desiredState":"stopped"}`, "b", false},
-		{"landed, other case", `{"target":"B","previous":"a","desiredState":"stopped"}`, "b", false},
-		{"was running", `{"target":"b","previous":"a","desiredState":"online"}`, "a", false},
-		{"record from an older Core", `{"target":"b","previous":"a"}`, "a", false},
-		{"no record", "", "a", false},
-		{"unreadable", `nope`, "a", false},
+		{"pending switch", switchUndoKey(uuid), fmt.Sprintf(`{"target":"b","previous":"a","desiredState":"stopped","at":%d}`, now.UnixNano())},
+		{"switch stamped ahead of a slow node clock", switchUndoKey(uuid), fmt.Sprintf(`{"target":"b","previous":"a","desiredState":"stopped","at":%d}`, now.Add(time.Hour).UnixNano())},
+		{"pending setup", setupBeforeKey(uuid), fmt.Sprintf(`{"Target":"b","DesiredState":"stopped","At":%d}`, now.UnixNano())},
+		{"setup stamped ahead of a slow node clock", setupBeforeKey(uuid), fmt.Sprintf(`{"Target":"b","DesiredState":"stopped","At":%d}`, now.Add(time.Hour).UnixNano())},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -39,18 +34,14 @@ func TestAPendingSwitchOfAStoppedServerHoldsTheOldSubServerDown(t *testing.T) {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if tc.active != "" {
-				if err := os.WriteFile(filepath.Join(dir, ".active_server"), []byte(tc.active), 0o644); err != nil {
-					t.Fatal(err)
-				}
+			if err := os.WriteFile(filepath.Join(dir, ".active_server"), []byte("a"), 0o644); err != nil {
+				t.Fatal(err)
 			}
 			rdb := newMiniRedis(t)
 			ctx := context.Background()
-			if tc.undo != "" {
-				rdb.Set(ctx, switchUndoKey(uuid), tc.undo, 0)
-			}
-			if got := restartBlocked(ctx, rdb, &StorageManager{paths: []string{root}}, uuid); got != tc.want {
-				t.Errorf("restartBlocked = %v, want %v", got, tc.want)
+			rdb.Set(ctx, tc.key, tc.record, time.Hour)
+			if restartBlocked(ctx, rdb, &StorageManager{paths: []string{root}}, uuid) {
+				t.Error("a dispatch record held the reconciler off")
 			}
 		})
 	}

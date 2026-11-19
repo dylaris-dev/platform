@@ -1959,8 +1959,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// (installation succeeded; the sub-server directory is valid).
 		refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
 
-		// Landed: nothing for a failure to put back, and the record no longer
-		// holds the reconciler off this server (setupPendingOverStop).
+		// Landed: nothing for a failure to put back.
 		forgetRecordFor(ctx, rdb, setupBeforeKey(cmd.Config.UUID), subName)
 
 		// Notify Core that installation is complete. "starting" when it was
@@ -2075,9 +2074,8 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			if err := writeServerRootFile(serverPath, ".active_server", []byte(subName)); err != nil {
 				log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
 			}
-			// Landed: nothing to undo, and the record no longer holds the
-			// reconciler off this server (switchPendingOverStop). Only this
-			// switch's record: a newer one queued behind it keeps its own.
+			// Landed: nothing to undo. Only this switch's record: a newer one
+			// queued behind it keeps its own.
 			forgetRecordFor(ctx, rdb, switchUndoKey(cmd.Config.UUID), subName)
 			log.Printf("Server %s switched to sub-server %s", cmd.Config.UUID, subName)
 			saveNodeConfig(storage.GetServerDir(cmd.Config.UUID), cmd.Config)

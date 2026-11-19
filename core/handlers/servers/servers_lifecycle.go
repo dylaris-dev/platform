@@ -945,7 +945,8 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		// Setup installs and starts the server. The intent is published BEFORE
 		// the command: the node asks it when the install is done, and a short
 		// install finished ahead of the scan that would have published it, read
-		// the old "stopped" and left a fresh server down.
+		// the old "stopped" and left a fresh server down. The window this opens
+		// for a stopped server is accepted, see the ponytail in SwitchSubServer.
 		services.IntendOnline(r.Context(), h.d.Redis, h.d.Store, srv.ID, srv.UUID)
 		if err := h.d.Queue.SendCommand(context.Background(), node.Token, "setup", configPayload, installerPayload); err != nil {
 			log.Printf("Redis Queue Failed: %v", err)
@@ -1565,6 +1566,14 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		// A switch starts the server, so the platform means to run it now.
 		// After a crash loop the intent read "stopped" while the switched
 		// server ran, and the reconciler would not bring it back if it fell.
+		// ponytail: for a server that was stopped, the node's reconciler sees
+		// "online" before the switch lands and may start the OLD sub-server:
+		// until the node pulls the command (seconds; longer on a backlogged
+		// worker pool), and after a refusal until the status watcher's next
+		// tick puts the intent back (consumeSwitchSubFailures, the same for
+		// setup and reinstall via RestoreSetupBefore). Accepted. Upgrade path:
+		// leave the intent alone and carry a start-after flag in the command,
+		// so the node sets it once the switch or install has landed.
 		if err := services.IntendOnline(r.Context(), h.d.Redis, h.d.Store, serverID, srv.UUID); err != nil {
 			log.Printf("SwitchSubServer: desired state for server %d: %v", serverID, err)
 		}

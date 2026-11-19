@@ -39,9 +39,8 @@ func SwitchUndoKey(serverUUID string) string {
 // SwitchUndoTTL outlasts a switch queued for a node that is away or behind:
 // the command waits in the stream for as long as that takes, and a refusal
 // after the record expired put back only active_sub_server. A node deletes the
-// record once the switch lands (node/main.go), and its reconciler holds the
-// old sub-server down while one is pending, so this only bounds a command that
-// is never delivered.
+// record once the switch lands (node/main.go), so this only bounds a command
+// that is never delivered.
 const SwitchUndoTTL = 24 * time.Hour
 
 // SwitchUndo is the state a switch to Target is about to overwrite.
@@ -55,8 +54,7 @@ type SwitchUndo struct {
 	DesiredState string `json:"desiredState,omitempty"`
 	// Set by DeleteSubServer: Previous is gone, so it is no place to go back to.
 	PreviousDeleted bool `json:"previousDeleted,omitempty"`
-	// The dispatch time, unix nanoseconds; the node holds a stopped server
-	// down only for a short while after it (node/reconciler.go).
+	// The dispatch time, unix nanoseconds.
 	At int64 `json:"at,omitempty"`
 }
 
@@ -137,8 +135,7 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 				continue
 			}
 			// Each report dropped below takes its own switch's undo record
-			// with it: left behind, it held the node's reconciler off whatever
-			// runs now (node/reconciler.go switchPendingOverStop).
+			// with it, so a later refusal cannot be put back from it.
 			srv, serr := s.store.GetServerByUUID(parts[2])
 			if serr != nil || srv == nil {
 				ForgetSwitchUndo(ctx, s.redis, parts[2], rep.Target)
@@ -170,8 +167,6 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 				ForgetSwitchUndo(ctx, s.redis, srv.UUID, rep.Target)
 				continue
 			}
-			// Deleted only once the intent is back: while it is there, the
-			// node's reconciler holds the old sub-server down (it reads it).
 			matched := undo.Target != "" && strings.EqualFold(undo.Previous, previous)
 			if noneBefore || (matched && undo.PreviousDeleted) {
 				// What DeleteSubServer does for a deleted active slot.

@@ -4,54 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"dylaris-pkg/queue"
 )
-
-// R33-01: a pending switch holds the reconciler off only while the switch has
-// neither landed nor been overtaken (the node is still on its previous
-// sub-server) and only for a short while after Core wrote it. A record that
-// outlived its switch held a different, running sub-server down for a day.
-func TestAPendingSwitchHoldsOnlyWhileItIsPending(t *testing.T) {
-	const uuid = "33333333-0101-0101-0101-333333333333"
-	fresh := time.Now().Add(-time.Minute).UnixNano()
-	for _, c := range []struct {
-		name, active, record string
-		want                 bool
-	}{
-		{"pending", "main", fmt.Sprintf(`{"target":"modded","previous":"main","desiredState":"stopped","at":%d}`, fresh), true},
-		{"pending, none active before", "", fmt.Sprintf(`{"target":"modded","previous":"","desiredState":"stopped","at":%d}`, fresh), true},
-		{"landed", "modded", fmt.Sprintf(`{"target":"modded","previous":"main","desiredState":"stopped","at":%d}`, fresh), false},
-		{"overtaken by a setup", "other", fmt.Sprintf(`{"target":"modded","previous":"main","desiredState":"stopped","at":%d}`, fresh), false},
-		{"too old", "main", fmt.Sprintf(`{"target":"modded","previous":"main","desiredState":"stopped","at":%d}`, time.Now().Add(-time.Hour).UnixNano()), false},
-		{"no dispatch time", "main", `{"target":"modded","previous":"main","desiredState":"stopped"}`, false},
-		{"meant to run", "main", fmt.Sprintf(`{"target":"modded","previous":"main","desiredState":"online","at":%d}`, fresh), false},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			root := t.TempDir()
-			if err := os.MkdirAll(filepath.Join(root, uuid), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if c.active != "" {
-				if err := os.WriteFile(filepath.Join(root, uuid, ".active_server"), []byte(c.active), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			rdb := newMiniRedis(t)
-			ctx := context.Background()
-			rdb.Set(ctx, switchUndoKey(uuid), c.record, time.Hour)
-			if got := switchPendingOverStop(ctx, rdb, &StorageManager{paths: []string{root}}, uuid); got != c.want {
-				t.Errorf("held = %v, want %v", got, c.want)
-			}
-		})
-	}
-}
 
 // R33-02/R33-04: a landed switch deletes only its own undo record; a newer
 // switch queued behind it keeps the record its refusal is put back from.
@@ -72,35 +31,6 @@ func TestALandedSwitchDeletesOnlyItsOwnUndoRecord(t *testing.T) {
 			forgetRecordFor(ctx, rdb, switchUndoKey(uuid), c.landed)
 			if n, _ := rdb.Exists(ctx, switchUndoKey(uuid)).Result(); (n == 1) != c.wantKept {
 				t.Errorf("record kept = %v, want %v", n == 1, c.wantKept)
-			}
-		})
-	}
-}
-
-// R33-03: a setup or reinstall Core dispatched for a server that was not meant
-// to run holds the reconciler off until it lands or Core puts it back, for a
-// short while at most.
-func TestAPendingSetupHoldsAStoppedServerDown(t *testing.T) {
-	const uuid = "33333333-0303-0303-0303-333333333333"
-	fresh := time.Now().Add(-time.Minute).UnixNano()
-	for _, c := range []struct {
-		name, record string
-		want         bool
-	}{
-		{"pending", fmt.Sprintf(`{"Target":"modded","DesiredState":"stopped","At":%d}`, fresh), true},
-		{"too old", fmt.Sprintf(`{"Target":"modded","DesiredState":"stopped","At":%d}`, time.Now().Add(-time.Hour).UnixNano()), false},
-		{"from an older Core", `{"Target":"modded","DesiredState":"stopped"}`, false},
-		{"meant to run", fmt.Sprintf(`{"Target":"modded","DesiredState":"online","At":%d}`, fresh), false},
-		{"none", "", false},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			rdb := newMiniRedis(t)
-			ctx := context.Background()
-			if c.record != "" {
-				rdb.Set(ctx, setupBeforeKey(uuid), c.record, time.Hour)
-			}
-			if got := setupPendingOverStop(ctx, rdb, uuid); got != c.want {
-				t.Errorf("held = %v, want %v", got, c.want)
 			}
 		})
 	}
@@ -160,19 +90,19 @@ func TestASetupFailureKeyNamesTheSetupItAnswers(t *testing.T) {
 	}
 }
 
-// R33-03: a setup that landed deletes its record, so the hold ends with it.
-func TestALandedSetupEndsItsHold(t *testing.T) {
+// R33-03: a setup that landed deletes only its own record.
+func TestALandedSetupForgetsOnlyItsOwnRecord(t *testing.T) {
 	const uuid = "33333333-0606-0606-0606-333333333333"
 	rdb := newMiniRedis(t)
 	ctx := context.Background()
-	rdb.Set(ctx, setupBeforeKey(uuid), fmt.Sprintf(`{"Target":"modded","DesiredState":"stopped","At":%d}`, time.Now().UnixNano()), time.Hour)
+	rdb.Set(ctx, setupBeforeKey(uuid), `{"Target":"modded","At":1}`, time.Hour)
 	forgetRecordFor(ctx, rdb, setupBeforeKey(uuid), "other")
-	if !setupPendingOverStop(ctx, rdb, uuid) {
-		t.Fatal("another setup's landing ended the hold")
+	if n, _ := rdb.Exists(ctx, setupBeforeKey(uuid)).Result(); n != 1 {
+		t.Fatal("another setup's landing forgot the record")
 	}
 	forgetRecordFor(ctx, rdb, setupBeforeKey(uuid), "modded")
-	if setupPendingOverStop(ctx, rdb, uuid) {
-		t.Error("still held after the setup landed")
+	if n, _ := rdb.Exists(ctx, setupBeforeKey(uuid)).Result(); n != 0 {
+		t.Error("the record outlived the setup that landed")
 	}
 }
 

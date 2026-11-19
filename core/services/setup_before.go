@@ -39,10 +39,9 @@ type setupBefore struct {
 	// Absent unless the setup changes them.
 	ModsKnown bool               `json:",omitempty"`
 	Mods      []models.ServerMod `json:",omitempty"`
-	// The dispatch time, unix nanoseconds. The node holds a stopped server
-	// down for a short while after it (node/reconciler.go
-	// setupPendingOverStop) and names it in a failure report, which is applied
-	// only to the setup it answers (consumeSetupFailures).
+	// The dispatch time, unix nanoseconds. The node names it in a failure
+	// report, which is applied only to the setup it answers
+	// (consumeSetupFailures).
 	At int64 `json:",omitempty"`
 }
 
@@ -59,8 +58,7 @@ func RememberSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store,
 		DesiredState: srv.DesiredState, At: time.Now().UnixNano(),
 	}
 	// The setup overtakes a switch still pending: a refusal of that switch is
-	// dropped as superseded, and its record must not hold the node's
-	// reconciler off the sub-server this setup installs.
+	// dropped as superseded.
 	rdb.Del(ctx, SwitchUndoKey(srv.UUID))
 	if st != nil {
 		if in, err := st.GetSubServerInstall(srv.ID, target); err == nil {
