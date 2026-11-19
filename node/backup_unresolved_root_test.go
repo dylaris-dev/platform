@@ -24,7 +24,7 @@ func TestNodeLocalBackupRefusesAnUnresolvedServerRoot(t *testing.T) {
 		run   func(sm *StorageManager) string
 	}{
 		{"upload", false, func(sm *StorageManager) string {
-			if err := uploadBackup(t.Context(), sm, unresolved, info, key, strings.NewReader("archive")); err == nil {
+			if err := uploadBackup(t.Context(), sm, unresolved, info, key, strings.NewReader("archive"), nil); err == nil {
 				return "upload into an unresolved server root succeeded"
 			}
 			return ""

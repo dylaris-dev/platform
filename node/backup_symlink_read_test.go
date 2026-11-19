@@ -134,7 +134,7 @@ func TestNodeLocalUploadRefusesToWriteThroughASymlink(t *testing.T) {
 
 	info := storageInfo{Provider: "node-local", Config: json.RawMessage(`{}`)}
 	err := uploadBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-7.tar.gz",
-		strings.NewReader("ARCHIVE-BYTES"))
+		strings.NewReader("ARCHIVE-BYTES"), nil)
 	if err != nil {
 		t.Fatalf("upload: %v", err)
 	}

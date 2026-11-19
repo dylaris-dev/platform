@@ -41,7 +41,7 @@ func TestNodeLocalBackupRefusesALinkedBackupDir(t *testing.T) {
 
 			switch op {
 			case "upload":
-				err := uploadBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-1.tar.gz", strings.NewReader("ARCHIVE"))
+				err := uploadBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-1.tar.gz", strings.NewReader("ARCHIVE"), nil)
 				if err == nil {
 					t.Error("upload through a linked backup dir succeeded")
 				}
@@ -82,7 +82,7 @@ func TestNodeLocalBackupRoundTripInARealDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := storageInfo{Provider: "node-local", Config: json.RawMessage(`{}`)}
-	if err := uploadBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-1.tar.gz", strings.NewReader("ARCHIVE")); err != nil {
+	if err := uploadBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-1.tar.gz", strings.NewReader("ARCHIVE"), nil); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
 	if l := h.handleBackupList("r", uuid).GetBackupListResp(); l == nil || len(l.Objects) != 1 || l.Objects[0].Key != "run-1.tar.gz" {
@@ -97,7 +97,7 @@ func TestNodeLocalBackupRoundTripInARealDir(t *testing.T) {
 	if m := h.handleBackupDelete("r", uuid, &pb.BackupDeleteReq{Key: "run-1.tar.gz"}); m.GetError().GetCode() != 404 {
 		t.Fatalf("second delete = %v, want 404", m.GetError())
 	}
-	if err := uploadBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-2.tar.gz", strings.NewReader("B")); err != nil {
+	if err := uploadBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-2.tar.gz", strings.NewReader("B"), nil); err != nil {
 		t.Fatal(err)
 	}
 	deleteBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-2.tar.gz")

@@ -80,7 +80,7 @@ func TestNodeLocalUploadDoesNotRecreateADeletedServerRoot(t *testing.T) {
 	root := resolveServerRoot(sm, uuid)
 	info := storageInfo{Provider: "node-local", Config: json.RawMessage(`{}`)}
 
-	err := uploadBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-1.tar.gz", strings.NewReader("archive"))
+	err := uploadBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-1.tar.gz", strings.NewReader("archive"), nil)
 
 	if err == nil {
 		t.Error("upload into a missing server root succeeded")

@@ -304,10 +304,15 @@ type worldSaveGuard struct {
 	// for a server without them: the one that ran when saving was paused and
 	// every one started during the walk.
 	subs map[string]bool
-	// stopped: a graceful stop reached the server during the walk. Its
-	// save-all and the stop's own save wrote the world under the tar, so the
-	// archive may hold torn region files and the run must not succeed.
+	// stopped: a stop or a save reached the server during the walk, through
+	// the node's gracefulStop or from inside the server (console, in game, a
+	// plugin). Both write the world regardless of save-off, so the archive may
+	// hold torn region files and the run must not succeed.
 	stopped bool
+	// ownSaves counts, per sub-server, the save-alls this guard queued whose
+	// "Saving the game" line has not been read yet: those are not a save the
+	// walk must fail on.
+	ownSaves map[string]int
 }
 
 // pauseWorldSaves stops the server writing its world, flushes what it holds,
@@ -360,6 +365,8 @@ func pauseWorldSaves(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 	if waitForSaveConfirmation(ctx, rdb, logKey, from, saveFlushTimeout) {
 		log.Printf("backup: server %s: saving paused, the server confirmed the flush", uuid)
 	} else {
+		// Its save may still start during the walk.
+		g.ownSaves = map[string]int{sub: 1}
 		log.Printf("backup: server %s: saving paused, but the server did not confirm the flush within %s; archiving anyway", uuid, saveFlushTimeout)
 	}
 	return g
@@ -463,6 +470,10 @@ func (g *worldSaveGuard) pauseOnStart(send func(command string) error, subServer
 			g.subs = map[string]bool{}
 		}
 		g.subs[sub] = true
+		if g.ownSaves == nil {
+			g.ownSaves = map[string]int{}
+		}
+		g.ownSaves[sub]++
 		send("save-off")
 		send("save-all flush")
 		if g.send == nil {
@@ -505,8 +516,56 @@ func isCrashRestart(line string) bool {
 	return strings.HasPrefix(line, "[Server crashed (exit code ") && strings.Contains(line, "restarting automatically")
 }
 
+// worldWriteLine reports a console line saying the JVM writes its world
+// regardless of save-off: its shutdown, or a save-all. ours is a save-all's
+// start line, which the guard's own save-alls print too. Matched from the
+// message start, so chat and /say cannot fail a backup.
+func worldWriteLine(line string) (write, ours bool) {
+	msg := afterLogPrefix(line)
+	if strings.HasPrefix(msg, "Stopping server") {
+		return true, false
+	}
+	// "Saving..." before 1.13. One per save-all, where the confirmation can be
+	// two lines ("All dimensions are saved", then "Saved the game").
+	if strings.HasPrefix(msg, "Saving the game") || msg == "Saving..." {
+		return true, true
+	}
+	// An op's save-all in game prints its start only to the op and its
+	// confirmation to the console as "[Steve: Saved the game]"; the node's own
+	// commands come from the console and print no name.
+	if name, rest, ok := strings.Cut(msg, ": "); ok && strings.HasPrefix(name, "[") && !strings.ContainsAny(name[1:], " []") &&
+		(strings.HasPrefix(rest, "Saved the game") || strings.HasPrefix(rest, "Saved the world")) {
+		return true, false
+	}
+	return false, false
+}
+
+// consoleWrite marks the walk stopped for a world write read on sub's console
+// that is not one of the guard's own save-alls.
+func (g *worldSaveGuard) consoleWrite(sub, line string) {
+	write, ours := worldWriteLine(line)
+	if !write {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed || g.stopped {
+		return
+	}
+	// ponytail: a save-all of ours the server never answers (a JVM that fails
+	// to boot) absorbs one later foreign save; matching lines to commands
+	// would need the console to echo them, which it does not.
+	if ours && g.ownSaves[sub] > 0 {
+		g.ownSaves[sub]--
+		return
+	}
+	g.stopped = true
+	log.Printf("backup: server %s: stopped or saved from inside the server during its backup, its world is saved under the archive; the run will fail", g.uuid)
+}
+
 // watchCrashRestarts treats every in-container restart the log-shipper
-// announces on a watched console as a start during the walk. The shipper
+// announces on a watched console as a start during the walk, and a stop or
+// save-all from inside the server (consoleWrite) as a stop. The shipper
 // restarts a crashed JVM itself, five seconds later, so no node start path
 // runs and the new JVM booted with saving on while tar read its region files.
 // The commands queued in those five seconds reach the new JVM as it boots, as
@@ -563,9 +622,15 @@ func (g *worldSaveGuard) watchCrashRestarts(rdb *redis.Client) (stop func()) {
 			for _, st := range res {
 				for _, m := range st.Messages {
 					from[st.Stream] = m.ID
-					if line, _ := m.Values["line"].(string); isCrashRestart(line) && ctx.Err() == nil {
+					line, _ := m.Values["line"].(string)
+					if ctx.Err() != nil {
+						continue
+					}
+					if isCrashRestart(line) {
 						log.Printf("backup: server %s: its JVM crashed and is restarting during the backup", g.uuid)
 						startingDuringBackup(g.uuid, subOf[st.Stream])
+					} else {
+						g.consoleWrite(subOf[st.Stream], line)
 					}
 				}
 			}
@@ -790,6 +855,19 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		abortSrc = func(err error) { pr.CloseWithError(err) }
 	}
 
+	// Run once the whole archive is read, before it is committed: an archive
+	// that matched nothing or was torn by a stop is never completed (multipart)
+	// or landed (node-local).
+	archived := func() error {
+		if !addedAny {
+			return errNothingArchived
+		}
+		if saves.stoppedDuringWalk() {
+			return errStoppedDuringBackup
+		}
+		return nil
+	}
+
 	// Upload reads from the pipe. Returns once EOF (or pipe error) reached.
 	// Object storage goes through Core's multipart upload; the filesystem
 	// providers are written by this node directly.
@@ -800,19 +878,17 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		// Checked before Complete, which is the point: an archive that matched
 		// nothing is never completed, so there is no object to clean up and
 		// Core aborts the parts when the run is reported failed.
-		multipartSize, upErr = uploadMultipartPaced(ctx, coreMultipartAPI(cmd.RunID), transferClient(cmd.GuardedTransfer, cmd.AllowPrivate), src, func() error {
-			if !addedAny {
-				return errNothingArchived
-			}
-			if saves.stoppedDuringWalk() {
-				return errStoppedDuringBackup
-			}
-			return nil
-		}, pacer)
+		multipartSize, upErr = uploadMultipartPaced(ctx, coreMultipartAPI(cmd.RunID), transferClient(cmd.GuardedTransfer, cmd.AllowPrivate), src, archived, pacer)
 	default:
-		upErr = uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, pacer.capReader(ctx, src))
+		// Checked before a node-local archive lands: once renamed its bytes are
+		// booked as landed, and deleting it afterwards credited none back.
+		upErr = uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, pacer.capReader(ctx, src), archived)
 	}
 	if errors.Is(upErr, errNothingArchived) || errors.Is(upErr, errStoppedDuringBackup) {
+		// local and shared wrote the file in place; node-local removed its partial.
+		if cmd.Upload != modeUploadMultipart {
+			deleteBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
+		}
 		reportBackup(ctx, rdb, cmd.RunID, "failed", upErr.Error(), 0)
 		return
 	}
@@ -856,20 +932,6 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		// quota and the run list should carry.
 		size = multipartSize
 	}
-	// Multipart checked this before Complete; a file target holds the archive.
-	if cmd.Upload != modeUploadMultipart && saves.stoppedDuringWalk() {
-		deleteBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
-		reportBackup(ctx, rdb, cmd.RunID, "failed", errStoppedDuringBackup.Error(), 0)
-		return
-	}
-	if !addedAny {
-		// We still uploaded a 0-file archive; clean up storage and surface
-		// the friendlier error so the UI doesn't show a zero-byte success.
-		deleteBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
-		reportBackup(ctx, rdb, cmd.RunID, "failed", "no files matched include/exclude patterns", 0)
-		return
-	}
-
 	reportBackup(ctx, rdb, cmd.RunID, "success", "", size)
 	log.Printf("Backup %d streamed to %s/%s — %.2f MB in %v", cmd.RunID, storage.Provider, cmd.StorageKey, float64(size)/1024/1024, time.Since(started))
 }
@@ -1107,7 +1169,12 @@ func (c *countingWriter) Total() int64 { return c.n.Load() }
 // tail filename is taken as the archive name and the directory is created on
 // demand. Object storage never reaches here: it is uploaded through Core
 // (uploadMultipart), and this node holds no credentials for it.
-func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, info storageInfo, key string, r io.Reader) error {
+// commit, when not nil, runs once the archive is written and before it is
+// committed; its error fails the upload.
+func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, info storageInfo, key string, r io.Reader, commit func() error) error {
+	if commit == nil {
+		commit = func() error { return nil }
+	}
 	switch info.Provider {
 	case "local", "shared":
 		// "shared" is the new UI label for the legacy "local" provider —
@@ -1127,7 +1194,10 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		if err != nil {
 			return err
 		}
-		return copyAndCommit(f, r)
+		if err := copyAndCommit(f, r); err != nil {
+			return err
+		}
+		return commit()
 
 	case "node-local":
 		// Resolve <server-dir>/.dylaris-backups/<archive>. The Core-side
@@ -1186,6 +1256,10 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 			}
 		}()
 		if err := copyAndCommit(f, budget.reader(r)); err != nil {
+			root.Remove(partial)
+			return err
+		}
+		if err := commit(); err != nil {
 			root.Remove(partial)
 			return err
 		}

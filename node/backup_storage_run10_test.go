@@ -107,7 +107,7 @@ func TestAFailedWriteBooksNothingAsLanded(t *testing.T) {
 			}
 			info := storageInfo{Provider: "node-local", Config: json.RawMessage(`{}`)}
 			r := &failingReader{left: 4096}
-			if err := uploadBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-1.tar.gz", r); err == nil {
+			if err := uploadBackup(t.Context(), sm, uuid, info, "backups/"+uuid+"/job-1/run-1.tar.gz", r, nil); err == nil {
 				t.Fatal("a broken source reported success")
 			}
 		}},

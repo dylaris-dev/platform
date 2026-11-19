@@ -54,7 +54,7 @@ func TestAFailedUploadLeavesTheArchiveBehind(t *testing.T) {
 	key := "backups/server-1/job-2/run.tar.gz"
 	info := localStorage(t, base)
 
-	err := uploadBackup(context.Background(), nil, "server-1", info, key, &failingReader{left: 4096})
+	err := uploadBackup(context.Background(), nil, "server-1", info, key, &failingReader{left: 4096}, nil)
 	if err == nil {
 		t.Fatal("uploadBackup reported success on a reader that failed")
 	}
@@ -100,7 +100,7 @@ func TestASuccessfulUploadKeepsItsArchive(t *testing.T) {
 	key := "backups/server-1/job-2/good.tar.gz"
 	info := localStorage(t, base)
 
-	if err := uploadBackup(context.Background(), nil, "server-1", info, key, io.LimitReader(&failingReader{left: 1 << 20}, 512)); err != nil {
+	if err := uploadBackup(context.Background(), nil, "server-1", info, key, io.LimitReader(&failingReader{left: 1 << 20}, 512), nil); err != nil {
 		t.Fatalf("uploadBackup: %v", err)
 	}
 	if st, err := os.Stat(filepath.Join(base, filepath.Clean("/"+key))); err != nil || st.Size() != 512 {
