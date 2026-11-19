@@ -2,6 +2,7 @@ package servers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"testing"
@@ -103,5 +104,11 @@ func TestSwitchSubServerClearsTheNodeHolds(t *testing.T) {
 	}
 	if got, _ := rdb.Get(ctx, services.DesiredStateKey("srv-uuid")).Result(); got != "online" {
 		t.Errorf("published desired state = %q, want online", got)
+	}
+	// R30-01: what the status watcher puts back if the node refuses it.
+	var undo services.SwitchUndo
+	raw, _ := rdb.Get(ctx, services.SwitchUndoKey("srv-uuid")).Result()
+	if json.Unmarshal([]byte(raw), &undo) != nil || undo.Target != "lobby" || undo.Previous != "main" {
+		t.Errorf("switch undo record = %q, want target lobby, previous main", raw)
 	}
 }

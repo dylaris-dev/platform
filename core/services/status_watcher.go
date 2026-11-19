@@ -142,6 +142,11 @@ func (s *StatusWatcherService) scan() {
 	if s.consumeCopySubFailures(ctx) {
 		dirty = true
 	}
+	// And a sub-server switch the node could not make: put Core back on the
+	// sub-server that is still running.
+	if s.consumeSwitchSubFailures(ctx) {
+		dirty = true
+	}
 
 	// Publish the durable per-server state keys the node reconciler and the
 	// gateway edge read (desired_state + live_status).

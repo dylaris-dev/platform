@@ -2025,6 +2025,12 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		clearRunBlockers(ctx, rdb, cmd.Config.UUID)
 
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
+		if serverPath == "" {
+			log.Printf("switch_server for %s: storage path not found, aborting", cmd.Config.UUID)
+			refuseSwitch(ctx, rdb, dm, cmd.Config.UUID, subName, "", "the server's storage is not available on the node")
+			return
+		}
+		previous := readActiveSubServer(serverPath)
 
 		// Build the start command for the target sub-server.
 		// ExtraJvmFlags is passed directly from Core as a dedicated field.
@@ -2033,7 +2039,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		startCmd, err := buildStartCommand(switchSubDir, cmd.Config.Docker.RAM, extraJvmFlags, cmd.Config.Docker.Image)
 		if err != nil {
 			log.Printf("buildStartCommand failed for switch %s/%s: %v", cmd.Config.UUID, subName, err)
-			rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", cmd.Config.UUID), "stopped", 30*time.Second)
+			refuseSwitch(ctx, rdb, dm, cmd.Config.UUID, subName, previous, "the sub-server has no server software the node can start")
 			return
 		}
 		cmd.Config.Docker.Command = startCmd
@@ -2049,6 +2055,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Abandoned still switched: the new container is there, only stopped.
 		if err := recreate(cmd.Config); err != nil && !errors.Is(err, errStartAbandoned) {
 			log.Printf("Failed to switch server pod %s: %v", cmd.Config.UUID, err)
+			// .active_server and .node_config.json still name the old
+			// sub-server, so that is what the reconciler brings back.
+			reportSwitchFailed(ctx, rdb, cmd.Config.UUID, subName, previous, "the node could not recreate the server's container")
 		} else {
 			if err := writeServerRootFile(serverPath, ".active_server", []byte(subName)); err != nil {
 				log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
@@ -2878,6 +2887,25 @@ func statusAfterFailedStop(dm *DockerManager, uuid string) string {
 		return "online"
 	}
 	return "stopped"
+}
+
+// refuseSwitch lands a switch given up before the container was touched: the
+// old sub-server is still the one running, so its status is not "stopped".
+func refuseSwitch(ctx context.Context, rdb *redis.Client, dm *DockerManager, uuid, target, previous, reason string) {
+	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:status", uuid), statusAfterFailedStop(dm, uuid), 30*time.Second)
+	reportSwitchFailed(ctx, rdb, uuid, target, previous, reason)
+}
+
+// reportSwitchFailed tells Core a switch did not happen, so it can put its
+// active_sub_server back: Core writes it before dispatching. Same shape as
+// reportCopyFailed, under the prefix the node's ACL already grants; an older
+// Core ignores the key until it expires.
+func reportSwitchFailed(ctx context.Context, rdb *redis.Client, uuid, target, previous, reason string) {
+	b, err := json.Marshal(map[string]string{"target": target, "previous": previous, "reason": reason})
+	if err != nil {
+		return
+	}
+	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:switch_failed", uuid), b, 5*time.Minute)
 }
 
 // reportRefusedStatus is the status write of a setup or reinstall refused
