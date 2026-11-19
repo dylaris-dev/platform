@@ -2458,16 +2458,36 @@ func (dm *DockerManager) ReconcileRedisEnv(rdb *redis.Client) {
 		return
 	}
 
-	for _, mc := range running {
-		// main runs this beside the command listener, so the heartbeat does not
-		// wait out a graceful stop per stale server (the console stop goes to a
-		// shipper that cannot hear it). The lock keeps a user's command and this
-		// recreate apart; the inspect under it sees what that command left.
-		release, ok := waitServerPower(dm.ctx, mc.UUID)
+	// main runs this beside the command listener, so the heartbeat does not
+	// wait out a graceful stop per stale server (the console stop goes to a
+	// shipper that cannot hear it). The lock keeps a user's command and this
+	// recreate apart; the inspect under it sees what that command left.
+	eachUnderPowerLock(dm.ctx, running, func(mc MCContainer) {
+		dm.reconcileRedisEnvOne(rdb, mc, wantAddr)
+	})
+}
+
+// eachUnderPowerLock runs fn for each server under its power lock. A server
+// whose lock is held is revisited after the rest: a setup, reinstall or version
+// move holds it for its whole run, minutes or more, and waiting on it in line
+// left every server after it on its stale env for that long.
+func eachUnderPowerLock(ctx context.Context, list []MCContainer, fn func(MCContainer)) {
+	var busy []MCContainer
+	for _, mc := range list {
+		release, ok := tryLockServerPower(mc.UUID)
+		if !ok {
+			busy = append(busy, mc)
+			continue
+		}
+		fn(mc)
+		release()
+	}
+	for _, mc := range busy {
+		release, ok := waitServerPower(ctx, mc.UUID)
 		if !ok {
 			return
 		}
-		dm.reconcileRedisEnvOne(rdb, mc, wantAddr)
+		fn(mc)
 		release()
 	}
 }
