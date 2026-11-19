@@ -1571,15 +1571,11 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	// switch reports within moments, and the status watcher puts these columns
 	// back from this record. A write after the dispatch could land on top of
 	// that restore.
-	if h.d.Redis != nil {
-		if rec, merr := json.Marshal(services.ChainSwitchUndo(r.Context(), h.d.Redis, srv.UUID, services.SwitchUndo{
-			Target: subName, Previous: srv.ActiveSubServer,
-			InstallerType: srv.InstallerType, MinecraftVersion: srv.MinecraftVersion, BuildNumber: srv.BuildNumber,
-			DesiredState: srv.DesiredState, At: time.Now().UnixNano(),
-		})); merr == nil {
-			h.d.Redis.Set(r.Context(), services.SwitchUndoKey(srv.UUID), rec, services.SwitchUndoTTL)
-		}
-	}
+	rollbackUndo := services.WriteSwitchUndo(r.Context(), h.d.Redis, srv.UUID, services.SwitchUndo{
+		Target: subName, Previous: srv.ActiveSubServer,
+		InstallerType: srv.InstallerType, MinecraftVersion: srv.MinecraftVersion, BuildNumber: srv.BuildNumber,
+		DesiredState: srv.DesiredState, At: time.Now().UnixNano(),
+	})
 
 	if h.d.Queue != nil {
 		combinedJvmFlags := strings.TrimSpace(defaultJvmFlags + " " + strings.TrimSpace(srv.ExtraJvmFlags))
@@ -1623,9 +1619,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 					log.Printf("SwitchSubServer: restoring loader metadata for server %d: %v", serverID, uerr)
 				}
 			}
-			if h.d.Redis != nil {
-				h.d.Redis.Del(context.Background(), services.SwitchUndoKey(srv.UUID))
-			}
+			rollbackUndo(context.Background())
 			h.d.Store.UpdateServerDesiredState(serverID, srv.DesiredState)
 			services.PublishDesiredState(r.Context(), h.d.Redis, srv.UUID, srv.DesiredState)
 			httpx.SendJSONError(w, "Could not reach the node to switch the sub-server. The switch did not happen; try again.", http.StatusServiceUnavailable)

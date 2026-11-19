@@ -135,3 +135,48 @@ func TestSwitchSubServerChainsAPendingUndoRecord(t *testing.T) {
 		t.Errorf("switch undo record = %q, want target lobby carrying previous lobby, paper and stopped", raw)
 	}
 }
+
+// R41-03: a switch whose dispatch fails puts back the pending record it wrote
+// over, with its remaining TTL, so the earlier switch's refusal is still put
+// back from it. With no pending record the key is gone again.
+func TestSwitchSubServerDispatchFailureKeepsThePendingUndoRecord(t *testing.T) {
+	const pending = `{"target":"main","previous":"lobby","installerType":"paper","desiredState":"stopped"}`
+	for _, tc := range []struct {
+		name, pending string
+	}{
+		{"pending record", pending},
+		{"no pending record", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fs, rdb := newInstallTest(t)
+			fs.server.Status = "offline"
+			fs.server.DesiredState = "online"
+			h.d.Store = &switchDispatchStore{installFakeStore: fs}
+			dead := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
+			t.Cleanup(func() { dead.Close() })
+			h.d.Queue = services.NewQueueService(dead)
+			ctx := context.Background()
+			key := services.SwitchUndoKey("srv-uuid")
+			if tc.pending != "" {
+				rdb.Set(ctx, key, tc.pending, time.Hour)
+			}
+
+			if rec := switchTo(h, "lobby"); rec.Code < 500 {
+				t.Fatalf("status %d, want a failure: %s", rec.Code, rec.Body.String())
+			}
+			raw, err := rdb.Get(ctx, key).Result()
+			if tc.pending == "" {
+				if err != redis.Nil {
+					t.Errorf("undo record = %q, want none", raw)
+				}
+				return
+			}
+			if raw != tc.pending {
+				t.Errorf("undo record = %q, want the pending one %q", raw, tc.pending)
+			}
+			if ttl := rdb.TTL(ctx, key).Val(); ttl <= 0 || ttl > time.Hour {
+				t.Errorf("undo record TTL = %v, want its remaining hour", ttl)
+			}
+		})
+	}
+}

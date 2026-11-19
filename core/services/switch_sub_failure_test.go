@@ -117,6 +117,9 @@ func TestConsumeSwitchSubFailures_IntentAndDeletedPrevious(t *testing.T) {
 		{"stopped since", `{"target":"modded","previous":"main","desiredState":"stopped"}`, "stopped", false, "main", "", ""},
 		{"undo from an older Core", `{"target":"modded","previous":"main"}`, "online", false, "main", "", ""},
 		{"previous deleted", `{"target":"modded","previous":"main","desiredState":"online"}`, "online", true, "", "stopped", "pending_setup"},
+		// R41-01: a chained record names the first switch's previous, and the
+		// node is on the first target: that switch landed and started it.
+		{"an earlier switch landed", `{"target":"modded","previous":"a","desiredState":"stopped"}`, "online", false, "main", "", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &switchFailFakeStore{}

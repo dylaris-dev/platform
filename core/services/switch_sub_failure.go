@@ -84,6 +84,35 @@ func ChainSwitchUndo(ctx context.Context, rdb *redis.Client, serverUUID string, 
 	return next
 }
 
+// WriteSwitchUndo writes the record of a switch about to be dispatched,
+// chained over a pending one, and returns what puts the key back if the
+// dispatch fails: the record it replaced, with its remaining TTL. Deleting the
+// key instead dropped a pending switch's record, and that switch's refusal was
+// then put back with no run intent.
+func WriteSwitchUndo(ctx context.Context, rdb *redis.Client, serverUUID string, next SwitchUndo) (rollback func(context.Context)) {
+	if rdb == nil {
+		return func(context.Context) {}
+	}
+	key := SwitchUndoKey(serverUUID)
+	prev, perr := rdb.Get(ctx, key).Result()
+	ttl := rdb.PTTL(ctx, key).Val()
+	rec, err := json.Marshal(ChainSwitchUndo(ctx, rdb, serverUUID, next))
+	if err != nil {
+		return func(context.Context) {}
+	}
+	rdb.Set(ctx, key, rec, SwitchUndoTTL)
+	return func(ctx context.Context) {
+		if perr != nil {
+			rdb.Del(ctx, key)
+			return
+		}
+		if ttl < 0 {
+			ttl = 0 // no expiry
+		}
+		rdb.Set(ctx, key, prev, ttl)
+	}
+}
+
 // ForgetSwitchUndo deletes the undo record only when it is the switch to
 // target's: the key is overwritten per switch, and a newer one's record is
 // what its own refusal is put back from.
@@ -282,8 +311,10 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 			}
 			// As RestoreSetupBefore: the switch ran nothing new, so the online
 			// the dispatch wrote must not have the reconciler start the old
-			// sub-server an owner had stopped. A stop since is kept.
-			if undo.Target != "" && undo.DesiredState != "" && undo.DesiredState != "online" && srv.DesiredState == "online" {
+			// sub-server an owner had stopped. A stop since is kept. Only when
+			// matched: otherwise an earlier chained switch landed and started
+			// what the node runs now, and the intent is from before it.
+			if matched && undo.DesiredState != "" && undo.DesiredState != "online" && srv.DesiredState == "online" {
 				if err := s.store.UpdateServerDesiredState(srv.ID, undo.DesiredState); err != nil {
 					log.Printf("Server %s: could not put the run intent back: %v", srv.UUID, err)
 				} else {
