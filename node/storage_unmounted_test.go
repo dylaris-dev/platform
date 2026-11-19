@@ -431,3 +431,56 @@ func TestIdentityDirUnmountedChecksTheRecordedNodeID(t *testing.T) {
 		})
 	}
 }
+
+// R25-09: the Redis bootstrap runs between identityDirUnmounted and
+// dropUnmountedPaths and can replace .node_id (a re-enrolment mints a new id).
+// The first path identityDirUnmounted vouched for under the old id was then
+// dropped as unmounted, the markers kept the old id, and every later boot
+// refused the node. The identity dir this boot runs from is kept, and the
+// marker records the id the node now runs as.
+func TestAnIdentityReplacedAtBootKeepsTheFirstPath(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		newID string
+	}{
+		{"same id", "A"},
+		{"re-enrolled as a new id", "B"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			disk1, disk2 := t.TempDir(), t.TempDir()
+			csv := disk1 + "," + disk2
+			prev := nodeSecretDir
+			nodeSecretDir = disk1
+			t.Cleanup(func() { nodeSecretDir = prev })
+			if err := os.WriteFile(filepath.Join(disk1, ".node_id"), []byte("A\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			NewStorageManager(csv, nil)
+			old, err := os.ReadFile(filepath.Join(disk1, storageMarkerName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			NewStorageManager(csv, nil)
+			// disk1's own marker went stale (a failed write), it holds no server.
+			if err := os.WriteFile(filepath.Join(disk1, storageMarkerName), old, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if identityDirUnmounted(csv) {
+				t.Fatal("identityDirUnmounted refused a first path holding the recorded id")
+			}
+			if err := os.WriteFile(filepath.Join(disk1, ".node_id"), []byte(tc.newID+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if sm := NewStorageManager(csv, nil); len(sm.Paths()) != 2 {
+				t.Fatalf("paths = %v, want the identity dir kept", sm.Paths())
+			}
+			b, _ := os.ReadFile(filepath.Join(disk2, storageMarkerName))
+			if !strings.Contains(string(b), storageMarkerNode+tc.newID+"\n") || strings.Count(string(b), storageMarkerNode) != 1 {
+				t.Fatalf("marker = %q, want only %s recorded", b, tc.newID)
+			}
+			if identityDirUnmounted(csv) {
+				t.Fatal("the next boot refuses the node")
+			}
+		})
+	}
+}

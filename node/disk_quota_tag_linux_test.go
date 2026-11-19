@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 )
@@ -91,4 +92,44 @@ func inodeOf(t *testing.T, p string) uint64 {
 		t.Fatal(err)
 	}
 	return st.Ino
+}
+
+// R25-08: a tenant can nest directories far below PATH_MAX's reach (the walk
+// opens by parent fd), and every level held its own full path string and two
+// fds, so memory grew with the square of the depth. Directories deeper than
+// maxProjectTreeDepth are counted as failed and not entered.
+func TestWalkProjectTreeStopsAtTheDepthCap(t *testing.T) {
+	prev := maxProjectTreeDepth
+	maxProjectTreeDepth = 3
+	t.Cleanup(func() { maxProjectTreeDepth = prev })
+	for _, tc := range []struct {
+		depth      int
+		wantErr    bool
+		wantVisits int // directories and files visited, root included
+	}{
+		{3, false, 1 + 3*2},
+		{5, true, 1 + 3*2},
+	} {
+		t.Run(strconv.Itoa(tc.depth), func(t *testing.T) {
+			root := t.TempDir()
+			d := root
+			for i := 0; i < tc.depth; i++ {
+				d = filepath.Join(d, "d")
+				if err := os.Mkdir(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(d, "f"), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			visits := 0
+			err := walkProjectTree(root, func(int, bool) error { visits++; return nil })
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
+			}
+			if visits != tc.wantVisits {
+				t.Fatalf("visited %d entries, want %d", visits, tc.wantVisits)
+			}
+		})
+	}
 }

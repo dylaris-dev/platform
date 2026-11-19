@@ -338,8 +338,11 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 	var kept []string
 	for _, p := range paths {
 		// The identity exception matches identityDirUnmounted: a path the node
-		// booted from is kept, and keeping it rewrites its stale marker.
-		if !marked[p] && known[p] && dirHoldsNothing(p) && !holdsNodeIdentity(p, nodeIDs) {
+		// booted from is kept, and keeping it rewrites its stale marker. The
+		// identity dir itself is never re-judged: identityDirUnmounted already
+		// let this boot run from it, and the enrolment since may have replaced
+		// .node_id, which no recorded id matches yet (R25-09).
+		if p != nodeSecretDir && !marked[p] && known[p] && dirHoldsNothing(p) && !holdsNodeIdentity(p, nodeIDs) {
 			log.Printf("storage: [warn] %s was a storage path of this node and is now empty without a current %s marker, so its disk is most likely not mounted; skipping. If it is a new empty disk, replace %s with an empty file to use it", p, storageMarkerName, filepath.Join(p, storageMarkerName))
 			sm.skipPath(p)
 			continue

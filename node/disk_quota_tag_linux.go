@@ -82,58 +82,68 @@ func walkProjectTree(root string, visit func(fd int, dir bool) error) error {
 		unix.Close(fd)
 		return fmt.Errorf("stat %s: %w", root, err)
 	}
-	w := &treeWalk{visit: visit, dev: st.Dev}
-	w.dir(fd, root)
+	w := &treeWalk{visit: visit, dev: st.Dev, root: root}
+	w.dir(fd, ".", 0)
 	if w.failed > 0 {
 		return fmt.Errorf("%d entries not tagged, first: %w", w.failed, w.first)
 	}
 	return nil
 }
 
+// maxProjectTreeDepth caps how deep the walk descends. Opening by parent fd
+// means PATH_MAX never stops it, and each level holds two fds and its listing
+// while the levels below run; a tenant can nest directories with renames alone
+// (R25-08). A directory deeper than this is counted as failed, not entered.
+var maxProjectTreeDepth = 4096
+
+// treeWalk carries no path down the recursion: a full path per level kept
+// every ancestor's string alive, memory growing with the square of the depth.
+// An error names the entry and its depth below root instead.
 type treeWalk struct {
 	visit  func(fd int, dir bool) error
 	dev    uint64
+	root   string
 	failed int
 	first  error
 }
 
-func (w *treeWalk) fail(path string, err error) {
+func (w *treeWalk) fail(name string, depth int, err error) {
 	if w.failed == 0 {
-		w.first = fmt.Errorf("%s: %w", path, err)
+		w.first = fmt.Errorf("%s: %q at depth %d: %w", w.root, name, depth, err)
 	}
 	w.failed++
 }
 
 // dir visits the directory open at dfd and everything in it, then closes dfd.
-func (w *treeWalk) dir(dfd int, path string) {
+func (w *treeWalk) dir(dfd int, name string, depth int) {
 	defer unix.Close(dfd)
 	names, err := readDirNames(dfd)
 	if err != nil {
-		w.fail(path, err)
+		w.fail(name, depth, err)
 	}
 	if err := w.visit(dfd, true); err != nil {
-		w.fail(path, err)
+		w.fail(name, depth, err)
 	}
-	for _, name := range names {
-		w.entry(dfd, name, path+"/"+name)
+	for _, n := range names {
+		w.entry(dfd, n, depth+1)
 	}
 }
 
-func (w *treeWalk) entry(dfd int, name, path string) {
+func (w *treeWalk) entry(dfd int, name string, depth int) {
 	// O_PATH opens nothing: a symlink yields the link itself and a device is
 	// not handed to its driver. The real open below goes through this fd, so
 	// it reaches the inode just typed, whatever happens to the name meanwhile.
 	pfd, err := unix.Openat(dfd, name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		if err != unix.ENOENT {
-			w.fail(path, err)
+			w.fail(name, depth, err)
 		}
 		return
 	}
 	defer unix.Close(pfd)
 	var st unix.Stat_t
 	if err := unix.Fstat(pfd, &st); err != nil {
-		w.fail(path, err)
+		w.fail(name, depth, err)
 		return
 	}
 	if st.Dev != w.dev {
@@ -141,21 +151,25 @@ func (w *treeWalk) entry(dfd int, name, path string) {
 	}
 	switch st.Mode & unix.S_IFMT {
 	case unix.S_IFDIR:
-		cfd, err := unix.Openat(pfd, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-		if err != nil {
-			w.fail(path, err)
+		if depth > maxProjectTreeDepth {
+			w.fail(name, depth, fmt.Errorf("deeper than %d levels, not entered", maxProjectTreeDepth))
 			return
 		}
-		w.dir(cfd, path)
+		cfd, err := unix.Openat(pfd, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+		if err != nil {
+			w.fail(name, depth, err)
+			return
+		}
+		w.dir(cfd, name, depth)
 	case unix.S_IFREG:
 		// An ioctl needs a real open; /proc/self/fd reopens the pinned inode.
 		cfd, err := unix.Open("/proc/self/fd/"+strconv.Itoa(pfd), unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
 		if err != nil {
-			w.fail(path, err)
+			w.fail(name, depth, err)
 			return
 		}
 		if err := w.visit(cfd, false); err != nil {
-			w.fail(path, err)
+			w.fail(name, depth, err)
 		}
 		unix.Close(cfd)
 	}
