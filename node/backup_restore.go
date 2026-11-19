@@ -539,16 +539,25 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		// old world counted against the server until the delete finished, and
 		// the limit put back meanwhile had the restored server refused writes
 		// and stopped by the disk guard.
-		freed := dirSize(backupDir)
-		if err := os.RemoveAll(backupDir); err != nil {
+		//
+		// Credited before the delete, not after: a budget opened while it runs
+		// measures the part already gone, and a credit booked later granted it
+		// that part twice. The old copy is held as inflight meanwhile, so no
+		// budget counts the credit before the space is free.
+		freed, booked := dirSize(backupDir), budget.used
+		oldFreed = freed
+		budget.disk.inflight.Add(freed)
+		settle()
+		if err := removeOldCopy(backupDir); err != nil {
 			log.Printf("Restore %d: [warn] remove the old copy %s: %v", cmd.RunID, backupDir, err)
-		} else {
-			oldFreed = freed
+			// Take back the credit for what is still on disk.
+			budget.disk.landed.Add(min(freed, booked) - min(max(freed-dirSize(backupDir), 0), booked))
 		}
+		budget.disk.inflight.Add(-freed)
 	} else {
 		keepStash(cmd.RunID, backupDir)
+		settle()
 	}
-	settle()
 	if cmd.SubServer == "" {
 		// The stage was made in the storage root, outside any project, and is
 		// now the server root: re-tag it or the server counts ~0 and its limit
@@ -559,6 +568,9 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	succeeded = true
 	log.Printf("Restore %d completed: %d files in %v", cmd.RunID, extracted, time.Since(started))
 }
+
+// removeOldCopy is a var so a test can open a budget while the delete runs.
+var removeOldCopy = os.RemoveAll
 
 const errRestoreServerDeleted = "the server was deleted during the restore"
 

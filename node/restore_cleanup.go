@@ -161,6 +161,7 @@ func runRestoreCleanup(sm *StorageManager) {
 					cutoff = now
 				}
 			}
+			finished := false
 			age := info.ModTime()
 			if m := preRestoreStash.FindString(base); m != "" {
 				// The stash is the renamed directory and keeps its mtime, days old
@@ -203,7 +204,8 @@ func runRestoreCleanup(sm *StorageManager) {
 					// restored root in place and the live archives and node
 					// config only here. Carry what the root lacks; whatever
 					// still cannot go is never deleted on the TTL.
-					if !restoreServersInFlight.has(filepath.Base(target)) && !sharedWithAnotherNode(root) {
+					ours := !restoreServersInFlight.has(filepath.Base(target)) && !sharedWithAnotherNode(root)
+					if ours {
 						// The stash is named at the swap. A node file in the root
 						// written before it is the archive's, which the tenant may
 						// have written, and gives way to the live one, as
@@ -224,13 +226,20 @@ func runRestoreCleanup(sm *StorageManager) {
 							moveMissing(src, dst)
 						}
 					}
-					if age.Before(cutoff) && slices.ContainsFunc(nodeOwnedRootEntries, func(name string) bool { return holdsFile(filepath.Join(path, name)) }) {
-						keepStash(0, path)
-						return filepath.SkipDir
+					if slices.ContainsFunc(nodeOwnedRootEntries, func(name string) bool { return holdsFile(filepath.Join(path, name)) }) {
+						if age.Before(cutoff) {
+							keepStash(0, path)
+							return filepath.SkipDir
+						}
+					} else if ours {
+						// Swapped and carried: the old world the restore was deleting
+						// when the node died. It keeps the server's quota project, so
+						// waiting out the TTL counted it against the server for a day.
+						finished = true
 					}
 				}
 			}
-			if age.Before(cutoff) {
+			if finished || age.Before(cutoff) {
 				log.Printf("restore-cleanup: removing %s %s (age %v)", label, path, now.Sub(age).Round(time.Minute))
 				if err := os.RemoveAll(path); err == nil {
 					if isRestore {

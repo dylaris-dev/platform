@@ -769,6 +769,47 @@ func (b *BackupScheduler) closeCompletedUnreportedRun(ctx context.Context, run m
 	}
 }
 
+// CloseRunsOfMovedServer closes the running backup runs of a server that has
+// just moved to another node. A spooled upload outlives the node's writer
+// hold, so a move can cut over in the middle of it; Core then refuses the old
+// node's part requests and drops its reports, and the run sat "running" until
+// the reaper, refusing every backup of the server on its new node for hours.
+func (b *BackupScheduler) CloseRunsOfMovedServer(ctx context.Context, serverID int) {
+	jobs, err := b.store.ListBackupJobs(serverID)
+	if err != nil {
+		logErrf("backup-scheduler", "server %d moved: listing its backup jobs: %v", serverID, err)
+		return
+	}
+	now := time.Now()
+	for i := range jobs {
+		job := &jobs[i]
+		// No new run starts while one runs, so a running run is its job's newest.
+		runs, err := b.store.ListBackupRuns(job.ID, 1)
+		if err != nil {
+			logErrf("backup-scheduler", "server %d moved: listing the runs of job %d: %v", serverID, job.ID, err)
+			continue
+		}
+		for _, run := range runs {
+			if run.Status != "running" {
+				continue
+			}
+			if run.UploadID != "" && run.UploadedBytes != nil {
+				b.closeCompletedUnreportedRun(ctx, run, now)
+				continue
+			}
+			closed, err := b.store.FailAbandonedBackupRun(run.ID, "The server moved to another node while this backup was running, so it was stopped and its uploaded parts are deleted. The next backup runs on the new node.", 0, now)
+			if err != nil {
+				logErrf("backup-scheduler", "server %d moved: closing run %d: %v", serverID, run.ID, err)
+				continue
+			}
+			if closed {
+				log.Printf("backup-scheduler: closed run %d (job %d): server %d moved to another node during it", run.ID, job.ID, serverID)
+				b.discardRunUpload(ctx, run.ID, job)
+			}
+		}
+	}
+}
+
 // discardRunUpload aborts the multipart upload of a run that has just been
 // closed without success, and deletes the archive at the run's own key. Core
 // completes an upload before the node reports, so a node that reports failure

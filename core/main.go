@@ -1142,6 +1142,7 @@ func main() {
 	backupScheduler.SetFeatureFlags(appState.FeatureFlags)
 	backupScheduler.SetLeader(coreLeader)
 	backupScheduler.Start(bgCtx)
+	migrationOrchestrator.SetMovedBackups(backupScheduler.CloseRunsOfMovedServer)
 
 	// Mod installs report their outcome on the same per-node channel shape the
 	// backup runs use. Leader-gated for the same reason: Pub/Sub reaches every

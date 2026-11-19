@@ -60,11 +60,19 @@ type MigrationOrchestrator struct {
 	// republishes them (the servers handler's syncPortsToStart). Atomic: it is
 	// wired once the handlers exist, after Start. nil = not wired, skipped.
 	portsRehome atomic.Pointer[func(srv *models.Server)]
+	// movedBackups closes the backup runs the source node can no longer finish
+	// (BackupScheduler.CloseRunsOfMovedServer). Atomic for the same reason.
+	movedBackups atomic.Pointer[func(ctx context.Context, serverID int)]
 }
 
 // SetPortsRehome wires the extra-port re-home a cutover runs for the target.
 func (o *MigrationOrchestrator) SetPortsRehome(fn func(srv *models.Server)) {
 	o.portsRehome.Store(&fn)
+}
+
+// SetMovedBackups wires what closes a moved server's running backup runs.
+func (o *MigrationOrchestrator) SetMovedBackups(fn func(ctx context.Context, serverID int)) {
+	o.movedBackups.Store(&fn)
 }
 
 // SetConnection wires the storage-connection builder. Call once at boot.
@@ -780,6 +788,11 @@ func (o *MigrationOrchestrator) Migrate(ctx context.Context, req MigrationReques
 func (o *MigrationOrchestrator) finishCutover(ctx context.Context, srv *models.Server, sourceNode, targetNode *models.Node, keptPort int, wasRunning bool, preStatus string, writeStatus func(phase, errMsg string)) {
 	// The machine the server left could read its voice key; a new one ends
 	// that. Best-effort: a failure leaves voice on the old key, as before.
+	// Before anything slow: a run left "running" refuses every backup of the
+	// server on its new node.
+	if fn := o.movedBackups.Load(); fn != nil {
+		(*fn)(context.Background(), srv.ID)
+	}
 	if err := RotateVoiceKey(ctx, o.store, o.redis, srv.ID); err != nil {
 		log.Printf("migration %s: rotating the voice key failed: %v", srv.UUID, err)
 	}
