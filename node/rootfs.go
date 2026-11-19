@@ -232,6 +232,27 @@ func mkdirParentIn(root *os.Root, name string) error {
 	return nil
 }
 
+// linkTargetIn follows name's last component through symlinks to the name an
+// open of it would reach, for a write that replaces the file by rename. A
+// target outside the Root stays refused: the Root fails every call on it.
+func linkTargetIn(root *os.Root, name string) (string, error) {
+	for range 40 {
+		fi, err := root.Lstat(name)
+		if err != nil || fi.Mode()&fs.ModeSymlink == 0 {
+			return name, nil
+		}
+		t, err := root.Readlink(name)
+		if err != nil {
+			return "", err
+		}
+		if filepath.IsAbs(t) {
+			return "", fmt.Errorf("%s: link leaves the server directory", path.Base(name))
+		}
+		name = path.Join(path.Dir(filepath.ToSlash(name)), filepath.ToSlash(t))
+	}
+	return "", fmt.Errorf("%s: too many links", path.Base(name))
+}
+
 // createTempIn is os.CreateTemp inside a Root: a new file in dir named
 // prefix+random+suffix, created exclusively. It returns the open file and its
 // name relative to the root.
@@ -803,8 +824,9 @@ func serverInflightOf(uuid string) *atomic.Int64 {
 // to a measurement, and one large upload counted twice refused writes that fit.
 // gone only grows, by what left live. owed is the other way round: what a
 // truncating overwrite freed and has not written back yet, which the gauge is
-// meant to keep until the close and a measurement no longer sees.
-type streamedBytes struct{ live, gone, owed atomic.Int64 }
+// meant to keep until the close and a measurement no longer sees. paid only
+// grows, by what left owed.
+type streamedBytes struct{ live, gone, owed, paid atomic.Int64 }
 
 var serverStreamed sync.Map // uuid -> *streamedBytes
 
@@ -822,6 +844,14 @@ func (c *streamedBytes) add(n int64) {
 	}
 }
 
+// addOwed is add for owed, into paid as gone is.
+func (c *streamedBytes) addOwed(n int64) {
+	c.owed.Add(n)
+	if n < 0 {
+		c.paid.Add(-n)
+	}
+}
+
 // streamedBefore is taken before measuring uuid's server and returns what to
 // subtract the measurement down to. Only what was streamed before the walk
 // began and is still reserved after it: bytes that left during the walk may be
@@ -830,17 +860,19 @@ func streamedBefore(uuid string) func(measured int64) int64 {
 	c := serverStreamedOf(uuid)
 	gone0 := c.gone.Load()
 	live0 := c.live.Load()
-	// Read before the walk and again after it, the smaller one added: owed
-	// only drops while a handle writes back (to 0 at its close), so what it
-	// wrote during the walk, which the walk may have seen, is never added as
-	// owed as well. One that opened during the walk is left out, counted short.
-	owed0 := c.owed.Load()
+	// What was owed before the walk less everything paid back during it: a
+	// handle's owed only drops while it writes back (to 0 at its close), so
+	// what it wrote during the walk, which the walk may have seen, is never
+	// added as owed as well. owed is a sum over handles, so its value after
+	// the walk could be the debt of one opened during it standing in for one
+	// that finished; that one is left out, counted short.
+	owed0, paid0 := c.owed.Load(), c.paid.Load()
 	return func(measured int64) int64 {
 		if measured < 0 {
 			return measured
 		}
 		off := live0 - (c.gone.Load() - gone0)
-		return max(measured-max(off, 0), 0) + min(owed0, c.owed.Load())
+		return max(measured-max(off, 0), 0) + max(owed0-(c.paid.Load()-paid0), 0)
 	}
 }
 
@@ -934,7 +966,7 @@ func (b *writeBudget) streamsOn(uuid string, skip int64) {
 func (b *writeBudget) mark() {
 	s, o := max(b.onDisk-b.skip, 0), max(b.skip-b.onDisk, 0)
 	b.stream.add(s - b.streamed)
-	b.stream.owed.Add(o - b.owed)
+	b.stream.addOwed(o - b.owed)
 	b.streamed, b.owed = s, o
 }
 
@@ -944,7 +976,7 @@ func (b *writeBudget) mark() {
 func (b *writeBudget) unstream() {
 	if b.stream != nil {
 		b.stream.add(-b.streamed)
-		b.stream.owed.Add(-b.owed)
+		b.stream.addOwed(-b.owed)
 		b.streamed, b.owed = 0, 0
 	}
 }

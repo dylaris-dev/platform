@@ -119,3 +119,44 @@ func TestTheUploadSweeperRemovesStaleCopyTemps(t *testing.T) {
 	cancel()
 	sweepStaleUploadTemps(ctx, sm, nil)
 }
+
+// R35-10: on storage another node also uses, a stale-looking temp may be that
+// node's live, throttled upload; held() knows only this process's streams.
+func TestTheUploadSweeperLeavesSharedStorageAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		shared bool
+		gone   bool
+	}{
+		{"own storage", false, true},
+		{"shared with another node", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			sm := NewStorageManager(root, nil)
+			p := filepath.Join(root, "srv-uuid", ".beam-upload-peer")
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("partial"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			old := time.Now().Add(-time.Hour)
+			if err := os.Chtimes(p, old, old); err != nil {
+				t.Fatal(err)
+			}
+			if tc.shared {
+				if err := writeBeacon(root, nodeBeacon{NodeID: "other-node", UpdatedAt: time.Now()}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			sweepStaleUploadTemps(ctx, sm, nil)
+			_, err := os.Stat(p)
+			if gone := os.IsNotExist(err); gone != tc.gone {
+				t.Errorf("temp removed %v, want %v", gone, tc.gone)
+			}
+		})
+	}
+}

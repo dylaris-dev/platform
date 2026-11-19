@@ -614,6 +614,11 @@ func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager, held func(ke
 	)
 	sweep := func() {
 		for _, base := range sm.Paths() {
+			// Storage another node also uses: held() knows only this process's
+			// streams, so a peer's live throttled upload looks stale here.
+			if sharedWithAnotherNode(base) {
+				continue
+			}
 			entries, err := os.ReadDir(base)
 			if err != nil {
 				continue
@@ -1089,6 +1094,9 @@ func (s *beamServer) ReadFileContent(ctx context.Context, req *pb.BeamFileReadRe
 	return &pb.BeamFileContentResp{Success: true, Content: string(data)}, nil
 }
 
+// saveContentWrite is SaveFileContent's write; a test fails it.
+var saveContentWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
+
 func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveReq) (*pb.BeamOpResp, error) {
 	if err := s.requireFilePerm(ctx, canWrite, "write"); err != nil {
 		return nil, err
@@ -1120,12 +1128,16 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 	// the size cap / disk limit / daily quota. Size is known up front.
 	size := int64(len(req.Content))
 	username := s.extractUsername(ctx)
+	// The save replaces the file a link inside the Root points at, as the
+	// in-place write it used to be did (S07), not the link.
+	if name, err = linkTargetIn(root, name); err != nil {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
 	// What the file held before: an overwrite frees it, as SFTP credits it.
-	// Stat, not Lstat: the open below follows a link that stays in the Root
-	// and truncates its target, so that is the size freed.
 	var prior int64
-	if st, err := root.Stat(name); err == nil && st.Mode().IsRegular() {
-		prior = st.Size()
+	mode := os.FileMode(0o644)
+	if st, err := root.Lstat(name); err == nil && st.Mode().IsRegular() {
+		prior, mode = st.Size(), st.Mode().Perm()
 	}
 	// Reserved on the counters uploads in progress hold, before checking, as
 	// UploadFile's Start does: a save read only the gauge and the booked
@@ -1155,21 +1167,51 @@ func (s *beamServer) SaveFileContent(ctx context.Context, req *pb.BeamFileSaveRe
 		return &pb.BeamOpResp{Success: false, Message: fmt.Sprintf("not enough free space on the node for a save of %d bytes", size)}, nil
 	}
 
-	f, err := openTenantWriteIn(root, name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644, serverDir)
+	// Refused before anything is written, as before: a pipe, a non-regular
+	// file, a second name of one of the node's own files.
+	if f, err := openTenantWriteIn(root, name, os.O_WRONLY, 0, serverDir); err == nil {
+		f.Close()
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
+	}
+	// Staged and renamed over the file, as the panel's save is: a write that
+	// failed half-way (EDQUOT, ENOSPC, a kill) truncated in place and left the
+	// config empty or partial.
+	f, tmp, err := createTempIn(root, path.Dir(name), ".beam-upload-", "")
 	if err != nil {
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
-	written, err = f.Write([]byte(req.Content))
+	defer func() {
+		if tmp != "" {
+			_ = root.Remove(tmp)
+		}
+	}()
+	written, err = saveContentWrite(f, []byte(req.Content))
+	if err == nil {
+		err = f.Chmod(mode)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if err == nil {
+		// A NEW file is the node's (root) and the running server could not
+		// write it; the start-time repair skips a directory that is already
+		// the container's, so nothing fixed it later either. On the temp's fd,
+		// so the rename carries it.
+		chownOpenForMC(f, tmp)
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
+	if err == nil {
+		err = root.Rename(tmp, name)
+	}
 	if err != nil {
+		// Nothing landed: the temp goes, the original is untouched.
+		written = 0
 		return &pb.BeamOpResp{Success: false, Message: err.Error()}, nil
 	}
-	// A NEW file is the node's (root) and the running server could not write
-	// it; the start-time repair skips a directory that is already the
-	// container's, so nothing fixed it later either.
-	chownForMCIn(root, name)
+	tmp = ""
 	s.recordBeamDailyUsage(ctx, username, size)
 	noteDiskWrite(ctx, s.rdb, serverUUID, size-prior)
 

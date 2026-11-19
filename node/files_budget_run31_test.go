@@ -115,25 +115,35 @@ func TestSFTPWrittenBytesCountOnceAgainstTheServerLimit(t *testing.T) {
 // R33-07: streamedBefore read the owed bytes before the walk and added all of
 // them after it, so an overwrite that wrote back, or closed, during the walk
 // had those bytes counted on disk and as owed both.
+// R35-09: owed is a sum over handles, so a min of before and after let a
+// handle opened during the walk stand in for one that finished during it.
 func TestStreamedBeforeOwedChangingDuringTheWalk(t *testing.T) {
 	const uuid = "33073307-3307-3307-3307-330733073307"
 	for _, tc := range []struct {
 		name string
-		// owed before the walk, owed after it, what the walk measured.
-		before, after, measured, want int64
+		// owed before the walk, its changes during it, what the walk measured.
+		before   int64
+		during   []int64
+		measured int64
+		want     int64
 	}{
-		{"unchanged", 500, 500, 1000, 1500},
-		{"wrote back 200 during the walk", 500, 300, 1200, 1500},
-		{"closed during the walk", 500, 0, 1500, 1500},
+		{"unchanged", 500, nil, 1000, 1500},
+		{"wrote back 200 during the walk", 500, []int64{-200}, 1200, 1500},
+		{"closed during the walk", 500, []int64{-500}, 1500, 1500},
 		// Started during the walk: left out, the under-count direction.
-		{"truncating open during the walk", 0, 500, 1000, 1000},
+		{"truncating open during the walk", 0, []int64{500}, 1000, 1000},
+		// A wrote its 500 back and C opened owing 800, wrote 300 back: what
+		// is owed after is C's, which the walk never held either way.
+		{"one finished, another opened", 500, []int64{-500, 800, -300}, 1500, 1500},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Cleanup(func() { serverStreamed.Delete(uuid) })
 			c := serverStreamedOf(uuid)
-			c.owed.Store(tc.before)
+			c.addOwed(tc.before)
 			less := streamedBefore(uuid)
-			c.owed.Store(tc.after)
+			for _, d := range tc.during {
+				c.addOwed(d)
+			}
 			if got := less(tc.measured); got != tc.want {
 				t.Errorf("less(%d) = %d, want %d", tc.measured, got, tc.want)
 			}

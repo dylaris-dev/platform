@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -259,5 +260,51 @@ func TestARedisErrorKeepsTheServerDataThrottle(t *testing.T) {
 	th.m[uuid].at = time.Now().Add(-time.Minute)
 	if th.limiter(ctx, uuid) != nil {
 		t.Fatal("a removed throttle is still applied")
+	}
+}
+
+// R35-11: a save truncated the file in place, so a write that failed half-way
+// (EDQUOT on a full project quota) left the config empty or partial.
+func TestAFailedBeamSaveLeavesTheFileIntact(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail bool
+		want string
+	}{
+		{"write fails half-way", true, "motd=old"},
+		{"write succeeds", false, "motd=new\nmax-players=20"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bs, uuid, ctx := newTestBeamServer(t)
+			dir := filepath.Join(bs.storageMgr.GetServerDir(uuid), "survival")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(dir, "server.properties")
+			if err := os.WriteFile(target, []byte("motd=old"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tc.fail {
+				orig := saveContentWrite
+				t.Cleanup(func() { saveContentWrite = orig })
+				saveContentWrite = func(f *os.File, b []byte) (int, error) {
+					n, _ := f.Write(b[:len(b)/2])
+					return n, errors.New("disk quota exceeded")
+				}
+			}
+			resp, err := bs.SaveFileContent(ctx, &pb.BeamFileSaveReq{Path: "survival/server.properties", Content: "motd=new\nmax-players=20"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.Success == tc.fail {
+				t.Errorf("success %v, want %v", resp.Success, !tc.fail)
+			}
+			if b, _ := os.ReadFile(target); string(b) != tc.want {
+				t.Errorf("file holds %q, want %q", b, tc.want)
+			}
+			if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+				t.Errorf("%d entries left in the folder, want only the file", len(entries))
+			}
+		})
 	}
 }
