@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,7 +109,7 @@ func TestAHalfDeletedMoveSourceNeverWinsAfterAKeyLoss(t *testing.T) {
 	t.Cleanup(func() { _ = rdb.Close() })
 	sm := NewStorageManager(t.TempDir()+","+t.TempDir(), rdb)
 	paths := sm.Paths()
-	src := writeCopy(t, paths[0], run18UUID, time.Now().Add(-time.Hour))
+	writeCopy(t, paths[0], run18UUID, time.Now().Add(-time.Hour))
 	if err := sm.setRedisPath(run18UUID, paths[0]); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +117,8 @@ func TestAHalfDeletedMoveSourceNeverWinsAfterAKeyLoss(t *testing.T) {
 	prev := removeTree
 	t.Cleanup(func() { removeTree = prev })
 	removeTree = func(dir string) error {
-		if dir != src {
+		// The source, parked under its hidden name by removeCopy.
+		if filepath.Dir(dir) != paths[0] || !strings.HasPrefix(filepath.Base(dir), "."+run18UUID+parkedCopyInfix) {
 			return prev(dir)
 		}
 		// Most entries go, the root and its marker stay, and the directory

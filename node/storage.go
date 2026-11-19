@@ -614,6 +614,17 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 		// that is merely not mounted yet, or a second copy a move left, made
 		// the first match the server's storage for good - and the next move
 		// to the live path cleared the live tree as the "leftover" (K35).
+		// With a path skipped the one copy found may be a move's leftover
+		// while the live tree waits on the unmounted disk (R34-10): never
+		// written back then, and not resolved at all when marked moved away.
+		// With every path mounted it is the only data there is.
+		if sm.skipped > 0 {
+			if _, err := readServerRootFile(filepath.Join(found, serverUUID), storageMovedAwayMarker); !errors.Is(err, fs.ErrNotExist) {
+				log.Printf("storage: %s has one copy, at %s, marked moved away (or unreadable) while a storage path is not mounted, not resolving", serverUUID, found)
+				return ""
+			}
+			return found
+		}
 		if !keyed && copies == 1 {
 			sm.setRedisPath(serverUUID, found)
 		}
@@ -679,26 +690,29 @@ const parkedCopyInfix = ".moved-away-"
 // removeTree is a var so a test can fail a delete partway.
 var removeTree = os.RemoveAll
 
-// removeCopy deletes a copy of a server that is not its live one, marking it
-// moved away first so that a delete stopped partway leaves no candidate.
-// Unmarked, it is not touched: a half-deleted copy without the mark is the
-// debris a lookup could settle on. A missing dir is nothing to remove.
+// removeCopy deletes a copy of a server that is not its live one, parking it
+// under a hidden name first so that a delete stopped partway leaves no
+// candidate: outside its <uuid> name the copy is none. A moved-away mark is no
+// such guard on its own, RemoveAll unlinks it in readdir order, possibly
+// before the live mark and most of the tree (R34-12). A rename needs no free
+// blocks either (ENOSPC, EDQUOT: the usual reasons to move a server off,
+// R32-10). What a failed delete leaves goes at the next node start
+// (sweepInterruptedWork). A missing dir is nothing to remove.
 //
-// A mark that cannot be written (ENOSPC on a full XFS disk, EDQUOT at the
-// server's project limit: the usual reasons to move a server off) parks the
-// copy under a hidden name instead. A rename needs no free blocks, and outside
-// its <uuid> name the copy is no candidate either (R32-10). What a failed
-// delete leaves of it goes at the next node start (sweepInterruptedWork).
+// A copy that cannot be renamed (a mountpoint) is marked moved away and loses
+// its live mark before the tree goes, so what a stopped delete leaves never
+// outranks a whole copy.
 func removeCopy(dir string) error {
-	if err := writeServerRootFile(dir, storageMovedAwayMarker, []byte(strconv.FormatInt(time.Now().UnixNano(), 10))); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		parked := filepath.Join(filepath.Dir(dir), "."+filepath.Base(dir)+parkedCopyInfix+strconv.FormatInt(time.Now().UnixNano(), 10))
-		if rerr := os.Rename(dir, parked); rerr != nil {
-			return fmt.Errorf("mark %s as moved away: %w (and park it: %v)", dir, err, rerr)
-		}
-		dir = parked
+	parked := filepath.Join(filepath.Dir(dir), "."+filepath.Base(dir)+parkedCopyInfix+strconv.FormatInt(time.Now().UnixNano(), 10))
+	if err := os.Rename(dir, parked); err == nil {
+		return removeTree(parked)
+	} else if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if merr := writeServerRootFile(dir, storageMovedAwayMarker, []byte(strconv.FormatInt(time.Now().UnixNano(), 10))); merr != nil {
+		return fmt.Errorf("park %s: %w (and mark it as moved away: %v)", dir, err, merr)
+	}
+	if err := removeServerRootFile(dir, storageLiveMarker); err != nil {
+		return fmt.Errorf("drop the live mark of %s: %w", dir, err)
 	}
 	return removeTree(dir)
 }
@@ -1505,8 +1519,7 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 		// A reply that timed out after Redis applied the write. Only a read
 		// naming the target settles it: one naming the source may still be
 		// overtaken by the write in flight.
-		if v, gerr := sm.rdb.Get(context.Background(), fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)).Result(); gerr != nil || v != targetPath {
-			sm.settleUnsureTarget(serverUUID, currentPath, targetPath)
+		if v, gerr := sm.rdb.Get(context.Background(), fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)).Result(); (gerr != nil || v != targetPath) && !sm.settleUnsureTarget(serverUUID, currentPath, targetPath) {
 			return fmt.Errorf("%w: %w", errStorageKeyUnsure, err)
 		}
 	}
@@ -1532,7 +1545,10 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 // copy is provably live: the target's live mark goes back to the source's and
 // its moved-away mark goes, so the markers tie and the lookup reports the
 // server ambiguous instead of picking one. Neither copy is deleted here.
-func (sm *StorageManager) settleUnsureTarget(serverUUID, currentPath, targetPath string) {
+//
+// It reports whether a read named the target: the move then finishes like any
+// other, and the source no longer outlives it on its disk (R34-11).
+func (sm *StorageManager) settleUnsureTarget(serverUUID, currentPath, targetPath string) bool {
 	key := fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)
 	srcDir := filepath.Join(currentPath, serverUUID)
 	dstDir := filepath.Join(targetPath, serverUUID)
@@ -1551,8 +1567,10 @@ func (sm *StorageManager) settleUnsureTarget(serverUUID, currentPath, targetPath
 	}
 	switch names {
 	case targetPath:
+		// The caller's success path clears the mark.
+		return true
 	case currentPath:
-		return
+		return false
 	default:
 		srcLive, err := readServerRootFile(srcDir, storageLiveMarker)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -1563,13 +1581,14 @@ func (sm *StorageManager) settleUnsureTarget(serverUUID, currentPath, targetPath
 		if err != nil {
 			// Unmarked with its higher live mark, the target would win.
 			log.Printf("storage: [warn] could not reset the live mark of %s after an unsure move, leaving it marked moved away: %v", dstDir, err)
-			return
+			return false
 		}
 		log.Printf("storage: the storage key of %s is unreadable after its move; both copies stay candidates until it is", serverUUID)
 	}
 	if err := clearMovedAway(dstDir); err != nil {
 		log.Printf("storage: [warn] could not clear the moved-away mark of %s: %v", dstDir, err)
 	}
+	return false
 }
 
 // formatBytes returns a human-readable byte size string.

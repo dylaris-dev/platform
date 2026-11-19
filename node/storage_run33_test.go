@@ -65,11 +65,12 @@ func TestAnUnsureMoveKeyNeverLeavesALiveTargetMarkedMovedAway(t *testing.T) {
 		applySet      bool
 		getFails      int // -1: never answers
 		wantTargetMrk bool
-		wantAfterLoss int // index into paths, -1 for unresolved
+		wantAfterLoss int  // index into paths, -1 for unresolved
+		wantDone      bool // a reread naming the target finishes the move (R34-11)
 	}{
-		{"set applied, key names the target on a reread", true, 1, false, 1},
-		{"set applied, key never readable", true, -1, false, -1},
-		{"set refused, key names the source", false, 0, true, 0},
+		{"set applied, key names the target on a reread", true, 1, false, 1, true},
+		{"set applied, key never readable", true, -1, false, -1, false},
+		{"set refused, key names the source", false, 0, true, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mr := miniredis.RunT(t)
@@ -93,14 +94,24 @@ func TestAnUnsureMoveKeyNeverLeavesALiveTargetMarkedMovedAway(t *testing.T) {
 				return prev(s, d)
 			}
 
-			if err := sm.MigrateServerPath(run18UUID, paths[1]); !errors.Is(err, errStorageKeyUnsure) {
-				t.Fatalf("MigrateServerPath = %v, want errStorageKeyUnsure", err)
-			}
+			err := sm.MigrateServerPath(run18UUID, paths[1])
 			hook.on = false
-			if got := sm.PathsHolding(run18UUID); len(got) != 2 {
-				t.Fatalf("PathsHolding = %v, want both copies kept", got)
+			if tc.wantDone {
+				if err != nil {
+					t.Fatalf("MigrateServerPath = %v, want the move finished", err)
+				}
+				if got := sm.PathsHolding(run18UUID); len(got) != 1 || got[0] != paths[1] {
+					t.Fatalf("PathsHolding = %v, want only the target", got)
+				}
+			} else {
+				if !errors.Is(err, errStorageKeyUnsure) {
+					t.Fatalf("MigrateServerPath = %v, want errStorageKeyUnsure", err)
+				}
+				if got := sm.PathsHolding(run18UUID); len(got) != 2 {
+					t.Fatalf("PathsHolding = %v, want both copies kept", got)
+				}
 			}
-			_, err := os.Stat(filepath.Join(paths[1], run18UUID, storageMovedAwayMarker))
+			_, err = os.Stat(filepath.Join(paths[1], run18UUID, storageMovedAwayMarker))
 			if marked := err == nil; marked != tc.wantTargetMrk {
 				t.Fatalf("target marked moved away = %v, want %v", marked, tc.wantTargetMrk)
 			}
@@ -113,7 +124,7 @@ func TestAnUnsureMoveKeyNeverLeavesALiveTargetMarkedMovedAway(t *testing.T) {
 			if got := sm.GetServerPath(run18UUID); got != want {
 				t.Fatalf("after the key loss GetServerPath = %q, want %q", got, want)
 			}
-			if amb := sm.StorageAmbiguities(); (len(amb) == 1) != (want == "") {
+			if amb := sm.StorageAmbiguities(); (len(amb) == 1) != (want == "" && !tc.wantDone) {
 				t.Fatalf("StorageAmbiguities = %v", amb)
 			}
 		})
