@@ -38,6 +38,9 @@ func nodeCmdStream(nodeToken string) string {
 	return fmt.Sprintf("dylaris:node:%s:cmds", nodeToken)
 }
 
+// nodeCmdGroup is the consumer group the node reads its command stream as.
+const nodeCmdGroup = "node"
+
 // NodeCommand is the exact structure the Node expects
 type NodeCommand struct {
 	Action    string      `json:"action"`

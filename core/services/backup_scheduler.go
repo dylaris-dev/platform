@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"strings"
 	"time"
 
 	nodegrpc "dylaris-core/grpc"
@@ -500,9 +501,8 @@ func (b *BackupScheduler) tick(ctx context.Context) {
 //
 // Six hours, like the runs, and only for a node that is CONNECTED and does not
 // hold the server's busy key (a restore refreshes it every ten seconds for as
-// long as it runs). A connected node has been handed the command by its
-// durable stream, so nothing running after that long means the result was
-// lost. A node that is offline still holds the command and runs it when it
+// long as it runs), and whose command stream no longer holds it un-ACKed
+// (restoreHeldInStream): only then was the result lost. A node that is offline still holds the command and runs it when it
 // returns - from node-local or filesystem storage without asking Core first -
 // so closing that row would show "failed" and then replace the world anyway;
 // it stays queued, and the panel says it resumes (restore_stall.go).
@@ -547,6 +547,9 @@ func (b *BackupScheduler) reapAbandonedRestores(ctx context.Context, now time.Ti
 		if err != nil || busy > 0 {
 			continue
 		}
+		if held, err := restoreHeldInStream(ctx, b.redis, r.NodeToken, r.ID); err != nil || held {
+			continue
+		}
 		age := now.Sub(r.RequestedAt).Round(time.Minute)
 		message := fmt.Sprintf("No result was received from the node within %s. It is connected and not restoring this server, so the result was lost; check the server and restore again if needed.", age)
 		closed, err := b.store.CloseAbandonedBackupRestore(r.ID, message, now)
@@ -558,6 +561,69 @@ func (b *BackupScheduler) reapAbandonedRestores(ctx context.Context, now time.Ti
 			log.Printf("backup-scheduler: closed abandoned restore %d (requested %s ago)", r.ID, age)
 		}
 	}
+}
+
+// restoreHeldInStream reports whether the node's command stream still holds
+// restore restoreID un-ACKed: not read yet, or read and not finished. A node
+// whose command workers are all busy stops reading its stream, so a restore
+// queued behind eight long backups has no busy key and is not lost either - it
+// runs once a slot frees, and from node-local or filesystem storage without
+// asking Core first.
+func restoreHeldInStream(ctx context.Context, rdb *redis.Client, nodeToken string, restoreID int) (bool, error) {
+	if nodeToken == "" {
+		return false, nil
+	}
+	stream := nodeCmdStream(nodeToken)
+	groups, err := rdb.XInfoGroups(ctx, stream).Result()
+	if err != nil {
+		if strings.Contains(err.Error(), "no such key") {
+			return false, nil
+		}
+		return false, err
+	}
+	// No group yet: the node has read nothing, so every entry is undelivered.
+	lastDelivered := "0-0"
+	for _, g := range groups {
+		if g.Name == nodeCmdGroup {
+			lastDelivered = g.LastDeliveredID
+		}
+	}
+	unread, err := rdb.XRangeN(ctx, stream, lastDelivered, "+", queue.DefaultMaxLen).Result()
+	if err != nil {
+		return false, err
+	}
+	entries := make([]redis.XMessage, 0, len(unread))
+	for _, m := range unread {
+		// XRANGE's start is inclusive; that entry was delivered, and is
+		// checked below if it is still pending.
+		if m.ID != lastDelivered {
+			entries = append(entries, m)
+		}
+	}
+	if lastDelivered != "0-0" {
+		pending, err := rdb.XPendingExt(ctx, &redis.XPendingExtArgs{Stream: stream, Group: nodeCmdGroup, Start: "-", End: "+", Count: queue.DefaultMaxLen}).Result()
+		if err != nil {
+			return false, err
+		}
+		for _, p := range pending {
+			ms, err := rdb.XRange(ctx, stream, p.ID, p.ID).Result()
+			if err != nil {
+				return false, err
+			}
+			entries = append(entries, ms...)
+		}
+	}
+	for _, m := range entries {
+		data, _ := m.Values["data"].(string)
+		var cmd struct {
+			Action    string `json:"action"`
+			RestoreID int    `json:"restoreId"`
+		}
+		if json.Unmarshal([]byte(data), &cmd) == nil && cmd.Action == "backup_restore" && cmd.RestoreID == restoreID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // restoreReapSettle is how long a node must stay reachable before a restore it

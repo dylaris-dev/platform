@@ -878,7 +878,7 @@ func (s *PostgresStore) UpdateBackupRestoreStatus(id int, status, errorMsg strin
 
 func (s *PostgresStore) ListAbandonedBackupRestores(requestedBefore time.Time, limit int) ([]models.AbandonedBackupRestore, error) {
 	rows, err := s.db.Query(
-		`SELECT br.id, sv.uuid, sv.node_id, COALESCE(n.status, ''), br.requested_at FROM backup_restores br
+		`SELECT br.id, sv.uuid, sv.node_id, COALESCE(n.status, ''), COALESCE(n.token, ''), br.requested_at FROM backup_restores br
 		 JOIN servers sv ON sv.id = br.server_id
 		 LEFT JOIN nodes n ON n.id = sv.node_id
 		 WHERE br.status IN ('queued', 'running') AND br.requested_at < $1
@@ -893,7 +893,7 @@ func (s *PostgresStore) ListAbandonedBackupRestores(requestedBefore time.Time, l
 	var out []models.AbandonedBackupRestore
 	for rows.Next() {
 		var r models.AbandonedBackupRestore
-		if err := rows.Scan(&r.ID, &r.ServerUUID, &r.NodeID, &r.NodeStatus, &r.RequestedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.ServerUUID, &r.NodeID, &r.NodeStatus, &r.NodeToken, &r.RequestedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

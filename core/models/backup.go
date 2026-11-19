@@ -119,6 +119,7 @@ type AbandonedBackupRestore struct {
 	ID          int
 	ServerUUID  string
 	NodeID      int
+	NodeToken   string // names the command stream a restore not yet finished still sits in
 	RequestedAt time.Time
 }
 

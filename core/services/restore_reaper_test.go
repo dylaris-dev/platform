@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -115,5 +116,71 @@ func TestAStaleFirstSeenDoesNotSkipTheWait(t *testing.T) {
 	b.reapAbandonedRestores(context.Background(), now)
 	if len(st.closed) != 0 {
 		t.Fatalf("closed %v on a stale first-seen time", st.closed)
+	}
+}
+
+// A node whose eight command slots are all held by long work stops reading its
+// stream, so a restore queued behind them is neither running (no busy key) nor
+// lost: it runs once a slot frees, and from node-local or filesystem storage
+// it never asks Core first. Closing it as failed told the customer to restore
+// again while the first restore was still on its way to replacing the world.
+func TestARestoreStillInTheNodesStreamIsNotReaped(t *testing.T) {
+	const stream = "dylaris:node:tok:cmds"
+	restoreCmd := func(id int) string {
+		return fmt.Sprintf(`{"action":"backup_restore","restoreId":%d,"serverUuid":"u"}`, id)
+	}
+	tests := []struct {
+		name string
+		// entries XADDed in order; the group reads the first `read` of them
+		// and ACKs the first `acked`.
+		entries     []string
+		read, acked int
+		wantClosed  bool
+	}{
+		{name: "undelivered behind busy workers", entries: []string{restoreCmd(1)}, wantClosed: false},
+		{name: "read but not finished", entries: []string{restoreCmd(1)}, read: 1, wantClosed: false},
+		{name: "read and acked: the result was lost", entries: []string{restoreCmd(1)}, read: 1, acked: 1, wantClosed: true},
+		{name: "only another restore is queued", entries: []string{restoreCmd(1), restoreCmd(9)}, read: 1, acked: 1, wantClosed: true},
+		{name: "no stream at all", wantClosed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			t.Cleanup(func() { rdb.Close() })
+			ctx := context.Background()
+			if len(tt.entries) > 0 {
+				if err := rdb.XGroupCreateMkStream(ctx, stream, "node", "0").Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var ids []string
+			for _, e := range tt.entries {
+				id, err := rdb.XAdd(ctx, &redis.XAddArgs{Stream: stream, Values: map[string]interface{}{"data": e}}).Result()
+				if err != nil {
+					t.Fatal(err)
+				}
+				ids = append(ids, id)
+			}
+			if tt.read > 0 {
+				if err := rdb.XReadGroup(ctx, &redis.XReadGroupArgs{Group: "node", Consumer: "n", Streams: []string{stream, ">"}, Count: int64(tt.read)}).Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, id := range ids[:tt.acked] {
+				rdb.XAck(ctx, stream, "node", id)
+			}
+
+			now := time.Now()
+			st := &restoreReapStore{open: []models.AbandonedBackupRestore{
+				{ID: 1, ServerUUID: "u", NodeID: 1, NodeToken: "tok", RequestedAt: now.Add(-7 * time.Hour)},
+			}}
+			b := &BackupScheduler{store: st, redis: rdb, nodeConnected: func(int) bool { return true },
+				restoreNodeSeen: map[int]time.Time{1: now.Add(-time.Hour)}, restoreSeenPass: now.Add(-time.Minute)}
+			b.reapAbandonedRestores(ctx, now)
+			if got := len(st.closed) == 1; got != tt.wantClosed {
+				t.Fatalf("closed %v, want closed=%v", st.closed, tt.wantClosed)
+			}
+		})
 	}
 }
