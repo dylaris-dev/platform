@@ -40,7 +40,7 @@ func TestRestoreInstalls_PrefersTheManifestOverTheSuccessTimeSnapshot(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			run := tc.run
 			st := &installsFakeStore{manifestFakeStore: manifestFakeStore{run: &run}}
-			(&BackupScheduler{store: st}).restoreInstalls(1, 7)
+			(&BackupScheduler{store: st}).restoreInstalls(1, 7, nil)
 			if tc.want == "" {
 				if len(st.upserted) != 0 {
 					t.Fatalf("upserted %+v, want nothing", st.upserted)

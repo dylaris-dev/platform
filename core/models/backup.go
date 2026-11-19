@@ -136,6 +136,11 @@ type BackupRestore struct {
 	CompletedAt  *time.Time `json:"completedAt,omitempty"`
 	Status       string     `json:"status"` // queued | running | success | failed
 	ErrorMessage string     `json:"errorMessage"`
+	// Overlay is whether the node was told to overlay this restore, recorded at
+	// dispatch so the result follows what was SENT rather than the job's
+	// patterns at the result, which can change while it runs. nil on rows from
+	// before the column: the result falls back to judging the run.
+	Overlay *bool `json:"-"`
 
 	// Stalled is set at response time (not a DB column) when this restore is
 	// still queued and the node that would run it is not there. The status stays

@@ -912,6 +912,7 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		ServerID:    job.ServerID,
 		RequestedBy: requestedBy,
 		Status:      "queued",
+		Overlay:     &overlay,
 	})
 	if err != nil {
 		httpx.SendJSONError(w, "Failed to record restore: "+err.Error(), 500)

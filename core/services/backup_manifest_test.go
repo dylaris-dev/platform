@@ -190,7 +190,7 @@ func TestRestoreMods_NoManifestTouchesNothing(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &manifestFakeStore{run: tc.run}
-			(&BackupScheduler{store: st}).restoreMods(1, 7)
+			(&BackupScheduler{store: st}).restoreMods(1, 7, nil)
 			if st.replaceCalls != 0 {
 				t.Errorf("ReplaceServerMods called %d times, want 0", st.replaceCalls)
 			}
@@ -211,7 +211,7 @@ func TestRestoreMods_EmptyEntryClearsAndAbsentEntryDoesNot(t *testing.T) {
 		},
 	})
 	st := &manifestFakeStore{run: &models.BackupRun{ID: 1, Manifest: string(blob)}}
-	(&BackupScheduler{store: st}).restoreMods(1, 7)
+	(&BackupScheduler{store: st}).restoreMods(1, 7, nil)
 
 	if len(st.replaced) != 2 {
 		t.Fatalf("replaced %d scopes, want 2 (nether is absent and must not be touched)", len(st.replaced))
@@ -232,7 +232,7 @@ func TestRestoreMods_WritesToTheRestoredServer(t *testing.T) {
 		Mods:   []BackupManifestMods{{SubServer: "survival", Mods: []BackupManifestMod{{ModrinthProjectID: "sodium"}}}},
 	})
 	st := &manifestFakeStore{run: &models.BackupRun{ID: 1, Manifest: string(blob)}}
-	(&BackupScheduler{store: st}).restoreMods(1, 99)
+	(&BackupScheduler{store: st}).restoreMods(1, 99, nil)
 
 	if len(st.replaced) != 1 || st.replaced[0].serverID != 99 {
 		t.Fatalf("replaced = %+v, want serverID 99 from the restore", st.replaced)
@@ -249,7 +249,7 @@ func TestRestoreMods_RestoredRowsAreConfirmedAndUnattributed(t *testing.T) {
 		}}},
 	})
 	st := &manifestFakeStore{run: &models.BackupRun{ID: 1, Manifest: string(blob)}}
-	(&BackupScheduler{store: st}).restoreMods(1, 7)
+	(&BackupScheduler{store: st}).restoreMods(1, 7, nil)
 
 	got := st.replaced[0].mods[0]
 	if got.InstalledBy != nil {

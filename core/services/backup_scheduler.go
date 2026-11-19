@@ -233,8 +233,8 @@ func (b *BackupScheduler) consumeRestoreResults(ctx context.Context) {
 				logErrf("backup-scheduler", "restore result: update failed for id=%d: %v", result.RestoreID, err)
 			}
 			if result.Status == "success" {
-				b.restoreInstalls(restore.RunID, restore.ServerID)
-				b.restoreMods(restore.RunID, restore.ServerID)
+				b.restoreInstalls(restore.RunID, restore.ServerID, restore.Overlay)
+				b.restoreMods(restore.RunID, restore.ServerID, restore.Overlay)
 			}
 		}
 	}
@@ -1206,12 +1206,12 @@ func (b *BackupScheduler) snapshotInstalls(runID int, job *models.BackupJob) {
 // that is the archive saying "there were none" - while a sub-server the manifest
 // does not mention is left alone, because the archive says nothing about it.
 // Those two must not collapse into each other.
-func (b *BackupScheduler) restoreMods(runID, serverID int) {
+func (b *BackupScheduler) restoreMods(runID, serverID int, overlay *bool) {
 	run, err := b.store.GetBackupRun(runID)
 	if err != nil || run == nil {
 		return
 	}
-	if b.overlaidRun(run) {
+	if b.overlaidRun(run, overlay) {
 		return
 	}
 	m, ok := DecodeBackupManifest(run.Manifest)
@@ -1232,9 +1232,14 @@ func (b *BackupScheduler) restoreMods(runID, serverID int) {
 
 // overlaidRun reports whether run was restored as an overlay (a selective
 // run): the files its patterns left out are the live ones, so the rows that
-// describe them stay as they are. A job that cannot be read is judged by the
-// run's manifest alone.
-func (b *BackupScheduler) overlaidRun(run *models.BackupRun) bool {
+// describe them stay as they are. recorded is the decision the restore sent to
+// the node, and when present it is the answer: the job's patterns can be edited
+// while the restore runs (R41-04). Only a restore from before that was recorded
+// is judged again; a job that cannot be read is judged by the manifest alone.
+func (b *BackupScheduler) overlaidRun(run *models.BackupRun, recorded *bool) bool {
+	if recorded != nil {
+		return *recorded
+	}
 	job, _ := b.store.GetBackupJob(run.JobID)
 	return PartialBackupRun(run, job)
 }
@@ -1252,12 +1257,12 @@ func (b *BackupScheduler) overlaidRun(run *models.BackupRun) bool {
 // a spooled run comes after an upload of hours - long enough for a version
 // update to land in between and be restored over the older files. The snapshot
 // is only the fallback for runs from before manifests.
-func (b *BackupScheduler) restoreInstalls(runID, serverID int) {
+func (b *BackupScheduler) restoreInstalls(runID, serverID int, overlay *bool) {
 	run, err := b.store.GetBackupRun(runID)
 	if err != nil || run == nil {
 		return
 	}
-	if b.overlaidRun(run) {
+	if b.overlaidRun(run, overlay) {
 		return
 	}
 	var records []models.SubServerInstall

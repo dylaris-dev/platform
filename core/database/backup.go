@@ -160,6 +160,9 @@ func createBackupTables(db *sql.DB) error {
 			status TEXT NOT NULL DEFAULT 'queued',
 			error_message TEXT NOT NULL DEFAULT ''
 		)`,
+		// Whether the node was told to overlay this restore. NULL on rows from
+		// before it, which the result then judges from the run as it did.
+		`ALTER TABLE backup_restores ADD COLUMN IF NOT EXISTS overlay BOOLEAN`,
 		`CREATE INDEX IF NOT EXISTS idx_backup_restores_server ON backup_restores(server_id, requested_at DESC)`,
 	}
 	for _, q := range tables {

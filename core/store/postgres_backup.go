@@ -805,7 +805,8 @@ func (s *PostgresStore) scanRestore(row interface{ Scan(...interface{}) error })
 	var r models.BackupRestore
 	var requestedBy sql.NullString
 	var completed sql.NullTime
-	err := row.Scan(&r.ID, &r.RunID, &r.ServerID, &requestedBy, &r.RequestedAt, &completed, &r.Status, &r.ErrorMessage)
+	var overlay sql.NullBool
+	err := row.Scan(&r.ID, &r.RunID, &r.ServerID, &requestedBy, &r.RequestedAt, &completed, &r.Status, &r.ErrorMessage, &overlay)
 	if err != nil {
 		return nil, err
 	}
@@ -817,10 +818,14 @@ func (s *PostgresStore) scanRestore(row interface{ Scan(...interface{}) error })
 		t := completed.Time
 		r.CompletedAt = &t
 	}
+	if overlay.Valid {
+		v := overlay.Bool
+		r.Overlay = &v
+	}
 	return &r, nil
 }
 
-const backupRestoreCols = `id, run_id, server_id, requested_by, requested_at, completed_at, status, error_message`
+const backupRestoreCols = `id, run_id, server_id, requested_by, requested_at, completed_at, status, error_message, overlay`
 
 func (s *PostgresStore) CreateBackupRestore(r *models.BackupRestore) (int, error) {
 	var id int
@@ -829,8 +834,8 @@ func (s *PostgresStore) CreateBackupRestore(r *models.BackupRestore) (int, error
 		requestedBy = *r.RequestedBy
 	}
 	err := s.db.QueryRow(
-		`INSERT INTO backup_restores (run_id, server_id, requested_by, status) VALUES ($1, $2, $3, $4) RETURNING id`,
-		r.RunID, r.ServerID, requestedBy, r.Status,
+		`INSERT INTO backup_restores (run_id, server_id, requested_by, status, overlay) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		r.RunID, r.ServerID, requestedBy, r.Status, r.Overlay,
 	).Scan(&id)
 	return id, err
 }

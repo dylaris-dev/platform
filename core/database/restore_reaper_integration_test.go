@@ -75,3 +75,37 @@ func TestIntegrationAbandonedRestoresAreListedAndClosedOnlyWhileOpen(t *testing.
 		t.Fatalf("closed restore = %+v", r)
 	}
 }
+
+// The overlay decision sent at dispatch survives to the result, and a row
+// written without one reads back as unrecorded rather than as "full" (R41-04).
+func TestIntegrationRestoreRecordsTheOverlayDecision(t *testing.T) {
+	_, st := integrationDB(t)
+	f := newFixture(t, st)
+	job, err := st.CreateBackupJob(&models.BackupJob{ServerID: f.server.ID, Name: uniqueName("j_"), Schedule: "manual", RetentionCount: 1, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.CreateBackupRun(&models.BackupRun{JobID: job, Status: "success", StorageKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	yes, no := true, false
+	for _, tt := range []struct {
+		name    string
+		overlay *bool
+	}{{"overlay", &yes}, {"full", &no}, {"not recorded", nil}} {
+		t.Run(tt.name, func(t *testing.T) {
+			id, err := st.CreateBackupRestore(&models.BackupRestore{RunID: run, ServerID: f.server.ID, Status: "queued", Overlay: tt.overlay})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := st.GetBackupRestore(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (r.Overlay == nil) != (tt.overlay == nil) || (r.Overlay != nil && *r.Overlay != *tt.overlay) {
+				t.Errorf("overlay = %v, want %v", r.Overlay, tt.overlay)
+			}
+		})
+	}
+}
