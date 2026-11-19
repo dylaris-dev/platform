@@ -326,8 +326,13 @@ func TestGetServerPathPersistsOnlyAnUnambiguousScan(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if got := sm.GetServerPath(uuid); got != paths[0] {
-				t.Fatalf("resolved %q, want %q", got, paths[0])
+			// Two copies and no key resolve to neither (R29-07).
+			wantPath := paths[0]
+			if tc.both {
+				wantPath = ""
+			}
+			if got := sm.GetServerPath(uuid); got != wantPath {
+				t.Fatalf("resolved %q, want %q", got, wantPath)
 			}
 			v, _ := mr.Get(key)
 			want := ""

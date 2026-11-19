@@ -19,12 +19,14 @@ import (
 // which copy is live; with one copy the scan is still used, as before.
 func TestAnUnreadableStorageKeyDoesNotPickBetweenCopies(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		both bool
-		want int // index into the paths, -1 for ""
+		name   string
+		both   bool
+		absent bool // no key at all, as after a Valkey restart (R29-07)
+		want   int  // index into the paths, -1 for ""
 	}{
-		{"one copy", false, 0},
-		{"a leftover copy", true, -1},
+		{"one copy", false, false, 0},
+		{"a leftover copy", true, false, -1},
+		{"a leftover copy and no key", true, true, -1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mr := miniredis.RunT(t)
@@ -43,8 +45,10 @@ func TestAnUnreadableStorageKeyDoesNotPickBetweenCopies(t *testing.T) {
 			}
 			// A key of the wrong type fails the GET, as a Redis blip does.
 			key := "node:" + nodeID + ":server:" + run18UUID + ":storage"
-			if _, err := mr.Lpush(key, "x"); err != nil {
-				t.Fatal(err)
+			if !tc.absent {
+				if _, err := mr.Lpush(key, "x"); err != nil {
+					t.Fatal(err)
+				}
 			}
 			want := ""
 			if tc.want >= 0 {

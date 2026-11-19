@@ -218,3 +218,49 @@ func TestAHungStoragePathDoesNotStallStorageInfo(t *testing.T) {
 		t.Fatalf("hung path probed %d times, want 1", n)
 	}
 }
+
+// R29-08: a probe that finished after its beat gave up on it is served on the
+// next beat, not thrown away for a new one, so a path that always needs longer
+// than storageProbeTimeout does not read unavailable on every beat.
+func TestASlowStorageProbeIsServedOnTheNextBeat(t *testing.T) {
+	slow := t.TempDir()
+	sm := &StorageManager{paths: []string{slow}}
+	release := make(chan struct{})
+	var calls atomic.Int32
+	prev, prevTimeout := diskSpaceOf, storageProbeTimeout
+	t.Cleanup(func() { diskSpaceOf, storageProbeTimeout = prev, prevTimeout })
+	storageProbeTimeout = 100 * time.Millisecond
+	diskSpaceOf = func(p string) (uint64, uint64) {
+		if calls.Add(1) == 1 {
+			<-release
+		}
+		return 1 << 30, 1 << 29
+	}
+	for _, tc := range []struct {
+		beat       int
+		unreadable bool
+		calls      int32
+	}{
+		{1, true, 1},  // still running when the beat gives up
+		{2, false, 1}, // the late result, no second probe
+		{3, false, 2}, // served once, so a fresh probe
+	} {
+		infos := sm.GetStorageInfo()
+		if len(infos) != 1 || infos[0].unreadable != tc.unreadable {
+			t.Fatalf("beat %d: infos = %+v, want unreadable=%v", tc.beat, infos, tc.unreadable)
+		}
+		if !tc.unreadable && infos[0].TotalBytes != 1<<30 {
+			t.Fatalf("beat %d: TotalBytes = %d", tc.beat, infos[0].TotalBytes)
+		}
+		if n := calls.Load(); n != tc.calls {
+			t.Fatalf("beat %d: %d probes, want %d", tc.beat, n, tc.calls)
+		}
+		if tc.beat == 1 {
+			close(release)
+			sm.probeMu.Lock()
+			pr := sm.probes[slow]
+			sm.probeMu.Unlock()
+			<-pr.done
+		}
+	}
+}

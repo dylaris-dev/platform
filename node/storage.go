@@ -592,8 +592,10 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 	if found != "" {
 		// Only the key can say which of two copies is live; the first one
 		// scanned was the leftover a move left whenever it sat on an earlier
-		// path, and every lookup during a Redis blip used it (A08).
-		if keyed && copies > 1 {
+		// path, and every lookup during a Redis blip used it (A08). A key
+		// that is simply gone, as every key is after a Valkey restart, vouches
+		// for neither copy either, which is how resolveMigration reads it (R29-07).
+		if copies > 1 {
 			log.Printf("storage: %s has %d copies and no readable storage key, not resolving", serverUUID, copies)
 			return ""
 		}
@@ -764,6 +766,9 @@ func (sm *StorageManager) GetStorageInfo() []StorageInfo {
 	for i, pr := range probes {
 		select {
 		case <-pr.done:
+			sm.probeMu.Lock()
+			pr.served = true
+			sm.probeMu.Unlock()
 			infos = append(infos, pr.info)
 		case <-ctx.Done():
 			log.Printf("storage: [warn] %s did not answer statfs/readdir within %s; reporting it unavailable", sm.paths[i], storageProbeTimeout)
@@ -778,18 +783,27 @@ func (sm *StorageManager) GetStorageInfo() []StorageInfo {
 var storageProbeTimeout = 2 * time.Second
 
 // storageProbe is one statStoragePath run; info is set before done is closed.
+// served (under probeMu) says a GetStorageInfo has reported info.
 type storageProbe struct {
-	done chan struct{}
-	info StorageInfo
+	done   chan struct{}
+	info   StorageInfo
+	served bool
 }
 
-// probePath starts a probe of p, or returns the one still running on it.
+// probePath starts a probe of p, or returns the one still running on it or
+// finished but not yet reported.
 func (sm *StorageManager) probePath(p string) *storageProbe {
 	sm.probeMu.Lock()
 	defer sm.probeMu.Unlock()
 	if pr := sm.probes[p]; pr != nil {
 		select {
 		case <-pr.done:
+			// Finished after its beat gave up on it: report it now. Restarted
+			// instead, a path that needs longer than storageProbeTimeout read
+			// unavailable with zero capacity on every beat (R29-08).
+			if !pr.served {
+				return pr
+			}
 		default:
 			return pr
 		}
