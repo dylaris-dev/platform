@@ -205,6 +205,10 @@ func transferClient(guarded bool, allowPrivate []string) *http.Client {
 // include/exclude patterns matched no file.
 var errNothingArchived = errors.New("no files matched include/exclude patterns")
 
+// errStoppedDuringBackup fails a run whose server was stopped or restarted
+// while the archive read its tree. See worldSaveGuard.stopped.
+var errStoppedDuringBackup = errors.New("the server was stopped or restarted during the backup, so it saved its world while the archive read it; run the backup again")
+
 // multipartAPI is what the uploader needs from Core, as functions so a test can
 // play Core without a stream.
 type multipartAPI struct {

@@ -304,6 +304,10 @@ type worldSaveGuard struct {
 	// for a server without them: the one that ran when saving was paused and
 	// every one started during the walk.
 	subs map[string]bool
+	// stopped: a graceful stop reached the server during the walk. Its
+	// save-all and the stop's own save wrote the world under the tar, so the
+	// archive may hold torn region files and the run must not succeed.
+	stopped bool
 }
 
 // pauseWorldSaves stops the server writing its world, flushes what it holds,
@@ -416,6 +420,26 @@ func startingDuringBackup(uuid, sub string) {
 	}
 }
 
+// walkStops holds, per server, what a graceful stop does while a backup walks
+// its tree (uuid -> func(sub)).
+var walkStops sync.Map
+
+// stoppingDuringBackup is called right before a server is stopped gracefully;
+// sub is the sub-server it runs, "" when unknown.
+func stoppingDuringBackup(uuid, sub string) {
+	if f, ok := walkStops.Load(uuid); ok {
+		f.(func(string))(sub)
+	}
+}
+
+// stoppedDuringWalk reports whether a graceful stop reached the archived
+// server while the archive read its tree.
+func (g *worldSaveGuard) stoppedDuringWalk() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.stopped
+}
+
 // pauseOnStart covers a start during the walk: save-off is per JVM, so a
 // server that was stopped when its backup began, or one restarted or
 // crash-restarted mid-walk after its own save-off, boots a JVM that writes
@@ -447,12 +471,27 @@ func (g *worldSaveGuard) pauseOnStart(send func(command string) error, subServer
 		}
 		log.Printf("backup: server %s: started during its backup, saving paused until the archive is done", g.uuid)
 	})
+	// A stop is the other half of a restart, and the one save-off cannot cover:
+	// the old JVM's save-all and its shutdown save write the world regardless.
+	walkStops.Store(g.uuid, func(sub string) {
+		if subServer != "" && sub != "" && sub != subServer {
+			return
+		}
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if g.closed {
+			return
+		}
+		g.stopped = true
+		log.Printf("backup: server %s: stopped during its backup, its world is saved under the archive; the run will fail", g.uuid)
+	})
 	var once sync.Once
 	// Once: the spooled path stops early and the deferred call must not drop
 	// the entry of a later backup of this server.
 	return func() {
 		once.Do(func() {
 			coldStarts.Delete(g.uuid)
+			walkStops.Delete(g.uuid)
 			g.mu.Lock()
 			g.closed = true
 			g.mu.Unlock()
@@ -711,6 +750,11 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 			// reservation through the paced upload counted them twice.
 			releaseSpool(counter.Total())
 			addedAny = added
+			// Not worth hours of paced upload: the spool already holds the torn tree.
+			if saves.stoppedDuringWalk() {
+				reportBackup(ctx, rdb, cmd.RunID, "failed", errStoppedDuringBackup.Error(), 0)
+				return
+			}
 			// The archive is complete on disk: the world may save again while the
 			// upload takes as long as the players need it to.
 			stopColdStart()
@@ -760,12 +804,15 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 			if !addedAny {
 				return errNothingArchived
 			}
+			if saves.stoppedDuringWalk() {
+				return errStoppedDuringBackup
+			}
 			return nil
 		}, pacer)
 	default:
 		upErr = uploadBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey, pacer.capReader(ctx, src))
 	}
-	if errors.Is(upErr, errNothingArchived) {
+	if errors.Is(upErr, errNothingArchived) || errors.Is(upErr, errStoppedDuringBackup) {
 		reportBackup(ctx, rdb, cmd.RunID, "failed", upErr.Error(), 0)
 		return
 	}
@@ -808,6 +855,12 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 		// The completed object's size as Core read it, which is the number the
 		// quota and the run list should carry.
 		size = multipartSize
+	}
+	// Multipart checked this before Complete; a file target holds the archive.
+	if cmd.Upload != modeUploadMultipart && saves.stoppedDuringWalk() {
+		deleteBackup(ctx, sm, cmd.ServerUUID, storage, cmd.StorageKey)
+		reportBackup(ctx, rdb, cmd.RunID, "failed", errStoppedDuringBackup.Error(), 0)
+		return
 	}
 	if !addedAny {
 		// We still uploaded a 0-file archive; clean up storage and surface

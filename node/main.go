@@ -3173,6 +3173,16 @@ func gracefulStop(rdb *redis.Client, uuid string, dm *DockerManager) error {
 	// Callers overwrite this with the outcome (stopped / starting) as before.
 	announceStopping(ctx, rdb, uuid)
 
+	// Before save-all: it and the stop's own save write the world, which a
+	// backup walking the tree would archive half-written.
+	stopSub := ""
+	if info.Config != nil {
+		if s := strings.TrimPrefix(info.Config.WorkingDir, "/data/"); s != info.Config.WorkingDir {
+			stopSub = s
+		}
+	}
+	stoppingDuringBackup(uuid, stopSub)
+
 	// save-all first, so a stop that has to be forced below still left a save
 	// behind. Not for a container that only just started: its world may not be
 	// loaded yet, the command then fails ("getLevel() is null", seen when a
