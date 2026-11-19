@@ -112,3 +112,46 @@ func TestUnavailablePathsIncludesAnUnreadablePath(t *testing.T) {
 		t.Fatal("a healthy node reports unavailable paths, which suppresses Core's missing list")
 	}
 }
+
+// R27-05/R27-06: the R26-08 layout with a third path. This node's own second
+// path is healthy and empty, and the foreign disk at the third path lists it
+// with a higher #kept gen. The foreign marker made it read as stale, so it was
+// skipped, and the foreign gen written back kept it skipped after the foreign
+// disk was gone.
+func TestAForeignMarkerDoesNotSkipAnOwnEmptyPath(t *testing.T) {
+	disk1, disk2, disk3 := t.TempDir(), t.TempDir(), t.TempDir()
+	csv := disk1 + "," + disk2 + "," + disk3
+	own := disk1 + "\n" + disk2 + "\n" + disk3 + "\n#kept 5 " + disk1 + "\n#kept 5 " + disk2 + "\n#kept 5 " + disk3 + "\n#node id1\n#gen 5\n"
+	for f, body := range map[string]string{
+		filepath.Join(disk1, ".node_id"):        "id1\n",
+		filepath.Join(disk1, storageMarkerName): own,
+		filepath.Join(disk2, storageMarkerName): own,
+		filepath.Join(disk3, storageMarkerName): disk1 + "\n" + disk2 + "\n#kept 9 " + disk1 + "\n#kept 9 " + disk2 + "\n#node id2\n#gen 9\n",
+	} {
+		if err := os.WriteFile(f, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(disk3, "srv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prev := nodeSecretDir
+	nodeSecretDir = disk1
+	t.Cleanup(func() { nodeSecretDir = prev })
+	sm := NewStorageManager(csv, nil)
+	if !slices.Contains(sm.Paths(), disk2) || len(sm.Paths()) != 3 {
+		t.Fatalf("paths = %v, want all three kept", sm.Paths())
+	}
+	// The foreign disk is detached: its mountpoint is bare again. The own
+	// empty path must still be taken, and only the bare mountpoint skipped.
+	if err := os.RemoveAll(disk3); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(disk3, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sm = NewStorageManager(csv, nil)
+	if got, want := sm.Paths(), []string{disk1, disk2}; !slices.Equal(got, want) {
+		t.Fatalf("after the foreign disk left, paths = %v, want %v", got, want)
+	}
+}

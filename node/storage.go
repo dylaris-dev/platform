@@ -204,19 +204,28 @@ const storageMarkerNode = "#node "
 // lists, which paths carry a current marker of their own, the last gen that
 // took each path, the highest gen seen, and the node ids the current markers
 // record. A path is unmounted when it is known, not marked, and holds nothing.
-func readStorageMarkers(paths []string) (known, marked map[string]bool, lastKept map[string]uint64, maxGen uint64, nodeIDs map[string]bool) {
+//
+// A marker recording a node id other than ownID ("" = no filter) is another
+// node's disk: it says nothing about this node's paths, so its path list,
+// #kept lines and gen are not counted against them (R27-05/R27-06). Its own
+// path is still judged by this node's gens, and maxGen still counts its gen,
+// so the next gen written is above every marker on the paths.
+func readStorageMarkers(paths []string, ownID string) (known, marked map[string]bool, lastKept map[string]uint64, maxGen uint64, nodeIDs map[string]bool) {
 	known = map[string]bool{}
 	marked = map[string]bool{}
 	listed := map[string]bool{}
 	gens := map[string]uint64{}
 	lastKept = map[string]uint64{}
 	ids := map[string]string{}
+	var ownMax uint64
 	for _, p := range paths {
 		b, err := os.ReadFile(filepath.Join(p, storageMarkerName))
 		if err != nil {
 			continue
 		}
 		marked[p] = true
+		var lines []string
+		kept := map[string]uint64{}
 		for _, line := range strings.Split(string(b), "\n") {
 			line = strings.TrimSpace(line)
 			if g, ok := strings.CutPrefix(line, storageMarkerGen); ok {
@@ -233,14 +242,26 @@ func readStorageMarkers(paths []string) (known, marked map[string]bool, lastKept
 			if k, ok := strings.CutPrefix(line, storageMarkerKept); ok {
 				g, kp, _ := strings.Cut(k, " ")
 				if n, err := strconv.ParseUint(g, 10, 64); err == nil && kp != "" {
-					lastKept[kp] = max(lastKept[kp], n)
+					kept[kp] = max(kept[kp], n)
 				}
 				continue
 			}
 			if line != "" {
-				known[line] = true
-				listed[p] = true
+				lines = append(lines, line)
 			}
+		}
+		if ownID != "" && ids[p] != "" && ids[p] != ownID {
+			continue
+		}
+		if g, ok := gens[p]; ok {
+			ownMax = max(ownMax, g)
+		}
+		for kp, n := range kept {
+			lastKept[kp] = max(lastKept[kp], n)
+		}
+		for _, l := range lines {
+			known[l] = true
+			listed[p] = true
 		}
 	}
 	// A marker without a number is taken as current only while no marker
@@ -248,7 +269,7 @@ func readStorageMarkers(paths []string) (known, marked map[string]bool, lastKept
 	// an operator to make). One listing paths beside numbered ones is the
 	// copy release 2026.11.17.2 wrote onto a bare mountpoint (Y11).
 	for p, g := range gens {
-		if k, ok := lastKept[p]; g < maxGen && !(ok && g == k) {
+		if k, ok := lastKept[p]; g < ownMax && !(ok && g == k) {
 			marked[p] = false
 		}
 	}
@@ -263,7 +284,7 @@ func readStorageMarkers(paths []string) (known, marked map[string]bool, lastKept
 	// the bare mountpoint wrote, naming the identity it enrolled there.
 	nodeIDs = map[string]bool{}
 	for p, id := range ids {
-		if marked[p] && id != "" {
+		if marked[p] && id != "" && (ownID == "" || id == ownID) {
 			nodeIDs[id] = true
 		}
 	}
@@ -290,7 +311,9 @@ func identityDirUnmounted(pathsCSV string) bool {
 		return false
 	}
 	p := paths[0]
-	known, marked, _, _, nodeIDs := readStorageMarkers(paths)
+	// No own-id filter: this runs before enrolment, and the id on a bare first
+	// mountpoint may be the phantom one this check is there to catch.
+	known, marked, _, _, nodeIDs := readStorageMarkers(paths, "")
 	if marked[p] || !known[p] || !dirHoldsNothing(p) {
 		return false
 	}
@@ -349,7 +372,8 @@ func holdsNodeIdentity(dir string, nodeIDs map[string]bool) bool {
 // ponytail: a single path, or a boot where every path is unmounted at once,
 // has no other marker to vouch for it and is taken as before.
 func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
-	known, marked, lastKept, maxGen, nodeIDs := readStorageMarkers(paths)
+	ownID, _ := cachedNodeID(nodeSecretDir)
+	known, marked, lastKept, maxGen, nodeIDs := readStorageMarkers(paths, ownID)
 	var kept []string
 	for _, p := range paths {
 		// The identity exception matches identityDirUnmounted: a path the node
