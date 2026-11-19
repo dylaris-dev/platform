@@ -107,9 +107,13 @@ var spoolSlackBytes int64 = 256 << 20
 // budget measured before those bytes were there still counts them. removed,
 // once the file is deleted, takes those landed bytes back out: the disk has
 // them again, and landed bytes count against every budget still running.
-func reserveSpool(p *backupPolicy, sourceBytes int64, freeBytes uint64) (int64, func(landed int64), func(), string) {
+// free is read under the lock, after the source walk: a reading taken before
+// it missed what another spool or restore wrote and released meanwhile, since
+// release moves those bytes out of inflight.
+func reserveSpool(p *backupPolicy, sourceBytes int64, free func() uint64) (int64, func(landed int64), func(), string) {
 	spoolReserveMu.Lock()
 	defer spoolReserveMu.Unlock()
+	freeBytes := free()
 	disk := writesOn(globalSpoolDir)
 	if held := disk.inflight.Load(); held > 0 {
 		freeBytes -= min(freeBytes, uint64(held))

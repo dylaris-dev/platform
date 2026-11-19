@@ -542,9 +542,11 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	defer func() { releaseSpool(0) }()
 	if cmd.Upload == modeUploadMultipart {
 		if p := backupPolicyNow.Load(); p != nil && p.SpoolEnabled && globalSpoolDir != "" {
-			_, free := getDiskSpace(globalSpoolDir)
 			var why string
-			spoolMax, releaseSpool, spoolRemoved, why = reserveSpool(p, archiveSourceBytes(rootDir), free)
+			spoolMax, releaseSpool, spoolRemoved, why = reserveSpool(p, archiveSourceBytes(rootDir), func() uint64 {
+				_, free := getDiskSpace(globalSpoolDir)
+				return free
+			})
 			if spoolMax > 0 {
 				spoolPath = filepath.Join(globalSpoolDir, spoolFileName(cmd.RunID))
 			} else {

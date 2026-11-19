@@ -36,7 +36,7 @@ func TestWritesCountOnlyAgainstTheirOwnFilesystem(t *testing.T) {
 	globalSpoolDir = filepath.Join(diskA, ".dylaris-backup-spool")
 	on := &backupPolicy{SpoolEnabled: true, SpoolMaxGB: 500}
 
-	held, release, removed, why := reserveSpool(on, 150*gb, 2000*gb)
+	held, release, removed, why := reserveSpool(on, 150*gb, freeIs(2000*gb))
 	if held <= 0 {
 		t.Fatalf("spool refused: %s", why)
 	}
@@ -61,7 +61,7 @@ func TestWritesCountOnlyAgainstTheirOwnFilesystem(t *testing.T) {
 	c := nodeWriteBudget(filepath.Join(diskB, "srv"))
 	c.spend(1900 * gb)
 	defer c.release()
-	if held, release, _, why := reserveSpool(on, 150*gb, 200*gb); held <= 0 {
+	if held, release, _, why := reserveSpool(on, 150*gb, freeIs(200*gb)); held <= 0 {
 		t.Errorf("spool on disk A refused for a write on disk B: %s", why)
 	} else {
 		release(0)

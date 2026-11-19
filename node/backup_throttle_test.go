@@ -398,7 +398,7 @@ func TestSpoolReservationIsSharedAcrossRuns(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			writesOn("").inflight.Store(tt.inflight)
-			limit, release, _, why := reserveSpool(on, 30*gb, 50*gb)
+			limit, release, _, why := reserveSpool(on, 30*gb, freeIs(50*gb))
 			defer release(0)
 			if (limit > 0) != tt.wantOK {
 				t.Fatalf("limit=%d why=%q, want ok=%v", limit, why, tt.wantOK)
@@ -407,11 +407,11 @@ func TestSpoolReservationIsSharedAcrossRuns(t *testing.T) {
 	}
 
 	writesOn("").inflight.Store(0)
-	limit, release, _, _ := reserveSpool(on, 30*gb, 50*gb)
+	limit, release, _, _ := reserveSpool(on, 30*gb, freeIs(50*gb))
 	if limit <= 0 {
 		t.Fatal("first run refused")
 	}
-	if l2, r2, _, why := reserveSpool(on, 30*gb, 50*gb); l2 > 0 {
+	if l2, r2, _, why := reserveSpool(on, 30*gb, freeIs(50*gb)); l2 > 0 {
 		r2(0)
 		t.Fatalf("second run of 30 GB spooled into 50 GB beside the first (limit %d, %q)", l2, why)
 	}
@@ -549,7 +549,7 @@ func TestAReleasedSpoolLandsWhatItWrote(t *testing.T) {
 	t.Cleanup(func() { restoreDiskBudget = prev })
 	g := writesOn("").inflight.Load()
 
-	_, release, _, why := reserveSpool(on, s, 100*gb)
+	_, release, _, why := reserveSpool(on, s, freeIs(100*gb))
 	if why != "" {
 		t.Fatal(why)
 	}
@@ -578,7 +578,7 @@ func TestARemovedSpoolGivesItsLandedBytesBack(t *testing.T) {
 	g, l := writesOn("").inflight.Load(), writesOn("").landed.Load()
 
 	b := nodeWriteBudget(t.TempDir()) // starts before the spool: 2s left
-	_, release, removed, why := reserveSpool(on, s, 100*gb)
+	_, release, removed, why := reserveSpool(on, s, freeIs(100*gb))
 	if why != "" {
 		t.Fatal(why)
 	}

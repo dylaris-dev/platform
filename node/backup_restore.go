@@ -162,10 +162,15 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// sub-server recount), not before them: the command is ACKed only when this
 	// returns, and a node killed after the report but before the ACK had the
 	// restore redelivered and applied again over everything played since.
-	succeeded := false
+	// A failure waits too: reported early, a redelivery re-ran it over a row
+	// the panel already showed as failed, and a success then overwrote it.
+	succeeded, failure := false, ""
 	defer func() {
-		if succeeded {
+		switch {
+		case succeeded:
 			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "success", "")
+		case failure != "":
+			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", failure)
 		}
 	}()
 
@@ -174,7 +179,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// which keeps the rename truly atomic.
 	stageDir, err := createStageDir(targetDir)
 	if err != nil {
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "stage dir: "+err.Error())
+		failure = "stage dir: " + err.Error()
 		return
 	}
 	defer releaseStageDir(stageDir)
@@ -191,7 +196,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		restoreURL, err = coreRestoreURL(cmd.RestoreID)(ctx)
 		if err != nil {
 			stageCleanup()
-			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "download failed: "+err.Error())
+			failure = "download failed: " + err.Error()
 			return
 		}
 	}
@@ -210,7 +215,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			// Nothing on disk is touched yet: the swap below must not run under
 			// a server that is still writing its world.
 			stageCleanup()
-			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "stop the server: "+err.Error())
+			failure = "stop the server: " + err.Error()
 			return
 		}
 	}
@@ -253,7 +258,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	}
 	if err != nil {
 		stageCleanup()
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "download failed: "+err.Error())
+		failure = "download failed: " + err.Error()
 		return
 	}
 	defer body.Close()
@@ -269,7 +274,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	gr, err := gzip.NewReader(&stallReader{r: body, t: stall, d: restoreStallTimeout, min: restoreStallMinBytes})
 	if err != nil {
 		stageCleanup()
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "gzip open: "+err.Error())
+		failure = "gzip open: " + err.Error()
 		return
 	}
 	defer gr.Close()
@@ -282,7 +287,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	}
 	if err != nil {
 		stageCleanup()
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "open stage: "+err.Error())
+		failure = "open stage: " + err.Error()
 		return
 	}
 	stageClosed := false
@@ -334,7 +339,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		}
 		if terr != nil {
 			stageCleanup()
-			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "tar read: "+terr.Error())
+			failure = "tar read: " + terr.Error()
 			return
 		}
 		// The archive's own description is not part of the server. Restoring it
@@ -364,21 +369,21 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		}
 		if berr != nil {
 			stageCleanup()
-			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", errRestoreDiskBudget.Error())
+			failure = errRestoreDiskBudget.Error()
 			return
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := stageRoot.MkdirAll(name, os.FileMode(hdr.Mode)); err != nil {
 				stageCleanup()
-				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "mkdir: "+err.Error())
+				failure = "mkdir: " + err.Error()
 				return
 			}
 		case tar.TypeReg, tar.TypeRegA:
 			f, ferr := createIn(stageRoot, name, os.FileMode(hdr.Mode))
 			if ferr != nil {
 				stageCleanup()
-				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "open file: "+ferr.Error())
+				failure = "open file: " + ferr.Error()
 				return
 			}
 			_, err := io.Copy(f, budget.reader(tr))
@@ -388,7 +393,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			if err != nil {
 				f.Close()
 				stageCleanup()
-				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "copy: "+err.Error())
+				failure = "copy: " + err.Error()
 				return
 			}
 			f.Close()
@@ -422,7 +427,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// at rest was swapped in as success and the good world deleted.
 	if _, err := io.Copy(io.Discard, gr); err != nil {
 		stageCleanup()
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "archive checksum: "+err.Error())
+		failure = "archive checksum: " + err.Error()
 		return
 	}
 
@@ -434,7 +439,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 
 	if extracted == 0 {
 		stageCleanup()
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "archive contained no regular files")
+		failure = "archive contained no regular files"
 		return
 	}
 
@@ -446,7 +451,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		if active := readActiveSubServer(rootDir); active != "" {
 			if st, err := os.Lstat(filepath.Join(stageDir, active)); err != nil || !st.IsDir() {
 				stageCleanup()
-				reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", fmt.Sprintf(errRestoreMissingActive, active))
+				failure = fmt.Sprintf(errRestoreMissingActive, active)
 				return
 			}
 		}
@@ -458,7 +463,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	if serverDeleted(cmd.ServerUUID) {
 		stageCleanup()
 		wasRunning = false
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", errRestoreServerDeleted)
+		failure = errRestoreServerDeleted
 		return
 	}
 
@@ -471,13 +476,13 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// name into the sub-server's place: it has to still be what was extracted.
 	if cur, err := os.Lstat(stageDir); err != nil || !os.SameFile(stageSt, cur) {
 		stageCleanup()
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "the staging directory was replaced during the restore")
+		failure = "the staging directory was replaced during the restore"
 		return
 	}
 	if _, statErr := os.Stat(targetDir); statErr == nil {
 		if err := os.Rename(targetDir, backupDir); err != nil {
 			stageCleanup()
-			reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "stash original: "+err.Error())
+			failure = "stash original: " + err.Error()
 			return
 		}
 	}
@@ -488,7 +493,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 			keepStash(cmd.RunID, backupDir)
 		}
 		stageCleanup()
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "swap stage: "+err.Error())
+		failure = "swap stage: " + err.Error()
 		return
 	}
 	// The delete can also land between the check above and the swap, after its
@@ -497,7 +502,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		os.RemoveAll(targetDir)
 		os.RemoveAll(backupDir)
 		wasRunning = false
-		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", errRestoreServerDeleted)
+		failure = errRestoreServerDeleted
 		return
 	}
 	carried := true
