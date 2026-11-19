@@ -527,9 +527,9 @@ func receiveMovedServer(ctx context.Context, rdb *redis.Client, nodeToken, serve
 		moved.Add(n)
 		disk.inflight.Add(n)
 		written += n
-	}); err != nil {
+	}, localPaths()); err != nil {
 		log.Printf("%s %s: extract failed: %v", cmd, serverUUID, err)
-		os.RemoveAll(targetDir)
+		removeCopy(targetDir)
 		fail(fmt.Sprintf("extract failed: %v", err))
 		return
 	}
@@ -583,14 +583,32 @@ func pullableEndpoint(endpoint string) bool {
 // Core sends its own config after the cutover (migrationTargetSince).
 // .active_server is not read to start anything and the backups are the
 // tenant's, so both stay.
-func extractMovedServer(zipPath, storagePath, targetDir string, onWrite func(int64)) error {
+//
+// The move markers it arrived with carry a generation from the source's
+// clock, which a leftover copy on another of paths could tie with or
+// outrank after a key loss. It is marked live above every local copy
+// instead (R32-12).
+func extractMovedServer(zipPath, storagePath, targetDir string, onWrite func(int64), paths []string) error {
 	if err := migration.Extract(zipPath, targetDir, restoreDiskBudget(storagePath)-writesOn(storagePath).inflight.Load(), onWrite); err != nil {
 		return err
 	}
-	for _, name := range []string{".node_config.json", ".dylaris.json"} {
+	for _, name := range []string{".node_config.json", ".dylaris.json", storageLiveMarker, storageMovedAwayMarker} {
 		if err := os.RemoveAll(filepath.Join(targetDir, name)); err != nil {
 			return fmt.Errorf("drop the archived %s: %w", name, err)
 		}
+	}
+	gen := time.Now().UnixNano()
+	for _, p := range paths {
+		dir := filepath.Join(p, filepath.Base(targetDir))
+		if dir == targetDir {
+			continue
+		}
+		if g, ok, _ := liveGeneration(dir); ok && g >= gen {
+			gen = g + 1
+		}
+	}
+	if err := writeServerRootFile(targetDir, storageLiveMarker, []byte(strconv.FormatInt(gen, 10))); err != nil {
+		return fmt.Errorf("mark the moved-in copy live: %w", err)
 	}
 	return nil
 }
@@ -681,7 +699,7 @@ var migrateInFlight sync.Map
 // resetMigrationTarget empties a server's directory on the TARGET before an
 // arriving copy is extracted into it.
 func resetMigrationTarget(dir string) error {
-	if err := os.RemoveAll(dir); err != nil {
+	if err := removeCopy(dir); err != nil {
 		return err
 	}
 	return os.MkdirAll(dir, 0o755)
@@ -1039,7 +1057,7 @@ func discardMovedCopy(storage *StorageManager, dm *DockerManager, serverUUID, pr
 		}
 		dir := filepath.Join(storagePath, serverUUID)
 		log.Printf("migrate_discard %s: removing the copy of a move that did not happen (%s)", serverUUID, dir)
-		os.RemoveAll(dir)
+		removeCopy(dir)
 		os.Remove(marker)
 		storage.RemoveServerPath(serverUUID)
 		globalQuotaSet.RemoveQuota(serverUUID)
@@ -1082,7 +1100,7 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 	}
 
 	srcDir := filepath.Join(storagePath, serverUUID)
-	if err := os.RemoveAll(srcDir); err != nil {
+	if err := removeCopy(srcDir); err != nil {
 		log.Printf("migrate_cleanup %s: could not remove server dir %s: %v", serverUUID, srcDir, err)
 		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("cleanup failed: %v", err))
 		return
@@ -1314,4 +1332,12 @@ func putFilePresigned(ctx context.Context, url, filePath string, read io.Writer)
 		return fmt.Errorf("presigned put status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+// localPaths are this node's storage paths, none before the manager is up.
+func localPaths() []string {
+	if globalStorageMgr == nil {
+		return nil
+	}
+	return globalStorageMgr.Paths()
 }

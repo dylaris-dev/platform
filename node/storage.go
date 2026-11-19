@@ -673,6 +673,9 @@ const (
 	storageMovedAwayMarker = ".dylaris_moved_away"
 )
 
+// parkedCopyInfix names a copy removeCopy parked: .<uuid>.moved-away-<ns>.
+const parkedCopyInfix = ".moved-away-"
+
 // removeTree is a var so a test can fail a delete partway.
 var removeTree = os.RemoveAll
 
@@ -680,14 +683,37 @@ var removeTree = os.RemoveAll
 // moved away first so that a delete stopped partway leaves no candidate.
 // Unmarked, it is not touched: a half-deleted copy without the mark is the
 // debris a lookup could settle on. A missing dir is nothing to remove.
+//
+// A mark that cannot be written (ENOSPC on a full XFS disk, EDQUOT at the
+// server's project limit: the usual reasons to move a server off) parks the
+// copy under a hidden name instead. A rename needs no free blocks, and outside
+// its <uuid> name the copy is no candidate either (R32-10). What a failed
+// delete leaves of it goes at the next node start (sweepInterruptedWork).
 func removeCopy(dir string) error {
 	if err := writeServerRootFile(dir, storageMovedAwayMarker, []byte(strconv.FormatInt(time.Now().UnixNano(), 10))); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("mark %s as moved away: %w", dir, err)
+		parked := filepath.Join(filepath.Dir(dir), "."+filepath.Base(dir)+parkedCopyInfix+strconv.FormatInt(time.Now().UnixNano(), 10))
+		if rerr := os.Rename(dir, parked); rerr != nil {
+			return fmt.Errorf("mark %s as moved away: %w (and park it: %v)", dir, err, rerr)
+		}
+		dir = parked
 	}
 	return removeTree(dir)
+}
+
+// clearMovedAway drops dir's moved-away mark, for a copy the key names live.
+func clearMovedAway(dir string) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if err := root.Remove(storageMovedAwayMarker); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // liveGeneration is the generation in dir's live mark; ok=false with no
@@ -1175,6 +1201,11 @@ func (sm *StorageManager) dropStaleCopies(serverUUID string) {
 	for _, p := range paths {
 		dir := filepath.Join(p, serverUUID)
 		if p == live {
+			// A move killed between its key flip and clearing the target's
+			// mark left the live copy reading as moved away.
+			if err := clearMovedAway(dir); err != nil {
+				log.Printf("storage: [warn] could not clear the moved-away mark of the live copy %s: %v", dir, err)
+			}
 			continue
 		}
 		if _, err := os.Stat(dir); err != nil {
@@ -1409,6 +1440,23 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 
 	log.Printf("storage: migrating %s: %s → %s (%s)", serverUUID, currentPath, targetPath, formatBytes(uint64(srcSize)))
 
+	// The target reads as moved away until its key is written: a move killed
+	// during the copy, or one whose key write is unconfirmed, then never
+	// outranks the source after a key loss. The copy brings the source's live
+	// mark along, which tied with it or won (R32-11, R32-09).
+	// With the source's mode, as the copy would have made it.
+	srcInfo, err := os.Stat(srcDir)
+	if err != nil {
+		return err
+	}
+	if err := os.Mkdir(dstDir, srcInfo.Mode().Perm()); err != nil {
+		return fmt.Errorf("create %s: %w", dstDir, err)
+	}
+	if err := writeServerRootFile(dstDir, storageMovedAwayMarker, []byte(strconv.FormatInt(time.Now().UnixNano(), 10))); err != nil {
+		removeCopy(dstDir)
+		return fmt.Errorf("mark %s as not yet live: %w", dstDir, err)
+	}
+
 	// copyTree, not copyDir: this is a move, so the destination has to be the
 	// whole server including the entries copyDir withholds from a user-facing
 	// duplicate. With backups present copyDir loses enough bytes to fail the
@@ -1426,8 +1474,8 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 	}
 
 	// Marked before the key flips, above the source's own mark, which the
-	// copy brought along: after a key loss this is what tells the whole
-	// target from the source (R31-08, R31-09).
+	// copy brought along: once the moved-away mark goes, after a key loss this
+	// is what tells the whole target from the source (R31-08, R31-09).
 	gen := time.Now().UnixNano()
 	if srcGen, ok, _ := liveGeneration(srcDir); ok && srcGen >= gen {
 		gen = srcGen + 1
@@ -1448,6 +1496,11 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 		if v, gerr := sm.rdb.Get(context.Background(), fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)).Result(); gerr != nil || v != targetPath {
 			return fmt.Errorf("%w: %w", errStorageKeyUnsure, err)
 		}
+	}
+	if err := clearMovedAway(dstDir); err != nil {
+		// The key names the target, so it is live; only a later key loss
+		// reads it wrong, and finishStorageMove clears it again.
+		log.Printf("storage: [warn] could not clear the moved-away mark of %s: %v", dstDir, err)
 	}
 
 	// Remove old directory (data is safe at target)

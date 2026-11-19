@@ -388,7 +388,7 @@ func nodeOwnedIdentities(root *os.Root, withBackups bool) map[fileIdentity]bool 
 			ids[id] = true
 		}
 	}
-	for _, n := range []string{".node_config.json", ".dylaris.json", ".active_server"} {
+	for _, n := range []string{".node_config.json", ".dylaris.json", ".active_server", metadataTempName, netGateFile, storageLiveMarker, storageMovedAwayMarker} {
 		if info, err := root.Lstat(n); err == nil {
 			add(info)
 		}

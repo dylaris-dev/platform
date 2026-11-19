@@ -161,7 +161,7 @@ func TestATargetMoveSharesTheDiskWithTheOtherWrites(t *testing.T) {
 	writesOn("").inflight.Store(4)
 	storage := t.TempDir()
 	zipPath := writeMoveZip(t, map[string]string{"survival/a": "1234", "survival/b": "5678"})
-	if err := extractMovedServer(zipPath, storage, filepath.Join(storage, "srv"), nil); !errors.Is(err, migration.ErrExtractBudget) {
+	if err := extractMovedServer(zipPath, storage, filepath.Join(storage, "srv"), nil, nil); !errors.Is(err, migration.ErrExtractBudget) {
 		t.Fatalf("err = %v, want the budget refusal", err)
 	}
 }

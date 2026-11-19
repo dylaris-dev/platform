@@ -54,6 +54,13 @@ func sweepInterruptedWork(roots []string) {
 				}
 				continue
 			}
+			// A copy removeCopy parked is no server's: only its delete failed.
+			if strings.HasPrefix(e.Name(), ".") && strings.Contains(e.Name(), parkedCopyInfix) {
+				if removeTree(filepath.Join(base, e.Name())) == nil {
+					removed++
+				}
+				continue
+			}
 			removed += sweepServerDir(filepath.Join(base, e.Name()), cutoff)
 		}
 	}
