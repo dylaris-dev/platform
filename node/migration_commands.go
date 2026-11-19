@@ -182,6 +182,12 @@ func writeMigrationStatus(ctx context.Context, rdb *redis.Client, nodeToken, ser
 	}
 }
 
+// migrateOutWritersWait is how long migrate_out waits for open writers to end
+// before refusing: Core bumps the Beam stamp as it sends the command, and a
+// stream sees that within beamRecheckEvery, an SFTP session at its next
+// recheck. A var so a test can shorten it; far under Core's stage wait.
+var migrateOutWritersWait = beamRecheckEvery + sftpRecheckInterval + 5*time.Second
+
 // handleMigrateOut (source side) stages the server's data directory as a zip
 // and publishes its hash. The orchestrator guarantees the server is already
 // stopped before this runs, so we archive the dir as-is.
@@ -220,7 +226,13 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 	// seconds after Core marks the server migrating: a write landing while the
 	// tree is read is missing from the copy or torn in it, and the source is
 	// deleted after cutover. Refused now, or dropped once the archive is read.
+	// The server is already stopped here, so a writer the access bump is about
+	// to end is waited for rather than refused.
 	writesSince, err := storage.watchWrites(serverUUID)
+	for deadline := time.Now().Add(migrateOutWritersWait); err != nil && time.Now().Before(deadline) && ctx.Err() == nil; {
+		time.Sleep(100 * time.Millisecond)
+		writesSince, err = storage.watchWrites(serverUUID)
+	}
 	if err != nil {
 		log.Printf("migrate_out %s: %v", serverUUID, err)
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", err.Error())

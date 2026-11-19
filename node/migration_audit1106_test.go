@@ -20,17 +20,26 @@ import (
 // the source was deleted after cutover, so the write was lost or torn. A held
 // writer now refuses the staging, and a write that began while the tree was
 // read drops the archive.
+// R39-06: Core stops the server and bumps the Beam stamp right before it sends
+// migrate_out, so a writer that the bump ends seconds later is waited for, not
+// refused - a refusal there takes the server down for a move that never runs.
 func TestAMigrateOutDoesNotStageOverAWrite(t *testing.T) {
+	prevWait := migrateOutWritersWait
+	t.Cleanup(func() { migrateOutWritersWait = prevWait })
+	migrateOutWritersWait = 2 * time.Second
 	tests := []struct {
 		name string
 		// before holds a writer across the whole run; during takes and
 		// releases one while the archive is written.
 		before, during bool
-		wantErr        string
+		// endsAfter releases a writer held at the start after this long.
+		endsAfter time.Duration
+		wantErr   string
 	}{
-		{"a write in progress", true, false, "in progress"},
-		{"a write while archiving", false, true, "written to the server while the move was staging"},
-		{"no write", false, false, ""},
+		{"a write in progress", true, false, 0, "in progress"},
+		{"a write the access bump ends", false, false, 200 * time.Millisecond, ""},
+		{"a write while archiving", false, true, 0, "written to the server while the move was staging"},
+		{"no write", false, false, 0, ""},
 	}
 	for i, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,6 +51,9 @@ func TestAMigrateOutDoesNotStageOverAWrite(t *testing.T) {
 			storage := &StorageManager{paths: []string{root}}
 			if tc.before {
 				defer storage.holdWriter(stagingTestUUID)()
+			}
+			if tc.endsAfter > 0 {
+				time.AfterFunc(tc.endsAfter, storage.holdWriter(stagingTestUUID))
 			}
 			prev := migrateOutArchive
 			t.Cleanup(func() { migrateOutArchive = prev })
