@@ -2850,7 +2850,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			break
 		}
 		handleMigrateIn(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.SourceNodeID, cmd.MigrateToken, cmd.ExpectedSha256, cmd.ExpectedSize, cmd.SourcePrivateIPs)
-		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit, cmd.Config.Docker.DiskGrace)
+		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, sentDiskLimit(payload), cmd.Config.Docker.DiskGrace)
 
 	case "migrate_cleanup":
 		// Source side: drop the staged archive + original dir.
@@ -2876,7 +2876,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			break
 		}
 		handleMigratePullR2(ctx, rdb, storage, id, cmd.Config.UUID, queue.MigrationProgressID(cmd.Config.UUID, cmd.Attempt), cmd.PresignedGetURL, cmd.ExpectedSha256, cmd.ExpectedSize)
-		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, cmd.Config.Docker.DiskLimit, cmd.Config.Docker.DiskGrace)
+		applyMovedDiskLimit(ctx, rdb, quota, storage.GetServerDir(cmd.Config.UUID), cmd.Config.UUID, sentDiskLimit(payload), cmd.Config.Docker.DiskGrace)
 
 	case "backup_run":
 		// Re-decode the full payload — BackupRunCommand has many fields
@@ -2953,21 +2953,41 @@ const busyStatusTTL = 30 * time.Second
 // passes busyStatusTTL.
 // applyMovedDiskLimit applies the limit a move command carried, once the
 // server's directory is on this node. A Core that predates the field sends
-// none, and "none" here means "not told", not "unlimited": that case keeps
-// whatever this node already knew instead of clearing it. grace is the disk
-// grace the server held on its source, empty when Core sent none.
-func applyMovedDiskLimit(ctx context.Context, rdb *redis.Client, quota *QuotaSet, serverDir, uuid string, limitMB int64, grace string) {
+// none (sent nil), and that means "not told", not "unlimited": that case keeps
+// whatever this node already knew instead of clearing it. An explicit 0 is
+// unlimited. grace is the disk grace the server held on its source, empty
+// when Core sent none.
+func applyMovedDiskLimit(ctx context.Context, rdb *redis.Client, quota *QuotaSet, serverDir, uuid string, sent *int64, grace string) {
 	if serverDir == "" {
 		return
 	}
 	if _, err := os.Stat(serverDir); err != nil {
 		return
 	}
-	if limitMB <= 0 {
-		limitMB = loadDiskLimit(ctx, rdb, uuid)
+	limitMB := loadDiskLimit(ctx, rdb, uuid)
+	if sent != nil {
+		limitMB = *sent
 	}
 	adoptMovedDiskGrace(ctx, rdb, uuid, limitMB, grace)
 	applyDiskLimit(ctx, rdb, quota, uuid, limitMB)
+}
+
+// sentDiskLimit is the config.docker.diskLimit a move command carried, nil
+// when it carried none. NodeCommand's int64 cannot tell an absent field (an
+// older Core) from Core's explicit 0 (unlimited), and a stale cached cap
+// filled that 0 in.
+func sentDiskLimit(payload string) *int64 {
+	var p struct {
+		Config struct {
+			Docker struct {
+				DiskLimit *int64 `json:"diskLimit"`
+			} `json:"docker"`
+		} `json:"config"`
+	}
+	if json.Unmarshal([]byte(payload), &p) != nil {
+		return nil
+	}
+	return p.Config.Docker.DiskLimit
 }
 
 // discardIfDeleted removes what an install wrote after its server was deleted

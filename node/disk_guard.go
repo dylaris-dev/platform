@@ -210,9 +210,11 @@ func assignNewServerQuota(ctx context.Context, rdb *redis.Client, q quotaAssigne
 	}
 	if limitMB > 0 {
 		recordDiskLimit(ctx, rdb, uuid, limitMB)
-		if err := q.SetLimit(uuid, limitMB); err != nil {
-			log.Printf("Quota limit warning for %s: %v", uuid, err)
-		}
+	}
+	// An unlimited create sets 0 too: a delete leaves the project's hard limit
+	// in the filesystem, and a server re-created under that uuid inherited it.
+	if err := q.SetLimit(uuid, max(limitMB, 0)); err != nil {
+		log.Printf("Quota limit warning for %s: %v", uuid, err)
 	}
 }
 

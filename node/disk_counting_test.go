@@ -1037,3 +1037,16 @@ func TestABootAfterRedisLostItRepairsTheGraceWithoutAWalk(t *testing.T) {
 		})
 	}
 }
+
+// R40-09: a delete leaves the project's hard limit in the filesystem, and a
+// server re-created under the same uuid with no limit inherited it, because
+// only a limited create set one.
+func TestAnUnlimitedCreateClearsAnInheritedHardLimit(t *testing.T) {
+	rdb := newDiskGuardRedis(t)
+	ctx := context.Background()
+	q := &fakeQuota{limitMB: 10240, after: usageOf(0, 0)}
+	assignNewServerQuota(ctx, rdb, q, "srv", 0)
+	if q.limitMB != 0 {
+		t.Fatalf("hard limit after an unlimited create = %d MB, want 0", q.limitMB)
+	}
+}
