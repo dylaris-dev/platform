@@ -923,6 +923,7 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 		budget: nodeWriteBudget(serverDir)}
 	if lim.disk >= 0 {
 		w.srv, w.uuid = uploadServerInflight(ref.UUID), ref.UUID
+		w.budget.streamsOn(ref.UUID, max(prior-baseline, 0))
 	}
 	held = true
 	return w, nil
@@ -1116,6 +1117,9 @@ func (m *meteredSFTPWriter) Close() error {
 		// Into the gauge before out of the count, so no check in between sees
 		// neither.
 		noteDiskWrite(context.Background(), m.rdb, m.uuid, m.maxEnd-m.prior)
+		if m.budget != nil {
+			m.budget.unstream()
+		}
 		m.srv.Add(-m.added())
 	}
 	if m.budget != nil {

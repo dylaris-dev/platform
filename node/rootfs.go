@@ -749,6 +749,10 @@ type writeBudget struct {
 	onDisk                      int64
 	disk                        *diskWrites
 	srvCap, srv0, sftp0, noted0 int64
+	// stream is the server's streamed count the written bytes are marked on,
+	// past the first skip of them; streamed is what this budget marked there.
+	stream         *streamedBytes
+	skip, streamed int64
 }
 
 // errServerDiskLimit ends a tenant's copy or install that would take the
@@ -897,6 +901,7 @@ func nodeWriteBudget(dir string) *writeBudget {
 // write as measured now, less what is reserved on it.
 func (b *writeBudget) boundServer(uuid string, headroom int64) {
 	b.srv, b.uuid = serverInflightOf(uuid), uuid
+	b.streamsOn(uuid, 0)
 	b.srv0, b.sftp0, b.noted0 = b.srv.Load(), uploadServerInflight(uuid).Load(), notedFor(uuid).Load()
 	b.srvCap = headroom - b.srv0
 	if b.srvCap < b.left {
@@ -904,13 +909,31 @@ func (b *writeBudget) boundServer(uuid string, headroom int64) {
 	}
 }
 
+// streamsOn marks what the budget writes, past its first skip bytes, as
+// streamed on uuid's server, for a write whose bytes stay reserved against the
+// server until it ends. boundServer does it for its own reservation; an SFTP
+// handle reserves on uploadServerInflight and calls it itself, since a
+// measurement mid-upload held its bytes too and every check counted them
+// twice. skip is what the gauge still holds of a file a truncating open freed:
+// the close notes only the growth past it.
+func (b *writeBudget) streamsOn(uuid string, skip int64) {
+	b.stream, b.skip = serverStreamedOf(uuid), skip
+}
+
+// unstream takes this budget's bytes back out of the server's streamed count.
+// Called before the reservation holding them drops, so no measurement takes
+// off bytes no longer reserved.
+func (b *writeBudget) unstream() {
+	if b.stream != nil {
+		b.stream.add(-b.streamed)
+		b.streamed = 0
+	}
+}
+
 func (b *writeBudget) release() {
 	b.disk.onDisk.Add(-b.onDisk)
-	if b.srv != nil {
-		// Before the remeasure below and before srv drops, so no measurement
-		// takes off bytes the reservation no longer holds.
-		serverStreamedOf(b.uuid).add(-b.onDisk)
-	}
+	// Before the remeasure below and before srv drops.
+	b.unstream()
 	b.onDisk = 0
 	b.disk.inflight.Add(-b.used)
 	b.disk.landed.Add(b.used)
@@ -967,8 +990,10 @@ func (b *writeBudget) spend(n int64) bool {
 func (b *writeBudget) written(n int64) {
 	b.onDisk += n
 	b.disk.onDisk.Add(n)
-	if b.srv != nil {
-		serverStreamedOf(b.uuid).add(n)
+	if b.stream != nil {
+		s := max(b.onDisk-b.skip, 0)
+		b.stream.add(s - b.streamed)
+		b.streamed = s
 	}
 }
 
