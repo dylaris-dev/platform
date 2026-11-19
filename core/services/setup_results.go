@@ -324,6 +324,12 @@ func ApplyImportedManifest(st importManifestStore, srv *models.Server, subServer
 		log.Printf("setup result: server %q reported a description for no sub-server", srv.UUID)
 		return
 	}
+	// A selective archive left out files its rows describe - mod jars, the
+	// loader - so the new server gets none of them, as an overlaid restore does.
+	if PartialManifest(m) {
+		log.Printf("setup result: server %q: a selective archive, its install and mod rows are not applied", srv.UUID)
+		return
+	}
 
 	if in := manifestInstallForImport(m); in != nil {
 		rec := *in

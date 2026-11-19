@@ -26,7 +26,9 @@ func (f *selectiveJobStore) GetBackupJob(id int) (*models.BackupJob, error) {
 // patterns left out (R39-03). Core sends such a run only as an overlay, and only
 // to a node that says it can do one.
 func TestRestoreRun_SelectiveRunNeedsANodeThatOverlays(t *testing.T) {
-	partial, _ := json.Marshal(services.BackupManifest{Schema: services.BackupManifestSchema, Partial: true})
+	yes, no := true, false
+	partial, _ := json.Marshal(services.BackupManifest{Schema: services.BackupManifestSchema, Partial: &yes})
+	full, _ := json.Marshal(services.BackupManifest{Schema: services.BackupManifestSchema, Partial: &no})
 	tests := []struct {
 		name             string
 		include, exclude []string
@@ -43,6 +45,9 @@ func TestRestoreRun_SelectiveRunNeedsANodeThatOverlays(t *testing.T) {
 		// The job lost its patterns after the run: the run's own manifest says.
 		{"partial manifest, job now full, old node", nil, nil, string(partial), false, http.StatusConflict, false},
 		{"partial manifest, job now full, new node", nil, nil, string(partial), true, http.StatusOK, true},
+		// The job got a pattern after a full run (R40-05): still a full restore.
+		{"full manifest, job now selective, old node", nil, []string{"logs/**"}, string(full), false, http.StatusOK, false},
+		{"full manifest, job now selective, new node", nil, []string{"logs/**"}, string(full), true, http.StatusOK, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

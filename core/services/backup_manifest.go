@@ -40,8 +40,9 @@ type BackupManifest struct {
 	Scope string `json:"scope"`
 	// Partial: the job had include or exclude patterns, so the archive holds
 	// only part of Scope. Recorded per run because a job's patterns can change
-	// after it ran.
-	Partial bool `json:"partial,omitempty"`
+	// after it ran. A pointer so a recorded false (a full run) is told apart
+	// from a manifest that predates the field; only the latter asks the job.
+	Partial *bool `json:"partial,omitempty"`
 	// Installs is how each covered sub-server was installed. Same records the
 	// run row has carried since install_snapshot existed.
 	Installs []models.SubServerInstall `json:"installs"`
@@ -241,8 +242,20 @@ func SelectiveBackupJob(job *models.BackupJob) bool {
 // The run's own manifest is the record; the job's patterns today cover runs
 // from before manifests said so.
 func PartialBackupRun(run *models.BackupRun, job *models.BackupJob) bool {
-	if m, ok := DecodeBackupManifest(run.Manifest); ok && m.Partial {
-		return true
+	if m, ok := DecodeBackupManifest(run.Manifest); ok && m.Partial != nil {
+		return *m.Partial
 	}
 	return SelectiveBackupJob(job)
+}
+
+// RecordBackupManifestPartial writes job's answer into m, a full run included.
+func RecordBackupManifestPartial(m *BackupManifest, job *models.BackupJob) {
+	p := SelectiveBackupJob(job)
+	m.Partial = &p
+}
+
+// PartialManifest reports whether m recorded that its archive holds only part
+// of its scope.
+func PartialManifest(m *BackupManifest) bool {
+	return m != nil && m.Partial != nil && *m.Partial
 }

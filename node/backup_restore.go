@@ -461,7 +461,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	// failure here still leaves the live tree untouched, and the swap below
 	// stays the one atomic step.
 	if cmd.Overlay && extracted > 0 {
-		if err := seedStageFromLive(targetDir, stageRoot, budget, cmd.SubServer); err != nil {
+		if err := seedStageFromLive(rootDir, stageRoot, budget, cmd.SubServer); err != nil {
 			stageCleanup()
 			if errors.Is(err, errUnpackBudget) {
 				err = errRestoreDiskBudget
@@ -589,24 +589,42 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	log.Printf("Restore %d completed: %d files in %v", cmd.RunID, extracted, time.Since(started))
 }
 
-// seedStageFromLive copies every live entry under targetDir that the extracted
-// stage does not have into the stage, so the swap replaces only what the
-// archive holds. Read through a Root at targetDir, so a tenant's link cannot
-// make the node copy something from outside the server in; written through the
-// stage Root and charged to the restore's budget like an extracted entry.
+// seedStageFromLive copies every live entry of subServer in the server at
+// rootDir that the extracted stage does not have into the stage, so the swap
+// replaces only what the archive holds. Read through a Root at the sub-server,
+// reached one real directory at a time from the server root, so a tenant's link
+// - in the tree or in place of the sub-server itself - cannot make the node copy
+// something from outside it in; written through the stage Root and charged to
+// the restore's budget like an extracted entry.
 // A copy rather than a rename: until the swap the live tree is not touched, so
 // any failure leaves the server as it was.
 // ponytail: costs the unchanged files' size in free disk for the restore's
 // length; moving them across after the stop would avoid it but gives up that.
-func seedStageFromLive(targetDir string, stage *os.Root, budget *writeBudget, subServer string) error {
-	live, err := os.OpenRoot(targetDir)
+func seedStageFromLive(rootDir string, stage *os.Root, budget *writeBudget, subServer string) error {
+	live, err := os.OpenRoot(rootDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil // nothing live to keep
 	}
 	if err != nil {
 		return err
 	}
-	defer live.Close()
+	defer func() { live.Close() }()
+	// The backup leaves these out under any name (storedIdentities); a copy of
+	// one is a new inode the MC uid is then handed.
+	deny := nodeOwnedIdentities(live, true)
+	if subServer != "" {
+		for _, c := range strings.Split(filepath.ToSlash(filepath.Clean(subServer)), "/") {
+			next, err := openRealDirIn(live, c)
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			live.Close()
+			live = next
+		}
+	}
 	return fs.WalkDir(live.FS(), ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -653,11 +671,17 @@ func seedStageFromLive(targetDir string, stage *os.Root, budget *writeBudget, su
 			}
 			return stage.Symlink(to, name)
 		case info.Mode().IsRegular():
-			src, err := live.Open(name)
+			src, err := openRegularIn(live, name)
 			if err != nil {
 				return err
 			}
 			defer src.Close()
+			if st, err := src.Stat(); err != nil {
+				return err
+			} else if !nodeOwnedRestoreName(subServer, name) && deniedIdentity(st, deny) {
+				log.Printf("restore: not keeping %q: it is a second name of one of the node's own files", name)
+				return nil
+			}
 			dst, err := createIn(stage, name, info.Mode().Perm())
 			if err != nil {
 				return err

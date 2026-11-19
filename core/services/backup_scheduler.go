@@ -1037,7 +1037,7 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	// mod rows as they were and could not say which sub-server it covered.
 	// Same bytes on the row and in the archive, as on the manual path.
 	m := BuildBackupManifest(b.store, srv.ID, subServer, b.releaseVersion)
-	m.Partial = SelectiveBackupJob(&job)
+	RecordBackupManifestPartial(m, &job)
 	manifest := EncodeBackupManifest(m)
 	if len(manifest) > 0 {
 		if err := b.store.SetBackupRunManifest(runID, string(manifest)); err != nil {

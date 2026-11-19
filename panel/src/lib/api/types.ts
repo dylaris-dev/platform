@@ -646,6 +646,8 @@ export interface BackupRun {
     sizeBytes: number;
     storageKey: string;
     errorMessage: string;
+    // Whether a restore overlays; absent from a Core before it said so.
+    partial?: boolean;
 }
 
 export const listBackupStorages = (): Promise<{ success: boolean; storages?: BackupStorage[] }> =>

@@ -109,6 +109,12 @@ func openBackupRoot(dir string, create bool) (*os.Root, error) {
 			return nil, err
 		}
 	}
+	return openRealDirIn(parent, name)
+}
+
+// openRealDirIn opens the directory name, one component, in parent as a Root of
+// its own, and refuses it unless it is a real directory there.
+func openRealDirIn(parent *os.Root, name string) (*os.Root, error) {
 	st, err := parent.Lstat(name)
 	if err != nil {
 		return nil, err

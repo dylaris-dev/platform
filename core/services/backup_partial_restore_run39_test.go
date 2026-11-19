@@ -12,7 +12,8 @@ import (
 // the manifest's rows dropped the row of every mod installed after the backup
 // while its jar stayed on disk (R39-03).
 func TestRestoreRows_SelectiveRunLeavesTheRowsAlone(t *testing.T) {
-	build := func(partial bool) string {
+	yes, no := true, false
+	build := func(partial *bool) string {
 		b, _ := json.Marshal(&BackupManifest{
 			Schema:   BackupManifestSchema,
 			Partial:  partial,
@@ -27,10 +28,11 @@ func TestRestoreRows_SelectiveRunLeavesTheRowsAlone(t *testing.T) {
 		job       *models.BackupJob
 		wantTouch bool
 	}{
-		{"full run", build(false), nil, true},
-		{"partial manifest", build(true), nil, false},
-		{"job with include patterns", build(false), &models.BackupJob{IncludePatterns: []string{"world/**"}}, false},
-		{"job with exclude patterns", build(false), &models.BackupJob{ExcludePatterns: []string{"logs/**"}}, false},
+		{"full run", build(&no), nil, true},
+		{"partial manifest", build(&yes), nil, false},
+		// Manifests from before the field: the job's patterns answer.
+		{"job with include patterns", build(nil), &models.BackupJob{IncludePatterns: []string{"world/**"}}, false},
+		{"job with exclude patterns", build(nil), &models.BackupJob{ExcludePatterns: []string{"logs/**"}}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -51,7 +53,8 @@ func TestRestoreRows_SelectiveRunLeavesTheRowsAlone(t *testing.T) {
 // The manifest records the patterns per run, because a job's patterns can be
 // cleared after it ran and the run's archive stays partial.
 func TestPartialBackupRun(t *testing.T) {
-	partial, _ := json.Marshal(&BackupManifest{Schema: BackupManifestSchema, Partial: true})
+	yes := true
+	partial, _ := json.Marshal(&BackupManifest{Schema: BackupManifestSchema, Partial: &yes})
 	full, _ := json.Marshal(&BackupManifest{Schema: BackupManifestSchema})
 	tests := []struct {
 		name     string

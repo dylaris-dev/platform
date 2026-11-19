@@ -219,7 +219,8 @@ export default function ServerBackupsView() {
     const [restoreHistory, setRestoreHistory] = useState<BackupRestore[]>([]);
     // Core restores a selective run as an overlay: the files its patterns left out stay.
     const restoreJob = restoreTarget ? jobs.find(j => j.id === restoreTarget.jobId) : undefined;
-    const restoreIsSelective = (restoreJob?.includePatterns?.length || 0) + (restoreJob?.excludePatterns?.length || 0) > 0;
+    // The run's own record wins: its job's patterns may have changed since it ran.
+    const restoreIsSelective = restoreTarget?.partial ?? (restoreJob?.includePatterns?.length || 0) + (restoreJob?.excludePatterns?.length || 0) > 0;
     const [expandedJobs, setExpandedJobs] = useState<Set<number>>(new Set());
     const toggleRuns = (id: number) => setExpandedJobs(prev => {
         const next = new Set(prev);

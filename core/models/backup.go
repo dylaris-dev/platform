@@ -98,6 +98,9 @@ type BackupRun struct {
 	// rows alone, which is the honest answer when nobody wrote down what was
 	// there.
 	Manifest string `json:"-"`
+	// Partial is whether a restore of this run overlays (services.PartialBackupRun),
+	// filled in for the run list only, so the panel's warning says what Core does.
+	Partial *bool `json:"partial,omitempty"`
 	// UploadID and PartSize describe the multipart upload Core started for this
 	// run on object storage; empty and 0 until the node first asked for part
 	// URLs, and always empty for filesystem targets. Not serialized: an upload

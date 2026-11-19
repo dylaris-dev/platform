@@ -732,7 +732,7 @@ func (h *BackupHandler) TriggerJob(w http.ResponseWriter, r *http.Request) {
 // ListRuns GET /api/backup-jobs/{jobId}/runs - the 50 most recent runs of one
 // schedule.
 func (h *BackupHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
-	jobID, _, ok := h.resolveJobWithAccess(w, r, "backups.read")
+	jobID, job, ok := h.resolveJobWithAccess(w, r, "backups.read")
 	if !ok {
 		return
 	}
@@ -743,6 +743,10 @@ func (h *BackupHandler) ListRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	if runs == nil {
 		runs = []models.BackupRun{}
+	}
+	for i := range runs {
+		p := services.PartialBackupRun(&runs[i], job)
+		runs[i].Partial = &p
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "runs": runs})
 }
@@ -1340,7 +1344,7 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// refuse a backup. The restore side already treats an absent manifest as
 	// "this archive says nothing" and leaves the rows alone.
 	m := services.BuildBackupManifest(h.d.Store, srv.ID, deref(job.SubServer), h.d.ReleaseVersion)
-	m.Partial = services.SelectiveBackupJob(job)
+	services.RecordBackupManifestPartial(m, job)
 	manifest := services.EncodeBackupManifest(m)
 	if len(manifest) > 0 {
 		if err := h.d.Store.SetBackupRunManifest(runID, string(manifest)); err != nil {
