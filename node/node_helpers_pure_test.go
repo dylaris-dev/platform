@@ -124,6 +124,13 @@ func TestMatchAny(t *testing.T) {
 		{"double-star pattern does NOT match a nested dir unless anchored at root", "world/logs/latest.log", []string{"logs/**"}, false},
 		{"double-star pattern matches when anchored at the correct root prefix", "world/logs/latest.log", []string{"world/logs/**"}, true},
 		{"double-star pattern matches the bare directory itself", "world/logs", []string{"world/logs/**"}, true},
+		// A pattern that names a directory covers what is under it, so an
+		// include of "world" acts like "world/**" instead of archiving only
+		// the empty directory entry.
+		{"pattern naming a directory matches its children", "world/region/r.0.0.mca", []string{"world"}, true},
+		{"pattern naming a nested directory matches its children", "plugins/Essentials/config.yml", []string{"plugins/Essentials"}, true},
+		{"glob naming a directory matches its children", "world_nether/DIM-1/r.0.0.mca", []string{"world_*"}, true},
+		{"sibling with a shared prefix is not a child", "worldedit/config.yml", []string{"world"}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

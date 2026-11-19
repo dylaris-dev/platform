@@ -1079,12 +1079,14 @@ func writeServerArchivePaced(w io.Writer, serverRoot, rootDir string, include, e
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
+		// Only a file is content: an archive of bare directory entries must
+		// still fail as "nothing matched", as the restore side counts it.
 		if f != nil {
 			if err := copyExactly(tw, pace(f), hdr.Size); err != nil {
 				return err
 			}
+			addedAny = true
 		}
-		addedAny = true
 		return nil
 	})
 
@@ -1356,6 +1358,23 @@ func deleteBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 // archive root) matches any of the glob patterns. Patterns ending in /**
 // match everything below a directory; otherwise filepath.Match semantics.
 func matchAny(path string, patterns []string) bool {
+	// A pattern that names a directory covers everything under it, so an
+	// include of "world" archives the world rather than one empty directory
+	// entry. Exclude already behaved this way by skipping the directory.
+	for dir := path; ; {
+		i := strings.LastIndex(dir, "/")
+		if i <= 0 {
+			break
+		}
+		dir = dir[:i]
+		if matchOne(dir, patterns) {
+			return true
+		}
+	}
+	return matchOne(path, patterns)
+}
+
+func matchOne(path string, patterns []string) bool {
 	for _, p := range patterns {
 		if p == "" {
 			continue

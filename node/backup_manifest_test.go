@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -90,6 +91,45 @@ func TestWriteServerArchive_ManifestDoesNotCountAsContent(t *testing.T) {
 	}
 	if added {
 		t.Error("added = true with no file matched; the manifest was counted as content")
+	}
+}
+
+// An include that names a folder archives the folder's files, and an archive
+// holding only directory entries is not content: added must be false so the
+// run fails as "nothing matched" instead of reporting an empty success.
+func TestWriteServerArchive_IncludeOfADirectory(t *testing.T) {
+	cases := []struct {
+		name      string
+		include   []string
+		wantAdded bool
+		wantName  string
+	}{
+		{"bare directory name archives its files", []string{"world"}, true, "world/level.dat"},
+		{"double-star form archives its files", []string{"world/**"}, true, "world/level.dat"},
+		{"pattern matching only an empty directory adds nothing", []string{"empty"}, false, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := seedServer(t)
+			if err := os.MkdirAll(filepath.Join(root, "empty", "sub"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var buf bytes.Buffer
+			added, err := writeServerArchive(&buf, root, root, c.include, nil, nil)
+			if err != nil {
+				t.Fatalf("writeServerArchive: %v", err)
+			}
+			if added != c.wantAdded {
+				t.Fatalf("added = %v, want %v", added, c.wantAdded)
+			}
+			if c.wantName == "" {
+				return
+			}
+			names := entryNames(t, &buf)
+			if !slices.Contains(names, c.wantName) {
+				t.Fatalf("entries = %v, want %q among them", names, c.wantName)
+			}
+		})
 	}
 }
 
