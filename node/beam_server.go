@@ -267,7 +267,7 @@ func (s *beamServer) auditBeam(ctx context.Context, serverUUID, kind, rel string
 	var ip string
 	if p, ok := peer.FromContext(ctx); ok && p != nil {
 		if _, direct := p.AuthInfo.(credentials.TLSInfo); direct {
-			ip = remoteAddr(p.Addr)
+			ip = peerHost(p.Addr)
 		}
 	}
 	a := newSFTPAudit(s.extractUsername(ctx), ip)

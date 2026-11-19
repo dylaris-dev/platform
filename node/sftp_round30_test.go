@@ -390,3 +390,20 @@ func TestSFTPANameNoAccountCanHaveWritesNoKeyOfItsOwn(t *testing.T) {
 		}
 	}
 }
+
+// R28-06: the audit trail took the limits' /64, so every device of one IPv6
+// subscriber shared one entry and the actor's address was gone.
+func TestPeerHostKeepsTheWholeAddress(t *testing.T) {
+	for _, tc := range []struct {
+		addr net.Addr
+		want string
+	}{
+		{&net.TCPAddr{IP: net.ParseIP("2001:db8:1:2::abcd"), Port: 2022}, "2001:db8:1:2::abcd"},
+		{&net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 2022}, "203.0.113.7"},
+		{nil, ""},
+	} {
+		if got := peerHost(tc.addr); got != tc.want {
+			t.Errorf("peerHost(%v) = %q, want %q", tc.addr, got, tc.want)
+		}
+	}
+}

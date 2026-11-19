@@ -151,15 +151,22 @@ func bookDailyUsage(ctx context.Context, rdb *redis.Client, username string, n i
 // limits count by: an IPv4 address, or an IPv6 /64 - one subscriber holds a
 // whole /64, so counting single IPv6 addresses counts nothing.
 func remoteAddr(a net.Addr) string {
+	host := peerHost(a)
+	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
+		return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+	}
+	return host
+}
+
+// peerHost is the host part of a connection's peer address, unmasked: what an
+// audit record names, where a /64 would stand for every device behind it.
+func peerHost(a net.Addr) string {
 	if a == nil {
 		return ""
 	}
 	host, _, err := net.SplitHostPort(a.String())
 	if err != nil {
 		host = a.String()
-	}
-	if ip := net.ParseIP(host); ip != nil && ip.To4() == nil {
-		return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 	}
 	return host
 }
@@ -406,7 +413,7 @@ func (s *SFTPServer) handleConn(conn net.Conn, config *ssh.ServerConfig) {
 	servers, _ := s.getUserServers(username)
 	set := &atomic.Pointer[sftpServerSet]{}
 	set.Store(newServerSet(servers))
-	audit := newSFTPAudit(username, remoteAddr(conn.RemoteAddr()))
+	audit := newSFTPAudit(username, peerHost(conn.RemoteAddr()))
 
 	// The server list and the credential were read once, at sign-in, and the
 	// session then ran on that snapshot for as long as the client stayed - a
