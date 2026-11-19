@@ -77,3 +77,45 @@ func TestTheUploadSweeperFindsTempsAtEveryDepth(t *testing.T) {
 		t.Errorf("the sweeper deleted a file that is not ours: %v", err)
 	}
 }
+
+// R32-07: a copy's temp sits next to its destination as .copy-<hex>.tmp, and
+// only the copy itself removed it, so a node restart mid-copy left it on the
+// server's disk for good.
+func TestTheUploadSweeperRemovesStaleCopyTemps(t *testing.T) {
+	root := t.TempDir()
+	sm := NewStorageManager(root, nil)
+	serverDir := filepath.Join(root, "srv-uuid")
+	for _, tc := range []struct {
+		rel  string
+		age  time.Duration
+		gone bool
+	}{
+		{filepath.Join("survival", "world", ".copy-0123456789abcdef.tmp"), time.Hour, true},
+		// A copy still running writes continuously; one a minute idle is not dead.
+		{filepath.Join("survival", ".copy-fedcba9876543210.tmp"), time.Minute, false},
+		// Not the copy's pattern: the tenant's own file.
+		{filepath.Join("survival", ".copy-notes.txt"), time.Hour, false},
+		{filepath.Join("survival", ".copy-notes.tmp"), time.Hour, false},
+	} {
+		p := filepath.Join(serverDir, tc.rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("partial"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Now().Add(-tc.age)
+		if err := os.Chtimes(p, when, when); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			_, err := os.Stat(p)
+			if gone := os.IsNotExist(err); gone != tc.gone {
+				t.Errorf("%s (%s old): removed %v, want %v", tc.rel, tc.age, gone, tc.gone)
+			}
+		}()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sweepStaleUploadTemps(ctx, sm, nil)
+}

@@ -594,6 +594,10 @@ func publishBeamEndpoint(ctx context.Context, rdb *redis.Client, nodeID, port st
 // claimUploadTemp's): a slow uplink or a shared throttle left a live upload's
 // mtime older than the grace, and the upload failed at its rename after the
 // whole transfer. nil = none is held.
+//
+// It takes a file copy's .copy-<hex>.tmp temps (copyFileIn) too: only the copy
+// itself removed one, so a node restart mid-copy kept it on the server's disk
+// for good.
 func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager, held func(key string) bool) {
 	const (
 		grace = 15 * time.Second
@@ -604,6 +608,9 @@ func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager, held func(ke
 		// often also makes it less likely to catch a live upload whose client
 		// stalled for longer than the grace period.
 		every = 5 * time.Minute
+		// A copy writes as fast as the disk takes it and holds no stream key,
+		// so its grace is long enough that only a dead copy is that idle.
+		copyGrace = 10 * time.Minute
 	)
 	sweep := func() {
 		for _, base := range sm.Paths() {
@@ -637,11 +644,18 @@ func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager, held func(ke
 						// one unreadable corner must not stop the rest of the sweep.
 						return nil
 					}
-					if !strings.HasPrefix(d.Name(), ".beam-upload-") {
+					g := grace
+					switch n := d.Name(); {
+					case strings.HasPrefix(n, ".beam-upload-"):
+					// Exactly createTempIn's 16 hex digits, so a tenant's own
+					// .copy-something.tmp is left alone.
+					case len(n) == len(".copy-")+16+len(".tmp") && strings.HasPrefix(n, ".copy-") && strings.HasSuffix(n, ".tmp"):
+						g = copyGrace
+					default:
 						return nil
 					}
 					info, ierr := d.Info()
-					if ierr != nil || now.Sub(info.ModTime()) < grace {
+					if ierr != nil || now.Sub(info.ModTime()) < g {
 						return nil
 					}
 					if held != nil && held(e.Name()+"/"+name) {

@@ -22,12 +22,15 @@ func TestSFTPWrittenBytesCountOnceAgainstTheServerLimit(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		flags uint32
-		// seed is what the file holds before the open.
-		seed int
+		// seed is what the file holds before the open; more is written after
+		// the mid-upload measurement, before the close.
+		seed, more int
 	}{
-		{"new file", 0x02 | 0x08 | 0x10, 0},
-		{"truncating overwrite", 0x02 | 0x08 | 0x10, 50},
-		{"append past the old end", 0x02 | 0x08, 50},
+		{"new file", 0x02 | 0x08 | 0x10, 0, 0},
+		{"truncating overwrite", 0x02 | 0x08 | 0x10, 50, 0},
+		{"append past the old end", 0x02 | 0x08, 50, 0},
+		// R32-06: measured while the new file is still shorter than the old.
+		{"truncating overwrite measured below the old size", 0x02 | 0x08 | 0x10, 500, 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withDiskBudget(t, 1<<20, 1000)
@@ -87,6 +90,11 @@ func TestSFTPWrittenBytesCountOnceAgainstTheServerLimit(t *testing.T) {
 			}
 			if _, left, ok := serverDiskHeadroom(dir); !ok || left != 1<<20-want {
 				t.Errorf("headroom %d (ok %v) mid-upload, want %d", left, ok, 1<<20-want)
+			}
+			if tc.more > 0 {
+				if _, err := w.WriteAt(make([]byte, tc.more), off+200); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if err := w.(io.Closer).Close(); err != nil {
 				t.Fatal(err)

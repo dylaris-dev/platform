@@ -751,8 +751,8 @@ type writeBudget struct {
 	srvCap, srv0, sftp0, noted0 int64
 	// stream is the server's streamed count the written bytes are marked on,
 	// past the first skip of them; streamed is what this budget marked there.
-	stream         *streamedBytes
-	skip, streamed int64
+	stream               *streamedBytes
+	skip, streamed, owed int64
 }
 
 // errServerDiskLimit ends a tenant's copy or install that would take the
@@ -801,8 +801,10 @@ func serverInflightOf(uuid string) *atomic.Int64 {
 // disk and still hold reserved on serverInflight. A measurement of the server
 // holds those bytes too, so it takes them off: every check adds serverInflight
 // to a measurement, and one large upload counted twice refused writes that fit.
-// gone only grows, by what left live.
-type streamedBytes struct{ live, gone atomic.Int64 }
+// gone only grows, by what left live. owed is the other way round: what a
+// truncating overwrite freed and has not written back yet, which the gauge is
+// meant to keep until the close and a measurement no longer sees.
+type streamedBytes struct{ live, gone, owed atomic.Int64 }
 
 var serverStreamed sync.Map // uuid -> *streamedBytes
 
@@ -828,12 +830,15 @@ func streamedBefore(uuid string) func(measured int64) int64 {
 	c := serverStreamedOf(uuid)
 	gone0 := c.gone.Load()
 	live0 := c.live.Load()
+	// Read before the walk, so a handle writing during it is at most counted
+	// short of what it wrote, never as having freed more than it did.
+	owed0 := c.owed.Load()
 	return func(measured int64) int64 {
 		if measured < 0 {
 			return measured
 		}
 		off := live0 - (c.gone.Load() - gone0)
-		return max(measured-max(off, 0), 0)
+		return max(measured-max(off, 0), 0) + owed0
 	}
 }
 
@@ -918,6 +923,17 @@ func (b *writeBudget) boundServer(uuid string, headroom int64) {
 // the close notes only the growth past it.
 func (b *writeBudget) streamsOn(uuid string, skip int64) {
 	b.stream, b.skip = serverStreamedOf(uuid), skip
+	b.mark()
+}
+
+// mark brings the server's streamed and owed counts up to what this budget has
+// on the disk: the bytes past skip are streamed, the part of skip not written
+// back yet is owed.
+func (b *writeBudget) mark() {
+	s, o := max(b.onDisk-b.skip, 0), max(b.skip-b.onDisk, 0)
+	b.stream.add(s - b.streamed)
+	b.stream.owed.Add(o - b.owed)
+	b.streamed, b.owed = s, o
 }
 
 // unstream takes this budget's bytes back out of the server's streamed count.
@@ -926,7 +942,8 @@ func (b *writeBudget) streamsOn(uuid string, skip int64) {
 func (b *writeBudget) unstream() {
 	if b.stream != nil {
 		b.stream.add(-b.streamed)
-		b.streamed = 0
+		b.stream.owed.Add(-b.owed)
+		b.streamed, b.owed = 0, 0
 	}
 }
 
@@ -991,9 +1008,7 @@ func (b *writeBudget) written(n int64) {
 	b.onDisk += n
 	b.disk.onDisk.Add(n)
 	if b.stream != nil {
-		s := max(b.onDisk-b.skip, 0)
-		b.stream.add(s - b.streamed)
-		b.streamed = s
+		b.mark()
 	}
 }
 
