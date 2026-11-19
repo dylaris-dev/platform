@@ -900,7 +900,7 @@ func (v *virtualFS) resolve(path string) (string, string, sftpServerRef, error) 
 func (v *virtualFS) holdWriterFor(p string, need func(sftpServerRef) bool) (func(), bool) {
 	name := strings.SplitN(strings.TrimPrefix(filepath.ToSlash(filepath.Clean("/"+p)), "/"), "/", 2)[0]
 	ref, ok := v.current().nameToRef[name]
-	if !ok || !need(ref) {
+	if !ok || !need(ref) || v.storageMgr.writesWithdrawn(ref.UUID) {
 		return func() {}, false
 	}
 	return v.storageMgr.holdWriter(ref.UUID), true
@@ -982,7 +982,7 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	if err != nil || realPath == "" {
 		return nil, os.ErrPermission
 	}
-	if !ref.Write {
+	if !ref.Write || v.storageMgr.writesWithdrawn(ref.UUID) {
 		return nil, os.ErrPermission
 	}
 	if protectedRel(rel) {
@@ -1047,7 +1047,7 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	lim := sftpWriteLimits(context.Background(), v.rdb, ref.UUID, v.username)
 	w := &meteredSFTPWriter{f: f, prior: prior, noted0: noted0, booked0: booked0, ceil: lim.disk, reason: "server disk limit", fileCap: lim.file, dailyCap: lim.daily,
 		baseline: baseline, maxEnd: baseline, rdb: v.rdb, username: v.username, pending: uploadAccountInflight(v.username),
-		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write }), release: release, open: v.open,
+		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write && !v.storageMgr.writesWithdrawn(r.UUID) }), release: release, open: v.open,
 		// After the open, so the space a truncating overwrite freed is free.
 		budget: nodeWriteBudget(serverDir)}
 	if lim.disk >= 0 {

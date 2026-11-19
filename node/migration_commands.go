@@ -182,11 +182,14 @@ func writeMigrationStatus(ctx context.Context, rdb *redis.Client, nodeToken, ser
 	}
 }
 
-// migrateOutWritersWait is how long migrate_out waits for open writers to end
-// before refusing: Core bumps the Beam stamp as it sends the command, and a
-// stream sees that within beamRecheckEvery, an SFTP session at its next
-// recheck. A var so a test can shorten it; far under Core's stage wait.
+// migrateOutWritersWait is how long migrate_out waits for its writes to go
+// quiet before refusing: a Beam upload ends within beamRecheckEvery of the
+// withdrawal, an idle SFTP handle at its session's next recheck. A var so a
+// test can shorten it; far under Core's stage wait.
 var migrateOutWritersWait = beamRecheckEvery + sftpRecheckInterval + 5*time.Second
+
+// migrateOutQuietWindow is how long no write may begin before staging.
+var migrateOutQuietWindow = 5 * time.Second
 
 // handleMigrateOut (source side) stages the server's data directory as a zip
 // and publishes its hash. The orchestrator guarantees the server is already
@@ -222,22 +225,20 @@ func handleMigrateOut(ctx context.Context, rdb *redis.Client, storage *StorageMa
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", "server directory missing")
 		return
 	}
-	// Beam and SFTP lose their write rights only on their next access check,
-	// seconds after Core marks the server migrating: a write landing while the
-	// tree is read is missing from the copy or torn in it, and the source is
-	// deleted after cutover. Refused now, or dropped once the archive is read.
-	// The server is already stopped here, so a writer the access bump is about
-	// to end is waited for rather than refused.
-	writesSince, err := storage.watchWrites(serverUUID)
-	for deadline := time.Now().Add(migrateOutWritersWait); err != nil && time.Now().Before(deadline) && ctx.Err() == nil; {
-		time.Sleep(100 * time.Millisecond)
-		writesSince, err = storage.watchWrites(serverUUID)
-	}
+	// A write landing while the tree is read is missing from the copy or torn
+	// in it, and the source is deleted after cutover. So the writes are
+	// withdrawn here, at once and for the whole staging, rather than at each
+	// session's next access check; the server is already stopped, so writes
+	// still running are waited out until quiet, and refused only past the
+	// bound, before anything is staged. A write the archive still sees
+	// drops it.
+	writesSince, restoreWrites, err := storage.quiesceWrites(ctx, serverUUID, migrateOutQuietWindow, migrateOutWritersWait)
 	if err != nil {
 		log.Printf("migrate_out %s: %v", serverUUID, err)
 		setMigrationStatus(ctx, rdb, nodeToken, progressID, "error", err.Error())
 		return
 	}
+	defer restoreWrites()
 
 	// The copy lands outside every server's quota, on the disk the other
 	// servers on this path write to, and region data barely compresses: so it

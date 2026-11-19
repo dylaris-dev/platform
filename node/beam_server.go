@@ -995,6 +995,11 @@ func (s *beamServer) requireFilePerm(ctx context.Context, want func(fileperms.Pe
 	if !want(*perms) {
 		return status.Errorf(codes.PermissionDenied, "you do not have permission to %s files on this server", verb)
 	}
+	// Anything read-only access does not cover is a write a move staging the
+	// server must not see, and the session's cached access check cannot know.
+	if v, _ := s.serverUUIDByPeer.Load(p.Addr.String()); !want(fileperms.Perms{Read: true}) && s.storageMgr.writesWithdrawn(fmt.Sprint(v)) {
+		return status.Error(codes.FailedPrecondition, "this server is being moved to another node; files cannot be changed until the move finishes")
+	}
 	return nil
 }
 

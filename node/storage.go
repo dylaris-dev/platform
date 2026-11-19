@@ -64,6 +64,10 @@ type StorageManager struct {
 	// archives without a fence, so it tells a write that began and ended
 	// while it read the tree by this number moving. See watchWrites.
 	writeGen map[string]uint64
+	// withdrawn counts, per server, cross-node moves staging it. While set,
+	// Beam, SFTP and panel writes are refused at once instead of at each
+	// session's next access check. See withdrawWrites.
+	withdrawn map[string]int
 	// readers counts, per server, folder zip downloads in progress. Apart
 	// from writers so a download does not bump writeGen. See holdReader.
 	readers map[string]int
@@ -1381,7 +1385,7 @@ func (sm *StorageManager) holdWriterUnlessMoving(serverUUID string, refuseMoving
 		return func() {}, true
 	}
 	sm.movingMu.Lock()
-	if refuseMoving && sm.moving[serverUUID] != nil {
+	if refuseMoving && (sm.moving[serverUUID] != nil || sm.withdrawn[serverUUID] > 0) {
 		sm.movingMu.Unlock()
 		return func() {}, false
 	}
@@ -1451,6 +1455,78 @@ func (sm *StorageManager) watchWrites(serverUUID string) (func() bool, error) {
 		defer sm.movingMu.Unlock()
 		return sm.writeGen[serverUUID] != start || sm.writers[serverUUID] > 0
 	}, nil
+}
+
+// withdrawWrites refuses new tenant writes of the server until the returned
+// func runs. Core withdraws them too, but a Beam session acts on an access
+// check up to beamRecheckEvery old and an SFTP session on a list up to
+// sftpRecheckInterval old, so a write started in that window landed while the
+// move read the tree and threw its archive away after the server was stopped.
+func (sm *StorageManager) withdrawWrites(serverUUID string) func() {
+	if sm == nil {
+		return func() {}
+	}
+	sm.movingMu.Lock()
+	if sm.withdrawn == nil {
+		sm.withdrawn = map[string]int{}
+	}
+	sm.withdrawn[serverUUID]++
+	sm.movingMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			sm.movingMu.Lock()
+			if sm.withdrawn[serverUUID]--; sm.withdrawn[serverUUID] <= 0 {
+				delete(sm.withdrawn, serverUUID)
+			}
+			sm.movingMu.Unlock()
+		})
+	}
+}
+
+// writesWithdrawn reports whether a move has withdrawn the server's writes.
+func (sm *StorageManager) writesWithdrawn(serverUUID string) bool {
+	if sm == nil {
+		return false
+	}
+	sm.movingMu.Lock()
+	defer sm.movingMu.Unlock()
+	return sm.withdrawn[serverUUID] > 0
+}
+
+// quiesceWrites withdraws the server's writes and waits, up to bound, until
+// no writer is open and none has begun for quiet. Zero writers at one instant
+// is not enough: a folder upload has a gap between every two files, and a
+// write that passed its access check just before the withdrawal takes its
+// hold just after. It returns watchWrites' writesSince from the quiet point
+// and the func that gives the writes back; on an error nothing is held.
+func (sm *StorageManager) quiesceWrites(ctx context.Context, serverUUID string, quiet, bound time.Duration) (func() bool, func(), error) {
+	restore := sm.withdrawWrites(serverUUID)
+	deadline := time.Now().Add(bound)
+	var gen uint64
+	var since time.Time
+	for {
+		sm.movingMu.Lock()
+		n, g := sm.writers[serverUUID], sm.writeGen[serverUUID]
+		sm.movingMu.Unlock()
+		now := time.Now()
+		if n > 0 || since.IsZero() || g != gen {
+			gen, since = g, now
+		} else if now.Sub(since) >= quiet {
+			if writesSince, err := sm.watchWrites(serverUUID); err == nil {
+				return writesSince, restore, nil
+			}
+			since = now
+		}
+		if now.After(deadline) || ctx.Err() != nil {
+			restore()
+			if n > 0 {
+				return nil, nil, writersInProgress(serverUUID, n)
+			}
+			return nil, nil, fmt.Errorf("files of server %s are still being written (uploads, installs or a restore); retry the move once they finish", serverUUID)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // moveInProgress returns the channel a lookup of this server waits on, or nil.

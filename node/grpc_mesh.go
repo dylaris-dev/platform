@@ -610,6 +610,17 @@ func (m *MeshManager) handleRequest(cc *coreConnection, msg *pb.NodeMessage) {
 	if chunk := msg.GetChunk(); chunk != nil {
 		m.writeMu.Lock()
 		if pw, ok := m.pendingWrites[msg.RequestId]; ok {
+			// Its hold would make a move staging the server wait it out, or
+			// drop the archive; the upload is refused instead, as a new one is.
+			if m.handler.storageMgr.writesWithdrawn(pw.serverUUID) {
+				pw.tempFile.Close()
+				m.handler.removeUploadTemp(pw.dir, pw.path, pw.tempName)
+				pw.release(0)
+				delete(m.pendingWrites, msg.RequestId)
+				m.writeMu.Unlock()
+				cc.send(storageMovingMsg(msg.RequestId))
+				return
+			}
 			pw.lastActive = time.Now()
 			if end := chunk.Offset + int64(len(chunk.Data)); end > pw.reserved {
 				more := end - pw.reserved

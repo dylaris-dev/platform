@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // The tests share one write count whatever directory they use: the temp dirs
@@ -11,6 +12,8 @@ import (
 // and the tests written against one node-wide count mean "this disk".
 func TestMain(m *testing.M) {
 	fsIDOf = func(string) uint64 { return 0 }
+	// Every migrate_out would otherwise wait out the production quiet window.
+	migrateOutQuietWindow = 50 * time.Millisecond
 	os.Exit(m.Run())
 }
 
