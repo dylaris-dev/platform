@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -1240,6 +1241,12 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 		if amb := globalStorageMgr.StorageAmbiguities(); len(amb) > 0 {
 			data["storageAmbiguous"] = amb
 		}
+		// Core follows this when it names another sub-server and has no
+		// command in flight for the server (status watcher); an older Core
+		// ignores the key.
+		if active := activeSubServersBounded(globalStorageMgr, infos); len(active) > 0 {
+			data["activeSubServers"] = active
+		}
 	}
 
 	// A storage path shared with another node. Reported every beat rather than
@@ -1309,6 +1316,54 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 		if b, err := json.Marshal(topo); err == nil {
 			rdb.Set(ctx, fmt.Sprintf("dylaris:node:%s:cpu", id), b, 60*time.Second)
 		}
+	}
+}
+
+// activeSubServersOf maps each server on a readable storage path to its
+// .active_server; a server without a readable plain name is left out.
+func activeSubServersOf(sm *StorageManager, infos []StorageInfo) map[string]string {
+	if sm == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, info := range infos {
+		if info.unreadable {
+			continue
+		}
+		for _, uuid := range info.ServerUUIDs {
+			if _, seen := out[uuid]; seen {
+				continue
+			}
+			if dir := sm.GetServerDir(uuid); dir != "" {
+				if name := readActiveSubServer(dir); name != "" {
+					out[uuid] = name
+				}
+			}
+		}
+	}
+	return out
+}
+
+// activeSubServersBusy is set while a scan runs: a hung mount blocks the file
+// reads for good, and the heartbeat must not wait on them (R28-08) nor start
+// a second scan behind a stuck one.
+var activeSubServersBusy atomic.Bool
+
+// activeSubServersBounded is activeSubServersOf within a second, or nil.
+func activeSubServersBounded(sm *StorageManager, infos []StorageInfo) map[string]string {
+	if !activeSubServersBusy.CompareAndSwap(false, true) {
+		return nil
+	}
+	done := make(chan map[string]string, 1)
+	go func() {
+		defer activeSubServersBusy.Store(false)
+		done <- activeSubServersOf(sm, infos)
+	}()
+	select {
+	case m := <-done:
+		return m
+	case <-time.After(time.Second):
+		return nil
 	}
 }
 
@@ -2574,6 +2629,11 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		cmd.Config.Docker.Command = startCmd
 		if installerCfg.ProxyProtocol {
 			reportProxy(writeProxyProtocolConfig(serverPath, subName, installerCfg))
+		}
+		// As setup: Core may have sent a sub-server the node never switched
+		// to, and switch reports, deletes and the heartbeat read this file.
+		if err := writeServerRootFile(serverPath, ".active_server", []byte(subName)); err != nil {
+			log.Printf("Failed to write .active_server for %s: %v", cmd.Config.UUID, err)
 		}
 
 		// Recreate container with start command - started only while the

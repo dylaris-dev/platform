@@ -112,6 +112,10 @@ type NodeHeartbeat struct {
 	// (BEAM_LAN_PORT). Absent from an older node, which means the default
 	// 25523. Raw node input like the two above.
 	BeamLANPort string `json:"beamLanPort,omitempty"`
+	// ActiveSubServers is each held server's .active_server (newer nodes;
+	// a server whose marker is unknown is left out). Raw node input: the
+	// status watcher validates a name before it follows it.
+	ActiveSubServers map[string]string `json:"activeSubServers,omitempty"`
 	// Timestamp (unix seconds) + Sig replace the raw-secret compare on the
 	// hardened path: Sig = HMAC(perNodeSecret, heartbeat-domain|token|ts).
 	Timestamp int64  `json:"timestamp"`

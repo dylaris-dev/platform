@@ -125,17 +125,28 @@ func MarkSwitchPreviousDeleted(ctx context.Context, rdb *redis.Client, serverUUI
 	if rdb == nil {
 		return
 	}
-	raw, err := rdb.Get(ctx, SwitchUndoKey(serverUUID)).Result()
+	// Watched like OvertakeSwitchUndo: a switch landing in between deletes
+	// the key, and a plain SET brought it back with no TTL.
+	key := SwitchUndoKey(serverUUID)
+	err := rdb.Watch(ctx, func(tx *redis.Tx) error {
+		var undo SwitchUndo
+		raw, err := tx.Get(ctx, key).Result()
+		if err != nil || json.Unmarshal([]byte(raw), &undo) != nil || !strings.EqualFold(undo.Previous, name) {
+			return nil
+		}
+		undo.PreviousDeleted = true
+		rec, err := json.Marshal(undo)
+		if err != nil {
+			return nil
+		}
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			p.SetArgs(ctx, key, rec, redis.SetArgs{KeepTTL: true})
+			return nil
+		})
+		return err
+	}, key)
 	if err != nil {
-		return
-	}
-	var undo SwitchUndo
-	if json.Unmarshal([]byte(raw), &undo) != nil || !strings.EqualFold(undo.Previous, name) {
-		return
-	}
-	undo.PreviousDeleted = true
-	if rec, merr := json.Marshal(undo); merr == nil {
-		rdb.SetArgs(ctx, SwitchUndoKey(serverUUID), rec, redis.SetArgs{KeepTTL: true})
+		log.Printf("Server %s: could not mark the pending switch's previous sub-server deleted: %v", serverUUID, err)
 	}
 }
 

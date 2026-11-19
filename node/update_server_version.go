@@ -346,6 +346,10 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	// way: the reconciler rebuilds a missing container from this file, and the
 	// setup-time image and start command crash-looped the moved server.
 	saveNodeConfig(serverPath, cmd.Config)
+	// The container now runs Core's sub-server; see reinstall.
+	if err := writeServerRootFile(serverPath, ".active_server", []byte(subName)); err != nil {
+		log.Printf("update_server_version: could not write .active_server for %s: %v", pl.UUID, err)
+	}
 	refreshServerMetadata(serverPath, pl.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
 	if err := recreate(cmd.Config); err != nil {
 		log.Printf("update_server_version: failed to restart %s: %v", pl.UUID, err)

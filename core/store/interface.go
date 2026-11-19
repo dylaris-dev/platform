@@ -221,6 +221,10 @@ type Store interface {
 	// install/reinstall command, so this cannot trigger a reinstall.
 	UpdateServerLoaderMetadata(id int, installerType, minecraftVersion, buildNumber string) error
 	UpdateServerActiveSubServer(id int, subServer string) error
+	// AdoptServerActiveSubServer sets active_sub_server to `to` and the loader
+	// columns only while active_sub_server is still `from`, and reports
+	// whether it did: a switch or setup written since must win.
+	AdoptServerActiveSubServer(id int, from, to, installerType, minecraftVersion, buildNumber string) (bool, error)
 	UpdateServerName(id int, name string) error
 	UpdateServerResources(id int, ram int, cpuLimit float64, diskLimit int64) error
 	UpdateServerCPUPinning(id int, mode, cpuset string) error

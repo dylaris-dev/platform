@@ -20,6 +20,9 @@ type StatusWatcherService struct {
 	store  store.Store
 	redis  *redis.Client
 	leader leader.Election
+	// activeSubSeen: servers whose node reports another active sub-server
+	// (adoptNodeActiveSubServers). Only the scan goroutine touches it.
+	activeSubSeen map[string]activeSubSighting
 }
 
 func NewStatusWatcherService(s store.Store, r *redis.Client) *StatusWatcherService {
@@ -145,6 +148,10 @@ func (s *StatusWatcherService) scan() {
 	// And a sub-server switch the node could not make: put Core back on the
 	// sub-server that is still running.
 	if s.consumeSwitchSubFailures(ctx) {
+		dirty = true
+	}
+	// And whatever is still left over: follow the sub-server the node runs.
+	if s.adoptNodeActiveSubServers(ctx, time.Now()) {
 		dirty = true
 	}
 
