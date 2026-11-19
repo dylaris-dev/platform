@@ -80,14 +80,18 @@ func TestAdoptNodeActiveSubServers(t *testing.T) {
 		name        string
 		field       map[string]string
 		record      string // "" none, else the key that is pending
+		status      string // "" stopped
 		noInstall   bool
 		wantAdopted bool
 	}{
-		{"adopted", map[string]string{uuid: "main"}, "", false, true},
-		{"old node", nil, "", false, false},
-		{"switch pending", map[string]string{uuid: "main"}, SwitchUndoKey(uuid), false, false},
-		{"setup pending", map[string]string{uuid: "main"}, setupBeforeKey(uuid), false, false},
-		{"no install record", map[string]string{uuid: "main"}, "", true, false},
+		{"adopted", map[string]string{uuid: "main"}, "", "", false, true},
+		{"old node", nil, "", "", false, false},
+		{"switch pending", map[string]string{uuid: "main"}, SwitchUndoKey(uuid), "", false, false},
+		{"setup pending", map[string]string{uuid: "main"}, setupBeforeKey(uuid), "", false, false},
+		{"no install record", map[string]string{uuid: "main"}, "", "", true, false},
+		// R36-01/R36-02: a version move writes neither record above.
+		{"version move pending", map[string]string{uuid: "main"}, VersionUpdateUndoKey(uuid), "", false, false},
+		{"installing", map[string]string{uuid: "main"}, "", "installing", false, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &adoptFakeStore{
@@ -96,6 +100,9 @@ func TestAdoptNodeActiveSubServers(t *testing.T) {
 			}
 			if c.noInstall {
 				fs.install = nil
+			}
+			if c.status != "" {
+				fs.servers[0].Status = c.status
 			}
 			s := &StatusWatcherService{store: fs, redis: newQueueTestRedis(t)}
 			ctx := context.Background()

@@ -223,7 +223,8 @@ type Store interface {
 	UpdateServerActiveSubServer(id int, subServer string) error
 	// AdoptServerActiveSubServer sets active_sub_server to `to` and the loader
 	// columns only while active_sub_server is still `from`, and reports
-	// whether it did: a switch or setup written since must win.
+	// whether it did: a switch or setup written since must win. It also needs
+	// `to`'s install record, so a sub-server being deleted is never adopted.
 	AdoptServerActiveSubServer(id int, from, to, installerType, minecraftVersion, buildNumber string) (bool, error)
 	UpdateServerName(id int, name string) error
 	UpdateServerResources(id int, ram int, cpuLimit float64, diskLimit int64) error

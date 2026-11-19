@@ -17,8 +17,8 @@ import (
 // .active_server is what runs, so once the two disagree with no command in
 // flight, Core follows the node.
 
-// activeSubSettle is how long a disagreement must hold, with no switch_undo or
-// setup_before record pending, before Core follows the node. The node writes
+// activeSubSettle is how long a disagreement must hold, with no command record
+// pending, before Core follows the node. The node writes
 // .active_server before it deletes its record, and the heartbeat key lives 15
 // seconds, so any heartbeat read this long after the records were seen gone
 // was taken after they cleared.
@@ -87,9 +87,12 @@ func (s *StatusWatcherService) adoptNodeActiveSubServers(ctx context.Context, no
 			continue
 		}
 		node := hb.ActiveSubServers[srv.UUID]
-		pending := false
-		if node != "" && srv.ActiveSubServer != "" && node != srv.ActiveSubServer {
-			n, err := s.redis.Exists(ctx, SwitchUndoKey(srv.UUID), setupBeforeKey(srv.UUID)).Result()
+		// 'installing' is what every command handler refuses on, and covers a
+		// setup or reinstall whose record write failed. A version move writes
+		// no switch_undo or setup_before, only its own undo.
+		pending := srv.Status == "installing"
+		if !pending && node != "" && srv.ActiveSubServer != "" && node != srv.ActiveSubServer {
+			n, err := s.redis.Exists(ctx, SwitchUndoKey(srv.UUID), setupBeforeKey(srv.UUID), VersionUpdateUndoKey(srv.UUID)).Result()
 			pending = err != nil || n > 0
 		}
 		prev, ok := s.activeSubSeen[srv.UUID]

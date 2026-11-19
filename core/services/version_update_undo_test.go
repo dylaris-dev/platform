@@ -278,3 +278,33 @@ func TestConsumeVersionUpdateFailures_KeepsARunningServerOnline(t *testing.T) {
 		})
 	}
 }
+
+// R36-01/R36-02: the loader columns describe the active sub-server. Once Core
+// names another one, the moved sub-server's pre-move values do not belong on
+// the row; its install record and mod rows are still put back.
+func TestConsumeVersionUpdateFailures_LoaderColumnsOnlyOnTheMovedSubServer(t *testing.T) {
+	for _, c := range []struct {
+		name, active string
+		wantLoader   int
+	}{
+		{"still active", "server", 1},
+		{"Core names another", "modded", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, fs := newUndoTest(t)
+			srv := fs.serversByUUID["u-1"]
+			srv.ActiveSubServer = c.active
+			fs.serversByUUID["u-1"] = srv
+			ctx := context.Background()
+			seedUndo(t, s, "u-1", VersionUpdateUndo{InstallerType: "fabric", MinecraftVersion: "1.20.1", SubServerName: "server", InstallRecorded: true})
+			s.redis.Set(ctx, VersionUpdateFailedKey("u-1"), "download failed", 0)
+			s.consumeVersionUpdateFailures(ctx)
+			if len(fs.loaderCalls) != c.wantLoader {
+				t.Errorf("loader restores = %+v, want %d", fs.loaderCalls, c.wantLoader)
+			}
+			if fs.installDeletes != 1 {
+				t.Errorf("install record restores = %d, want 1", fs.installDeletes)
+			}
+		})
+	}
+}

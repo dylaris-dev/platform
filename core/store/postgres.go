@@ -1556,7 +1556,8 @@ func (s *PostgresStore) UpdateServerActiveSubServer(id int, subServer string) er
 
 func (s *PostgresStore) AdoptServerActiveSubServer(id int, from, to, installerType, minecraftVersion, buildNumber string) (bool, error) {
 	res, err := s.db.Exec(`UPDATE servers SET active_sub_server = $1, installer_type = $2, minecraft_version = $3, build_number = $4
-		WHERE id = $5 AND active_sub_server = $6`, to, installerType, minecraftVersion, buildNumber, id, from)
+		WHERE id = $5 AND active_sub_server = $6
+		  AND EXISTS (SELECT 1 FROM sub_server_installs WHERE server_id = $5 AND sub_server_name = $1)`, to, installerType, minecraftVersion, buildNumber, id, from)
 	if err != nil {
 		return false, err
 	}

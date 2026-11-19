@@ -144,6 +144,10 @@ type subServerDeleteFakeStore struct {
 	status string
 	// installsErr fails the install-record lookup the existence check asks.
 	installsErr error
+	// activeLater, when set, is the active sub-server every read after the
+	// first sees: the status watcher followed the node in between.
+	activeLater string
+	reads       int
 }
 
 // The server has two sub-servers, survival (active) and creative.
@@ -163,7 +167,12 @@ func (f *subServerDeleteFakeStore) GetUserByID(id string) (*models.User, error) 
 }
 
 func (f *subServerDeleteFakeStore) GetServerByID(id int) (*models.Server, error) {
-	return &models.Server{ID: id, UUID: "srv-uuid", OwnerID: "alice", NodeID: 3, ActiveSubServer: "survival", Status: f.status}, nil
+	f.reads++
+	active := "survival"
+	if f.reads > 1 && f.activeLater != "" {
+		active = f.activeLater
+	}
+	return &models.Server{ID: id, UUID: "srv-uuid", OwnerID: "alice", NodeID: 3, ActiveSubServer: active, Status: f.status}, nil
 }
 
 // Audit is off for this server, which is the common case and keeps these
@@ -308,6 +317,37 @@ func TestDeleteSubServerRefusesAServerBeingInstalled(t *testing.T) {
 				if fs.statusSet != "" || fs.installCleared != "" {
 					t.Error("the refused delete still reset the row or dropped the install record")
 				}
+			}
+		})
+	}
+}
+
+// R36-03: the status watcher can follow the node onto the slot being deleted
+// after the handler read the row and before the install record is gone. The
+// handler decides "was it active" from the row as it stands after the record
+// is removed, so that adoption is reset like any delete of the active slot.
+func TestDeleteSubServerResetsASlotAdoptedMeanwhile(t *testing.T) {
+	for _, tt := range []struct {
+		name, activeLater string
+		wantReset         bool
+	}{
+		{"not adopted", "", false},
+		{"adopted meanwhile", "creative", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := &subServerDeleteFakeStore{admin: true, activeLater: tt.activeLater}
+			h := &ServerHandler{d: testDeps(Deps{Store: fs, Events: services.NewSystemEventsPublisher(nil)})}
+			req := httptest.NewRequest(http.MethodDelete, "/api/servers/7/sub-servers/creative", nil)
+			ctx := context.WithValue(req.Context(), "userID", "alice")
+			ctx = context.WithValue(ctx, "isAdmin", true)
+			req = mux.SetURLVars(req.WithContext(ctx), map[string]string{"id": "7", "subServerName": "creative"})
+			rw := httptest.NewRecorder()
+			h.DeleteSubServer(rw, req)
+			if rw.Code != http.StatusOK {
+				t.Fatalf("status = %d (body: %s)", rw.Code, rw.Body.String())
+			}
+			if fs.activeSet != tt.wantReset || (fs.statusSet == "pending_setup") != tt.wantReset {
+				t.Errorf("activeSet=%v status=%q, want reset %v", fs.activeSet, fs.statusSet, tt.wantReset)
 			}
 		})
 	}

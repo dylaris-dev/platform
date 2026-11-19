@@ -2846,6 +2846,14 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 	h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
 
 	wasActive := srv.ActiveSubServer == subServerName
+	// The status watcher may have followed the node onto this slot since srv
+	// was read. Its compare-and-set needs the install record, which is gone
+	// now, so this read sees any adoption that can still land.
+	// ponytail: an adopting UPDATE whose snapshot predates the record delete
+	// and commits after this read slips through; a CAS clear here closes it.
+	if cur, err := h.d.Store.GetServerByID(serverID); err == nil && cur != nil {
+		wasActive = cur.ActiveSubServer == subServerName
+	}
 	services.MarkSwitchPreviousDeleted(r.Context(), h.d.Redis, srv.UUID, subServerName)
 	if wasActive {
 		// A pending switch to the deleted slot is moot; its record must not

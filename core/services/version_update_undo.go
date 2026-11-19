@@ -127,8 +127,12 @@ func (s *StatusWatcherService) consumeVersionUpdateFailures(ctx context.Context)
 			log.Printf("Server %s: the node abandoned the version move (%s), putting Minecraft %s and %d mod rows back",
 				uuid, reason, undo.MinecraftVersion, len(undo.Mods))
 
-			if err := s.store.UpdateServerLoaderMetadata(srv.ID, undo.InstallerType, undo.MinecraftVersion, undo.BuildNumber); err != nil {
-				log.Printf("Server %s: could not restore the Minecraft version: %v", uuid, err)
+			// The loader columns describe the active sub-server; once Core names
+			// another one they are not the moved sub-server's to put back.
+			if srv.ActiveSubServer == undo.SubServerName {
+				if err := s.store.UpdateServerLoaderMetadata(srv.ID, undo.InstallerType, undo.MinecraftVersion, undo.BuildNumber); err != nil {
+					log.Printf("Server %s: could not restore the Minecraft version: %v", uuid, err)
+				}
 			}
 			if undo.GameImage != "" {
 				if err := s.store.UpdateServerRuntime(srv.ID, undo.GameImage, srv.ExtraJvmFlags); err != nil {
