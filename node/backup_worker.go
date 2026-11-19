@@ -300,6 +300,10 @@ type worldSaveGuard struct {
 	send func(command string) error
 	// closed: the archive no longer reads the tree, so a start needs no pause.
 	closed bool
+	// subs are the sub-servers whose console watchCrashRestarts reads, ""
+	// for a server without them: the one that ran when saving was paused and
+	// every one started during the walk.
+	subs map[string]bool
 }
 
 // pauseWorldSaves stops the server writing its world, flushes what it holds,
@@ -333,6 +337,7 @@ func pauseWorldSaves(ctx context.Context, rdb *redis.Client, dm *DockerManager, 
 	}
 	inputKey := fmt.Sprintf("dylaris:server:%s:input", uuid)
 	g.send = func(command string) error { return rdb.RPush(context.Background(), inputKey, command).Err() }
+	g.subs = map[string]bool{sub: true}
 	logKey := serverLogStreamKey(uuid, sub)
 	// From the newest line now, so an earlier save's confirmation is not read
 	// as this one's.
@@ -430,6 +435,10 @@ func (g *worldSaveGuard) pauseOnStart(send func(command string) error, subServer
 		if g.closed {
 			return
 		}
+		if g.subs == nil {
+			g.subs = map[string]bool{}
+		}
+		g.subs[sub] = true
 		send("save-off")
 		send("save-all flush")
 		if g.send == nil {
@@ -449,6 +458,81 @@ func (g *worldSaveGuard) pauseOnStart(send func(command string) error, subServer
 			g.mu.Unlock()
 		})
 	}
+}
+
+// isCrashRestart reports the line the log-shipper writes before it starts Java
+// again in the same container; its "giving up" line ends the container instead.
+func isCrashRestart(line string) bool {
+	return strings.HasPrefix(line, "[Server crashed (exit code ") && strings.Contains(line, "restarting automatically")
+}
+
+// watchCrashRestarts treats every in-container restart the log-shipper
+// announces on a watched console as a start during the walk. The shipper
+// restarts a crashed JVM itself, five seconds later, so no node start path
+// runs and the new JVM booted with saving on while tar read its region files.
+// The commands queued in those five seconds reach the new JVM as it boots, as
+// they do on a cold start. stop must be called with pauseOnStart's.
+func (g *worldSaveGuard) watchCrashRestarts(rdb *redis.Client) (stop func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		subOf, from, watching := map[string]string{}, map[string]string{}, map[string]bool{}
+		for ctx.Err() == nil {
+			g.mu.Lock()
+			var added []string
+			for sub := range g.subs {
+				if key := serverLogStreamKey(g.uuid, sub); !watching[key] {
+					watching[key] = true
+					subOf[key] = sub
+					added = append(added, key)
+				}
+			}
+			g.mu.Unlock()
+			// From the console's newest line, as pauseWorldSaves reads it: an
+			// earlier crash is not this walk's.
+			for _, key := range added {
+				from[key] = "$"
+				if last, err := rdb.XRevRangeN(ctx, key, "+", "-", 1).Result(); err == nil {
+					from[key] = "0"
+					if len(last) > 0 {
+						from[key] = last[0].ID
+					}
+				}
+			}
+			if len(from) == 0 {
+				select {
+				case <-ctx.Done():
+				case <-time.After(250 * time.Millisecond):
+				}
+				continue
+			}
+			streams := make([]string, 0, 2*len(from))
+			for key := range from {
+				streams = append(streams, key)
+			}
+			for _, key := range streams[:len(from)] {
+				streams = append(streams, from[key])
+			}
+			// Short, so a sub-server started during the walk is read soon.
+			res, err := rdb.XRead(ctx, &redis.XReadArgs{Streams: streams, Count: 200, Block: 250 * time.Millisecond}).Result()
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil && err != redis.Nil {
+				time.Sleep(time.Second)
+				continue
+			}
+			for _, st := range res {
+				for _, m := range st.Messages {
+					from[st.Stream] = m.ID
+					if line, _ := m.Values["line"].(string); isCrashRestart(line) && ctx.Err() == nil {
+						log.Printf("backup: server %s: its JVM crashed and is restarting during the backup", g.uuid)
+						startingDuringBackup(g.uuid, subOf[st.Stream])
+					}
+				}
+			}
+		}
+	}()
+	return cancel
 }
 
 func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *DockerManager, cmd BackupRunCommand) {
@@ -570,7 +654,9 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	}
 	if rdb != nil {
 		inputKey := fmt.Sprintf("dylaris:server:%s:input", cmd.ServerUUID)
-		stopColdStart = saves.pauseOnStart(func(c string) error { return rdb.RPush(context.Background(), inputKey, c).Err() }, cmd.SubServer, pacer)
+		stopPause := saves.pauseOnStart(func(c string) error { return rdb.RPush(context.Background(), inputKey, c).Err() }, cmd.SubServer, pacer)
+		stopWatch := saves.watchCrashRestarts(rdb)
+		stopColdStart = func() { stopWatch(); stopPause() }
 	}
 	// Deferred after resume, so it runs before it.
 	defer stopColdStart()

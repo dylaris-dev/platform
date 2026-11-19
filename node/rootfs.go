@@ -793,6 +793,46 @@ func serverInflightOf(uuid string) *atomic.Int64 {
 	return c.(*atomic.Int64)
 }
 
+// streamedBytes is, per server, what writes in progress already put on the
+// disk and still hold reserved on serverInflight. A measurement of the server
+// holds those bytes too, so it takes them off: every check adds serverInflight
+// to a measurement, and one large upload counted twice refused writes that fit.
+// gone only grows, by what left live.
+type streamedBytes struct{ live, gone atomic.Int64 }
+
+var serverStreamed sync.Map // uuid -> *streamedBytes
+
+func serverStreamedOf(uuid string) *streamedBytes {
+	c, _ := serverStreamed.LoadOrStore(uuid, new(streamedBytes))
+	return c.(*streamedBytes)
+}
+
+// add marks n more bytes (fewer, when negative) as streamed. Out of live
+// before into gone, the order streamedBefore reads them in reverse.
+func (c *streamedBytes) add(n int64) {
+	c.live.Add(n)
+	if n < 0 {
+		c.gone.Add(-n)
+	}
+}
+
+// streamedBefore is taken before measuring uuid's server and returns what to
+// subtract the measurement down to. Only what was streamed before the walk
+// began and is still reserved after it: bytes that left during the walk may be
+// gone from the disk (a removed temp) and so missing from the measurement.
+func streamedBefore(uuid string) func(measured int64) int64 {
+	c := serverStreamedOf(uuid)
+	gone0 := c.gone.Load()
+	live0 := c.live.Load()
+	return func(measured int64) int64 {
+		if measured < 0 {
+			return measured
+		}
+		off := live0 - (c.gone.Load() - gone0)
+		return max(measured-max(off, 0), 0)
+	}
+}
+
 // serverDiskHeadroom is what the server whose directory holds dir may still
 // write, measured now rather than read off the gauge: that one is up to five
 // minutes old, and an install right after its wipe would be refused for the
@@ -811,7 +851,8 @@ var serverDiskHeadroom = func(dir string) (uuid string, left int64, ok bool) {
 	if limit <= 0 {
 		return "", 0, false
 	}
-	return uuid, limit - dirSize(serverDir), true
+	less := streamedBefore(uuid)
+	return uuid, limit - less(dirSize(serverDir)), true
 }
 
 // serverOfDir names the server directory, among the storage paths, that holds
@@ -865,6 +906,11 @@ func (b *writeBudget) boundServer(uuid string, headroom int64) {
 
 func (b *writeBudget) release() {
 	b.disk.onDisk.Add(-b.onDisk)
+	if b.srv != nil {
+		// Before the remeasure below and before srv drops, so no measurement
+		// takes off bytes the reservation no longer holds.
+		serverStreamedOf(b.uuid).add(-b.onDisk)
+	}
 	b.onDisk = 0
 	b.disk.inflight.Add(-b.used)
 	b.disk.landed.Add(b.used)
@@ -921,6 +967,9 @@ func (b *writeBudget) spend(n int64) bool {
 func (b *writeBudget) written(n int64) {
 	b.onDisk += n
 	b.disk.onDisk.Add(n)
+	if b.srv != nil {
+		serverStreamedOf(b.uuid).add(n)
+	}
 }
 
 // unspend gives back n of what spend charged and the write did not use.

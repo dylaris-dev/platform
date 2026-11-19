@@ -1656,6 +1656,15 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 			// On the counter panel uploads and copies reserve on, so each of
 			// them sees this one; plus what open SFTP handles wrote.
 			serverTotal, releaseServer = reserveOn(serverInflightOf(serverUUID), need)
+			// What this stream streamed stays reserved until releaseServer;
+			// out of the server's streamed count first, as a budget's release
+			// does, so no measurement takes off bytes no longer reserved.
+			var streamed atomic.Int64
+			reservedServer := releaseServer
+			releaseServer = func() {
+				serverStreamedOf(serverUUID).add(-streamed.Swap(0))
+				reservedServer()
+			}
 			serverTotal += uploadServerInflight(serverUUID).Load()
 			userTotal, releaseUser = reserveOn(uploadAccountInflight(username), need)
 
@@ -1685,6 +1694,8 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 				defer s.tempsMu.Unlock()
 				if claim == nil || claim.owner == me {
 					budget.written(n)
+					streamed.Add(n)
+					serverStreamedOf(serverUUID).add(n)
 				}
 			}
 

@@ -949,6 +949,7 @@ func getDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, quota *Qu
 	if globalStorageMgr != nil && globalStorageMgr.moveInProgress(uuid) != nil {
 		return nil
 	}
+	less := streamedBefore(uuid)
 	var usage *DiskUsagePayload
 	enforceable := quota != nil && quota.IsAvailableFor(uuid)
 	if enforceable {
@@ -969,6 +970,7 @@ func getDiskUsage(ctx context.Context, rdb *redis.Client, uuid string, quota *Qu
 	// failed and fell through to du is not enforceable either, so this is set
 	// from the answer rather than from which branch produced the payload.
 	usage.Enforceable = enforceable
+	usage.Total = less(usage.Total)
 
 	// Set warning level based on limit utilization
 	if usage.Limit > 0 && usage.Total > 0 {
