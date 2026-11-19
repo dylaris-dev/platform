@@ -2071,6 +2071,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			if err := writeServerRootFile(serverPath, ".active_server", []byte(subName)); err != nil {
 				log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
 			}
+			// Landed: nothing to undo, and the record no longer holds the
+			// reconciler off this server (switchPendingOverStop).
+			rdb.Del(ctx, switchUndoKey(cmd.Config.UUID))
 			log.Printf("Server %s switched to sub-server %s", cmd.Config.UUID, subName)
 			saveNodeConfig(storage.GetServerDir(cmd.Config.UUID), cmd.Config)
 			refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)

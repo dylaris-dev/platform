@@ -36,8 +36,13 @@ func SwitchUndoKey(serverUUID string) string {
 	return "dylaris:server:" + serverUUID + ":switch_undo"
 }
 
-// SwitchUndoTTL outlasts the node's report.
-const SwitchUndoTTL = 10 * time.Minute
+// SwitchUndoTTL outlasts a switch queued for a node that is away or behind:
+// the command waits in the stream for as long as that takes, and a refusal
+// after the record expired put back only active_sub_server. A node deletes the
+// record once the switch lands (node/main.go), and its reconciler holds the
+// old sub-server down while one is pending, so this only bounds a command that
+// is never delivered.
+const SwitchUndoTTL = 24 * time.Hour
 
 // SwitchUndo is the state a switch to Target is about to overwrite.
 type SwitchUndo struct {
@@ -124,29 +129,38 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 			if previous == "" {
 				previous = undo.Previous
 			}
-			if !validate.IsSubServerName(previous) {
+			// The undo record of this switch naming no previous is a server
+			// whose active sub-server had been deleted: none was active.
+			noneBefore := previous == "" && undo.Target != ""
+			if !noneBefore && !validate.IsSubServerName(previous) {
 				log.Printf("Server %s: the switch to %q failed on the node (%s) and the sub-server it runs is unknown", srv.UUID, rep.Target, rep.Reason)
 				continue
 			}
-			s.redis.Del(ctx, SwitchUndoKey(srv.UUID))
+			// Deleted only once the intent is back: while it is there, the
+			// node's reconciler holds the old sub-server down (it reads it).
 			matched := undo.Target != "" && strings.EqualFold(undo.Previous, previous)
-			if matched && undo.PreviousDeleted {
+			if noneBefore || (matched && undo.PreviousDeleted) {
 				// What DeleteSubServer does for a deleted active slot.
-				log.Printf("Server %s: the switch to sub-server %q failed on the node (%s) and %q was deleted since; none is active", srv.UUID, rep.Target, rep.Reason, previous)
+				log.Printf("Server %s: the switch to sub-server %q failed on the node (%s) and no sub-server is active (%q was deleted)", srv.UUID, rep.Target, rep.Reason, previous)
 				s.store.UpdateServerStatus(srv.ID, "pending_setup")
 				if err := s.store.UpdateServerActiveSubServer(srv.ID, ""); err != nil {
 					log.Printf("Server %s: could not clear the active sub-server: %v", srv.UUID, err)
 				}
 				s.store.UpdateServerDesiredState(srv.ID, "stopped")
 				PublishDesiredState(ctx, s.redis, srv.UUID, "stopped")
-				notifyServerOwner(s.store, srv, "Switch failed",
-					fmt.Sprintf("Switching %s to the sub-server %s did not happen, and its previous sub-server %s was deleted, so no sub-server is active. Switch to one to run the server again.", srv.Name, rep.Target, previous))
+				s.redis.Del(ctx, SwitchUndoKey(srv.UUID))
+				body := fmt.Sprintf("Switching %s to the sub-server %s did not happen, and its previous sub-server %s was deleted, so no sub-server is active. Switch to one to run the server again.", srv.Name, rep.Target, previous)
+				if noneBefore {
+					body = fmt.Sprintf("Switching %s to the sub-server %s did not happen, so no sub-server is active. Switch to one that is set up to run the server again.", srv.Name, rep.Target)
+				}
+				notifyServerOwner(s.store, srv, "Switch failed", body)
 				changed = true
 				continue
 			}
 			log.Printf("Server %s: the switch to sub-server %q failed on the node (%s), back on %q", srv.UUID, rep.Target, rep.Reason, previous)
 			if err := s.store.UpdateServerActiveSubServer(srv.ID, previous); err != nil {
 				log.Printf("Server %s: could not restore the active sub-server: %v", srv.UUID, err)
+				s.redis.Del(ctx, SwitchUndoKey(srv.UUID))
 				continue
 			}
 			if matched {
@@ -164,6 +178,7 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 					PublishDesiredState(ctx, s.redis, srv.UUID, undo.DesiredState)
 				}
 			}
+			s.redis.Del(ctx, SwitchUndoKey(srv.UUID))
 			reason := rep.Reason
 			if reason == "" {
 				reason = "the node could not start it"

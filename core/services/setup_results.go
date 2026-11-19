@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -46,6 +48,59 @@ func (s *SetupResultService) Start(ctx context.Context) {
 	}
 	go s.consume(ctx)
 	go s.runProxyProtocolSweep(ctx)
+	go s.runSetupFailedSweep(ctx)
+}
+
+func (s *SetupResultService) runSetupFailedSweep(ctx context.Context) {
+	tick := time.NewTicker(setupFailedScanInterval)
+	defer tick.Stop()
+	for {
+		if s.leader == nil || s.leader.IsLeader() {
+			s.consumeSetupFailures(ctx)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+// consumeSetupFailures applies each failure a node kept under SetupFailedKey.
+// The key names the server; a report inside it about another one is dropped.
+func (s *SetupResultService) consumeSetupFailures(ctx context.Context) {
+	var cursor uint64
+	for {
+		keys, next, err := s.redis.Scan(ctx, cursor, setupFailedPattern, 100).Result()
+		if err != nil {
+			return
+		}
+		for _, key := range keys {
+			parts := strings.Split(key, ":")
+			if len(parts) != 4 {
+				continue
+			}
+			raw, rerr := s.redis.GetDel(ctx, key).Result()
+			if rerr != nil {
+				continue
+			}
+			var rep setupReport
+			if json.Unmarshal([]byte(raw), &rep) != nil || rep.ServerUUID != parts[2] || rep.Error == "" {
+				log.Printf("setup result: dropping an unreadable failure report under %q", key)
+				continue
+			}
+			srv, serr := s.store.GetServerByUUID(rep.ServerUUID)
+			if serr != nil || srv == nil {
+				log.Printf("setup result: dropping a failure report: server %q could not be loaded: %v", rep.ServerUUID, serr)
+				continue
+			}
+			s.applyFailure(srv, rep)
+		}
+		cursor = next
+		if cursor == 0 {
+			return
+		}
+	}
 }
 
 type setupReport struct {
@@ -69,7 +124,27 @@ type setupReport struct {
 	// the mod rows the dispatch dropped go back too. An older node never
 	// sends it, and its failed wipe left nothing behind those rows.
 	Restored bool `json:"restored,omitempty"`
+	// Durable, beside Error: the node also wrote the report to SetupFailedKey,
+	// and consumeSetupFailures applies it from there. An older node never
+	// sends it, and its Pub/Sub copy is the only one.
+	Durable bool `json:"durable,omitempty"`
 }
+
+// SetupFailedKey is where a node keeps a setup or reinstall failure until Core
+// applies it (node/installer_backup.go publishSetupFailure). Pub/Sub reaches
+// only a leader listening at that moment, and a report lost to a redeploy or a
+// leader change took the rollback with it. Under the per-server prefix the
+// node's Redis ACL grants, like switch_failed, which is also what attributes
+// it to the node hosting the server.
+func SetupFailedKey(serverUUID string) string {
+	return "dylaris:server:" + serverUUID + ":setup_failed"
+}
+
+const setupFailedPattern = "dylaris:server:*:setup_failed"
+
+// setupFailedScanInterval matches the status watcher's tick, which picks up
+// switch_failed and the other durable node reports.
+const setupFailedScanInterval = 2 * time.Second
 
 func (s *SetupResultService) consume(ctx context.Context) {
 	pubsub := s.redis.PSubscribe(ctx, queue.SetupResultsPattern)
@@ -145,14 +220,11 @@ func (s *SetupResultService) apply(channel string, rep setupReport) {
 	}
 
 	if rep.Error != "" {
-		// Before RestoreSetupBefore, which consumes the record.
-		if rep.Restored && RestoreSetupMods(context.Background(), s.redis, s.store, srv, rep.SubServer) {
-			log.Printf("setup result: server %q has its mod rows of %q back", rep.ServerUUID, rep.SubServer)
+		// consumeSetupFailures applies it from the key; twice would tell the
+		// owner twice.
+		if !rep.Durable {
+			s.applyFailure(srv, rep)
 		}
-		if RestoreSetupBefore(context.Background(), s.redis, s.store, srv, rep.SubServer) {
-			log.Printf("setup result: server %q is back on its previous sub-server and loader", rep.ServerUUID)
-		}
-		s.notifyInstallFailed(srv, rep.SubServer, rep.Error)
 		return
 	}
 
@@ -162,6 +234,19 @@ func (s *SetupResultService) apply(channel string, rep setupReport) {
 		return
 	}
 	ApplyImportedManifest(s.store, srv, rep.SubServer, m)
+}
+
+// applyFailure puts back what the dispatch of a failed setup wrote and tells
+// the owner why.
+func (s *SetupResultService) applyFailure(srv *models.Server, rep setupReport) {
+	// Before RestoreSetupBefore, which consumes the record.
+	if rep.Restored && RestoreSetupMods(context.Background(), s.redis, s.store, srv, rep.SubServer) {
+		log.Printf("setup result: server %q has its mod rows of %q back", rep.ServerUUID, rep.SubServer)
+	}
+	if RestoreSetupBefore(context.Background(), s.redis, s.store, srv, rep.SubServer) {
+		log.Printf("setup result: server %q is back on its previous sub-server and loader", rep.ServerUUID)
+	}
+	s.notifyInstallFailed(srv, rep.SubServer, rep.Error)
 }
 
 // notifyInstallFailed puts the node's reason in front of the person who asked

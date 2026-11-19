@@ -293,11 +293,47 @@ func restartBlocked(ctx context.Context, rdb *redis.Client, storage *StorageMana
 	if n, err := rdb.Exists(ctx, stoppedByServerKey(uuid)).Result(); err == nil && n > 0 {
 		return true
 	}
+	// A sub-server switch of a server that was not meant to run, not landed yet.
+	if switchPendingOverStop(ctx, rdb, storage, uuid) {
+		return true
+	}
 	// A server this node staged a move of. Once Core sets it online for its NEW
 	// node, the desired state reads "online" here too, and this restarted the
 	// stopped source container on data the move's cleanup deletes moments
 	// later - and left it running for good.
 	return migrationInFlight(storage, uuid)
+}
+
+// switchUndoKey is Core's record of a sub-server switch it dispatched
+// (core/services.SwitchUndoKey), kept until the switch lands or Core has put a
+// refused one back.
+func switchUndoKey(uuid string) string {
+	return fmt.Sprintf("dylaris:server:%s:switch_undo", uuid)
+}
+
+// switchPendingOverStop reports a switch Core dispatched for a server that was
+// not meant to run, which has not landed here. Core publishes "online" when it
+// sends a switch, so until then the reconciler saw a stopped server it was
+// meant to run - before the command was pulled, and after a refusal until Core
+// put the intent back - and started the OLD sub-server its owner had stopped.
+// A record from a Core without desiredState holds nothing, as before.
+func switchPendingOverStop(ctx context.Context, rdb *redis.Client, storage *StorageManager, uuid string) bool {
+	raw, err := rdb.Get(ctx, switchUndoKey(uuid)).Result()
+	if err != nil {
+		return false
+	}
+	var undo struct {
+		Target       string `json:"target"`
+		DesiredState string `json:"desiredState"`
+	}
+	if json.Unmarshal([]byte(raw), &undo) != nil || undo.DesiredState == "" || undo.DesiredState == "online" {
+		return false
+	}
+	active := ""
+	if dir := storage.GetServerDir(uuid); dir != "" {
+		active = readActiveSubServer(dir)
+	}
+	return !strings.EqualFold(active, undo.Target)
 }
 
 // StartReconciler runs a periodic loop that compares actual Docker container

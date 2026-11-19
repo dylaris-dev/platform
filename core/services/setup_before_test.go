@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/store"
@@ -246,5 +247,54 @@ func TestASetupFailureReportPutsTheRowsBackOnlyWhenTheFilesAre(t *testing.T) {
 		if len(st.written) != 1 {
 			t.Errorf("restored=%v: setup columns restored %d times, want 1", restored, len(st.written))
 		}
+	}
+}
+
+// R32-03: a setup failure the node also keeps under the server's prefix is
+// applied from that key, so it survives a report sent while no Core leader
+// listened; the Pub/Sub copy marked durable is then left alone, or the owner
+// would be told twice. An unmarked copy (an older node) is applied as before.
+func TestASetupFailureIsAppliedOnceFromTheDurableKey(t *testing.T) {
+	const report = `{"serverUuid":"srv-3","subServer":"modded","error":"download failed","restored":true,"timestamp":1}`
+	for _, c := range []struct {
+		name    string
+		key     string // "" = none
+		pubsub  *setupReport
+		wantRun int // setup columns restored
+	}{
+		{"key only (no leader listened)", report, nil, 1},
+		{"key and its durable Pub/Sub copy", report, &setupReport{ServerUUID: "srv-3", SubServer: "modded", Error: "download failed", Restored: true, Durable: true}, 1},
+		{"older node: Pub/Sub only", "", &setupReport{ServerUUID: "srv-3", SubServer: "modded", Error: "download failed", Restored: true}, 1},
+		{"key about another server", `{"serverUuid":"srv-9","subServer":"modded","error":"x"}`, nil, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			ctx := context.Background()
+			srv := &models.Server{ID: 3, UUID: "srv-3", NodeID: 1, ActiveSubServer: "modded"}
+			st := &setupBeforeStore{srv: srv, mods: []models.ServerMod{{ID: 1, ModrinthProjectID: "sodium", TargetDir: "mods"}}}
+			RememberSetupBefore(ctx, rdb, st, srv, "modded")
+			RememberSetupMods(ctx, rdb, st, srv, "modded")
+			st.mods = nil
+
+			s := NewSetupResultService(st, rdb, nil, nil)
+			if c.pubsub != nil {
+				s.apply(queue.SetupResultsChannel("node-tok"), *c.pubsub)
+			}
+			if c.key != "" {
+				rdb.Set(ctx, SetupFailedKey("srv-3"), c.key, time.Minute)
+			}
+			s.consumeSetupFailures(ctx)
+			s.consumeSetupFailures(ctx)
+
+			if len(st.written) != c.wantRun {
+				t.Errorf("setup columns restored %d times, want %d", len(st.written), c.wantRun)
+			}
+			if c.wantRun == 1 && len(st.mods) != 1 {
+				t.Errorf("mod rows = %+v, want them back", st.mods)
+			}
+			if n, _ := rdb.Exists(ctx, SetupFailedKey("srv-3")).Result(); n != 0 {
+				t.Error("the report was left to be applied again")
+			}
+		})
 	}
 }

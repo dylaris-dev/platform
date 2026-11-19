@@ -155,3 +155,65 @@ func TestConsumeSwitchSubFailures_IntentAndDeletedPrevious(t *testing.T) {
 		})
 	}
 }
+
+// R32-01: a switch from a server with no active sub-server (its active one was
+// deleted) that the node refused is put back to "none active", like a deleted
+// previous: the report and the undo record both name no previous, and that is
+// a known state, not an unknown one.
+func TestConsumeSwitchSubFailures_NoneActiveBefore(t *testing.T) {
+	for _, c := range []struct {
+		name, undo  string
+		wantChanged bool
+	}{
+		{"undo names none active", `{"target":"modded","previous":"","desiredState":"stopped"}`, true},
+		{"no undo record", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &switchFailFakeStore{}
+			fs.serversByUUID = map[string]models.Server{
+				"u-1": {ID: 7, UUID: "u-1", Name: "SMP", OwnerID: "owner-1", ActiveSubServer: "modded", DesiredState: "online"},
+			}
+			s := &StatusWatcherService{store: fs, redis: newQueueTestRedis(t)}
+			ctx := context.Background()
+			s.redis.Set(ctx, SwitchSubFailedKey("u-1"), `{"target":"modded","previous":"","reason":"x"}`, 0)
+			if c.undo != "" {
+				s.redis.Set(ctx, SwitchUndoKey("u-1"), c.undo, time.Minute)
+			}
+
+			if got := s.consumeSwitchSubFailures(ctx); got != c.wantChanged {
+				t.Fatalf("changed = %v, want %v", got, c.wantChanged)
+			}
+			if !c.wantChanged {
+				return
+			}
+			if len(fs.active) != 1 || fs.active[0] != "" {
+				t.Errorf("active_sub_server writes = %q, want [\"\"]", fs.active)
+			}
+			if len(fs.statusCalls) == 0 || fs.statusCalls[len(fs.statusCalls)-1].status != "pending_setup" {
+				t.Errorf("status writes = %+v, want pending_setup", fs.statusCalls)
+			}
+			if len(fs.desired) == 0 || fs.desired[len(fs.desired)-1] != "stopped" {
+				t.Errorf("desired writes = %q, want stopped", fs.desired)
+			}
+			if pub, _ := s.redis.Get(ctx, DesiredStateKey("u-1")).Result(); pub != "stopped" {
+				t.Errorf("published desired_state = %q, want stopped", pub)
+			}
+			if len(fs.notes) != 1 || fs.notes[0].UserID != "owner-1" {
+				t.Errorf("notifications = %+v, want one to the owner", fs.notes)
+			}
+			if n, _ := s.redis.Exists(ctx, SwitchUndoKey("u-1")).Result(); n != 0 {
+				t.Error("the undo record was left behind")
+			}
+		})
+	}
+}
+
+// R32-04: the undo record is what a refusal is put back from, and a switch to
+// a node that is away or backlogged is refused long after it was queued. The
+// node deletes the record once the switch lands, so its TTL only bounds a
+// command that is never delivered.
+func TestSwitchUndoOutlivesAQueuedSwitch(t *testing.T) {
+	if SwitchUndoTTL < 24*time.Hour {
+		t.Errorf("SwitchUndoTTL = %v, want at least a day", SwitchUndoTTL)
+	}
+}

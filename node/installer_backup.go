@@ -205,6 +205,20 @@ func publishSetupFailure(ctx context.Context, rdb *redis.Client, serverUUID, sub
 		log.Printf("setup failure report: marshal failed: %v", err)
 		return
 	}
+	// Pub/Sub reaches only a Core leader listening at that moment, and a
+	// report lost to a redeploy took the whole rollback with it. The key
+	// waits for the status watcher like switch_failed; "durable" tells a Core
+	// that reads it to leave the Pub/Sub copy alone, and only once the key is
+	// there. An older Core ignores both.
+	if err := rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:setup_failed", serverUUID), data, 10*time.Minute).Err(); err != nil {
+		log.Printf("setup failure report: could not keep it for Core: %v", err)
+	} else {
+		payload["durable"] = true
+		if data, err = json.Marshal(payload); err != nil {
+			log.Printf("setup failure report: marshal failed: %v", err)
+			return
+		}
+	}
 	if err := rdb.Publish(ctx, queue.SetupResultsChannel(nodeID), data).Err(); err != nil {
 		// Logged, never fatal, and never retried: the install already failed,
 		// and the report is the explanation rather than the outcome.
