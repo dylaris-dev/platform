@@ -160,3 +160,49 @@ func TestTheUploadSweeperLeavesSharedStorageAlone(t *testing.T) {
 		})
 	}
 }
+
+// R38-04: the sweeper walks a tenant's tree every five minutes, so it takes the
+// same depth cap as the boot sweep; a tenant's endless nesting must not pin or
+// crash the node.
+func TestTheUploadSweeperStopsAtTheDepthCap(t *testing.T) {
+	prev := maxTenantWalkDepth
+	maxTenantWalkDepth = 3
+	t.Cleanup(func() { maxTenantWalkDepth = prev })
+	root := t.TempDir()
+	sm := NewStorageManager(root, nil)
+	serverDir := filepath.Join(root, "srv-uuid")
+	cases := []struct {
+		rel  string
+		gone bool
+	}{
+		{"a/a/.beam-upload-within", true},   // depth 3: within the cap
+		{"a/a/a/.beam-upload-below", false}, // depth 4: not entered
+	}
+	old := time.Now().Add(-time.Hour)
+	for _, tc := range cases {
+		p := filepath.Join(serverDir, filepath.FromSlash(tc.rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("partial"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var heldKeys []string
+	sweepStaleUploadTemps(ctx, sm, func(key string) bool { heldKeys = append(heldKeys, key); return false })
+	for _, tc := range cases {
+		_, err := os.Lstat(filepath.Join(serverDir, filepath.FromSlash(tc.rel)))
+		if gone := os.IsNotExist(err); gone != tc.gone {
+			t.Errorf("%s: gone=%v, want %v", tc.rel, gone, tc.gone)
+		}
+	}
+	// The stream key is still the server-relative path.
+	if len(heldKeys) != 1 || heldKeys[0] != "srv-uuid/a/a/.beam-upload-within" {
+		t.Errorf("held() asked for %v", heldKeys)
+	}
+}

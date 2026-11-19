@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -114,9 +115,9 @@ func TestSweepSkipsStorageAnotherNodeUses(t *testing.T) {
 // tenant's endlessly nested tree cannot make every boot crawl or crash. What
 // the walk reaches is still judged by its parent's name.
 func TestSweepServerDirStopsAtDepthCap(t *testing.T) {
-	prev := maxLeftoverSweepDepth
-	maxLeftoverSweepDepth = 3
-	t.Cleanup(func() { maxLeftoverSweepDepth = prev })
+	prev := maxTenantWalkDepth
+	maxTenantWalkDepth = 3
+	t.Cleanup(func() { maxTenantWalkDepth = prev })
 	srv := filepath.Join(t.TempDir(), "srv-1")
 	old := time.Now().Add(-7 * time.Hour)
 	cases := []struct {
@@ -145,5 +146,47 @@ func TestSweepServerDirStopsAtDepthCap(t *testing.T) {
 		if gone := os.IsNotExist(err); gone != tc.gone {
 			t.Errorf("%s: gone=%v, want %v", tc.rel, gone, tc.gone)
 		}
+	}
+}
+
+// R38-06: a Root opened from another is named by the joined path, and every
+// entry read from it keeps a copy, so a deep chain of long names held memory
+// quadratic in its depth. Each level's handle now carries a short name, and
+// every handle a level opened is closed when the walk leaves it.
+func TestWalkTenantTreeKeepsLevelNamesShort(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reaching a level by descriptor needs /proc")
+	}
+	dir := t.TempDir()
+	long := strings.Repeat("d", 100)
+	deep := dir
+	for range 30 {
+		deep = filepath.Join(deep, long)
+	}
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fds := func() int {
+		ents, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(ents)
+	}
+	before := fds()
+	maxName, maxDepth := 0, 0
+	walkTenantTree(dir, func(e tenantEntry) bool {
+		maxName = max(maxName, len(e.level.Name()))
+		maxDepth = max(maxDepth, e.depth)
+		return true
+	})
+	if maxDepth != 30 {
+		t.Fatalf("walked %d levels, want 30", maxDepth)
+	}
+	if limit := len(dir) + 64; maxName > limit {
+		t.Errorf("a level's handle is named by %d bytes, want at most %d", maxName, limit)
+	}
+	if after := fds(); after != before {
+		t.Errorf("%d descriptors open after the walk, %d before", after, before)
 	}
 }

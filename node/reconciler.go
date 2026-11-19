@@ -146,6 +146,13 @@ func reconcileDeletedContainers(ctx context.Context, rdb *redis.Client, dm *Dock
 
 	// Scan all storage paths for server directories.
 	for _, storagePath := range storage.Paths() {
+		// Storage another node also uses: a copy with no container on this
+		// daemon may be that node's live server (migrate_cleanup leaves a moved
+		// server's copy there), and recreating it here ran two servers on one
+		// world (R38-07).
+		if sharedWithAnotherNode(storagePath) {
+			continue
+		}
 		entries, err := os.ReadDir(storagePath)
 		if err != nil {
 			continue

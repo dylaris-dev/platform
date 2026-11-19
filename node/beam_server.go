@@ -639,15 +639,11 @@ func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager, held func(ke
 				// levels down, where nothing ever looked. A kill mid-stream then
 				// left the partial file on the server's disk for good, counting
 				// against its limit.
-				root, err := os.OpenRoot(filepath.Join(base, e.Name()))
-				if err != nil {
-					continue
-				}
-				_ = fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
-					if err != nil || d.IsDir() {
-						// A directory that cannot be read is skipped, not fatal:
-						// one unreadable corner must not stop the rest of the sweep.
-						return nil
+				// The shared walk: by handle, with the depth cap, since this runs
+				// every five minutes over a tree the tenant shapes (R38-04).
+				walkTenantTree(filepath.Join(base, e.Name()), func(d tenantEntry) bool {
+					if d.IsDir() {
+						return true
 					}
 					g := grace
 					switch n := d.Name(); {
@@ -657,23 +653,23 @@ func sweepStaleUploadTemps(ctx context.Context, sm *StorageManager, held func(ke
 					case len(n) == len(".copy-")+16+len(".tmp") && strings.HasPrefix(n, ".copy-") && strings.HasSuffix(n, ".tmp"):
 						g = copyGrace
 					default:
-						return nil
+						return false
 					}
 					info, ierr := d.Info()
 					if ierr != nil || now.Sub(info.ModTime()) < g {
-						return nil
+						return false
 					}
+					name := d.rel()
 					if held != nil && held(e.Name()+"/"+name) {
-						return nil
+						return false
 					}
-					if rerr := root.Remove(name); rerr == nil {
+					if rerr := d.level.Remove(d.Name()); rerr == nil {
 						log.Printf("beam-server: sweeper removed stale temp %s/%s", e.Name(), name)
 						// A kept temp's bytes were booked into the gauge.
 						remeasureServerSoon(e.Name())
 					}
-					return nil
+					return false
 				})
-				root.Close()
 			}
 		}
 	}

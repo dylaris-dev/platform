@@ -18,9 +18,9 @@ const leftoverMinAge = 6 * time.Hour
 // partialBackupSuffix marks a node-local backup archive still being written.
 const partialBackupSuffix = ".partial"
 
-// maxLeftoverSweepDepth caps how deep the boot sweep descends into a tenant's
-// tree; no job leaves anything that deep. Same cap as the quota walk.
-var maxLeftoverSweepDepth = 4096
+// maxTenantWalkDepth caps how deep a sweep descends into a tenant's tree; no
+// job leaves anything that deep. Same cap as the quota walk.
+var maxTenantWalkDepth = 4096
 
 // sweepInterruptedWork removes what jobs killed by a node restart left behind.
 // A node update stops the agent within seconds, whatever it was doing, and
@@ -76,19 +76,61 @@ func sweepInterruptedWork(roots []string) {
 // sweepServerDir sweeps one whole server directory: a panel upload stages next
 // to its destination and a rename parks next to its target, at any depth.
 func sweepServerDir(dir string, cutoff time.Time) int {
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return 0
-	}
-	defer root.Close()
 	uuid := filepath.Base(dir)
 	removed := 0
-	// Each level opens its children relative to its own handle and carries
-	// only its own name: re-resolving the full path from the server root cost
-	// one openat per component per level, quadratic in a tenant's nesting (R37-09).
-	var walk func(dir *os.Root, parent string, depth int)
-	walk = func(dir *os.Root, parent string, depth int) {
-		f, err := dir.Open(".")
+	walkTenantTree(dir, func(e tenantEntry) bool {
+		if strings.HasPrefix(e.Name(), renameStagePrefix) && !strings.HasPrefix(e.Name(), renameStageOwn) {
+			recoverParkedRename(e.level, e)
+			return false
+		}
+		if isLeftover(e.Name(), e.IsDir(), e.depth, e.parent()) {
+			if removeLeftover(e.level, e.Name(), e, cutoff, uuid) {
+				removed++
+			}
+			return false
+		}
+		return true
+	})
+	return removed
+}
+
+// tenantEntry is one entry walkTenantTree visits.
+type tenantEntry struct {
+	os.DirEntry
+	level *os.Root // the directory holding it
+	depth int      // 1 = directly in the walked directory
+	above []string // own names of the directories above it, outermost first
+}
+
+// parent is the own name of the directory holding the entry, "." at the top.
+func (e tenantEntry) parent() string {
+	if len(e.above) == 0 {
+		return "."
+	}
+	return e.above[len(e.above)-1]
+}
+
+// rel is the entry's slash path below the walked directory.
+func (e tenantEntry) rel() string {
+	return path.Join(path.Join(e.above...), e.Name())
+}
+
+// walkTenantTree visits every entry below dir, a tenant's tree, and descends
+// into a directory (never a link) when visit returns true, down to
+// maxTenantWalkDepth. Each level opens its children relative to its own
+// handle and carries only its own name: re-resolving the full path from the
+// top cost one openat per component per level, quadratic in a tenant's
+// nesting (R37-09). Every sweep of a tenant's tree walks through here.
+func walkTenantTree(dir string, visit func(tenantEntry) bool) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return
+	}
+	defer root.Close()
+	var above []string
+	var walk func(level *os.Root, depth int)
+	walk = func(level *os.Root, depth int) {
+		f, err := level.Open(".")
 		if err != nil {
 			return
 		}
@@ -98,28 +140,36 @@ func sweepServerDir(dir string, cutoff time.Time) int {
 			return
 		}
 		for _, e := range entries {
-			if strings.HasPrefix(e.Name(), renameStagePrefix) && !strings.HasPrefix(e.Name(), renameStageOwn) {
-				recoverParkedRename(dir, e)
+			if !visit(tenantEntry{e, level, depth, above}) || !e.IsDir() || e.Type()&os.ModeSymlink != 0 || depth >= maxTenantWalkDepth {
 				continue
 			}
-			if isLeftover(e.Name(), e.IsDir(), depth, parent) {
-				if removeLeftover(dir, e.Name(), e, cutoff, uuid) {
-					removed++
-				}
+			child, closeChild, err := openTenantLevel(level, e.Name())
+			if err != nil {
 				continue
 			}
-			if e.IsDir() && e.Type()&os.ModeSymlink == 0 && depth < maxLeftoverSweepDepth {
-				child, err := dir.OpenRoot(e.Name())
-				if err != nil {
-					continue
-				}
-				walk(child, e.Name(), depth+1)
-				child.Close()
-			}
+			above = append(above, e.Name())
+			walk(child, depth+1)
+			above = above[:len(above)-1]
+			closeChild()
 		}
 	}
-	walk(root, ".", 1)
-	return removed
+	walk(root, 1)
+}
+
+// openTenantLevel opens directory name in level as a Root of its own. A Root
+// opened from another is named by the two names joined, and every entry read
+// from it keeps a copy of that name, so a chain N levels deep held O(N^2)
+// bytes of names: gigabytes for a 4096-deep chain of long names (R38-06).
+// Where it can, the child is reached through a name that stays short at any
+// depth instead (openLevelByFd); close releases what it opened.
+func openTenantLevel(level *os.Root, name string) (r *os.Root, close func(), err error) {
+	if r, close, ok := openLevelByFd(level, name); ok {
+		return r, close, nil
+	}
+	if r, err = level.OpenRoot(name); err != nil {
+		return nil, nil, err
+	}
+	return r, func() { r.Close() }, nil
 }
 
 // recoverParkedRename gives back what a rename killed between its two renameat
