@@ -64,6 +64,10 @@ type NodeHeartbeat struct {
 	// LinkKeySwap is set while the node would move its Link onto warp's new key
 	// by itself (node 2026.10.12+, link updater running, a managed Link found).
 	LinkKeySwap bool `json:"linkKeySwap,omitempty"`
+	// RestoreOverlay is set by a node that keeps the live files a selective
+	// backup does not hold (backup_restore "overlay"). Absent: the node would
+	// replace the whole target with the archive.
+	RestoreOverlay bool `json:"restoreOverlay,omitempty"`
 	// PortRange is the node's effective MC host-port range ("25600-25699") and
 	// PortRangeNotice is set only when the node fell back to its default because
 	// PORT_RANGE was unset or unparseable. Surfaced so an admin sees the ports

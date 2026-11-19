@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"math"
 	"net/http"
@@ -40,6 +41,11 @@ type BackupRestoreCommand struct {
 	// GuardedTransfer, AllowPrivate: see BackupRunCommand.
 	GuardedTransfer bool     `json:"guardedTransfer"`
 	AllowPrivate    []string `json:"allowPrivate"`
+	// Overlay: the archive holds only part of the target (a job with include
+	// or exclude patterns), so the live files it does not hold are kept rather
+	// than swapped away. Core sends it only to a node whose heartbeat says
+	// restoreOverlay; an older node would replace the whole target.
+	Overlay bool `json:"overlay"`
 }
 
 // createStageDir makes the directory a restore extracts into, beside targetDir
@@ -451,6 +457,20 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 		return
 	}
 
+	// Seeded only now: the archive is complete and its checksum good, so a
+	// failure here still leaves the live tree untouched, and the swap below
+	// stays the one atomic step.
+	if cmd.Overlay && extracted > 0 {
+		if err := seedStageFromLive(targetDir, stageRoot, budget, cmd.SubServer); err != nil {
+			stageCleanup()
+			if errors.Is(err, errUnpackBudget) {
+				err = errRestoreDiskBudget
+			}
+			failure = "keep the files the backup does not hold: " + err.Error()
+			return
+		}
+	}
+
 	// Close the stage Root BEFORE the swap: the swap renames stageDir itself,
 	// and on Windows an open handle on a directory blocks renaming it. The Root
 	// was only needed to write the entries, which is done. Idempotent, so the
@@ -567,6 +587,94 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 
 	succeeded = true
 	log.Printf("Restore %d completed: %d files in %v", cmd.RunID, extracted, time.Since(started))
+}
+
+// seedStageFromLive copies every live entry under targetDir that the extracted
+// stage does not have into the stage, so the swap replaces only what the
+// archive holds. Read through a Root at targetDir, so a tenant's link cannot
+// make the node copy something from outside the server in; written through the
+// stage Root and charged to the restore's budget like an extracted entry.
+// A copy rather than a rename: until the swap the live tree is not touched, so
+// any failure leaves the server as it was.
+// ponytail: costs the unchanged files' size in free disk for the restore's
+// length; moving them across after the stop would avoid it but gives up that.
+func seedStageFromLive(targetDir string, stage *os.Root, budget *writeBudget, subServer string) error {
+	live, err := os.OpenRoot(targetDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil // nothing live to keep
+	}
+	if err != nil {
+		return err
+	}
+	defer live.Close()
+	return fs.WalkDir(live.FS(), ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if name == "." {
+			return nil
+		}
+		// Carried across the swap by carryArchivesAcrossSwap, the backups
+		// among them: a copy would double the disk they take.
+		if subServer == "" && !strings.Contains(name, "/") && slices.Contains(nodeOwnedRootEntries, name) {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if st, err := stage.Lstat(name); err == nil {
+			// The archive's entry wins. A directory in both is merged below it.
+			if d.IsDir() && !st.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if err := budget.entryAt(name); err != nil {
+			return err
+		}
+		switch {
+		case d.IsDir():
+			budget.dirs[name] = true
+			return stage.MkdirAll(name, info.Mode().Perm())
+		case d.Type()&fs.ModeSymlink != 0:
+			// The tenant's own link, as it was: the live tree already had it.
+			to, err := live.Readlink(name)
+			if err != nil {
+				return err
+			}
+			if err := mkdirParentIn(stage, name); err != nil {
+				return err
+			}
+			return stage.Symlink(to, name)
+		case info.Mode().IsRegular():
+			src, err := live.Open(name)
+			if err != nil {
+				return err
+			}
+			defer src.Close()
+			dst, err := createIn(stage, name, info.Mode().Perm())
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(dst, budget.reader(src))
+			if cerr := dst.Close(); err == nil {
+				err = cerr
+			}
+			if err != nil {
+				return err
+			}
+			if !nodeOwnedRestoreName(subServer, name) {
+				chownForMCIn(stage, name)
+			}
+		}
+		return nil
+	})
 }
 
 // removeOldCopy is a var so a test can open a budget while the delete runs.

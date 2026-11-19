@@ -1308,6 +1308,9 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 	if linkKeySwapReady.Load() {
 		data["linkKeySwap"] = true
 	}
+	// Core restores a selective backup only to a node that says this: an
+	// older one would swap the partial archive in for the whole target.
+	data["restoreOverlay"] = true
 	// Where the operator would otherwise type the server network and the
 	// beam address in by hand. Not covered by sig (id and timestamp only).
 	netName, beamTarget := serverNetworkFacts(dm)

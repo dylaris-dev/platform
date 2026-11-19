@@ -18,6 +18,7 @@ type manifestFakeStore struct {
 	modSubs    []string
 
 	run *models.BackupRun
+	job *models.BackupJob // nil: a job without patterns
 
 	// Captured for assertions.
 	replaced     []replacedMods
@@ -49,6 +50,13 @@ func (f *manifestFakeStore) ListServerModSubServers(int) ([]string, error) {
 
 func (f *manifestFakeStore) GetBackupRun(int) (*models.BackupRun, error) {
 	return f.run, nil
+}
+
+func (f *manifestFakeStore) GetBackupJob(id int) (*models.BackupJob, error) {
+	if f.job != nil {
+		return f.job, nil
+	}
+	return &models.BackupJob{ID: id}, nil
 }
 
 func (f *manifestFakeStore) ReplaceServerMods(serverID int, sub string, mods []models.ServerMod) error {

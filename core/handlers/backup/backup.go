@@ -878,6 +878,10 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONError(w, "Node not found", 404)
 		return
 	}
+	overlay, ok := h.refusePartialRestore(w, r, run, job, node)
+	if !ok {
+		return
+	}
 	// Same resolution the run path uses. This is the one that matters most: a
 	// backup that cannot be restored is worse than no backup, because the
 	// failure only shows up when someone is already recovering.
@@ -951,6 +955,9 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	if objectStorage {
 		payload["download"] = services.BackupDownloadPresigned
 	}
+	if overlay {
+		payload["overlay"] = true
+	}
 	// A tenant's own bucket: the presigned URLs point wherever they said, so
 	// the node refuses non-public addresses for them. An older node ignores
 	// the field.
@@ -971,6 +978,24 @@ func (h *BackupHandler) RestoreRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "restoreId": restoreID})
+}
+
+// refusePartialRestore answers 409 for a run whose archive holds only part of
+// its scope (a job with include or exclude patterns) unless the node says it
+// restores one as an overlay. Every node replaces the restore target with the
+// archive otherwise, so a world-only run deleted the jar, the plugins and every
+// config, with no copy kept (R39-03). Refused before a restore row exists or
+// anything reaches the node: the node stops the server before it downloads.
+// overlay is true when the command must say so.
+func (h *BackupHandler) refusePartialRestore(w http.ResponseWriter, r *http.Request, run *models.BackupRun, job *models.BackupJob, node *models.Node) (overlay, ok bool) {
+	if !services.PartialBackupRun(run, job) {
+		return false, true
+	}
+	if !services.NodeRestoresOverlay(r.Context(), h.d.Redis, node.Token) {
+		httpx.SendJSONError(w, "This backup holds only the files its include/exclude patterns selected, and this node would delete every other file where it restores. Update the node, then restore again.", http.StatusConflict)
+		return false, false
+	}
+	return true, true
 }
 
 // ListRestores GET /api/servers/{id}/backup-restores
@@ -1314,8 +1339,9 @@ func (h *BackupHandler) startBackupRun(ctx context.Context, job *models.BackupJo
 	// Best-effort: a description that could not be written is not a reason to
 	// refuse a backup. The restore side already treats an absent manifest as
 	// "this archive says nothing" and leaves the rows alone.
-	manifest := services.EncodeBackupManifest(
-		services.BuildBackupManifest(h.d.Store, srv.ID, deref(job.SubServer), h.d.ReleaseVersion))
+	m := services.BuildBackupManifest(h.d.Store, srv.ID, deref(job.SubServer), h.d.ReleaseVersion)
+	m.Partial = services.SelectiveBackupJob(job)
+	manifest := services.EncodeBackupManifest(m)
 	if len(manifest) > 0 {
 		if err := h.d.Store.SetBackupRunManifest(runID, string(manifest)); err != nil {
 			log.Printf("backup manifest: run %d: %v", runID, err)

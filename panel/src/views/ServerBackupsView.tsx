@@ -217,6 +217,9 @@ export default function ServerBackupsView() {
     const [restoreCountdown, setRestoreCountdown] = useState(5);
     const [restoring, setRestoring] = useState(false);
     const [restoreHistory, setRestoreHistory] = useState<BackupRestore[]>([]);
+    // Core restores a selective run as an overlay: the files its patterns left out stay.
+    const restoreJob = restoreTarget ? jobs.find(j => j.id === restoreTarget.jobId) : undefined;
+    const restoreIsSelective = (restoreJob?.includePatterns?.length || 0) + (restoreJob?.excludePatterns?.length || 0) > 0;
     const [expandedJobs, setExpandedJobs] = useState<Set<number>>(new Set());
     const toggleRuns = (id: number) => setExpandedJobs(prev => {
         const next = new Set(prev);
@@ -649,7 +652,9 @@ export default function ServerBackupsView() {
                             <p className="alert alert-warning text-xs">
                                 <AlertTriangle size={13} className="shrink-0 mt-0.5" />
                                 <span>
-                                    Your server will be stopped, the archive extracted into the sub-server directory, and the server restarted automatically. The previous contents are moved aside (kept until next disk cleanup) — but anything written since this backup will be gone.
+                                    {restoreIsSelective
+                                        ? 'Your server will be stopped, every file in this selective backup written over its current version, and the server restarted automatically. Files the backup does not hold stay as they are. No copy of the replaced files is kept.'
+                                        : 'Your server will be stopped, its directory replaced with the archive, and the server restarted automatically. The current contents are deleted, including anything written since this backup. No copy of them is kept.'}
                                 </span>
                             </p>
                         </div>

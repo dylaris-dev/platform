@@ -1036,7 +1036,9 @@ func (b *BackupScheduler) dispatch(ctx context.Context, job models.BackupJob) er
 	// Scheduled runs wrote no manifest, so restoring one left the install and
 	// mod rows as they were and could not say which sub-server it covered.
 	// Same bytes on the row and in the archive, as on the manual path.
-	manifest := EncodeBackupManifest(BuildBackupManifest(b.store, srv.ID, subServer, b.releaseVersion))
+	m := BuildBackupManifest(b.store, srv.ID, subServer, b.releaseVersion)
+	m.Partial = SelectiveBackupJob(&job)
+	manifest := EncodeBackupManifest(m)
 	if len(manifest) > 0 {
 		if err := b.store.SetBackupRunManifest(runID, string(manifest)); err != nil {
 			log.Printf("backup manifest: run %d: %v", runID, err)
@@ -1209,6 +1211,9 @@ func (b *BackupScheduler) restoreMods(runID, serverID int) {
 	if err != nil || run == nil {
 		return
 	}
+	if b.overlaidRun(run) {
+		return
+	}
 	m, ok := DecodeBackupManifest(run.Manifest)
 	if !ok {
 		return
@@ -1223,6 +1228,15 @@ func (b *BackupScheduler) restoreMods(runID, serverID int) {
 			logErrf("backup-scheduler", "restore mods: server %d/%s: %v", serverID, entry.SubServer, err)
 		}
 	}
+}
+
+// overlaidRun reports whether run was restored as an overlay (a selective
+// run): the files its patterns left out are the live ones, so the rows that
+// describe them stay as they are. A job that cannot be read is judged by the
+// run's manifest alone.
+func (b *BackupScheduler) overlaidRun(run *models.BackupRun) bool {
+	job, _ := b.store.GetBackupJob(run.JobID)
+	return PartialBackupRun(run, job)
 }
 
 // restoreInstalls puts the archived install records back after a restore.
@@ -1241,6 +1255,9 @@ func (b *BackupScheduler) restoreMods(runID, serverID int) {
 func (b *BackupScheduler) restoreInstalls(runID, serverID int) {
 	run, err := b.store.GetBackupRun(runID)
 	if err != nil || run == nil {
+		return
+	}
+	if b.overlaidRun(run) {
 		return
 	}
 	var records []models.SubServerInstall

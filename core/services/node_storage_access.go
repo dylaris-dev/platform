@@ -113,6 +113,15 @@ func NodeSwapsLinkKey(ctx context.Context, rdb *redis.Client, nodeToken string) 
 	return hb != nil && hb.LinkKeySwap
 }
 
+// NodeRestoresOverlay reports whether the node keeps the live files a
+// selective backup does not hold. An older node replaces the whole target with
+// the archive, which deletes everything the patterns left out. Read off what
+// the node says it does; no heartbeat (offline) is "no".
+func NodeRestoresOverlay(ctx context.Context, rdb *redis.Client, nodeToken string) bool {
+	hb := LoadHeartbeat(ctx, rdb, nodeToken)
+	return hb != nil && hb.RestoreOverlay
+}
+
 // nodeAtLeast reports whether the node's heartbeat names release `since` or
 // newer, with the reading nodeTakesPresignedTransfers documents: no heartbeat
 // or an unparseable version is old, no version at all is a development build.
