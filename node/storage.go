@@ -705,12 +705,18 @@ func removeCopy(dir string) error {
 
 // clearMovedAway drops dir's moved-away mark, for a copy the key names live.
 func clearMovedAway(dir string) error {
+	return removeServerRootFile(dir, storageMovedAwayMarker)
+}
+
+// removeServerRootFile is the remove side of writeServerRootFile; a file
+// already gone is no error.
+func removeServerRootFile(dir, name string) error {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
-	if err := root.Remove(storageMovedAwayMarker); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := root.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -1162,6 +1168,12 @@ var errAlreadyOnPath = errors.New("is already on path")
 // start goes to the one the key names (see boundToMovedCopy).
 var errStorageKeyUnsure = errors.New("record the new storage path")
 
+// unsureKeyRereads and unsureKeyRereadDelay bound how long an unsure move
+// keeps asking Redis what its key write did; a var so a test needs no wait.
+const unsureKeyRereads = 3
+
+var unsureKeyRereadDelay = 200 * time.Millisecond
+
 // keyedPath is the storage path the server's storage key names, when that is
 // one of this node's paths, else "". Unlike GetServerPath it never guesses by
 // scanning: only the key can vouch for which of two copies is live.
@@ -1494,6 +1506,7 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 		// naming the target settles it: one naming the source may still be
 		// overtaken by the write in flight.
 		if v, gerr := sm.rdb.Get(context.Background(), fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)).Result(); gerr != nil || v != targetPath {
+			sm.settleUnsureTarget(serverUUID, currentPath, targetPath)
 			return fmt.Errorf("%w: %w", errStorageKeyUnsure, err)
 		}
 	}
@@ -1509,6 +1522,54 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 	}
 	log.Printf("storage: migration complete: %s → %s", serverUUID, targetPath)
 	return nil
+}
+
+// settleUnsureTarget fixes the target's marks after a move whose key write
+// could not be confirmed, so a later key loss never resolves to the wrong
+// copy. The key is read again: naming the target, it is live and loses its
+// moved-away mark (the server starts there, and nothing else would clear it,
+// R33-08/R33-09); naming the source, the mark stays. Still unread, neither
+// copy is provably live: the target's live mark goes back to the source's and
+// its moved-away mark goes, so the markers tie and the lookup reports the
+// server ambiguous instead of picking one. Neither copy is deleted here.
+func (sm *StorageManager) settleUnsureTarget(serverUUID, currentPath, targetPath string) {
+	key := fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)
+	srcDir := filepath.Join(currentPath, serverUUID)
+	dstDir := filepath.Join(targetPath, serverUUID)
+	names := ""
+	for i := 0; i < unsureKeyRereads; i++ {
+		time.Sleep(unsureKeyRereadDelay)
+		v, err := sm.rdb.Get(context.Background(), key).Result()
+		if err != nil {
+			continue
+		}
+		// Every read, not the first answer: one naming the source may
+		// still be overtaken by the write in flight.
+		if names = v; v == targetPath {
+			break
+		}
+	}
+	switch names {
+	case targetPath:
+	case currentPath:
+		return
+	default:
+		srcLive, err := readServerRootFile(srcDir, storageLiveMarker)
+		if errors.Is(err, fs.ErrNotExist) {
+			err = removeServerRootFile(dstDir, storageLiveMarker)
+		} else if err == nil {
+			err = writeServerRootFile(dstDir, storageLiveMarker, srcLive)
+		}
+		if err != nil {
+			// Unmarked with its higher live mark, the target would win.
+			log.Printf("storage: [warn] could not reset the live mark of %s after an unsure move, leaving it marked moved away: %v", dstDir, err)
+			return
+		}
+		log.Printf("storage: the storage key of %s is unreadable after its move; both copies stay candidates until it is", serverUUID)
+	}
+	if err := clearMovedAway(dstDir); err != nil {
+		log.Printf("storage: [warn] could not clear the moved-away mark of %s: %v", dstDir, err)
+	}
 }
 
 // formatBytes returns a human-readable byte size string.

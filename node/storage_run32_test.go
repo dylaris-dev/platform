@@ -141,8 +141,14 @@ func TestAnUnfinishedMoveTargetNeverWinsAfterAKeyLoss(t *testing.T) {
 			}
 			mr.SetError("")
 			mr.FlushAll()
-			if got := sm.GetServerPath(run18UUID); got != paths[0] {
-				t.Fatalf("after the key loss GetServerPath = %q, want the source %q", got, paths[0])
+			// The key could not be read back, so it may name either copy and
+			// the server may have run on the target since: neither wins
+			// (R33-08/R33-09), the server is reported ambiguous instead.
+			if got := sm.GetServerPath(run18UUID); got != "" {
+				t.Fatalf("after the key loss GetServerPath = %q, want unresolved", got)
+			}
+			if amb := sm.StorageAmbiguities(); len(amb) != 1 {
+				t.Fatalf("StorageAmbiguities = %v, want the server", amb)
 			}
 		})
 	}
