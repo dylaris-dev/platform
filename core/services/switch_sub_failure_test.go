@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 )
@@ -10,9 +12,10 @@ import (
 type switchFailFakeStore struct {
 	statusWatcherFakeStore
 
-	active []string
-	loader [][3]string
-	notes  []models.Notification
+	active  []string
+	loader  [][3]string
+	notes   []models.Notification
+	desired []string
 }
 
 func (f *switchFailFakeStore) UpdateServerActiveSubServer(id int, sub string) error {
@@ -83,6 +86,71 @@ func TestConsumeSwitchSubFailures(t *testing.T) {
 			}
 			if n, _ := s.redis.Exists(ctx, SwitchUndoKey("u-1")).Result(); n != 0 {
 				t.Error("the undo record was left behind")
+			}
+		})
+	}
+}
+
+func (f *switchFailFakeStore) UpdateServerDesiredState(id int, state string) error {
+	f.desired = append(f.desired, state)
+	return nil
+}
+
+// R31-01/R31-02: a switch that did not happen puts back the run intent the
+// dispatch overwrote, so the reconciler does not start the old sub-server an
+// owner had stopped. Only over the online the dispatch wrote.
+// R31-03: a previous sub-server deleted since the switch is not restored.
+func TestConsumeSwitchSubFailures_IntentAndDeletedPrevious(t *testing.T) {
+	const report = `{"target":"modded","previous":"main","reason":"x"}`
+	for _, c := range []struct {
+		name, undo, rowDesired string
+		deletePrevious         bool
+		wantActive             string
+		wantDesired            string // "" = not written
+		wantStatus             string // "" = not written
+	}{
+		{"stopped before, row online", `{"target":"modded","previous":"main","desiredState":"stopped"}`, "online", false, "main", "stopped", ""},
+		{"online before", `{"target":"modded","previous":"main","desiredState":"online"}`, "online", false, "main", "", ""},
+		{"stopped since", `{"target":"modded","previous":"main","desiredState":"stopped"}`, "stopped", false, "main", "", ""},
+		{"undo from an older Core", `{"target":"modded","previous":"main"}`, "online", false, "main", "", ""},
+		{"previous deleted", `{"target":"modded","previous":"main","desiredState":"online"}`, "online", true, "", "stopped", "pending_setup"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &switchFailFakeStore{}
+			fs.serversByUUID = map[string]models.Server{
+				"u-1": {ID: 7, UUID: "u-1", Name: "SMP", OwnerID: "owner-1", ActiveSubServer: "modded", DesiredState: c.rowDesired},
+			}
+			s := &StatusWatcherService{store: fs, redis: newQueueTestRedis(t)}
+			ctx := context.Background()
+			s.redis.Set(ctx, SwitchSubFailedKey("u-1"), report, 0)
+			s.redis.Set(ctx, SwitchUndoKey("u-1"), c.undo, time.Minute)
+			if c.deletePrevious {
+				MarkSwitchPreviousDeleted(ctx, s.redis, "u-1", "MAIN")
+				MarkSwitchPreviousDeleted(ctx, s.redis, "u-1", "other") // not the previous: no effect
+			}
+
+			if !s.consumeSwitchSubFailures(ctx) {
+				t.Fatal("reported nothing changed")
+			}
+			if len(fs.active) != 1 || fs.active[0] != c.wantActive {
+				t.Errorf("active_sub_server writes = %q, want [%q]", fs.active, c.wantActive)
+			}
+			var gotDesired, gotStatus string
+			if len(fs.desired) > 0 {
+				gotDesired = fs.desired[len(fs.desired)-1]
+			}
+			if len(fs.statusCalls) > 0 {
+				gotStatus = fs.statusCalls[len(fs.statusCalls)-1].status
+			}
+			if gotDesired != c.wantDesired || gotStatus != c.wantStatus {
+				t.Errorf("desired=%q status=%q, want desired=%q status=%q", gotDesired, gotStatus, c.wantDesired, c.wantStatus)
+			}
+			pub, _ := s.redis.Get(ctx, DesiredStateKey("u-1")).Result()
+			if pub != c.wantDesired {
+				t.Errorf("published desired_state = %q, want %q", pub, c.wantDesired)
+			}
+			if c.deletePrevious && (len(fs.notes) != 1 || !strings.Contains(fs.notes[0].Body, "deleted")) {
+				t.Errorf("notification = %+v, want one saying the previous sub-server was deleted", fs.notes)
 			}
 		})
 	}

@@ -1541,6 +1541,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		if rec, merr := json.Marshal(services.SwitchUndo{
 			Target: subName, Previous: srv.ActiveSubServer,
 			InstallerType: srv.InstallerType, MinecraftVersion: srv.MinecraftVersion, BuildNumber: srv.BuildNumber,
+			DesiredState: srv.DesiredState,
 		}); merr == nil {
 			h.d.Redis.Set(r.Context(), services.SwitchUndoKey(srv.UUID), rec, services.SwitchUndoTTL)
 		}
@@ -2833,6 +2834,7 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 	h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
 
 	wasActive := srv.ActiveSubServer == subServerName
+	services.MarkSwitchPreviousDeleted(r.Context(), h.d.Redis, srv.UUID, subServerName)
 	if wasActive {
 		h.d.Store.UpdateServerStatus(serverID, "pending_setup")
 		h.d.Store.UpdateServerActiveSubServer(serverID, "")

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"dylaris-pkg/validate"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // SwitchSubServer writes active_sub_server (and the target's loader columns)
@@ -44,6 +46,31 @@ type SwitchUndo struct {
 	InstallerType    string `json:"installerType"`
 	MinecraftVersion string `json:"minecraftVersion"`
 	BuildNumber      string `json:"buildNumber"`
+	// The run intent before IntendOnline; empty from an older Core.
+	DesiredState string `json:"desiredState,omitempty"`
+	// Set by DeleteSubServer: Previous is gone, so it is no place to go back to.
+	PreviousDeleted bool `json:"previousDeleted,omitempty"`
+}
+
+// MarkSwitchPreviousDeleted records that the sub-server a pending switch would
+// fall back to was deleted. The delete is allowed because Core already names
+// the target, and the node's report still names the deleted one.
+func MarkSwitchPreviousDeleted(ctx context.Context, rdb *redis.Client, serverUUID, name string) {
+	if rdb == nil {
+		return
+	}
+	raw, err := rdb.Get(ctx, SwitchUndoKey(serverUUID)).Result()
+	if err != nil {
+		return
+	}
+	var undo SwitchUndo
+	if json.Unmarshal([]byte(raw), &undo) != nil || !strings.EqualFold(undo.Previous, name) {
+		return
+	}
+	undo.PreviousDeleted = true
+	if rec, merr := json.Marshal(undo); merr == nil {
+		rdb.SetArgs(ctx, SwitchUndoKey(serverUUID), rec, redis.SetArgs{KeepTTL: true})
+	}
 }
 
 type switchSubFailure struct {
@@ -102,14 +129,39 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 				continue
 			}
 			s.redis.Del(ctx, SwitchUndoKey(srv.UUID))
+			matched := undo.Target != "" && strings.EqualFold(undo.Previous, previous)
+			if matched && undo.PreviousDeleted {
+				// What DeleteSubServer does for a deleted active slot.
+				log.Printf("Server %s: the switch to sub-server %q failed on the node (%s) and %q was deleted since; none is active", srv.UUID, rep.Target, rep.Reason, previous)
+				s.store.UpdateServerStatus(srv.ID, "pending_setup")
+				if err := s.store.UpdateServerActiveSubServer(srv.ID, ""); err != nil {
+					log.Printf("Server %s: could not clear the active sub-server: %v", srv.UUID, err)
+				}
+				s.store.UpdateServerDesiredState(srv.ID, "stopped")
+				PublishDesiredState(ctx, s.redis, srv.UUID, "stopped")
+				notifyServerOwner(s.store, srv, "Switch failed",
+					fmt.Sprintf("Switching %s to the sub-server %s did not happen, and its previous sub-server %s was deleted, so no sub-server is active. Switch to one to run the server again.", srv.Name, rep.Target, previous))
+				changed = true
+				continue
+			}
 			log.Printf("Server %s: the switch to sub-server %q failed on the node (%s), back on %q", srv.UUID, rep.Target, rep.Reason, previous)
 			if err := s.store.UpdateServerActiveSubServer(srv.ID, previous); err != nil {
 				log.Printf("Server %s: could not restore the active sub-server: %v", srv.UUID, err)
 				continue
 			}
-			if undo.Target != "" && strings.EqualFold(undo.Previous, previous) {
+			if matched {
 				if err := s.store.UpdateServerLoaderMetadata(srv.ID, undo.InstallerType, undo.MinecraftVersion, undo.BuildNumber); err != nil {
 					log.Printf("Server %s: could not restore the loader metadata: %v", srv.UUID, err)
+				}
+			}
+			// As RestoreSetupBefore: the switch ran nothing new, so the online
+			// the dispatch wrote must not have the reconciler start the old
+			// sub-server an owner had stopped. A stop since is kept.
+			if undo.Target != "" && undo.DesiredState != "" && undo.DesiredState != "online" && srv.DesiredState == "online" {
+				if err := s.store.UpdateServerDesiredState(srv.ID, undo.DesiredState); err != nil {
+					log.Printf("Server %s: could not put the run intent back: %v", srv.UUID, err)
+				} else {
+					PublishDesiredState(ctx, s.redis, srv.UUID, undo.DesiredState)
 				}
 			}
 			reason := rep.Reason
