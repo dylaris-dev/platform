@@ -1099,11 +1099,26 @@ func handleMigrateCleanup(ctx context.Context, rdb *redis.Client, storage *Stora
 		}
 	}
 
-	srcDir := filepath.Join(storagePath, serverUUID)
-	if err := removeCopy(srcDir); err != nil {
-		log.Printf("migrate_cleanup %s: could not remove server dir %s: %v", serverUUID, srcDir, err)
-		setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("cleanup failed: %v", err))
-		return
+	// Every copy here goes, as on delete: a second one an unsettled storage
+	// move left had no container and a global desired_state of online, so
+	// the reconciler brought it up on this node too (R37-10). Not one on
+	// storage another node also uses: that may be the target's live copy.
+	dirs := []string{filepath.Join(storagePath, serverUUID)}
+	for _, p := range storage.PathsHolding(serverUUID) {
+		if dir := filepath.Join(p, serverUUID); p != storagePath {
+			if sharedWithAnotherNode(p) {
+				log.Printf("migrate_cleanup %s: leaving the copy at %s, its storage is shared with another node", serverUUID, dir)
+				continue
+			}
+			dirs = append(dirs, dir)
+		}
+	}
+	for _, srcDir := range dirs {
+		if err := removeCopy(srcDir); err != nil {
+			log.Printf("migrate_cleanup %s: could not remove server dir %s: %v", serverUUID, srcDir, err)
+			setMigrationStatus(ctx, rdb, nodeToken, serverUUID, "error", fmt.Sprintf("cleanup failed: %v", err))
+			return
+		}
 	}
 
 	// The archive LAST: while it exists the reconciler leaves this server

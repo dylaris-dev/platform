@@ -18,6 +18,10 @@ const leftoverMinAge = 6 * time.Hour
 // partialBackupSuffix marks a node-local backup archive still being written.
 const partialBackupSuffix = ".partial"
 
+// maxLeftoverSweepDepth caps how deep the boot sweep descends into a tenant's
+// tree; no job leaves anything that deep. Same cap as the quota walk.
+var maxLeftoverSweepDepth = 4096
+
 // sweepInterruptedWork removes what jobs killed by a node restart left behind.
 // A node update stops the agent within seconds, whatever it was doing, and
 // these were only removed by the job's own deferred cleanup, which never ran:
@@ -79,9 +83,12 @@ func sweepServerDir(dir string, cutoff time.Time) int {
 	defer root.Close()
 	uuid := filepath.Base(dir)
 	removed := 0
-	var walk func(rel string, depth int)
-	walk = func(rel string, depth int) {
-		f, err := root.Open(rel)
+	// Each level opens its children relative to its own handle and carries
+	// only its own name: re-resolving the full path from the server root cost
+	// one openat per component per level, quadratic in a tenant's nesting (R37-09).
+	var walk func(dir *os.Root, parent string, depth int)
+	walk = func(dir *os.Root, parent string, depth int) {
+		f, err := dir.Open(".")
 		if err != nil {
 			return
 		}
@@ -91,23 +98,27 @@ func sweepServerDir(dir string, cutoff time.Time) int {
 			return
 		}
 		for _, e := range entries {
-			name := path.Join(rel, e.Name())
 			if strings.HasPrefix(e.Name(), renameStagePrefix) && !strings.HasPrefix(e.Name(), renameStageOwn) {
-				recoverParkedRename(root, rel, e)
+				recoverParkedRename(dir, e)
 				continue
 			}
-			if isLeftover(e.Name(), e.IsDir(), depth, rel) {
-				if removeLeftover(root, name, e, cutoff, uuid) {
+			if isLeftover(e.Name(), e.IsDir(), depth, parent) {
+				if removeLeftover(dir, e.Name(), e, cutoff, uuid) {
 					removed++
 				}
 				continue
 			}
-			if e.IsDir() && e.Type()&os.ModeSymlink == 0 {
-				walk(name, depth+1)
+			if e.IsDir() && e.Type()&os.ModeSymlink == 0 && depth < maxLeftoverSweepDepth {
+				child, err := dir.OpenRoot(e.Name())
+				if err != nil {
+					continue
+				}
+				walk(child, e.Name(), depth+1)
+				child.Close()
 			}
 		}
 	}
-	walk(".", 1)
+	walk(root, ".", 1)
 	return removed
 }
 
@@ -115,13 +126,13 @@ func sweepServerDir(dir string, cutoff time.Time) int {
 // calls left under renameStagePrefix, which every tenant path hides and
 // refuses. Same directory, visible name; a link is removed instead, since
 // renameNoFollow refuses to move one and parks it only to judge it.
-func recoverParkedRename(root *os.Root, rel string, e os.DirEntry) {
-	name := path.Join(rel, e.Name())
+func recoverParkedRename(root *os.Root, e os.DirEntry) {
+	name := e.Name()
 	if e.Type()&os.ModeSymlink != 0 {
 		_ = root.Remove(name)
 		return
 	}
-	back := path.Join(rel, "recovered-"+strings.TrimPrefix(e.Name(), renameStagePrefix))
+	back := "recovered-" + strings.TrimPrefix(e.Name(), renameStagePrefix)
 	if _, err := root.Lstat(back); err == nil {
 		return
 	}

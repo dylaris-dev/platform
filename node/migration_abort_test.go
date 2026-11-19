@@ -230,3 +230,54 @@ func TestMigrateDiscardDropsOnlyAMovedInCopy(t *testing.T) {
 }
 
 const discardUUID = "7d0a1c2e-3b4f-4a5b-8c6d-9e0f1a2b3c4d"
+
+// R37-10: a successful move away removes every copy of the server on this
+// node, not only the one the storage key names: a second copy left by an
+// unsettled storage move was brought back up here by the reconciler. A copy on
+// storage another node also uses may be the target's live one and stays.
+func TestMigrateCleanupRemovesEveryCopyOnTheSource(t *testing.T) {
+	prevNodeID := nodeID
+	t.Cleanup(func() { nodeID = prevNodeID })
+	nodeID = "node-src"
+	const uuid = "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d"
+	cases := []struct {
+		name        string
+		sharedOther bool // the second path is also another node's storage
+		wantOther   bool // the second copy survives
+	}{
+		{"leftover on own storage goes", false, false},
+		{"copy on storage shared with the target stays", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			p1, p2 := t.TempDir(), t.TempDir()
+			for _, p := range []string{p1, p2} {
+				if err := os.MkdirAll(filepath.Join(p, uuid), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(p, uuid, ".node_config.json"), []byte("{}"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.sharedOther {
+				if err := writeBeacon(p2, nodeBeacon{NodeID: "node-dst", UpdatedAt: time.Now()}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sm := &StorageManager{paths: []string{p1, p2}, rdb: rdb}
+			if err := sm.setRedisPath(uuid, p1); err != nil {
+				t.Fatal(err)
+			}
+			handleMigrateCleanup(context.Background(), rdb, sm, nil, "tok", uuid)
+			if _, err := os.Stat(filepath.Join(p1, uuid)); !os.IsNotExist(err) {
+				t.Fatal("the keyed copy was not removed")
+			}
+			_, err := os.Stat(filepath.Join(p2, uuid))
+			if got := err == nil; got != tc.wantOther {
+				t.Fatalf("second copy survives = %v, want %v", got, tc.wantOther)
+			}
+		})
+	}
+}

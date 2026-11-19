@@ -109,3 +109,41 @@ func TestSweepSkipsStorageAnotherNodeUses(t *testing.T) {
 		t.Fatal("swept a job on storage another node uses")
 	}
 }
+
+// R37-09: the sweep walks by directory handle and stops at a depth cap, so a
+// tenant's endlessly nested tree cannot make every boot crawl or crash. What
+// the walk reaches is still judged by its parent's name.
+func TestSweepServerDirStopsAtDepthCap(t *testing.T) {
+	prev := maxLeftoverSweepDepth
+	maxLeftoverSweepDepth = 3
+	t.Cleanup(func() { maxLeftoverSweepDepth = prev })
+	srv := filepath.Join(t.TempDir(), "srv-1")
+	old := time.Now().Add(-7 * time.Hour)
+	cases := []struct {
+		rel  string
+		gone bool
+	}{
+		{"a/a/.upload-1.tmp", true},                     // depth 3: within the cap
+		{"a/.dylaris-backups/job.tar.gz.partial", true}, // parent name still known
+		{"a/a/a/.upload-2.tmp", false},                  // depth 4: not entered
+	}
+	for _, tc := range cases {
+		p := filepath.Join(srv, filepath.FromSlash(tc.rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sweepServerDir(srv, time.Now().Add(-leftoverMinAge))
+	for _, tc := range cases {
+		_, err := os.Lstat(filepath.Join(srv, filepath.FromSlash(tc.rel)))
+		if gone := os.IsNotExist(err); gone != tc.gone {
+			t.Errorf("%s: gone=%v, want %v", tc.rel, gone, tc.gone)
+		}
+	}
+}
