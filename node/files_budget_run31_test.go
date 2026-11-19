@@ -111,3 +111,32 @@ func TestSFTPWrittenBytesCountOnceAgainstTheServerLimit(t *testing.T) {
 		})
 	}
 }
+
+// R33-07: streamedBefore read the owed bytes before the walk and added all of
+// them after it, so an overwrite that wrote back, or closed, during the walk
+// had those bytes counted on disk and as owed both.
+func TestStreamedBeforeOwedChangingDuringTheWalk(t *testing.T) {
+	const uuid = "33073307-3307-3307-3307-330733073307"
+	for _, tc := range []struct {
+		name string
+		// owed before the walk, owed after it, what the walk measured.
+		before, after, measured, want int64
+	}{
+		{"unchanged", 500, 500, 1000, 1500},
+		{"wrote back 200 during the walk", 500, 300, 1200, 1500},
+		{"closed during the walk", 500, 0, 1500, 1500},
+		// Started during the walk: left out, the under-count direction.
+		{"truncating open during the walk", 0, 500, 1000, 1000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(func() { serverStreamed.Delete(uuid) })
+			c := serverStreamedOf(uuid)
+			c.owed.Store(tc.before)
+			less := streamedBefore(uuid)
+			c.owed.Store(tc.after)
+			if got := less(tc.measured); got != tc.want {
+				t.Errorf("less(%d) = %d, want %d", tc.measured, got, tc.want)
+			}
+		})
+	}
+}

@@ -830,15 +830,17 @@ func streamedBefore(uuid string) func(measured int64) int64 {
 	c := serverStreamedOf(uuid)
 	gone0 := c.gone.Load()
 	live0 := c.live.Load()
-	// Read before the walk, so a handle writing during it is at most counted
-	// short of what it wrote, never as having freed more than it did.
+	// Read before the walk and again after it, the smaller one added: owed
+	// only drops while a handle writes back (to 0 at its close), so what it
+	// wrote during the walk, which the walk may have seen, is never added as
+	// owed as well. One that opened during the walk is left out, counted short.
 	owed0 := c.owed.Load()
 	return func(measured int64) int64 {
 		if measured < 0 {
 			return measured
 		}
 		off := live0 - (c.gone.Load() - gone0)
-		return max(measured-max(off, 0), 0) + owed0
+		return max(measured-max(off, 0), 0) + min(owed0, c.owed.Load())
 	}
 }
 
