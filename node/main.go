@@ -1861,6 +1861,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer lockServerInstall(cmd.Config.UUID)()
+		// A restart in its graceful stop recreated and started the old
+		// container beside the install; see waitServerPower for the order.
+		releasePower, powerOK := waitServerPower(ctx, cmd.Config.UUID)
+		if !powerOK {
+			log.Printf("Setup of %s/%s refused: the node is shutting down", cmd.Config.UUID, subName)
+			reportSetupRefused(errors.New("the node is shutting down"))
+			return
+		}
+		defer releasePower()
 		log.Printf("Setting up server %s (sub-server: %s)...", cmd.Config.UUID, subName)
 
 		// Set install-start timestamp for cooldown tracking
@@ -2587,6 +2596,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		}
 		defer leaveTree()
 		defer lockServerInstall(cmd.Config.UUID)()
+		// As setup: a restart in flight started the old JVM in the tree.
+		releasePower, powerOK := waitServerPower(ctx, cmd.Config.UUID)
+		if !powerOK {
+			log.Printf("Reinstall of %s/%s refused: the node is shutting down", cmd.Config.UUID, subName)
+			reportRefusedStatus(ctx, rdb, dm, cmd.Config.UUID, "stopped")
+			reportSetupFailed(ctx, rdb, cmd.Config.UUID, subName, errors.New("the node is shutting down"))
+			return
+		}
+		defer releasePower()
 		// Hold the reconciler off for the whole reinstall: we are about to stop a
 		// container whose desired_state is still "online" and then delete its JARs.
 		releaseBusy := holdBusyStatus(rdb, cmd.Config.UUID, "installing", busyStatusTTL)

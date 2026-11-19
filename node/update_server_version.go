@@ -172,6 +172,20 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 		return
 	}
 	defer leaveTree()
+	// As setup and reinstall: a restart or switch in flight started the old
+	// software beside the move. Before the busy hold, so its status writes end
+	// before "installing" goes up.
+	releasePower, powerOK := waitServerPower(ctx, pl.UUID)
+	if !powerOK {
+		abort("the node is shutting down")
+		return
+	}
+	defer releasePower()
+	// Core's undo record for this move, deleted once the move lands: left for
+	// its hour, Core's adoption of the active sub-server stood down as if the
+	// move were still pending. Read here so a newer dispatch's record is kept.
+	undoKey := fmt.Sprintf("dylaris:server:%s:version_update_undo", pl.UUID)
+	undoAtStart, _ := rdb.Get(ctx, undoKey).Result()
 
 	// Hold the reconciler off for the whole move, exactly like reinstall: the
 	// container is about to be stopped while its desired_state is still online.
@@ -342,6 +356,8 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	// recreate keeps it, as reinstall does: putting the old files back under a
 	// container that may already carry the new command would match neither.
 	stash.discard()
+	// No give-up signal can follow from here, so the undo has nothing to undo.
+	forgetValueIf(ctx, rdb, undoKey, undoAtStart)
 	// Saved whatever the recreate does, as the new software is on disk either
 	// way: the reconciler rebuilds a missing container from this file, and the
 	// setup-time image and start command crash-looped the moved server.
@@ -358,6 +374,27 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	}
 	releaseBusy(status)
 	log.Printf("update_server_version: %s/%s moved (status %s)", pl.UUID, subName, status)
+}
+
+// forgetValueIf deletes key only while it still holds want ("" deletes
+// nothing). WATCH, as the node's ACL grants no scripting.
+func forgetValueIf(ctx context.Context, rdb *redis.Client, key, want string) {
+	if want == "" {
+		return
+	}
+	err := rdb.Watch(ctx, func(tx *redis.Tx) error {
+		if cur, err := tx.Get(ctx, key).Result(); err != nil || cur != want {
+			return nil
+		}
+		_, err := tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			p.Del(ctx, key)
+			return nil
+		})
+		return err
+	}, key)
+	if err != nil {
+		log.Printf("could not forget %s: %v", key, err)
+	}
 }
 
 // abandonVersionUpdate tells Core the move did not happen, so it can undo the

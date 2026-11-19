@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"dylaris-core/models"
+	"dylaris-core/store"
 )
 
 // A version move writes the database optimistically and then dispatches the
@@ -139,20 +140,7 @@ func (s *StatusWatcherService) consumeVersionUpdateFailures(ctx context.Context)
 					log.Printf("Server %s: could not restore the Java image: %v", uuid, err)
 				}
 			}
-			if undo.InstallRecorded {
-				var err error
-				if undo.Install != nil {
-					rec := *undo.Install
-					rec.ServerID, rec.SubServerName = srv.ID, undo.SubServerName
-					err = s.store.UpsertSubServerInstall(rec)
-				} else {
-					err = s.store.DeleteSubServerInstall(srv.ID, undo.SubServerName)
-				}
-				if err != nil {
-					log.Printf("Server %s: could not restore the install record: %v", uuid, err)
-				}
-			}
-			s.restoreServerMods(srv.ID, undo)
+			RestoreVersionUpdateRows(s.store, srv.ID, undo)
 			// A move refused before its stop left the server running, and a
 			// newer node reports that ahead of this signal; "stopped" over it
 			// turned logins away from a running server. An older node leaves
@@ -174,6 +162,26 @@ func (s *StatusWatcherService) consumeVersionUpdateFailures(ctx context.Context)
 	}
 }
 
+// RestoreVersionUpdateRows puts back the install record and the mod rows a
+// move rewrote: from the watcher on the node's give-up signal, and from the
+// handler when the command never reached the queue.
+func RestoreVersionUpdateRows(st store.Store, serverID int, undo VersionUpdateUndo) {
+	if undo.InstallRecorded {
+		var err error
+		if undo.Install != nil {
+			rec := *undo.Install
+			rec.ServerID, rec.SubServerName = serverID, undo.SubServerName
+			err = st.UpsertSubServerInstall(rec)
+		} else {
+			err = st.DeleteSubServerInstall(serverID, undo.SubServerName)
+		}
+		if err != nil {
+			log.Printf("Server %d: could not restore the install record: %v", serverID, err)
+		}
+	}
+	restoreServerMods(st, serverID, undo)
+}
+
 // restoreServerMods puts the mod inventory back.
 //
 // Upsert rather than a delete-and-insert: the rows conflict on
@@ -184,7 +192,7 @@ func (s *StatusWatcherService) consumeVersionUpdateFailures(ctx context.Context)
 //
 // A mod with no Modrinth project id is skipped: it has no conflict key, so
 // writing it would insert a duplicate on every restore rather than replace one.
-func (s *StatusWatcherService) restoreServerMods(serverID int, undo VersionUpdateUndo) {
+func restoreServerMods(st store.Store, serverID int, undo VersionUpdateUndo) {
 	for _, m := range undo.Mods {
 		if strings.TrimSpace(m.ModrinthProjectID) == "" {
 			continue
@@ -200,7 +208,7 @@ func (s *StatusWatcherService) restoreServerMods(serverID int, undo VersionUpdat
 			SHA512:              m.SHA512,
 			TargetDir:           m.TargetDir,
 		}
-		if _, err := s.store.UpsertServerMod(&row); err != nil {
+		if _, err := st.UpsertServerMod(&row); err != nil {
 			log.Printf("Server %d: could not restore mod %s: %v", serverID, m.Title, err)
 		}
 	}

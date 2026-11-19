@@ -173,6 +173,7 @@ func (f *moveStore) UpsertSubServerInstall(in models.SubServerInstall) error {
 	f.upserted = append(f.upserted, in)
 	return nil
 }
+func (f *moveStore) DeleteSubServerInstall(int, string) error { f.install = nil; return nil }
 
 func runMove(t *testing.T, fs *moveStore, rdb *redis.Client, body string) *httptest.ResponseRecorder {
 	t.Helper()

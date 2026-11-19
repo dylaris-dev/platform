@@ -190,7 +190,7 @@ func TestConsumeVersionUpdateFailures_ClearsTheSignalWithNoUndoRecord(t *testing
 // insert a duplicate on every restore instead of replacing one.
 func TestRestoreServerModsSkipsUnlinkedMods(t *testing.T) {
 	s, fs := newUndoTest(t)
-	s.restoreServerMods(7, VersionUpdateUndo{
+	restoreServerMods(s.store, 7, VersionUpdateUndo{
 		SubServerName: "server",
 		Mods: []VersionUpdateUndoMod{
 			{ModrinthProjectID: "AANobbMI", Title: "Sodium"},

@@ -507,6 +507,9 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
 		return
 	}
+	if refuseInstallInPowerTransition(w, r, srv) {
+		return
+	}
 	// Before the cooldown below is claimed: a refusal here is answered by
 	// ticking a box, and must not cost the 30 seconds of a real install.
 	actorID, _ := r.Context().Value("userID").(string)
@@ -1104,6 +1107,9 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
 		return
 	}
+	if refuseInstallInPowerTransition(w, r, srv) {
+		return
+	}
 
 	// What is sent to the node is what was validated: the request's fields,
 	// each falling back to what the server already runs. The node used to get
@@ -1692,6 +1698,18 @@ func inPowerTransition(status string) bool {
 		return true
 	}
 	return false
+}
+
+// refuseInstallInPowerTransition answers a setup, reinstall or version move
+// of a server between power states and reports true. The node ran the start
+// or restart in flight beside the install, and its old JVM came up in the
+// tree the installer was writing. Operators pass, as in powerTransitionRefusal.
+func refuseInstallInPowerTransition(w http.ResponseWriter, r *http.Request, srv *models.Server) bool {
+	if reqctx.OperatorOverride(r) || !inPowerTransition(srv.Status) {
+		return false
+	}
+	httpx.SendJSONErrorCode(w, "The server is "+srv.Status+". Try again once it has started or stopped.", "server_in_transition", http.StatusConflict)
+	return true
 }
 
 // powerLockTTL is how long one power action locks out the next for its server.

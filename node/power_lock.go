@@ -155,6 +155,12 @@ func tryLockServerPower(uuid string) (func(), bool) {
 // for it instead of giving up: for work that must still happen once a running
 // command is done. It does not queue as a waiter, so it cannot replace one or
 // be replaced. False only when ctx ends.
+//
+// Lock order for one server, always: tree change (enterTreeChangeOfServer /
+// waitTreeChangeOfServer) -> install (lockServerInstall) -> power. Setup,
+// reinstall, version move and sub-server delete take them in that order; the
+// power holders (serialisedActions, the reconciler, ReconcileRedisEnv) take
+// only the power lock and never wait on the other two, so nothing deadlocks.
 func waitServerPower(ctx context.Context, uuid string) (func(), bool) {
 	for {
 		if release, ok := tryLockServerPower(uuid); ok {

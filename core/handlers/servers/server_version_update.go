@@ -369,6 +369,9 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
 		return
 	}
+	if refuseInstallInPowerTransition(w, r, srv) {
+		return
+	}
 	loader := strings.ToLower(strings.TrimSpace(req.Loader))
 	if loader == "" {
 		loader = strings.ToLower(srv.InstallerType)
@@ -541,9 +544,9 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	// longer than any move takes and short enough that a stale record cannot
 	// undo a LATER, successful move.
 	prevInstall, ierr := h.d.Store.GetSubServerInstall(serverID, srv.ActiveSubServer)
+	undo := buildVersionUpdateUndo(srv, mods)
+	undo.Install, undo.InstallRecorded = prevInstall, ierr == nil
 	if h.d.Redis != nil {
-		undo := buildVersionUpdateUndo(srv, mods)
-		undo.Install, undo.InstallRecorded = prevInstall, ierr == nil
 		if rec, merr := json.Marshal(undo); merr == nil {
 			h.d.Redis.Set(r.Context(), services.VersionUpdateUndoKey(srv.UUID), rec, time.Hour)
 		}
@@ -564,39 +567,35 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 	}
 	h.d.Store.UpdateServerStatus(serverID, "installing")
 
-	if err := h.d.Queue.SendCommand(context.Background(), node.Token, "update_server_version", configPayload, installerPayload); err != nil {
-		// No node got the command, so none will report a failure for the
-		// status watcher to undo: put the columns back here, or the server
-		// claims the target version and sits "installing" for good.
-		_ = h.d.Store.UpdateServerSetup(serverID, srv.GameImage, srv.StartCommand, srv.ActiveSubServer, srv.ExtraJvmFlags, srv.InstallerType, srv.MinecraftVersion, srv.BuildNumber)
-		h.d.Store.UpdateServerStatus(serverID, srv.Status)
-		if h.d.Redis != nil {
-			h.d.Redis.Del(context.Background(), services.VersionUpdateUndoKey(srv.UUID))
-			if proxyKeep {
-				services.ForgetProxyProtocolInstall(context.WithoutCancel(r.Context()), h.d.Redis, srv.UUID)
-			}
-		}
-		httpx.SendJSONError(w, "Failed to queue the version update", http.StatusInternalServerError)
-		return
-	}
-
+	// The mod rows and the install record are written before the dispatch
+	// too, as setup, reinstall and the copy do: a node refusing within
+	// milliseconds has its undo applied by the status watcher, and a write
+	// after the dispatch landed on top of that restore for good.
+	//
 	// The mod rows follow the jars: the dropped ones are gone from disk, and
-	// the kept ones now point at a different version and file name.
+	// the kept ones now point at a different version and file name. A dropped
+	// row with no Modrinth project id is one the undo cannot put back
+	// (restoreServerMods), so it goes only once the command is out.
 	dropped := map[int]bool{}
 	for _, u := range unavailable {
 		dropped[u.ModID] = true
 	}
+	var dropAfterSend []int
 	for _, m := range mods {
-		if dropped[m.ID] {
-			_ = h.d.Store.DeleteServerMod(m.ID, serverID)
+		if !dropped[m.ID] {
+			continue
 		}
+		if strings.TrimSpace(m.ModrinthProjectID) == "" {
+			dropAfterSend = append(dropAfterSend, m.ID)
+			continue
+		}
+		_ = h.d.Store.DeleteServerMod(m.ID, serverID)
 	}
 	for _, in := range install {
 		row := movedModRow(in, targetDir)
 		if _, err := h.d.Store.UpsertServerMod(&row); err != nil {
-			// The jar is on its way regardless; a stale row is visible and
-			// fixable, so this is logged through the response rather than
-			// failing a move that is already dispatched.
+			// A stale row is visible and fixable, and a failed move puts
+			// it back from the undo, so it does not stop the move.
 			continue
 		}
 	}
@@ -617,6 +616,26 @@ func (h *ServerModsHandler) VersionUpdate(w http.ResponseWriter, r *http.Request
 		if err := h.d.Store.UpsertSubServerInstall(next); err != nil {
 			log.Printf("VersionUpdate: could not update the install record for server %d/%s: %v", serverID, srv.ActiveSubServer, err)
 		}
+	}
+
+	if err := h.d.Queue.SendCommand(context.Background(), node.Token, "update_server_version", configPayload, installerPayload); err != nil {
+		// No node got the command, so none will report a failure for the
+		// status watcher to undo: put the columns back here, or the server
+		// claims the target version and sits "installing" for good.
+		_ = h.d.Store.UpdateServerSetup(serverID, srv.GameImage, srv.StartCommand, srv.ActiveSubServer, srv.ExtraJvmFlags, srv.InstallerType, srv.MinecraftVersion, srv.BuildNumber)
+		services.RestoreVersionUpdateRows(h.d.Store, serverID, undo)
+		h.d.Store.UpdateServerStatus(serverID, srv.Status)
+		if h.d.Redis != nil {
+			h.d.Redis.Del(context.Background(), services.VersionUpdateUndoKey(srv.UUID))
+			if proxyKeep {
+				services.ForgetProxyProtocolInstall(context.WithoutCancel(r.Context()), h.d.Redis, srv.UUID)
+			}
+		}
+		httpx.SendJSONError(w, "Failed to queue the version update", http.StatusInternalServerError)
+		return
+	}
+	for _, id := range dropAfterSend {
+		_ = h.d.Store.DeleteServerMod(id, serverID)
 	}
 
 	h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
