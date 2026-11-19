@@ -639,7 +639,7 @@ func nodeOwnedRestoreName(subServer, name string) bool {
 
 // nodeOwnedRootEntries are the names in a server root the node writes and the
 // tenant cannot (isProtectedFile).
-var nodeOwnedRootEntries = []string{backupDirName, ".node_config.json", ".active_server", ".dylaris.json"}
+var nodeOwnedRootEntries = []string{backupDirName, ".node_config.json", ".active_server", ".dylaris.json", storageLiveMarker, storageMovedAwayMarker}
 
 // restoreStallTimeout ends a restore download that delivers no byte for this
 // long. A variable for tests.

@@ -150,7 +150,7 @@ func archiveSourceBytes(dir string) int64 {
 // archiveHiddenRootFiles are the node-owned files in a server root that no
 // archive carries. .active_server is not among them: the active sub-server is
 // no secret, and a restore onto an empty disk still learns it from the archive.
-var archiveHiddenRootFiles = []string{".node_config.json", ".dylaris.json", netGateFile}
+var archiveHiddenRootFiles = []string{".node_config.json", ".dylaris.json", netGateFile, storageLiveMarker, storageMovedAwayMarker}
 
 // RunBackup builds the archive and streams it directly to storage via an
 // io.Pipe — no buffering in RAM. The tar+gzip writer runs in a goroutine

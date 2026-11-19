@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -594,11 +595,13 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 		// (A08), so an unreadable key resolves to neither. A key that is
 		// simply gone, as every key is after a Valkey restart, resolved to
 		// neither for good too (R29-07), and nothing wrote it again (R30-09):
-		// the copy the node wrote last is settled as the live one instead.
+		// the copy the move markers name live is settled as the live one
+		// instead. Not the newest mtime: a move's debris is written last
+		// (R31-08, R31-09).
 		if copies > 1 {
 			if !keyed {
-				if live := lastWrittenCopy(serverUUID, holding); live != "" {
-					log.Printf("storage: %s has %d copies and no storage key; %s holds the last write, recording it as the live one (the other copies are left alone)", serverUUID, copies, live)
+				if live := markedLiveCopy(serverUUID, holding); live != "" {
+					log.Printf("storage: %s has %d copies and no storage key; the move markers name %s live, recording it (the other copies are left alone)", serverUUID, copies, live)
 					sm.setRedisPath(serverUUID, live)
 					return live
 				}
@@ -658,52 +661,95 @@ func (sm *StorageManager) PathsHolding(serverUUID string) []string {
 	return out
 }
 
-// lastWrittenCopy is the path whose copy of the server holds the newest
-// write, or "" when no single copy does. A move writes its target after the
-// source (the copy does not carry mtimes over), and only the copy the key
-// named runs, writes .node_config.json and rotates its logs, so a leftover
-// only ever gets older. Read two levels down: the node's own files and each
-// sub-server's world, logs and player files, and not a whole world tree.
-func lastWrittenCopy(serverUUID string, paths []string) string {
-	best, bestAt, tie := "", time.Time{}, false
+// storageLiveMarker and storageMovedAwayMarker are the node's proof, on disk,
+// of which copy a storage move left live: the storage key is gone after a
+// Valkey restart, and mtimes are no proof, because a move's own debris is
+// written last (the source delete bumps its directories, a copy killed
+// halfway is newer than its source). The target is marked live, with a
+// generation above the source's, before the key flips; a copy is marked moved
+// away before any of it is deleted. Both names are isProtectedFile's.
+const (
+	storageLiveMarker      = ".dylaris_live"
+	storageMovedAwayMarker = ".dylaris_moved_away"
+)
+
+// removeTree is a var so a test can fail a delete partway.
+var removeTree = os.RemoveAll
+
+// removeCopy deletes a copy of a server that is not its live one, marking it
+// moved away first so that a delete stopped partway leaves no candidate.
+// Unmarked, it is not touched: a half-deleted copy without the mark is the
+// debris a lookup could settle on. A missing dir is nothing to remove.
+func removeCopy(dir string) error {
+	if err := writeServerRootFile(dir, storageMovedAwayMarker, []byte(strconv.FormatInt(time.Now().UnixNano(), 10))); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("mark %s as moved away: %w", dir, err)
+	}
+	return removeTree(dir)
+}
+
+// liveGeneration is the generation in dir's live mark; ok=false with no
+// error when there is none.
+func liveGeneration(dir string) (gen int64, ok bool, err error) {
+	b, err := readServerRootFile(dir, storageLiveMarker)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	gen, err = strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	return gen, err == nil, err
+}
+
+// markedLiveCopy is the path whose copy of the server the move markers name
+// live, or "" when they do not settle it: a copy marked moved away never wins;
+// of the rest, the only one, or the only one with the newest live mark. Copies
+// an older node left carry no marks and stay unsettled. Any mark that cannot
+// be read leaves it unsettled too.
+func markedLiveCopy(serverUUID string, paths []string) string {
+	var standing []string
+	gens := map[string]int64{}
 	for _, p := range paths {
-		at := newestEntry(filepath.Join(p, serverUUID), 2)
+		dir := filepath.Join(p, serverUUID)
+		if _, err := readServerRootFile(dir, storageMovedAwayMarker); err == nil {
+			continue
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return ""
+		}
+		standing = append(standing, p)
+		gen, ok, err := liveGeneration(dir)
+		if err != nil {
+			return ""
+		}
+		if ok {
+			gens[p] = gen
+		}
+	}
+	if len(standing) == 1 {
+		return standing[0]
+	}
+	best, tie := "", false
+	for _, p := range standing {
+		gen, ok := gens[p]
 		switch {
-		case at.After(bestAt):
-			best, bestAt, tie = p, at, false
-		case at.Equal(bestAt):
+		case !ok:
+		case best == "" || gen > gens[best]:
+			best, tie = p, false
+		case gen == gens[best]:
 			tie = true
 		}
 	}
-	if tie || bestAt.IsZero() {
+	if tie {
 		return ""
 	}
 	return best
 }
 
-// newestEntry is the newest mtime among dir's entries down to depth levels,
-// without following links (DirEntry.Info is an lstat).
-func newestEntry(dir string, depth int) time.Time {
-	var newest time.Time
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return newest
-	}
-	for _, e := range entries {
-		if fi, err := e.Info(); err == nil && fi.ModTime().After(newest) {
-			newest = fi.ModTime()
-		}
-		if e.IsDir() && depth > 1 {
-			if at := newestEntry(filepath.Join(dir, e.Name()), depth-1); at.After(newest) {
-				newest = at
-			}
-		}
-	}
-	return newest
-}
-
 // StorageAmbiguity is a server with copies on several storage paths that no
-// storage key and no write time tell apart. The heartbeat reports it so an
+// storage key and no move marker tell apart. The heartbeat reports it so an
 // operator can remove the stale tree; until then the server resolves nowhere.
 type StorageAmbiguity struct {
 	Server string   `json:"server"`
@@ -1135,7 +1181,7 @@ func (sm *StorageManager) dropStaleCopies(serverUUID string) {
 			continue
 		}
 		log.Printf("storage: removing the leftover copy of %s at %s (it lives on %s)", serverUUID, dir, live)
-		if err := os.RemoveAll(dir); err != nil {
+		if err := removeCopy(dir); err != nil {
 			log.Printf("storage: [warn] could not remove leftover copy %s: %v", dir, err)
 		}
 	}
@@ -1352,7 +1398,7 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 	// key names the source; resolveMigration refuses when it does not). Copied over,
 	// it merged: files deleted from the live tree since came back. Cleared
 	// before the space check, which it would otherwise count as used.
-	if err := os.RemoveAll(dstDir); err != nil {
+	if err := removeCopy(dstDir); err != nil {
 		return fmt.Errorf("clear the leftover copy at %s: %w", dstDir, err)
 	}
 
@@ -1369,14 +1415,26 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 	// 90% check below; without them it passes and the source is deleted, taking
 	// .active_server and .node_config.json with it.
 	if err := migrateCopyTree(srcDir, dstDir); err != nil {
-		os.RemoveAll(dstDir)
+		removeCopy(dstDir)
 		return fmt.Errorf("copy failed: %v", err)
 	}
 
 	// Verify: dest must be at least 90% of source size
 	if dstSize := dirSize(dstDir); srcSize > 0 && dstSize < srcSize*9/10 {
-		os.RemoveAll(dstDir)
+		removeCopy(dstDir)
 		return fmt.Errorf("copy verification failed: source=%s, dest=%s", formatBytes(uint64(srcSize)), formatBytes(uint64(dstSize)))
+	}
+
+	// Marked before the key flips, above the source's own mark, which the
+	// copy brought along: after a key loss this is what tells the whole
+	// target from the source (R31-08, R31-09).
+	gen := time.Now().UnixNano()
+	if srcGen, ok, _ := liveGeneration(srcDir); ok && srcGen >= gen {
+		gen = srcGen + 1
+	}
+	if err := writeServerRootFile(dstDir, storageLiveMarker, []byte(strconv.FormatInt(gen, 10))); err != nil {
+		removeCopy(dstDir)
+		return fmt.Errorf("mark %s live: %w", dstDir, err)
 	}
 
 	// The key moves before the source goes: a node killed during the delete,
@@ -1393,7 +1451,7 @@ func (sm *StorageManager) MigrateServerPath(serverUUID, targetPath string) error
 	}
 
 	// Remove old directory (data is safe at target)
-	if err := os.RemoveAll(srcDir); err != nil {
+	if err := removeCopy(srcDir); err != nil {
 		log.Printf("storage: [warn] could not remove old directory %s: %v", srcDir, err)
 	}
 	log.Printf("storage: migration complete: %s → %s", serverUUID, targetPath)
