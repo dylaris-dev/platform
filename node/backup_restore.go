@@ -126,6 +126,14 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	}
 
 	rootDir := resolveServerRoot(sm, cmd.ServerUUID)
+	// "" is an unresolved root (two copies, an unreadable key, an unmounted
+	// path), not a directory: the stage would land in the node's working
+	// directory, and the server was stopped and the whole archive unpacked
+	// there before the swap onto "" failed.
+	if rootDir == "" {
+		reportRestore(ctx, rdb, cmd.RestoreID, cmd.RunID, "failed", "the server's storage path cannot be resolved on this node right now; try again shortly")
+		return
+	}
 	targetDir := rootDir
 	if cmd.SubServer != "" {
 		targetDir = filepath.Join(rootDir, cmd.SubServer)

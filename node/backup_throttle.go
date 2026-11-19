@@ -126,17 +126,22 @@ func watchBackupPolicy(ctx context.Context, rdb *redis.Client, nodeID, spoolDir 
 			rdb.Set(ctx, backupEnvKey(nodeID), b, time.Minute)
 		}
 	}
+	// The first load returns before the watch goes on in the background: main
+	// runs it before the command consumer, so a backup the queue redelivers at
+	// boot already sees the policy (and spools when it should).
 	reload()
-	t := time.NewTicker(10 * time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			reload()
+	go func() {
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				reload()
+			}
 		}
-	}
+	}()
 }
 
 // serverLoad is what a running server's stats collector last saw.

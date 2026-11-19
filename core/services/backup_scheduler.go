@@ -1191,13 +1191,23 @@ func (b *BackupScheduler) restoreMods(runID, serverID int) {
 // leave the existing records alone rather than clear them. A restore that
 // silently emptied them would trade a record that might be stale for no record
 // at all, which reads on screen as "we never wrote this down".
+//
+// The manifest is read first: it is built at dispatch from the rows the archive
+// is packed under, while the snapshot is read at the success report, which on
+// a spooled run comes after an upload of hours - long enough for a version
+// update to land in between and be restored over the older files. The snapshot
+// is only the fallback for runs from before manifests.
 func (b *BackupScheduler) restoreInstalls(runID, serverID int) {
 	run, err := b.store.GetBackupRun(runID)
-	if err != nil || run == nil || run.InstallSnapshot == "" {
+	if err != nil || run == nil {
 		return
 	}
 	var records []models.SubServerInstall
-	if err := json.Unmarshal([]byte(run.InstallSnapshot), &records); err != nil {
+	if m, ok := DecodeBackupManifest(run.Manifest); ok {
+		records = m.Installs
+	} else if run.InstallSnapshot == "" {
+		return
+	} else if err := json.Unmarshal([]byte(run.InstallSnapshot), &records); err != nil {
 		log.Printf("restore installs: run %d snapshot is unreadable: %v", runID, err)
 		return
 	}

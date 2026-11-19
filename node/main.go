@@ -498,11 +498,14 @@ func main() {
 	// Before the consumer: a restore the queue redelivers after a restart must
 	// not budget its disk around the stage its killed run left behind.
 	runRestoreCleanup(storageMgr)
-	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
-	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
+	// Before the consumer too: a spooled backup redelivered at boot read no
+	// policy and no spool dir and uploaded from the live tree, and clearing
+	// the spool after it started could delete the file it was writing.
 	globalSpoolDir = backupSpoolDir(storageMgr.Paths())
 	clearBackupSpool(globalSpoolDir)
-	go watchBackupPolicy(ctx, rdb, nodeID, globalSpoolDir)
+	watchBackupPolicy(ctx, rdb, nodeID, globalSpoolDir)
+	go listenForCommands(ctx, rdb, dockerMgr, nodeID, quotaProvider, storageMgr)
+	go StartStatsCollector(ctx, rdb, dockerMgr, nodeID, statsBufferMaxLen, quotaProvider)
 	go startVoiceForwarder(ctx, rdb, dockerMgr, nodeID)
 	// Caps and TTLs on the keys a server's own shipper credential can write.
 	startShipperKeyGuard(ctx, dockerMgr, rdb)
