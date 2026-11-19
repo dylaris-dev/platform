@@ -323,18 +323,30 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	budget := nodeWriteBudget(filepath.Dir(stageDir))
 	// oldFreed is the size of the old copy the swap deleted.
 	var oldFreed int64
+	settled := false
+	// settle books a swapped-in stage as landed. Run as soon as the old copy is
+	// gone, before the re-tag walk: a budget opened during the walk measured the
+	// free space without the old world, and a credit booked after it opened
+	// would grant it that space a second time.
+	settle := func() {
+		settled = true
+		booked := budget.used
+		budget.release()
+		// The old copy was on disk when every running budget measured
+		// the free space; crediting it back, up to what this restore
+		// booked, keeps them from counting the old world as still used.
+		if oldFreed > 0 {
+			budget.disk.landed.Add(-min(oldFreed, booked))
+		}
+	}
 	// Only a swapped-in stage stays on disk; every failure removes it, and
 	// bytes booked as landed count against every other write still running.
 	defer func() {
+		if settled {
+			return
+		}
 		if succeeded {
-			booked := budget.used
-			budget.release()
-			// The old copy was on disk when every running budget measured
-			// the free space; crediting it back, up to what this restore
-			// booked, keeps them from counting the old world as still used.
-			if oldFreed > 0 {
-				budget.disk.landed.Add(-min(oldFreed, booked))
-			}
+			settle()
 		} else {
 			budget.releaseWritten(0)
 		}
@@ -536,6 +548,7 @@ func RunRestore(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *
 	} else {
 		keepStash(cmd.RunID, backupDir)
 	}
+	settle()
 	if cmd.SubServer == "" {
 		// The stage was made in the storage root, outside any project, and is
 		// now the server root: re-tag it or the server counts ~0 and its limit
