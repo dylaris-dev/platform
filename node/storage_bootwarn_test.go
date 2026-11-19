@@ -155,3 +155,30 @@ func TestAForeignMarkerDoesNotSkipAnOwnEmptyPath(t *testing.T) {
 		t.Fatalf("after the foreign disk left, paths = %v, want %v", got, want)
 	}
 }
+
+// R28-07: a boot whose identity was replaced during enrolment (.node_id now
+// names a new id) must still read its own markers, which name the id it ran as
+// before, as its own: a bare non-first mountpoint is skipped, not marked.
+func TestAReplacedIdentityStillSkipsABareOwnPath(t *testing.T) {
+	disk1, disk2 := t.TempDir(), t.TempDir()
+	csv := disk1 + "," + disk2
+	own := disk1 + "\n" + disk2 + "\n#kept 7 " + disk1 + "\n#kept 7 " + disk2 + "\n#node oldid\n#gen 7\n"
+	for f, body := range map[string]string{
+		filepath.Join(disk1, ".node_id"):        "newid\n",
+		filepath.Join(disk1, storageMarkerName): own,
+	} {
+		if err := os.WriteFile(f, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prev := nodeSecretDir
+	nodeSecretDir = disk1
+	t.Cleanup(func() { nodeSecretDir = prev })
+	sm := NewStorageManager(csv, nil)
+	if got, want := sm.Paths(), []string{disk1}; !slices.Equal(got, want) {
+		t.Fatalf("paths = %v, want %v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(disk2, storageMarkerName)); err == nil {
+		t.Fatal("the bare mountpoint was given a marker")
+	}
+}

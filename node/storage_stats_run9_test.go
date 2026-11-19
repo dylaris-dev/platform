@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -165,5 +166,55 @@ func TestStatsOfAStoppedContainerAreAnError(t *testing.T) {
 				t.Fatalf("a stopped container returned stats %+v and replaced the CPU counters", stats)
 			}
 		})
+	}
+}
+
+// R28-08: a hung statfs on one storage path must not stop the heartbeat.
+// GetStorageInfo returns within its bound, reports the hung path unreadable and
+// the healthy one in full, and a second beat starts no second probe on the
+// hung path while the first is still stuck.
+func TestAHungStoragePathDoesNotStallStorageInfo(t *testing.T) {
+	good, bad := t.TempDir(), t.TempDir()
+	const uuid = "eeeeeeee-1111-2222-3333-444444444444"
+	if err := os.MkdirAll(filepath.Join(good, uuid), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sm := &StorageManager{paths: []string{good, bad}}
+	release := make(chan struct{})
+	var badCalls atomic.Int32
+	prev, prevTimeout := diskSpaceOf, storageProbeTimeout
+	t.Cleanup(func() { close(release); diskSpaceOf, storageProbeTimeout = prev, prevTimeout })
+	storageProbeTimeout = 200 * time.Millisecond
+	diskSpaceOf = func(p string) (uint64, uint64) {
+		if p == bad {
+			badCalls.Add(1)
+			<-release
+		}
+		return 1 << 30, 1 << 29
+	}
+	for beat := 1; beat <= 2; beat++ {
+		done := make(chan []StorageInfo, 1)
+		go func() { done <- sm.GetStorageInfo() }()
+		var infos []StorageInfo
+		select {
+		case infos = <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("beat %d: GetStorageInfo blocked behind a hung statfs", beat)
+		}
+		if len(infos) != 2 || infos[0].Path != good || infos[1].Path != bad {
+			t.Fatalf("beat %d: infos = %+v", beat, infos)
+		}
+		if infos[0].unreadable || infos[0].ServerCount != 1 || infos[0].TotalBytes != 1<<30 {
+			t.Fatalf("beat %d: healthy path = %+v", beat, infos[0])
+		}
+		if !infos[1].unreadable {
+			t.Fatalf("beat %d: hung path not reported unreadable", beat)
+		}
+		if got := sm.UnavailablePaths(infos); len(got) != 1 || got[0] != bad {
+			t.Fatalf("beat %d: unavailable = %v", beat, got)
+		}
+	}
+	if n := badCalls.Load(); n != 1 {
+		t.Fatalf("hung path probed %d times, want 1", n)
 	}
 }

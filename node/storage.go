@@ -44,6 +44,10 @@ type StorageManager struct {
 	// closed once the move is done. See fenceMove.
 	movingMu sync.Mutex
 	moving   map[string]chan struct{}
+
+	// probes holds each path's last GetStorageInfo probe, under probeMu.
+	probeMu sync.Mutex
+	probes  map[string]*storageProbe
 	// writers counts, per server, writes that outlive one lookup: SFTP handles,
 	// Beam and panel uploads, restores, installs. Under movingMu with moving:
 	// see holdWriter.
@@ -205,12 +209,12 @@ const storageMarkerNode = "#node "
 // took each path, the highest gen seen, and the node ids the current markers
 // record. A path is unmounted when it is known, not marked, and holds nothing.
 //
-// A marker recording a node id other than ownID ("" = no filter) is another
+// A marker recording a node id not in ownIDs (empty = no filter) is another
 // node's disk: it says nothing about this node's paths, so its path list,
 // #kept lines and gen are not counted against them (R27-05/R27-06). Its own
 // path is still judged by this node's gens, and maxGen still counts its gen,
 // so the next gen written is above every marker on the paths.
-func readStorageMarkers(paths []string, ownID string) (known, marked map[string]bool, lastKept map[string]uint64, maxGen uint64, nodeIDs map[string]bool) {
+func readStorageMarkers(paths []string, ownIDs map[string]bool) (known, marked map[string]bool, lastKept map[string]uint64, maxGen uint64, nodeIDs map[string]bool) {
 	known = map[string]bool{}
 	marked = map[string]bool{}
 	listed := map[string]bool{}
@@ -250,7 +254,7 @@ func readStorageMarkers(paths []string, ownID string) (known, marked map[string]
 				lines = append(lines, line)
 			}
 		}
-		if ownID != "" && ids[p] != "" && ids[p] != ownID {
+		if len(ownIDs) > 0 && ids[p] != "" && !ownIDs[ids[p]] {
 			continue
 		}
 		if g, ok := gens[p]; ok {
@@ -284,7 +288,7 @@ func readStorageMarkers(paths []string, ownID string) (known, marked map[string]
 	// the bare mountpoint wrote, naming the identity it enrolled there.
 	nodeIDs = map[string]bool{}
 	for p, id := range ids {
-		if marked[p] && id != "" && (ownID == "" || id == ownID) {
+		if marked[p] && id != "" && (len(ownIDs) == 0 || ownIDs[id]) {
 			nodeIDs[id] = true
 		}
 	}
@@ -313,7 +317,7 @@ func identityDirUnmounted(pathsCSV string) bool {
 	p := paths[0]
 	// No own-id filter: this runs before enrolment, and the id on a bare first
 	// mountpoint may be the phantom one this check is there to catch.
-	known, marked, _, _, nodeIDs := readStorageMarkers(paths, "")
+	known, marked, _, _, nodeIDs := readStorageMarkers(paths, nil)
 	if marked[p] || !known[p] || !dirHoldsNothing(p) {
 		return false
 	}
@@ -372,8 +376,7 @@ func holdsNodeIdentity(dir string, nodeIDs map[string]bool) bool {
 // ponytail: a single path, or a boot where every path is unmounted at once,
 // has no other marker to vouch for it and is taken as before.
 func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
-	ownID, _ := cachedNodeID(nodeSecretDir)
-	known, marked, lastKept, maxGen, nodeIDs := readStorageMarkers(paths, ownID)
+	known, marked, lastKept, maxGen, nodeIDs := readStorageMarkers(paths, ownNodeIDs(nodeSecretDir))
 	var kept []string
 	for _, p := range paths {
 		// The identity exception matches identityDirUnmounted: a path the node
@@ -423,6 +426,30 @@ func (sm *StorageManager) dropUnmountedPaths(paths []string) []string {
 		}
 	}
 	return kept
+}
+
+// ownNodeIDs are the ids this node's own markers may name: the .node_id in dir
+// and the ids dir's marker records. The enrolment before dropUnmountedPaths
+// may have replaced .node_id, and the markers still name the id this node ran
+// as until now; judged by the new id alone, every own marker read as foreign
+// and a bare mountpoint was taken and marked (R28-07). dir is the identity
+// dir, which identityDirUnmounted already let this boot run from.
+func ownNodeIDs(dir string) map[string]bool {
+	ids := map[string]bool{}
+	if dir == "" {
+		return ids
+	}
+	if id, _ := cachedNodeID(dir); id != "" {
+		ids[id] = true
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, storageMarkerName)); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			if id, ok := strings.CutPrefix(strings.TrimSpace(line), storageMarkerNode); ok && id != "" {
+				ids[id] = true
+			}
+		}
+	}
+	return ids
 }
 
 // dirHoldsNothing reports whether dir holds no server: no directory but the
@@ -719,36 +746,92 @@ func (sm *StorageManager) RemoveServerPath(serverUUID string) {
 // No sm.mu: sm.paths is fixed after NewStorageManager, and statfs or ReadDir
 // on a hung NFS path held the read lock forever, which with a SetPlacement
 // queued behind it blocked every server's path lookup on the node.
+//
+// Each path is probed in its own goroutine and waited on for at most
+// storageProbeTimeout: the heartbeat calls this, and a hard NFS mount that
+// stops answering blocks statfs for good, which stopped every beat and read the
+// node offline (R28-08). A path not back in time reads as unreadable, so Core
+// lists it under storageUnavailable, and a probe still stuck is waited on again
+// rather than joined by another.
 func (sm *StorageManager) GetStorageInfo() []StorageInfo {
-	var infos []StorageInfo
-	for _, p := range sm.paths {
-		info := StorageInfo{Path: p}
-
-		total, free := diskSpaceOf(p)
-		info.TotalBytes = total
-		info.FreeBytes = free
-		info.InodesTotal, info.InodesFree = getInodes(p)
-		if total > free {
-			info.UsedBytes = total - free
+	probes := make([]*storageProbe, len(sm.paths))
+	for i, p := range sm.paths {
+		probes[i] = sm.probePath(p)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), storageProbeTimeout)
+	defer cancel()
+	infos := make([]StorageInfo, 0, len(sm.paths))
+	for i, pr := range probes {
+		select {
+		case <-pr.done:
+			infos = append(infos, pr.info)
+		case <-ctx.Done():
+			log.Printf("storage: [warn] %s did not answer statfs/readdir within %s; reporting it unavailable", sm.paths[i], storageProbeTimeout)
+			infos = append(infos, StorageInfo{Path: sm.paths[i], ServerUUIDs: []string{}, unreadable: true})
 		}
-
-		// Count and list server directories (UUID folders)
-		entries, err := os.ReadDir(p)
-		info.ServerUUIDs = []string{}
-		if err == nil {
-			for _, e := range entries {
-				if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-					info.ServerCount++
-					info.ServerUUIDs = append(info.ServerUUIDs, e.Name())
-				}
-			}
-		} else {
-			info.unreadable = true
-		}
-
-		infos = append(infos, info)
 	}
 	return infos
+}
+
+// storageProbeTimeout bounds GetStorageInfo; well under the heartbeat's 5 s
+// tick, so a hung path still leaves the discovery key its 15 s TTL.
+var storageProbeTimeout = 2 * time.Second
+
+// storageProbe is one statStoragePath run; info is set before done is closed.
+type storageProbe struct {
+	done chan struct{}
+	info StorageInfo
+}
+
+// probePath starts a probe of p, or returns the one still running on it.
+func (sm *StorageManager) probePath(p string) *storageProbe {
+	sm.probeMu.Lock()
+	defer sm.probeMu.Unlock()
+	if pr := sm.probes[p]; pr != nil {
+		select {
+		case <-pr.done:
+		default:
+			return pr
+		}
+	}
+	if sm.probes == nil {
+		sm.probes = map[string]*storageProbe{}
+	}
+	pr := &storageProbe{done: make(chan struct{})}
+	sm.probes[p] = pr
+	go func() {
+		pr.info = statStoragePath(p)
+		close(pr.done)
+	}()
+	return pr
+}
+
+// statStoragePath reads p's disk usage and the server directories on it.
+func statStoragePath(p string) StorageInfo {
+	info := StorageInfo{Path: p}
+
+	total, free := diskSpaceOf(p)
+	info.TotalBytes = total
+	info.FreeBytes = free
+	info.InodesTotal, info.InodesFree = getInodes(p)
+	if total > free {
+		info.UsedBytes = total - free
+	}
+
+	// Count and list server directories (UUID folders)
+	entries, err := os.ReadDir(p)
+	info.ServerUUIDs = []string{}
+	if err == nil {
+		for _, e := range entries {
+			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+				info.ServerCount++
+				info.ServerUUIDs = append(info.ServerUUIDs, e.Name())
+			}
+		}
+	} else {
+		info.unreadable = true
+	}
+	return info
 }
 
 // setRedisPath stores the storage path for a server in Redis (no expiry).
