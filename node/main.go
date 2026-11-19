@@ -703,13 +703,10 @@ func parseConfig() {
 	// Cache the per-node secret on the first persisted storage path so it
 	// survives restarts (resolved the same way StorageManager picks paths[0]).
 	nodeSecretDir = firstPersistedStoragePath(storagePaths)
-	// Refused rather than skipped like any other unmounted path: booting on the
-	// bare mountpoint finds no identity, and a node holding CLUSTER_SECRET then
-	// enrols as a brand-new node, orphaning every server on the old one.
-	if identityDirUnmounted(storagePaths) {
-		log.Fatalf("FATAL: the first storage path %s holds no node identity that proves it is this node's disk and reads as a disk that is not mounted (it is empty and lacks a current %s marker that another storage path expects). "+
-			"Mount the disk and restart the node. If it is a new empty disk, replace %s with an empty file.",
-			nodeSecretDir, storageMarkerName, filepath.Join(nodeSecretDir, storageMarkerName))
+	// Warned, never refused: booting on a bare mountpoint can enrol a new node,
+	// but every refusal so far stopped a healthy one.
+	if msg := identityDirWarning(storagePaths); msg != "" {
+		log.Print(msg)
 	}
 	log.Printf("Redis ACL: node uses scoped credentials (secret dir: %s)", nodeSecretDir)
 	if coreGRPCAddr == "" {
@@ -1230,8 +1227,8 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 		data["storage"] = infos
 		// Only when some are: an old node sends no key, and Core reads an
 		// absent one as "every path listed", as before.
-		if skipped := globalStorageMgr.SkippedPaths(); len(skipped) > 0 {
-			data["storageUnavailable"] = skipped
+		if unavailable := globalStorageMgr.UnavailablePaths(infos); len(unavailable) > 0 {
+			data["storageUnavailable"] = unavailable
 		}
 	}
 

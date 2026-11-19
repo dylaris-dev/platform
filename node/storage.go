@@ -81,6 +81,8 @@ type StorageInfo struct {
 	// btrfs among them, report none).
 	InodesTotal uint64 `json:"inodes_total"`
 	InodesFree  uint64 `json:"inodes_free"`
+	// unreadable: ReadDir failed, so ServerUUIDs says nothing about the path.
+	unreadable bool
 }
 
 // NewStorageManager creates a StorageManager with the given paths.
@@ -292,15 +294,28 @@ func identityDirUnmounted(pathsCSV string) bool {
 	if marked[p] || !known[p] || !dirHoldsNothing(p) {
 		return false
 	}
-	// The refusal only exists to stop a fresh enrolment. Markers written by
+	// The loud warning is for a fresh enrolment. Markers written by
 	// 2026.11.17.2 and 2026.11.18 (gen-less, or gens without #kept lines) leave
-	// a healthy first path reading as stale, and a node that ran fine on them
-	// must not crash-loop on upgrade.
+	// a healthy first path reading as stale, and its identity tells it apart.
 	if holdsNodeIdentity(p, nodeIDs) {
 		log.Printf("storage: [warn] the first storage path %s reads as a disk that is not mounted (empty, without a current %s marker), but it holds this node's identity, so the node boots from it. Check that the disk is mounted", p, storageMarkerName)
 		return false
 	}
 	return true
+}
+
+// identityDirWarning is the boot warning for a first storage path that reads
+// as a disk that did not mount, "" when it does not. It never refuses the
+// boot: every refusal shipped so far stopped a healthy node (R26-08 was a
+// foreign disk's marker), and a node that is down takes every server with it.
+func identityDirWarning(pathsCSV string) string {
+	if !identityDirUnmounted(pathsCSV) {
+		return ""
+	}
+	p := firstPersistedStoragePath(pathsCSV)
+	return fmt.Sprintf("storage: [WARNING] the first storage path %s holds the node identity and reads as a disk that is not mounted (it holds no server and lacks a current %s marker another storage path expects). The node boots from it anyway. "+
+		"If a disk belongs there, stop the node, mount the disk and restart: a node running on the bare mountpoint may enrol as a new node. If it is a new empty disk, replace %s with an empty file to clear this warning.",
+		p, storageMarkerName, filepath.Join(p, storageMarkerName))
 }
 
 // holdsNodeIdentity reports whether dir holds an identity that proves it is the
@@ -411,6 +426,21 @@ func (sm *StorageManager) SkippedPaths() []string {
 	out := make([]string, 0, len(sm.skippedPaths))
 	for p := range sm.skippedPaths {
 		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// UnavailablePaths are the paths whose servers infos cannot list: the ones
+// skipped at boot and the ones whose directory could not be read now (a stale
+// NFS handle, an I/O error). Core lists no server as missing from disk while
+// any path is unavailable (R26-09). Sorted.
+func (sm *StorageManager) UnavailablePaths(infos []StorageInfo) []string {
+	out := sm.SkippedPaths()
+	for _, info := range infos {
+		if info.unreadable {
+			out = append(out, info.Path)
+		}
 	}
 	sort.Strings(out)
 	return out
@@ -688,6 +718,8 @@ func (sm *StorageManager) GetStorageInfo() []StorageInfo {
 					info.ServerUUIDs = append(info.ServerUUIDs, e.Name())
 				}
 			}
+		} else {
+			info.unreadable = true
 		}
 
 		infos = append(infos, info)

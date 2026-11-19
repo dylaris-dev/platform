@@ -245,11 +245,14 @@ func TestIdentityDirUnmounted(t *testing.T) {
 			if got := identityDirUnmounted(csv); got != tc.want {
 				t.Fatalf("identityDirUnmounted = %v, want %v", got, tc.want)
 			}
+			assertBoots(t, csv, disk1)
 		})
 	}
-	if identityDirUnmounted(t.TempDir()) {
+	single := t.TempDir()
+	if identityDirUnmounted(single) {
 		t.Fatal("a single path has nothing to vouch against and must read as mounted")
 	}
+	assertBoots(t, single, single)
 }
 
 // R22-06/07: markers written by earlier releases (gen-less 2026.11.17.2,
@@ -336,6 +339,7 @@ func TestIdentityDirUnmountedBootsAnExistingIdentity(t *testing.T) {
 				if got := identityDirUnmounted(disk1 + "," + disk2); got != want {
 					t.Fatalf("identityDirUnmounted = %v, want %v", got, want)
 				}
+				assertBoots(t, disk1+","+disk2, disk1)
 				// The StorageManager must answer as the boot did, and heal the
 				// marker so the next boot no longer reads the path as stale.
 				for boot := 1; boot <= 2; boot++ {
@@ -354,6 +358,7 @@ func TestIdentityDirUnmountedBootsAnExistingIdentity(t *testing.T) {
 	if identityDirUnmounted(single) {
 		t.Fatal("a single path has nothing to vouch against and must read as mounted")
 	}
+	assertBoots(t, single, single)
 }
 
 func ptr(s string) *string { return &s }
@@ -416,6 +421,7 @@ func TestIdentityDirUnmountedChecksTheRecordedNodeID(t *testing.T) {
 			if got := identityDirUnmounted(csv); got != tc.want {
 				t.Fatalf("identityDirUnmounted = %v, want %v", got, tc.want)
 			}
+			assertBoots(t, csv, disk1)
 			sm := NewStorageManager(csv, nil)
 			if kept := len(sm.Paths()) == 2; kept == tc.want {
 				t.Fatalf("paths = %v, want first path kept=%v", sm.Paths(), !tc.want)
@@ -468,6 +474,7 @@ func TestAnIdentityReplacedAtBootKeepsTheFirstPath(t *testing.T) {
 			if identityDirUnmounted(csv) {
 				t.Fatal("identityDirUnmounted refused a first path holding the recorded id")
 			}
+			assertBoots(t, csv, disk1)
 			if err := os.WriteFile(filepath.Join(disk1, ".node_id"), []byte(tc.newID+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
