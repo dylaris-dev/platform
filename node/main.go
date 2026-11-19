@@ -2320,26 +2320,20 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		activeFile := filepath.Join(serverPath, ".active_server")
 		delFinalActive := readActiveSubServer(serverPath)
 		deletedActive := delFinalActive == subName
-		if delFinalActive == subName {
-			// Find another sub-server to activate
-			entries, _ := os.ReadDir(serverPath)
-			newActive := ""
-			for _, e := range entries {
-				if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-					newActive = e.Name()
-					break
-				}
+		nothingSetUp := delFinalActive == ""
+		if deletedActive {
+			// No other sub-server is activated in its place: Core records
+			// active "" and pending_setup for this delete and never adopts a
+			// pick made here. A re-pointed .active_server made a later failed
+			// setup report "stopped" (setupIdleStatus) for a server Core holds
+			// as never set up, and the panel offered Start on nothing.
+			if err := os.Remove(activeFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				log.Printf("Failed to remove .active_server for %s: %v", cmd.Config.UUID, err)
 			}
-			if newActive != "" {
-				if err := writeServerRootFile(serverPath, ".active_server", []byte(newActive)); err != nil {
-					log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
-				}
-				log.Printf("Activated sub-server %s for %s", newActive, cmd.Config.UUID)
-				delFinalActive = newActive
-			} else {
-				os.Remove(activeFile)
+			delFinalActive = ""
+			if len(scanSubServers(serverPath)) == 0 {
+				nothingSetUp = true
 				log.Printf("No sub-servers remaining for %s, pending_setup", cmd.Config.UUID)
-				delFinalActive = ""
 			}
 		}
 		// Reflect the post-delete reality in Redis-status so
@@ -2357,7 +2351,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// Deleting the ACTIVE sub-server is "nothing set up" too, as Core
 		// records it: the container is gone, so "stopped" offered a Start
 		// that had nothing to start and failed without a word.
-		if delFinalActive == "" || (deletedActive && toreDown) {
+		if nothingSetUp || (deletedActive && toreDown) {
 			rdb.Set(ctx, statusKey, "pending_setup", 30*time.Second)
 		} else if toreDown {
 			rdb.Set(ctx, statusKey, "stopped", 30*time.Second)

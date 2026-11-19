@@ -106,10 +106,19 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 	// what Docker shows rather than the busy hold's "installing": Core landed
 	// that as "stopped" for a server that went on running. Written before the
 	// abandon signal, so Core reads the real status first. dm is nil only in
-	// tests that never reach Docker.
+	// tests that never reach Docker. Once the busy hold is up the status goes
+	// through its release, as fail's does: written beside the running
+	// refresher, a refresh put "installing" back over it for good.
+	var releaseBusy func(final string)
 	abort := func(reason string) {
+		status := ""
 		if dm != nil {
-			rdb.Set(ctx, statusKey, statusAfterFailedStop(dm, pl.UUID), 30*time.Second)
+			status = statusAfterFailedStop(dm, pl.UUID)
+		}
+		if releaseBusy != nil {
+			releaseBusy(status)
+		} else if status != "" {
+			rdb.Set(ctx, statusKey, status, 30*time.Second)
 		}
 		abandonVersionUpdate(ctx, rdb, pl.UUID, reason)
 	}
@@ -166,7 +175,7 @@ func runUpdateServerVersion(ctx context.Context, rdb *redis.Client, dm *DockerMa
 
 	// Hold the reconciler off for the whole move, exactly like reinstall: the
 	// container is about to be stopped while its desired_state is still online.
-	releaseBusy := holdBusyStatus(rdb, pl.UUID, "installing", busyStatusTTL)
+	releaseBusy = holdBusyStatus(rdb, pl.UUID, "installing", busyStatusTTL)
 	defer releaseBusy("")
 	rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:install-start", pl.UUID), "1", 30*time.Second)
 	// Before any abort below, which all report "left exactly as it was".

@@ -121,7 +121,7 @@ func TestDeletingTheActiveSubServerReportsNothingSetUp(t *testing.T) {
 	}
 	body := s[i : i+j]
 	if !strings.Contains(body, "deletedActive := delFinalActive == subName") ||
-		!strings.Contains(body, "if delFinalActive == \"\" || (deletedActive && toreDown) {\n\t\t\trdb.Set(ctx, statusKey, \"pending_setup\"") {
+		!strings.Contains(body, "if nothingSetUp || (deletedActive && toreDown) {\n\t\t\trdb.Set(ctx, statusKey, \"pending_setup\"") {
 		t.Error("deleting the active sub-server no longer reports pending_setup")
 	}
 }
