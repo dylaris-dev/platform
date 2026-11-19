@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/hex"
 	"log"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"dylaris-pkg/validate"
 )
 
 // leftoverMinAge keeps the boot sweep away from anything still in use. A job
@@ -215,14 +218,27 @@ func isLeftover(name string, isDir bool, depth int, parent string) bool {
 	switch {
 	case isDir && depth <= 2 && (strings.HasPrefix(name, ".technic-stage-") || strings.HasPrefix(name, ".technic-dl-")):
 		return true
-	case isDir && depth == 1 && strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".copying"):
+	// Only the exact names the node writes (copy_sub_server's staging dir,
+	// createTempIn's 16 hex digits): the tenant owns this tree and may hold a
+	// .upload-cache.tmp or a .my.mods.copying of its own (R39-07).
+	case isDir && depth == 1 && strings.HasPrefix(name, ".") && strings.HasSuffix(name, ".copying") &&
+		validate.IsSubServerName(strings.TrimSuffix(strings.TrimPrefix(name, "."), ".copying")):
 		return true
-	case !isDir && strings.HasPrefix(name, ".upload-") && strings.HasSuffix(name, ".tmp"):
+	case !isDir && strings.HasPrefix(name, ".upload-") && strings.HasSuffix(name, ".tmp") &&
+		isHex16(strings.TrimSuffix(strings.TrimPrefix(name, ".upload-"), ".tmp")):
 		return true
 	case !isDir && path.Base(parent) == backupDirName && strings.HasSuffix(name, partialBackupSuffix):
 		return true
 	}
 	return false
+}
+
+func isHex16(s string) bool {
+	if len(s) != 16 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
 }
 
 // sharedWithAnotherNode reports whether another node has claimed this storage

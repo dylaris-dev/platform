@@ -38,8 +38,8 @@ func TestSweepInterruptedWork(t *testing.T) {
 		mk("srv-1/.technic-stage-123", true, true),
 		mk("srv-1/survival/.technic-dl-9", true, true),
 		mk("srv-1/.creative.copying", true, true),
-		mk("srv-1/survival/mods/.upload-77.tmp", false, true),
-		mk("srv-1/survival/world/datapacks/pack/.upload-1.tmp", false, true), // P06: uploads land at any depth
+		mk("srv-1/survival/mods/.upload-0123456789abcdef.tmp", false, true),
+		mk("srv-1/survival/world/datapacks/pack/.upload-fedcba9876543210.tmp", false, true), // P06: uploads land at any depth
 		mk("srv-1/.dylaris-backups/job-1.tar.gz.partial", false, true),
 		mk("srv-2.migration-in.zip", false, true),
 		mk(".migration-pull-123", false, true),
@@ -51,6 +51,10 @@ func TestSweepInterruptedWork(t *testing.T) {
 		mk("srv-1/.dylaris-backups/job-0.tar.gz", false, true),  // a finished archive
 		mk("srv-1/survival/server.properties", false, true),
 		mk("srv-1/survival/.copying", true, true), // not at the server level
+		// R39-07: tenant names of the same shape the node never writes.
+		mk("srv-1/survival/world/.upload-cache.tmp", false, true),
+		mk("srv-1/survival/.upload-0123456789abcdeg.tmp", false, true), // not hex
+		mk("srv-1/.my.mods.copying", true, true),                       // no sub-server name
 	}
 	sweepInterruptedWork([]string{base})
 	for _, p := range gone {
@@ -124,9 +128,9 @@ func TestSweepServerDirStopsAtDepthCap(t *testing.T) {
 		rel  string
 		gone bool
 	}{
-		{"a/a/.upload-1.tmp", true},                     // depth 3: within the cap
+		{"a/a/.upload-0000000000000001.tmp", true},      // depth 3: within the cap
 		{"a/.dylaris-backups/job.tar.gz.partial", true}, // parent name still known
-		{"a/a/a/.upload-2.tmp", false},                  // depth 4: not entered
+		{"a/a/a/.upload-0000000000000002.tmp", false},   // depth 4: not entered
 	}
 	for _, tc := range cases {
 		p := filepath.Join(srv, filepath.FromSlash(tc.rel))

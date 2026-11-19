@@ -1346,6 +1346,14 @@ func (s *beamServer) CopyFile(ctx context.Context, req *pb.BeamFileCopyReq) (*pb
 		return nil, err
 	}
 	serverUUID := s.extractServerUUID(ctx)
+	// The panel's copy runs in these slots (see MeshManager.handleRequest).
+	// Without one, any number of Beam connections each ran two whole-tree du
+	// walks per copy, however small the file.
+	slots := requestSlotsFor(serverUUID)
+	if !takeSlot(slots) {
+		return &pb.BeamOpResp{Success: false, Message: "the node is busy with other file operations on this server, try again"}, nil
+	}
+	defer func() { <-slots }()
 	defer s.storageMgr.holdWriter(serverUUID)()
 	srcPath, err := s.validateBeamPath(req.SrcPath, serverUUID)
 	if err != nil {

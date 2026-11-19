@@ -523,6 +523,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	// the race where two concurrent requests both saw an expired TTL and both
 	// enqueued a setup.
 	cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
+	cooldownClaimed := false
 	if !isAdmin {
 		acquired, err := h.d.Redis.SetNX(context.Background(), cooldownKey, "1", 30*time.Second).Result()
 		if err == nil && !acquired {
@@ -530,7 +531,16 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, fmt.Sprintf("Please wait %d seconds before installing again", int(ttl.Seconds())), 429)
 			return
 		}
+		cooldownClaimed = err == nil
 	}
+	// Given back by every return that dispatched nothing: the power handler
+	// refuses start, stop and restart while the key lives, so a refused
+	// request must not hold it for 30 seconds (R39-01).
+	defer func() {
+		if cooldownClaimed {
+			h.d.Redis.Del(context.Background(), cooldownKey)
+		}
+	}()
 
 	// The same rule SwitchSubServer applies, and for the same reason: this names
 	// a directory on the node. It used to sanitize instead - stripping the
@@ -990,6 +1000,8 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		go h.snapshotModpackContents(serverID, subName, originalInstallerType, snapshotBuild, externalMrpackURL, false)
 	}
 
+	cooldownClaimed = false
+
 	auditMeta := map[string]interface{}{
 		"sub_server": subName,
 		"installer":  req.Installer.Type,
@@ -1171,6 +1183,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	// Atomically claim the install cooldown (30s, admins bypass) — SetNX closes
 	// the concurrent-request race.
 	cooldownKey := fmt.Sprintf("dylaris:server:%s:install-start", srv.UUID)
+	cooldownClaimed := false
 	if !isAdmin {
 		acquired, err := h.d.Redis.SetNX(context.Background(), cooldownKey, "1", 30*time.Second).Result()
 		if err == nil && !acquired {
@@ -1178,7 +1191,16 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 			httpx.SendJSONError(w, fmt.Sprintf("Please wait %d seconds before reinstalling", int(ttl.Seconds())), 429)
 			return
 		}
+		cooldownClaimed = err == nil
 	}
+	// Given back by every return that dispatched nothing: the power handler
+	// refuses start, stop and restart while the key lives, so a refused
+	// request must not hold it for 30 seconds (R39-01).
+	defer func() {
+		if cooldownClaimed {
+			h.d.Redis.Del(context.Background(), cooldownKey)
+		}
+	}()
 
 	subName := srv.ActiveSubServer
 	if subName == "" {
@@ -1310,6 +1332,8 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		// installer. The panel reinstalls a pack via /setup, not this route.
 		go h.snapshotModpackContents(serverID, subName, installerType, nil, "", true)
 	}
+
+	cooldownClaimed = false
 
 	actorID, _ := r.Context().Value("userID").(string)
 	audit.LogServer(h.d.Store, r, serverID, audit.ServerAuditEventReinstall, actorID, "", map[string]interface{}{
