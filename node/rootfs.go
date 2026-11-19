@@ -694,14 +694,29 @@ func copyTreeAt(src, dst string, forTenant bool) error {
 		return err
 	}
 	defer dstRoot.Close()
-	var budget *writeBudget
-	if forTenant {
-		// A copy had no bound at all: a member duplicating a large world
-		// again and again filled the node's disk for every server on it.
-		budget = newWriteBudget(dstRoot.Name())
-		defer budget.release()
+	if !forTenant {
+		return copyWalkIn(srcRoot, srcName, dstRoot, filepath.Base(dst), false, nil)
 	}
-	return copyWalkIn(srcRoot, srcName, dstRoot, filepath.Base(dst), forTenant, budget)
+	// A copy had no bound at all: a member duplicating a large world
+	// again and again filled the node's disk for every server on it.
+	budget := newWriteBudget(dstRoot.Name())
+	defer budget.release()
+	leaf := filepath.Base(dst)
+	_, statErr := dstRoot.Lstat(leaf)
+	err = copyWalkIn(srcRoot, srcName, dstRoot, leaf, true, budget)
+	if err != nil && errors.Is(statErr, fs.ErrNotExist) {
+		// As in copyDirForTenant: what a failed copy made goes before the
+		// budget is released, or its bytes were booked as landed and noted
+		// and the remeasure counted them still on disk.
+		if rerr := dstRoot.RemoveAll(leaf); rerr != nil {
+			log.Printf("copy: cannot remove %s: %v", dst, rerr)
+		}
+		budget.releaseWritten(0)
+		if budget.uuid != "" {
+			remeasureServer(budget.uuid)
+		}
+	}
+	return err
 }
 
 // errUnpackBudget ends an extraction or copy that would fill the disk.
