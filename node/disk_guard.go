@@ -528,6 +528,24 @@ func knownDiskLimitMB(ctx context.Context, rdb *redis.Client, q quotaAssigner, u
 	return 0
 }
 
+// movedDiskLimitMB is knownDiskLimitMB for a storage move found already on its
+// target. The server resolves to the target by then, whose project may still
+// hold the hard limit an earlier stay there left (nothing clears it when a
+// copy leaves), so a readable saved config wins even when it says unlimited.
+func movedDiskLimitMB(ctx context.Context, rdb *redis.Client, q quotaAssigner, uuid string) int64 {
+	if limitMB := loadDiskLimit(ctx, rdb, uuid); limitMB > 0 {
+		return limitMB
+	}
+	if globalStorageMgr != nil {
+		if dir := globalStorageMgr.GetServerDir(uuid); dir != "" {
+			if limitMB, ok := savedDiskLimit(dir); ok {
+				return limitMB
+			}
+		}
+	}
+	return knownDiskLimitMB(ctx, rdb, q, uuid)
+}
+
 // withGraceLimit reports a graced server against its own limit rather than the
 // ceiling the filesystem holds meanwhile, so the owner sees it as full. Only
 // while that is still its limit: right after a raise it read as full against

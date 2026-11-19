@@ -1940,15 +1940,22 @@ func savedContainerPortIn(serverDir string) int {
 // savedDiskLimitIn is the disk limit in MB the server's saved config holds:
 // the one Core last pushed, or 0.
 func savedDiskLimitIn(serverDir string) int64 {
+	limitMB, _ := savedDiskLimit(serverDir)
+	return limitMB
+}
+
+// savedDiskLimit is savedDiskLimitIn, and whether a saved config was read at
+// all: only then is its 0 Core's unlimited rather than nothing known.
+func savedDiskLimit(serverDir string) (int64, bool) {
 	data, err := readServerRootFile(serverDir, ".node_config.json")
 	if err != nil {
-		return 0
+		return 0, false
 	}
 	var saved ServerConfig
 	if json.Unmarshal(data, &saved) != nil {
-		return 0
+		return 0, false
 	}
-	return saved.Docker.DiskLimit
+	return saved.Docker.DiskLimit, true
 }
 
 // dataBindStale reports whether a container's /data bind names another host

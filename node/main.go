@@ -2773,7 +2773,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			// restart) that left the container bound to the half-deleted
 			// source and the tree on the target untagged. Finishing is a
 			// no-op for the first and the rest of the move for the second.
-			if ferr := finishStorageMove(ctx, rdb, dm, quota, storage, cmd.Config.UUID, knownDiskLimitMB(ctx, rdb, quota, cmd.Config.UUID)); ferr != nil {
+			if ferr := finishStorageMove(ctx, rdb, dm, quota, storage, cmd.Config.UUID, movedDiskLimitMB(ctx, rdb, quota, cmd.Config.UUID)); ferr != nil {
 				log.Printf("Storage migration of %s to %s could not be finished: %v - repeating the move finishes it", cmd.Config.UUID, targetPath, ferr)
 				releaseMigrateBusy("stopped")
 				return
