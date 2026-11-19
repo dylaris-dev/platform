@@ -113,7 +113,7 @@ func TestAnOpenSFTPSessionEndsWhenItsCredentialChanges(t *testing.T) {
 	go func() {
 		conn, err := ln.Accept()
 		if err == nil {
-			s.handleConn(conn, cfg)
+			s.handleConn(conn, cfg, func() {})
 		}
 	}()
 	client, err := ssh.Dial("tcp", ln.Addr().String(), &ssh.ClientConfig{

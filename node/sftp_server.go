@@ -47,12 +47,30 @@ type SFTPServer struct {
 	connMu  sync.Mutex
 	conns   int
 	perAddr map[string]int
+
+	// Connections still in the SSH handshake, oldest first, and per address.
+	// A stalled handshake held one of the slots above for the whole deadline,
+	// so a few addresses that never sent a version string kept every customer
+	// out. They now share a small budget of their own, and a full budget
+	// drops its oldest entry for the newcomer: holding the slots takes a
+	// connection flood faster than a real handshake, not idle sockets.
+	preAuth        []sftpPreAuthConn
+	preAuthPerAddr map[string]int
+}
+
+type sftpPreAuthConn struct {
+	conn net.Conn
+	addr string
 }
 
 const (
 	sftpMaxConns         = 256
 	sftpMaxConnsPerAddr  = 16
 	sftpHandshakeTimeout = 30 * time.Second
+	// Handshakes in progress, node-wide and per address. A real one takes
+	// well under a second unless a person is typing a password.
+	sftpMaxPreAuth        = 32
+	sftpMaxPreAuthPerAddr = 4
 	// Failed sign-ins before a source address, or one account from one address,
 	// is turned away for the 15-minute window.
 	sftpMaxFailsPerAddr     = 30
@@ -90,20 +108,50 @@ type sftpServerRef struct {
 
 func NewSFTPServer(rdb *redis.Client, storageMgr *StorageManager, nodeID string) *SFTPServer {
 	return &SFTPServer{rdb: rdb, storageMgr: storageMgr, nodeID: nodeID,
-		perAddr: map[string]int{}}
+		perAddr: map[string]int{}, preAuthPerAddr: map[string]int{}}
 }
 
-// admit counts a new connection from addr, or refuses it when the node or that
-// address already holds its share.
-func (s *SFTPServer) admit(addr string) bool {
+// admit counts a new connection c from addr, or refuses it when the node or
+// that address already holds its share. c also enters the pre-auth budget
+// until handshakeDone; when that budget is full its oldest connection is
+// closed to make room.
+func (s *SFTPServer) admit(c net.Conn, addr string) bool {
 	s.connMu.Lock()
 	defer s.connMu.Unlock()
-	if s.conns >= sftpMaxConns || s.perAddr[addr] >= sftpMaxConnsPerAddr {
+	if s.conns >= sftpMaxConns || s.perAddr[addr] >= sftpMaxConnsPerAddr ||
+		s.preAuthPerAddr[addr] >= sftpMaxPreAuthPerAddr {
 		return false
+	}
+	if len(s.preAuth) >= sftpMaxPreAuth {
+		old := s.preAuth[0]
+		old.conn.Close() // its handshake fails, and its goroutine releases the slot
+		s.dropPreAuthLocked(0)
 	}
 	s.conns++
 	s.perAddr[addr]++
+	s.preAuth = append(s.preAuth, sftpPreAuthConn{c, addr})
+	s.preAuthPerAddr[addr]++
 	return true
+}
+
+// handshakeDone takes c out of the pre-auth budget, if it is still in it.
+func (s *SFTPServer) handshakeDone(c net.Conn) {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	for i, p := range s.preAuth {
+		if p.conn == c {
+			s.dropPreAuthLocked(i)
+			return
+		}
+	}
+}
+
+func (s *SFTPServer) dropPreAuthLocked(i int) {
+	addr := s.preAuth[i].addr
+	s.preAuth = append(s.preAuth[:i], s.preAuth[i+1:]...)
+	if s.preAuthPerAddr[addr]--; s.preAuthPerAddr[addr] <= 0 {
+		delete(s.preAuthPerAddr, addr)
+	}
 }
 
 func (s *SFTPServer) release(addr string) {
@@ -225,13 +273,13 @@ func (s *SFTPServer) Start(ctx context.Context, port string) {
 		}
 		pause = 0
 		addr := remoteAddr(conn.RemoteAddr())
-		if !s.admit(addr) {
+		if !s.admit(conn, addr) {
 			conn.Close()
 			continue
 		}
 		go func() {
 			defer s.release(addr)
-			s.handleConn(conn, config)
+			s.handleConn(conn, config, func() { s.handshakeDone(conn) })
 		}()
 	}
 }
@@ -398,10 +446,12 @@ func (s *SFTPServer) recordAuthFail(ctx context.Context, key string) {
 	}
 }
 
-func (s *SFTPServer) handleConn(conn net.Conn, config *ssh.ServerConfig) {
+// handshook runs once the SSH handshake has ended, either way.
+func (s *SFTPServer) handleConn(conn net.Conn, config *ssh.ServerConfig, handshook func()) {
 	// A handshake that never finishes held its goroutine and descriptor forever.
 	conn.SetDeadline(time.Now().Add(sftpHandshakeTimeout))
 	sshConn, chans, reqs, err := ssh.NewServerConn(conn, config)
+	handshook()
 	if err != nil {
 		conn.Close()
 		return
