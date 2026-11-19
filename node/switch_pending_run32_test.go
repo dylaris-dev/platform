@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // R32-02: Core publishes desired_state "online" when it dispatches a switch,
@@ -16,12 +18,14 @@ import (
 // switch has not landed, it holds the server down.
 func TestAPendingSwitchOfAStoppedServerHoldsTheOldSubServerDown(t *testing.T) {
 	const uuid = "32323232-0202-0202-0202-323232323232"
+	// R33-01: Core stamps the dispatch time; a record without one holds nothing.
+	at := fmt.Sprint(time.Now().UnixNano())
 	for _, tc := range []struct {
 		name, undo, active string
 		want               bool
 	}{
-		{"pending, was stopped", `{"target":"b","previous":"a","desiredState":"stopped"}`, "a", true},
-		{"pending, none active before", `{"target":"b","previous":"","desiredState":"stopped"}`, "", true},
+		{"pending, was stopped", `{"target":"b","previous":"a","desiredState":"stopped","at":` + at + `}`, "a", true},
+		{"pending, none active before", `{"target":"b","previous":"","desiredState":"stopped","at":` + at + `}`, "", true},
 		{"landed", `{"target":"b","previous":"a","desiredState":"stopped"}`, "b", false},
 		{"landed, other case", `{"target":"B","previous":"a","desiredState":"stopped"}`, "b", false},
 		{"was running", `{"target":"b","previous":"a","desiredState":"online"}`, "a", false},

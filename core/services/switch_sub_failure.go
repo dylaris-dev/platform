@@ -55,6 +55,34 @@ type SwitchUndo struct {
 	DesiredState string `json:"desiredState,omitempty"`
 	// Set by DeleteSubServer: Previous is gone, so it is no place to go back to.
 	PreviousDeleted bool `json:"previousDeleted,omitempty"`
+	// The dispatch time, unix nanoseconds; the node holds a stopped server
+	// down only for a short while after it (node/reconciler.go).
+	At int64 `json:"at,omitempty"`
+}
+
+// ForgetSwitchUndo deletes the undo record only when it is the switch to
+// target's: the key is overwritten per switch, and a newer one's record is
+// what its own refusal is put back from.
+func ForgetSwitchUndo(ctx context.Context, rdb *redis.Client, serverUUID, target string) {
+	if rdb == nil {
+		return
+	}
+	key := SwitchUndoKey(serverUUID)
+	err := rdb.Watch(ctx, func(tx *redis.Tx) error {
+		var undo SwitchUndo
+		raw, err := tx.Get(ctx, key).Result()
+		if err != nil || json.Unmarshal([]byte(raw), &undo) != nil || !strings.EqualFold(undo.Target, target) {
+			return nil
+		}
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			p.Del(ctx, key)
+			return nil
+		})
+		return err
+	}, key)
+	if err != nil {
+		log.Printf("Server %s: could not forget the undo record of the switch to %q: %v", serverUUID, target, err)
+	}
 }
 
 // MarkSwitchPreviousDeleted records that the sub-server a pending switch would
@@ -108,13 +136,18 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 			if json.Unmarshal([]byte(raw), &rep) != nil || !validate.IsSubServerName(rep.Target) {
 				continue
 			}
+			// Each report dropped below takes its own switch's undo record
+			// with it: left behind, it held the node's reconciler off whatever
+			// runs now (node/reconciler.go switchPendingOverStop).
 			srv, serr := s.store.GetServerByUUID(parts[2])
 			if serr != nil || srv == nil {
+				ForgetSwitchUndo(ctx, s.redis, parts[2], rep.Target)
 				continue
 			}
-			// A switch since then moved Core on; this report is not about the
-			// active sub-server any more, and its undo record is that switch's.
+			// A switch, setup or delete since then moved Core on; this report
+			// is not about the active sub-server any more.
 			if !strings.EqualFold(rep.Target, srv.ActiveSubServer) {
+				ForgetSwitchUndo(ctx, s.redis, srv.UUID, rep.Target)
 				continue
 			}
 			var undo SwitchUndo
@@ -134,6 +167,7 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 			noneBefore := previous == "" && undo.Target != ""
 			if !noneBefore && !validate.IsSubServerName(previous) {
 				log.Printf("Server %s: the switch to %q failed on the node (%s) and the sub-server it runs is unknown", srv.UUID, rep.Target, rep.Reason)
+				ForgetSwitchUndo(ctx, s.redis, srv.UUID, rep.Target)
 				continue
 			}
 			// Deleted only once the intent is back: while it is there, the

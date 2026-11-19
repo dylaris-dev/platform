@@ -1541,7 +1541,7 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		if rec, merr := json.Marshal(services.SwitchUndo{
 			Target: subName, Previous: srv.ActiveSubServer,
 			InstallerType: srv.InstallerType, MinecraftVersion: srv.MinecraftVersion, BuildNumber: srv.BuildNumber,
-			DesiredState: srv.DesiredState,
+			DesiredState: srv.DesiredState, At: time.Now().UnixNano(),
 		}); merr == nil {
 			h.d.Redis.Set(r.Context(), services.SwitchUndoKey(srv.UUID), rec, services.SwitchUndoTTL)
 		}
@@ -2836,6 +2836,9 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 	wasActive := srv.ActiveSubServer == subServerName
 	services.MarkSwitchPreviousDeleted(r.Context(), h.d.Redis, srv.UUID, subServerName)
 	if wasActive {
+		// A pending switch to the deleted slot is moot; its record must not
+		// hold the node's reconciler off whatever is set up next.
+		services.ForgetSwitchUndo(r.Context(), h.d.Redis, srv.UUID, subServerName)
 		h.d.Store.UpdateServerStatus(serverID, "pending_setup")
 		h.d.Store.UpdateServerActiveSubServer(serverID, "")
 		h.d.Store.UpdateServerDesiredState(serverID, "stopped")

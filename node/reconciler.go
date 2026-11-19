@@ -297,6 +297,12 @@ func restartBlocked(ctx context.Context, rdb *redis.Client, storage *StorageMana
 	if switchPendingOverStop(ctx, rdb, storage, uuid) {
 		return true
 	}
+	// The same for a setup or reinstall: Core publishes "online" when it sends
+	// one too, and until the node holds it "installing" (or after a refusal,
+	// until Core put the intent back) the old sub-server was started.
+	if setupPendingOverStop(ctx, rdb, uuid) {
+		return true
+	}
 	// A server this node staged a move of. Once Core sets it online for its NEW
 	// node, the desired state reads "online" here too, and this restarted the
 	// stopped source container on data the move's cleanup deletes moments
@@ -311,29 +317,97 @@ func switchUndoKey(uuid string) string {
 	return fmt.Sprintf("dylaris:server:%s:switch_undo", uuid)
 }
 
+// setupBeforeKey is Core's record of a setup or reinstall it dispatched
+// (core/services setupBeforeKey), kept until it lands here or Core has put a
+// failed one back.
+func setupBeforeKey(uuid string) string {
+	return fmt.Sprintf("dylaris:server:%s:setup_before", uuid)
+}
+
+// pendingIntentHold bounds how long a record Core wrote at dispatch holds a
+// stopped server down. Past it the command is not merely queued, and a record
+// that outlived its command must not keep a running sub-server's crash from
+// being restarted for the record's whole TTL (a day for a switch).
+const pendingIntentHold = 15 * time.Minute
+
+// dispatchRecord is what the reconciler reads of a switch_undo or
+// setup_before record. Go matches the keys case-insensitively, so one struct
+// reads both ("target" there, "Target" here).
+type dispatchRecord struct {
+	Target       string
+	Previous     string
+	DesiredState string
+	// Core's dispatch time, unix nanoseconds; zero from an older Core.
+	At int64
+}
+
+func readDispatchRecord(ctx context.Context, rdb *redis.Client, key string) (dispatchRecord, bool) {
+	var rec dispatchRecord
+	raw, err := rdb.Get(ctx, key).Result()
+	if err != nil || json.Unmarshal([]byte(raw), &rec) != nil {
+		return rec, false
+	}
+	return rec, true
+}
+
+// holdsOverStop: the record says the server was not meant to run, and it was
+// written recently. A record from a Core without the fields holds nothing.
+func (rec dispatchRecord) holdsOverStop() bool {
+	if rec.DesiredState == "" || rec.DesiredState == "online" || rec.At <= 0 {
+		return false
+	}
+	return time.Since(time.Unix(0, rec.At)) < pendingIntentHold
+}
+
 // switchPendingOverStop reports a switch Core dispatched for a server that was
 // not meant to run, which has not landed here. Core publishes "online" when it
 // sends a switch, so until then the reconciler saw a stopped server it was
 // meant to run - before the command was pulled, and after a refusal until Core
 // put the intent back - and started the OLD sub-server its owner had stopped.
-// A record from a Core without desiredState holds nothing, as before.
+// Only while the node is still on the switch's previous sub-server: one that
+// landed, or a setup since, moved it on, and the record is then not about the
+// sub-server that runs.
 func switchPendingOverStop(ctx context.Context, rdb *redis.Client, storage *StorageManager, uuid string) bool {
-	raw, err := rdb.Get(ctx, switchUndoKey(uuid)).Result()
-	if err != nil {
-		return false
-	}
-	var undo struct {
-		Target       string `json:"target"`
-		DesiredState string `json:"desiredState"`
-	}
-	if json.Unmarshal([]byte(raw), &undo) != nil || undo.DesiredState == "" || undo.DesiredState == "online" {
+	rec, ok := readDispatchRecord(ctx, rdb, switchUndoKey(uuid))
+	if !ok || !rec.holdsOverStop() {
 		return false
 	}
 	active := ""
 	if dir := storage.GetServerDir(uuid); dir != "" {
 		active = readActiveSubServer(dir)
 	}
-	return !strings.EqualFold(active, undo.Target)
+	return strings.EqualFold(active, rec.Previous)
+}
+
+// setupPendingOverStop is switchPendingOverStop for a setup or reinstall. The
+// record is deleted when the install lands here (forgetRecordFor) or Core put
+// a failed one back.
+func setupPendingOverStop(ctx context.Context, rdb *redis.Client, uuid string) bool {
+	rec, ok := readDispatchRecord(ctx, rdb, setupBeforeKey(uuid))
+	return ok && rec.holdsOverStop()
+}
+
+// forgetRecordFor deletes Core's dispatch record under key only when it is
+// about target, the command that just landed. Core overwrites the record per
+// dispatch, so an unconditional delete wiped the record of a newer command
+// queued behind this one, and its refusal could not be put back. WATCH, as
+// the node's ACL grants no scripting.
+func forgetRecordFor(ctx context.Context, rdb *redis.Client, key, target string) {
+	err := rdb.Watch(ctx, func(tx *redis.Tx) error {
+		var rec dispatchRecord
+		raw, err := tx.Get(ctx, key).Result()
+		if err != nil || json.Unmarshal([]byte(raw), &rec) != nil || !strings.EqualFold(rec.Target, target) {
+			return nil
+		}
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			p.Del(ctx, key)
+			return nil
+		})
+		return err
+	}, key)
+	if err != nil {
+		log.Printf("could not forget %s: %v", key, err)
+	}
 }
 
 // StartReconciler runs a periodic loop that compares actual Docker container

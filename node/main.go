@@ -1959,6 +1959,10 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// (installation succeeded; the sub-server directory is valid).
 		refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
 
+		// Landed: nothing for a failure to put back, and the record no longer
+		// holds the reconciler off this server (setupPendingOverStop).
+		forgetRecordFor(ctx, rdb, setupBeforeKey(cmd.Config.UUID), subName)
+
 		// Notify Core that installation is complete. "starting" when it was
 		// started: "stopped" here sat over a server that was coming up, and the
 		// collector would not correct it for up to 15 seconds.
@@ -2072,8 +2076,9 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 				log.Printf("Failed to update .active_server for %s: %v", cmd.Config.UUID, err)
 			}
 			// Landed: nothing to undo, and the record no longer holds the
-			// reconciler off this server (switchPendingOverStop).
-			rdb.Del(ctx, switchUndoKey(cmd.Config.UUID))
+			// reconciler off this server (switchPendingOverStop). Only this
+			// switch's record: a newer one queued behind it keeps its own.
+			forgetRecordFor(ctx, rdb, switchUndoKey(cmd.Config.UUID), subName)
 			log.Printf("Server %s switched to sub-server %s", cmd.Config.UUID, subName)
 			saveNodeConfig(storage.GetServerDir(cmd.Config.UUID), cmd.Config)
 			refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
@@ -2595,6 +2600,7 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// The config too: the reconciler rebuilds a missing container from it.
 		saveNodeConfig(serverPath, cmd.Config)
 		refreshServerMetadata(serverPath, cmd.Config.UUID, "", cmd.Config.Docker.Image, cmd.Config.Docker.RAM, cmd.Config.Docker.CPULimit, subName)
+		forgetRecordFor(ctx, rdb, setupBeforeKey(cmd.Config.UUID), subName) // landed, as in setup
 		releaseBusy(reinstallStatus)
 
 	case "migrate_storage":

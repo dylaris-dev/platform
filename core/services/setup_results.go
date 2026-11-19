@@ -94,6 +94,13 @@ func (s *SetupResultService) consumeSetupFailures(ctx context.Context) {
 				log.Printf("setup result: dropping a failure report: server %q could not be loaded: %v", rep.ServerUUID, serr)
 				continue
 			}
+			// Only to the setup it answers. A key that outlived it - an older
+			// Core applied the Pub/Sub copy and left the key, the owner retried
+			// - would roll the retry back and tell the owner twice.
+			if b, ok := readSetupBefore(ctx, s.redis, srv, rep.SubServer); !ok || rep.Attempt == 0 || b.At != rep.Attempt {
+				log.Printf("setup result: dropping a failure report for server %q: it answers a setup that is not pending", rep.ServerUUID)
+				continue
+			}
 			s.applyFailure(srv, rep)
 		}
 		cursor = next
@@ -128,6 +135,9 @@ type setupReport struct {
 	// and consumeSetupFailures applies it from there. An older node never
 	// sends it, and its Pub/Sub copy is the only one.
 	Durable bool `json:"durable,omitempty"`
+	// Attempt, on a durable report: the setup_before dispatch time of the
+	// setup it answers. A node writes the key only for a setup that has one.
+	Attempt int64 `json:"attempt,omitempty"`
 }
 
 // SetupFailedKey is where a node keeps a setup or reinstall failure until Core

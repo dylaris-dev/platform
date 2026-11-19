@@ -2,6 +2,9 @@ package services
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -281,7 +284,11 @@ func TestASetupFailureIsAppliedOnceFromTheDurableKey(t *testing.T) {
 				s.apply(queue.SetupResultsChannel("node-tok"), *c.pubsub)
 			}
 			if c.key != "" {
-				rdb.Set(ctx, SetupFailedKey("srv-3"), c.key, time.Minute)
+				// R33-05: the key names the setup it answers.
+				var b setupBefore
+				raw, _ := rdb.Get(ctx, setupBeforeKey("srv-3")).Result()
+				json.Unmarshal([]byte(raw), &b)
+				rdb.Set(ctx, SetupFailedKey("srv-3"), strings.Replace(c.key, `"timestamp":1`, fmt.Sprintf(`"timestamp":1,"attempt":%d`, b.At), 1), time.Minute)
 			}
 			s.consumeSetupFailures(ctx)
 			s.consumeSetupFailures(ctx)

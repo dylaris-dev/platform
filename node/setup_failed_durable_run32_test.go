@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"dylaris-pkg/queue"
 )
@@ -24,6 +25,8 @@ func TestASetupFailureReportOutlivesACoreRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 		ch := sub.Channel()
+		// R33-05: only a setup Core stamped gets the key.
+		rdb.Set(ctx, setupBeforeKey(uuid), `{"Target":"modded","At":1}`, time.Hour)
 
 		publishSetupFailure(ctx, rdb, uuid, "modded", errors.New("download failed"), restored)
 

@@ -108,7 +108,7 @@ func TestSwitchSubServerClearsTheNodeHolds(t *testing.T) {
 	// R30-01: what the status watcher puts back if the node refuses it.
 	var undo services.SwitchUndo
 	raw, _ := rdb.Get(ctx, services.SwitchUndoKey("srv-uuid")).Result()
-	if json.Unmarshal([]byte(raw), &undo) != nil || undo.Target != "lobby" || undo.Previous != "main" {
-		t.Errorf("switch undo record = %q, want target lobby, previous main", raw)
+	if json.Unmarshal([]byte(raw), &undo) != nil || undo.Target != "lobby" || undo.Previous != "main" || undo.At <= 0 {
+		t.Errorf("switch undo record = %q, want target lobby, previous main, a dispatch time (R33-01)", raw)
 	}
 }

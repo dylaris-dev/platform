@@ -200,6 +200,13 @@ func publishSetupFailure(ctx context.Context, rdb *redis.Client, serverUUID, sub
 	if restored {
 		payload["restored"] = true
 	}
+	// The setup this answers, by the dispatch time Core stamped its record
+	// with. Core applies the key only to that setup, so a key that outlived
+	// it (an older Core applied the Pub/Sub copy and left the key, a retry
+	// wrote a new record) cannot roll the retry back.
+	if rec, ok := readDispatchRecord(ctx, rdb, setupBeforeKey(serverUUID)); ok && rec.Target == subServer && rec.At > 0 {
+		payload["attempt"] = rec.At
+	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("setup failure report: marshal failed: %v", err)
@@ -209,14 +216,17 @@ func publishSetupFailure(ctx context.Context, rdb *redis.Client, serverUUID, sub
 	// report lost to a redeploy took the whole rollback with it. The key
 	// waits for the status watcher like switch_failed; "durable" tells a Core
 	// that reads it to leave the Pub/Sub copy alone, and only once the key is
-	// there. An older Core ignores both.
-	if err := rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:setup_failed", serverUUID), data, 10*time.Minute).Err(); err != nil {
-		log.Printf("setup failure report: could not keep it for Core: %v", err)
-	} else {
-		payload["durable"] = true
-		if data, err = json.Marshal(payload); err != nil {
-			log.Printf("setup failure report: marshal failed: %v", err)
-			return
+	// there. A setup with no stamp is an older Core's, which ignores both and
+	// never deletes the key, so it gets the Pub/Sub copy only, as before.
+	if payload["attempt"] != nil {
+		if err := rdb.Set(ctx, fmt.Sprintf("dylaris:server:%s:setup_failed", serverUUID), data, 10*time.Minute).Err(); err != nil {
+			log.Printf("setup failure report: could not keep it for Core: %v", err)
+		} else {
+			payload["durable"] = true
+			if data, err = json.Marshal(payload); err != nil {
+				log.Printf("setup failure report: marshal failed: %v", err)
+				return
+			}
 		}
 	}
 	if err := rdb.Publish(ctx, queue.SetupResultsChannel(nodeID), data).Err(); err != nil {
