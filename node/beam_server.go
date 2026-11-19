@@ -1632,8 +1632,48 @@ func (s *beamServer) UploadFile(stream grpc.ClientStreamingServer[pb.BeamUploadM
 		log.Printf("beam-server: upload aborted, removed partial temp %s", path.Base(tmpName))
 	}()
 
+	// Recv runs on its own goroutine, one message per request, so a stream
+	// waiting for its next message still rechecks its access: a stalled or
+	// vanished client sends none, and its writer hold made migrate_out refuse.
+	type recvd struct {
+		msg *pb.BeamUploadMsg
+		err error
+	}
+	next, got, recvDone := make(chan struct{}), make(chan recvd), make(chan struct{})
+	defer close(recvDone)
+	go func() {
+		for {
+			select {
+			case <-next:
+			case <-recvDone:
+				return
+			}
+			msg, err := stream.Recv()
+			select {
+			case got <- recvd{msg, err}:
+			case <-recvDone:
+				return
+			}
+		}
+	}()
+	recheck := time.NewTicker(beamRecheckEvery)
+	defer recheck.Stop()
+	recv := func() (*pb.BeamUploadMsg, error) {
+		next <- struct{}{}
+		for {
+			select {
+			case r := <-got:
+				return r.msg, r.err
+			case <-recheck.C:
+				if err := s.requireFilePerm(ctx, canWrite, "upload"); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
 	for {
-		msg, err := stream.Recv()
+		msg, err := recv()
 		if err == io.EOF {
 			completed = true
 			break

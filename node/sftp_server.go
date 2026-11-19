@@ -1056,6 +1056,9 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	}
 	v.open.add(w)
 	held = true
+	// A republish between the Write check above and the add walked the
+	// registry without w, so w checks the set it stored itself.
+	w.endIfWithdrawn()
 	return w, nil
 }
 
