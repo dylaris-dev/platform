@@ -813,34 +813,6 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		// record a failure restores has to be the one from before this setup.
 		services.RememberSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)
 
-		// Record HOW this sub-server is being installed, now that the pack
-		// branch above has resolved a pack into its concrete versions.
-		//
-		// originalInstallerType, not req.Installer.Type: a pack was rewritten to
-		// "modpack" for the node's benefit, and the panel has to put the operator
-		// back on the Packs tab, not on Modrinth. Written wholesale so a reinstall
-		// away from a modpack CLEARS the old reference instead of leaving the
-		// panel prefilling a pack the directory no longer contains.
-		//
-		// Best-effort: a failure here must not fail an install that is about to be
-		// dispatched. The cost of losing it is a form that cannot prefill, which is
-		// exactly where this feature started.
-		if err := h.d.Store.UpsertSubServerInstall(models.SubServerInstall{
-			ServerID:            serverID,
-			SubServerName:       subName,
-			InstallerType:       recordedInstallerType(originalInstallerType, req.Installer.Software),
-			McVersion:           req.Installer.McVersion,
-			BuildVersion:        req.Installer.Version,
-			Loader:              req.Installer.Loader,
-			ModrinthProjectID:   req.Installer.ModrinthProjectID,
-			ModrinthVersionID:   req.Installer.ModrinthVersionID,
-			ModrinthProjectSlug: req.Installer.ModrinthProjectSlug,
-			PackID:              req.Installer.PackID,
-			PackBuildID:         req.Installer.BuildID,
-		}); err != nil {
-			log.Printf("sub-server install record failed for server %d/%s: %v", serverID, subName, err)
-		}
-
 		configPayload := map[string]interface{}{
 			"uuid":    srv.UUID,
 			"ownerId": srv.OwnerID,
@@ -929,6 +901,37 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			}
 			return changed
 		}
+
+		// Record HOW this sub-server is being installed, now that the pack
+		// branch above has resolved a pack into its concrete versions. Past
+		// every refusal, as reinstall does: a setup refused after this write
+		// left the new record behind with nothing dispatched.
+		//
+		// originalInstallerType, not req.Installer.Type: a pack was rewritten to
+		// "modpack" for the node's benefit, and the panel has to put the operator
+		// back on the Packs tab, not on Modrinth. Written wholesale so a reinstall
+		// away from a modpack CLEARS the old reference instead of leaving the
+		// panel prefilling a pack the directory no longer contains.
+		//
+		// Best-effort: a failure here must not fail an install that is about to be
+		// dispatched. The cost of losing it is a form that cannot prefill, which is
+		// exactly where this feature started.
+		if err := h.d.Store.UpsertSubServerInstall(models.SubServerInstall{
+			ServerID:            serverID,
+			SubServerName:       subName,
+			InstallerType:       recordedInstallerType(originalInstallerType, req.Installer.Software),
+			McVersion:           req.Installer.McVersion,
+			BuildVersion:        req.Installer.Version,
+			Loader:              req.Installer.Loader,
+			ModrinthProjectID:   req.Installer.ModrinthProjectID,
+			ModrinthVersionID:   req.Installer.ModrinthVersionID,
+			ModrinthProjectSlug: req.Installer.ModrinthProjectSlug,
+			PackID:              req.Installer.PackID,
+			PackBuildID:         req.Installer.BuildID,
+		}); err != nil {
+			log.Printf("sub-server install record failed for server %d/%s: %v", serverID, subName, err)
+		}
+
 		// Recorded first, so a failure that leaves the files as they were puts
 		// the rows back (RestoreSetupMods), and changed before the command: a
 		// node that refuses at once can report before Core gets to drop them.
@@ -1133,6 +1136,13 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 	buildNumber := reqVersion
 	if buildNumber == "" {
 		buildNumber = srv.BuildNumber
+		// These take the Minecraft version as "version", and after a version
+		// move build_number holds the loader build (Paper "130", Fabric
+		// "0.16.9"), which the node would ask the download API for.
+		switch installerType {
+		case "paper", "vanilla", "fabric", "forge":
+			buildNumber = services.ExactMinecraftVersion(installerType, mcVersion, srv.BuildNumber, loader)
+		}
 	}
 	// Reinstall updates the server software in place. Every other source -
 	// modpacks, packs, Technic, uploads - is resolved and authorized
@@ -2767,10 +2777,12 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 	// bind dir and the user's deleted slot resurrects empty. Setting
 	// desired_state="stopped" tells the reconciler to leave it alone.
 	// The install record outlives the directory otherwise, and the panel would
-	// then prefill an edit form for a modpack that is no longer on disk.
-	if err := h.d.Store.DeleteSubServerInstall(serverID, subServerName); err != nil {
-		log.Printf("sub-server install record cleanup failed for server %d/%s: %v", serverID, subServerName, err)
-	}
+	// then prefill an edit form for a modpack that is no longer on disk. The
+	// mod rows and the modpack snapshot go with it, as for a copy that never
+	// landed: kept, a new sub-server of the same name would list mods that are
+	// not on disk, and its next version move would install them.
+	services.RemoveCopyTargetRows(h.d.Store, srv, subServerName)
+	h.d.Events.Publish(r.Context(), "server_mods.changed", map[string]interface{}{"serverId": serverID})
 
 	wasActive := srv.ActiveSubServer == subServerName
 	if wasActive {

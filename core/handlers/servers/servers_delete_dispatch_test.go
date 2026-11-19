@@ -137,6 +137,9 @@ type subServerDeleteFakeStore struct {
 	// installCleared is the sub-server whose install record was dropped, "" if
 	// the handler never got there.
 	installCleared string
+	// modsCleared / packCleared are the sub-servers whose mod rows and
+	// modpack snapshot were dropped.
+	modsCleared, packCleared string
 	// status is the server's DB status; "" reads as stopped.
 	status string
 }
@@ -177,6 +180,20 @@ func (f *subServerDeleteFakeStore) UpdateServerDesiredState(id int, state string
 // prefill the setup form with a modpack that is no longer on disk.
 func (f *subServerDeleteFakeStore) DeleteSubServerInstall(serverID int, subServer string) error {
 	f.installCleared = subServer
+	return nil
+}
+
+func (f *subServerDeleteFakeStore) ReplaceServerMods(serverID int, subServer string, mods []models.ServerMod) error {
+	if mods == nil {
+		f.modsCleared = subServer
+	}
+	return nil
+}
+
+func (f *subServerDeleteFakeStore) ReplaceServerModpackContents(serverID int, subServer string, rows []models.ServerModpackContent) error {
+	if rows == nil {
+		f.packCleared = subServer
+	}
 	return nil
 }
 
@@ -237,6 +254,15 @@ func TestDeleteSubServerHonorsTheDeleteCapability(t *testing.T) {
 				// prefills the setup form with a modpack that is no longer on
 				// disk - and a name that can be re-created later inherits it.
 				t.Errorf("install record cleared for %q, want \"survival\"", fs.installCleared)
+			}
+			// R28-01/R28-03: the mod rows and the modpack snapshot go too.
+			// Left behind, a new sub-server with the same name lists mods that
+			// are not on disk, and a version move installs them into it.
+			if tt.wantStatus == http.StatusOK && (fs.modsCleared != "survival" || fs.packCleared != "survival") {
+				t.Errorf("mod rows cleared for %q, modpack snapshot for %q, want both \"survival\"", fs.modsCleared, fs.packCleared)
+			}
+			if tt.wantStatus == http.StatusForbidden && (fs.modsCleared != "" || fs.packCleared != "") {
+				t.Error("the refused request still dropped the mod rows or the modpack snapshot")
 			}
 		})
 	}

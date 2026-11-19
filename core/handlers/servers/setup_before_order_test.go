@@ -3,6 +3,7 @@ package servers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -108,5 +109,46 @@ func TestSetupRecordsTheModRowsItDrops(t *testing.T) {
 	}
 	if !got.ModsKnown || len(got.Mods) != 1 || got.Mods[0].ModrinthProjectID != "sodium" {
 		t.Fatalf("recorded %+v, want the sodium row from before the setup", got)
+	}
+}
+
+type setupWriteFailsStore struct{ *installFakeStore }
+
+func (f *setupWriteFailsStore) UpdateServerSetup(int, string, string, string, string, string, string, string) error {
+	return errors.New("db down")
+}
+
+// R28-02: a setup refused after the install record was written left the new
+// record behind with nothing dispatched, so the edit form and the mod checks
+// resolved against software that was never installed. The record is now
+// written past the last refusal, as reinstall does.
+func TestSetupRefusedLateKeepsTheOldInstallRecord(t *testing.T) {
+	old := models.SubServerInstall{ServerID: 1, SubServerName: "main", InstallerType: "paper", McVersion: "1.20.4", BuildVersion: "1.20.4"}
+	for _, tt := range []struct {
+		name   string
+		stored *models.SubServerInstall
+	}{
+		{"over an installed sub-server", &old},
+		{"first install", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h, base, rdb := newInstallTest(t)
+			base.storedInstall = tt.stored
+			h.d.Store = &setupWriteFailsStore{base}
+			rec := httptest.NewRecorder()
+			h.SetupServer(rec, installRequest("setup", setupBody(map[string]string{"type": "fabric", "version": "1.21.1", "mcVersion": "1.21.1"}), false))
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("setup status %d, want 500: %s", rec.Code, rec.Body.String())
+			}
+			if n := len(queuedInstaller(t, rdb)); n != 0 {
+				t.Fatalf("%d installs queued, want none", n)
+			}
+			if base.installRow != (models.SubServerInstall{}) {
+				t.Errorf("install record written as %+v by a setup that was refused", base.installRow)
+			}
+			if tt.stored != nil && (base.storedInstall == nil || *base.storedInstall != old) {
+				t.Errorf("stored record %+v, want the paper 1.20.4 one from before", base.storedInstall)
+			}
+		})
 	}
 }

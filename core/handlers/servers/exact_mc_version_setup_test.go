@@ -91,3 +91,35 @@ func TestReinstallRecordsTheRequestedVersion(t *testing.T) {
 		t.Errorf("minecraft_version = %q, want 1.21.4", fs.setupMC)
 	}
 }
+
+// R28-04: a version move records the loader build in build_number, and a
+// reinstall naming no version sent that build to the node as the Minecraft
+// version (Paper "130", Fabric "0.16.9"), which no download serves.
+func TestReinstallWithoutAVersionSendsTheMinecraftVersion(t *testing.T) {
+	for _, tt := range []struct {
+		software, build, want string
+	}{
+		{"paper", "130", "1.21.4"},
+		{"fabric", "0.16.9", "1.21.4"},
+		{"forge", "54.0.12", "1.21.4"},
+		// A build that is the Minecraft version, as setup records it.
+		{"paper", "1.21.4", "1.21.4"},
+		{"vanilla", "1.21.4", "1.21.4"},
+	} {
+		t.Run(tt.software+" "+tt.build, func(t *testing.T) {
+			h, fs, rdb := newInstallTest(t)
+			fs.server.Status = "stopped"
+			fs.server.InstallerType = tt.software
+			fs.server.MinecraftVersion = "1.21.4"
+			fs.server.BuildNumber = tt.build
+			rec := httptest.NewRecorder()
+			h.ReinstallServer(rec, installRequest("reinstall", map[string]any{"javaImage": "ghcr.io/dylaris-dev/platform-mc-java21:latest"}, true))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("reinstall status %d: %s", rec.Code, rec.Body.String())
+			}
+			if inst := queuedInstaller(t, rdb); len(inst) != 1 || inst[0]["version"] != tt.want {
+				t.Fatalf("queued %v, want version %s", inst, tt.want)
+			}
+		})
+	}
+}
