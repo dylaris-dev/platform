@@ -656,9 +656,10 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	applyExactMinecraftVersion(&req.Installer.McVersion, &req.Installer.Version,
 		recordedInstallerType(req.Installer.Type, req.Installer.Software), req.Installer.Loader)
 
-	// Enforce sub-server limit. Skipped during first setup only - the comment
-	// here used to claim admins were exempt too, and they never have been:
-	// the condition below reads srv.Status and nothing else.
+	// Enforce sub-server limit, on every setup. It used to be skipped while the
+	// row read pending_setup, and that status is not "nothing on disk": a failed
+	// setup and a deleted active slot both leave it over sub-server directories
+	// that are still there. An empty server root still passes (the guard).
 	//
 	// Read through the shared parser: this site used to hold its own copy of the
 	// rule, guarded on `n > 0`, and therefore threw away a stored 0 and fell back
@@ -670,10 +671,8 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 	// apply while a server was stopped, and a stopped server is exactly when a
 	// sub-server gets added. Measured on production: a limit of three, seven
 	// sub-servers.
-	if srv.Status != "pending_setup" {
-		if guard.RefuseIfSubServerLimitReached(w, h.d.Store, h.d.GRPCRegistry, srv.NodeID, srv.UUID, subName) {
-			return
-		}
+	if guard.RefuseIfSubServerLimitReached(w, h.d.Store, h.d.GRPCRegistry, srv.NodeID, srv.UUID, subName, srv.Status == "pending_setup") {
+		return
 	}
 
 	// Build JVM flags: default/Aikar flags followed by server-specific extra flags.
@@ -1424,6 +1423,13 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
+		return
+	}
+	// As setup and reinstall: an install queued but not yet started holds no
+	// busy key on the node, and a switch beside it left Core on this sub-server
+	// and the node on the one the setup installed.
+	if srv.Status == "installing" {
+		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
 		return
 	}
 
@@ -2741,6 +2747,12 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
 		return
 	}
+	// As CopySubServer: a start or restart in flight on the node rebuilt the
+	// container on the deleted slot, and Docker made its directory again.
+	if srv.ActiveSubServer == subServerName && inPowerTransition(srv.Status) {
+		httpx.SendJSONError(w, "The server is "+srv.Status+". Delete this sub-server once it has started or stopped.", http.StatusConflict)
+		return
+	}
 
 	// Same silence as DeleteServer had, with the same consequence one level down:
 	// the slot disappears from the panel while its directory stays on disk,
@@ -2789,6 +2801,7 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		h.d.Store.UpdateServerStatus(serverID, "pending_setup")
 		h.d.Store.UpdateServerActiveSubServer(serverID, "")
 		h.d.Store.UpdateServerDesiredState(serverID, "stopped")
+		services.PublishDesiredState(r.Context(), h.d.Redis, srv.UUID, "stopped")
 	}
 
 	actorID, _ := r.Context().Value("userID").(string)

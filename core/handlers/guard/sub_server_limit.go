@@ -132,12 +132,19 @@ func SubServerLimit(st store.Store) *int64 {
 // cap counted the target itself, which refused re-installing an existing
 // sub-server at the limit and gave an upload install - whose file is staged
 // into the new folder before setup asks - one fewer than the limit.
-func RefuseIfSubServerLimitReached(w http.ResponseWriter, st store.Store, reg *nodegrpc.Registry, nodeID int, serverUUID, target string) bool {
+//
+// pendingSetup is the one exception to refusing an unanswered count: the
+// first setup of a server queues durably for a node that is offline, as it
+// always has. Once the node answers, its listing counts like any other.
+func RefuseIfSubServerLimitReached(w http.ResponseWriter, st store.Store, reg *nodegrpc.Registry, nodeID int, serverUUID, target string, pendingSetup bool) bool {
 	limit := SubServerLimit(st)
 	if limit == nil {
 		return false
 	}
 	entries, err := ListServerRootNames(reg, nodeID, serverUUID)
+	if err != nil && pendingSetup {
+		return false
+	}
 	if err != nil {
 		httpx.SendJSONError(w, "The node did not answer, so the number of sub-servers is not known: "+err.Error(),
 			http.StatusBadGateway)
@@ -146,7 +153,14 @@ func RefuseIfSubServerLimitReached(w http.ResponseWriter, st store.Store, reg *n
 	if subServerDirExists(entries, target) {
 		return false
 	}
-	return RefuseIfOverSubServerLimit(w, limit, CountSubServerDirs(entries))
+	have := CountSubServerDirs(entries)
+	// The first sub-server is the server itself, and no cap refuses it: setup
+	// used to skip this check on pending_setup for that, which also waved
+	// through every setup over directories a failed one or a delete left.
+	if have == 0 {
+		return false
+	}
+	return RefuseIfOverSubServerLimit(w, limit, have)
 }
 
 // RefuseIfOverSubServerLimit is the decision on counts alone, split out so both

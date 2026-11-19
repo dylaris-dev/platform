@@ -99,11 +99,21 @@ func TestSubServerLimitRefusesWhenTheNodeCannotBeAsked(t *testing.T) {
 	st := &subServerLimitStore{limit: "3"}
 	rec := httptest.NewRecorder()
 	// No node registry, so the listing cannot be made.
-	if !RefuseIfSubServerLimitReached(rec, st, nil, 7, "srv-uuid", "new") {
+	if !RefuseIfSubServerLimitReached(rec, st, nil, 7, "srv-uuid", "new", false) {
 		t.Fatal("an unanswerable count was treated as room to spare")
 	}
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502 - the node is what did not answer", rec.Code)
+	}
+}
+
+// R29-01: the first setup of a server still queues for an offline node, as it
+// did while pending_setup skipped the count entirely.
+func TestSubServerLimitLetsAFirstSetupQueueForAnOfflineNode(t *testing.T) {
+	st := &subServerLimitStore{limit: "3"}
+	rec := httptest.NewRecorder()
+	if RefuseIfSubServerLimitReached(rec, st, nil, 7, "srv-uuid", "new", true) {
+		t.Fatalf("a first setup was refused for an offline node: %s", rec.Body.String())
 	}
 }
 
@@ -112,7 +122,7 @@ func TestSubServerLimitRefusesWhenTheNodeCannotBeAsked(t *testing.T) {
 func TestSubServerLimitDoesNotAskTheNodeWhenThereIsNoCap(t *testing.T) {
 	st := &subServerLimitStore{limit: "unlimited"}
 	rec := httptest.NewRecorder()
-	if RefuseIfSubServerLimitReached(rec, st, nil, 7, "srv-uuid", "new") {
+	if RefuseIfSubServerLimitReached(rec, st, nil, 7, "srv-uuid", "new", false) {
 		t.Fatalf("refused although no cap is set: %s", rec.Body.String())
 	}
 }

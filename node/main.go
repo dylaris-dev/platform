@@ -2189,6 +2189,15 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			return
 		}
 		defer unlockInstall()
+		// A start or restart running beside the delete recreated the container
+		// on the slot renamed away below, and Docker made that directory again,
+		// root-owned. Power actions take neither lock above, so no deadlock.
+		releasePower, ok := waitServerPower(ctx, cmd.Config.UUID)
+		if !ok {
+			log.Printf("delete_sub_server %s/%s gave up waiting for a power action of the server", cmd.Config.UUID, subName)
+			return
+		}
+		defer releasePower()
 		// "" means the storage path is not mounted here, and joining the name
 		// onto it works relative to the node's own working directory.
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
