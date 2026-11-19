@@ -56,6 +56,11 @@ type SwitchUndo struct {
 	PreviousDeleted bool `json:"previousDeleted,omitempty"`
 	// The dispatch time, unix nanoseconds.
 	At int64 `json:"at,omitempty"`
+	// Set once a setup or reinstall was sent after this switch
+	// (OvertakeSwitchUndo). The record is kept rather than deleted: without
+	// it a refusal fell back to the node's previous sub-server and was put
+	// back over an install into the same target.
+	Overtaken bool `json:"overtaken,omitempty"`
 }
 
 // ForgetSwitchUndo deletes the undo record only when it is the switch to
@@ -80,6 +85,36 @@ func ForgetSwitchUndo(ctx context.Context, rdb *redis.Client, serverUUID, target
 	}, key)
 	if err != nil {
 		log.Printf("Server %s: could not forget the undo record of the switch to %q: %v", serverUUID, target, err)
+	}
+}
+
+// OvertakeSwitchUndo marks a pending switch's record as overtaken by a setup
+// or reinstall that has just been sent, so a refusal of that switch is dropped
+// as superseded (consumeSwitchSubFailures).
+func OvertakeSwitchUndo(ctx context.Context, rdb *redis.Client, serverUUID string) {
+	if rdb == nil {
+		return
+	}
+	key := SwitchUndoKey(serverUUID)
+	err := rdb.Watch(ctx, func(tx *redis.Tx) error {
+		var undo SwitchUndo
+		raw, err := tx.Get(ctx, key).Result()
+		if err != nil || json.Unmarshal([]byte(raw), &undo) != nil || undo.Overtaken {
+			return nil
+		}
+		undo.Overtaken = true
+		rec, err := json.Marshal(undo)
+		if err != nil {
+			return nil
+		}
+		_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
+			p.SetArgs(ctx, key, rec, redis.SetArgs{KeepTTL: true})
+			return nil
+		})
+		return err
+	}, key)
+	if err != nil {
+		log.Printf("Server %s: could not mark the pending switch overtaken: %v", serverUUID, err)
 	}
 }
 
@@ -152,6 +187,13 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 				if json.Unmarshal([]byte(u), &undo) != nil || !strings.EqualFold(undo.Target, rep.Target) {
 					undo = SwitchUndo{}
 				}
+			}
+			// A setup or reinstall into this target went out after the switch
+			// and is what the node runs, not the switch's previous sub-server.
+			if undo.Overtaken {
+				log.Printf("Server %s: the switch to sub-server %q failed on the node (%s), overtaken by a setup", srv.UUID, rep.Target, rep.Reason)
+				ForgetSwitchUndo(ctx, s.redis, srv.UUID, rep.Target)
+				continue
 			}
 			// The node's .active_server is what still runs; Core's record of
 			// the same name only adds the loader columns.

@@ -47,7 +47,9 @@ type setupBefore struct {
 
 // RememberSetupBefore records srv's setup columns and target's install record
 // before a setup or reinstall to target is dispatched. Best-effort: without it
-// a failure leaves them as today.
+// a failure leaves them as today. Called past the last refusal: a record left
+// by a setup that never went out held a later crash restart off. A pending
+// switch is overtaken only once the command is sent (OvertakeSwitchUndo).
 func RememberSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store, srv *models.Server, target string) {
 	if rdb == nil || srv == nil {
 		return
@@ -57,9 +59,6 @@ func RememberSetupBefore(ctx context.Context, rdb *redis.Client, st store.Store,
 		Flags: srv.ExtraJvmFlags, Installer: srv.InstallerType, MCVersion: srv.MinecraftVersion, Build: srv.BuildNumber,
 		DesiredState: srv.DesiredState, At: time.Now().UnixNano(),
 	}
-	// The setup overtakes a switch still pending: a refusal of that switch is
-	// dropped as superseded.
-	rdb.Del(ctx, SwitchUndoKey(srv.UUID))
 	if st != nil {
 		if in, err := st.GetSubServerInstall(srv.ID, target); err == nil {
 			before.InstallKnown, before.Install = true, in

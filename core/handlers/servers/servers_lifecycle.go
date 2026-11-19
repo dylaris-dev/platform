@@ -808,10 +808,6 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Before the install record below is written, as reinstall does: the
-		// record a failure restores has to be the one from before this setup.
-		services.RememberSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)
-
 		configPayload := map[string]interface{}{
 			"uuid":    srv.UUID,
 			"ownerId": srv.OwnerID,
@@ -866,6 +862,10 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 		if !recordSetup() {
 			return
 		}
+		// Past the last refusal, and before the install record below is
+		// written: the record a failure restores has to be the one from before
+		// this setup. srv still holds the columns recordSetup overwrote.
+		services.RememberSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)
 		// A new server defaults to real player IP forwarding. The switch goes on
 		// BEFORE the command, through the owner's own write path, and the node
 		// only writes the matching config when told it is on; a node that cannot
@@ -967,6 +967,7 @@ func (h *ServerHandler) SetupServer(w http.ResponseWriter, r *http.Request) {
 			httpx.SendJSONError(w, "Failed to queue setup", 500)
 			return
 		}
+		services.OvertakeSwitchUndo(r.Context(), h.d.Redis, srv.UUID)
 
 		// Set install cooldown
 		h.d.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)
@@ -1206,9 +1207,6 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// A node that rolls the reinstall back reports it as a failed setup, and
-	// this record is what that report puts back (as in setup).
-	services.RememberSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)
 	// Update DB (start_command is display-only; node builds the real command)
 	if err := h.d.Store.UpdateServerSetup(serverID, javaImage, "", subName, extraFlags, installerType, mcVersion, buildNumber); err != nil {
 		httpx.SendJSONError(w, "Failed to update server", 500)
@@ -1229,6 +1227,10 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 			httpx.SendJSONError(w, "Node not found", 404)
 			return
 		}
+		// A node that rolls the reinstall back reports it as a failed setup, and
+		// this record is what that report puts back (as in setup). Past the
+		// last refusal; srv still holds the columns written above.
+		services.RememberSetupBefore(r.Context(), h.d.Redis, h.d.Store, srv, subName)
 
 		configPayload := map[string]interface{}{
 			"uuid": srv.UUID,
@@ -1287,6 +1289,7 @@ func (h *ServerHandler) ReinstallServer(w http.ResponseWriter, r *http.Request) 
 			httpx.SendJSONError(w, "Failed to queue reinstall", 500)
 			return
 		}
+		services.OvertakeSwitchUndo(r.Context(), h.d.Redis, srv.UUID)
 
 		// Set install cooldown
 		h.d.Redis.Set(context.Background(), cooldownKey, "1", 30*time.Second)

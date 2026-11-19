@@ -40,10 +40,11 @@ func TestASupersededSwitchReportForgetsItsUndoRecord(t *testing.T) {
 	}
 }
 
-// R33-01: a setup or reinstall overtakes a pending switch, so it forgets the
-// switch's undo record; the record it writes is stamped with the dispatch time
-// the node bounds its hold by (R33-03) and matches a failure report to (R33-05).
-func TestASetupForgetsAPendingSwitchAndStampsItsRecord(t *testing.T) {
+// R33-01/R34-02: the record a setup or reinstall writes is stamped with the
+// dispatch time the node matches a failure report to (R33-05). It leaves a
+// pending switch's undo record alone: the handler overtakes the switch only
+// once the command is sent (OvertakeSwitchUndo).
+func TestASetupStampsItsRecordAndLeavesAPendingSwitch(t *testing.T) {
 	rdb := newQueueTestRedis(t)
 	ctx := context.Background()
 	srv := &models.Server{ID: 3, UUID: "srv-3", ActiveSubServer: "survival", DesiredState: "stopped"}
@@ -51,8 +52,8 @@ func TestASetupForgetsAPendingSwitchAndStampsItsRecord(t *testing.T) {
 
 	RememberSetupBefore(ctx, rdb, &setupBeforeStore{}, srv, "other")
 
-	if n, _ := rdb.Exists(ctx, SwitchUndoKey("srv-3")).Result(); n != 0 {
-		t.Error("the overtaken switch's undo record is still there")
+	if raw, _ := rdb.Get(ctx, SwitchUndoKey("srv-3")).Result(); raw != `{"target":"modded","previous":"survival"}` {
+		t.Errorf("the pending switch's undo record = %q, want it untouched", raw)
 	}
 	var b setupBefore
 	raw, _ := rdb.Get(ctx, setupBeforeKey("srv-3")).Result()
@@ -107,6 +108,43 @@ func TestASetupFailureKeyIsAppliedOnlyToItsSetup(t *testing.T) {
 
 			if len(st.written) != c.wantRun {
 				t.Errorf("setup columns restored %d times, want %d", len(st.written), c.wantRun)
+			}
+		})
+	}
+}
+
+// R34-04: a switch refusal consumed after a setup or reinstall into the same
+// sub-server went out is superseded: the install is what the node runs, so
+// Core must not go back to the switch's previous sub-server.
+func TestARefusalOfAnOvertakenSwitchIsDropped(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		overtaken  bool
+		wantActive int
+	}{
+		{"overtaken by a setup", true, 0},
+		{"still the switch's", false, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &switchFailFakeStore{}
+			fs.serversByUUID = map[string]models.Server{
+				"u-1": {ID: 7, UUID: "u-1", ActiveSubServer: "modded", DesiredState: "online"},
+			}
+			s := &StatusWatcherService{store: fs, redis: newQueueTestRedis(t)}
+			ctx := context.Background()
+			s.redis.Set(ctx, SwitchUndoKey("u-1"), `{"target":"modded","previous":"main","desiredState":"stopped"}`, time.Hour)
+			if c.overtaken {
+				OvertakeSwitchUndo(ctx, s.redis, "u-1")
+			}
+			s.redis.Set(ctx, SwitchSubFailedKey("u-1"), `{"target":"modded","previous":"main","reason":"x"}`, 0)
+
+			s.consumeSwitchSubFailures(ctx)
+
+			if len(fs.active) != c.wantActive || (c.overtaken && len(fs.desired)+len(fs.notes) != 0) {
+				t.Errorf("active=%v desired=%v notes=%d, want %d active writes", fs.active, fs.desired, len(fs.notes), c.wantActive)
+			}
+			if n, _ := s.redis.Exists(ctx, SwitchUndoKey("u-1")).Result(); n != 0 {
+				t.Error("the undo record was left behind")
 			}
 		})
 	}
