@@ -168,7 +168,7 @@ func isLeftover(name string, isDir bool, depth int, parent string) bool {
 // path within a day (see shared_storage_beacon.go).
 func sharedWithAnotherNode(base string) bool {
 	for _, b := range readBeacons(base) {
-		if b.NodeID != nodeID && time.Since(b.UpdatedAt) < 24*time.Hour {
+		if b.NodeID != nodeID && !formerOwnBeacon(b) && time.Since(b.UpdatedAt) < 24*time.Hour {
 			return true
 		}
 	}

@@ -44,6 +44,21 @@ const (
 	beaconFreshness     = 5 * time.Minute
 )
 
+// formerNodeIDs are ids this node ran as before this boot (set once in main,
+// before anything reads it), and processStarted is when this process began. A
+// beacon under a former id written before processStarted is the previous
+// process's own, left behind by an identity change: writeBeacon names the file
+// after the id, so nothing overwrites it (R35-12). One refreshed since is a
+// live process and stays a peer.
+var (
+	formerNodeIDs  map[string]bool
+	processStarted = time.Now()
+)
+
+func formerOwnBeacon(b nodeBeacon) bool {
+	return formerNodeIDs[b.NodeID] && b.UpdatedAt.Before(processStarted)
+}
+
 // nodeBeacon is one node's claim on a storage path.
 type nodeBeacon struct {
 	NodeID string `json:"nodeId"`
@@ -224,8 +239,16 @@ func (d *sharedStorageDetector) Check() []sharedStorageConflict {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
+		var beacons, former []nodeBeacon
+		for _, b := range readBeacons(path) {
+			if b.NodeID != d.nodeID && formerOwnBeacon(b) {
+				former = append(former, b)
+				continue
+			}
+			beacons = append(beacons, b)
+		}
 		found = append(found, evaluateBeacons(
-			path, d.nodeID, d.instanceID, readBeacons(path), now, firstRound,
+			path, d.nodeID, d.instanceID, beacons, now, firstRound,
 		)...)
 
 		if err := writeBeacon(path, nodeBeacon{
@@ -235,6 +258,12 @@ func (d *sharedStorageDetector) Check() []sharedStorageConflict {
 			UpdatedAt:  now,
 		}); err != nil {
 			log.Printf("shared-storage check: could not write beacon in %s: %v", path, err)
+			continue
+		}
+		for _, b := range former {
+			if err := os.Remove(filepath.Join(path, beaconDirName, b.NodeID+".beacon")); err != nil && !os.IsNotExist(err) {
+				log.Printf("shared-storage check: could not remove the beacon of former id %s in %s: %v", b.NodeID, path, err)
+			}
 		}
 	}
 

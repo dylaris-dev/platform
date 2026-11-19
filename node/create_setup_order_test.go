@@ -185,3 +185,33 @@ func TestSetupRefusesBesideABackupOrAVersionMove(t *testing.T) {
 		})
 	}
 }
+
+// R35-13: a create redelivered while the server's storage cannot be resolved
+// (its key names a path that is not mounted, or the key cannot be read with a
+// path skipped) used to pick a path anyway and re-key the server to an empty
+// slot, so the real tree read as a leftover once its disk came back.
+func TestACreateLeavesAnUnresolvableServerAlone(t *testing.T) {
+	const uuid = "f7f7f7f7-2222-3333-4444-555555555555"
+	t.Chdir(t.TempDir())
+	t.Cleanup(func() { forgetTombstoneInMemory(uuid) })
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	root := t.TempDir()
+	storage := NewStorageManager(root, rdb)
+	key := "node:" + nodeID + ":server:" + uuid + ":storage"
+	rdb.Set(context.Background(), key, "/not/mounted", 0)
+
+	cmd := NodeCommand{Action: "create"}
+	cmd.Config.UUID = uuid
+	func() {
+		defer func() { _ = recover() }() // nil DockerManager: a create that goes on panics there
+		processCommand(context.Background(), cmd, "", rdb, nil, "node-a", nil, storage)
+	}()
+
+	if got := rdb.Get(context.Background(), key).Val(); got != "/not/mounted" {
+		t.Errorf("storage key = %q, want it left naming the unmounted path", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, uuid)); !os.IsNotExist(err) {
+		t.Errorf("create made a new slot for a server it could not resolve: %v", err)
+	}
+}

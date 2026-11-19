@@ -341,6 +341,14 @@ func main() {
 	// existing rdb re-auths transparently. Fail-closed; capped backoff.
 	go redisACLWatchdog(ctx, rdb)
 
+	// Before NewStorageManager rewrites the marker with the current id: the
+	// marker still names the id the previous boot ran as, whose beacons are
+	// this node's own (R35-12).
+	formerNodeIDs = ownNodeIDs(nodeSecretDir)
+	for _, id := range nodeIdentities(nodeSecretDir) {
+		formerNodeIDs[id] = true
+	}
+
 	// Multi-storage: init StorageManager with configured paths
 	storageMgr := NewStorageManager(storagePaths, rdb)
 	storageMgr.LogStorageInfo()
@@ -1733,11 +1741,18 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 		// the lock first, would replace the installed server with an empty
 		// slot and move its storage key to an empty path. Setup writes
 		// .active_server, so its presence means the slot is long done.
-		if dir := storage.GetServerDir(cmd.Config.UUID); dir != "" {
-			if _, err := readServerRootFile(dir, ".active_server"); err == nil {
-				log.Printf("create %s: the server is already set up on this node, leaving it as it is", cmd.Config.UUID)
-				return
-			}
+		// A new server resolves to the default path, so "" is a server whose
+		// storage cannot be resolved (its key names an unmounted disk, the key
+		// is unreadable with a path skipped, or copies are ambiguous). Picking
+		// a path then re-keyed it to an empty slot (R35-13).
+		dir := storage.GetServerDir(cmd.Config.UUID)
+		if dir == "" {
+			log.Printf("create %s: refusing, the server's storage on this node cannot be resolved (see the storage log above); nothing was changed", cmd.Config.UUID)
+			return
+		}
+		if _, err := readServerRootFile(dir, ".active_server"); err == nil {
+			log.Printf("create %s: the server is already set up on this node, leaving it as it is", cmd.Config.UUID)
+			return
 		}
 
 		// Assign storage path: the one the create asked for, else balanced by

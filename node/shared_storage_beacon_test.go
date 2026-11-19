@@ -327,3 +327,44 @@ func TestDetector_ConcurrentCheckAndConflicts(t *testing.T) {
 	<-done
 	<-done
 }
+
+// R35-12: after an identity change the previous process's beacon carries the
+// id this node ran as until now. Left there it read as a foreign node: a
+// shared-storage alarm for five minutes and the boot sweep skipped for a day.
+// A beacon under a former id that is refreshed after this process started is
+// a live process, though, and must still be reported.
+func TestDetector_FormerOwnIDIsNotAPeer(t *testing.T) {
+	tests := []struct {
+		name      string
+		updated   time.Time
+		wantPeer  bool
+		wantKept  bool
+		wantShare bool
+	}{
+		{name: "written before this process started", updated: processStarted.Add(-30 * time.Second)},
+		{name: "refreshed after this process started", updated: time.Now().UTC().Add(time.Second), wantPeer: true, wantKept: true, wantShare: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			oldFormer, oldID := formerNodeIDs, nodeID
+			formerNodeIDs, nodeID = map[string]bool{"node-old": true}, "node-new"
+			t.Cleanup(func() { formerNodeIDs, nodeID = oldFormer, oldID })
+
+			if err := writeBeacon(dir, nodeBeacon{NodeID: "node-old", InstanceID: "prev", UpdatedAt: tt.updated}); err != nil {
+				t.Fatal(err)
+			}
+			if got := sharedWithAnotherNode(dir); got != tt.wantShare {
+				t.Errorf("sharedWithAnotherNode = %v, want %v", got, tt.wantShare)
+			}
+			got := newSharedStorageDetector("node-new", func() []string { return []string{dir} }).Check()
+			if peer := len(got) == 1 && got[0].Kind == sharedStoragePeer; peer != tt.wantPeer || len(got) > 1 {
+				t.Errorf("conflicts = %+v, want peer %v", got, tt.wantPeer)
+			}
+			_, err := os.Stat(filepath.Join(dir, beaconDirName, "node-old.beacon"))
+			if kept := err == nil; kept != tt.wantKept {
+				t.Errorf("old beacon kept = %v, want %v", kept, tt.wantKept)
+			}
+		})
+	}
+}
