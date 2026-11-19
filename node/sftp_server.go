@@ -52,15 +52,18 @@ type SFTPServer struct {
 	// A stalled handshake held one of the slots above for the whole deadline,
 	// so a few addresses that never sent a version string kept every customer
 	// out. They now share a small budget of their own, and a full budget
-	// drops its oldest entry for the newcomer: holding the slots takes a
-	// connection flood faster than a real handshake, not idle sockets.
-	preAuth        []sftpPreAuthConn
-	preAuthPerAddr map[string]int
+	// drops the oldest entry of the group holding the most (preAuthGroup):
+	// strict oldest-first let 8 addresses cycle every real handshake out,
+	// while this way a group can only push out its own or a bigger one's.
+	preAuth         []sftpPreAuthConn
+	preAuthPerAddr  map[string]int
+	preAuthPerGroup map[string]int
 }
 
 type sftpPreAuthConn struct {
-	conn net.Conn
-	addr string
+	conn  net.Conn
+	addr  string
+	group string
 }
 
 const (
@@ -108,13 +111,26 @@ type sftpServerRef struct {
 
 func NewSFTPServer(rdb *redis.Client, storageMgr *StorageManager, nodeID string) *SFTPServer {
 	return &SFTPServer{rdb: rdb, storageMgr: storageMgr, nodeID: nodeID,
-		perAddr: map[string]int{}, preAuthPerAddr: map[string]int{}}
+		perAddr: map[string]int{}, preAuthPerAddr: map[string]int{}, preAuthPerGroup: map[string]int{}}
+}
+
+// preAuthGroup is the unit pre-auth eviction weighs holders by: the address
+// remoteAddr counts, except that an IPv6 /64 widens to its /48, since one
+// subscriber holds hundreds of /64s.
+//
+// ponytail: 32 groups holding one stalled handshake each still rotate a real
+// one out; a per-address accept rate limit is the next step if that is seen.
+func preAuthGroup(addr string) string {
+	if _, n, err := net.ParseCIDR(addr); err == nil && n.IP.To4() == nil {
+		return n.IP.Mask(net.CIDRMask(48, 128)).String() + "/48"
+	}
+	return addr
 }
 
 // admit counts a new connection c from addr, or refuses it when the node or
 // that address already holds its share. c also enters the pre-auth budget
-// until handshakeDone; when that budget is full its oldest connection is
-// closed to make room.
+// until handshakeDone; when that budget is full the oldest connection of the
+// group holding the most is closed to make room.
 func (s *SFTPServer) admit(c net.Conn, addr string) bool {
 	s.connMu.Lock()
 	defer s.connMu.Unlock()
@@ -123,14 +139,21 @@ func (s *SFTPServer) admit(c net.Conn, addr string) bool {
 		return false
 	}
 	if len(s.preAuth) >= sftpMaxPreAuth {
-		old := s.preAuth[0]
-		old.conn.Close() // its handshake fails, and its goroutine releases the slot
-		s.dropPreAuthLocked(0)
+		victim, most := 0, 0
+		for i, p := range s.preAuth { // oldest first, so ties go to the oldest
+			if n := s.preAuthPerGroup[p.group]; n > most {
+				victim, most = i, n
+			}
+		}
+		s.preAuth[victim].conn.Close() // its handshake fails, and its goroutine releases the slot
+		s.dropPreAuthLocked(victim)
 	}
 	s.conns++
 	s.perAddr[addr]++
-	s.preAuth = append(s.preAuth, sftpPreAuthConn{c, addr})
+	group := preAuthGroup(addr)
+	s.preAuth = append(s.preAuth, sftpPreAuthConn{c, addr, group})
 	s.preAuthPerAddr[addr]++
+	s.preAuthPerGroup[group]++
 	return true
 }
 
@@ -147,10 +170,13 @@ func (s *SFTPServer) handshakeDone(c net.Conn) {
 }
 
 func (s *SFTPServer) dropPreAuthLocked(i int) {
-	addr := s.preAuth[i].addr
+	addr, group := s.preAuth[i].addr, s.preAuth[i].group
 	s.preAuth = append(s.preAuth[:i], s.preAuth[i+1:]...)
 	if s.preAuthPerAddr[addr]--; s.preAuthPerAddr[addr] <= 0 {
 		delete(s.preAuthPerAddr, addr)
+	}
+	if s.preAuthPerGroup[group]--; s.preAuthPerGroup[group] <= 0 {
+		delete(s.preAuthPerGroup, group)
 	}
 }
 

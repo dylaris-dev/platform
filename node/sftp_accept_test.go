@@ -95,19 +95,67 @@ func TestSFTPPreAuthBudget(t *testing.T) {
 		}
 	}
 
-	// A customer arriving now still gets in, and the oldest stalled one goes.
-	var oldest *closeRecorder
-	for _, c := range stalled {
-		if !c.closed {
-			oldest = c
-			break
-		}
-	}
+	// A customer arriving now still gets in, and a stalled one goes.
 	cust := &closeRecorder{}
 	if !s.admit(cust, "192.0.2.7") {
 		t.Fatal("a customer was refused while strangers held stalled handshakes")
 	}
-	if cust.closed || oldest == nil || !oldest.closed {
-		t.Fatalf("customer closed=%v, oldest stalled dropped=%v; want false, true", cust.closed, oldest != nil && oldest.closed)
+	after := 0
+	for _, c := range stalled {
+		if !c.closed {
+			after++
+		}
+	}
+	if cust.closed || after != open-1 {
+		t.Fatalf("customer closed=%v, stalled dropped=%d; want false, 1", cust.closed, open-after)
+	}
+}
+
+// A few addresses that keep the pre-auth budget full must not be able to cycle
+// a real handshake out of it: eviction takes from whoever holds the most, so a
+// customer with one handshake outlives any number of stalled arrivals. An IPv6
+// attacker counts as one holder per /48, since one subscriber holds hundreds of
+// /64s.
+func TestSFTPPreAuthEvictsTheBiggestHolder(t *testing.T) {
+	cases := []struct {
+		name     string
+		attacker func(i int) string
+		customer string
+	}{
+		{"8 IPv4 addresses", func(i int) string { return fmt.Sprintf("198.51.%d.1", i%8) }, "192.0.2.7"},
+		{"32 IPv6 /64s of one /48", func(i int) string { return fmt.Sprintf("2001:db8:1:%x::/64", i%32) }, "2001:db8:2::/64"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewSFTPServer(nil, nil, "node-1")
+			var stalled []*closeRecorder
+			reap := func() {
+				for _, c := range stalled {
+					if c.closed && !c.released {
+						c.released = true
+						s.handshakeDone(c)
+						s.release(c.addr)
+					}
+				}
+			}
+			flood := func(n int) {
+				for i := 0; i < n; i++ {
+					c := &closeRecorder{addr: tc.attacker(i)}
+					if s.admit(c, c.addr) {
+						stalled = append(stalled, c)
+					}
+					reap()
+				}
+			}
+			flood(sftpMaxPreAuth * 2)
+			cust := &closeRecorder{}
+			if !s.admit(cust, tc.customer) {
+				t.Fatal("customer refused")
+			}
+			flood(sftpMaxPreAuth * 20)
+			if cust.closed {
+				t.Fatal("the attacker's stalled handshakes evicted the customer's")
+			}
+		})
 	}
 }
