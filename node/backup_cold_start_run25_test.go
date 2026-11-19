@@ -54,7 +54,8 @@ func TestAStartDuringABackupOfAStoppedServerPausesSaving(t *testing.T) {
 }
 
 // The guard pieces on their own: another sub-server starting is left alone,
-// a second start sends nothing more, and a start after the walk sends nothing.
+// a second start (a new JVM, R26-03) is paused again, and a start after the
+// walk sends nothing.
 func TestPauseOnStart(t *testing.T) {
 	var sent []string
 	g := &worldSaveGuard{uuid: "srv-cold"}
@@ -67,7 +68,7 @@ func TestPauseOnStart(t *testing.T) {
 	}
 	startingDuringBackup("srv-cold", "survival")
 	startingDuringBackup("srv-cold", "survival")
-	if want := []string{"save-off", "save-all flush"}; !reflect.DeepEqual(sent, want) {
+	if want := []string{"save-off", "save-all flush", "save-off", "save-all flush"}; !reflect.DeepEqual(sent, want) {
 		t.Fatalf("sent %v, want %v", sent, want)
 	}
 	if pacer.pausedSince.Load() == 0 {
@@ -77,7 +78,7 @@ func TestPauseOnStart(t *testing.T) {
 	stop()
 	g.resume()
 	startingDuringBackup("srv-cold", "survival")
-	if want := []string{"save-off", "save-all flush", "save-on"}; !reflect.DeepEqual(sent, want) {
+	if want := []string{"save-off", "save-all flush", "save-off", "save-all flush", "save-on"}; !reflect.DeepEqual(sent, want) {
 		t.Fatalf("sent %v, want %v", sent, want)
 	}
 }

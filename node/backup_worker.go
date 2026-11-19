@@ -399,8 +399,8 @@ func (g *worldSaveGuard) resume() {
 	log.Printf("backup: server %s: ERROR: saving is still OFF, save-on could not be sent: %v; run save-on in the console or restart the server", g.uuid, err)
 }
 
-// coldStarts holds, per server, what a start does while a backup walks the
-// tree of a server that was stopped when the run began (uuid -> func(sub)).
+// coldStarts holds, per server, what a start does while a backup walks its
+// tree (uuid -> func(sub)).
 var coldStarts sync.Map
 
 // startingDuringBackup is called right before a server's container starts;
@@ -411,10 +411,11 @@ func startingDuringBackup(uuid, sub string) {
 	}
 }
 
-// pauseOnStart covers a server that was stopped when its backup began: it had
-// no save-off window, and a start mid-walk had the JVM write region files while
-// tar read them. A start during the walk pauses saving through this guard, so
-// the run's resume() turns it back on. The commands are queued before the
+// pauseOnStart covers a start during the walk: save-off is per JVM, so a
+// server that was stopped when its backup began, or one restarted or
+// crash-restarted mid-walk after its own save-off, boots a JVM that writes
+// region files while tar reads them. Every start during the walk pauses saving
+// again through this guard, so the run's resume() turns it back on once. The commands are queued before the
 // container starts, and its log-shipper feeds them to the JVM as it boots.
 // stop must be called once the archive no longer reads the tree, before resume.
 func (g *worldSaveGuard) pauseOnStart(send func(command string) error, subServer string, pacer *backupPacer) (stop func()) {
@@ -426,13 +427,15 @@ func (g *worldSaveGuard) pauseOnStart(send func(command string) error, subServer
 		}
 		g.mu.Lock()
 		defer g.mu.Unlock()
-		if g.closed || g.send != nil {
+		if g.closed {
 			return
 		}
 		send("save-off")
 		send("save-all flush")
-		g.send = send
-		pacer.savesPaused(time.Now())
+		if g.send == nil {
+			g.send = send
+			pacer.savesPaused(time.Now())
+		}
 		log.Printf("backup: server %s: started during its backup, saving paused until the archive is done", g.uuid)
 	})
 	var once sync.Once
@@ -555,14 +558,15 @@ func RunBackup(ctx context.Context, rdb *redis.Client, sm *StorageManager, dm *D
 	// covers every exit, including the panic paths.
 	saves := pauseSaves(ctx, rdb, dm, cmd.ServerUUID, cmd.SubServer)
 	defer saves.resume()
-	// A stopped server is spooled too: it has no save-off window, but it can be
-	// started mid-run, and an unspooled walk runs at the paced upload speed for
-	// hours, holding the server's interlock and reading a world being written.
-	// The runs that are not spooled pause saving when that start comes.
+	// A start mid-walk (a stopped server started, a running one restarted or
+	// crash-restarted) boots a JVM that never got save-off, and an unspooled
+	// walk runs at the paced upload speed for hours. Every run pauses saving
+	// again when that start comes.
 	stopColdStart := func() {}
 	if saves.send != nil {
 		pacer.savesPaused(time.Now())
-	} else if rdb != nil {
+	}
+	if rdb != nil {
 		inputKey := fmt.Sprintf("dylaris:server:%s:input", cmd.ServerUUID)
 		stopColdStart = saves.pauseOnStart(func(c string) error { return rdb.RPush(context.Background(), inputKey, c).Err() }, cmd.SubServer, pacer)
 	}
