@@ -489,6 +489,7 @@ func (s *SFTPServer) handleConn(conn net.Conn, config *ssh.ServerConfig, handsho
 	servers, _ := s.getUserServers(username)
 	set := &atomic.Pointer[sftpServerSet]{}
 	set.Store(newServerSet(servers))
+	open := &sftpOpenWriters{}
 	audit := newSFTPAudit(username, peerHost(conn.RemoteAddr()))
 
 	// The server list and the credential were read once, at sign-in, and the
@@ -498,7 +499,7 @@ func (s *SFTPServer) handleConn(conn net.Conn, config *ssh.ServerConfig, handsho
 	// that is gone or changed ends the connection.
 	done := make(chan struct{})
 	defer close(done)
-	go s.watchSession(sshConn, set, audit, done)
+	go s.watchSession(sshConn, set, open, audit, done)
 
 	go ssh.DiscardRequests(reqs)
 
@@ -511,13 +512,13 @@ func (s *SFTPServer) handleConn(conn net.Conn, config *ssh.ServerConfig, handsho
 		if err != nil {
 			continue
 		}
-		go s.handleSession(channel, requests, set, audit, username)
+		go s.handleSession(channel, requests, set, open, audit, username)
 	}
 }
 
 // watchSession re-checks an open connection every sftpRecheckInterval until
 // done, and flushes its audit record as it goes and at the end.
-func (s *SFTPServer) watchSession(conn *ssh.ServerConn, set *atomic.Pointer[sftpServerSet], audit *sftpAudit, done <-chan struct{}) {
+func (s *SFTPServer) watchSession(conn *ssh.ServerConn, set *atomic.Pointer[sftpServerSet], open *sftpOpenWriters, audit *sftpAudit, done <-chan struct{}) {
 	t := time.NewTicker(sftpRecheckInterval)
 	defer t.Stop()
 	defer s.publishAudit(audit)
@@ -534,7 +535,7 @@ func (s *SFTPServer) watchSession(conn *ssh.ServerConn, set *atomic.Pointer[sftp
 			return
 		}
 		if servers, ok := s.getUserServers(username); ok {
-			set.Store(newServerSet(servers))
+			republish(set, open, servers)
 		}
 		s.publishAudit(audit)
 	}
@@ -573,7 +574,7 @@ func (s *SFTPServer) credentialStillValid(p *ssh.Permissions) bool {
 	return false
 }
 
-func (s *SFTPServer) handleSession(channel ssh.Channel, requests <-chan *ssh.Request, set *atomic.Pointer[sftpServerSet], audit *sftpAudit, username string) {
+func (s *SFTPServer) handleSession(channel ssh.Channel, requests <-chan *ssh.Request, set *atomic.Pointer[sftpServerSet], open *sftpOpenWriters, audit *sftpAudit, username string) {
 	defer channel.Close()
 
 	for req := range requests {
@@ -583,7 +584,7 @@ func (s *SFTPServer) handleSession(channel ssh.Channel, requests <-chan *ssh.Req
 				if req.WantReply {
 					req.Reply(true, nil)
 				}
-				vfs := &virtualFS{set: set, storageMgr: s.storageMgr, rdb: s.rdb, username: username,
+				vfs := &virtualFS{set: set, open: open, storageMgr: s.storageMgr, rdb: s.rdb, username: username,
 					audit: audit}
 				handlers := sftp.Handlers{
 					FileGet:  vfs,
@@ -712,7 +713,9 @@ func loadOrGenHostKeyAt(keyPath, legacyPath string) (ssh.Signer, error) {
 type virtualFS struct {
 	// set is the session's current server list, replaced by watchSession as
 	// Core republishes it.
-	set        *atomic.Pointer[sftpServerSet]
+	set *atomic.Pointer[sftpServerSet]
+	// open is the connection's write handles, shared with watchSession.
+	open       *sftpOpenWriters
 	storageMgr *StorageManager
 	// rdb + username let Filewrite meter writes against the upload limits and
 	// attribute them to the user's shared daily-quota bucket. The SFTP login
@@ -783,7 +786,55 @@ func newServerSet(servers []sftpServerRef) *sftpServerSet {
 func newVirtualFS(servers []sftpServerRef, sm *StorageManager, rdb *redis.Client, username string) *virtualFS {
 	set := &atomic.Pointer[sftpServerSet]{}
 	set.Store(newServerSet(servers))
-	return &virtualFS{set: set, storageMgr: sm, rdb: rdb, username: username}
+	return &virtualFS{set: set, open: &sftpOpenWriters{}, storageMgr: sm, rdb: rdb, username: username}
+}
+
+// sftpOpenWriters is a connection's open write handles. Each holds its server
+// against a storage move (holdWriter) until it closes, and an idle one never
+// writes to find out its access went: a client that keeps a file open, as an
+// sshfs mount does, made migrate_out refuse with writers in progress.
+type sftpOpenWriters struct {
+	mu sync.Mutex
+	w  map[*meteredSFTPWriter]struct{}
+}
+
+func (o *sftpOpenWriters) add(w *meteredSFTPWriter) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.w == nil {
+		o.w = map[*meteredSFTPWriter]struct{}{}
+	}
+	o.w[w] = struct{}{}
+}
+
+func (o *sftpOpenWriters) remove(w *meteredSFTPWriter) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	delete(o.w, w)
+}
+
+// republish stores a session's new server list and ends the hold of every
+// open handle it took write access from.
+func republish(set *atomic.Pointer[sftpServerSet], open *sftpOpenWriters, servers []sftpServerRef) {
+	set.Store(newServerSet(servers))
+	if open == nil {
+		return
+	}
+	open.mu.Lock()
+	ws := make([]*meteredSFTPWriter, 0, len(open.w))
+	for w := range open.w {
+		ws = append(ws, w)
+	}
+	open.mu.Unlock()
+	for _, w := range ws {
+		w.endIfWithdrawn()
+	}
 }
 
 // current is the server list as of now.
@@ -842,15 +893,17 @@ func (v *virtualFS) resolve(path string) (string, string, sftpServerRef, error) 
 }
 
 // holdWriterFor is StorageManager.holdWriter for the server path p lands in,
-// found without resolving its directory. A path outside every server holds
-// nothing; resolve refuses it.
-func (v *virtualFS) holdWriterFor(p string) func() {
+// found without resolving its directory. It holds nothing and answers false
+// when p is outside every server or need refuses the session's right on it:
+// every hold counts as a write to a cross-node move (watchWrites), so a
+// refused command that took one threw the move's archive away.
+func (v *virtualFS) holdWriterFor(p string, need func(sftpServerRef) bool) (func(), bool) {
 	name := strings.SplitN(strings.TrimPrefix(filepath.ToSlash(filepath.Clean("/"+p)), "/"), "/", 2)[0]
 	ref, ok := v.current().nameToRef[name]
-	if !ok {
-		return func() {}
+	if !ok || !need(ref) {
+		return func() {}, false
 	}
-	return v.storageMgr.holdWriter(ref.UUID)
+	return v.storageMgr.holdWriter(ref.UUID), true
 }
 
 // openRoot opens the server directory resolve landed in as an os.Root. The
@@ -994,13 +1047,14 @@ func (v *virtualFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 	lim := sftpWriteLimits(context.Background(), v.rdb, ref.UUID, v.username)
 	w := &meteredSFTPWriter{f: f, prior: prior, noted0: noted0, booked0: booked0, ceil: lim.disk, reason: "server disk limit", fileCap: lim.file, dailyCap: lim.daily,
 		baseline: baseline, maxEnd: baseline, rdb: v.rdb, username: v.username, pending: uploadAccountInflight(v.username),
-		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write }), release: release,
+		allowed: v.still(ref.UUID, func(r sftpServerRef) bool { return r.Write }), release: release, open: v.open,
 		// After the open, so the space a truncating overwrite freed is free.
 		budget: nodeWriteBudget(serverDir)}
 	if lim.disk >= 0 {
 		w.srv, w.uuid = uploadServerInflight(ref.UUID), ref.UUID
 		w.budget.streamsOn(ref.UUID, max(prior-baseline, 0))
 	}
+	v.open.add(w)
 	held = true
 	return w, nil
 }
@@ -1093,6 +1147,11 @@ type meteredSFTPWriter struct {
 	allowed func() bool
 	// release drops the handle's hold on the server (StorageManager.holdWriter).
 	release func()
+	// ended is set once release ran before Close: the handle no longer holds
+	// its server, so it never writes again, even if the access comes back.
+	ended bool
+	// open is the registry the handle is in, left on Close. May be nil.
+	open *sftpOpenWriters
 	// budget holds what the handle added against the node's free space less
 	// its reserve, shared with every other write in progress. nil = none.
 	budget *writeBudget
@@ -1109,7 +1168,8 @@ func (m *meteredSFTPWriter) added() int64 {
 func (m *meteredSFTPWriter) WriteAt(p []byte, off int64) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.allowed != nil && !m.allowed() {
+	if m.ended || m.allowed != nil && !m.allowed() {
+		m.endHold()
 		return 0, os.ErrPermission
 	}
 	end := off + int64(len(p))
@@ -1182,7 +1242,27 @@ func (m *meteredSFTPWriter) WriteAt(p []byte, off int64) (int, error) {
 	return n, err
 }
 
+// endIfWithdrawn ends the handle's hold once its write access is gone. Under
+// mu, so it waits for a write in progress rather than letting a move start
+// under it.
+func (m *meteredSFTPWriter) endIfWithdrawn() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.allowed != nil && !m.allowed() {
+		m.endHold()
+	}
+}
+
+// endHold drops the move hold early. Under mu.
+func (m *meteredSFTPWriter) endHold() {
+	m.ended = true
+	if m.release != nil {
+		m.release()
+	}
+}
+
 func (m *meteredSFTPWriter) Close() error {
+	m.open.remove(m)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	bookDailyUsage(context.Background(), m.rdb, m.username, m.added())
@@ -1213,8 +1293,28 @@ func (m *meteredSFTPWriter) Close() error {
 func (v *virtualFS) Filecmd(r *sftp.Request) error {
 	// Every branch changes the tree, so it holds a storage move off as a write
 	// does, from before resolve's path lookup: one resolved just before a move
-	// fenced deleted or renamed inside the tree the copy was reading.
-	defer v.holdWriterFor(r.Filepath)()
+	// fenced deleted or renamed inside the tree the copy was reading. Only a
+	// command that may run takes it; the branches still check the right on
+	// what resolve returns.
+	need := func(r sftpServerRef) bool { return r.Write }
+	switch r.Method {
+	case "Mkdir", "Rename":
+	case "Remove", "Rmdir":
+		need = func(r sftpServerRef) bool { return r.Delete }
+	case "Setstat":
+		// A size is a truncate, and it was answered "done" without happening.
+		// Mode, owner and times are still ignored: the node owns those.
+		if !r.AttrFlags().Size {
+			return nil
+		}
+	default:
+		return fmt.Errorf("unsupported operation: %s", r.Method)
+	}
+	release, ok := v.holdWriterFor(r.Filepath, need)
+	if !ok {
+		return os.ErrPermission
+	}
+	defer release()
 	switch r.Method {
 	case "Mkdir":
 		realPath, rel, ref, err := v.resolve(r.Filepath)
@@ -1328,11 +1428,6 @@ func (v *virtualFS) Filecmd(r *sftp.Request) error {
 		v.audit.note(srcRef.UUID, "rename", srcRel+" -> "+dstRel)
 		return nil
 	case "Setstat":
-		// A size is a truncate, and it was answered "done" without happening.
-		// Mode, owner and times are still ignored: the node owns those.
-		if !r.AttrFlags().Size {
-			return nil
-		}
 		realPath, rel, ref, err := v.resolve(r.Filepath)
 		if err != nil || realPath == "" || !ref.Write || protectedRel(rel) {
 			return os.ErrPermission

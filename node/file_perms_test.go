@@ -20,6 +20,9 @@ import (
 func permittedFS(t *testing.T, p fileperms.Perms) (*virtualFS, string) {
 	t.Helper()
 	sm, _ := newPlacementManager(t, 1)
+	// A delete remeasures in the background, reading globalStorageMgr, which
+	// later tests swap.
+	t.Cleanup(func() { waitRemeasuresIdle(t) })
 	const uuid = "srv-uuid"
 	base := filepath.Join(sm.Paths()[0], uuid, "survival")
 	if err := os.MkdirAll(base, 0o755); err != nil {
