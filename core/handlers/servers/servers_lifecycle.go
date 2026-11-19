@@ -2737,6 +2737,18 @@ func (h *ServerHandler) DeleteSubServer(w http.ResponseWriter, r *http.Request) 
 		httpx.SendJSONError(w, "Server not found", 404)
 		return
 	}
+	// As the switch: any well-formed name used to be queued, and each one
+	// waited on the node for a running backup to end.
+	if subServerName != srv.ActiveSubServer {
+		if exists, answered := h.subServerExists(r.Context(), serverID, srv.UUID, subServerName); !exists {
+			if !answered {
+				httpx.SendJSONError(w, "Could not check which sub-servers this server has; try again in a moment", 503)
+				return
+			}
+			httpx.SendJSONError(w, "No sub-server named "+subServerName+" on this server", 400)
+			return
+		}
+	}
 	if guard.RefuseIfServerBusy(w, r, h.d.Redis, h.d.GRPCRegistry, srv) {
 		return
 	}

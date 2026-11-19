@@ -142,6 +142,16 @@ type subServerDeleteFakeStore struct {
 	modsCleared, packCleared string
 	// status is the server's DB status; "" reads as stopped.
 	status string
+	// installsErr fails the install-record lookup the existence check asks.
+	installsErr error
+}
+
+// The server has two sub-servers, survival (active) and creative.
+func (f *subServerDeleteFakeStore) ListSubServerInstalls(serverID int) ([]models.SubServerInstall, error) {
+	if f.installsErr != nil {
+		return nil, f.installsErr
+	}
+	return []models.SubServerInstall{{SubServerName: "survival"}, {SubServerName: "creative"}}, nil
 }
 
 func (f *subServerDeleteFakeStore) GetUserByID(id string) (*models.User, error) {

@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -1409,10 +1410,42 @@ func listenForCommands(ctx context.Context, rdb *redis.Client, dm *DockerManager
 			log.Printf("Invalid command payload, dropping: %v", err)
 			return nil // ack + drop malformed (same as the old loop's skip)
 		}
-		processCommand(ctx, cmd, string(payloadBytes), rdb, dm, id, quota, storage)
+		runCommand(ctx, cmd, func(ctx context.Context, cmd NodeCommand) {
+			processCommand(ctx, cmd, string(payloadBytes), rdb, dm, id, quota, storage)
+		})
 		return nil
 	}
 	runCommandConsumer(ctx, func(ctx context.Context) error { return consumer.Run(ctx, handler) })
+}
+
+// runCommand runs a command in the consumer worker that pulled it, except a
+// sub-server delete: that one waits for a backup, an install and a power action
+// of its server, up to hours, and eight of them during one backup held every
+// worker, so every other server of the node waited too. It runs beside the
+// pool instead, one per server and sub-server, and the worker acks at once.
+//
+// ponytail: acked before it runs, so a node restart while it waits loses the
+// delete (as the bounded wait giving up already did); persist it if that bites.
+func runCommand(ctx context.Context, cmd NodeCommand, process func(context.Context, NodeCommand)) {
+	if cmd.Action != "delete_sub_server" {
+		process(ctx, cmd)
+		return
+	}
+	key := "delete_sub_server:" + cmd.Config.UUID + "/" + cmd.Config.ActiveSubServer
+	if !commandsInFlight.enter(key) {
+		log.Printf("delete_sub_server %s/%s: the same delete is already waiting on this node, dropping the duplicate", cmd.Config.UUID, cmd.Config.ActiveSubServer)
+		return
+	}
+	go func() {
+		defer commandsInFlight.leave(key)
+		// The consumer's recover does not reach this goroutine.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("delete_sub_server %s/%s panicked: %v\n%s", cmd.Config.UUID, cmd.Config.ActiveSubServer, r, debug.Stack())
+			}
+		}()
+		process(ctx, cmd)
+	}()
 }
 
 // consumerRestartWait is the pause before the consumer is started again;
