@@ -5,6 +5,7 @@ import (
 	"dylaris-core/handlers/handlertest"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -124,5 +125,39 @@ func TestTakePowerLock(t *testing.T) {
 	}
 	if powerLockTTL >= 5*time.Second {
 		t.Fatalf("powerLockTTL = %v; the panel's own pause is 5 s and the lock must not outlast it", powerLockTTL)
+	}
+}
+
+// A setup, reinstall or version move still queued on the node holds no busy
+// key, and 'installing' is the only thing the sibling guards read. A start,
+// stop or restart would overwrite it, so they are refused; kill and an
+// operator still go through.
+func TestPowerActionsRefusedWhileInstalling(t *testing.T) {
+	cases := []struct {
+		action  string
+		admin   bool
+		refused bool
+	}{
+		{"start", false, true},
+		{"stop", false, true},
+		{"restart", false, true},
+		{"kill", false, false},
+		{"start", true, false},
+		{"stop", true, false},
+	}
+	for _, c := range cases {
+		h, fs := powerStateFixture(t, "installing")
+		rec := httptest.NewRecorder()
+		h.ServerPowerHandler(rec, serverPowerReq(1, c.action, "alice", c.admin, "u1"))
+		if c.refused {
+			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "server_installing") {
+				t.Errorf("%s (admin=%v): answered %d %s, want 409 server_installing", c.action, c.admin, rec.Code, rec.Body.String())
+			}
+			if n := queuedPowerCommands(t, h); n != 0 || len(fs.updateStatusCalls) != 0 {
+				t.Errorf("%s (admin=%v): %d command(s) queued, status writes %v", c.action, c.admin, n, fs.updateStatusCalls)
+			}
+		} else if rec.Code != http.StatusOK {
+			t.Errorf("%s (admin=%v): status %d, want 200: %s", c.action, c.admin, rec.Code, rec.Body.String())
+		}
 	}
 }

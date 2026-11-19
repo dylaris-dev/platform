@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"dylaris-core/models"
 	"dylaris-core/services"
@@ -110,5 +111,27 @@ func TestSwitchSubServerClearsTheNodeHolds(t *testing.T) {
 	raw, _ := rdb.Get(ctx, services.SwitchUndoKey("srv-uuid")).Result()
 	if json.Unmarshal([]byte(raw), &undo) != nil || undo.Target != "lobby" || undo.Previous != "main" || undo.At <= 0 {
 		t.Errorf("switch undo record = %q, want target lobby, previous main, a dispatch time (R33-01)", raw)
+	}
+}
+
+// R40-01: a switch sent while the one before it is still pending keeps that
+// one's previous sub-server and run intent in its undo record, since a refusal
+// of both is reported once, naming the sub-server the node still runs.
+func TestSwitchSubServerChainsAPendingUndoRecord(t *testing.T) {
+	h, fs, rdb := newInstallTest(t)
+	fs.server.Status = "offline"
+	fs.server.DesiredState = "online" // what the pending switch to main wrote
+	ss := &switchDispatchStore{installFakeStore: fs}
+	h.d.Store = ss
+	ctx := context.Background()
+	rdb.Set(ctx, services.SwitchUndoKey("srv-uuid"), `{"target":"main","previous":"lobby","installerType":"paper","desiredState":"stopped"}`, time.Minute)
+
+	if rec := switchTo(h, "lobby"); rec.Code >= 300 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var undo services.SwitchUndo
+	raw, _ := rdb.Get(ctx, services.SwitchUndoKey("srv-uuid")).Result()
+	if json.Unmarshal([]byte(raw), &undo) != nil || undo.Target != "lobby" || undo.Previous != "lobby" || undo.InstallerType != "paper" || undo.DesiredState != "stopped" {
+		t.Errorf("switch undo record = %q, want target lobby carrying previous lobby, paper and stopped", raw)
 	}
 }

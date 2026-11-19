@@ -63,6 +63,27 @@ type SwitchUndo struct {
 	Overtaken bool `json:"overtaken,omitempty"`
 }
 
+// ChainSwitchUndo is the record to write for a switch from next.Previous when
+// a switch to that sub-server is still pending (its record is deleted when it
+// lands). The node reports both refusals into one key and Core reads only the
+// last, which names what the node still runs: the first switch's previous. So
+// that previous, its loader columns and the run intent before the first
+// switch's IntendOnline are carried forward. A record overtaken by a setup is
+// not: the setup is what the node runs then.
+func ChainSwitchUndo(ctx context.Context, rdb *redis.Client, serverUUID string, next SwitchUndo) SwitchUndo {
+	if rdb == nil {
+		return next
+	}
+	raw, err := rdb.Get(ctx, SwitchUndoKey(serverUUID)).Result()
+	var pending SwitchUndo
+	if err != nil || json.Unmarshal([]byte(raw), &pending) != nil || pending.Overtaken || !strings.EqualFold(pending.Target, next.Previous) {
+		return next
+	}
+	next.Previous, next.PreviousDeleted, next.DesiredState = pending.Previous, pending.PreviousDeleted, pending.DesiredState
+	next.InstallerType, next.MinecraftVersion, next.BuildNumber = pending.InstallerType, pending.MinecraftVersion, pending.BuildNumber
+	return next
+}
+
 // ForgetSwitchUndo deletes the undo record only when it is the switch to
 // target's: the key is overwritten per switch, and a newer one's record is
 // what its own refusal is put back from.
@@ -171,11 +192,12 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 			if len(parts) != 4 {
 				continue
 			}
-			raw, rerr := s.redis.Get(ctx, key).Result()
+			// GetDel, as setup_failed: a report the node writes between a Get
+			// and a Del was deleted unread.
+			raw, rerr := s.redis.GetDel(ctx, key).Result()
 			if rerr != nil {
 				continue
 			}
-			s.redis.Del(ctx, key)
 			var rep switchSubFailure
 			if json.Unmarshal([]byte(raw), &rep) != nil || !validate.IsSubServerName(rep.Target) {
 				continue
@@ -247,6 +269,14 @@ func (s *StatusWatcherService) consumeSwitchSubFailures(ctx context.Context) boo
 			}
 			if matched {
 				if err := s.store.UpdateServerLoaderMetadata(srv.ID, undo.InstallerType, undo.MinecraftVersion, undo.BuildNumber); err != nil {
+					log.Printf("Server %s: could not restore the loader metadata: %v", srv.UUID, err)
+				}
+			} else if in, err := s.store.GetSubServerInstall(srv.ID, previous); err == nil && in != nil {
+				// No record of what this switch overwrote for previous: take its
+				// own install record, as adoption does, rather than leave the
+				// refused target's columns on it.
+				mv := RecordedMinecraftVersion(in.InstallerType, in.McVersion, in.BuildVersion, in.Loader)
+				if err := s.store.UpdateServerLoaderMetadata(srv.ID, in.InstallerType, mv, in.BuildVersion); err != nil {
 					log.Printf("Server %s: could not restore the loader metadata: %v", srv.UUID, err)
 				}
 			}

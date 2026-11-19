@@ -1572,11 +1572,11 @@ func (h *ServerHandler) SwitchSubServer(w http.ResponseWriter, r *http.Request) 
 	// back from this record. A write after the dispatch could land on top of
 	// that restore.
 	if h.d.Redis != nil {
-		if rec, merr := json.Marshal(services.SwitchUndo{
+		if rec, merr := json.Marshal(services.ChainSwitchUndo(r.Context(), h.d.Redis, srv.UUID, services.SwitchUndo{
 			Target: subName, Previous: srv.ActiveSubServer,
 			InstallerType: srv.InstallerType, MinecraftVersion: srv.MinecraftVersion, BuildNumber: srv.BuildNumber,
 			DesiredState: srv.DesiredState, At: time.Now().UnixNano(),
-		}); merr == nil {
+		})); merr == nil {
 			h.d.Redis.Set(r.Context(), services.SwitchUndoKey(srv.UUID), rec, services.SwitchUndoTTL)
 		}
 	}
@@ -1906,6 +1906,13 @@ func (h *ServerHandler) ServerPowerHandler(w http.ResponseWriter, r *http.Reques
 	}
 	if msg := powerTransitionRefusal(req.Action, srv.Status, reqctx.OperatorOverride(r)); msg != "" {
 		httpx.SendJSONError(w, msg, http.StatusConflict)
+		return
+	}
+	// An install queued but not yet started holds no busy key on the node, and
+	// a status written here would erase the 'installing' every sibling guard
+	// (setup, reinstall, switch, delete) reads. Kill and operators still pass.
+	if srv.Status == "installing" && req.Action != "kill" && !reqctx.OperatorOverride(r) {
+		httpx.SendJSONErrorCode(w, "The server is being installed. Try again when it has finished.", "server_installing", http.StatusConflict)
 		return
 	}
 

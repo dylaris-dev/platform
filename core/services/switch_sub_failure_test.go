@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -12,10 +14,11 @@ import (
 type switchFailFakeStore struct {
 	statusWatcherFakeStore
 
-	active  []string
-	loader  [][3]string
-	notes   []models.Notification
-	desired []string
+	active   []string
+	loader   [][3]string
+	notes    []models.Notification
+	desired  []string
+	installs map[string]models.SubServerInstall
 }
 
 func (f *switchFailFakeStore) UpdateServerActiveSubServer(id int, sub string) error {
@@ -215,5 +218,83 @@ func TestConsumeSwitchSubFailures_NoneActiveBefore(t *testing.T) {
 func TestSwitchUndoOutlivesAQueuedSwitch(t *testing.T) {
 	if SwitchUndoTTL < 24*time.Hour {
 		t.Errorf("SwitchUndoTTL = %v, want at least a day", SwitchUndoTTL)
+	}
+}
+
+func (f *switchFailFakeStore) GetSubServerInstall(_ int, sub string) (*models.SubServerInstall, error) {
+	if in, ok := f.installs[sub]; ok {
+		return &in, nil
+	}
+	return nil, errors.New("no install record")
+}
+
+// R40-01: two switches refused back to back. The node reports both into one
+// key, so Core reads only the second, whose undo record names the first
+// target as previous. The record a chained switch writes keeps the first
+// pending switch's previous, loader columns and run intent, so the refusal is
+// put back to what really runs.
+func TestChainedSwitchUndo(t *testing.T) {
+	const pendingB = `{"target":"b","previous":"a","installerType":"paper","minecraftVersion":"1.21.4","buildNumber":"100","desiredState":"stopped"}`
+	// What SwitchSubServer would write for C from a row already moved to B.
+	next := SwitchUndo{Target: "c", Previous: "b", InstallerType: "fabric", MinecraftVersion: "1.20.1", BuildNumber: "0.15", DesiredState: "online", At: 5}
+	for _, c := range []struct {
+		name, pending string
+		want          SwitchUndo
+	}{
+		{"no pending switch", "", next},
+		{"pending switch to the active sub-server", pendingB, SwitchUndo{Target: "c", Previous: "a", InstallerType: "paper", MinecraftVersion: "1.21.4", BuildNumber: "100", DesiredState: "stopped", At: 5}},
+		{"pending switch overtaken by a setup", `{"target":"b","previous":"a","desiredState":"stopped","overtaken":true}`, next},
+		{"pending switch to another sub-server", `{"target":"x","previous":"a","desiredState":"stopped"}`, next},
+		{"pending switch from a deleted previous", `{"target":"b","previous":"a","desiredState":"stopped","previousDeleted":true}`, SwitchUndo{Target: "c", Previous: "a", DesiredState: "stopped", PreviousDeleted: true, At: 5}},
+		{"unreadable", `nope`, next},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rdb := newQueueTestRedis(t)
+			ctx := context.Background()
+			if c.pending != "" {
+				rdb.Set(ctx, SwitchUndoKey("u-1"), c.pending, time.Minute)
+			}
+			if got := ChainSwitchUndo(ctx, rdb, "u-1", next); got != c.want {
+				t.Errorf("got %+v, want %+v", got, c.want)
+			}
+		})
+	}
+	if got := ChainSwitchUndo(context.Background(), nil, "u-1", next); got != next {
+		t.Errorf("no Redis: got %+v, want %+v", got, next)
+	}
+}
+
+// R40-01: a refusal whose undo record does not name the sub-server the node
+// went back to still puts that sub-server's own loader columns back, from its
+// install record, instead of leaving the refused target's.
+func TestConsumeSwitchSubFailures_UnmatchedPreviousTakesItsInstallRecord(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		installs   map[string]models.SubServerInstall
+		wantLoader [][3]string
+	}{
+		{"install record", map[string]models.SubServerInstall{"main": {InstallerType: "paper", McVersion: "1.21.4", BuildVersion: "100"}}, [][3]string{{"paper", "1.21.4", "100"}}},
+		{"no install record", nil, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			fs := &switchFailFakeStore{installs: c.installs}
+			fs.serversByUUID = map[string]models.Server{
+				"u-1": {ID: 7, UUID: "u-1", Name: "SMP", OwnerID: "owner-1", ActiveSubServer: "c", InstallerType: "fabric"},
+			}
+			s := &StatusWatcherService{store: fs, redis: newQueueTestRedis(t)}
+			ctx := context.Background()
+			s.redis.Set(ctx, SwitchSubFailedKey("u-1"), `{"target":"c","previous":"main","reason":"x"}`, 0)
+			s.redis.Set(ctx, SwitchUndoKey("u-1"), `{"target":"c","previous":"b","installerType":"fabric"}`, time.Minute)
+
+			if !s.consumeSwitchSubFailures(ctx) {
+				t.Fatal("reported nothing changed")
+			}
+			if len(fs.active) != 1 || fs.active[0] != "main" {
+				t.Errorf("active_sub_server writes = %q, want [main]", fs.active)
+			}
+			if fmt.Sprint(fs.loader) != fmt.Sprint(c.wantLoader) {
+				t.Errorf("loader writes = %v, want %v", fs.loader, c.wantLoader)
+			}
+		})
 	}
 }
