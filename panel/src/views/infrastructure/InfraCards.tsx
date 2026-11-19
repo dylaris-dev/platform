@@ -103,6 +103,9 @@ export interface NodeInfo {
   // node too. That topology cannot work - node identity lives in the first
   // storage path - and it destroys a server on the next migration.
   sharedStorage?: SharedStorageConflict[];
+  // Servers with a copy on several storage paths that the node cannot tell
+  // apart. Each resolves to no directory until the stale copy is removed.
+  storageAmbiguous?: { server: string; paths: string[] }[];
   // The host's Docker cannot enforce a server's RAM limit (no memory cgroup).
   noMemoryLimit?: boolean;
 }
@@ -355,6 +358,30 @@ export function NodeCard({
           <p className="text-[10px] text-(--base-06) leading-snug">
             Give each node its own storage path. Sharing one is not supported: node
             identity is stored there, so the nodes overwrite each other.
+          </p>
+        </div>
+      )}
+
+      {node.storageAmbiguous && node.storageAmbiguous.length > 0 && (
+        <div className="rounded-sm border border-(--error-border) bg-(--error-ghost) px-2 py-2 space-y-1.5">
+          <p className="flex items-start gap-1.5 text-[10px] font-mono font-semibold uppercase tracking-[0.08em] text-(--error-light)">
+            <AlertTriangle size={11} className="mt-px shrink-0" />
+            <span>
+              {node.storageAmbiguous.length === 1
+                ? '1 server cannot be resolved'
+                : `${node.storageAmbiguous.length} servers cannot be resolved`}
+            </span>
+          </p>
+          <ul className="space-y-1">
+            {node.storageAmbiguous.map((a) => (
+              <li key={a.server} className="text-[10px] text-(--error-light) leading-snug break-all">
+                {a.server}: copies on {a.paths.join(', ')}
+              </li>
+            ))}
+          </ul>
+          <p className="text-[10px] text-(--base-06) leading-snug">
+            The node cannot tell which copy is live, so the server does not start and
+            its files are not shown. Remove the stale copy on the host to settle it.
           </p>
         </div>
       )}

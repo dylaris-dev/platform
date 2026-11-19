@@ -86,6 +86,9 @@ type NodeHeartbeat struct {
 	// lives in the first storage path - and it silently destroys a server on the
 	// next migration, so it is carried all the way to the panel.
 	SharedStorage []models.SharedStorageConflict `json:"sharedStorage,omitempty"`
+	// StorageAmbiguous: servers whose copies on two storage paths the node
+	// cannot tell apart. Sent only when there are any.
+	StorageAmbiguous []models.StorageAmbiguity `json:"storageAmbiguous,omitempty"`
 	// ReleaseVersion is the release this node's IMAGE was built from, stamped in
 	// at build time. It is what lets the panel say whether the NODE is behind,
 	// rather than assuming it moved whenever Core did - an operator who updates

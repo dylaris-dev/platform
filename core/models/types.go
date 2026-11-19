@@ -384,6 +384,10 @@ type Node struct {
 	// identity itself lives in the first storage path - and it destroys a server
 	// on the next migration while reporting success.
 	SharedStorage []SharedStorageConflict `json:"sharedStorage,omitempty"`
+	// StorageAmbiguous lists the servers with copies on several storage paths
+	// that the node cannot tell apart. Each resolves to no directory, so it
+	// neither starts nor shows files until the stale copy is removed by hand.
+	StorageAmbiguous []StorageAmbiguity `json:"storageAmbiguous,omitempty"`
 
 	// Unusable is a derived (not persisted) flag set at API-response time:
 	// true when this node currently has no usable routing path (e.g. an
@@ -402,6 +406,13 @@ type Node struct {
 	// time: true when the node reports no region, i.e. it was started without
 	// NODE_REGION. The fix is on the node, not here.
 	NeedsConfiguration bool `json:"needsConfiguration,omitempty"`
+}
+
+// StorageAmbiguity is one server the node reports under storageAmbiguous,
+// with the storage paths that each hold a copy of it.
+type StorageAmbiguity struct {
+	Server string   `json:"server"`
+	Paths  []string `json:"paths"`
 }
 
 // SharedStorageConflict is one storage path a node found mounted into another

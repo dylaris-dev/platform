@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1231,6 +1232,11 @@ func sendHeartbeat(ctx context.Context, rdb *redis.Client, id, tags, region stri
 		if unavailable := globalStorageMgr.UnavailablePaths(infos); len(unavailable) > 0 {
 			data["storageUnavailable"] = unavailable
 		}
+		// Only when some are: an older Core ignores the key. A server listed
+		// here resolves to no directory until an operator removes its stale copy.
+		if amb := globalStorageMgr.StorageAmbiguities(); len(amb) > 0 {
+			data["storageAmbiguous"] = amb
+		}
 	}
 
 	// A storage path shared with another node. Reported every beat rather than
@@ -2187,15 +2193,33 @@ func processCommand(ctx context.Context, cmd NodeCommand, payload string, rdb *r
 			quota.RemoveQuota(cmd.Config.UUID)
 		}
 
+		// Every copy goes, not just the one the lookup resolves: a deleted
+		// server has no live copy to protect, and with two copies and no key
+		// the lookup resolves none, so both trees stayed for good (R30-08).
 		serverPath := storage.GetServerDir(cmd.Config.UUID)
-		if serverPath == "" {
+		var dirs []string
+		for _, p := range storage.PathsHolding(cmd.Config.UUID) {
+			dirs = append(dirs, filepath.Join(p, cmd.Config.UUID))
+		}
+		if serverPath != "" && !slices.Contains(dirs, serverPath) {
+			dirs = append(dirs, serverPath)
+		}
+		if len(dirs) == 0 {
 			log.Printf("delete %s: no server directory resolved, skipping the data removal", cmd.Config.UUID)
 			return
 		}
-		if err := removeTreeVerified(serverPath); err != nil {
-			// The storage mapping and the limit stay, so the leftover can still
-			// be found and stays capped; the tombstone keeps it from starting.
-			log.Printf("delete %s: data NOT removed from %s: %v", cmd.Config.UUID, serverPath, err)
+		for _, dir := range dirs {
+			if err := removeTreeVerified(dir); err != nil {
+				// The storage mapping and the limit stay, so the leftover can still
+				// be found and stays capped; the tombstone keeps it from starting.
+				log.Printf("delete %s: data NOT removed from %s: %v", cmd.Config.UUID, dir, err)
+				return
+			}
+		}
+		if serverPath == "" && len(storage.SkippedPaths()) > 0 {
+			// The key may name a path that is not mounted, where the tree
+			// still is: the mapping and the limit stay with it, as above.
+			log.Printf("delete %s: copies on the mounted paths removed; a storage path is not mounted, keeping the mapping", cmd.Config.UUID)
 			return
 		}
 		storage.RemoveServerPath(cmd.Config.UUID)

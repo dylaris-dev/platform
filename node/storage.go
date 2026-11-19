@@ -48,6 +48,10 @@ type StorageManager struct {
 	// probes holds each path's last GetStorageInfo probe, under probeMu.
 	probeMu sync.Mutex
 	probes  map[string]*storageProbe
+	// ambiguous are the servers whose copies nothing tells apart, with the
+	// paths holding them, under ambMu. See StorageAmbiguities.
+	ambMu     sync.Mutex
+	ambiguous map[string][]string
 	// writers counts, per server, writes that outlive one lookup: SFTP handles,
 	// Beam and panel uploads, restores, installs. Under movingMu with moving:
 	// see holdWriter.
@@ -579,23 +583,27 @@ func (sm *StorageManager) GetServerPath(serverUUID string) string {
 	}
 
 	// 2. Scan all paths for existing UUID directory
-	found, copies := "", 0
-	for _, p := range sm.paths {
-		serverDir := filepath.Join(p, serverUUID)
-		if stat, err := os.Stat(serverDir); err == nil && stat.IsDir() {
-			if found == "" {
-				found = p
-			}
-			copies++
-		}
+	holding := sm.PathsHolding(serverUUID)
+	found, copies := "", len(holding)
+	if copies > 0 {
+		found = holding[0]
 	}
 	if found != "" {
-		// Only the key can say which of two copies is live; the first one
-		// scanned was the leftover a move left whenever it sat on an earlier
-		// path, and every lookup during a Redis blip used it (A08). A key
-		// that is simply gone, as every key is after a Valkey restart, vouches
-		// for neither copy either, which is how resolveMigration reads it (R29-07).
+		// The first copy scanned was the leftover a move left whenever it sat
+		// on an earlier path, and every lookup during a Redis blip used it
+		// (A08), so an unreadable key resolves to neither. A key that is
+		// simply gone, as every key is after a Valkey restart, resolved to
+		// neither for good too (R29-07), and nothing wrote it again (R30-09):
+		// the copy the node wrote last is settled as the live one instead.
 		if copies > 1 {
+			if !keyed {
+				if live := lastWrittenCopy(serverUUID, holding); live != "" {
+					log.Printf("storage: %s has %d copies and no storage key; %s holds the last write, recording it as the live one (the other copies are left alone)", serverUUID, copies, live)
+					sm.setRedisPath(serverUUID, live)
+					return live
+				}
+				sm.noteAmbiguity(serverUUID, holding)
+			}
 			log.Printf("storage: %s has %d copies and no readable storage key, not resolving", serverUUID, copies)
 			return ""
 		}
@@ -633,6 +641,104 @@ func (sm *StorageManager) GetServerDir(serverUUID string) string {
 		return ""
 	}
 	return filepath.Join(base, serverUUID)
+}
+
+// PathsHolding are the storage paths holding a directory of the server, in
+// configured order. Unlike GetServerPath it does not decide which is live.
+func (sm *StorageManager) PathsHolding(serverUUID string) []string {
+	if !validate.IsServerUUID(serverUUID) {
+		return nil
+	}
+	var out []string
+	for _, p := range sm.paths {
+		if stat, err := os.Stat(filepath.Join(p, serverUUID)); err == nil && stat.IsDir() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// lastWrittenCopy is the path whose copy of the server holds the newest
+// write, or "" when no single copy does. A move writes its target after the
+// source (the copy does not carry mtimes over), and only the copy the key
+// named runs, writes .node_config.json and rotates its logs, so a leftover
+// only ever gets older. Read two levels down: the node's own files and each
+// sub-server's world, logs and player files, and not a whole world tree.
+func lastWrittenCopy(serverUUID string, paths []string) string {
+	best, bestAt, tie := "", time.Time{}, false
+	for _, p := range paths {
+		at := newestEntry(filepath.Join(p, serverUUID), 2)
+		switch {
+		case at.After(bestAt):
+			best, bestAt, tie = p, at, false
+		case at.Equal(bestAt):
+			tie = true
+		}
+	}
+	if tie || bestAt.IsZero() {
+		return ""
+	}
+	return best
+}
+
+// newestEntry is the newest mtime among dir's entries down to depth levels,
+// without following links (DirEntry.Info is an lstat).
+func newestEntry(dir string, depth int) time.Time {
+	var newest time.Time
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return newest
+	}
+	for _, e := range entries {
+		if fi, err := e.Info(); err == nil && fi.ModTime().After(newest) {
+			newest = fi.ModTime()
+		}
+		if e.IsDir() && depth > 1 {
+			if at := newestEntry(filepath.Join(dir, e.Name()), depth-1); at.After(newest) {
+				newest = at
+			}
+		}
+	}
+	return newest
+}
+
+// StorageAmbiguity is a server with copies on several storage paths that no
+// storage key and no write time tell apart. The heartbeat reports it so an
+// operator can remove the stale tree; until then the server resolves nowhere.
+type StorageAmbiguity struct {
+	Server string   `json:"server"`
+	Paths  []string `json:"paths"`
+}
+
+func (sm *StorageManager) noteAmbiguity(serverUUID string, paths []string) {
+	sm.ambMu.Lock()
+	defer sm.ambMu.Unlock()
+	if sm.ambiguous == nil {
+		sm.ambiguous = map[string][]string{}
+	}
+	sm.ambiguous[serverUUID] = append([]string(nil), paths...)
+}
+
+// forgetAmbiguity drops the report once the server has a key or is gone.
+func (sm *StorageManager) forgetAmbiguity(serverUUID string) {
+	sm.ambMu.Lock()
+	delete(sm.ambiguous, serverUUID)
+	sm.ambMu.Unlock()
+}
+
+// StorageAmbiguities are the servers GetServerPath could not resolve between
+// copies, sorted. Not re-checked on disk: the heartbeat reads this, and a
+// stat on a hung path stopped every beat (R28-08). The next lookup of the
+// server, once a copy is gone, writes its key and clears the report.
+func (sm *StorageManager) StorageAmbiguities() []StorageAmbiguity {
+	sm.ambMu.Lock()
+	out := make([]StorageAmbiguity, 0, len(sm.ambiguous))
+	for u, paths := range sm.ambiguous {
+		out = append(out, StorageAmbiguity{Server: u, Paths: paths})
+	}
+	sm.ambMu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Server < out[j].Server })
+	return out
 }
 
 // SetPlacement applies the per-node placement policy Core published. An
@@ -737,6 +843,7 @@ func (sm *StorageManager) assignPath(serverUUID, storagePath string) (string, er
 
 // RemoveServerPath cleans up the Redis key when a server is deleted.
 func (sm *StorageManager) RemoveServerPath(serverUUID string) {
+	sm.forgetAmbiguity(serverUUID)
 	if sm.rdb != nil {
 		key := fmt.Sprintf("node:%s:server:%s:storage", nodeID, serverUUID)
 		sm.rdb.Del(context.Background(), key)
@@ -771,6 +878,13 @@ func (sm *StorageManager) GetStorageInfo() []StorageInfo {
 			sm.probeMu.Unlock()
 			infos = append(infos, pr.info)
 		case <-ctx.Done():
+			// A probe slower than the window but done within a beat or two
+			// is a slow path, not a dead one: zeros on every second beat had
+			// Core skip it for placement and disk checks (R30-07).
+			if pr.prev != nil && time.Since(pr.started) < storageProbeStale {
+				infos = append(infos, *pr.prev)
+				continue
+			}
 			log.Printf("storage: [warn] %s did not answer statfs/readdir within %s; reporting it unavailable", sm.paths[i], storageProbeTimeout)
 			infos = append(infos, StorageInfo{Path: sm.paths[i], ServerUUIDs: []string{}, unreadable: true})
 		}
@@ -782,12 +896,20 @@ func (sm *StorageManager) GetStorageInfo() []StorageInfo {
 // tick, so a hung path still leaves the discovery key its 15 s TTL.
 var storageProbeTimeout = 2 * time.Second
 
+// storageProbeStale is how long a probe may run while the previous one's
+// result stands in for it; past that the path reads unavailable.
+var storageProbeStale = 10 * time.Second
+
 // storageProbe is one statStoragePath run; info is set before done is closed.
-// served (under probeMu) says a GetStorageInfo has reported info.
+// served (under probeMu) says a GetStorageInfo has reported info. prev is the
+// result of the probe this one replaced and started when it began, both set
+// before the probe is shared and never changed.
 type storageProbe struct {
-	done   chan struct{}
-	info   StorageInfo
-	served bool
+	done    chan struct{}
+	info    StorageInfo
+	served  bool
+	prev    *StorageInfo
+	started time.Time
 }
 
 // probePath starts a probe of p, or returns the one still running on it or
@@ -811,7 +933,11 @@ func (sm *StorageManager) probePath(p string) *storageProbe {
 	if sm.probes == nil {
 		sm.probes = map[string]*storageProbe{}
 	}
-	pr := &storageProbe{done: make(chan struct{})}
+	pr := &storageProbe{done: make(chan struct{}), started: time.Now()}
+	if old := sm.probes[p]; old != nil {
+		info := old.info
+		pr.prev = &info
+	}
 	sm.probes[p] = pr
 	go func() {
 		pr.info = statStoragePath(p)
@@ -850,6 +976,8 @@ func statStoragePath(p string) StorageInfo {
 
 // setRedisPath stores the storage path for a server in Redis (no expiry).
 func (sm *StorageManager) setRedisPath(serverUUID, storagePath string) error {
+	// Whatever path is recorded, the server is settled and no longer reported.
+	sm.forgetAmbiguity(serverUUID)
 	if sm.rdb == nil {
 		return nil
 	}

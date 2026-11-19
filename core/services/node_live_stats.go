@@ -54,6 +54,7 @@ func EnrichNodesWithLiveStats(ctx context.Context, st NodeServerCounter, rdb *re
 		nodes[i].PortRange = hb.PortRange
 		nodes[i].PortRangeNotice = hb.PortRangeNotice
 		nodes[i].SharedStorage = hb.SharedStorage
+		nodes[i].StorageAmbiguous = hb.StorageAmbiguous
 		nodes[i].NetPolicy = hb.NetPolicy
 		nodes[i].NetPolicyServers = hb.NetPolicyServers
 		nodes[i].NetPolicyNotice = hb.NetPolicyNotice

@@ -70,6 +70,27 @@ func TestNoMemoryLimitReachesThePanel(t *testing.T) {
 	}
 }
 
+// R30-09: a server whose copies on two storage paths the node cannot tell
+// apart resolves to no directory, and the node says so in its heartbeat; the
+// panel gets the list, and a node that says nothing reaches it with none.
+func TestStorageAmbiguitiesReachThePanel(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	mr.Set("dylaris:discovery:n-two", `{"cpuUsage":1,"storageAmbiguous":[{"server":"s1","paths":["/a","/b"]}]}`)
+	mr.Set("dylaris:discovery:n-old", `{"cpuUsage":1}`)
+
+	nodes := []models.Node{{Token: "n-two"}, {Token: "n-old"}}
+	EnrichNodesWithLiveStats(t.Context(), nil, rdb, nodes)
+
+	if got := nodes[0].StorageAmbiguous; len(got) != 1 || got[0].Server != "s1" || len(got[0].Paths) != 2 {
+		t.Errorf("ambiguities = %+v", got)
+	}
+	if raw, _ := json.Marshal(nodes[1]); strings.Contains(string(raw), "storageAmbiguous") {
+		t.Errorf("a silent node reports ambiguities: %s", raw)
+	}
+}
+
 type perNodeCounter struct {
 	counts map[int]int
 	err    error
