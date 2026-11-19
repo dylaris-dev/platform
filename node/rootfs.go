@@ -232,25 +232,47 @@ func mkdirParentIn(root *os.Root, name string) error {
 	return nil
 }
 
-// linkTargetIn follows name's last component through symlinks to the name an
-// open of it would reach, for a write that replaces the file by rename. A
-// target outside the Root stays refused: the Root fails every call on it.
+// linkTargetIn follows name through symlinks to the name an open of it would
+// reach, for a write that replaces the file by rename. It walks every
+// component the way the kernel does, so a relative target is applied to its
+// link's REAL folder: d -> x/y, d/f -> ../g is x/g, not the g a lexical join
+// of "d" and "../g" gives (R36-05). A target outside the Root is refused.
 func linkTargetIn(root *os.Root, name string) (string, error) {
-	for range 40 {
-		fi, err := root.Lstat(name)
-		if err != nil || fi.Mode()&fs.ModeSymlink == 0 {
-			return name, nil
+	rest := strings.Split(filepath.ToSlash(name), "/")
+	var done []string
+	for hops := 0; len(rest) > 0; {
+		c := rest[0]
+		rest = rest[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			if len(done) == 0 {
+				return "", fmt.Errorf("%s: link leaves the server directory", path.Base(name))
+			}
+			done = done[:len(done)-1]
+			continue
 		}
-		t, err := root.Readlink(name)
+		cur := path.Join(path.Join(done...), c)
+		fi, err := root.Lstat(cur)
+		if err != nil || fi.Mode()&fs.ModeSymlink == 0 {
+			// done holds no links, so '..' popping it is the kernel's answer.
+			done = append(done, c)
+			continue
+		}
+		if hops++; hops > 40 {
+			return "", fmt.Errorf("%s: too many links", path.Base(name))
+		}
+		t, err := root.Readlink(cur)
 		if err != nil {
 			return "", err
 		}
 		if filepath.IsAbs(t) {
 			return "", fmt.Errorf("%s: link leaves the server directory", path.Base(name))
 		}
-		name = path.Join(path.Dir(filepath.ToSlash(name)), filepath.ToSlash(t))
+		rest = append(strings.Split(filepath.ToSlash(t), "/"), rest...)
 	}
-	return "", fmt.Errorf("%s: too many links", path.Base(name))
+	return path.Join(done...), nil
 }
 
 // createTempIn is os.CreateTemp inside a Root: a new file in dir named

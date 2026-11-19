@@ -155,3 +155,53 @@ func TestNoReadEscapesUnderRace(t *testing.T) {
 		t.Fatalf("read a file outside the jail %d times through the Root", leaked)
 	}
 }
+
+// R36-05: linkTargetIn names the file an open through the Root reaches. A
+// relative target is applied to its link's REAL folder, so a '..' after a
+// folder link climbs out of the link's target, not out of the link's spelling.
+func TestLinkTargetInResolvesLikeTheKernel(t *testing.T) {
+	srv, _ := seedJail(t)
+	requireSymlinks(t, srv)
+	if err := os.MkdirAll(filepath.Join(srv, "x", "y"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srv, "x", "g"), []byte("real"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for link, target := range map[string]string{
+		"dl":       "x/y",
+		"x/y/f":    "../g",
+		"cfg":      "dl/f",
+		"la":       "a",
+		"dangling": "d/new",
+		"esc":      "../outside/f",
+		"loop":     "loop",
+	} {
+		if err := os.Symlink(target, filepath.Join(srv, filepath.FromSlash(link))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root, err := os.OpenRoot(srv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	for _, tc := range []struct {
+		name, want string
+		wantErr    bool
+	}{
+		{"a", "a", false},
+		{"new", "new", false},
+		{"la", "a", false},
+		{"cfg", "x/g", false},
+		{"dl/f", "x/g", false},
+		{"dangling", "d/new", false},
+		{"esc", "", true},
+		{"loop", "", true},
+	} {
+		got, err := linkTargetIn(root, tc.name)
+		if (err != nil) != tc.wantErr || got != tc.want {
+			t.Errorf("linkTargetIn(%q) = %q, %v; want %q, err %v", tc.name, got, err, tc.want, tc.wantErr)
+		}
+	}
+}
