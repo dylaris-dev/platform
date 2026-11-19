@@ -1082,7 +1082,10 @@ func uploadBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		// prefix for display, but on-disk we collapse it to the leaf
 		// filename — the directory is server-scoped already so the prefix
 		// adds no information.
-		dir := filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName)
+		dir, err := nodeLocalBackupDir(sm, serverUUID)
+		if err != nil {
+			return err
+		}
 		// Not MkdirAll: the server may have been deleted while the backup
 		// waited for its save flush, and MkdirAll brought its directory back
 		// for good. A missing server root fails the run instead.
@@ -1164,7 +1167,11 @@ func completeArchive(sm *StorageManager, serverUUID string, info storageInfo, ke
 		f, err = os.Open(filepath.Join(cfg.BasePath, filepath.Clean("/"+key)))
 	case "node-local":
 		// Inside the tenant's bind mount: openArchive refuses a planted link.
-		f, err = openArchive(filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName, nodeLocalArchiveName(key)))
+		dir, derr := nodeLocalBackupDir(sm, serverUUID)
+		if derr != nil {
+			return 0, false
+		}
+		f, err = openArchive(filepath.Join(dir, nodeLocalArchiveName(key)))
 	default:
 		return 0, false
 	}
@@ -1207,7 +1214,11 @@ func deleteBackup(ctx context.Context, sm *StorageManager, serverUUID string, in
 		}
 		os.Remove(filepath.Join(cfg.BasePath, filepath.Clean("/"+key)))
 	case "node-local":
-		if root, err := openBackupRoot(filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName), false); err == nil {
+		dir, err := nodeLocalBackupDir(sm, serverUUID)
+		if err != nil {
+			return
+		}
+		if root, err := openBackupRoot(dir, false); err == nil {
 			root.Remove(nodeLocalArchiveName(key))
 			root.Close()
 		}
@@ -1305,6 +1316,17 @@ func resolveServerRoot(sm *StorageManager, uuid string) string {
 		return filepath.Join("./dylaris_data/servers", uuid)
 	}
 	return sm.GetServerDir(uuid)
+}
+
+// nodeLocalBackupDir is the server's .dylaris-backups directory. A root that
+// does not resolve right now is refused: joined onto "", the name is relative,
+// and the archive went into the node's working directory and read as a backup.
+func nodeLocalBackupDir(sm *StorageManager, uuid string) (string, error) {
+	root := resolveServerRoot(sm, uuid)
+	if root == "" {
+		return "", errors.New("the server's storage path cannot be resolved on this node right now")
+	}
+	return filepath.Join(root, backupDirName), nil
 }
 
 // copyExactly writes exactly size bytes of f: the size the tar header already

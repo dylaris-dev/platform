@@ -768,8 +768,11 @@ func downloadBackup(ctx context.Context, sm *StorageManager, serverUUID string, 
 		return os.Open(full)
 
 	case "node-local":
-		archive := nodeLocalArchiveName(key)
-		full := filepath.Join(resolveServerRoot(sm, serverUUID), backupDirName, archive)
+		dir, err := nodeLocalBackupDir(sm, serverUUID)
+		if err != nil {
+			return nil, err
+		}
+		full := filepath.Join(dir, nodeLocalArchiveName(key))
 		// The same check list and download take: an archive is a regular file
 		// the node wrote, never a link to be followed.
 		return openArchive(full)
